@@ -176,6 +176,10 @@ private backups, chart review, registry artifact/platform checks,
 stage/frozen final render and server dry-run, quiesce/migrate, configure,
 Helm update, Pod readiness, and acceptance. Helm/chart is the sole CRD owner:
 there is no separate SSA CRD apply/wait phase or compatibility field.
+Pod readiness ignores deleting Pods and terminal `Succeeded`/`Failed` Pods.
+Each deployed role requires at least one matching nonterminal container; all
+matching containers and their Pods must be Ready. No live match or any current
+nonready match remains a STOP at the readiness deadline.
 Before removing a CRD from the chart, both the previous Helm release manifest
 and live CRD must already carry `helm.sh/resource-policy: keep`. This is a
 data-preservation gate; the tool never patches ownership or adds keep

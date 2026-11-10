@@ -365,7 +365,7 @@ def archive(run, sha, destination):
 def image_ready(pods, expected):
     matches = []
     for pod in pods['items']:
-        if pod['metadata'].get('deletionTimestamp'):
+        if pod['metadata'].get('deletionTimestamp') or pod.get('status', {}).get('phase') in ('Succeeded', 'Failed'):
             continue
         statuses = {x['name']: x for x in pod.get('status', {}).get('containerStatuses', [])}
         for container in pod['spec'].get('containers', []):
@@ -711,7 +711,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise RuntimeError('Pod Ready/restarts/digest readiness deadline exceeded')
+                raise RuntimeError('matching container Ready/Pod Ready readiness deadline exceeded')
             pods = json.loads(run.run(kube + ['get', 'pods', '-o', 'json'], 'pods.json', timeout=min(120, remaining)))
             deployed = {r: e for r, e in publication['roles'].items() if r in ('server', 'operator', 'profiler', 'dashboard', 'query', 'node-agent')}
             checks = {role: image_ready(pods, expected) for role, expected in deployed.items()}
