@@ -393,18 +393,11 @@ func (o *SchedulerService) controlRound(ctx context.Context) time.Time {
 	tickStarted := time.Now()
 	event.Admit = tickStarted.Sub(admitStarted)
 	event.TickAt = tickStarted.UTC()
-	decision, err := o.Controller.Tick(ctx, event.TickAt)
+	_, err := o.Controller.Tick(ctx, event.TickAt)
 	event.Tick = time.Since(tickStarted)
 	o.Lock.Unlock()
 	finished := time.Now()
 	event.FinishedAt, event.Elapsed = finished.UTC(), finished.Sub(started)
-	event.Status = decision.Status
-	if decision.Target != nil {
-		event.TargetID = decision.Target.ID
-	}
-	if decision.Capacity != nil && decision.Capacity.Search != nil {
-		event.Fallback = decision.Capacity.Search.Fallback
-	}
 	if err != nil {
 		event.Error = err.Error()
 		ctrl.Log.Error(err, "evaluate and record scheduler control interval")

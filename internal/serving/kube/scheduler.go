@@ -300,14 +300,13 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot)
 	decision.EvaluationElapsed = time.Since(evaluationStarted)
 	event.Evaluation = decision.EvaluationTiming
+	event.DecisionAt = decision.At
 	event.Status = decision.Status
 	if decision.Target != nil {
 		event.TargetID = decision.Target.ID
 	}
 	if decision.Capacity != nil && decision.Capacity.Search != nil {
 		event.Fallback = decision.Capacity.Search.Fallback
-		event.Surrogate = decision.Capacity.Search.SurrogateElapsed
-		event.Exact = decision.Capacity.Search.ExactElapsed
 	}
 	if err != nil {
 		return serving.SchedulerDecision{}, err

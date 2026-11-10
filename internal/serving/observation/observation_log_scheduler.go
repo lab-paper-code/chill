@@ -51,11 +51,12 @@ type SchedulerActionObservation struct {
 
 // SchedulerControlObservation is a bounded call-completion record. Elapsed ends
 // before this record is submitted: it does not claim async persistence or
-// physical completion. TickAt joins round/tick records to the original decision.
-// Phase is the last stage entered; Error and Status retain failed/Keep calls.
+// physical completion. TickAt joins round/tick calls; DecisionAt identifies the
+// captured decision. Only tick records own evaluation disposition.
 type SchedulerControlObservation struct {
 	Scope      string                            `json:"scope"`
 	TickAt     time.Time                         `json:"tickAt"`
+	DecisionAt time.Time                         `json:"decisionAt"`
 	StartedAt  time.Time                         `json:"startedAt"`
 	FinishedAt time.Time                         `json:"finishedAt"`
 	Elapsed    time.Duration                     `json:"elapsedNanos"`
@@ -73,8 +74,6 @@ type SchedulerControlObservation struct {
 	Publish    time.Duration                     `json:"publishNanos"`
 	Record     time.Duration                     `json:"recordNanos"`
 	Launch     time.Duration                     `json:"launchNanos"`
-	Surrogate  time.Duration                     `json:"surrogateElapsedNanos"`
-	Exact      time.Duration                     `json:"exactElapsedNanos"`
 	Evaluation serving.SchedulerEvaluationTiming `json:"evaluation"`
 }
 

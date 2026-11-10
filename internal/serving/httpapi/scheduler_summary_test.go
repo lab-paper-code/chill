@@ -169,7 +169,7 @@ func TestSchedulerSummaryWorkloadStates(t *testing.T) {
 func TestSchedulerHistoryRetainsControlTiming(t *testing.T) {
 	at := time.Date(2026, 11, 10, 1, 2, 3, 4, time.UTC)
 	control := &observation.SchedulerControlObservation{
-		Scope: "round", TickAt: at, StartedAt: at, FinishedAt: at.Add(time.Second),
+		Scope: "tick", TickAt: at, DecisionAt: at, StartedAt: at, FinishedAt: at.Add(time.Second),
 		Elapsed: time.Second, Tick: time.Second / 2, Phase: "complete", Status: "Keep",
 	}
 	records := []observation.SchedulerObservation{{At: control.FinishedAt, Control: control}}
@@ -183,6 +183,7 @@ func TestSchedulerHistoryRetainsControlTiming(t *testing.T) {
 			Control struct {
 				Scope        string        `json:"scope"`
 				TickAt       time.Time     `json:"tickAt"`
+				DecisionAt   time.Time     `json:"decisionAt"`
 				ElapsedNanos time.Duration `json:"elapsedNanos"`
 				TickNanos    time.Duration `json:"tickNanos"`
 				Status       string        `json:"status"`
@@ -191,7 +192,7 @@ func TestSchedulerHistoryRetainsControlTiming(t *testing.T) {
 		if err := json.Unmarshal(body, &decoded); err != nil {
 			t.Fatal(err)
 		}
-		if len(decoded) != 1 || decoded[0].Control.Scope != "round" || !decoded[0].Control.TickAt.Equal(at) || decoded[0].Control.ElapsedNanos != time.Second || decoded[0].Control.TickNanos != time.Second/2 || decoded[0].Control.Status != "Keep" {
+		if len(decoded) != 1 || decoded[0].Control.Scope != "tick" || !decoded[0].Control.TickAt.Equal(at) || !decoded[0].Control.DecisionAt.Equal(at) || decoded[0].Control.ElapsedNanos != time.Second || decoded[0].Control.TickNanos != time.Second/2 || decoded[0].Control.Status != "Keep" {
 			t.Fatalf("history projection lost native completion contract: %s", body)
 		}
 	}

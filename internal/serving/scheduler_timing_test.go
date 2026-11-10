@@ -24,7 +24,7 @@ func TestSchedulerEvaluationTimingStages(t *testing.T) {
 				t.Fatal("fixture did not search")
 			}
 			search := decision.Capacity.Search
-			if search.ExactElapsed <= 0 || search.ExactElapsed+search.SurrogateElapsed > search.Duration || search.Duration > timing.Search || (search.SurrogateElapsed > 0) != (strategy == "v2") {
+			if search.ExactElapsed <= 0 || search.ExactElapsed+search.SurrogateElapsed > search.Duration || search.Duration > timing.Search || (search.SurrogateElapsed > 0) != (strategy == "v2") || timing.Exact != search.ExactElapsed || timing.Surrogate != search.SurrogateElapsed {
 				t.Fatalf("search timers lost backend scope: %+v; evaluation=%+v", search, timing)
 			}
 		})

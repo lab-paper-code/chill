@@ -257,6 +257,7 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	timing.Preparation = time.Since(stageStarted)
 	stage, stageStarted = &timing.Search, time.Now()
 	best, err := planner.search(started.Add(settings.ControlInterval / 2))
+	timing.Surrogate, timing.Exact = planner.searched.SurrogateElapsed, planner.searched.ExactElapsed
 	if err != nil {
 		return SchedulerDecision{}, err
 	}

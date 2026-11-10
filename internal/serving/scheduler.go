@@ -588,13 +588,16 @@ type SchedulerDecision struct {
 }
 
 // SchedulerEvaluationTiming records non-overlapping EvaluateScheduler stages.
-// Search includes its own preparation, surrogate and exact/filter work.
+// Surrogate and Exact are backend subsets of Search, including filters/seeding;
+// they survive errors without retaining a candidate or publishable decision.
 type SchedulerEvaluationTiming struct {
 	Preparation time.Duration `json:"preparationNanos"`
 	Search      time.Duration `json:"searchNanos"`
 	Payback     time.Duration `json:"paybackNanos"`
 	Rates       time.Duration `json:"ratesNanos"`
 	Projection  time.Duration `json:"projectionNanos"`
+	Surrogate   time.Duration `json:"surrogateElapsedNanos"`
+	Exact       time.Duration `json:"exactElapsedNanos"`
 }
 
 func (s SchedulerSettings) Validate() error {

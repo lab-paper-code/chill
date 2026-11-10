@@ -209,7 +209,8 @@ Query owns public progress and per-cell coverage projection.
 
 제어 호출 완료는 기존 scheduler stream의 작은 `control` 행으로 보존한다. 원본 archive와
 `GET /api/v1/observations/scheduler`의 full/compact/summary에서 읽으며,
-`control.tickAt = decision.at`으로 같은 호출을 연결한다. `scope:"round"`는 application lock
+`control.tickAt`으로 round와 Tick을 연결하고, Tick 행의 `control.decisionAt = decision.at`으로
+평가 결과를 연결한다. `scope:"round"`는 application lock
 대기→Admit→Tick→unlock의 `startedAt`/`finishedAt`/`elapsedNanos`와
 `lockWaitNanos`, `admitNanos`, `tickNanos`를 제공한다. `tickNanos`는 실제 Tick 호출 반환까지이며
 Tick 완료 행의 동기 제출도 포함한다. `admitError`와 Tick의 `error`는 별도다.
@@ -218,8 +219,11 @@ Tick 완료 행의 동기 제출도 포함한다. `admitError`와 Tick의 `error
 `captureNanos`, `evaluateNanos`, `publishNanos`, `recordNanos`, `launchNanos`를 제공한다.
 `recordNanos`는 기존 OnDecision callback 전체이며 실패한 callback 시간도 포함한다.
 완료 행 자체의 제출은 해당 행의 종료 경계 뒤이므로 `elapsedNanos`에 포함하지 않는다.
-두 scope 모두 Keep·오류·중도 반환을 기록하며 `phase`는 마지막 진입 단계,
-`status`·`targetID`·`fallback`은 평가가 생성한 처분이다. 오류로 평가 전 종료하면 처분은 비어 있다.
+두 scope 모두 Keep·오류·중도 반환을 기록하며 `phase`는 마지막 진입 단계다.
+평가 처분 `status`·`targetID`·`fallback`은 Tick 완료 행만 제공한다.
+round는 호출 식별·전체 시간·오류만 소유하며 Tick의 빈 오류 반환값에서 처분을 추정하지 않는다.
+결정 callback이 기록 후 취소해도 Tick 행의 처분과 `decisionAt`은 유지한다.
+평가 전 종료 또는 평가 오류로 decision을 생성하지 못하면 처분은 비어 있다.
 이 행은 큰 decision/snapshot을 다시 저장하지 않으며, 제출 오류는 서버 로그로 남긴다.
 비동기 파일 영속 완료·물리 동작 완료는 이 시간에 포함하지 않는다.
 
@@ -231,7 +235,9 @@ Tick 완료 행의 동기 제출도 포함한다. `admitError`와 Tick의 `error
 탐색 전에 반환하면 preparation만 측정한다. v2 finalist postfilter는 search 안에 남는다.
 `capacity.search.surrogateElapsedNanos`는 v2 Candidates 호출만,
 `exactElapsedNanos`는 keep seeding·exact funnel·exact fallback·backend postfilter를 포함한다.
-두 scalar는 Tick 완료 행의 `control`에도 보존하므로 결정 callback 실패 때도 읽을 수 있다.
+두 scalar는 `decision.evaluationTiming`과 Tick 완료 행의 `control.evaluation`에도 보존한다.
+Search 뒤 nominal-rate 진단이 취소돼 빈 decision을 반환해도 이미 수행한 backend 시간은 남는다.
+이 scalar는 search의 부분집합이며 다섯 배타적 단계에 다시 합산하지 않는다.
 v1은 backend 전체 exact search의 wall time이며 병렬 worker CPU 시간의 합이 아니다.
 두 backend 시간은 scalar table/problem 준비와 native 진단 변환을 제외하므로
 합을 전체 search/Tick 시간으로 해석하지 않는다. 과거 행에 새 시간값을 소급 생성하지 않는다.
