@@ -280,6 +280,33 @@ func (r *Runtime) advance(ctx context.Context, run *api.EvaluationRun, stage *ap
 	return &result, true, nil
 }
 
+// Only persisted result references authorize collection; Job completion alone does not.
+func (r *Runtime) deleteCompletedProcedurePods(ctx context.Context, namespace string, procedures []api.EvaluationProcedure) error {
+	for _, p := range procedures {
+		if p.FinishedAt == nil || p.EvidenceRef == nil || p.JobRef == nil || p.JobRef.UID == "" {
+			continue
+		}
+		var pods corev1.PodList
+		if err := r.APIReader.List(ctx, &pods, client.InNamespace(namespace), client.MatchingLabels{"batch.kubernetes.io/controller-uid": string(p.JobRef.UID)}); err != nil {
+			return err
+		}
+		for i := range pods.Items {
+			pod := &pods.Items[i]
+			owner := metav1.GetControllerOf(pod)
+			if pod.Status.Phase != corev1.PodSucceeded || owner == nil ||
+				owner.APIVersion != batchv1.SchemeGroupVersion.String() || owner.Kind != "Job" ||
+				owner.Name != p.JobRef.Name || owner.UID != p.JobRef.UID {
+				continue
+			}
+			uid := pod.UID
+			if err := r.Client.Delete(ctx, pod, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); client.IgnoreNotFound(err) != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func validateResult(result stepResult, runUID, stageUID types.UID, stageID, step string) error {
 	if result.SchemaVersion != "evaluation-step.v1alpha1" || result.RunUID != runUID || result.StageUID != stageUID || result.StageID != stageID || result.Step != step || result.StartedAt.IsZero() || result.FinishedAt.IsZero() || (result.Execution.Status != complete && result.Execution.Status != failed) {
 		return fmt.Errorf("%s: invalid result identity/schema", api.EvaluationReasonEvidenceUnreadable)

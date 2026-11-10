@@ -49,7 +49,13 @@ func reconcileBootstrapJob(
 			if !current.DeletionTimestamp.IsZero() {
 				return BootstrapStateRunning, true, nil
 			}
-			return observeBootstrapJob(current), false, nil
+			state := observeBootstrapJob(current)
+			if state == BootstrapStateSucceeded {
+				if err := deleteSucceededBootstrapPods(ctx, k8sClient, current); err != nil {
+					return "", false, err
+				}
+			}
+			return state, false, nil
 		}
 
 		available, err := deploymentAvailable(ctx, k8sClient, system, instance)

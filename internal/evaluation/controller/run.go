@@ -23,11 +23,22 @@ import (
 
 type RunReconciler struct{ Runtime }
 
-func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
 	run := &api.EvaluationRun{}
 	if err := r.APIReader.Get(ctx, req.NamespacedName, run); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	defer func() {
+		if err != nil {
+			return
+		}
+		if cleanupErr := r.deleteCompletedProcedurePods(ctx, run.Namespace, run.Status.Procedures); cleanupErr != nil {
+			ctrl.LoggerFrom(ctx).Error(cleanupErr, "collect completed evaluation procedure Pods", "run", req.NamespacedName)
+			if !result.Requeue && result.RequeueAfter == 0 {
+				result = pending
+			}
+		}
+	}()
 	if run.Status.ObservedGeneration == 0 {
 		before := run.DeepCopy()
 		run.Status.ObservedGeneration = run.Generation

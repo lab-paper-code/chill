@@ -49,11 +49,22 @@ func (r *Runtime) activeParent(ctx context.Context, stage *api.EvaluationStage) 
 	}
 	return nil, errParentPending
 }
-func (r *StageReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *StageReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
 	stage := &api.EvaluationStage{}
 	if err := r.APIReader.Get(ctx, req.NamespacedName, stage); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	defer func() {
+		if err != nil {
+			return
+		}
+		if cleanupErr := r.deleteCompletedProcedurePods(ctx, stage.Namespace, stage.Status.Procedures); cleanupErr != nil {
+			ctrl.LoggerFrom(ctx).Error(cleanupErr, "collect completed evaluation procedure Pods", "stage", req.NamespacedName)
+			if !result.Requeue && result.RequeueAfter == 0 {
+				result = pending
+			}
+		}
+	}()
 	if stage.Status.FinishedAt != nil {
 		if stage.DeletionTimestamp.IsZero() {
 			return ctrl.Result{}, nil

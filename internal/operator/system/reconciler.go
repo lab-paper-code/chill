@@ -30,8 +30,10 @@ type ChillSystemReconciler struct {
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems/finalizers,verbs=update
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=list;watch;delete
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get;list;watch
 
 // Reconcile updates ChillSystem finalization and status.
 func (r *ChillSystemReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -79,6 +81,10 @@ func (r *ChillSystemReconciler) reconcileSystem(ctx context.Context, name string
 
 	if err := r.patchStatus(ctx, key); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update ChillSystem %s status: %w", key.String(), err)
+	}
+	if err := r.cleanupCompletedDeploymentPods(ctx, system); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "collect completed CHILL Deployment Pods", "system", system.Name)
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 	return ctrl.Result{}, nil
 }

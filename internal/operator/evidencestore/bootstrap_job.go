@@ -1,12 +1,15 @@
 package evidencestore
 
 import (
+	"context"
 	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lab-paper-code/chill/internal/component"
 )
@@ -69,4 +72,32 @@ func buildBootstrapJob(instance Instance, config Config, configResourceVersion s
 
 func bootstrapEndpoint(instance Instance) string {
 	return fmt.Sprintf("http://%s:%d", instance.ServiceName, s3Port)
+}
+
+// deleteSucceededBootstrapPods removes consumed bootstrap output while retaining
+// the completed Job as the bootstrap attestation.
+func deleteSucceededBootstrapPods(ctx context.Context, k8sClient client.Client, job *batchv1.Job) error {
+	if job.UID == "" {
+		return nil
+	}
+	pods := &corev1.PodList{}
+	if err := k8sClient.List(ctx, pods, client.InNamespace(job.Namespace)); err != nil {
+		return fmt.Errorf("list Evidence Store bootstrap Pods for %s: %w", client.ObjectKeyFromObject(job), err)
+	}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		owner := metav1.GetControllerOf(pod)
+		if pod.Status.Phase != corev1.PodSucceeded || owner == nil ||
+			owner.APIVersion != batchv1.SchemeGroupVersion.String() || owner.Kind != "Job" ||
+			owner.Name != job.Name || owner.UID != job.UID {
+			continue
+		}
+		err := k8sClient.Delete(ctx, pod, &client.DeleteOptions{
+			Preconditions: &metav1.Preconditions{UID: &pod.UID, ResourceVersion: &pod.ResourceVersion},
+		})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete Evidence Store bootstrap Pod %s: %w", client.ObjectKeyFromObject(pod), err)
+		}
+	}
+	return nil
 }

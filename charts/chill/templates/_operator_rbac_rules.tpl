@@ -29,6 +29,14 @@
 - apiGroups:
   - ""
   resources:
+  - pods
+  verbs:
+  - delete
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - secrets
   verbs:
   - create
@@ -68,6 +76,14 @@
   - get
   - list
   - patch
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - replicasets
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - batch
