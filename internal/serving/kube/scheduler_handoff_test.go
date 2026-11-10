@@ -67,12 +67,17 @@ func handoffController(t *testing.T, extraNodes ...string) *SchedulerController 
 			}
 			pod.UID = types.UID(pod.Name + "-pod")
 			pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
-			pod.Status = old.Status
+			if !servingstate.PodTerminated(pod) {
+				pod.Status = old.Status
+			}
 			if err := cl.Create(ctx, pod, opts...); err != nil {
 				return err
 			}
 			if err := c.kube.(*kubefake.Clientset).Tracker().Create(core.SchemeGroupVersion.WithResource("pods"), pod.DeepCopy(), pod.Namespace); err != nil {
 				return err
+			}
+			if servingstate.PodTerminated(pod) {
+				return nil
 			}
 			follow, stop := context.WithCancel(c.observer.ctx)
 			c.observer.mu.Lock()

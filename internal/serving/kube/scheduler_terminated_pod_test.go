@@ -27,21 +27,12 @@ func terminatedPodController(t *testing.T) (*SchedulerController, serving.Schedu
 	pod.Spec.NodeName = "b"
 	pod.Annotations[servingstate.ServingProfileAnnotation] = "b-profile"
 	pod.Finalizers = []string{servingstate.SourceFinalizer}
+	pod.Status = core.PodStatus{Phase: core.PodFailed}
 	uid := c.config.Settings.AutonomousWorkloads[0]
 	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: "edge.dacs.io/v1alpha1", Kind: "Workload", Name: "workload", UID: types.UID(uid)}}
 	if err := c.store.client.Create(c.ctx, pod); err != nil {
 		t.Fatal(err)
 	}
-	// The shared creation fixture initially publishes a running status. Replace
-	// that API-only fixture state before the first observation of this Pod.
-	pod.Status = core.PodStatus{Phase: core.PodFailed}
-	if err := c.store.client.Status().Update(c.ctx, pod); err != nil {
-		t.Fatal(err)
-	}
-	c.observer.mu.Lock()
-	source := c.observer.sources[string(pod.UID)]
-	source.containerID = ""
-	c.observer.mu.Unlock()
 	api := c.store.client.(*resetAPI)
 	api.terminateOnDelete = false
 	if err := api.Delete(c.ctx, pod); err != nil {
@@ -67,6 +58,22 @@ func terminatedPodController(t *testing.T) (*SchedulerController, serving.Schedu
 
 func TestTerminatedPodOnlyPlannerReachesNormalRemovePrepareAndRoute(t *testing.T) {
 	c, old := terminatedPodController(t)
+	goal, remove, prepare, route := terminatedPodReplacementPlan(t, c, old)
+	reached, release := holdTerminatedPodReturn(t, c, old)
+	c.launch(c.ctx, *goal, c.config)
+	select {
+	case <-reached:
+	case <-c.ctx.Done():
+		t.Fatal("normal remove did not reach finalizer return", c.ctx.Err())
+	}
+	requireTerminatedPodReturnFence(t, c, goal, old, remove, prepare, route)
+	close(release)
+	c.wg.Wait()
+	completeTerminatedPodReplacement(t, c, goal, old, remove, prepare, route)
+}
+
+func terminatedPodReplacementPlan(t *testing.T, c *SchedulerController, old serving.SchedulerInstance) (*serving.SchedulerCandidate, serving.Action, serving.Action, serving.Action) {
+	t.Helper()
 	snapshot := c.state.Snapshot
 	uid := snapshot.Workloads[0].UID
 	// Isolate the real planner's one-node replacement choice. The controller
@@ -109,17 +116,22 @@ func TestTerminatedPodOnlyPlannerReachesNormalRemovePrepareAndRoute(t *testing.T
 		!slices.Contains(prepare.DependsOn, remove.ID) || !slices.Contains(route.DependsOn, prepare.ID) {
 		t.Fatalf("planner lost physical-return ordering: %+v", goal.Actions)
 	}
+	return goal, remove, prepare, route
+}
+
+func holdTerminatedPodReturn(t *testing.T, c *SchedulerController, old serving.SchedulerInstance) (<-chan struct{}, chan struct{}) {
+	t.Helper()
 
 	// Hold the real finalizer return. No successful remove receipt or subsequent
 	// prepare/route may appear while the physical source remains in the API.
 	reached, release := make(chan struct{}), make(chan struct{})
-	defer func() {
+	t.Cleanup(func() {
 		select {
 		case <-release:
 		default:
 			close(release)
 		}
-	}()
+	})
 	api := c.store.client.(*resetAPI)
 	api.Client = interceptor.NewClient(api.Client.(client.WithWatch), interceptor.Funcs{
 		Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
@@ -138,12 +150,11 @@ func TestTerminatedPodOnlyPlannerReachesNormalRemovePrepareAndRoute(t *testing.T
 			return cl.Patch(ctx, obj, patch, opts...)
 		},
 	})
-	c.launch(c.ctx, *goal, c.config)
-	select {
-	case <-reached:
-	case <-c.ctx.Done():
-		t.Fatal("normal remove did not reach finalizer return", c.ctx.Err())
-	}
+	return reached, release
+}
+
+func requireTerminatedPodReturnFence(t *testing.T, c *SchedulerController, goal *serving.SchedulerCandidate, old serving.SchedulerInstance, remove, prepare, route serving.Action) {
+	t.Helper()
 	c.mu.Lock()
 	run := c.runs[remove.ID]
 	if run == nil || run.action.Status != servingstate.NativeOperationRunning || run.result.Operation.Instance != "" || run.result.Operation.PodUID != old.PodUID ||
@@ -155,15 +166,18 @@ func TestTerminatedPodOnlyPlannerReachesNormalRemovePrepareAndRoute(t *testing.T
 	if !slices.ContainsFunc(c.runtime.Instances(), func(i serving.InstanceState) bool { return i.PodUID == old.PodUID }) {
 		t.Fatal("allocation returned before finalizer/Pod removal")
 	}
-	close(release)
-	c.wg.Wait()
+}
+
+func completeTerminatedPodReplacement(t *testing.T, c *SchedulerController, goal *serving.SchedulerCandidate, old serving.SchedulerInstance, remove, prepare, route serving.Action) {
+	t.Helper()
 	requireCompletedContinuationAction(t, c.runs[remove.ID], "actual Pod-only remove")
 	key := client.ObjectKey{Namespace: "chill-system", Name: "failed-without-executor"}
 	requireRetiredHandoffResources(t, c, key, old)
 	if slices.ContainsFunc(c.runtime.Instances(), func(i serving.InstanceState) bool { return i.PodUID == old.PodUID }) {
 		t.Fatal("successful normal remove retained physical allocation")
 	}
-	snapshot = handoffSnapshot(t, c)
+	snapshot := handoffSnapshot(t, c)
+	uid := snapshot.Workloads[0].UID
 	operation := scheduledOperation(prepare, goal, c.config, c.powerTargets, snapshot.Workloads)
 	if operation.Prepare == nil {
 		t.Fatal("planner target has no preparation contract")
@@ -186,49 +200,7 @@ func TestTerminatedPodOnlyRemoveRetainsChangedAndUnknownSources(t *testing.T) {
 	for _, mismatch := range []string{"action-pod", "snapshot-pod", "node-uid", "replaced-pod", "replaced-node", "unknown", "revived", "retained-executor"} {
 		t.Run(mismatch, func(t *testing.T) {
 			c, old := terminatedPodController(t)
-			action := serving.Action{ID: "guarded-remove", Kind: servingstate.OperationRemove, Node: old.Node, Instance: old.ID}
-			index := slices.IndexFunc(c.state.Snapshot.Instances, func(i serving.SchedulerInstance) bool { return i.ID == old.ID })
-			switch mismatch {
-			case "action-pod":
-				action.Instance = "different-pod"
-			case "snapshot-pod":
-				c.state.Snapshot.Instances[index].PodUID = "different-pod"
-			case "node-uid":
-				action.Node.UID = "replaced-node"
-			case "unknown":
-				c.state.Snapshot.Instances[index].Terminated = false
-			case "revived":
-				pod, err := c.kube.CoreV1().Pods("chill-system").Get(c.ctx, "failed-without-executor", meta.GetOptions{})
-				if err != nil {
-					t.Fatal(err)
-				}
-				pod.Status = core.PodStatus{Phase: core.PodRunning, ContainerStatuses: []core.ContainerStatus{{Name: servingstate.FirstfloorContainerName, ContainerID: "containerd://new", State: core.ContainerState{Running: &core.ContainerStateRunning{}}}}}
-				if err := c.kube.(*kubefake.Clientset).Tracker().Update(core.SchemeGroupVersion.WithResource("pods"), pod, pod.Namespace); err != nil {
-					t.Fatal(err)
-				}
-			case "replaced-pod":
-				pod, err := c.kube.CoreV1().Pods("chill-system").Get(c.ctx, "failed-without-executor", meta.GetOptions{})
-				if err != nil {
-					t.Fatal(err)
-				}
-				pod.UID = "different-pod"
-				if err := c.kube.(*kubefake.Clientset).Tracker().Update(core.SchemeGroupVersion.WithResource("pods"), pod, pod.Namespace); err != nil {
-					t.Fatal(err)
-				}
-			case "replaced-node":
-				node, err := c.kube.CoreV1().Nodes().Get(c.ctx, old.Node.Name, meta.GetOptions{})
-				if err != nil {
-					t.Fatal(err)
-				}
-				node.UID = "different-node"
-				if err := c.kube.(*kubefake.Clientset).Tracker().Update(core.SchemeGroupVersion.WithResource("nodes"), node, ""); err != nil {
-					t.Fatal(err)
-				}
-			case "retained-executor":
-				c.observer.mu.Lock()
-				c.observer.sources[old.PodUID].containerID, c.observer.sources[old.PodUID].stopped = "containerd://unknown", false
-				c.observer.mu.Unlock()
-			}
+			action := changedTerminatedPodRemoveAction(t, c, old, mismatch)
 			goal := serving.SchedulerCandidate{ID: "guarded-cleanup", Actions: []serving.Action{action}}
 			handoffDispatch(t, c, &goal, action)
 			if run := c.runs[action.ID]; run != nil && run.action.Status == servingstate.NativeOperationComplete {
@@ -239,5 +211,56 @@ func TestTerminatedPodOnlyRemoveRetainsChangedAndUnknownSources(t *testing.T) {
 				t.Fatalf("guard discarded physical source/finalizer/allocation: pod=%+v err=%v", pod, err)
 			}
 		})
+	}
+}
+
+func changedTerminatedPodRemoveAction(t *testing.T, c *SchedulerController, old serving.SchedulerInstance, mismatch string) serving.Action {
+	t.Helper()
+	action := serving.Action{ID: "guarded-remove", Kind: servingstate.OperationRemove, Node: old.Node, Instance: old.ID}
+	index := slices.IndexFunc(c.state.Snapshot.Instances, func(i serving.SchedulerInstance) bool { return i.ID == old.ID })
+	switch mismatch {
+	case "action-pod":
+		action.Instance = "different-pod"
+	case "snapshot-pod":
+		c.state.Snapshot.Instances[index].PodUID = "different-pod"
+	case "node-uid":
+		action.Node.UID = "replaced-node"
+	case "unknown":
+		c.state.Snapshot.Instances[index].Terminated = false
+	default:
+		changeTerminatedPodPhysicalSource(t, c, old, mismatch)
+	}
+	return action
+}
+
+func changeTerminatedPodPhysicalSource(t *testing.T, c *SchedulerController, old serving.SchedulerInstance, mismatch string) {
+	t.Helper()
+	switch mismatch {
+	case "revived", "replaced-pod":
+		pod, err := c.kube.CoreV1().Pods("chill-system").Get(c.ctx, "failed-without-executor", meta.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mismatch == "revived" {
+			pod.Status = core.PodStatus{Phase: core.PodRunning, ContainerStatuses: []core.ContainerStatus{{Name: servingstate.FirstfloorContainerName, ContainerID: "containerd://new", State: core.ContainerState{Running: &core.ContainerStateRunning{}}}}}
+		} else {
+			pod.UID = "different-pod"
+		}
+		if err := c.kube.(*kubefake.Clientset).Tracker().Update(core.SchemeGroupVersion.WithResource("pods"), pod, pod.Namespace); err != nil {
+			t.Fatal(err)
+		}
+	case "replaced-node":
+		node, err := c.kube.CoreV1().Nodes().Get(c.ctx, old.Node.Name, meta.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		node.UID = "different-node"
+		if err := c.kube.(*kubefake.Clientset).Tracker().Update(core.SchemeGroupVersion.WithResource("nodes"), node, ""); err != nil {
+			t.Fatal(err)
+		}
+	case "retained-executor":
+		c.observer.mu.Lock()
+		c.observer.sources[old.PodUID].containerID, c.observer.sources[old.PodUID].stopped = "containerd://unknown", false
+		c.observer.mu.Unlock()
 	}
 }
