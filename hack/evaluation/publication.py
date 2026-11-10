@@ -15,7 +15,8 @@ REPO=HERE.parent.parent
 
 def verdict(judgment):
     status=judgment.get('components',{}).get('slo',{}).get('status',judgment['status'])
-    if status in ('NOT_EVALUATED','NOT_READY','INCOMPLETE','UNKNOWN','INVALID_NO_LOAD'): return {'verdict':'NOT_EVALUATED','reason':'NoLoad' if status=='INVALID_NO_LOAD' else 'ObservationUnavailable'}
+    if status == 'INVALID': return {'verdict':'INVALID','reason':judgment.get('reason','MeasurementInvalid')}
+    if status in ('NOT_EVALUATED','NOT_READY','INCOMPLETE','UNKNOWN','INVALID_NO_LOAD'): return {'verdict':'NOT_EVALUATED','reason':judgment.get('reason','NoLoad' if status=='INVALID_NO_LOAD' else 'ObservationUnavailable')}
     return {'verdict':'FAIL' if status=='FAIL' else 'PASS','reason':'SLOFailed' if status=='FAIL' else 'MeasurementComplete'}
 
 

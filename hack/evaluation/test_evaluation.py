@@ -371,7 +371,7 @@ class EvaluationTests(unittest.TestCase):
             for row in rows:
                 self.assertTrue(all(name + 'Error' in row for name in ('scheduler', 'kube', 'power', 'harness')))
 
-    def exercise_publication(self, lost=False, residual=False):
+    def exercise_publication(self, lost=False, residual=False, measurement=None):
         temporary_directory = tempfile.TemporaryDirectory
         with temporary_directory() as directory:
             root = Path(directory)
@@ -400,6 +400,12 @@ class EvaluationTests(unittest.TestCase):
             records = {'experiments/run/stages/one/' + step + '/result.json': {
                 **complete, 'measurement': {'verdict': 'PASS'}} for step in ('factor', 'stage', 'judge', 'cleanup-jobs')}
             records.update({'experiments/run/run/' + step + '/result.json': complete for step in ('prepare', 'finish')})
+            if measurement:
+                records['experiments/run/stages/one/judge/result.json']['measurement'] = measurement
+                request['D1'] = 'FAIL'
+                evidence_io.save(scope / 'judgment.json', {'schema': 'e5-judgment.v3', 'status': 'FAIL',
+                    'requests': {NAME: request}, 'components': {'slo': {'status': 'FAIL'}},
+                    'power': {'complete': True, 'wholePoolJoules': 1}})
             if lost:
                 execution['childRefs'] = [{'stageID': 'one', 'uid': 'stage', 'name': 'stage',
                     'execution': {'status': 'Failed', 'reason': 'ExecutionLost'},
@@ -419,6 +425,12 @@ class EvaluationTests(unittest.TestCase):
             def publish(args, **kwargs):
                 manifest = evidence_io.load(args[args.index('--manifest') + 1])
                 summary = evidence_io.load(manifest['summary']['localPath'])
+                if measurement:
+                    self.assertEqual(summary['status'], measurement['verdict'])
+                    self.assertEqual(summary['outcome']['measurement'], measurement)
+                    self.assertEqual(summary['outcome']['execution'], complete['execution'])
+                    self.assertEqual(summary['outcome']['cleanup']['status'], 'Complete')
+                    self.assertEqual(summary['stages'][0]['kpis']['requests'][NAME]['D1'], 'FAIL')
                 row = summary['stages'][0]['kpis']['requests'][NAME]
                 declared = summary['definition']['workloads'][0]
                 source = row['identitySource']
@@ -445,6 +457,10 @@ class EvaluationTests(unittest.TestCase):
     def test_execution_loss_cleanup_uses_latest_observations(self):
         self.exercise_publication(lost=True)
         self.exercise_publication(lost=True, residual=True)
+
+    def test_generator_invalid_survives_descriptive_slo_failure_publication(self):
+        self.exercise_publication(measurement={'verdict': 'INVALID', 'reason': 'GeneratorInvalid'})
+        self.exercise_publication(measurement={'verdict': 'FAIL', 'reason': 'SLOFailed'})
 
     def test_all_no_load_stages_cannot_become_summary_pass(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1923,10 +1939,32 @@ class EvaluationTests(unittest.TestCase):
             stages = [{'id': 'measured', 'kpis': {'status': 'MEASURED_DESCRIPTIVE'}}]
             results = {'measured': {'measurement': {'verdict': 'PASS'}}, 'missing': {'measurement': {'verdict': 'NOT_EVALUATED'}}}
             summary = judgment_rules.summarize(None, root, evaluation={'stages': stages, 'results': results})
-            self.assertEqual(summary['status'], 'MEASURED_DESCRIPTIVE')
+            self.assertEqual(summary['status'], 'NOT_EVALUATED')
             self.assertEqual(summary['completeness'], 'PARTIAL')
             results['missing']['measurement']['verdict'] = 'FAIL'
             self.assertEqual(judgment_rules.summarize(None, root, evaluation={'stages': stages, 'results': results})['status'], 'FAIL')
+
+    def test_summary_measurement_precedence_preserves_descriptive_facts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stages = [{'id': 'one', 'kpis': {'status': 'FAIL', 'components': {'slo': {'status': 'FAIL'}}}}]
+            for verdicts, expected in [
+                    (('INVALID', 'FAIL', 'NOT_EVALUATED', 'PASS'), 'INVALID'),
+                    (('PASS', 'FAIL', 'INVALID'), 'INVALID'),
+                    (('FAIL', 'NOT_EVALUATED', 'PASS'), 'NOT_EVALUATED'),
+                    (('FAIL', 'PASS'), 'FAIL'), (('PASS', 'PASS'), 'PASS')]:
+                with self.subTest(verdicts=verdicts):
+                    results = {str(i): {'measurement': {'verdict': value,
+                        'reason': {'INVALID': 'GeneratorInvalid', 'NOT_EVALUATED': 'NotStarted',
+                                   'FAIL': 'SLOFailed', 'PASS': 'MeasurementComplete'}[value]}}
+                               for i, value in enumerate(verdicts)}
+                    summary = judgment_rules.summarize(None, Path(directory),
+                        evaluation={'stages': stages, 'results': results})
+                    self.assertEqual(publication.verdict(summary), {'verdict': expected,
+                        'reason': {'INVALID': 'GeneratorInvalid', 'NOT_EVALUATED': 'NotStarted',
+                                   'FAIL': 'SLOFailed', 'PASS': 'MeasurementComplete'}[expected]})
+                    self.assertEqual(summary['stages'], stages)
+                    self.assertEqual(summary['components']['measurement'],
+                                     {key: value['measurement'] for key, value in results.items()})
 
     def test_meter_energy_includes_idle_declared_node_without_history(self):
         with tempfile.TemporaryDirectory() as directory:

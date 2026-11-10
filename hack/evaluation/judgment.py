@@ -201,14 +201,22 @@ def summarize(binding, root, *, evaluation=None):
     stages = evaluation['stages'] if evaluation else []
     results = evaluation.get('results', {}) if evaluation else {}
     measurements = [value.get('measurement', {}).get('verdict', 'NOT_EVALUATED') for value in results.values()]
-    slo_statuses = measurements + [stage['kpis'].get('components', {}).get('slo', {}).get('status') for stage in stages]
-    status = 'FAIL' if 'FAIL' in slo_statuses else 'MEASURED_DESCRIPTIVE' if 'PASS' in slo_statuses else 'NOT_EVALUATED'
+    if measurements:
+        selected = next(value.get('measurement', {'verdict': 'NOT_EVALUATED'}) for verdict in ('INVALID', 'NOT_EVALUATED', 'FAIL', 'PASS')
+                        for value in results.values()
+                        if value.get('measurement', {}).get('verdict', 'NOT_EVALUATED') == verdict)
+        status = 'MEASURED_DESCRIPTIVE' if selected.get('verdict') == 'PASS' else selected.get('verdict', 'NOT_EVALUATED')
+    else:
+        slo_statuses = [stage['kpis'].get('components', {}).get('slo', {}).get('status') for stage in stages]
+        status = 'FAIL' if 'FAIL' in slo_statuses else 'MEASURED_DESCRIPTIVE' if 'PASS' in slo_statuses else 'NOT_EVALUATED'
     result = {'schema': 'e5-summary.v4', 'failurePolicy': 'v2', 'stages': stages, 'status': status, 'results': results,
               'completeness': 'PARTIAL' if 'NOT_EVALUATED' in measurements or len(stages) < len(results) or any(
                   stage['kpis'].get('power', {}).get('complete') is False or stage['kpis']['status']=='PARTIAL' for stage in stages) else 'OBSERVED',
               'components': {'measurement': {key: value.get('measurement') for key,value in results.items()},
                              'execution': {key: value.get('execution') for key,value in results.items()},
                              'energy': {stage['id']: stage['kpis'].get('power') for stage in stages}}}
+    if measurements and selected.get('reason'):
+        result['reason'] = selected['reason']
     evidence_io.save(root / 'e5-summary.json', result)
     return result
 
