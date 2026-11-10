@@ -184,15 +184,26 @@ func completeTerminatedPodReplacement(t *testing.T, c *SchedulerController, goal
 	}
 	nextHTTP, _ := preparationNativeHTTPClient(t, c.ctx, operation.Prepare.Config, *operation.Prepare.Instance.Profile)
 	c.observer.native.HTTPClient = nextHTTP
-	handoffDispatch(t, c, goal, prepare)
+	parent := c.runs[transitionRunKind+"/"+goal.ID]
+	for range 4 {
+		if err := c.Continue(c.ctx, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		c.wg.Wait()
+		if !parent.reserved {
+			break
+		}
+	}
 	requireCompletedContinuationAction(t, c.runs[prepare.ID], "actual replacement prepare")
-	handoffSnapshot(t, c)
-	handoffDispatch(t, c, goal, route)
 	requireCompletedContinuationAction(t, c.runs[route.ID], "actual replacement route")
 	physical := c.runs[prepare.ID].prepareIdentity
 	routing, _ := c.runtime.SchedulerRouting()
 	if physical == "" || routing[uid][physical] <= 0 {
 		t.Fatalf("replacement never became a positive applied route: %v", routing)
+	}
+	if parent.action.Status != servingstate.NativeOperationComplete || parent.reserved ||
+		slices.ContainsFunc(c.state.Snapshot.Reservations, func(reservation serving.SchedulerReservation) bool { return reservation.Owner == goal.ID }) {
+		t.Fatal("automatic continuation did not complete and return the frozen owner reservation")
 	}
 }
 
