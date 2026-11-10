@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// Global candidates belong only to the reference query, not the immutable
-// production distribution. Build once per distribution, outside timed loops.
+// Reconstruct reference candidates independently of the production search domain.
+// Build once per distribution, outside timed loops.
 func baselineServiceValues(d *ServiceDistribution) []int64 {
 	var values []int64
 	for _, trial := range d.trials {
