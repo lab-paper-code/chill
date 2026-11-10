@@ -123,6 +123,42 @@ func (t *serviceTrial) nearest(gap *int64) (a, b []ServiceSample, distance int64
 	}
 	return y.samples, x.samples, left, outside
 }
+
+// nearestSurvivors applies the nearest-gap rule after excluding S <= elapsed.
+func (t *serviceTrial) nearestSurvivors(gap *int64, elapsed int64) (a, b []ServiceSample, distance int64, outside bool) {
+	if gap == nil {
+		return t.startup[serviceUpperBound(t.startup, elapsed):], nil, 0, false
+	}
+	g := *gap
+	right := sort.Search(len(t.groups), func(i int) bool { return t.groups[i].gap >= g })
+	left := right - 1
+	for left >= 0 && t.groups[left].samples[len(t.groups[left].samples)-1].ServiceDurationNanos <= elapsed {
+		left--
+	}
+	for right < len(t.groups) && t.groups[right].samples[len(t.groups[right].samples)-1].ServiceDurationNanos <= elapsed {
+		right++
+	}
+	if left < 0 && right == len(t.groups) {
+		return nil, nil, 0, false
+	}
+	if left < 0 {
+		x := t.groups[right]
+		return x.samples[serviceUpperBound(x.samples, elapsed):], nil, x.gap - g, x.gap != g
+	}
+	if right == len(t.groups) {
+		x := t.groups[left]
+		return x.samples[serviceUpperBound(x.samples, elapsed):], nil, g - x.gap, true
+	}
+	x, y := t.groups[left], t.groups[right]
+	leftDistance, rightDistance := g-x.gap, y.gap-g
+	if leftDistance < rightDistance {
+		return x.samples[serviceUpperBound(x.samples, elapsed):], nil, leftDistance, false
+	}
+	if rightDistance < leftDistance {
+		return y.samples[serviceUpperBound(y.samples, elapsed):], nil, rightDistance, false
+	}
+	return x.samples[serviceUpperBound(x.samples, elapsed):], y.samples[serviceUpperBound(y.samples, elapsed):], leftDistance, false
+}
 func (d *ServiceDistribution) support(gap *int64) ConditionalSupport {
 	var out ConditionalSupport
 	if d == nil || gap != nil && *gap < 0 {
@@ -165,8 +201,8 @@ func (d *ServiceDistribution) Sample(gap *int64, rng *rand.Rand) (ServiceSample,
 	panic("eligible trial missing")
 }
 
-// SampleResidual conditions the same nearest/trial mixture on S > elapsed.
-// Surviving trial mass is survivors/original-neighbors, not uniform surviving trials.
+// SampleResidual conditions the nearest/trial mixture on S > elapsed. When no
+// nearest record survives, it retries nearest selection among surviving records.
 func (d *ServiceDistribution) SampleResidual(gap *int64, elapsed int64, rng *rand.Rand) (ServiceSample, ConditionalSupport, bool) {
 	support := d.support(gap)
 	if support.TrialCount == 0 || elapsed < 0 {
@@ -180,7 +216,7 @@ func (d *ServiceDistribution) SampleResidual(gap *int64, elapsed int64, rng *ran
 		}
 	}
 	if total == 0 {
-		return ServiceSample{}, support, false
+		return d.sampleResidualSurvivors(gap, elapsed, rng)
 	}
 	pick := rng.Float64() * total
 	for i := range d.trials {
@@ -203,6 +239,43 @@ func (d *ServiceDistribution) SampleResidual(gap *int64, elapsed int64, rng *ran
 			}
 			return b[bi+j-(len(a)-ai)], support, true
 		}
+	}
+	panic("surviving trial missing")
+}
+
+// sampleResidualSurvivors selects uniformly among surviving physical trials,
+// then among each trial's nearest actual records with S > elapsed.
+func (d *ServiceDistribution) sampleResidualSurvivors(gap *int64, elapsed int64, rng *rand.Rand) (ServiceSample, ConditionalSupport, bool) {
+	var support ConditionalSupport
+	if d == nil || gap != nil && *gap < 0 || elapsed < 0 {
+		return ServiceSample{}, support, false
+	}
+	for i := range d.trials {
+		a, b, distance, outside := d.trials[i].nearestSurvivors(gap, elapsed)
+		if len(a)+len(b) == 0 {
+			continue
+		}
+		support.TrialCount++
+		support.DistanceNanos = max(support.DistanceNanos, distance)
+		support.OutsideSupport = support.OutsideSupport || outside
+	}
+	if support.TrialCount == 0 {
+		return ServiceSample{}, support, false
+	}
+	trial := rng.IntN(support.TrialCount)
+	for i := range d.trials {
+		a, b, _, _ := d.trials[i].nearestSurvivors(gap, elapsed)
+		if len(a)+len(b) == 0 {
+			continue
+		}
+		if trial == 0 {
+			j := rng.IntN(len(a) + len(b))
+			if j < len(a) {
+				return a[j], support, true
+			}
+			return b[j-len(a)], support, true
+		}
+		trial--
 	}
 	panic("surviving trial missing")
 }
