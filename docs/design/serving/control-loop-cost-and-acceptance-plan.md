@@ -1,6 +1,6 @@
 # 제어 비용·관측 판정·배치 적용 후속 해결 계획
 
-상태: 배포 소스·보존 원문 조사 반영 완료, 구현 대기. 이번에는 코드·설정·클러스터를 변경하지 않았다.
+상태: A1·A2·C1 구현 및 독립 리뷰 진행. 로컬 소비자 검증 후 통합 gate와 main의 배포·실수용을 수행한다.
 기준: `036e00a54442b085121f6fc7464b9c37042d8e74`, Helm230, control373의 동일 E5 두 stage.
 선행: [요청·관측·제어 간섭 해소](request-control-interference-plan.md). 완료한 C1~C5는 유지하고 남은 경계만 다룬다.
 
@@ -51,18 +51,18 @@ CPU 원문을 `go tool pprof -peek`로 다시 분석했다. exact Funnel 10.12 C
 
 `firstfloor/service_distribution.go:211–247`은 실제 CDF 질량을 선택된 nearest-gap 그룹에서 계산하면서, 탐색 후보는 전체 분포의 `d.services`를 사용한다. 현재 질량이 없는 다른 gap의 service 값까지 binary search 후보에 포함된다.
 
-**권장 변경:** 선택된 nearest 그룹의 service 값만 후보로 삼아 같은 inverse CDF를 계산한다. CDF가 증가할 수 있는 값은 이 집합에 있으므로, 표본을 버리거나 근사 분위수를 도입할 필요가 없다.
+**구현:** 선택된 nearest 그룹의 support가 작으면 해당 값만 후보로 같은 inverse CDF를 계산한다. 큰 support는 기존 전체 후보 탐색을 유지한다. physical trial별 질량과 CDF 계산은 동일하다.
 
 - physical trial 가중치, 정수 거리 동률의 두 그룹, float 누산 순서와 비교식을 유지한다.
 - startup·빈 support·분위수 0/100·중복값·큰 그룹을 같은 함수에서 처리한다.
 - 작은 선택 집합은 호출 로컬 저장공간을 사용한다. 원시 표본과 immutable 분포는 유지하고 전역 query cache를 추가하지 않는다.
-- 선택 집합이 큰 경우의 정렬·할당 비용도 비교한다. 실제 비용이 줄지 않는 구현은 채택하지 않는다.
+- 큰 선택 집합은 기존 탐색을 재사용한다. 별도 그룹별 탐색은 비용 비교에서 불리해 제거했다.
 
-보존된 실제 PLC profile의 6개 batch에서 전체 service 후보는 896–11,620개였고, 조사한 조건의 선택 support는 3–4개였다. startup·0·구간 끝·동률을 포함한 270개 수학적 비교에서 결과 차이 0을 확인했다. 이는 Python으로 검토한 후보 방식이며 Go 구현·속도·전체 profile 검증은 후속 작업이다.
+보존된 112profile/508batch를 실제 Go 소비자로 비교했다. 12,700query의 분위수·support·유효 여부 차이는 0이었다. 5회 benchmark 중앙값에서 전체 quantile은 기준의 0.675배, batch 선택은 1.070배, v1/v2 평가 fixture는 0.980/0.939배였다. 모든 경로의 가속이나 실제 Tick 10초 충족을 뜻하지 않는다.
 
 ### A3. 후순위로 좁힌 비용
 
-- `serving/kube/catalog.go:305–307,531–535`: warm cache hit에서도 원시 sample을 깊게 복사한다. 공개 mutable 반환과 내부 immutable 참조의 소유권을 보존하면서 필요한 복사만 남긴다. heap 보유량을 Tick당 새 분포 생성량으로 해석하지 않는다.
+- `serving/kube/catalog.go:305–307,531–535`: warm cache hit의 깊은 복사는 공개 mutable 반환을 보호한다. 이번에는 유지한다. 독립 메모리 리뷰에서도 소유권을 바꿀 근거가 부족하다고 판단했다.
 - `serving/scheduler_capacity_evaluate.go:262–278`: actual-keep의 energy/candidate 구성은 memo 조회 전에 반복될 수 있다. 기존 평가 수명 내 결과 전달로 줄일 수 있으나 지배적인 병목이라는 근거는 없다. A2 이후 남은 비용이 확인될 때만 수정한다.
 - `serving/scheduler_capacity_decision.go:137–194`: nominal-rate 검사는 유한 arrival cohort exact replay와 다른 진단이다. keep/selected의 같은 query는 이미 공유한다. 이 검사를 제거하거나 후보 거절 게이트로 바꾸지 않는다.
 - capture의 필수 List·LoadWindow와 observation 기록 비용은 전체 시간 분해에서 확인한다. 선행 C1~C5를 다시 구현하거나 두 번째 replay cache를 만들지 않는다.
@@ -177,4 +177,6 @@ CPU·heap은 같은 stage 상대 시점·표본 길이·GC 조건으로 비교�
 
 세 독립 조사 결과를 소스 원문으로 검토했고, 부모가 gopls 정의/참조를 확인했다. pinned gopls는 v0.23.0이다. 일부 scout에는 실행/LSP 도구가 없어 해당 부분은 부모가 수행했다.
 
-남은 것은 후보 수치 구현의 전체 분포·속도 검증, 완전한 round/Tick wall-time 분해, 정상 정리 수정 후 물리 전환·새 측정의 실수용이다. 최초 unclean predecessor의 발생 원인은 보존된 run 파일이 없어 확정하지 않았다. 원문 집계·기존 소비자 분석만 실행했으며 생산 코드·원raw·live·peer 통신 변경은 없다.
+구현 근거는 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/control-loop-implementation-20261110/`에 보존한다. `standalone-consumer-comparison.json`, `numeric-final-comparison.json`, `numeric-review.json`, `continuation-consumer.json`은 각각 실제 수치 소비·비용·독립 리뷰·자동 Continue에 의한 remove→prepare/route→예약 반환을 확인한다.
+
+남은 실수용은 전체 round/Tick wall time, 정상 정리 뒤 물리 전환, executor 교대 뒤 공식 품질이다. 최초 unclean predecessor의 발생 원인은 보존된 run 파일이 없어 확정하지 않았다. 기존 raw와 published 결과는 유지한다.
