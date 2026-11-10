@@ -235,6 +235,10 @@ func (s *schedulerReplayState) counted(node NodeReference) bool {
 // schedulerReplay replays candidate c over the horizon; energy counts the
 // compared Nodes only (nil counts every Node).
 func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool, capacity *capacityWindowLimit) (result schedulerReplayResult, err error) {
+	return schedulerReplayWithArrivals(ctx, settings, snap, c, rng, compared, capacity, nil)
+}
+
+func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool, capacity *capacityWindowLimit, cohort *feedbackArrivalCohort) (result schedulerReplayResult, err error) {
 	if err := ctx.Err(); err != nil {
 		return schedulerReplayResult{}, err
 	}
@@ -250,7 +254,13 @@ func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap Sched
 	s.initializeInstances()
 	s.initializeActions()
 	s.initializeOutstanding()
-	if !s.initializeArrivals(ctx) || len(s.out.reasons) != 0 || !s.initializeRunning() {
+	arrivalsReady := false
+	if cohort != nil && capacity == nil {
+		arrivalsReady = s.initializeArrivalCohort(ctx, cohort)
+	} else {
+		arrivalsReady = s.initializeArrivals(ctx)
+	}
+	if !arrivalsReady || len(s.out.reasons) != 0 || !s.initializeRunning() {
 		return s.out, ctx.Err()
 	}
 	s.routeCredits = map[string][]int64{}

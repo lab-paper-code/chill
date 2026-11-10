@@ -45,6 +45,10 @@ type FeedbackCandidateResult struct {
 // EvaluateFeedbackCandidate drains the finite comparison-period arrival cohort
 // through the actual native policy. Planner energy remains owned by its caller.
 func EvaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, candidate SchedulerCandidate, seed uint64) (FeedbackCandidateResult, error) {
+	return evaluateFeedbackCandidate(ctx, settings, snapshot, candidate, seed, nil)
+}
+
+func evaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, candidate SchedulerCandidate, seed uint64, cohort *feedbackArrivalCohort) (FeedbackCandidateResult, error) {
 	if err := ctx.Err(); err != nil {
 		return FeedbackCandidateResult{}, err
 	}
@@ -64,7 +68,7 @@ func EvaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, 
 	}
 	// Empty compared set disables node-energy estimation, not physical action,
 	// service, ownership, readiness, occupancy, or routing behavior.
-	replay, err := schedulerReplay(ctx, settings, snapshot, candidate, rand.New(rand.NewPCG(seed, 0)), map[NodeReference]bool{}, nil)
+	replay, err := schedulerReplayWithArrivals(ctx, settings, snapshot, candidate, rand.New(rand.NewPCG(seed, 0)), map[NodeReference]bool{}, nil, cohort)
 	if err != nil {
 		return FeedbackCandidateResult{}, err
 	}

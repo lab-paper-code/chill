@@ -911,6 +911,7 @@ func capacityRawPlannerForTest(p *capacityPlanner) {
 	p.snapshot.Baselines = nil
 	p.settings.AutonomousWorkloads = nil
 	p.feedbackCache = sync.Map{}
+	p.feedbackCohort = capacityArrivalMemo{}
 	p.snapshot.Arrivals, p.snapshot.Outstanding = nil, nil
 	p.snapshot.PathFeedback = nil
 	p.index = map[string]int{}

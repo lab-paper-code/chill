@@ -226,6 +226,12 @@ type capacityFeedbackMemo struct {
 	result FeedbackCandidateResult
 	err    error
 }
+type capacityArrivalMemo struct {
+	once   sync.Once
+	cohort *feedbackArrivalCohort
+	err    error
+}
+
 type capacityReplayKey struct {
 	config, plans string
 	route         float64
@@ -275,7 +281,16 @@ func (p *capacityPlanner) assessResult(res capacityResult) capacityResult {
 		entry, _ = p.feedbackCache.LoadOrStore(key, &capacityFeedbackMemo{})
 	}
 	memo := entry.(*capacityFeedbackMemo)
-	memo.once.Do(func() { memo.result, memo.err = EvaluateFeedbackCandidate(p.ctx, p.settings, p.snapshot, candidate, 0) })
+	memo.once.Do(func() {
+		p.feedbackCohort.once.Do(func() {
+			p.feedbackCohort.cohort, p.feedbackCohort.err = newFeedbackArrivalCohort(p.ctx, p.settings, p.snapshot)
+		})
+		if p.feedbackCohort.err != nil {
+			memo.err = p.feedbackCohort.err
+			return
+		}
+		memo.result, memo.err = evaluateFeedbackCandidate(p.ctx, p.settings, p.snapshot, candidate, 0, p.feedbackCohort.cohort)
+	})
 	if memo.err != nil {
 		p.feedbackCache.Delete(key)
 		res.exclusion = memo.err.Error()
