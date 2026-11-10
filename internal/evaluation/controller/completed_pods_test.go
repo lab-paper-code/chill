@@ -17,8 +17,10 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
+const completedPodStage = "stage"
+
 func TestProcedurePodsCollectedAfterResultStatus(t *testing.T) {
-	for _, scopeName := range []string{"run", "stage"} {
+	for _, scopeName := range []string{"run", completedPodStage} {
 		for _, phase := range []corev1.PodPhase{corev1.PodSucceeded, corev1.PodFailed, corev1.PodRunning} {
 			for _, failStatus := range []bool{false, true} {
 				name := scopeName + "/" + string(phase)
@@ -33,7 +35,7 @@ func TestProcedurePodsCollectedAfterResultStatus(t *testing.T) {
 					r, store := fixtureRuntime(t, run)
 					owner := client.Object(run)
 					step, stageID, stageUID := api.EvaluationStepPublish, "", types.UID("")
-					if scopeName == "stage" {
+					if scopeName == completedPodStage {
 						stage := fixtureStage(t, &r, run)
 						stage.Finalizers = []string{api.EvaluationStageFinalizer}
 						if err := r.Client.Update(ctx, stage); err != nil {
@@ -99,7 +101,7 @@ func TestProcedurePodsCollectedAfterResultStatus(t *testing.T) {
 					})
 					reconcile := func() error {
 						request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(owner)}
-						if scopeName == "stage" {
+						if scopeName == completedPodStage {
 							_, err := (&StageReconciler{Runtime: r}).Reconcile(ctx, request)
 							return err
 						}
@@ -143,21 +145,26 @@ func TestProcedurePodsCollectedAfterResultStatus(t *testing.T) {
 					if err := reconcile(); err != nil {
 						t.Fatal(err)
 					}
-					podErr := r.APIReader.Get(ctx, client.ObjectKeyFromObject(pod), &corev1.Pod{})
-					if phase == corev1.PodSucceeded && !apierrors.IsNotFound(podErr) || phase != corev1.PodSucceeded && podErr != nil {
-						t.Fatalf("Pod phase %s: %v", phase, podErr)
-					}
-					if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: owner.GetNamespace(), Name: jobRef.Name}, &batchv1.Job{}); err != nil {
-						t.Fatalf("consumed Job must stay: %v", err)
-					}
+					assertCollectedProcedurePod(t, ctx, r.APIReader, pod, phase, client.ObjectKey{Namespace: owner.GetNamespace(), Name: jobRef.Name})
 				})
 			}
 		}
 	}
 }
 
+func assertCollectedProcedurePod(t *testing.T, ctx context.Context, reader client.Reader, pod *corev1.Pod, phase corev1.PodPhase, jobKey client.ObjectKey) {
+	t.Helper()
+	podErr := reader.Get(ctx, client.ObjectKeyFromObject(pod), &corev1.Pod{})
+	if phase == corev1.PodSucceeded && !apierrors.IsNotFound(podErr) || phase != corev1.PodSucceeded && podErr != nil {
+		t.Fatalf("Pod phase %s: %v", phase, podErr)
+	}
+	if err := reader.Get(ctx, jobKey, &batchv1.Job{}); err != nil {
+		t.Fatalf("consumed Job must stay: %v", err)
+	}
+}
+
 func TestPastProcedurePodsReconciledByExactJobOwner(t *testing.T) {
-	for _, scopeName := range []string{"run", "stage"} {
+	for _, scopeName := range []string{"run", completedPodStage} {
 		t.Run(scopeName, func(t *testing.T) {
 			ctx := context.Background()
 			now := metav1.NewTime(fixtureTime)
@@ -170,7 +177,7 @@ func TestPastProcedurePodsReconciledByExactJobOwner(t *testing.T) {
 			run.Status.Procedures = procedures
 			condition(&run.Status.Conditions, 1, api.EvaluationConditionPublished, metav1.ConditionTrue, complete, "")
 			owner := client.Object(run)
-			if scopeName == "stage" {
+			if scopeName == completedPodStage {
 				owner = &api.EvaluationStage{ObjectMeta: metav1.ObjectMeta{Name: "past-stage", Namespace: "system", UID: "past-stage-uid"},
 					Status: api.EvaluationStageStatus{FinishedAt: &now, Procedures: procedures}}
 			}
@@ -202,7 +209,7 @@ func TestPastProcedurePodsReconciledByExactJobOwner(t *testing.T) {
 			for range 2 {
 				request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(owner)}
 				var err error
-				if scopeName == "stage" {
+				if scopeName == completedPodStage {
 					_, err = (&StageReconciler{Runtime: r}).Reconcile(ctx, request)
 				} else {
 					_, err = (&RunReconciler{Runtime: r}).Reconcile(ctx, request)

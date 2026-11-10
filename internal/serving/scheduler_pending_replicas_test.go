@@ -28,7 +28,7 @@ func TestPendingPrepareRespectsReplicaBudget(t *testing.T) {
 				t.Errorf("created=%v maxReplicas=%d pending=1 secondPrepare=%v", created, limit, expanded)
 			}
 			for _, plan := range d.Capacity.Plans {
-				if plan.Node == wanted.Node && plan.Key == "keep" && plan.RoutingRate[wanted.WorkloadUID] != 0 {
+				if plan.Node == wanted.Node && plan.Key == capacitySearchStartKeep && plan.RoutingRate[wanted.WorkloadUID] != 0 {
 					t.Fatalf("pending replica fabricated capacity: %+v", plan)
 				}
 			}

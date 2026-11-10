@@ -17,7 +17,8 @@ import (
 )
 
 func TestProcedurePodGCErrorDoesNotBlockReconcile(t *testing.T) {
-	for _, scopeName := range []string{"run-status", "run-finalizer", "stage-status", "stage-finalizer"} {
+	const stageFinalizer = "stage-finalizer"
+	for _, scopeName := range []string{"run-status", "run-finalizer", "stage-status", stageFinalizer} {
 		for _, operation := range []string{"list", "delete"} {
 			t.Run(scopeName+"/"+operation, func(t *testing.T) {
 				ctx := context.Background()
@@ -41,10 +42,10 @@ func TestProcedurePodGCErrorDoesNotBlockReconcile(t *testing.T) {
 					publish := procedures[0]
 					publish.Step = api.EvaluationStepPublish
 					run.Status.Procedures = append(run.Status.Procedures, publish)
-				case "stage-status", "stage-finalizer":
+				case "stage-status", stageFinalizer:
 					stage := &api.EvaluationStage{ObjectMeta: metav1.ObjectMeta{Name: "stage", Namespace: run.Namespace, UID: "stage-uid", Finalizers: []string{api.EvaluationStageFinalizer}},
 						Status: api.EvaluationStageStatus{Procedures: procedures}}
-					if scopeName == "stage-finalizer" {
+					if scopeName == stageFinalizer {
 						stage.Status.FinishedAt = &now
 						stage.DeletionTimestamp = &now
 					}
@@ -87,7 +88,7 @@ func TestProcedurePodGCErrorDoesNotBlockReconcile(t *testing.T) {
 				}
 				saved := owner.DeepCopyObject().(client.Object)
 				if err := r.APIReader.Get(ctx, request.NamespacedName, saved); err != nil {
-					if (scopeName == "stage-finalizer" || scopeName == "run-finalizer") && apierrors.IsNotFound(err) {
+					if (scopeName == stageFinalizer || scopeName == "run-finalizer") && apierrors.IsNotFound(err) {
 						return
 					}
 					t.Fatal(err)

@@ -15,6 +15,7 @@ import (
 )
 
 func TestSchedulerTickReusesRefreshListsAndRecordsCaptureSpans(t *testing.T) {
+	const nodesResource = "nodes"
 	for _, cluster := range []bool{false, true} {
 		name := "namespace-observer"
 		if cluster {
@@ -28,7 +29,7 @@ func TestSchedulerTickReusesRefreshListsAndRecordsCaptureSpans(t *testing.T) {
 			kube := controller.kube.(*kubefake.Clientset)
 			var nodesRequestedAt time.Time
 			var listElapsed time.Duration
-			kube.PrependReactor("list", "nodes", func(ktesting.Action) (bool, runtime.Object, error) {
+			kube.PrependReactor(listVerb, nodesResource, func(ktesting.Action) (bool, runtime.Object, error) {
 				nodesRequestedAt = time.Now()
 				time.Sleep(2 * time.Millisecond)
 				listElapsed += time.Since(nodesRequestedAt)
@@ -56,7 +57,7 @@ func TestSchedulerTickReusesRefreshListsAndRecordsCaptureSpans(t *testing.T) {
 				}
 				nodeLists := 0
 				for _, action := range kube.Actions() {
-					if action.GetVerb() == "list" && action.GetResource().Resource == "nodes" {
+					if action.GetVerb() == listVerb && action.GetResource().Resource == nodesResource {
 						nodeLists++
 					}
 				}

@@ -119,7 +119,7 @@ func TestReconcileCompletedHelmDeploymentPods(t *testing.T) {
 				case "component":
 					deployment.Labels["app.kubernetes.io/component"] = "executor"
 				case "namespace":
-					deployment.Namespace, rs.Namespace, pod.Namespace = "operator-namespace", "operator-namespace", "operator-namespace"
+					deployment.Namespace, rs.Namespace, pod.Namespace = completedPodOperatorNamespace, completedPodOperatorNamespace, completedPodOperatorNamespace
 				case "name":
 					deployment.Labels["app.kubernetes.io/name"] = "foreign"
 				case "managed-by":
@@ -162,6 +162,8 @@ func TestReconcileCleansLaterSucceededDeploymentPod(t *testing.T) {
 	reconcileCompletedPod(t, r, system.Name)
 }
 
+const completedPodOperatorNamespace = "operator-namespace"
+
 func completedPodFixture(t *testing.T) (*ChillSystemReconciler, *edgev1alpha1.ChillSystem, *appsv1.Deployment, *appsv1.ReplicaSet, *corev1.Pod) {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -198,7 +200,7 @@ func completedPodFixture(t *testing.T) (*ChillSystemReconciler, *edgev1alpha1.Ch
 		},
 		Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 	}
-	r := &ChillSystemReconciler{Scheme: scheme, Options: Options{SystemName: system.Name, Namespace: "operator-namespace"}}
+	r := &ChillSystemReconciler{Scheme: scheme, Options: Options{SystemName: system.Name, Namespace: completedPodOperatorNamespace}}
 	return r, system, deployment, rs, pod
 }
 
