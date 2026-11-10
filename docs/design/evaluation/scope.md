@@ -17,6 +17,8 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 | 사람 개입 없는 종결 | 정리가 확인되면 Run이 `CleanupComplete=True`, `PoolAcquired=False/Returned`가 된다. 실제 잔여가 없는데 pool을 잡는 것은 결함이다. 실제 잔여가 있거나 정리 완료를 확인하지 못하면 pool을 유지한다. 수동 `POST .../release`는 종료된 Blocked Run에서 운영자가 원복·잔여 정리를 확인한 뒤 쓰는 복구 경로이며, cleanup 실패 기록은 남는다. |
 | 재현 가능 | 게시물(`serving-experiment.v1alpha1`)에 정의·LoadScenario·seed·harness 이미지·sourceSHA·동결 설정·증거 참조가 있어 같은 Run을 다시 제출할 수 있다. 단일 seed 묶음은 반복 독립성을 주장하지 않는다(binding `limitations`). |
 
+단계에서 전체 요약·게시로 올라갈 때 측정 판정은 `INVALID > NOT_EVALUATED > FAIL > PASS` 순서와 해당 원인을 보존한다. workload별 서술적 SLO 실패가 측정 무효를 덮지 않으며, execution·cleanup 상태와 원시 결과는 별도로 유지한다.
+
 ## 2. 블랙박스 경계
 
 평가자는 CHILL을 시험 대상으로만 본다. 내부 상태를 판정·보정·시작 조건에 쓰지 않는다. 예외는 하나다. 실험 시작 조건에 한해 B3 gate의 점검 대상을 고를 때 CHILL이 공개한 결정(인스턴스 Ready·routed 여부)을 쓸 수 있다. 이 값은 판정·보정에는 쓰지 않는다.

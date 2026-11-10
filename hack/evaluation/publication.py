@@ -114,9 +114,7 @@ def publish(context):
     # Finish re-observes all run-owned Jobs/Pods and restores every settings receipt.
     # Earlier execution loss or cleanup attempts cannot override that final boundary.
     cleanup=finish.get('cleanup',not_started)
-    unjudged=next((stage['measurement'] for stage in stage_outcomes if stage['measurement']['verdict']=='NOT_EVALUATED'),None)
     measured=verdict(aggregated)
-    if measured['verdict']=='NOT_EVALUATED' and unjudged: measured=unjudged
     outcome={'execution':execution_outcome([procedures['prepare'],finish]+[{'execution':stage['execution']} for stage in stage_outcomes]+[{'execution':child['execution']} for child in children]),'measurement':measured,'cleanup':cleanup,'stages':stage_outcomes}
     residuals=[];seen_refs=set()
     def collect_residuals(value,reason='ResidualState'):

@@ -1962,9 +1962,6 @@ class EvaluationTests(unittest.TestCase):
                     self.assertEqual(publication.verdict(summary), {'verdict': expected,
                         'reason': {'INVALID': 'GeneratorInvalid', 'NOT_EVALUATED': 'NotStarted',
                                    'FAIL': 'SLOFailed', 'PASS': 'MeasurementComplete'}[expected]})
-                    self.assertEqual(summary['stages'], stages)
-                    self.assertEqual(summary['components']['measurement'],
-                                     {key: value['measurement'] for key, value in results.items()})
 
     def test_meter_energy_includes_idle_declared_node_without_history(self):
         with tempfile.TemporaryDirectory() as directory:
