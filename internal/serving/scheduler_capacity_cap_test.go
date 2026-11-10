@@ -15,7 +15,7 @@ func TestCapacityEveryProfileVariantRetained(t *testing.T) {
 		plan := *p.plans[0][0]
 		plan.keep, plan.option, plan.record.Key = false, "same-profile-option", time.Duration(mu).String()
 		item := plan.items[0][0]
-		item.routingWeight = profileRoutingWeight(mu)
+		item.routingWeight, item.throughput = profileRoutingWeight(mu), mu
 		plan.items = [][]capacityItem{{item}}
 		p.plans[0] = append(p.plans[0], &plan)
 	}
@@ -50,10 +50,10 @@ func TestCapacityDeltaFrozen130And190ms(t *testing.T) {
 		plan := *base
 		plan.keep, plan.option, plan.preMean, plan.preMax = false, "profile", .05, .05
 		item := base.items[0][0]
-		item.routingWeight, item.serviceNanos = profileRoutingWeight(spec.mu), spec.service
+		item.routingWeight, item.throughput, item.serviceNanos = profileRoutingWeight(spec.mu), spec.mu, spec.service
 		plan.items = [][]capacityItem{{item}}
 		retained := item
-		retained.routingWeight = 10
+		retained.routingWeight, retained.throughput = 10, 10
 		plan.retained = [][]capacityItem{{retained}}
 		p.plans[0] = append(p.plans[0], &plan)
 	}
@@ -83,8 +83,8 @@ func TestCapacityDeltaFrozenWorkloadPriority(t *testing.T) {
 		p.settings.SLOPriorityStrategy, p.settings.WorkloadPriority = strategy, []string{"a"}
 		makePlan := func(bService, aService float64, key string) *capacityPlan {
 			return &capacityPlan{items: [][]capacityItem{
-				{{id: "b", routingWeight: 10, serviceNanos: bService}},
-				{{id: "a", routingWeight: 10, serviceNanos: aService}},
+				{{id: "b", routingWeight: 10, throughput: 10, serviceNanos: bService}},
+				{{id: "a", routingWeight: 10, throughput: 10, serviceNanos: aService}},
 			}, retained: make([][]capacityItem, 2), record: SchedulerNodePlan{Key: key, Eligible: true}}
 		}
 		p.plans[0] = []*capacityPlan{makePlan(190e6, 130e6, "A"), makePlan(150e6, 140e6, "B")}

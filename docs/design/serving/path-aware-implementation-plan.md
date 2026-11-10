@@ -51,7 +51,7 @@ POST는 native chooser의 배치 선택·대기·drop에 영향을 준다. 현�
 
 라우팅은 기존 프로파일의 `capacityThroughput`을 상대 가중치로 사용해 먼저 구성한다. 이를 `RoutingWeight`로 구분한다. keep와 최종 선택의 현재 nominal rate만 기존 Poisson·window·percentile 판정으로 검사한다. 검사하지 않은 영역을 보간하지 않으며, κ̂ 결과를 새 실행 거절 게이트로 쓰지 않는다.
 
-v2의 저비용 탐색→최종 후보 평가 구조를 유지한다. 탐색에서는 프로파일 가중치 μ, 최소 조건부 service·occupancy s, 현재 backlog q, 요구율 λ, 전환시간 r, 비교기간 T로 다음 heuristic을 계산한다.
+v2의 저비용 탐색→최종 후보 평가 구조를 유지한다. 탐색에서는 프로파일 처리율 `μ_i = max_{b≤maxBatch} b/(profileMean(b)+b×d)`를 사용한다. d는 해당 인스턴스에 resolve한 dispatch occupancy이며 RoutingWeight는 유지한다. 처리율 μ, 최소 조건부 service·occupancy s, 현재 backlog q, 요구율 λ, 전환시간 r, 비교기간 T로 다음 heuristic을 계산한다.
 
 ```
 B    = max(0, q + (λ − μ_retained) × r)

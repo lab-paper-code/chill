@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"math"
 	"reflect"
 	"slices"
 	"testing"
@@ -34,8 +35,8 @@ func TestCapacityTableZeroRoutingDoesNotPruneProfile(t *testing.T) {
 }
 
 func TestCapacityTableScalars(t *testing.T) {
-	item := capacityItem{id: "new", routingWeight: 3, serviceNanos: 7e6, e: 5, weight: 7, prepare: true}
-	retained := capacityItem{id: "old", routingWeight: 11, e: 13, weight: 17}
+	item := capacityItem{id: "new", routingWeight: 3, throughput: 2, serviceNanos: 7e6, e: 5, weight: 7, prepare: true}
+	retained := capacityItem{id: "old", routingWeight: 11, throughput: 10, e: 13, weight: 17}
 	plan := &capacityPlan{option: "option", mode: "mode", items: [][]capacityItem{{item}}, retained: [][]capacityItem{{retained}},
 		others: 2, preMean: 19, preMax: 23, postMean: 29, postMax: 31, preJ: 37, postJ: 41,
 		before: 43, mid: 47, after: 53, replaces: true, reduces: true,
@@ -45,9 +46,32 @@ func TestCapacityTableScalars(t *testing.T) {
 	q := tab.byPlan[0][1]
 	got := []float64{tab.routingRate[q][0], tab.routingRateServiceNanos[q][0], tab.energyRate[q][0], tab.retainedRoutingRate[q][0], tab.weightRet[q][0], tab.energyWeightRet[q][0],
 		tab.before[q], tab.mid[q], tab.after[q], tab.tauPre[q], tab.tPre[q], tab.tauPost[q]}
-	want := []float64{3, 21e6, 15, 11, 17, 221, 43, 47, 53, 19, 23, 29}
+	want := []float64{2, 14e6, 10, 10, 17, 221, 43, 47, 53, 19, 23, 29}
 	if !slices.Equal(got, want) || tab.count[q][0] != 1 || tab.others[q] != 2 || !tab.nonnegative[q] {
 		t.Fatalf("scalar extraction: got=%v want=%v table=%+v", got, want, tab)
+	}
+}
+
+func TestCapacityProfileTermsThroughputUsesMeanAndOccupancy(t *testing.T) {
+	profile := &Profile{Batches: []BatchProfile{
+		schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{10e6, 30e6}),
+		schedulerTestBatchProfile(BatchProfile{Batch: 2}, []float64{10e6, 50e6}),
+	}}
+	p := &capacityPlanner{settings: SchedulerSettings{DefaultDispatchOccupancyNanos: int64(10 * time.Millisecond)}}
+	d := &Definition{SLO: SLO{Percentile: 99}}
+	for _, maxBatch := range []int{1, 2} {
+		i := SchedulerInstance{Profile: profile, MaxBatch: maxBatch}
+		_, got, _, reason := p.profileTerms(i, d)
+		want := 1e9 / (20e6 + 10e6)
+		if maxBatch == 2 {
+			want = math.Max(want, 2e9/(30e6+2*10e6))
+		}
+		if reason != "" || math.Abs(got-want) > 1e-12 {
+			t.Fatalf("maxBatch=%d throughput=%g want=%g reason=%q", maxBatch, got, want, reason)
+		}
+		if got == capacityThroughput(profile, maxBatch) {
+			t.Fatalf("maxBatch=%d throughput still uses fastest sample: %g", maxBatch, got)
+		}
 	}
 }
 

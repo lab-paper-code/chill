@@ -204,7 +204,7 @@ func TestCapacityFunnelPostFilterReverts(t *testing.T) {
 func capacityV2MultiOptionFixture() *capacityPlanner {
 	p := capacityThreeNodeSwap()
 	alternative := *p.plans[0][1]
-	alternative.items = [][]capacityItem{{{id: "faster", routingWeight: 40, e: .5}}}
+	alternative.items = [][]capacityItem{{{id: "faster", routingWeight: 40, throughput: 40, e: .5}}}
 	alternative.record.Key, alternative.after = "faster", 26
 	p.plans[0] = append(p.plans[0], &alternative)
 	p.settings.ComparisonPeriod, p.period = time.Second, 1

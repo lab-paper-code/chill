@@ -1003,6 +1003,7 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int) *capacityPlanne
 			for w := range workloads {
 				for k := range rng.IntN(3) {
 					item := capacityItem{id: fmt.Sprint(n, "-", j, "-", w, "-", k), routingWeight: profileRoutingWeight(60 * rng.Float64()), e: rng.Float64(), weight: 1}
+					item.throughput = float64(item.routingWeight)
 					plan.items[w] = append(plan.items[w], item)
 					if plan.keep || rng.IntN(2) == 0 {
 						plan.retained[w] = append(plan.retained[w], item)
@@ -1069,11 +1070,11 @@ func capacityThreeNodeSwap() *capacityPlanner {
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 29}}
 	for n := range 3 {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
-		item := capacityItem{id: fmt.Sprint("i", n), routingWeight: 10, e: 1}
+		item := capacityItem{id: fmt.Sprint("i", n), routingWeight: 10, throughput: 10, e: 1}
 		keep := &capacityPlan{keep: true, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
 		other := &capacityPlan{items: [][]capacityItem{nil}, retained: [][]capacityItem{{item}}}
 		if n == 0 {
-			other.items, other.after = [][]capacityItem{{{id: "big", routingWeight: 30, e: 1}}}, 25
+			other.items, other.after = [][]capacityItem{{{id: "big", routingWeight: 30, throughput: 30, e: 1}}}, 25
 		}
 		keep.record.Eligible, other.record.Eligible, other.record.Key = true, true, "swap"
 		p.sum(keep)
@@ -1123,8 +1124,8 @@ func capacityTwinSwap(gain, bound float64) *capacityPlanner {
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 10}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
 	a, b := SchedulerInstance{ID: "a"}, SchedulerInstance{ID: "b"}
-	keep := &capacityPlan{keep: true, instances: []SchedulerInstance{a}, items: [][]capacityItem{{{id: "a", routingWeight: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", routingWeight: 50, e: 1}}}, before: 10}
-	swap := &capacityPlan{instances: []SchedulerInstance{b}, items: [][]capacityItem{{{id: "b", routingWeight: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", routingWeight: 50, e: 1}}}, mid: 10, after: 10 - gain/60}
+	keep := &capacityPlan{keep: true, instances: []SchedulerInstance{a}, items: [][]capacityItem{{{id: "a", routingWeight: 50, throughput: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", routingWeight: 50, throughput: 50, e: 1}}}, before: 10}
+	swap := &capacityPlan{instances: []SchedulerInstance{b}, items: [][]capacityItem{{{id: "b", routingWeight: 50, throughput: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", routingWeight: 50, throughput: 50, e: 1}}}, mid: 10, after: 10 - gain/60}
 	source := schedulerBoundSource{reference: evidencestore.ObjectIdentity{Store: "raw", Key: "swap", Size: 1}, trial: 0}
 	swap.operationBounds = schedulerEnergyBounds{source: bound}
 	keep.record.Eligible, swap.record.Eligible, swap.record.Key = true, true, "swap"
@@ -1156,6 +1157,7 @@ func capacityRecoverySwapForTest(gain, bound float64) *capacityPlanner {
 	p := capacityTwinSwap(gain, bound)
 	p.settings.ComparisonPeriod, p.period = time.Second, 1
 	p.plans[0][0].items[0][0].routingWeight = 1
+	p.plans[0][0].items[0][0].throughput = 1
 	capacityRawPlannerForTest(p)
 	old, next := p.snapshot.Instances[0], p.plans[0][1].instances[0]
 	mode := p.snapshot.Nodes[0].PowerMode
@@ -1351,13 +1353,13 @@ func TestCapacitySearchEmptyStartFindsFourNodeChange(t *testing.T) {
 	for n := range 4 {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
 		i := SchedulerInstance{ID: fmt.Sprint("i", n), WorkloadUID: "w"}
-		item := capacityItem{id: i.ID, routingWeight: 10, e: 1}
+		item := capacityItem{id: i.ID, routingWeight: 10, throughput: 10, e: 1}
 		keep := &capacityPlan{keep: true, instances: []SchedulerInstance{i}, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
 		empty := &capacityPlan{items: [][]capacityItem{nil}, retained: [][]capacityItem{{item}}}
 		plans := []*capacityPlan{keep, empty}
 		if n == 0 {
 			big := SchedulerInstance{ID: "big", WorkloadUID: "w"}
-			plans = append(plans, &capacityPlan{instances: []SchedulerInstance{big}, items: [][]capacityItem{{{id: "big", routingWeight: 40, e: 1}}}, retained: [][]capacityItem{{item}}, after: 35})
+			plans = append(plans, &capacityPlan{instances: []SchedulerInstance{big}, items: [][]capacityItem{{{id: "big", routingWeight: 40, throughput: 40, e: 1}}}, retained: [][]capacityItem{{item}}, after: 35})
 		}
 		for j, plan := range plans {
 			plan.record.Eligible, plan.record.Key = true, fmt.Sprint("plan-", j)
@@ -1612,7 +1614,7 @@ func TestCapacityBacklogDoesNotChangeWeightsOrRequestEnergy(t *testing.T) {
 	for n, k := range support {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
 		keep := &capacityPlan{keep: true, items: [][]capacityItem{nil}, retained: [][]capacityItem{nil}}
-		add := &capacityPlan{items: [][]capacityItem{{{id: fmt.Sprint("i", n), routingWeight: profileRoutingWeight(k), e: float64(n + 1)}}}, retained: [][]capacityItem{nil}}
+		add := &capacityPlan{items: [][]capacityItem{{{id: fmt.Sprint("i", n), routingWeight: profileRoutingWeight(k), throughput: k, e: float64(n + 1)}}}, retained: [][]capacityItem{nil}}
 		p.plans = append(p.plans, []*capacityPlan{keep, add})
 		p.compared = append(p.compared, true)
 		choice = append(choice, 1)
@@ -2000,7 +2002,7 @@ func TestCapacityExactTieKeepsCurrent(t *testing.T) {
 	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 50}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
-	item := capacityItem{id: "i", routingWeight: 100, e: 1, weight: 1}
+	item := capacityItem{id: "i", routingWeight: 100, throughput: 100, e: 1, weight: 1}
 	keep := &capacityPlan{keep: true, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
 	twin := item
 	twin.id = "a-twin"
@@ -2047,7 +2049,7 @@ func TestCapacityProportionalWeightsIgnoreDemandAndBacklog(t *testing.T) {
 	p.keep.Routing = map[string]map[string]int32{"w": {"q1": 643, "lut": 357}}
 	for n, id := range ids {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
-		item := capacityItem{id: id, routingWeight: profileRoutingWeight(support[n]), e: float64(n + 1)}
+		item := capacityItem{id: id, routingWeight: profileRoutingWeight(support[n]), throughput: support[n], e: float64(n + 1)}
 		p.plans = append(p.plans, []*capacityPlan{{keep: true, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}}})
 		p.compared = append(p.compared, true)
 	}
@@ -2245,6 +2247,7 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 		for w := range plans[0].items {
 			for k := range plans[0].items[w] {
 				plans[0].items[w][k].routingWeight = 1
+				plans[0].items[w][k].throughput = 1
 				plans[0].instances[k].Profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: capacityInputEnergy(plans[0].instances[k]), MemoryBytes: 100}, []float64{float64(time.Second)})}
 			}
 		}

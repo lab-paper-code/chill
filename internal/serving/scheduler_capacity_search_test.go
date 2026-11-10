@@ -212,7 +212,8 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 		itemFor := func(c e5Pair) capacityItem {
 			instance := instances[c.id]
 			service := float64(instance.Profile.Batches[0].ServiceSamples[0].ServiceDurationNanos)
-			return capacityItem{id: c.id, routingWeight: profileRoutingWeight(capacityThroughput(instance.Profile, instance.MaxBatch)), serviceNanos: service, e: c.opt.e, weight: weights[c.id], prepare: !current[c.id]}
+			mu := capacityThroughput(instance.Profile, instance.MaxBatch)
+			return capacityItem{id: c.id, routingWeight: profileRoutingWeight(mu), throughput: mu, serviceNanos: service, e: c.opt.e, weight: weights[c.id], prepare: !current[c.id]}
 		}
 		watts := func(set []e5Pair) float64 {
 			x := options[0].unloaded

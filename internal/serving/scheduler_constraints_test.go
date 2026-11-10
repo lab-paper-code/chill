@@ -59,7 +59,7 @@ func TestTransitionReserveEstimatedSurvivingRate(t *testing.T) {
 	p := &capacityPlanner{settings: SchedulerSettings{TransitionReserveFraction: .5}, ws: []capacityWorkload{{d: &Definition{UID: uid}, rate: 10}}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: a, PowerMode: "fixed"}, {Node: b, PowerMode: "fixed"}}
 	p.snapshot.Instances = []SchedulerInstance{{ID: "a", Node: a, WorkloadUID: uid, Ready: true, Routable: map[string]bool{uid: true}}, {ID: "b", Node: b, WorkloadUID: uid, Ready: true, Routable: map[string]bool{uid: true}}}
-	itemA, itemB := capacityItem{id: "a", routingWeight: 10}, capacityItem{id: "b", routingWeight: 20}
+	itemA, itemB := capacityItem{id: "a", routingWeight: 10, throughput: 10}, capacityItem{id: "b", routingWeight: 20, throughput: 20}
 	p.plans = [][]*capacityPlan{
 		{{keep: true, mode: "fixed", items: [][]capacityItem{{itemA}}, retained: [][]capacityItem{{itemA}}}, {mode: "fixed", items: [][]capacityItem{{}}, retained: [][]capacityItem{{itemA}}}},
 		{{keep: true, mode: "fixed", items: [][]capacityItem{{itemB}}, retained: [][]capacityItem{{itemB}}}},

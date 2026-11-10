@@ -52,8 +52,8 @@ type Table struct {
 	EntryOf, Index           []int
 	NodeUID, KeyParts        []string
 	Options, Modes, PlanKeys []string
-	// Additive profile routing terms, indexed [plan][workload]. These are
-	// heuristic inputs, independent of current tested-rate capacity witnesses.
+	// Additive surrogate profile-throughput sums, indexed [plan][workload].
+	// These heuristic inputs are independent of routing weights and tested-rate capacity witnesses.
 	RoutingRate, RetainedRoutingRate, RoutingRateServiceNanos [][]float64
 	Count                                                     [][]int
 	Keep, Searchable, Compared, Nonnegative                   []bool

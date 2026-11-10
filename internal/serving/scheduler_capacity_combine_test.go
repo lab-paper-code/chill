@@ -53,7 +53,7 @@ func capacityScalarProductFixture() *capacityPlanner {
 		plan.keep, plan.record.Key = false, "move"
 		if n == 0 {
 			item := keep.items[0][0]
-			item.routingWeight = 30
+			item.routingWeight, item.throughput = 30, 30
 			plan.items, plan.after = [][]capacityItem{{item}}, 25
 		} else {
 			plan.items, plan.after = [][]capacityItem{{}}, 0

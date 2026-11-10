@@ -26,6 +26,7 @@ type profileRoutingWeight float64
 type capacityItem struct {
 	id            string
 	routingWeight profileRoutingWeight
+	throughput    float64
 	serviceNanos  float64
 	e             float64
 	weight        int32
@@ -68,7 +69,7 @@ func (p *capacityPlanner) resolveCapacity() {
 		choices := make([]capacityChoice, len(p.ws))
 		for w := range p.ws {
 			c := capacityChoice{option: o, w: w}
-			c.routingWeight, c.serviceNanos, c.reason = p.profileTerms(o.Instance, p.ws[w].d)
+			c.routingWeight, c.throughput, c.serviceNanos, c.reason = p.profileTerms(o.Instance, p.ws[w].d)
 			choices[w] = c
 		}
 		p.optionCapacity[option] = choices
@@ -79,7 +80,7 @@ func (p *capacityPlanner) resolveCapacity() {
 		if _, ok := p.currentCapacity[key]; !ok {
 			item := capacityItem{}
 			if w, ok := p.index[instance.WorkloadUID]; ok && !instance.Terminated {
-				item.routingWeight, item.serviceNanos, _ = p.profileTerms(instance, p.ws[w].d)
+				item.routingWeight, item.throughput, item.serviceNanos, _ = p.profileTerms(instance, p.ws[w].d)
 			}
 			p.currentCapacity[key] = item
 		}
@@ -158,6 +159,7 @@ type capacityChoice struct {
 	option        SchedulerOption
 	w             int
 	routingWeight profileRoutingWeight
+	throughput    float64
 	serviceNanos  float64
 	reason        string
 }
@@ -371,9 +373,9 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		added = added || !used[i.ID]
 		plan.instances = append(plan.instances, i)
 		if used[i.ID] {
-			c.routingWeight, c.serviceNanos, c.reason = p.profileTerms(i, p.ws[c.w].d)
+			c.routingWeight, c.throughput, c.serviceNanos, c.reason = p.profileTerms(i, p.ws[c.w].d)
 		}
-		chosenItems[i.ID] = capacityItem{routingWeight: c.routingWeight, serviceNanos: c.serviceNanos}
+		chosenItems[i.ID] = capacityItem{routingWeight: c.routingWeight, throughput: c.throughput, serviceNanos: c.serviceNanos}
 		if c.reason != "" && plan.record.Reason == "" {
 			plan.record.Reason = c.reason
 		}
@@ -553,7 +555,7 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 		if plan.keep {
 			if i.Ready {
 				resolved := p.currentCapacity[currentCapacityKey(i)]
-				item.routingWeight, item.serviceNanos = resolved.routingWeight, resolved.serviceNanos
+				item.routingWeight, item.throughput, item.serviceNanos = resolved.routingWeight, resolved.throughput, resolved.serviceNanos
 			}
 			if item.weight > 0 && i.Ready {
 				plan.retained[w] = append(plan.retained[w], item)
@@ -592,14 +594,15 @@ type profileTermsKey struct {
 }
 type profileScalar struct {
 	routingWeight profileRoutingWeight
+	throughput    float64
 	serviceNanos  float64
 	reason        string
 }
 
 // profileTerms performs raw distribution queries once per option/Workload/Tick.
-func (p *capacityPlanner) profileTerms(i SchedulerInstance, d *Definition) (profileRoutingWeight, float64, string) {
+func (p *capacityPlanner) profileTerms(i SchedulerInstance, d *Definition) (profileRoutingWeight, float64, float64, string) {
 	if i.Profile == nil || d == nil || i.Terminated {
-		return 0, 0, "MissingProfile"
+		return 0, 0, 0, "MissingProfile"
 	}
 	key := profileTermsKey{profile: i.Profile, definition: d, node: i.Node, maxBatch: i.MaxBatch}
 	var gap *int64
@@ -612,26 +615,30 @@ func (p *capacityPlanner) profileTerms(i SchedulerInstance, d *Definition) (prof
 		key.hasGap, key.gap = true, *gap
 	}
 	if cached, ok := p.profileScalars[key]; ok {
-		return cached.routingWeight, cached.serviceNanos, cached.reason
+		return cached.routingWeight, cached.throughput, cached.serviceNanos, cached.reason
 	}
 	mu := capacityThroughput(i.Profile, i.MaxBatch)
+	throughput := 0.0
 	service := math.Inf(1)
 	for _, batch := range i.Profile.Batches {
 		if batch.Batch > i.MaxBatch {
 			continue
+		}
+		if mean, ok := i.Profile.MeanNanos(batch.Batch); ok {
+			throughput = max(throughput, float64(batch.Batch)*float64(time.Second)/(mean+float64(batch.Batch)*float64(occupancy.PerRequest)))
 		}
 		q, _, ok := batch.ServiceDistribution.QuantileNanos(gap, d.SLO.Percentile)
 		if ok {
 			service = min(service, float64(q)+float64(batch.Batch)*float64(occupancy.PerRequest))
 		}
 	}
-	result := profileScalar{routingWeight: profileRoutingWeight(mu), serviceNanos: service}
-	if mu <= 0 || !schedulerFinite(mu) || !schedulerFinite(service) {
+	result := profileScalar{routingWeight: profileRoutingWeight(mu), throughput: throughput, serviceNanos: service}
+	if mu <= 0 || !schedulerFinite(mu) || throughput <= 0 || !schedulerFinite(throughput) || !schedulerFinite(service) {
 		result = profileScalar{reason: "MissingConditionalService"}
 	}
 	if p.profileScalars == nil {
 		p.profileScalars = map[profileTermsKey]profileScalar{}
 	}
 	p.profileScalars[key] = result
-	return result.routingWeight, result.serviceNanos, result.reason
+	return result.routingWeight, result.throughput, result.serviceNanos, result.reason
 }

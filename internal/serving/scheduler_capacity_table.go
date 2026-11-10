@@ -2,6 +2,7 @@ package serving
 
 // planTable owns the Tick's scalar columns. Search needs no capacityPlan reads.
 // Workload columns and item lists are indexed [table plan][Workload].
+// Rate columns sum surrogate profile throughput, independent of routing weights.
 type planTable struct {
 	byPlan                                                    [][]int
 	node, index                                               []int
@@ -56,16 +57,16 @@ func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorklo
 			items = plan.items[w]
 		}
 		for _, item := range items {
-			routingRate[w] += float64(item.routingWeight)
-			service[w] += float64(item.routingWeight) * item.serviceNanos
-			energyRate[w] += float64(item.routingWeight) * item.e
+			routingRate[w] += item.throughput
+			service[w] += item.throughput * item.serviceNanos
+			energyRate[w] += item.throughput * item.e
 			weight[w] += float64(item.weight)
 			weightedEnergy[w] += float64(item.weight) * item.e
 			nonnegative = nonnegative && item.e >= 0
 		}
 		if w < len(plan.retained) {
 			for _, item := range plan.retained[w] {
-				retainedRate[w] += float64(item.routingWeight)
+				retainedRate[w] += item.throughput
 				weightRet[w] += float64(item.weight)
 				energyWeightRet[w] += item.e * float64(item.weight)
 				nonnegative = nonnegative && item.e >= 0
