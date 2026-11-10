@@ -102,8 +102,10 @@ func (c *reservationState) reconcileSnapshot(snapshot serving.SchedulerSnapshot,
 func (c *reservationState) freezePreparingExecutorsLocked(snapshot serving.SchedulerSnapshot) {
 	// API-confirmed RestartPolicyNever Pod identity permits one late container
 	// binding even after failure. Slot/name discovery is not creation evidence.
+	// Capture may already have returned a terminal prepare's exact known effect.
+	// Late binding must not reacquire identities after that responsibility ends.
 	for _, run := range c.runs {
-		if (run.action.Kind != servingstate.OperationPrepare && run.action.Kind != servingstate.OperationResize) || run.prepareIdentity != "" || run.result == nil || run.result.Operation.Prepare == nil {
+		if !run.reserved || (run.action.Kind != servingstate.OperationPrepare && run.action.Kind != servingstate.OperationResize) || run.prepareIdentity != "" || run.result == nil || run.result.Operation.Prepare == nil {
 			continue
 		}
 		wanted := run.result.Operation.Prepare.Instance
