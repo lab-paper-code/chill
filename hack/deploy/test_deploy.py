@@ -395,6 +395,18 @@ class DeploymentCLI(unittest.TestCase):
                     self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers(); self.wfile.write(b'<!doctype html><html><body>CHILL</body></html>'); return
                 if self.path.endswith('measurement-coverage'):
                     state = json.loads((cls.directory / 'state.json').read_text())
+                    if not state.get('upgraded'):
+                        if state.get('baselineUnavailable'):
+                            self.reply({'code': 'CoverageUnavailable'}, 503)
+                            return
+                        if state.get('baselineWarming') or (state.get('baselineWarmingOnce') and not state.get('baselineWarmed')):
+                            state['baselineWarmed'] = True
+                            (cls.directory / 'state.json').write_text(json.dumps(state))
+                            self.send_response(503)
+                            self.send_header('Retry-After', '1')
+                            self.end_headers()
+                            self.wfile.write(b'{"code":"CoverageWarming"}')
+                            return
                     if state.get('upgraded') and state.get('warmingOnce') and not state.get('warmed'):
                         state['warmed'] = True
                         (cls.directory / 'state.json').write_text(json.dumps(state))
@@ -948,6 +960,76 @@ shutil.disk_usage = disk_usage
         self.assertNotIn(secret, result.stdout + result.stderr)
         self.assertEqual(json.loads((self.out / 'failure.json').read_text())['stage'], 'preflight')
 
+    def test_cli_waits_for_cold_full_baseline_and_preserves_snapshots(self):
+        import acceptance
+        self.state(baselineWarmingOnce=True)
+        self.recipe['readinessSeconds'] = 15
+        self.cli('--execute', '--evidence', str(self.out))
+        before = self.out / 'before'
+        self.assertEqual(json.loads((before / 'attempt-000/coverage.json').read_text())['code'],
+                         'CoverageWarming')
+        self.assertEqual((before / 'attempt-000/coverage.http-status').read_text().strip(), '503')
+        self.assertFalse((before / 'attempt-000/profiles.json').exists())
+        self.assertTrue(json.loads((before / 'snapshot-status.json').read_text())['valid'])
+        baseline = acceptance.load_baseline(before)
+        after = acceptance.load_baseline(self.out / 'after')
+        self.assertTrue(acceptance.compare(baseline, after)['passed'])
+        self.assertTrue(acceptance.compare_records(baseline, after)['passed'])
+        self.assertTrue(json.loads((self.out / 'after/acceptance.json').read_text())['passed'])
+        self.assertTrue(json.loads((self.out / 'state.json').read_text())['ready'])
+
+    def test_cli_cold_baseline_inspection_reads_canonical_snapshots(self):
+        self.state(baselineWarmingOnce=True)
+        cells = self.directory / 'inspection-cells.json'
+        requests = self.directory / 'inspection-assessed-requests.json'
+        cells.write_text('[]')
+        requests.write_text('{"items":[]}')
+        self.recipe.update(readinessSeconds=15, inspectionCells=str(cells),
+                           inspectionRequests=str(requests))
+        self.cli('--inspect', '--evidence', str(self.out))
+        projection = json.loads((self.out / 'coverage-projection.json').read_text())
+        self.assertTrue(projection['projectionAvailable'])
+        self.assertEqual(projection['profileRecordsInput'], 1)
+        self.assertEqual(projection['countsBefore']['usable'], 2)
+        self.assertEqual(json.loads((self.out / 'before/attempt-000/coverage.json').read_text())['code'],
+                         'CoverageWarming')
+        self.assertFalse((self.out / 'publication.json').exists())
+        self.assertFalse(any(call[0] == 'docker' or 'upgrade' in call or 'apply' in call
+                             for call in self.calls()))
+
+    def test_cli_persistent_baseline_warming_stops_before_publication(self):
+        self.state(baselineWarming=True)
+        self.recipe['readinessSeconds'] = 1
+        started = time.monotonic()
+        self.cli('--execute', '--evidence', str(self.out), expected=1)
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertFalse(json.loads((self.out / 'failure.json').read_text())['ready'])
+        attempts = list((self.out / 'before').glob('attempt-*'))
+        self.assertTrue(attempts)
+        for attempt in attempts:
+            self.assertEqual(json.loads((attempt / 'coverage.json').read_text())['code'], 'CoverageWarming')
+            self.assertFalse((attempt / 'profiles.json').exists())
+        self.assertFalse((self.out / 'before/snapshot-status.json').exists())
+        self.assertFalse((self.out / 'publication.json').exists())
+        self.assertFalse(any(call[0] == 'docker' or 'upgrade' in call or 'apply' in call
+                             for call in self.calls()))
+
+    def test_cli_baseline_source_failure_stops_before_publication(self):
+        self.state(baselineUnavailable=True)
+        self.recipe['readinessSeconds'] = 15
+        self.cli('--execute', '--evidence', str(self.out), expected=1)
+        before = self.out / 'before'
+        self.assertEqual(json.loads((before / 'attempt-000/coverage.json').read_text())['code'],
+                         'CoverageUnavailable')
+        self.assertEqual((before / 'attempt-000/coverage.http-status').read_text().strip(), '503')
+        self.assertFalse((before / 'attempt-000/profiles.json').exists())
+        self.assertFalse((before / 'coverage.json').exists())
+        self.assertFalse((before / 'snapshot-status.json').exists())
+        self.assertFalse(json.loads((self.out / 'failure.json').read_text())['ready'])
+        self.assertFalse((self.out / 'publication.json').exists())
+        self.assertFalse(any(call[0] == 'docker' or 'upgrade' in call or 'apply' in call
+                             for call in self.calls()))
+
     def test_cli_waits_for_warming_and_records_ready(self):
         self.state(warmingOnce=True)
         self.recipe['readinessSeconds'] = 15
@@ -1111,7 +1193,8 @@ shutil.disk_usage = disk_usage
         self.assertFalse(status['retainedRecords']['passed'])
 
     def test_unknown_coverage_remains_diagnostic_before_and_after_upgrade(self):
-        self.state(unknownCoverage=True)
+        self.state(unknownCoverage=True, baselineWarmingOnce=True)
+        self.recipe['readinessSeconds'] = 15
         frozen = self.directory / 'incomplete-baseline'
         frozen.mkdir()
         (frozen / 'profiles.json').write_text(json.dumps({'profiles': [{'id': 'profile-1', 'assessment': {'displayStatus': 'usable'}, 'batches': [{'batch': 1, 'energyPerInputJoules': 3, 'meanWallWatts': 5}]}]}))
@@ -1120,6 +1203,9 @@ shutil.disk_usage = disk_usage
         self.cli('--execute', '--evidence', str(self.out))
         state = json.loads((self.out / 'state.json').read_text())
         self.assertTrue(state['ready'])
+        self.assertEqual(json.loads((self.out / 'before/attempt-000/coverage.json').read_text())['code'],
+                         'CoverageWarming')
+        self.assertTrue(json.loads((self.out / 'before/snapshot-status.json').read_text())['valid'])
         for report in (state['preDeployDiagnostics'], state['diagnostics']):
             self.assertFalse(report['passed'])
             self.assertIsNone(report['coverageUsableAfter'])

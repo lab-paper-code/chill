@@ -2,6 +2,7 @@
 import json
 from decimal import Decimal
 from pathlib import Path
+import shutil
 import time
 import urllib.parse
 
@@ -90,17 +91,21 @@ def capture(config, namespace, out, timeout=60):
 
 
 def wait_capture(config, namespace, out, deadline):
-    """Wait only for startup, sharing the rollout's monotonic readiness deadline."""
+    """Wait only for startup within the supplied monotonic readiness deadline."""
     attempt = 0
+    out = Path(out)
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise RuntimeError('API readiness/coverage warming deadline exceeded')
+        attempt_out = out / ('attempt-%03d' % attempt)
         try:
             # Include setup and validation in the shared elapsed budget, not just sockets.
             with api_checks._elapsed_deadline(min(120, remaining)):
-                snapshot = capture(config, namespace, Path(out) / ('attempt-%03d' % attempt),
-                                   timeout=min(60, remaining / 2))
+                snapshot = capture(config, namespace, attempt_out, timeout=min(60, remaining / 2))
+            for name in ('coverage.json', 'profiles.json', 'coverage.http-status',
+                         'profiles.http-status', 'snapshot-status.json'):
+                shutil.copy2(attempt_out / name, out / name)
             print('[readiness] attempt=%d ready remaining=%.1fs' %
                   (attempt + 1, max(0, deadline - time.monotonic())), flush=True)
             return snapshot

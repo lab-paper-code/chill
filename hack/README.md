@@ -360,6 +360,17 @@ and command timings remain available. Ctrl-C in the executing CLI interrupts
 that deployment and cleans up its current local process group; it is not
 equivalent to Ctrl-C in a separate `tail -F` log viewer.
 
+Pre-deploy profile/coverage capture, including inspect and frozen-baseline
+comparison, waits for startup transport failures or explicit HTTP 503
+`CoverageWarming` within its own `readinessSeconds` budget, before image
+publication or Helm upgrade. Authentication failures (401/403), other HTTP
+errors and invalid snapshots stop immediately; source-incomplete diagnostics
+do not trigger retries. Each `attempt-NNN/` retains its original raw evidence;
+successful `coverage.json`, `profiles.json`, their `.http-status` files and
+`snapshot-status.json` are copied unchanged to the capture root for inspection
+and baseline readers. Post-rollout capture keeps the separate deadline shared
+with rollout readiness.
+
 Large backup responses are scoped to the deployment, not hidden by increasing
 limits. CRD backup fetches the complete live schemas for names declared in this
 release's captured manifest/hooks, rather than every CRD on the cluster;

@@ -562,7 +562,8 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         frozen = recipe.get('baselineDirectory')
         if frozen:
             baseline = acceptance.load_baseline(frozen)
-            current = acceptance.capture(config, recipe['namespace'], out / 'before')
+            current = acceptance.wait_capture(config, recipe['namespace'], out / 'before',
+                                              time.monotonic() + recipe['readinessSeconds'])
             report = acceptance.compare(
                 baseline, current, recipe['allowedLostProfileIDs'], out / 'pre-deploy-acceptance',
                 recipe.get('expectedCoverageUsable'), recipe.get('expectedProfileCount'))
@@ -582,7 +583,8 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             check_configuration(out / 'render-before.yaml')
             if recipe.get('inspectionCells'):
                 if not frozen:
-                    acceptance.capture(config, recipe['namespace'], out / 'before')
+                    acceptance.wait_capture(config, recipe['namespace'], out / 'before',
+                                            time.monotonic() + recipe['readinessSeconds'])
                 requests = out / 'inspection-requests.json'
                 requests.write_bytes(run.run(kube + ['get', 'batchenergyoptimizations', '-o', 'json'], 'inspection-requests.json'))
                 state['coverageProjection'] = inspection.project(recipe, src, out, run.run, out / 'before/profiles.json', out / 'before/coverage.json', requests)
@@ -594,7 +596,8 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             print('INSPECTED (no image publication/cluster writes; local Go helpers may compile): ' + str(out))
             return
         if not frozen:
-            baseline = acceptance.capture(config, recipe['namespace'], out / 'before')
+            baseline = acceptance.wait_capture(config, recipe['namespace'], out / 'before',
+                                               time.monotonic() + recipe['readinessSeconds'])
         current_before = current if frozen else baseline
         stage('publish-images')
         builders = sorted({item['builder'] for item in planned if item['action'] == 'build'})

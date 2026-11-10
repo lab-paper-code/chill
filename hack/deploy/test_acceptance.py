@@ -353,9 +353,11 @@ class AcceptanceChecks(unittest.TestCase):
             config = {'apiBase': 'https://localhost:%d' % server.server_port,
                       'caFile': str(cert), 'tokenFile': str(token)}
             expected = snapshot()
-            for row in expected['profiles']['profiles']:
-                row['batches'] = [{'batch': 1, 'energyPerInputJoules': 3, 'meanWallWatts': 5}]
-            healthy = [(200, expected['coverage']), (200, expected['profiles'])]
+            profiles_body = json.dumps(expected['profiles'], default=str)
+            for value in expected['profiles']['profiles'][0]['batches'][0].values():
+                if isinstance(value, Decimal):
+                    profiles_body = profiles_body.replace(json.dumps(str(value)), str(value))
+            healthy = [(200, expected['coverage']), (200, profiles_body.encode())]
             clock = [0]
             worker = threading.Thread(target=server.serve_forever)
             def advance(seconds):
@@ -377,11 +379,17 @@ class AcceptanceChecks(unittest.TestCase):
                         acceptance.time, 'sleep', side_effect=advance):
                     result = acceptance.wait_capture(config, 'review', root / 'startup', deadline=30)
                 self.assertTrue(acceptance.compare(expected, result)['passed'])
+                published = acceptance.load_baseline(root / 'startup')
+                self.assertTrue(acceptance.compare(expected, published)['passed'])
+                self.assertTrue(json.loads((root / 'startup/snapshot-status.json').read_text())['valid'])
                 self.assertEqual((root / 'startup/attempt-000/coverage.http-status').read_text().strip(),
                                  'transport-error')
                 transport = json.loads((root / 'startup/attempt-000/coverage.transport-error.json').read_text())
                 self.assertTrue(transport['readinessPending'])
                 self.assertEqual((root / 'startup/attempt-001/coverage.http-status').read_text().strip(), '503')
+                self.assertEqual(json.loads((root / 'startup/attempt-001/coverage.json').read_text())['code'],
+                                 'CoverageWarming')
+                self.assertFalse((root / 'startup/attempt-001/profiles.json').exists())
                 self.assertEqual((root / 'startup/attempt-002/profiles.http-status').read_text().strip(), '200')
                 self.assertEqual(sum(route.endswith('/profiles') for route in routes), 1)
 
@@ -391,6 +399,8 @@ class AcceptanceChecks(unittest.TestCase):
                 with patch.object(acceptance.time, 'sleep'):
                     result = acceptance.wait_capture(config, 'review', root / 'tls-eof', time.monotonic() + 30)
                 self.assertTrue(acceptance.compare(expected, result)['passed'])
+                self.assertTrue(acceptance.compare(
+                    expected, acceptance.load_baseline(root / 'tls-eof'))['passed'])
                 transport = json.loads((root / 'tls-eof/attempt-000/coverage.transport-error.json').read_text())
                 self.assertEqual(transport['type'], ssl.SSLEOFError.__name__)
                 self.assertTrue(transport['readinessPending'])
@@ -409,6 +419,8 @@ class AcceptanceChecks(unittest.TestCase):
                 with patch.object(acceptance.time, 'sleep'):
                     result = acceptance.wait_capture(config, 'review', root / 'profiles', time.monotonic() + 30)
                 self.assertTrue(acceptance.compare(expected, result)['passed'])
+                self.assertTrue(acceptance.compare(
+                    expected, acceptance.load_baseline(root / 'profiles'))['passed'])
                 self.assertEqual(len(routes), 4)
                 self.assertTrue(json.loads(
                     (root / 'profiles/attempt-000/profiles.transport-error.json').read_text())['readinessPending'])
