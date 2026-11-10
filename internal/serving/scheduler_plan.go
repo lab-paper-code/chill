@@ -539,6 +539,12 @@ func schedulerInstanceRouted(routing map[string]map[string]int32, id string) boo
 	return false
 }
 
+// A Pod-only identity carries no executor to stop or drain. Termination and
+// exact Pod identity must both come from the physical snapshot.
+func schedulerTerminatedPodOnly(i SchedulerInstance) bool {
+	return i.PodUID != "" && i.ID == i.PodUID && i.Stopped && i.Terminated
+}
+
 func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 	// Power affects every runner on the node, never only one UID.
 	for _, n := range c.Nodes {
@@ -573,6 +579,12 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 			drains := map[string]string{}
 			for _, i := range p.snap.Instances {
 				if i.Node == n.Node {
+					if schedulerTerminatedPodOnly(i) {
+						remove := p.add(schedulerActionRemove, n.Node, i.ID, schedulerState(i), "unloaded", nil)
+						p.stops[i.ID] = remove
+						deps = append(deps, remove)
+						continue
+					}
 					st := p.add(schedulerActionStop, n.Node, i.ID, "", "", nil)
 					dr := p.add(schedulerActionDrain, n.Node, i.ID, "", "", []string{st})
 					p.stops[i.ID] = st
@@ -604,7 +616,7 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 
 func (p *schedulerPlanState) removeNodeInstances(node NodeReference, deps []string) {
 	for _, i := range p.snap.Instances {
-		if i.Node == node {
+		if i.Node == node && !schedulerTerminatedPodOnly(i) {
 			p.add(schedulerActionRemove, node, i.ID, schedulerState(i), "unloaded", deps)
 		}
 	}
@@ -730,10 +742,20 @@ func (p *schedulerPlanState) retirePreparationBlocker(actual SchedulerInstance) 
 			return
 		}
 	}
-	stop := p.add(schedulerActionStop, actual.Node, actual.ID, "", "", nil)
-	drain := p.add(schedulerActionDrain, actual.Node, actual.ID, "", "", []string{stop})
-	p.add(schedulerActionRemove, actual.Node, actual.ID, schedulerState(actual), "unloaded", []string{drain})
-	p.stops[actual.ID] = stop
+	p.retireInstance(actual, nil)
+}
+
+func (p *schedulerPlanState) retireInstance(actual SchedulerInstance, deps []string) {
+	if !schedulerTerminatedPodOnly(actual) {
+		stop := p.add(schedulerActionStop, actual.Node, actual.ID, "", "", deps)
+		drain := p.add(schedulerActionDrain, actual.Node, actual.ID, "", "", []string{stop})
+		p.stops[actual.ID] = stop
+		deps = []string{drain}
+	}
+	remove := p.add(schedulerActionRemove, actual.Node, actual.ID, schedulerState(actual), "unloaded", deps)
+	if schedulerTerminatedPodOnly(actual) {
+		p.stops[actual.ID] = remove
+	}
 }
 
 func (p *schedulerPlanState) retireOld(c SchedulerCandidate, route string) {
@@ -752,9 +774,7 @@ func (p *schedulerPlanState) retireOld(c SchedulerCandidate, route string) {
 			if schedulerInstanceRouted(p.snap.Routing, i.ID) {
 				deps = []string{route}
 			}
-			st := p.add(schedulerActionStop, i.Node, i.ID, "", "", deps)
-			dr := p.add(schedulerActionDrain, i.Node, i.ID, "", "", []string{st})
-			p.add(schedulerActionRemove, i.Node, i.ID, schedulerState(i), "unloaded", []string{dr})
+			p.retireInstance(i, deps)
 		}
 	}
 }

@@ -646,3 +646,87 @@ func TestIdleRetirementDoesNotWaitForUnrelatedPreparation(t *testing.T) {
 		})
 	}
 }
+
+func TestTerminatedPodOnlyCleanupPlansDirectRemove(t *testing.T) {
+	for _, path := range []string{"preparation-blocker", "obsolete", "power-in-place", "power-reboot"} {
+		t.Run(path, func(t *testing.T) {
+			settings, snapshot, target := overlappingResourceFixture(t)
+			old := &snapshot.Instances[0]
+			old.ID, old.PodUID = "fa69342d-6690-4d29-b593-d29907f2ea94", "fa69342d-6690-4d29-b593-d29907f2ea94"
+			old.Ready, old.Stopped, old.Terminated = false, true, true
+			snapshot.Routing = map[string]map[string]int32{"w1": {}}
+			target.Nodes = slices.Clone(snapshot.Nodes)
+			switch path {
+			case "obsolete":
+				target.Instances = nil
+				target.Routing = snapshot.Routing
+			case "power-in-place", "power-reboot":
+				target.Nodes[0].PowerMode = "next"
+				if path == "power-reboot" {
+					snapshot.Nodes[0].Reboots = []PowerReboot{{From: snapshot.Nodes[0].PowerMode, To: "next"}}
+				}
+			}
+			actions := schedulerPlan(settings, snapshot, target)
+			remove := requireTransitionAction(t, actions, schedulerActionRemove)
+			if remove.Instance != old.ID || remove.Node != old.Node ||
+				slices.ContainsFunc(actions, func(a Action) bool {
+					return a.Instance == old.ID && (a.Kind == schedulerActionStop || a.Kind == schedulerActionDrain)
+				}) {
+				t.Fatalf("Pod-only inventory acquired executor actions: %+v", actions)
+			}
+			if count := len(slices.DeleteFunc(slices.Clone(actions), func(a Action) bool {
+				return a.Kind != schedulerActionRemove || a.Instance != old.ID
+			})); count != 1 {
+				t.Fatalf("Pod-only inventory removed %d times: %+v", count, actions)
+			}
+			if path == "preparation-blocker" {
+				prepare := requireTransitionAction(t, actions, schedulerActionPrepare)
+				route := requireTransitionAction(t, actions, schedulerActionRoute)
+				if !slices.Contains(prepare.DependsOn, remove.ID) || !slices.Contains(route.DependsOn, prepare.ID) {
+					t.Fatalf("preparation bypassed physical removal: %+v", actions)
+				}
+			}
+			if path == "power-in-place" || path == "power-reboot" {
+				power := requireTransitionAction(t, actions, schedulerActionPower)
+				if !slices.Contains(power.DependsOn, remove.ID) {
+					t.Fatalf("power bypassed Pod-only removal: %+v", actions)
+				}
+			}
+		})
+	}
+}
+
+func TestPodOnlyCleanupKeepsExecutorAndUnknownGuards(t *testing.T) {
+	for _, state := range []string{"running", "terminated-executor", "missing-pod-uid", "unknown"} {
+		t.Run(state, func(t *testing.T) {
+			settings, snapshot, target := overlappingResourceFixture(t)
+			old := &snapshot.Instances[0]
+			old.ID, old.PodUID = "pod/containerd://executor", "pod"
+			snapshot.Routing = map[string]map[string]int32{"w1": {}}
+			switch state {
+			case "terminated-executor":
+				old.Ready, old.Stopped, old.Terminated = false, true, true
+			case "missing-pod-uid":
+				old.ID, old.PodUID = "pod", ""
+				old.Ready, old.Stopped, old.Terminated = false, true, true
+			case "unknown":
+				old.ID, old.Ready, old.Stopped = old.PodUID, false, true
+			}
+			actions := schedulerPlan(settings, snapshot, target)
+			if state == "unknown" {
+				if slices.ContainsFunc(actions, func(a Action) bool {
+					return a.Kind == schedulerActionRemove || a.Kind == schedulerActionStop || a.Kind == schedulerActionDrain
+				}) {
+					t.Fatalf("unknown source became removable: %+v", actions)
+				}
+				return
+			}
+			stop := requireTransitionAction(t, actions, schedulerActionStop)
+			drain := requireTransitionAction(t, actions, schedulerActionDrain)
+			remove := requireTransitionAction(t, actions, schedulerActionRemove)
+			if !slices.Contains(drain.DependsOn, stop.ID) || !slices.Contains(remove.DependsOn, drain.ID) {
+				t.Fatalf("executor cleanup lost stop/drain: %+v", actions)
+			}
+		})
+	}
+}

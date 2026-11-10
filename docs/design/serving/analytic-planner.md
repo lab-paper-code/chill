@@ -243,7 +243,7 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
 - 현재 유효 수요는 max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이에 minimumDemand 하한을 적용한다. reductionDemand도 이 현재 수요다. 별도 이력 최대값이나 지속 시간 조건은 없다.
 - 최종 에너지 하강 route와 retirement의 `현재 유효 수요×(1+h)` 보호 조건과 설정 h는 유지한다. 이를 완료된 κ 또는 κ̂-only 보장으로 해석하지 않고 현재 routing·수요 평가에 연결한다. bridge/reserve·실제 요청 J는 할증하지 않는다.
 - 실제 부족 회복, 부분 관측의 실제 가용 수요, unknown·예약·소유권·Ready/native ACK·old+new peak·bridge·reserve·H 검사를 유지한다. 중단형 power 변경은 handoff가 아니다.
-- Terminated는 Ready 공급이 아니며 allocation 반환 증거도 아니다. same-Node stop/drain/remove 의존성을 유지한다.
+- Terminated는 Ready 공급이 아니며 allocation 반환 증거도 아니다. same-Node stop/drain/remove 의존성을 유지한다. snapshot의 exact `ID=PodUID`·stopped·terminated로 검증한 Pod-only 재고만 stop/drain 없이 기존 remove로 연결하며, 실제 반환 뒤 prepare/power를 진행한다.
 - 실행 중 owner 예약과 frozen target을 보존한다. 이미 허가된 DAG의 후속 drain/remove는 계속하며 중간 배분은 실제 Ready/ACK·stop 제외·원자적 UID별 route 계약을 따른다.
 - 빈 Node의 새 Fixed 절전도 같은 현재 수요·SLO와 gain/minimumGain/payback으로 비교한다. 별도 시간 허가나 이력 상태는 없다.
 keep 비용·교체 payback·minimumGain과 `decision.capacity.periodNanos` 모두 같은 H를 사용한다. 사슬이 H를 넘는 경우 4장의 진단·에너지 clamp를 적용하며 H를 후보에 맞춰 늘리지 않는다.

@@ -65,6 +65,15 @@ finalizer와 Pod/Service/config 소멸을 증명하며 scheduler가 native 적�
 측정 readiness·새 route/prepare/power/stop의 gate는 바꾸지 않는다. process-local
 stop 증거를 재시작으로 잃어 `Stopped=false`가 된 옛 실물을 자동 복구하는 계약은 없다.
 
+Snapshot이 `ID=PodUID`, nonempty `PodUID`, `Stopped=true`, `Terminated=true`로
+확인한 Pod-only 재고는 executor stop/drain 없이 기존 remove로 정리한다. 준비
+blocker·obsolete retirement·power 변경 모두 같은 조건을 쓰며 power는 이 Pod의
+remove 뒤에 진행한다. adapter는 action과 snapshot의 exact Node/ID를 대조하여
+`Instance=""`, `PodUID=<snapshot UID>`로 전달한다. 문자열 모양은 신원 근거가 아니다.
+Operations의 fresh Node/Pod UID·종료 검증과 finalizer/Service/config·실물 반환
+증명은 그대로 유지하며 후속 prepare/route는 remove 완료를 기다린다. container
+신원이 있는 executor와 종료 미확정 재고에는 이 단축 경로를 적용하지 않는다.
+
 
 ## Why concealment forces routing
 
