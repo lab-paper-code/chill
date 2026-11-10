@@ -54,45 +54,45 @@ type SchedulerActionObservation struct {
 // physical completion. TickAt joins round/tick records to the original decision.
 // Phase is the last stage entered; Error and Status retain failed/Keep calls.
 type SchedulerControlObservation struct {
-	Scope        string                            `json:"scope"`
-	TickAt       time.Time                         `json:"tickAt"`
-	StartedAt    time.Time                         `json:"startedAt"`
-	FinishedAt   time.Time                         `json:"finishedAt"`
-	Elapsed      time.Duration                     `json:"elapsedNanos"`
-	Phase        string                            `json:"phase"`
-	Status       string                            `json:"status,omitempty"`
-	TargetID     string                            `json:"targetID,omitempty"`
-	Fallback     string                            `json:"fallback,omitempty"`
-	Error        string                            `json:"error,omitempty"`
-	AdmitError   string                            `json:"admitError,omitempty"`
-	LockWait     time.Duration                     `json:"lockWaitNanos"`
-	Admit        time.Duration                     `json:"admitNanos"`
-	Tick         time.Duration                     `json:"tickNanos"`
-	Capture      time.Duration                     `json:"captureNanos"`
-	Evaluate     time.Duration                     `json:"evaluateNanos"`
-	Publish      time.Duration                     `json:"publishNanos"`
-	Record       time.Duration                     `json:"recordNanos"`
-	Launch       time.Duration                     `json:"launchNanos"`
-	Surrogate    time.Duration                     `json:"surrogateElapsedNanos"`
-	Exact        time.Duration                     `json:"exactElapsedNanos"`
-	Evaluation   serving.SchedulerEvaluationTiming `json:"evaluation"`
+	Scope      string                            `json:"scope"`
+	TickAt     time.Time                         `json:"tickAt"`
+	StartedAt  time.Time                         `json:"startedAt"`
+	FinishedAt time.Time                         `json:"finishedAt"`
+	Elapsed    time.Duration                     `json:"elapsedNanos"`
+	Phase      string                            `json:"phase"`
+	Status     string                            `json:"status,omitempty"`
+	TargetID   string                            `json:"targetID,omitempty"`
+	Fallback   string                            `json:"fallback,omitempty"`
+	Error      string                            `json:"error,omitempty"`
+	AdmitError string                            `json:"admitError,omitempty"`
+	LockWait   time.Duration                     `json:"lockWaitNanos"`
+	Admit      time.Duration                     `json:"admitNanos"`
+	Tick       time.Duration                     `json:"tickNanos"`
+	Capture    time.Duration                     `json:"captureNanos"`
+	Evaluate   time.Duration                     `json:"evaluateNanos"`
+	Publish    time.Duration                     `json:"publishNanos"`
+	Record     time.Duration                     `json:"recordNanos"`
+	Launch     time.Duration                     `json:"launchNanos"`
+	Surrogate  time.Duration                     `json:"surrogateElapsedNanos"`
+	Exact      time.Duration                     `json:"exactElapsedNanos"`
+	Evaluation serving.SchedulerEvaluationTiming `json:"evaluation"`
 }
 
 type SchedulerObservation struct {
-	At            time.Time                   `json:"at"`
-	Control       *SchedulerControlObservation  `json:"control,omitempty"`
-	Decision      *serving.SchedulerDecision  `json:"decision,omitempty"`
-	Snapshot      *serving.SchedulerSnapshot  `json:"snapshot,omitempty"`
-	Settings      *SchedulerSettingsChange    `json:"settings,omitempty"`
-	Action        *SchedulerActionObservation `json:"action,omitempty"`
-	Power         *metricobserver.Result      `json:"power,omitempty"`
-	Node          *serving.NodeReference      `json:"node,omitempty"`
-	Meter         string                      `json:"meter,omitempty"`
-	PowerScope    string                      `json:"powerScope,omitempty"`
-	PowerSampling *metricobserver.Request     `json:"powerSampling,omitempty"`
-	PowerCoverage *powerwindow.Policy         `json:"powerCoverage,omitempty"`
-	PowerJoules   *float64                    `json:"powerJoules,omitempty"`
-	PowerError    string                      `json:"powerError,omitempty"`
+	At            time.Time                    `json:"at"`
+	Control       *SchedulerControlObservation `json:"control,omitempty"`
+	Decision      *serving.SchedulerDecision   `json:"decision,omitempty"`
+	Snapshot      *serving.SchedulerSnapshot   `json:"snapshot,omitempty"`
+	Settings      *SchedulerSettingsChange     `json:"settings,omitempty"`
+	Action        *SchedulerActionObservation  `json:"action,omitempty"`
+	Power         *metricobserver.Result       `json:"power,omitempty"`
+	Node          *serving.NodeReference       `json:"node,omitempty"`
+	Meter         string                       `json:"meter,omitempty"`
+	PowerScope    string                       `json:"powerScope,omitempty"`
+	PowerSampling *metricobserver.Request      `json:"powerSampling,omitempty"`
+	PowerCoverage *powerwindow.Policy          `json:"powerCoverage,omitempty"`
+	PowerJoules   *float64                     `json:"powerJoules,omitempty"`
+	PowerError    string                       `json:"powerError,omitempty"`
 	// Offset is the original window's append offset.
 	// schedulerLine deliberately does not persist this read-side reference.
 	Offset *int `json:"offset,omitempty"`
@@ -102,19 +102,19 @@ type SchedulerObservation struct {
 // catalog: a power row names its meter, and a snapshot names definitions,
 // costs and baselines by reference.
 type schedulerLine struct {
-	At          time.Time                   `json:"at"`
-	Control     *SchedulerControlObservation  `json:"control,omitempty"`
-	Decision    *serving.SchedulerDecision  `json:"decision,omitempty"`
-	Snapshot    *serving.SchedulerSnapshot  `json:"snapshot,omitempty"`
-	Settings    *SchedulerSettingsChange    `json:"settings,omitempty"`
-	Action      *SchedulerActionObservation `json:"action,omitempty"`
-	Node        *serving.NodeReference      `json:"node,omitempty"`
-	Meter       string                      `json:"meter,omitempty"`
-	StartedAt   *time.Time                  `json:"startedAt,omitempty"`
-	Samples     []metricobserver.Sample     `json:"samples,omitempty"`
-	Failures    []metricobserver.Failure    `json:"failures,omitempty"`
-	PowerJoules *float64                    `json:"powerJoules,omitempty"`
-	PowerError  string                      `json:"powerError,omitempty"`
+	At          time.Time                    `json:"at"`
+	Control     *SchedulerControlObservation `json:"control,omitempty"`
+	Decision    *serving.SchedulerDecision   `json:"decision,omitempty"`
+	Snapshot    *serving.SchedulerSnapshot   `json:"snapshot,omitempty"`
+	Settings    *SchedulerSettingsChange     `json:"settings,omitempty"`
+	Action      *SchedulerActionObservation  `json:"action,omitempty"`
+	Node        *serving.NodeReference       `json:"node,omitempty"`
+	Meter       string                       `json:"meter,omitempty"`
+	StartedAt   *time.Time                   `json:"startedAt,omitempty"`
+	Samples     []metricobserver.Sample      `json:"samples,omitempty"`
+	Failures    []metricobserver.Failure     `json:"failures,omitempty"`
+	PowerJoules *float64                     `json:"powerJoules,omitempty"`
+	PowerError  string                       `json:"powerError,omitempty"`
 }
 
 // ObservationMeter is the catalog body of a meter.

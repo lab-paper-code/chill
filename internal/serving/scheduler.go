@@ -583,8 +583,8 @@ type SchedulerDecision struct {
 	Capacity     *SchedulerCapacity       `json:"capacity,omitempty"`
 	PathFeedback []PathFeedback           `json:"pathFeedback,omitempty"`
 	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
-	EvaluationElapsed time.Duration `json:"evaluationElapsedNanos"`
-	EvaluationTiming SchedulerEvaluationTiming `json:"evaluationTiming"`
+	EvaluationElapsed time.Duration             `json:"evaluationElapsedNanos"`
+	EvaluationTiming  SchedulerEvaluationTiming `json:"evaluationTiming"`
 }
 
 // SchedulerEvaluationTiming records non-overlapping EvaluateScheduler stages.

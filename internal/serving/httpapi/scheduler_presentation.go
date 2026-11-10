@@ -228,16 +228,16 @@ type schedulerHistoryPower struct {
 }
 
 type schedulerHistoryObservation struct {
-	At          time.Time                 `json:"at"`
-	Offset      *int                      `json:"offset,omitempty"`
+	At          time.Time                                `json:"at"`
+	Offset      *int                                     `json:"offset,omitempty"`
 	Control     *observation.SchedulerControlObservation `json:"control,omitempty"`
-	Decision    *schedulerHistoryDecision `json:"decision,omitempty"`
-	Snapshot    *schedulerHistorySnapshot `json:"snapshot,omitempty"`
-	Settings    *schedulerHistorySettings `json:"settings,omitempty"`
-	Action      *schedulerHistoryAction   `json:"action,omitempty"`
-	Power       *schedulerHistoryPower    `json:"power,omitempty"`
-	Node        *serving.NodeReference    `json:"node,omitempty"`
-	PowerJoules *float64                  `json:"powerJoules,omitempty"`
+	Decision    *schedulerHistoryDecision                `json:"decision,omitempty"`
+	Snapshot    *schedulerHistorySnapshot                `json:"snapshot,omitempty"`
+	Settings    *schedulerHistorySettings                `json:"settings,omitempty"`
+	Action      *schedulerHistoryAction                  `json:"action,omitempty"`
+	Power       *schedulerHistoryPower                   `json:"power,omitempty"`
+	Node        *serving.NodeReference                   `json:"node,omitempty"`
+	PowerJoules *float64                                 `json:"powerJoules,omitempty"`
 }
 
 func schedulerHistoryObservations(records []observation.SchedulerObservation) []schedulerHistoryObservation {
