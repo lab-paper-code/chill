@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
-	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
@@ -16,7 +16,15 @@ import (
 )
 
 func (c *SchedulerController) capture(ctx context.Context, now time.Time, config SchedulerControllerConfig) (serving.SchedulerSnapshot, error) {
+	return c.captureTimed(ctx, now, config, nil)
+}
+
+func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, config SchedulerControllerConfig, timing *observation.SchedulerControlObservation) (serving.SchedulerSnapshot, error) {
+	windowStarted := time.Now()
 	window, err := c.observationLog.LoadWindow(ctx, now.Add(-config.Settings.ObservationWindow), now)
+	if timing != nil {
+		timing.Window = time.Since(windowStarted)
+	}
 	if err != nil {
 		return serving.SchedulerSnapshot{}, err
 	}
@@ -29,24 +37,28 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	if config.DispatchOccupancySnapshot != nil {
 		s.DispatchOccupancy = config.DispatchOccupancySnapshot()
 	}
-	// Historical reads must finish before refreshing authoritative live sources.
-	pods, err := c.observer.refresh(ctx)
-	if err != nil {
-		return s, err
-	}
 	// Observer state is read before the Node list: another refresh holding the
 	// observer lock would otherwise age every Node.
 	profiles, profileByID := c.observer.schedulerProfiles()
 	reboots := c.observer.powerRebootFacts()
-	// Request start is a conservative lower bound; slow live I/O still ages it.
-	nodesObservedAt := time.Now().UTC()
-	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
+	// Historical reads must finish before refreshing authoritative live sources.
+	refreshed, err := c.observer.refresh(ctx)
+	if timing != nil {
+		timing.RefreshList = refreshed.listNanos
+		timing.SourceProbe = refreshed.sourceProbeNanos
+	}
 	if err != nil {
 		return s, err
 	}
+	nodes, pods, classes := refreshed.nodes, refreshed.clusterPods, refreshed.classes
+	nodesObservedAt := refreshed.nodesObservedAt
 	if pods == nil {
 		// A namespace-only observer cannot prove occupancy across the POOL.
+		listStarted := time.Now()
 		pods, err = c.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{FieldSelector: nonTerminalPodSelector})
+		if timing != nil {
+			timing.RefreshList += time.Since(listStarted)
+		}
 		if err != nil {
 			return s, err
 		}
@@ -56,10 +68,6 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		pods.Items = slices.DeleteFunc(pods.Items, func(p core.Pod) bool {
 			return p.Status.Phase == core.PodSucceeded || p.Status.Phase == core.PodFailed
 		})
-	}
-	var classes edge.DeviceClassList
-	if err = c.store.client.List(ctx, &classes); err != nil {
-		return s, err
 	}
 	power := map[string]time.Duration{}
 	physical := map[string]serving.InstanceState{}

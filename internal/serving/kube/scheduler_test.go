@@ -50,9 +50,9 @@ func withSchedulerEstimateFixture(settings serving.SchedulerSettings) serving.Sc
 	return settings
 }
 
-// schedulerCaptureClockController serves one Node and one instance; onLiveNodes
-// runs when capture lists the Nodes, after its observer refresh.
-func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) *SchedulerController {
+// schedulerCaptureClockController serves one Node and one instance;
+// onLiveInventory runs during capture's POOL Pod List, after observer refresh.
+func schedulerCaptureClockController(t *testing.T, onLiveInventory func(*Observer)) *SchedulerController {
 	t.Helper()
 	manager, _ := newManagerHarness(t)
 	pod, node, profile, class := observerSourceFixture()
@@ -65,7 +65,7 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 	}
 	manager.observer.SetProfiles([]serving.Profile{profile})
 	service := observerServiceFixture(pod)
-	var nodeReads atomic.Int32
+	var poolReads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("watch") == "true" || strings.HasSuffix(r.URL.Path, "/log") {
@@ -84,11 +84,11 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 				Runtime: actual, MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
 			}}
 		case r.URL.Path == "/api/v1/nodes":
-			if nodeReads.Add(1) == 2 && onLiveNodes != nil {
-				onLiveNodes(manager.observer)
-			}
 			response = core.NodeList{TypeMeta: meta.TypeMeta{Kind: "NodeList", APIVersion: "v1"}, Items: []core.Node{*node}}
 		case strings.HasSuffix(r.URL.Path, "/pods"):
+			if r.URL.Path == "/api/v1/pods" && poolReads.Add(1) == 1 && onLiveInventory != nil {
+				onLiveInventory(manager.observer)
+			}
 			response = core.PodList{TypeMeta: meta.TypeMeta{Kind: "PodList", APIVersion: "v1"}, Items: []core.Pod{*pod}}
 		case strings.HasSuffix(r.URL.Path, "/pods/"+pod.Name):
 			response = pod

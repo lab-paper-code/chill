@@ -54,27 +54,31 @@ type SchedulerActionObservation struct {
 // physical completion. TickAt joins round/tick calls; DecisionAt identifies the
 // captured decision. Only tick records own evaluation disposition.
 type SchedulerControlObservation struct {
-	Scope      string                            `json:"scope"`
-	TickAt     time.Time                         `json:"tickAt"`
-	DecisionAt time.Time                         `json:"decisionAt"`
-	StartedAt  time.Time                         `json:"startedAt"`
-	FinishedAt time.Time                         `json:"finishedAt"`
-	Elapsed    time.Duration                     `json:"elapsedNanos"`
-	Phase      string                            `json:"phase"`
-	Status     string                            `json:"status,omitempty"`
-	TargetID   string                            `json:"targetID,omitempty"`
-	Fallback   string                            `json:"fallback,omitempty"`
-	Error      string                            `json:"error,omitempty"`
-	AdmitError string                            `json:"admitError,omitempty"`
-	LockWait   time.Duration                     `json:"lockWaitNanos"`
-	Admit      time.Duration                     `json:"admitNanos"`
-	Tick       time.Duration                     `json:"tickNanos"`
-	Capture    time.Duration                     `json:"captureNanos"`
-	Evaluate   time.Duration                     `json:"evaluateNanos"`
-	Publish    time.Duration                     `json:"publishNanos"`
-	Record     time.Duration                     `json:"recordNanos"`
-	Launch     time.Duration                     `json:"launchNanos"`
-	Evaluation serving.SchedulerEvaluationTiming `json:"evaluation"`
+	Scope       string                            `json:"scope"`
+	TickAt      time.Time                         `json:"tickAt"`
+	DecisionAt  time.Time                         `json:"decisionAt"`
+	StartedAt   time.Time                         `json:"startedAt"`
+	FinishedAt  time.Time                         `json:"finishedAt"`
+	Elapsed     time.Duration                     `json:"elapsedNanos"`
+	Phase       string                            `json:"phase"`
+	Status      string                            `json:"status,omitempty"`
+	TargetID    string                            `json:"targetID,omitempty"`
+	Fallback    string                            `json:"fallback,omitempty"`
+	Error       string                            `json:"error,omitempty"`
+	AdmitError  string                            `json:"admitError,omitempty"`
+	LockWait    time.Duration                     `json:"lockWaitNanos"`
+	Admit       time.Duration                     `json:"admitNanos"`
+	Tick        time.Duration                     `json:"tickNanos"`
+	Capture     time.Duration                     `json:"captureNanos"`
+	Window      time.Duration                     `json:"windowNanos"`
+	RefreshList time.Duration                     `json:"refreshListNanos"`
+	SourceProbe time.Duration                     `json:"sourceProbeNanos"`
+	Rest        time.Duration                     `json:"restNanos"`
+	Evaluate    time.Duration                     `json:"evaluateNanos"`
+	Publish     time.Duration                     `json:"publishNanos"`
+	Record      time.Duration                     `json:"recordNanos"`
+	Launch      time.Duration                     `json:"launchNanos"`
+	Evaluation  serving.SchedulerEvaluationTiming `json:"evaluation"`
 }
 
 type SchedulerObservation struct {

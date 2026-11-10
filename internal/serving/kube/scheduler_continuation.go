@@ -24,7 +24,7 @@ func (c *SchedulerController) Continue(ctx context.Context, now time.Time) error
 	c.mu.Lock()
 	config := c.config
 	c.mu.Unlock()
-	snapshot, err := c.captureReconciled(ctx, now, config, true)
+	snapshot, err := c.captureReconciled(ctx, now, config, true, nil)
 	if err != nil {
 		return err
 	}

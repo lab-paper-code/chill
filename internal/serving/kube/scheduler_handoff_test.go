@@ -121,7 +121,7 @@ func handoffController(t *testing.T, extraNodes ...string) *SchedulerController 
 
 func handoffSnapshot(t *testing.T, c *SchedulerController) serving.SchedulerSnapshot {
 	t.Helper()
-	snapshot, err := c.captureReconciled(c.ctx, time.Now(), c.config, false)
+	snapshot, err := c.captureReconciled(c.ctx, time.Now(), c.config, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

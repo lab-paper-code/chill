@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
@@ -20,8 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	typedcore "k8s.io/client-go/kubernetes/typed/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestObserverKeepsServingAcrossRuntimeDeclarationChange(t *testing.T) {
@@ -262,15 +259,14 @@ func TestTickCaptureDuringIndependentRefreshRetainsReady(t *testing.T) {
 	prepared.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	// Pause capture's class read after its own refresh, before runtime copy.
+	// Pause capture's POOL Pod read after its own refresh, before runtime copy.
 	paused, resume := make(chan struct{}), make(chan struct{})
 	var armed atomic.Bool
 	armed.Store(true)
-	var lists atomic.Int32
-	c.store.client = interceptor.NewClient(c.store.client.(client.WithWatch), interceptor.Funcs{
-		List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-			_, classes := list.(*edge.DeviceClassList)
-			if classes && armed.Load() && lists.Add(1) == 2 {
+	c.kube = gatedObserverKube{Interface: c.kube, core: gatedObserverCore{
+		CoreV1Interface: c.kube.CoreV1(),
+		gate: func(ctx context.Context) error {
+			if armed.CompareAndSwap(true, false) {
 				close(paused)
 				select {
 				case <-resume:
@@ -278,9 +274,9 @@ func TestTickCaptureDuringIndependentRefreshRetainsReady(t *testing.T) {
 					return ctx.Err()
 				}
 			}
-			return cl.List(ctx, list, opts...)
+			return nil
 		},
-	})
+	}}
 	tickDone := make(chan error, 1)
 	go func() { _, err := c.Tick(ctx, time.Now()); tickDone <- err }()
 	select {
@@ -288,7 +284,6 @@ func TestTickCaptureDuringIndependentRefreshRetainsReady(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	armed.Store(false)
 	before := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
 	if before == nil {
 		t.Fatal("fixture lacks A")

@@ -203,15 +203,25 @@ func (o *Observer) Refresh(ctx context.Context) error {
 	return err
 }
 
-// refresh returns this cycle's complete cluster Pod baseline when OnCluster
-// requires one. The caller owns the list; no later refresh or watch updates it.
-func (o *Observer) refresh(ctx context.Context) (*corev1.PodList, error) {
+type observerRefresh struct {
+	nodes            *corev1.NodeList
+	classes          edgev1alpha1.DeviceClassList
+	clusterPods      *corev1.PodList
+	nodesObservedAt  time.Time
+	listNanos        time.Duration
+	sourceProbeNanos time.Duration
+}
+
+// refresh returns this cycle's Node and DeviceClass facts and the complete
+// cluster Pod baseline when OnCluster requires one. The caller owns the lists;
+// no later refresh or watch updates them.
+func (o *Observer) refresh(ctx context.Context) (observerRefresh, error) {
 	o.refreshMu.Lock()
 	defer o.refreshMu.Unlock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return observerRefresh{}, err
 	}
 	return o.refreshLocked(ctx)
 }
@@ -233,13 +243,18 @@ func (o *Observer) RefreshWithin(ctx context.Context, age time.Duration) error {
 	_, err := o.refreshLocked(ctx)
 	return err
 }
-func (o *Observer) refreshLocked(ctx context.Context) (*corev1.PodList, error) {
+func (o *Observer) refreshLocked(ctx context.Context) (result observerRefresh, err error) {
 	if o.closed {
-		return nil, errors.New("observer is closed")
+		return result, errors.New("observer is closed")
 	}
+	// Request start is a conservative lower bound; slow live I/O still ages it.
+	listStarted := time.Now()
+	result.nodesObservedAt = listStarted.UTC()
 	nodes, err := o.kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	result.nodes = nodes
+	result.listNanos += time.Since(listStarted)
 	if err != nil {
-		return nil, o.refreshFailure(err)
+		return result, o.refreshFailure(err)
 	}
 	podOptions := metav1.ListOptions{}
 	if o.podWatch != nil && o.config.OnCluster == nil {
@@ -247,25 +262,30 @@ func (o *Observer) refreshLocked(ctx context.Context) (*corev1.PodList, error) {
 		// retained-source GET below still proves exact terminal containers.
 		podOptions.FieldSelector = nonTerminalPodSelector
 	}
+	listStarted = time.Now()
 	pods, err := o.kube.CoreV1().Pods(o.clusterWatchNamespace()).List(ctx, podOptions)
+	result.listNanos += time.Since(listStarted)
 	if err != nil {
-		return nil, o.refreshFailure(err)
+		return result, o.refreshFailure(err)
 	}
 	o.observeClusterList(pods.Items)
-	var clusterPods *corev1.PodList
 	if o.config.OnCluster != nil {
 		// Cluster facts include release control Pods outside the serving namespace;
 		// native execution and ownership continue to use only the selected namespace.
-		clusterPods = pods
+		result.clusterPods = pods
 		pods = o.sourceNamespacePods(pods)
 	}
+	listStarted = time.Now()
 	resources, err := o.store.SourceResources(ctx, pods.Items, o.config.Namespace)
+	result.listNanos += time.Since(listStarted)
 	if err != nil {
-		return nil, o.refreshFailure(err)
+		return result, o.refreshFailure(err)
 	}
-	var classes edgev1alpha1.DeviceClassList
-	if err = o.store.client.List(ctx, &classes); err != nil {
-		return nil, o.refreshFailure(err)
+	listStarted = time.Now()
+	err = o.store.client.List(ctx, &result.classes)
+	result.listNanos += time.Since(listStarted)
+	if err != nil {
+		return result, o.refreshFailure(err)
 	}
 	measurement := []serving.NodeReference{}
 	byName := map[string]*corev1.Node{}
@@ -287,7 +307,7 @@ func (o *Observer) refreshLocked(ctx context.Context) (*corev1.PodList, error) {
 	if o.podWatch == nil {
 		w, e := o.kube.CoreV1().Pods(o.clusterWatchNamespace()).Watch(o.ctx, metav1.ListOptions{ResourceVersion: pods.ResourceVersion})
 		if e != nil {
-			return nil, o.refreshFailure(e)
+			return result, o.refreshFailure(e)
 		}
 		o.podWatch = w
 		o.issue("pod-watch", nil)
@@ -300,7 +320,9 @@ func (o *Observer) refreshLocked(ctx context.Context) (*corev1.PodList, error) {
 	}
 	// Share one Service list; each completed native probe re-lists only its
 	// UID label, including terminal Pods, to verify identity and duplicates.
+	listStarted = time.Now()
 	services, servicesErr := o.kube.CoreV1().Services(o.config.Namespace).List(ctx, metav1.ListOptions{})
+	result.listNanos += time.Since(listStarted)
 	servicesByName := map[string]*corev1.Service{}
 	if servicesErr == nil {
 		for i := range services.Items {
@@ -326,7 +348,7 @@ func (o *Observer) refreshLocked(ctx context.Context) (*corev1.PodList, error) {
 		probes.Add(1)
 		go func() {
 			defer probes.Done()
-			instance, publish, probe := o.probeSource(ctx, pod, byName[pod.Spec.NodeName], profiles[pod.Annotations[servingstate.ServingProfileAnnotation]], classes.Items, resources, servicesByName, servicesErr)
+			instance, publish, probe := o.probeSource(ctx, pod, byName[pod.Spec.NodeName], profiles[pod.Annotations[servingstate.ServingProfileAnnotation]], result.classes.Items, resources, servicesByName, servicesErr)
 			var latest *corev1.PodList
 			var latestErr error
 			if probe != nil {
@@ -345,12 +367,14 @@ func (o *Observer) refreshLocked(ctx context.Context) (*corev1.PodList, error) {
 		}()
 	}
 	o.mu.Unlock()
+	probeStarted := time.Now()
 	probes.Wait()
+	result.sourceProbeNanos = time.Since(probeStarted)
 	o.mu.Lock()
 	if err := o.finishRefreshLocked(ctx, observed); err != nil {
-		return nil, err
+		return result, err
 	}
-	return clusterPods, nil
+	return result, nil
 }
 
 func (o *Observer) sourceNamespacePods(pods *corev1.PodList) *corev1.PodList {

@@ -274,6 +274,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 	defer func() {
 		finished := time.Now()
 		*stage += finished.Sub(stageStarted)
+		event.Rest = event.Capture - event.Window - event.RefreshList - event.SourceProbe
 		event.FinishedAt, event.Elapsed = finished.UTC(), finished.Sub(started)
 		if err != nil {
 			event.Error = err.Error()
@@ -292,7 +293,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 	config := c.config
 	c.mu.Unlock()
 	evaluationStarted := time.Now()
-	snapshot, err := c.captureReconciled(ctx, now, config, false)
+	snapshot, err := c.captureReconciled(ctx, now, config, false, &event)
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
@@ -348,8 +349,8 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 }
 
 // captureReconciled keeps Tick and completion observation effects in one order.
-func (c *SchedulerController) captureReconciled(ctx context.Context, now time.Time, config SchedulerControllerConfig, continuation bool) (serving.SchedulerSnapshot, error) {
-	snapshot, err := c.capture(ctx, now, config)
+func (c *SchedulerController) captureReconciled(ctx context.Context, now time.Time, config SchedulerControllerConfig, continuation bool, timing *observation.SchedulerControlObservation) (serving.SchedulerSnapshot, error) {
+	snapshot, err := c.captureTimed(ctx, now, config, timing)
 	if err != nil {
 		return snapshot, err
 	}

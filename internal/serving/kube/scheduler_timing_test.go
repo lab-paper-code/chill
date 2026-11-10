@@ -108,5 +108,13 @@ func TestSchedulerTickCompletionRetainsEarlyFailuresAndLockWait(t *testing.T) {
 		if event.Error == "" || event.Phase != "capture" || event.LockWait <= 0 || event.Elapsed < event.LockWait+event.Capture || event.Evaluate != 0 || event.Record != 0 || event.Launch != 0 {
 			t.Fatalf("early return missing from call denominator: %+v", event)
 		}
+		if canceled {
+			if event.Window != 0 || event.RefreshList != 0 || event.SourceProbe != 0 || event.Rest != event.Capture {
+				t.Fatalf("canceled capture recorded unexecuted work: %+v", event)
+			}
+		} else if event.Window <= 0 || event.RefreshList <= 0 || event.SourceProbe != 0 ||
+			event.Rest < 0 || event.Window+event.RefreshList+event.Rest != event.Capture {
+			t.Fatalf("failed Node List lost capture sub-spans: %+v", event)
+		}
 	}
 }

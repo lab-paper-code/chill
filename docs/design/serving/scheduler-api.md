@@ -217,6 +217,11 @@ Tick 완료 행의 동기 제출도 포함한다. `admitError`와 Tick의 `error
 
 `scope:"tick"`은 controller lock 대기부터 unlock까지의 경과와
 `captureNanos`, `evaluateNanos`, `publishNanos`, `recordNanos`, `launchNanos`를 제공한다.
+capture 하위 구간은 `windowNanos`(LoadWindow), `refreshListNanos`(Node·Pod·source resource·DeviceClass·Service List),
+`sourceProbeNanos`(병렬 native probe와 후속 UID 확인의 `probes.Wait`), `restNanos`(잠금 대기·관측 정리·snapshot 조립·reconcile 등 나머지)다.
+namespace-only observer의 전체 POOL Pod List도 `refreshListNanos`에 포함한다.
+하위 구간은 중복 없이 `captureNanos`로 합산하며 오류·중도 반환도 실제 실행한 구간만 기록한다.
+capture는 refresh의 Node·DeviceClass List를 재사용한다. Node의 `observedAt`은 해당 List 요청 직전의 보수적인 하한이다.
 `recordNanos`는 기존 OnDecision callback 전체이며 실패한 callback 시간도 포함한다.
 완료 행 자체의 제출은 해당 행의 종료 경계 뒤이므로 `elapsedNanos`에 포함하지 않는다.
 두 scope 모두 Keep·오류·중도 반환을 기록하며 `phase`는 마지막 진입 단계다.
