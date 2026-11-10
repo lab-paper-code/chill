@@ -1966,6 +1966,7 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 	poolsAddNode(&snap, "idle", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	want := capacityDecideForTest(t, s, snap)
 	want.Capacity.Search = nil // Wall-budget traversal statistics are not the chosen decision.
+	want.EvaluationTiming = SchedulerEvaluationTiming{}
 	for seed := range 10 {
 		rng := rand.New(rand.NewPCG(uint64(seed), 3))
 		shuffled := snap
@@ -1982,6 +1983,7 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 		})
 		got := capacityDecideForTest(t, s, shuffled)
 		got.Capacity.Search = nil
+		got.EvaluationTiming = SchedulerEvaluationTiming{}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("seed %d: shuffled input changed the decision:\n%+v\n%+v", seed, got.Target, want.Target)
 		}

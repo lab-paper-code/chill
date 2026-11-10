@@ -94,6 +94,9 @@ type Diagnostics struct {
 	Neighborhood, Evaluated, TrailingEvaluated    int
 	StartedAt, FinishedAt                         time.Time
 	Duration                                      time.Duration
+	// Backend wall time: Candidates versus exact search/seeding/postfilters.
+	// Native problem/table preparation and diagnostic projection are excluded.
+	SurrogateElapsed, ExactElapsed                 time.Duration
 	BudgetCut                                     bool
 	TerminationReason                             string
 	Key                                           string

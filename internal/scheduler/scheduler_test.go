@@ -81,17 +81,39 @@ func TestRootOwnsV2FallbackAndNativeResult(t *testing.T) {
 	p.NewState = func(choice []int) protocol.State {
 		return &oneNodeState{choice: slices.Clone(choice), result: make([]int, len(choice)), table: p.Table}
 	}
-	exact := &nativeExact{reject: true}
+	p.PostFilter = true
+	exact := &timedExact{nativeExact: &nativeExact{reject: true}}
 	got, err := scheduler.Select[nativeResult](protocol.V2).Search(p, exact)
-	if err != nil || !got.Found || got.Value.payload != exact || !slices.Equal(got.Value.choice, []int{0}) || got.Diagnostics.Strategy != protocol.V2 || got.Diagnostics.Fallback != protocol.V1 {
+	if err != nil || !got.Found || got.Value.payload != exact.nativeExact || !slices.Equal(got.Value.choice, []int{0}) || got.Diagnostics.Strategy != protocol.V2 || got.Diagnostics.Fallback != protocol.V1 {
 		t.Fatalf("fallback lost native result: %+v err=%v", got, err)
 	}
 	if got.Diagnostics.TerminationReason != protocol.Deadline || !got.Diagnostics.BudgetCut {
 		t.Fatalf("fallback lost v2 termination: %+v", got.Diagnostics)
 	}
+	if d := got.Diagnostics; d.ExactElapsed < exact.elapsed || d.SurrogateElapsed <= 0 || d.ExactElapsed+d.SurrogateElapsed > d.Duration {
+		t.Fatalf("fallback omitted seeding/filter wall time or overlapped surrogate: %+v; exact stalls=%v", d, exact.elapsed)
+	}
 	if scheduler.Select[nativeResult]("unknown") != nil {
 		t.Fatal("unknown scheduler selected a default")
 	}
+}
+
+type timedExact struct {
+	*nativeExact
+	elapsed time.Duration
+}
+
+func (e *timedExact) SeedKeep(nativeResult) {
+	started := time.Now()
+	time.Sleep(time.Millisecond)
+	e.elapsed += time.Since(started)
+}
+
+func (e *timedExact) PostFilter(r nativeResult) nativeResult {
+	started := time.Now()
+	time.Sleep(time.Millisecond)
+	e.elapsed += time.Since(started)
+	return r
 }
 
 type oneNodeState struct {

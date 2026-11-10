@@ -68,6 +68,11 @@ type SchedulerPlanSearch struct {
 	// initial keep/empty origins; it is not Search.Examined's node-plan count.
 	Evaluated int           `json:"evaluated"`
 	Duration  time.Duration `json:"durationNanos"`
+	// SurrogateElapsed covers v2 Candidates only. ExactElapsed covers backend
+	// exact search, keep seeding and filters, including v1 fallback; neither
+	// includes scalar table/problem preparation or native diagnostic projection.
+	SurrogateElapsed time.Duration `json:"surrogateElapsedNanos"`
+	ExactElapsed     time.Duration `json:"exactElapsedNanos"`
 	// StartedAt and FinishedAt are direct wall-clock boundaries of search,
 	// excluding node-plan construction and final decision projection.
 	StartedAt  time.Time `json:"startedAt"`
@@ -182,6 +187,12 @@ type SchedulerNodePlan struct {
 // Offline BuildCapacityRow/CapacityTable remain explicit full-grid analysis APIs.
 func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) (decision SchedulerDecision, err error) {
 	started := time.Now()
+	timing := SchedulerEvaluationTiming{}
+	stage, stageStarted := &timing.Preparation, started
+	defer func() {
+		*stage += time.Since(stageStarted)
+		decision.EvaluationTiming = timing
+	}()
 	if err := ctx.Err(); err != nil {
 		return SchedulerDecision{}, err
 	}
@@ -243,16 +254,24 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err := planner.build(); err != nil {
 		return SchedulerDecision{}, err
 	}
+	timing.Preparation = time.Since(stageStarted)
+	stage, stageStarted = &timing.Search, time.Now()
 	best, err := planner.search(started.Add(settings.ControlInterval / 2))
 	if err != nil {
 		return SchedulerDecision{}, err
 	}
+	timing.Search = time.Since(stageStarted)
+	stage, stageStarted = &timing.Payback, time.Now()
 	if settings.PlanSearchStrategy != protocol.V2 || !settings.PlanPostFilterFinalists {
 		best = planner.minimumGain(planner.payback(best))
 	}
+	timing.Payback = time.Since(stageStarted)
+	stage, stageStarted = &timing.Rates, time.Now()
 	if err := planner.testDecisionRates(best); err != nil {
 		return SchedulerDecision{}, err
 	}
+	timing.Rates = time.Since(stageStarted)
+	stage, stageStarted = &timing.Projection, time.Now()
 	decision = planner.decide(decision, best)
 	markFixedEstimates(&decision)
 	return decision, ctx.Err()

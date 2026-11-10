@@ -9,15 +9,25 @@ import (
 
 type Engine[R any] struct{}
 
-func (Engine[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (protocol.Outcome[R], error) {
+func (Engine[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (out protocol.Outcome[R], err error) {
 	started := time.Now()
+	surrogateElapsed := time.Duration(0)
+	exactElapsed := time.Duration(0)
+	defer func() {
+		out.Diagnostics.SurrogateElapsed = surrogateElapsed
+		out.Diagnostics.ExactElapsed = exactElapsed
+	}()
 	keep := exact.Evaluate(make([]int, len(p.Plans)))
 	exact.SeedKeep(keep)
+	exactElapsed = time.Since(started)
+	surrogateStarted := time.Now()
 	candidates, core := Candidates(p, p.Table, p.Evaluations, p.Finalists, p.Active, p.Deadline)
+	surrogateElapsed = time.Since(surrogateStarted)
 	if err := p.Context.Err(); err != nil {
 		return protocol.Outcome[R]{}, err
 	}
 	stats := FunnelStats{}
+	exactStarted := time.Now()
 	best := Funnel(p, exact, candidates, &stats)
 	fallback := ""
 	if best == nil {
@@ -32,6 +42,7 @@ func (Engine[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (protocol.O
 			best = &filtered
 		}
 	}
+	exactElapsed += time.Since(exactStarted)
 	if best == nil {
 		d := protocol.Diagnostics{Strategy: protocol.V2, Fallback: protocol.V1, StartedAt: started.UTC()}
 		recordCore(&d, core)

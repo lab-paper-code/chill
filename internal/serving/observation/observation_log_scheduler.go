@@ -49,8 +49,38 @@ type SchedulerActionObservation struct {
 	ExpectedSource  *serving.ActionExpectedSource  `json:"expectedSource"`
 }
 
+// SchedulerControlObservation is a bounded call-completion record. Elapsed ends
+// before this record is submitted: it does not claim async persistence or
+// physical completion. TickAt joins round/tick records to the original decision.
+// Phase is the last stage entered; Error and Status retain failed/Keep calls.
+type SchedulerControlObservation struct {
+	Scope        string                            `json:"scope"`
+	TickAt       time.Time                         `json:"tickAt"`
+	StartedAt    time.Time                         `json:"startedAt"`
+	FinishedAt   time.Time                         `json:"finishedAt"`
+	Elapsed      time.Duration                     `json:"elapsedNanos"`
+	Phase        string                            `json:"phase"`
+	Status       string                            `json:"status,omitempty"`
+	TargetID     string                            `json:"targetID,omitempty"`
+	Fallback     string                            `json:"fallback,omitempty"`
+	Error        string                            `json:"error,omitempty"`
+	AdmitError   string                            `json:"admitError,omitempty"`
+	LockWait     time.Duration                     `json:"lockWaitNanos"`
+	Admit        time.Duration                     `json:"admitNanos"`
+	Tick         time.Duration                     `json:"tickNanos"`
+	Capture      time.Duration                     `json:"captureNanos"`
+	Evaluate     time.Duration                     `json:"evaluateNanos"`
+	Publish      time.Duration                     `json:"publishNanos"`
+	Record       time.Duration                     `json:"recordNanos"`
+	Launch       time.Duration                     `json:"launchNanos"`
+	Surrogate    time.Duration                     `json:"surrogateElapsedNanos"`
+	Exact        time.Duration                     `json:"exactElapsedNanos"`
+	Evaluation   serving.SchedulerEvaluationTiming `json:"evaluation"`
+}
+
 type SchedulerObservation struct {
 	At            time.Time                   `json:"at"`
+	Control       *SchedulerControlObservation  `json:"control,omitempty"`
 	Decision      *serving.SchedulerDecision  `json:"decision,omitempty"`
 	Snapshot      *serving.SchedulerSnapshot  `json:"snapshot,omitempty"`
 	Settings      *SchedulerSettingsChange    `json:"settings,omitempty"`
@@ -73,6 +103,7 @@ type SchedulerObservation struct {
 // costs and baselines by reference.
 type schedulerLine struct {
 	At          time.Time                   `json:"at"`
+	Control     *SchedulerControlObservation  `json:"control,omitempty"`
 	Decision    *serving.SchedulerDecision  `json:"decision,omitempty"`
 	Snapshot    *serving.SchedulerSnapshot  `json:"snapshot,omitempty"`
 	Settings    *SchedulerSettingsChange    `json:"settings,omitempty"`
@@ -114,7 +145,7 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 		return &serving.Error{Code: "InvalidObservation", Message: "scheduler observation time is required"}
 	}
 	refs := &observationReferences{}
-	line := schedulerLine{At: event.At, Settings: event.Settings, Action: event.Action}
+	line := schedulerLine{At: event.At, Control: event.Control, Settings: event.Settings, Action: event.Action}
 	if d := event.Decision; d != nil {
 		recorded := *d
 		recorded.Keep = refs.candidate(d.Keep)
@@ -264,7 +295,7 @@ func DecodeSchedulerLine(raw []byte, catalog *ObservationCatalog) (SchedulerObse
 	if err := json.Unmarshal(raw, &line); err != nil {
 		return SchedulerObservation{}, err
 	}
-	event := SchedulerObservation{At: line.At, Decision: line.Decision, Snapshot: line.Snapshot, Settings: line.Settings, Action: line.Action}
+	event := SchedulerObservation{At: line.At, Control: line.Control, Decision: line.Decision, Snapshot: line.Snapshot, Settings: line.Settings, Action: line.Action}
 	if d := event.Decision; d != nil && d.Target != nil && d.Target.ID == d.Keep.ID {
 		target := d.Keep
 		d.Target = &target
@@ -518,6 +549,7 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 	}
 	var line struct {
 		At       time.Time
+		Control  *SchedulerControlObservation
 		Decision *struct {
 			At        time.Time
 			Status    string
@@ -545,7 +577,7 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 	if err := json.Unmarshal(raw, &line); err != nil {
 		return SchedulerObservation{}, err
 	}
-	record := SchedulerObservation{At: line.At, Node: line.Node, PowerJoules: line.PowerJoules}
+	record := SchedulerObservation{At: line.At, Control: line.Control, Node: line.Node, PowerJoules: line.PowerJoules}
 	if d := line.Decision; d != nil {
 		record.Decision = &serving.SchedulerDecision{At: d.At, Status: d.Status, Workloads: d.Workloads}
 	}

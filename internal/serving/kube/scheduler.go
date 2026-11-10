@@ -18,6 +18,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	"k8s.io/client-go/kubernetes"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
@@ -261,26 +262,58 @@ func (c *reservationState) actionsLocked(now time.Time) []serving.Action {
 	return result
 }
 
-func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.SchedulerDecision, error) {
+func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result serving.SchedulerDecision, err error) {
+	started := time.Now()
+	event := observation.SchedulerControlObservation{Scope: "tick", TickAt: now, StartedAt: started.UTC(), Phase: "lock"}
+	stage, stageStarted := &event.LockWait, started
+	next := func(phase string, elapsed *time.Duration) {
+		*stage += time.Since(stageStarted)
+		event.Phase, stage, stageStarted = phase, elapsed, time.Now()
+	}
+	// Registered before unlock, so elapsed includes the controller lock lifetime.
+	defer func() {
+		finished := time.Now()
+		*stage += finished.Sub(stageStarted)
+		event.FinishedAt, event.Elapsed = finished.UTC(), finished.Sub(started)
+		if err != nil {
+			event.Error = err.Error()
+		}
+		if recordErr := c.observationLog.SchedulerRecord(observation.SchedulerObservation{At: event.FinishedAt, Control: &event}); recordErr != nil {
+			ctrl.Log.Error(recordErr, "record scheduler Tick completion")
+		}
+	}()
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
+	next("capture", &event.Capture)
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
 	c.mu.Lock()
 	config := c.config
 	c.mu.Unlock()
-	started := time.Now()
+	evaluationStarted := time.Now()
 	snapshot, err := c.captureReconciled(ctx, now, config, false)
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
+	next("evaluate", &event.Evaluate)
 	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot)
+	decision.EvaluationElapsed = time.Since(evaluationStarted)
+	event.Evaluation = decision.EvaluationTiming
+	event.Status = decision.Status
+	if decision.Target != nil {
+		event.TargetID = decision.Target.ID
+	}
+	if decision.Capacity != nil && decision.Capacity.Search != nil {
+		event.Fallback = decision.Capacity.Search.Fallback
+		event.Surrogate = decision.Capacity.Search.SurrogateElapsed
+		event.Exact = decision.Capacity.Search.ExactElapsed
+	}
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	decision.EvaluationElapsed = time.Since(started)
 	decision.PathFeedback = slices.Clone(snapshot.PathFeedback)
+	next("publish", &event.Publish)
 	c.mu.Lock()
 	if err := ctx.Err(); err != nil {
 		c.mu.Unlock()
@@ -292,6 +325,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
+	next("record", &event.Record)
 	if config.OnDecision != nil {
 		if err := config.OnDecision(decision, snapshot); err != nil {
 			return decision, fmt.Errorf("persist decision before physical action: %w", err)
@@ -300,6 +334,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
+	next("launch", &event.Launch)
 	// Without a selected target, only finish previously authorized Fixed work.
 	if decision.Target != nil {
 		c.launch(ctx, *decision.Target, config)

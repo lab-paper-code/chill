@@ -378,6 +378,43 @@ func (o *SchedulerService) restartPower(config SchedulerConfiguration) {
 	}
 }
 
+// controlRound measures the periodic call, including admission and both sides
+// of the application lock. Completion-event submission follows the boundary.
+func (o *SchedulerService) controlRound(ctx context.Context) time.Time {
+	started := time.Now()
+	event := observation.SchedulerControlObservation{Scope: "round", StartedAt: started.UTC(), Phase: "complete"}
+	o.Lock.Lock()
+	admitStarted := time.Now()
+	event.LockWait = admitStarted.Sub(started)
+	if err := o.Controller.Admit(ctx); err != nil {
+		event.AdmitError = err.Error()
+		ctrl.Log.Error(err, "admit measurements")
+	}
+	tickStarted := time.Now()
+	event.Admit = tickStarted.Sub(admitStarted)
+	event.TickAt = tickStarted.UTC()
+	decision, err := o.Controller.Tick(ctx, event.TickAt)
+	event.Tick = time.Since(tickStarted)
+	o.Lock.Unlock()
+	finished := time.Now()
+	event.FinishedAt, event.Elapsed = finished.UTC(), finished.Sub(started)
+	event.Status = decision.Status
+	if decision.Target != nil {
+		event.TargetID = decision.Target.ID
+	}
+	if decision.Capacity != nil && decision.Capacity.Search != nil {
+		event.Fallback = decision.Capacity.Search.Fallback
+	}
+	if err != nil {
+		event.Error = err.Error()
+		ctrl.Log.Error(err, "evaluate and record scheduler control interval")
+	}
+	if recordErr := o.observationLog.SchedulerRecord(observation.SchedulerObservation{At: event.FinishedAt, Control: &event}); recordErr != nil {
+		ctrl.Log.Error(recordErr, "record scheduler control round completion")
+	}
+	return started
+}
+
 func (o *SchedulerService) Start() {
 	if o == nil {
 		return
@@ -392,18 +429,8 @@ func (o *SchedulerService) Start() {
 		defer o.wg.Done()
 		for o.ctx.Err() == nil {
 			callCtx, cancel := context.WithTimeout(o.ctx, o.opts.RequestTimeout)
-			started := time.Now()
-			// The server's profile refresh owner accepts remote evidence and external
-			// ConfigMap edits. Control uses the last accepted inputs independently.
-			o.Lock.Lock()
-			if err := o.Controller.Admit(callCtx); err != nil {
-				ctrl.Log.Error(err, "admit measurements")
-			}
-			_, err := o.Controller.Tick(callCtx, time.Now().UTC())
-			o.Lock.Unlock()
-			if err != nil {
-				ctrl.Log.Error(err, "evaluate and record scheduler control interval")
-			}
+			// Control uses the last accepted inputs independently of refresh.
+			started := o.controlRound(callCtx)
 			cancel()
 			timer := time.NewTimer(max(time.Until(started.Add(o.Controller.Settings().ControlInterval)), 0))
 			waiting := true

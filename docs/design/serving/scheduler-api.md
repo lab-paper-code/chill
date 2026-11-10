@@ -206,6 +206,35 @@ Query owns public progress and per-cell coverage projection.
 탐색이 실행된 decision의 `capacity.search.startedAt`/`finishedAt`은 실제 탐색 진입/결과 반환에서 직접 캡처한 UTC 시각이며 `durationNanos`는 같은 구간의 monotonic 경과다. `search.examined`(만든 node-plan 수)와 `capacity.search.evaluated`(초기 keep/empty 원점을 제외한 sweep의 plan-set 후보 평가 수)는 서로 다른 값이다. 관측 이력 full/compact와 replay decoder는 이 구간을 그대로 전달한다. 탐색하지 않은 decision에 구간을 합성하지 않으며 summary는 기존대로 search를 생략한다. 기존 v3 저장 계약·관측 prefix/version은 유지하고, 과거 원시 기록을 수정하거나 시각을 소급 생성하지 않는다.
 `GET /api/v1/scheduler/state?view=summary`와 `/api/v1/observations/scheduler?view=summary`의 decision도 원본 순서의 `workloads[]`(`uid`, `state`, 선택적 `reason`)를 그대로 제공한다.
 이력 summary는 catalog를 복원하지 않고 저장된 decision의 `workloads[]`를 직접 읽으므로 과거 상태·사유와 순서를 유지한다.
+
+제어 호출 완료는 기존 scheduler stream의 작은 `control` 행으로 보존한다. 원본 archive와
+`GET /api/v1/observations/scheduler`의 full/compact/summary에서 읽으며,
+`control.tickAt = decision.at`으로 같은 호출을 연결한다. `scope:"round"`는 application lock
+대기→Admit→Tick→unlock의 `startedAt`/`finishedAt`/`elapsedNanos`와
+`lockWaitNanos`, `admitNanos`, `tickNanos`를 제공한다. `tickNanos`는 실제 Tick 호출 반환까지이며
+Tick 완료 행의 동기 제출도 포함한다. `admitError`와 Tick의 `error`는 별도다.
+
+`scope:"tick"`은 controller lock 대기부터 unlock까지의 경과와
+`captureNanos`, `evaluateNanos`, `publishNanos`, `recordNanos`, `launchNanos`를 제공한다.
+`recordNanos`는 기존 OnDecision callback 전체이며 실패한 callback 시간도 포함한다.
+완료 행 자체의 제출은 해당 행의 종료 경계 뒤이므로 `elapsedNanos`에 포함하지 않는다.
+두 scope 모두 Keep·오류·중도 반환을 기록하며 `phase`는 마지막 진입 단계,
+`status`·`targetID`·`fallback`은 평가가 생성한 처분이다. 오류로 평가 전 종료하면 처분은 비어 있다.
+이 행은 큰 decision/snapshot을 다시 저장하지 않으며, 제출 오류는 서버 로그로 남긴다.
+비동기 파일 영속 완료·물리 동작 완료는 이 시간에 포함하지 않는다.
+
+`decision.evaluationElapsedNanos`는 기존 capture+EvaluateScheduler 구간을 유지한다.
+`decision.evaluationTiming`과 Tick 완료 행의 `control.evaluation`은
+`preparationNanos`(정규화·검증·입력 및 노드 계획 준비), `searchNanos`,
+`paybackNanos`(search 뒤 payback/minimum-gain), `ratesNanos`(nominal-rate 진단),
+`projectionNanos`(최종 decision 구성)의 배타적 단계를 제공한다.
+탐색 전에 반환하면 preparation만 측정한다. v2 finalist postfilter는 search 안에 남는다.
+`capacity.search.surrogateElapsedNanos`는 v2 Candidates 호출만,
+`exactElapsedNanos`는 keep seeding·exact funnel·exact fallback·backend postfilter를 포함한다.
+두 scalar는 Tick 완료 행의 `control`에도 보존하므로 결정 callback 실패 때도 읽을 수 있다.
+v1은 backend 전체 exact search의 wall time이며 병렬 worker CPU 시간의 합이 아니다.
+두 backend 시간은 scalar table/problem 준비와 native 진단 변환을 제외하므로
+합을 전체 search/Tick 시간으로 해석하지 않는다. 과거 행에 새 시간값을 소급 생성하지 않는다.
 `comparedNodes`는 keep 밖의 적격 노드 계획이 있는 Node이며 `expectedJoules`는 이 Node만 합산한다.
 관측 기록의 인스턴스는 profile을 `profileID`로, Workload를 `workloadUID` 하나로 보존한다.
 

@@ -61,6 +61,7 @@ func (e *capacityExact) record(d protocol.Diagnostics) {
 	p := e.p
 	p.searched = SchedulerPlanSearch{Strategy: d.Strategy, Neighborhood: d.Neighborhood, Evaluated: d.Evaluated,
 		StartedAt: d.StartedAt, FinishedAt: d.FinishedAt, Duration: d.Duration, BudgetCut: d.BudgetCut,
+		SurrogateElapsed: d.SurrogateElapsed, ExactElapsed: d.ExactElapsed,
 		TrailingEvaluated: d.TrailingEvaluated, TerminationReason: d.TerminationReason, Key: d.Key, Joules: d.Joules,
 		Pruned: d.Pruned, SurrogateEvaluated: d.SurrogateEvaluated, Finalists: d.Finalists, ExactEvaluated: d.ExactEvaluated,
 		SurrogateGapJoules: d.SurrogateGapJoules, PostFilterReverts: d.PostFilterReverts, Fallback: d.Fallback, Start: d.Start, DualBound: d.DualBound,
@@ -119,7 +120,11 @@ func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 	} else {
 		problem = p.searchProblem(deadline)
 	}
+	engineStarted := time.Now()
 	result, err := scheduler.Select[capacityResult](p.settings.PlanSearchStrategy).Search(problem, e)
+	if p.settings.PlanSearchStrategy == protocol.V1 {
+		result.Diagnostics.ExactElapsed = time.Since(engineStarted)
+	}
 	finished := time.Now()
 	result.Diagnostics.StartedAt, result.Diagnostics.FinishedAt = started.UTC(), finished.UTC()
 	result.Diagnostics.Duration = finished.Sub(started)

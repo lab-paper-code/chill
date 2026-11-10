@@ -584,6 +584,17 @@ type SchedulerDecision struct {
 	PathFeedback []PathFeedback           `json:"pathFeedback,omitempty"`
 	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
 	EvaluationElapsed time.Duration `json:"evaluationElapsedNanos"`
+	EvaluationTiming SchedulerEvaluationTiming `json:"evaluationTiming"`
+}
+
+// SchedulerEvaluationTiming records non-overlapping EvaluateScheduler stages.
+// Search includes its own preparation, surrogate and exact/filter work.
+type SchedulerEvaluationTiming struct {
+	Preparation time.Duration `json:"preparationNanos"`
+	Search      time.Duration `json:"searchNanos"`
+	Payback     time.Duration `json:"paybackNanos"`
+	Rates       time.Duration `json:"ratesNanos"`
+	Projection  time.Duration `json:"projectionNanos"`
 }
 
 func (s SchedulerSettings) Validate() error {

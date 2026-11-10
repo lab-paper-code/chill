@@ -29,15 +29,18 @@ func (second[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (protocol.O
 		return result, err
 	}
 	core := result.Diagnostics
+	exactStarted := time.Now()
 	result, err = (v1.Engine[R]{}).Search(p, exact)
 	d := &result.Diagnostics
 	d.Strategy, d.Fallback = protocol.V2, protocol.V1
-	d.StartedAt, d.FinishedAt = core.StartedAt, time.Now().UTC()
-	d.Duration = time.Since(started)
 	d.Steps, d.SurrogateEvaluated, d.TrailingEvaluated = core.Steps, core.SurrogateEvaluated, core.TrailingEvaluated
 	d.BudgetCut, d.TerminationReason = core.BudgetCut, core.TerminationReason
 	if p.PostFilter {
 		result.Value = exact.PostFilter(result.Value)
 	}
+	d.SurrogateElapsed = core.SurrogateElapsed
+	d.ExactElapsed = core.ExactElapsed + time.Since(exactStarted)
+	d.StartedAt, d.FinishedAt = core.StartedAt, time.Now().UTC()
+	d.Duration = time.Since(started)
 	return result, err
 }
