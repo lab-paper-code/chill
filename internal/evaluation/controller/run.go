@@ -55,7 +55,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result
 	if run.Status.StartedAt == nil && run.Status.FinishedAt != nil {
 		// Rejected before taking the pool: nothing ran, so nothing holds the object.
 		if controllerutil.ContainsFinalizer(run, api.EvaluationRunFinalizer) {
-			return r.removeFinalizer(ctx, run)
+			return ctrl.Result{}, r.removeFinalizer(ctx, run)
 		}
 		return ctrl.Result{}, nil
 	}
@@ -69,7 +69,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result
 	}
 	if run.Status.StartedAt == nil {
 		if !run.DeletionTimestamp.IsZero() {
-			return r.removeFinalizer(ctx, run)
+			return ctrl.Result{}, r.removeFinalizer(ctx, run)
 		}
 		return r.acquire(ctx, run)
 	}
@@ -87,7 +87,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result
 	// A stopped run still publishes what it measured: release the object only after the
 	// publish attempt recorded its outcome (success or failure).
 	if !run.DeletionTimestamp.IsZero() && !occupied(run) && publishRecorded(run) {
-		return r.removeFinalizer(ctx, run)
+		return ctrl.Result{}, r.removeFinalizer(ctx, run)
 	}
 	if isTrue(run.Status.Conditions, api.EvaluationConditionPublished) {
 		// Only a run whose every step stored its result has nothing left on the workspace;
@@ -485,10 +485,10 @@ func (r *RunReconciler) runFailure(ctx context.Context, run, before *api.Evaluat
 	run.Status.ResidualStateRef = evidence
 	return ctrl.Result{}, r.patchStatus(ctx, run, before)
 }
-func (r *RunReconciler) removeFinalizer(ctx context.Context, run *api.EvaluationRun) (ctrl.Result, error) {
+func (r *RunReconciler) removeFinalizer(ctx context.Context, run *api.EvaluationRun) error {
 	before := run.DeepCopy()
 	controllerutil.RemoveFinalizer(run, api.EvaluationRunFinalizer)
-	return ctrl.Result{}, r.Client.Patch(ctx, run, client.MergeFrom(before))
+	return r.Client.Patch(ctx, run, client.MergeFrom(before))
 }
 
 func releaseEligible(run *api.EvaluationRun) bool {
