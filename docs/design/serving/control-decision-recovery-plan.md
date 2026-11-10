@@ -41,6 +41,8 @@ IC 수요는 34.3 req/s였다. 탐색 근사는 현재 JetsonX가 수요를 감�
 
 이 반사실은 routing 가중치까지 바꿨다. 같은 recorded 선택의 정밀 결과도 0.936→0.937, 84,986→85,070J로 달라졌다. 따라서 원인 메커니즘은 확인됐지만, 해결 여부는 routing·정밀 평가를 보존한 table-only 구현을 같은 입력으로 다시 실행해 판정한다. 증거: `I/production-search-{before-k1,v2,v3-mu-only,v1}.jsonl`.
 
+같은 입력에서 keep 기준 적격 단일 Node 변경 383개를 모두 정밀 평가했다(`I/production-search-before-k1{,-rest}.jsonl`). 물리 admission을 통과하고 SLO를 충족하는 후보는 20개(genesis2 GPU 10, Rasp5 5, JetsonO CPU 5)였다. 이 중 JetsonO CPU IC 추가는 keep보다 에너지가 낮았다(84,828J). 수정 전 탐색 근사는 20개 모두를 미충족으로 보고 finalist에서 뺐다.
+
 ### 2.3 기각한 가설
 
 - **준비시간 `+r`을 retained 공급 Workload에 부과:** 계산상 PLC에 가짜 excess를 만들지만, 이번 decision의 선택 실패 원인은 아니다. 단독 수정은 IC 공급을 늘리지 않는 긴 준비 후보를 충족으로 오판해 finalist를 채웠다(위 표 마지막 행). 이번 범위에서 바꾸지 않는다.
@@ -59,12 +61,21 @@ P는 배치 판단의 해결 경로다. R·V는 독립 작업이며 P의 효과�
 
 하지 않는 것: 준비시간 항 변경, finalist 수·예산·ranking·seed 순서 변경, 모든 과부하에 ExactK1 추가, routing 가중치 정의 변경, SLO·분위수·minimumDemand·비교기간 변경, 새 cache·설정.
 
-**제어 시간(복구 완료 조건, 현재 미충족):** 전체 Tick 중앙값 45~47초 중 exact 평가가 32~37초다. R1·R2는 반복 계산을 줄이지만 10초 충족을 보장하지 않는다. 같은 입력에서 memo 없는 cold production Search의 exact·전체 시간을 기준(`4f2d97ca`)과 통합본으로 비교한다. 10초를 넘으면 지배 비용을 근거로 다음 작업 단위를 정한다. 실측 수용은 §5-2로 판정한다.
+**제어 시간(복구 완료 조건):** 전체 Tick 중앙값 45~47초 중 exact 평가가 32~37초다. 같은 입력의 memo 없는 cold production Search로 비교했다(`I/cold-search-{base,r12,fixed}.jsonl`).
 
-## 4. 검증
+| 소스 | Search | exact | 선택 |
+|---|---:|---:|---|
+| 기준 `4f2d97ca` | 38.7초 | 37.3초 | JetsonX 4→1, 미충족 |
+| + R1·R2 | 38.3초 | 37.2초 | 동일 |
+| + R1·R2 + P | 9.95초 | 8.6초 | genesis2 GPU 추가, 충족 |
 
-- 로컬: P 함수·탐색 회귀, v1/v2 회귀, 같은 입력의 production Search 전후, lint, `make test`, architecture, pinned gopls.
-- 독립 리뷰: 시스템 목적·책임 경계·과구현과 메모리 보유·연산 비용을 분리한다.
+R1·R2는 이 입력에서 시간을 줄이지 못했다. CPU profile에서 exact 시간의 약 60%는 과부하 replay의 `chooseBatches`가 매 event마다 대기열 전체의 요청 상태를 다시 만드는 비용이었다(`I/cold-search-r12.cpu.pb.gz`). P 뒤 finalist가 과부하 배치가 아니게 되면서 exact가 줄었다. Search만 10초 근처이므로 capture(실측 평균 6.1~8.5초)를 더한 전체 Tick은 10초를 넘을 가능성이 높다. 실측 §5-2로 판정하고, 넘으면 capture와 과부하 replay 비용을 다음 작업 단위로 다룬다.
+
+## 4. 로컬 검증 결과
+
+- 같은 입력, routing·정밀 replay 보존: recorded 선택의 정밀 결과가 기준과 동일했다(84,985.531J, IC 0.935753). finalist 16개가 모두 정밀 평가 충족이었고 production v2 Search는 genesis2 CUDA IC 추가 + JetsonX batch 16을 선택했다. IC 실패율 0.019, PLC·Smol 0, 87,801J(`I/production-search-fixed.jsonl`).
+- 한계: 같은 입력의 단일 Node 정밀 평가에서 JetsonO CPU IC 추가가 SLO를 충족하면서 3.4% 더 적은 에너지(84,828J)를 썼다. 탐색 근사는 과도 구간의 최악 대기를 분위수 SLO 대신 쓰고 준비 시간을 모든 Workload에 더하므로 이 후보를 finalist에 넣지 못했다. SLO 충족이 우선이므로 이번 범위에서 바꾸지 않고 실측 후 판단한다.
+- `go test ./internal/serving ./internal/scheduler/...` PASS. lint·`make test`·architecture·gopls 결과는 handoff에 기록한다.
 
 ## 5. main 실수용
 
