@@ -35,6 +35,7 @@ func numericDistributionFixture(tb testing.TB, trials, groups int) *ServiceDistr
 func TestQuantileMatchesBaselineTrialMixture(t *testing.T) {
 	for _, trials := range []int{1, 32, 33, 64} {
 		d := numericDistributionFixture(t, trials, 8)
+		services := baselineServiceValues(d)
 		gaps := []*int64{nil}
 		for _, value := range []int64{-1, 0, 1, 2, 7, 8, 15, 16, math.MaxInt64} {
 			gap := value
@@ -42,7 +43,7 @@ func TestQuantileMatchesBaselineTrialMixture(t *testing.T) {
 		}
 		for _, gap := range gaps {
 			for _, percentile := range []float64{math.NaN(), -1, 0, math.SmallestNonzeroFloat64, 12.5, 37.5, 50, math.Nextafter(50, 100), 87.5, 95, 99.9, 100, 101, math.Inf(1)} {
-				want, support, valid := baselineQuantileNanos(d, gap, percentile)
+				want, support, valid := baselineQuantileNanos(d, services, gap, percentile)
 				got, gotSupport, ok := d.QuantileNanos(gap, percentile)
 				if got != want || gotSupport != support || ok != valid {
 					t.Fatalf("trials=%d gap=%v p=%g: got %d %+v %v, want %d %+v %v", trials, gap, percentile, got, gotSupport, ok, want, support, valid)
@@ -81,6 +82,91 @@ func TestQuantileIntegerNeighborTieAndSupport(t *testing.T) {
 	}
 	if got, support, ok := d.QuantileNanos(nil, 100); !ok || got != 123 || support != (ConditionalSupport{TrialCount: 1}) {
 		t.Fatalf("startup mixture: got %d %+v %v", got, support, ok)
+	}
+}
+
+// Repeated selected gaps exercise large pre-sorted groups. A third physical
+// trial lacks the right gap, so ties must not turn into uniform record weights.
+func selectedGroupFixture(tb testing.TB, records int) *ServiceDistribution {
+	tb.Helper()
+	var rows []ServiceSample
+	left, right, unrelated := int64(0), int64(2), int64(100_000)
+	for trial, id := range []string{"c", "a", "b"} {
+		for record := range records {
+			service := int64(2 + (record*7+trial*13)%257)
+			if trial == 2 && record == records-1 {
+				service = math.MaxInt64
+			}
+			rows = append(rows,
+				ServiceSample{TrialID: id, ServiceDurationNanos: service},
+				ServiceSample{TrialID: id, PrecedingIdleNanos: &left, ServiceDurationNanos: service},
+			)
+			if trial != 2 {
+				rows = append(rows, ServiceSample{TrialID: id, PrecedingIdleNanos: &right, ServiceDurationNanos: service + 1})
+			}
+		}
+		rows = append(rows, ServiceSample{TrialID: id, PrecedingIdleNanos: &unrelated, ServiceDurationNanos: 1})
+	}
+	d, err := NewServiceDistribution(rows)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return d
+}
+
+func TestQuantileSelectedGroupBoundaries(t *testing.T) {
+	for _, records := range []int{1, 6, 4096} {
+		d := selectedGroupFixture(t, records)
+		services := baselineServiceValues(d)
+		gaps := []*int64{nil}
+		for _, gap := range []int64{-1, 0, 1, 2, 3, math.MaxInt64} {
+			gaps = append(gaps, &gap)
+		}
+		for _, gap := range gaps {
+			percentiles := []float64{math.NaN(), -1, 0, math.SmallestNonzeroFloat64, 50, 99, 100, 101}
+			// Check both sides of floating CDF jumps, not just round percentiles.
+			support := d.support(gap)
+			if support.TrialCount > 0 {
+				for _, value := range []int64{2, 33, 128, 258, math.MaxInt64} {
+					mass := 0.0
+					for i := range d.trials {
+						a, b, _, _ := d.trials[i].nearest(gap)
+						if n := len(a) + len(b); n > 0 {
+							mass += float64(serviceUpperBound(a, value)+serviceUpperBound(b, value)) / float64(n)
+						}
+					}
+					p := mass / float64(support.TrialCount) * 100
+					percentiles = append(percentiles, math.Nextafter(p, 0), p, math.Nextafter(p, math.Inf(1)))
+				}
+			}
+			for _, percentile := range percentiles {
+				want, support, valid := baselineQuantileNanos(d, services, gap, percentile)
+				got, gotSupport, ok := d.QuantileNanos(gap, percentile)
+				if got != want || gotSupport != support || ok != valid {
+					t.Fatalf("records=%d gap=%v p=%.17g: got %d %+v %v, want %d %+v %v", records, gap, percentile, got, gotSupport, ok, want, support, valid)
+				}
+			}
+		}
+	}
+	empty := &ServiceDistribution{}
+	if value, support, ok := empty.QuantileNanos(nil, 0); value != 0 || support != (ConditionalSupport{}) || ok {
+		t.Fatalf("empty distribution gained support: %d %+v %v", value, support, ok)
+	}
+}
+
+func BenchmarkConditionalQuantileGroupSize(b *testing.B) {
+	for _, records := range []int{1, 32, 4096, 65536} {
+		d := selectedGroupFixture(b, records)
+		for _, gap := range []int64{0, 1} {
+			b.Run(fmt.Sprintf("records%d/gap%d", records, gap), func(b *testing.B) {
+				b.ReportAllocs()
+				for range b.N {
+					if _, _, ok := d.QuantileNanos(&gap, 99); !ok {
+						b.Fatal("missing quantile")
+					}
+				}
+			})
+		}
 	}
 }
 

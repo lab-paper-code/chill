@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"math/rand/v2"
+	"slices"
 	"sort"
 )
 
@@ -33,8 +34,7 @@ type serviceNeighbors struct{ a, b []ServiceSample }
 // ServiceDistribution is immutable after hydration. Quantile queries use local
 // scratch; up to 32 physical trials need no heap-backed scratch.
 type ServiceDistribution struct {
-	trials   []serviceTrial
-	services []int64
+	trials []serviceTrial
 }
 
 func NewServiceDistribution(samples []ServiceSample) (*ServiceDistribution, error) {
@@ -54,7 +54,6 @@ func NewServiceDistribution(samples []ServiceSample) (*ServiceDistribution, erro
 			trialIDs = append(trialIDs, s.TrialID)
 		}
 		byTrial[s.TrialID] = append(byTrial[s.TrialID], s)
-		d.services = append(d.services, s.ServiceDurationNanos)
 	}
 	sort.Strings(trialIDs)
 	for _, id := range trialIDs {
@@ -89,7 +88,6 @@ func NewServiceDistribution(samples []ServiceSample) (*ServiceDistribution, erro
 		}
 		d.trials = append(d.trials, t)
 	}
-	sort.Slice(d.services, func(i, j int) bool { return d.services[i] < d.services[j] })
 	return d, nil
 }
 
@@ -215,6 +213,7 @@ func (d *ServiceDistribution) QuantileNanos(gap *int64, percentile float64) (int
 	}
 	var local [32]serviceNeighbors
 	nearest := local[:0]
+	selected := 0
 	for j := range d.trials {
 		a, b, distance, outside := d.trials[j].nearest(gap)
 		if len(a)+len(b) == 0 {
@@ -226,6 +225,7 @@ func (d *ServiceDistribution) QuantileNanos(gap *int64, percentile float64) (int
 			nearest = all
 		}
 		nearest = append(nearest, serviceNeighbors{a, b})
+		selected += len(a) + len(b)
 		support.TrialCount++
 		support.DistanceNanos = max(support.DistanceNanos, distance)
 		support.OutsideSupport = support.OutsideSupport || outside
@@ -233,16 +233,48 @@ func (d *ServiceDistribution) QuantileNanos(gap *int64, percentile float64) (int
 	if support.TrialCount == 0 || math.IsNaN(percentile) || percentile < 0 || percentile > 100 {
 		return 0, support, false
 	}
-	index := sort.Search(len(d.services), func(i int) bool {
+	// Only selected records can increase the CDF. Keep the physical-trial
+	// accumulation and comparison identical, including positive mass at p0.
+	reaches := func(value int64) bool {
 		mass := 0.0
 		for _, trial := range nearest {
 			n := len(trial.a) + len(trial.b)
-			mass += float64(serviceUpperBound(trial.a, d.services[i])+serviceUpperBound(trial.b, d.services[i])) / float64(n)
+			mass += float64(serviceUpperBound(trial.a, value)+serviceUpperBound(trial.b, value)) / float64(n)
 		}
 		return mass > 0 && mass/float64(support.TrialCount) >= percentile/100
-	})
-	if index == len(d.services) {
-		return 0, support, false
 	}
-	return d.services[index], support, true
+	var values [32]int64
+	if selected <= len(values) {
+		candidates := values[:0]
+		for _, trial := range nearest {
+			for _, group := range [2][]ServiceSample{trial.a, trial.b} {
+				for _, sample := range group {
+					candidates = append(candidates, sample.ServiceDurationNanos)
+				}
+			}
+		}
+		slices.Sort(candidates)
+		index := sort.Search(len(candidates), func(i int) bool { return reaches(candidates[i]) })
+		if index == len(candidates) {
+			return 0, support, false
+		}
+		return candidates[index], support, true
+	}
+	// Large groups are already sorted. Find each group's first CDF crossing,
+	// retaining the smallest, without copying or sorting their records.
+	var value int64
+	found := false
+	for _, trial := range nearest {
+		for _, group := range [2][]ServiceSample{trial.a, trial.b} {
+			n := len(group)
+			if found {
+				n = sort.Search(n, func(i int) bool { return group[i].ServiceDurationNanos >= value })
+			}
+			index := sort.Search(n, func(i int) bool { return reaches(group[i].ServiceDurationNanos) })
+			if index < n {
+				value, found = group[index].ServiceDurationNanos, true
+			}
+		}
+	}
+	return value, support, found
 }

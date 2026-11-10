@@ -9,31 +9,59 @@ import (
 	"testing"
 )
 
+// Global candidates belong only to the reference query, not the immutable
+// production distribution. Build once per distribution, outside timed loops.
+func baselineServiceValues(d *ServiceDistribution) []int64 {
+	var values []int64
+	for _, trial := range d.trials {
+		for _, sample := range trial.startup {
+			values = append(values, sample.ServiceDurationNanos)
+		}
+		for _, group := range trial.groups {
+			for _, sample := range group.samples {
+				values = append(values, sample.ServiceDurationNanos)
+			}
+		}
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+	return values
+}
+
 // baselineQuantileNanos preserves the 02b521a0 query for exact comparisons,
 // including floating-point trial summation and the positive-mass p0 rule.
-func baselineQuantileNanos(d *ServiceDistribution, gap *int64, percentile float64) (int64, ConditionalSupport, bool) {
+func baselineQuantileNanos(d *ServiceDistribution, services []int64, gap *int64, percentile float64) (int64, ConditionalSupport, bool) {
 	support := d.support(gap)
 	if support.TrialCount == 0 || math.IsNaN(percentile) || percentile < 0 || percentile > 100 {
 		return 0, support, false
 	}
-	index := sort.Search(len(d.services), func(i int) bool {
+	index := sort.Search(len(services), func(i int) bool {
 		mass := 0.0
 		for j := range d.trials {
 			a, b, _, _ := d.trials[j].nearest(gap)
 			if n := len(a) + len(b); n > 0 {
-				mass += float64(serviceUpperBound(a, d.services[i])+serviceUpperBound(b, d.services[i])) / float64(n)
+				mass += float64(serviceUpperBound(a, services[i])+serviceUpperBound(b, services[i])) / float64(n)
 			}
 		}
 		return mass > 0 && mass/float64(support.TrialCount) >= percentile/100
 	})
-	if index == len(d.services) {
+	if index == len(services) {
 		return 0, support, false
 	}
-	return d.services[index], support, true
+	return services[index], support, true
 }
 
-// This file also runs unchanged on 02b521a0. Retained profiles are external
-// evidence, never synthetic replacements for missing paired service samples.
+// Retained profiles are external evidence, never synthetic replacements for
+// missing paired service samples. For baseline 036e00a5 and the changed tree:
+//
+//	CHILL_NUMERICAL_PROFILES=/path/to/retained-profile-samples.json \
+//	  go test ./internal/firstfloor -run '^TestRetainedServiceSamples$' -count=1 -v
+//	CHILL_NUMERICAL_PROFILES=/path/to/retained-profile-samples.json \
+//	  go test ./internal/firstfloor -run '^$' -bench '^BenchmarkRetainedServiceSamples$' -benchmem -count=5
+//
+// Compare profile startup/busy choice logs and benchmark medians on the same
+// host. Each quantile is also checked against the original full-support query.
+// Run BenchmarkConditionalQuantile and BenchmarkConditionalQuantileGroupSize
+// separately for common three-trial support and large-group allocation/cost.
 func retainedServicePolicies(tb testing.TB) ([]string, []Policy) {
 	tb.Helper()
 	path := os.Getenv("CHILL_NUMERICAL_PROFILES")
@@ -96,6 +124,7 @@ func TestRetainedServiceSamples(t *testing.T) {
 	ids, policies := retainedServicePolicies(t)
 	for i, p := range policies {
 		for _, batch := range p.Batches {
+			services := baselineServiceValues(batch.Distribution)
 			var lo, hi int64
 			known := false
 			for _, sample := range batch.ServiceSamples {
@@ -113,8 +142,8 @@ func TestRetainedServiceSamples(t *testing.T) {
 				gaps = append(gaps, &lo, &middle, &hi)
 			}
 			for _, gap := range gaps {
-				for _, percentile := range []float64{0, 50, 99, 100} {
-					want, support, valid := baselineQuantileNanos(batch.Distribution, gap, percentile)
+				for _, percentile := range []float64{math.NaN(), -1, 0, math.SmallestNonzeroFloat64, 12.5, 37.5, 50, math.Nextafter(50, 100), 87.5, 95, 99.9, 100, 101} {
+					want, support, valid := baselineQuantileNanos(batch.Distribution, services, gap, percentile)
 					got, gotSupport, ok := batch.Distribution.QuantileNanos(gap, percentile)
 					if got != want || gotSupport != support || ok != valid {
 						t.Fatalf("profile %s batch %d p%g: got %d %+v %v, want %d %+v %v", ids[i], batch.Size, percentile, got, gotSupport, ok, want, support, valid)
