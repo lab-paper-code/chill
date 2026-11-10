@@ -197,7 +197,7 @@ func completeTerminatedPodReplacement(t *testing.T, c *SchedulerController, goal
 }
 
 func TestTerminatedPodOnlyRemoveRetainsChangedAndUnknownSources(t *testing.T) {
-	for _, mismatch := range []string{"action-pod", "snapshot-pod", "node-uid", "replaced-pod", "replaced-node", "unknown", "revived", "retained-executor"} {
+	for _, mismatch := range []string{"action-pod", "snapshot-pod", "node-uid", "replaced-pod", "replaced-node", "unconfirmed-source", "revived", "retained-executor"} {
 		t.Run(mismatch, func(t *testing.T) {
 			c, old := terminatedPodController(t)
 			action := changedTerminatedPodRemoveAction(t, c, old, mismatch)
@@ -220,12 +220,12 @@ func changedTerminatedPodRemoveAction(t *testing.T, c *SchedulerController, old 
 	index := slices.IndexFunc(c.state.Snapshot.Instances, func(i serving.SchedulerInstance) bool { return i.ID == old.ID })
 	switch mismatch {
 	case "action-pod":
-		action.Instance = "different-pod"
+		action.Instance = otherPodUID
 	case "snapshot-pod":
-		c.state.Snapshot.Instances[index].PodUID = "different-pod"
+		c.state.Snapshot.Instances[index].PodUID = otherPodUID
 	case "node-uid":
 		action.Node.UID = "replaced-node"
-	case "unknown":
+	case "unconfirmed-source":
 		c.state.Snapshot.Instances[index].Terminated = false
 	default:
 		changeTerminatedPodPhysicalSource(t, c, old, mismatch)
@@ -244,7 +244,7 @@ func changeTerminatedPodPhysicalSource(t *testing.T, c *SchedulerController, old
 		if mismatch == "revived" {
 			pod.Status = core.PodStatus{Phase: core.PodRunning, ContainerStatuses: []core.ContainerStatus{{Name: servingstate.FirstfloorContainerName, ContainerID: "containerd://new", State: core.ContainerState{Running: &core.ContainerStateRunning{}}}}}
 		} else {
-			pod.UID = "different-pod"
+			pod.UID = otherPodUID
 		}
 		if err := c.kube.(*kubefake.Clientset).Tracker().Update(core.SchemeGroupVersion.WithResource("pods"), pod, pod.Namespace); err != nil {
 			t.Fatal(err)

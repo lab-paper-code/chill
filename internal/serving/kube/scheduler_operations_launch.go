@@ -95,15 +95,7 @@ func (c *SchedulerController) launchTargetLocked(ctx context.Context, target ser
 				continue
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.snapshotLocked().Workloads)
-			if action.Kind == servingstate.OperationRemove {
-				for _, instance := range c.state.Snapshot.Instances {
-					if instance.ID == action.Instance && instance.Node == action.Node && instance.PodUID != "" &&
-						instance.ID == instance.PodUID && instance.Stopped && instance.Terminated {
-						operation.Instance, operation.PodUID = "", instance.PodUID
-						break
-					}
-				}
-			}
+			bindTerminatedPodRemoval(&operation, action, c.state.Snapshot.Instances)
 			var routeTouches map[string][]string
 			if action.Kind == servingstate.OperationRoute {
 				scope, empty := c.routeOperationScopeLocked(target, *selectedTarget, selectedTarget != &target)
@@ -404,6 +396,18 @@ func (c *reservationState) completedHandoffPresent(target serving.SchedulerCandi
 		}
 	}
 	return false
+}
+
+func bindTerminatedPodRemoval(operation *servingstate.Operation, action serving.Action, instances []serving.SchedulerInstance) {
+	if action.Kind == servingstate.OperationRemove {
+		for _, instance := range instances {
+			if instance.ID == action.Instance && instance.Node == action.Node && instance.PodUID != "" &&
+				instance.ID == instance.PodUID && instance.Stopped && instance.Terminated {
+				operation.Instance, operation.PodUID = "", instance.PodUID
+				break
+			}
+		}
+	}
 }
 
 // scheduledOperation builds the operation of one planned action. A preparation

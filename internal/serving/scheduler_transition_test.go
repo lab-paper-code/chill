@@ -648,7 +648,8 @@ func TestIdleRetirementDoesNotWaitForUnrelatedPreparation(t *testing.T) {
 }
 
 func TestTerminatedPodOnlyCleanupPlansDirectRemove(t *testing.T) {
-	for _, path := range []string{"preparation-blocker", "obsolete", "power-in-place", "power-reboot"} {
+	const rebootCleanup, inPlaceCleanup = "power-reboot", "power-in-place"
+	for _, path := range []string{"preparation-blocker", "obsolete", inPlaceCleanup, rebootCleanup} {
 		t.Run(path, func(t *testing.T) {
 			settings, snapshot, target := overlappingResourceFixture(t)
 			old := &snapshot.Instances[0]
@@ -660,9 +661,9 @@ func TestTerminatedPodOnlyCleanupPlansDirectRemove(t *testing.T) {
 			case "obsolete":
 				target.Instances = nil
 				target.Routing = snapshot.Routing
-			case "power-in-place", "power-reboot":
+			case inPlaceCleanup, rebootCleanup:
 				target.Nodes[0].PowerMode = "next"
-				if path == "power-reboot" {
+				if path == rebootCleanup {
 					snapshot.Nodes[0].Reboots = []PowerReboot{{From: snapshot.Nodes[0].PowerMode, To: "next"}}
 				}
 			}
@@ -686,7 +687,7 @@ func TestTerminatedPodOnlyCleanupPlansDirectRemove(t *testing.T) {
 					t.Fatalf("preparation bypassed physical removal: %+v", actions)
 				}
 			}
-			if path == "power-in-place" || path == "power-reboot" {
+			if path == inPlaceCleanup || path == rebootCleanup {
 				power := requireTransitionAction(t, actions, schedulerActionPower)
 				if !slices.Contains(power.DependsOn, remove.ID) {
 					t.Fatalf("power bypassed Pod-only removal: %+v", actions)
@@ -697,7 +698,8 @@ func TestTerminatedPodOnlyCleanupPlansDirectRemove(t *testing.T) {
 }
 
 func TestPodOnlyCleanupKeepsExecutorAndUnknownGuards(t *testing.T) {
-	for _, state := range []string{"running", "terminated-executor", "missing-pod-uid", "unknown"} {
+	const unconfirmedPod = "unconfirmed-pod-only"
+	for _, state := range []string{"running", "terminated-executor", "missing-pod-uid", unconfirmedPod} {
 		t.Run(state, func(t *testing.T) {
 			settings, snapshot, target := overlappingResourceFixture(t)
 			old := &snapshot.Instances[0]
@@ -709,11 +711,11 @@ func TestPodOnlyCleanupKeepsExecutorAndUnknownGuards(t *testing.T) {
 			case "missing-pod-uid":
 				old.ID, old.PodUID = "pod", ""
 				old.Ready, old.Stopped, old.Terminated = false, true, true
-			case "unknown":
+			case unconfirmedPod:
 				old.ID, old.Ready, old.Stopped = old.PodUID, false, true
 			}
 			actions := schedulerPlan(settings, snapshot, target)
-			if state == "unknown" {
+			if state == unconfirmedPod {
 				if slices.ContainsFunc(actions, func(a Action) bool {
 					return a.Kind == schedulerActionRemove || a.Kind == schedulerActionStop || a.Kind == schedulerActionDrain
 				}) {
