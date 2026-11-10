@@ -9,20 +9,38 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 )
 
 func TestSchedulerControlRoundRetainsAdmissionLockAndTick(t *testing.T) {
-	for _, failedRecord := range []bool{false, true} {
-		name := "keep"
-		if failedRecord {
-			name = "failed-record"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		failedRecord, canceled bool
+	}{
+		{name: "keep"},
+		{name: "failed-record", failedRecord: true},
+		{name: "canceled-before-capture", canceled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			service := schedulerTestService(t, schedulerTestConfiguration())
 			installPolicyControlSources(t, service)
+			// Empty inventory is Pending (MissingPoolInventory). A Ready POOL
+			// Node with no workloads is a real Keep without observation warm-up.
+			node := &corev1.Node{
+				ObjectMeta: meta.ObjectMeta{Name: "round-node", UID: "round-node-uid"},
+				Status: corev1.NodeStatus{
+					Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi")},
+					Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+				},
+			}
+			if _, err := service.kube.CoreV1().Nodes().Create(context.Background(), node, meta.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
 			failure := errors.New("controlled admission failure")
 			var admitElapsed, recordElapsed time.Duration
 			first := true
@@ -36,11 +54,14 @@ func TestSchedulerControlRoundRetainsAdmissionLockAndTick(t *testing.T) {
 				admitElapsed = time.Since(started)
 				return true, nil, failure
 			})
-			config := servingkube.SchedulerControllerConfig{Settings: service.Controller.Settings(), OnDecision: func(serving.SchedulerDecision, serving.SchedulerSnapshot) error {
+			config := servingkube.SchedulerControllerConfig{Settings: service.Controller.Settings(), OnDecision: func(decision serving.SchedulerDecision, snapshot serving.SchedulerSnapshot) error {
+				if tc.canceled || decision.Status != "Keep" || len(decision.Reasons) != 0 || len(snapshot.Nodes) != 1 || !snapshot.Nodes[0].Ready {
+					t.Fatalf("expected evaluable empty Ready POOL: decision=%+v snapshot=%+v", decision, snapshot)
+				}
 				started := time.Now()
 				time.Sleep(10 * time.Millisecond)
 				recordElapsed = time.Since(started)
-				if failedRecord {
+				if tc.failedRecord {
 					return errors.New("controlled decision failure")
 				}
 				return nil
@@ -48,11 +69,16 @@ func TestSchedulerControlRoundRetainsAdmissionLockAndTick(t *testing.T) {
 			if err := service.Controller.SetConfiguration(config); err != nil {
 				t.Fatal(err)
 			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.canceled {
+				cancel()
+			}
 			service.Lock.Lock()
 			entered, done := make(chan struct{}), make(chan time.Time, 1)
 			go func() {
 				close(entered)
-				done <- service.controlRound(context.Background())
+				done <- service.controlRound(ctx)
 			}()
 			<-entered
 			time.Sleep(10 * time.Millisecond)
@@ -76,7 +102,14 @@ func TestSchedulerControlRoundRetainsAdmissionLockAndTick(t *testing.T) {
 			if round == nil || tick == nil {
 				t.Fatalf("round/Tick completion pair missing: %+v", rows)
 			}
-			if !round.TickAt.Equal(tick.TickAt) || round.Status != "Keep" || round.AdmitError != failure.Error() || (round.Error != "") != failedRecord {
+			wantStatus := "Keep"
+			if tc.canceled {
+				wantStatus = ""
+				if tick.Error != context.Canceled.Error() || tick.Phase != "capture" || tick.Record != 0 || tick.Launch != 0 {
+					t.Fatalf("canceled Tick advanced beyond entry: %+v", tick)
+				}
+			}
+			if !round.TickAt.Equal(tick.TickAt) || round.Status != wantStatus || tick.Status != wantStatus || round.AdmitError != failure.Error() || (round.Error != "") != (tc.failedRecord || tc.canceled) {
 				t.Fatalf("round disposition or join lost: round=%+v tick=%+v", round, tick)
 			}
 			if round.LockWait <= 0 || round.Admit < admitElapsed || tick.Record < recordElapsed || round.Tick < tick.Elapsed || round.Elapsed < round.LockWait+round.Admit+round.Tick {

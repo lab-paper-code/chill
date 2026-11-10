@@ -1960,13 +1960,19 @@ func TestCapacityTargetDAGProjectsOnlyPowerMode(t *testing.T) {
 	}
 }
 
-// §9 6 기간과 기록: the decision does not depend on input order.
-func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
+// Planner decision projection is input-order invariant when search runs to
+// completion. Public EvaluateScheduler wall-deadline behavior is tested separately.
+func TestCapacityPlannerDecisionIgnoresInputOrder(t *testing.T) {
 	s, snap, _ := capacityE1Fixture()
 	poolsAddNode(&snap, "idle", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
-	want := capacityDecideForTest(t, s, snap)
-	want.Capacity.Search = nil // Wall-budget traversal statistics are not the chosen decision.
-	want.EvaluationTiming = SchedulerEvaluationTiming{}
+	decide := func(snapshot SchedulerSnapshot) SchedulerDecision {
+		planner := capacityPlannerForTest(t, s, snapshot)
+		best := capacitySearchForTest(t, planner)
+		decision := planner.decide(SchedulerDecision{Keep: planner.keep}, best)
+		decision.Capacity.Search = nil // Search timing/traversal diagnostics are not the chosen outcome.
+		return decision
+	}
+	want := decide(snap)
 	for seed := range 10 {
 		rng := rand.New(rand.NewPCG(uint64(seed), 3))
 		shuffled := snap
@@ -1981,9 +1987,7 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 		rng.Shuffle(len(shuffled.Arrivals), func(i, j int) {
 			shuffled.Arrivals[i], shuffled.Arrivals[j] = shuffled.Arrivals[j], shuffled.Arrivals[i]
 		})
-		got := capacityDecideForTest(t, s, shuffled)
-		got.Capacity.Search = nil
-		got.EvaluationTiming = SchedulerEvaluationTiming{}
+		got := decide(shuffled)
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("seed %d: shuffled input changed the decision:\n%+v\n%+v", seed, got.Target, want.Target)
 		}

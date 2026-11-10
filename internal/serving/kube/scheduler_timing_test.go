@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -15,7 +16,7 @@ import (
 
 func TestSchedulerTickCompletionIncludesKeepAndFailedRecord(t *testing.T) {
 	for _, fail := range []bool{false, true} {
-		name := "keep"
+		name := native.DeadlineKeep
 		if fail {
 			name = "failed-record"
 		}
