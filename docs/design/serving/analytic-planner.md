@@ -92,6 +92,8 @@ only q and its q/window contribution to λ use this waiting-demand projection.
 
 keep와 exact finalists는 현재 outstanding, 실제 transition schedule, 정수 routing과 비교기간의 finite arrival population을 replay한다. 비교기간 뒤 신규 도착 없이 완료·drop·만료·미완료를 수집한다. retained worker가 실제 처리한 만큼만 queue를 줄이며 running batch는 원 worker의 conditional residual을 유지한다. λ/κ̂나 backlog/κ̂를 완료 지연으로 사용하지 않는다.
 
+같은 planner의 후보들은 불변 arrival cohort를 한 번 준비해 사용한다. outstanding과 요청별 가변 상태·RNG는 각 replay가 소유한다. 최종 결과 집계에서는 변화가 끝난 큐의 요청 수와 profile 호환성을 재사용하고, 실행 중 expiry/drop은 현재 큐를 읽는다. 같은 후보의 기존 결과 memo와 별개이며 다음 Tick으로 보유하지 않는다.
+
 최종 순서는 물리 eligibility 다음 전체 Workload의 SLO 충족 여부다. 충족 후보끼리는 기존 에너지·keep·논리 key 순으로 비교한다. 미충족 후보는 Workload별 실패 비율, 성공 요청의 상대 지연 초과, 조건부 potential 초과 순서의 tuple을 비교한다. potential은 실제 실패의 완료시간이 아니며 성공 표본이 없으면 성공 percentile은 null이다. 모집단이 0인 Workload에는 현재 비교 의무가 없다.
 
 충족 판정은 불변 Definition별 전체 요청의 설정 분위수를 따른다. 늦은 완료·drop·실패·만료·미완료는 같은 허용 tail을 쓰며 실패 0건을 요구하지 않는다. v1/v2·직접 replay·capacity window의 공통 수식과 성공 전용 진단값의 구분은 [M0 §3.3](path-aware-implementation-plan.md#33-처리율탐색최종-평가)에 둔다.

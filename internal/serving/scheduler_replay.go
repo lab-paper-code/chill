@@ -223,12 +223,12 @@ type schedulerReplayState struct {
 	// compared limits energy to these Nodes; nil counts every Node.
 	compared map[NodeReference]bool
 	// chooseBatches scratch, reused across events.
-	entries  []schedulerReplayQueued
-	states   []firstfloor.RequestState
-	capacity *capacityWindowLimit // nil for ordinary candidate estimates
+	entries            []schedulerReplayQueued
+	states             []firstfloor.RequestState
+	capacity           *capacityWindowLimit // nil for ordinary candidate estimates
 	finalizingFeedback bool
-	potentialQueues   map[*schedulerReplayInstance]*feedbackQueueSummary // non-nil only during immutable final reduction
-	potentialProfiles map[feedbackProfileKey]bool // immutable Definition/Profile compatibility, never readiness or queue state
+	potentialQueues    map[*schedulerReplayInstance]*feedbackQueueSummary // non-nil only during immutable final reduction
+	potentialProfiles  map[feedbackProfileKey]bool                        // immutable Definition/Profile compatibility, never readiness or queue state
 }
 
 func (s *schedulerReplayState) counted(node NodeReference) bool {

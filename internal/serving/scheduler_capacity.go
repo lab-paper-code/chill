@@ -321,7 +321,7 @@ type capacityPlanner struct {
 	settings                 SchedulerSettings
 	snapshot                 SchedulerSnapshot
 	keep                     SchedulerCandidate
-	feedbackCache            sync.Map // Tick-local exact replay results; v1 workers share immutable values
+	feedbackCache            sync.Map            // Tick-local exact replay results; v1 workers share immutable values
 	feedbackCohort           capacityArrivalMemo // Tick-local immutable arrivals; mutable requests belong to each replay
 	options                  []SchedulerOption
 	pending                  []SchedulerInstance // uncreated commitments, counted once without capacity
