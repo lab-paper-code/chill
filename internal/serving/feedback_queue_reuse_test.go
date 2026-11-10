@@ -74,7 +74,9 @@ func TestFeedbackPotentialCompatibilityUsesImmutablePointers(t *testing.T) {
 	}
 	other := *profile
 	other.Condition.LogicalModel += "-other"
-	if state.potentialProfileMatches(definition, &other) || state.potentialProfileMatches(definition, &other) {
+	// The second call reads the memoized verdict.
+	first := state.potentialProfileMatches(definition, &other)
+	if second := state.potentialProfileMatches(definition, &other); first || second {
 		t.Fatal("incompatible profile accepted")
 	}
 	frozen := *definition
