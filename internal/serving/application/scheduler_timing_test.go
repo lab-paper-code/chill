@@ -17,6 +17,8 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
+const schedulerTimingKeepStatus = "Keep"
+
 func TestSchedulerControlRoundRetainsAdmissionLockAndTick(t *testing.T) {
 	for _, tc := range []struct {
 		name                 string
@@ -42,7 +44,7 @@ func TestSchedulerControlRoundRetainsAdmissionLockAndTick(t *testing.T) {
 				return true, nil, failure
 			})
 			config := servingkube.SchedulerControllerConfig{Settings: service.Controller.Settings(), OnDecision: func(decision serving.SchedulerDecision, snapshot serving.SchedulerSnapshot) error {
-				if tc.canceled || decision.Status != "Keep" || len(decision.Reasons) != 0 || len(snapshot.Nodes) != 1 || !snapshot.Nodes[0].Ready {
+				if tc.canceled || decision.Status != schedulerTimingKeepStatus || len(decision.Reasons) != 0 || len(snapshot.Nodes) != 1 || !snapshot.Nodes[0].Ready {
 					t.Fatalf("expected evaluable empty Ready POOL: decision=%+v snapshot=%+v", decision, snapshot)
 				}
 				started := time.Now()
@@ -75,21 +77,8 @@ func TestSchedulerControlRoundRetainsAdmissionLockAndTick(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var round, tick *observation.SchedulerControlObservation
-			for _, row := range rows {
-				if row.Control == nil {
-					continue
-				}
-				if row.Control.Scope == "round" {
-					round = row.Control
-				} else if row.Control.Scope == "tick" {
-					tick = row.Control
-				}
-			}
-			if round == nil || tick == nil {
-				t.Fatalf("round/Tick completion pair missing: %+v", rows)
-			}
-			wantStatus := "Keep"
+			round, tick := schedulerControlCompletionPair(t, rows)
+			wantStatus := schedulerTimingKeepStatus
 			if tc.canceled {
 				wantStatus = ""
 				if tick.Error != context.Canceled.Error() || tick.Phase != "capture" || tick.Record != 0 || tick.Launch != 0 {
@@ -104,6 +93,25 @@ func TestSchedulerControlRoundRetainsAdmissionLockAndTick(t *testing.T) {
 			}
 		})
 	}
+}
+
+func schedulerControlCompletionPair(t *testing.T, rows []observation.SchedulerObservation) (round, tick *observation.SchedulerControlObservation) {
+	t.Helper()
+	for _, row := range rows {
+		if row.Control == nil {
+			continue
+		}
+		switch row.Control.Scope {
+		case "round":
+			round = row.Control
+		case "tick":
+			tick = row.Control
+		}
+	}
+	if round == nil || tick == nil {
+		t.Fatalf("round/Tick completion pair missing: %+v", rows)
+	}
+	return round, tick
 }
 
 func schedulerTimingService(t *testing.T) *SchedulerService {
@@ -146,26 +154,17 @@ func TestSchedulerControlRoundRecordedDecisionCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var round, tick *observation.SchedulerControlObservation
+	round, tick := schedulerControlCompletionPair(t, rows)
 	var recorded *serving.SchedulerDecision
 	for _, row := range rows {
 		if row.Decision != nil {
 			recorded = row.Decision
 		}
-		if row.Control == nil {
-			continue
-		}
-		switch row.Control.Scope {
-		case "round":
-			round = row.Control
-		case "tick":
-			tick = row.Control
-		}
 	}
-	if round == nil || tick == nil || recorded == nil || decisionAt.IsZero() {
+	if recorded == nil || decisionAt.IsZero() {
 		t.Fatalf("recorded decision/completion chain missing: %+v", rows)
 	}
-	if !round.TickAt.Equal(tick.TickAt) || !tick.DecisionAt.Equal(decisionAt) || !recorded.At.Equal(decisionAt) || tick.Status != "Keep" || tick.TargetID == "" {
+	if !round.TickAt.Equal(tick.TickAt) || !tick.DecisionAt.Equal(decisionAt) || !recorded.At.Equal(decisionAt) || tick.Status != schedulerTimingKeepStatus || tick.TargetID == "" {
 		t.Fatalf("recorded disposition lost after cancellation: round=%+v tick=%+v decision=%+v", round, tick, recorded)
 	}
 	if round.Status != "" || round.TargetID != "" || round.Fallback != "" || round.Error != context.Canceled.Error() || tick.Error != context.Canceled.Error() || tick.Phase != "record" || tick.Launch != 0 {
