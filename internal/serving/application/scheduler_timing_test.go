@@ -21,7 +21,7 @@ const schedulerTimingKeepStatus = "Keep"
 
 func TestSchedulerControlRoundRetainsAdmissionLockAndTick(t *testing.T) {
 	for _, tc := range []struct {
-		name                 string
+		name                   string
 		failedRecord, canceled bool
 	}{
 		{name: "keep"},
@@ -124,7 +124,7 @@ func schedulerTimingService(t *testing.T) *SchedulerService {
 		ObjectMeta: meta.ObjectMeta{Name: "round-node", UID: "round-node-uid"},
 		Status: corev1.NodeStatus{
 			Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi")},
-			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+			Conditions:  []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
 		},
 	}
 	if _, err := service.kube.CoreV1().Nodes().Create(context.Background(), node, meta.CreateOptions{}); err != nil {

@@ -1,6 +1,6 @@
 # 제어 비용·관측 판정·배치 적용 후속 해결 계획
 
-상태: A1·A2·C1 구현 및 독립 리뷰 진행. 로컬 소비자 검증 후 통합 gate와 main의 배포·실수용을 수행한다.
+상태: A1·A2·C1 구현·독립 리뷰·로컬 누적 검증 완료. main의 공식 배포·실수용으로 이어간다.
 기준: `036e00a54442b085121f6fc7464b9c37042d8e74`, Helm230, control373의 동일 E5 두 stage.
 선행: [요청·관측·제어 간섭 해소](request-control-interference-plan.md). 완료한 C1~C5는 유지하고 남은 경계만 다룬다.
 
@@ -178,5 +178,9 @@ CPU·heap은 같은 stage 상대 시점·표본 길이·GC 조건으로 비교�
 세 독립 조사 결과를 소스 원문으로 검토했고, 부모가 gopls 정의/참조를 확인했다. pinned gopls는 v0.23.0이다. 일부 scout에는 실행/LSP 도구가 없어 해당 부분은 부모가 수행했다.
 
 구현 근거는 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/control-loop-implementation-20261110/`에 보존한다. `standalone-consumer-comparison.json`, `numeric-final-comparison.json`, `numeric-review.json`, `continuation-consumer.json`은 각각 실제 수치 소비·비용·독립 리뷰·자동 Continue에 의한 remove→prepare/route→예약 반환을 확인한다.
+
+`make test`는 77개 Go package와 Python·Helm·배포 검사를 통과했지만 kube의 기존 fake API 게시 순서 경쟁 1건으로 실패했다. fixture에서 terminal 상태를 clientset→판정 store 순서로 게시하도록 고쳤으며, 영향 회귀와 kube package 전체를 다시 통과했다. 생산 코드·단언은 유지했다. 최종 lint·architecture·pinned gopls도 통과했다. 전체 `make test` 재실행 PASS로 표현하지 않는다.
+
+round↔Tick은 `control.tickAt`, Tick↔decision은 `control.decisionAt`으로 연결한다. round는 시간·오류, Tick은 처분을 소유한다. `filter=all`로 control 행을 수집하며, 오류·Keep·fallback도 분모에 포함한다. 완료 행 자신의 기록 제출과 비동기 영속·물리 완료는 elapsed 밖이다. 상세 실행·검증 항목은 구현 근거의 `deployment-handoff.md`에 있다.
 
 남은 실수용은 전체 round/Tick wall time, 정상 정리 뒤 물리 전환, executor 교대 뒤 공식 품질이다. 최초 unclean predecessor의 발생 원인은 보존된 run 파일이 없어 확정하지 않았다. 기존 raw와 published 결과는 유지한다.
