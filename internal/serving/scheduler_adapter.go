@@ -9,7 +9,7 @@ import (
 )
 
 // capacityExact keeps lifecycle admission, reserve evidence and native results in CHILL.
-// Observer slots are private to each v1 worker; v2 uses slot zero.
+// Observer slots are private to each exact worker in both engines.
 type capacityExact struct {
 	p        *capacityPlanner
 	excluded []map[string]int

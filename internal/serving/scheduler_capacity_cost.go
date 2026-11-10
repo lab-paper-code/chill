@@ -199,6 +199,7 @@ func ActionDeadline(window time.Duration, costs []OperationCost, a Action) time.
 // do not repay their transition at the least load over the same period T.
 // Empty-Node savings must pay independently, including in overload plan sets.
 func (p *capacityPlanner) payback(best capacityResult) capacityResult {
+	// Each alternative includes earlier reverts, so these replays are dependent.
 	for n, j := range best.choice {
 		plan := p.plans[n][j]
 		emptySaving := !plan.keep && plan.mode != p.plans[n][0].mode &&

@@ -29,10 +29,16 @@ func (Engine[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (out protoc
 	stats := FunnelStats{}
 	exactStarted := time.Now()
 	best := Funnel(p, exact, candidates, &stats)
+	if err := p.Context.Err(); err != nil {
+		return protocol.Outcome[R]{}, err
+	}
 	fallback := ""
 	if best == nil {
 		fallback = "exactK1"
 		best = ExactK1(p, exact, &stats)
+		if err := p.Context.Err(); err != nil {
+			return protocol.Outcome[R]{}, err
+		}
 		if best != nil {
 			point := exact.Point(*best)
 			stats.RawKey, stats.RawJoules = point.Key, point.Joules

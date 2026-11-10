@@ -2,6 +2,7 @@ package v2
 
 import (
 	"slices"
+	"sync"
 
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
@@ -30,14 +31,53 @@ func funnelEvaluate[R any](exact protocol.Exact[R], choice []int, stats *FunnelS
 
 // Funnel selects on native exact results and optional CHILL postfilters.
 func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []protocol.Candidate, stats *FunnelStats) *R {
+	// Replays borrow only immutable problem state. Reduce in candidate order so
+	// completion order cannot change ties, postfilters or observer diagnostics.
+	results := make([]struct {
+		value     R
+		evaluated bool
+	}, len(candidates))
+	workers := min(max(p.Workers, 1), len(candidates))
+	evaluate := func(w int) {
+		for i := w; i < len(candidates); i += workers {
+			if p.Context != nil && p.Context.Err() != nil {
+				return
+			}
+			if exact.Bounded(candidates[i].Choice) {
+				results[i].value = exact.Evaluate(slices.Clone(candidates[i].Choice))
+				results[i].evaluated = true
+			}
+		}
+	}
+	if workers == 1 {
+		evaluate(0)
+	} else {
+		var wg sync.WaitGroup
+		for w := range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				evaluate(w)
+			}()
+		}
+		wg.Wait()
+	}
 	var rawBest, filteredBest, selected *R
 	var rawFiltered R
 	var rawGap, filteredGap float64
 	var rawStart, filteredStart string
 	anySurvivor := false
-	for _, candidate := range candidates {
-		res := funnelEvaluate(exact, candidate.Choice, stats)
-		if res == nil {
+	for i, candidate := range candidates {
+		if p.Context != nil && p.Context.Err() != nil {
+			return nil
+		}
+		if !results[i].evaluated {
+			continue
+		}
+		res := &results[i].value
+		stats.Exact++
+		exact.Observe(*res, i%workers)
+		if !exact.Admits(*res) {
 			continue
 		}
 		filtered := *res
@@ -62,6 +102,9 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 			}
 		}
 	}
+	if p.Context != nil && p.Context.Err() != nil {
+		return nil
+	}
 	if p.PostFilter && rawBest != nil && !exact.FilterKept(*rawBest) && exact.FilterKept(rawFiltered) && anySurvivor {
 		stats.Reverts++
 	}
@@ -78,10 +121,16 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 
 // ExactK1 includes keep and every eligible variant without surrogate pruning.
 func ExactK1[R any](p protocol.Problem, exact protocol.Exact[R], stats *FunnelStats) *R {
+	if p.Context != nil && p.Context.Err() != nil {
+		return nil
+	}
 	choice := make([]int, len(p.Plans))
 	best := funnelEvaluate(exact, choice, stats)
 	for n, plans := range p.Plans {
 		for j, plan := range plans {
+			if p.Context != nil && p.Context.Err() != nil {
+				return nil
+			}
 			if j == 0 || !plan.Eligible {
 				continue
 			}
