@@ -152,6 +152,13 @@ type feedbackPopulation struct {
 }
 
 func (s *schedulerReplayState) finishFeedback() {
+	// Event-time expiry/drop captures still read the current queue. Only final
+	// reduction has no later queue, lifetime, or defer mutations.
+	s.finalizingFeedback = true
+	defer func() {
+		s.finalizingFeedback = false
+		s.potentialQueues = nil
+	}()
 	populations := make(map[string]*feedbackPopulation, len(s.out.definitions))
 	for _, request := range s.requests {
 		population := populations[request.identity]
@@ -287,7 +294,7 @@ func (s *schedulerReplayState) capturePotential(request *schedulerReplayRequest,
 		if assigned != nil && instance != assigned {
 			continue // accepted native work never teleports to another actor
 		}
-		if instance.config.Profile == nil || !schedulerProfileMatches(request.source.Definition, instance.config.Profile) || !schedulerOwnerAllows(instance.config.OwnerWorkloadUID, request.source.Definition.UID) {
+		if instance.config.Profile == nil || !s.potentialProfileMatches(request.source.Definition, instance.config.Profile) || !schedulerOwnerAllows(instance.config.OwnerWorkloadUID, request.source.Definition.UID) {
 			continue
 		}
 		wait, ready := s.potentialReady(instance, request)
@@ -318,7 +325,7 @@ func (s *schedulerReplayState) potentialLatency(instance *schedulerReplayInstanc
 		return base + residual // reuse the already sampled nonpreemptive residual
 	}
 	base += residual
-	count := potentialBatchCount(instance, request)
+	count := s.potentialBatchCount(instance, request)
 	var gap *int64
 	if instance.ready {
 		if len(instance.batch) > 0 {
@@ -341,6 +348,85 @@ func (s *schedulerReplayState) potentialLatency(instance *schedulerReplayInstanc
 		}
 	}
 	return best
+}
+
+type feedbackProfileKey struct {
+	definition *Definition
+	profile    *Profile
+}
+
+func (s *schedulerReplayState) potentialProfileMatches(definition *Definition, profile *Profile) bool {
+	key := feedbackProfileKey{definition, profile}
+	if matches, known := s.potentialProfiles[key]; known {
+		return matches
+	}
+	matches := schedulerProfileMatches(definition, profile)
+	if s.potentialProfiles == nil {
+		s.potentialProfiles = map[feedbackProfileKey]bool{}
+	}
+	s.potentialProfiles[key] = matches
+	return matches
+}
+
+type feedbackDeferredRun struct {
+	identity string
+	count    int
+}
+
+type feedbackQueueSummary struct {
+	normal   map[string]int
+	members  map[*schedulerReplayRequest]int // -1 for normal, otherwise deferred run index
+	deferred []feedbackDeferredRun
+}
+
+func summarizeFeedbackQueue(instance *schedulerReplayInstance) *feedbackQueueSummary {
+	summary := &feedbackQueueSummary{normal: map[string]int{}, members: make(map[*schedulerReplayRequest]int, len(instance.queue))}
+	for _, queued := range instance.queue {
+		if queued.expired || queued.dropped {
+			continue
+		}
+		if !queued.deferred {
+			summary.normal[queued.identity]++
+			summary.members[queued] = -1
+			continue
+		}
+		last := len(summary.deferred) - 1
+		if last < 0 || summary.deferred[last].identity != queued.identity {
+			summary.deferred = append(summary.deferred, feedbackDeferredRun{identity: queued.identity})
+			last++
+		}
+		summary.deferred[last].count++
+		summary.members[queued] = last
+	}
+	return summary
+}
+
+func (s *schedulerReplayState) potentialBatchCount(instance *schedulerReplayInstance, request *schedulerReplayRequest) int {
+	if !s.finalizingFeedback {
+		return potentialBatchCount(instance, request)
+	}
+	if s.potentialQueues == nil {
+		s.potentialQueues = make(map[*schedulerReplayInstance]*feedbackQueueSummary, len(s.instances))
+	}
+	summary := s.potentialQueues[instance]
+	if summary == nil {
+		summary = summarizeFeedbackQueue(instance)
+		s.potentialQueues[instance] = summary
+	}
+	member, contains := summary.members[request]
+	count := summary.normal[request.identity]
+	if request.deferred {
+		count = 0
+		if contains {
+			count = summary.deferred[member].count
+		} else if last := len(summary.deferred) - 1; last >= 0 && summary.deferred[last].identity == request.identity {
+			count = summary.deferred[last].count
+		}
+	}
+	if !contains && (!request.dispatched || request.source.Phase == phaseAssigned) {
+		count++
+	}
+	return count
 }
 
 func potentialBatchCount(instance *schedulerReplayInstance, request *schedulerReplayRequest) int {

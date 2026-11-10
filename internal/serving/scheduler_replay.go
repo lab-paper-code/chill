@@ -226,6 +226,9 @@ type schedulerReplayState struct {
 	entries  []schedulerReplayQueued
 	states   []firstfloor.RequestState
 	capacity *capacityWindowLimit // nil for ordinary candidate estimates
+	finalizingFeedback bool
+	potentialQueues   map[*schedulerReplayInstance]*feedbackQueueSummary // non-nil only during immutable final reduction
+	potentialProfiles map[feedbackProfileKey]bool // immutable Definition/Profile compatibility, never readiness or queue state
 }
 
 func (s *schedulerReplayState) counted(node NodeReference) bool {
