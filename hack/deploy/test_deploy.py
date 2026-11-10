@@ -301,7 +301,11 @@ if name=='kubectl':
   publication=json.loads(pathlib.Path(state['publication']).read_text());items=[]
   for role,entry in publication['roles'].items():
    if role not in ('server','operator','query','dashboard','node-agent','profiler'):continue
-   items.append({'metadata':{'name':role},'spec':{'containers':[{'name':role,'image':'foreign:old' if state.get('wrongPodImage') else entry['image']}]},'status':{'conditions':[{'type':'Ready','status':'False' if state.get('podNotReady') else 'True'}],'containerStatuses':[{'name':role,'ready':not state.get('containerNotReady',False),'restartCount':state.get('podRestartCount',0),'imageID':state.get('podImageID','registry@'+entry['platformDigests'][0])}]}})
+   for variant in state.get('podVariants',[{}]):
+    ready=variant.get('ready',True)
+    metadata={'name':role+'-'+str(len(items))}
+    if variant.get('deleting'):metadata['deletionTimestamp']='2026-11-10T00:00:00Z'
+    items.append({'metadata':metadata,'spec':{'containers':[{'name':role,'image':'foreign:old' if state.get('wrongPodImage') else entry['image']}]},'status':{'phase':variant.get('phase','Running'),'reason':variant.get('reason',''),'conditions':[{'type':'Ready','status':'True' if ready and not state.get('podNotReady') else 'False'}],'containerStatuses':[{'name':role,'ready':ready and not state.get('containerNotReady',False),'restartCount':state.get('podRestartCount',0),'imageID':state.get('podImageID','registry@'+entry['platformDigests'][0])}]}})
   print(json.dumps({'items':items}))
  else:print('{"items":[]}')
  sys.exit(0)
@@ -755,6 +759,35 @@ shutil.disk_usage = disk_usage
         next_publication = json.loads((follow_on / 'publication.json').read_text())
         self.assertEqual(next_publication['roles']['firstfloor']['action'], 'build')
         self.assertTrue(json.loads((follow_on / 'state.json').read_text())['ready'])
+
+    def test_cli_reused_image_readiness_ignores_terminal_and_deleting_pods(self):
+        initial = self.out / 'initial'
+        self.cli('--execute', '--evidence', str(initial))
+        self.recipe['reusePublication'] = str(initial / 'publication.json')
+        failed = {'phase': 'Failed', 'reason': 'Evicted', 'ready': False}
+        succeeded = {'phase': 'Succeeded', 'ready': False}
+        deleting = {'deleting': True, 'ready': False}
+        scenarios = [
+            ('terminal-history', [{}, failed, succeeded], True),
+            ('only-terminals', [dict(failed, ready=True), dict(succeeded, ready=True)], False),
+            ('pending', [{}, {'phase': 'Pending', 'ready': False}], False),
+            ('unknown', [{}, {'phase': 'Unknown', 'ready': False}], False),
+            ('unready', [{}, {'ready': False}], False),
+            ('deleting-history', [{}, deleting], True),
+            ('only-deleting', [dict(deleting, ready=True)], False),
+        ]
+        for scenario, variants, ready in scenarios:
+            with self.subTest(scenario=scenario):
+                self.state(podVariants=variants)
+                evidence = self.out / scenario
+                call_count = len(self.calls())
+                self.cli('--execute', '--evidence', str(evidence), expected=0 if ready else 1)
+                self.assertEqual(json.loads((evidence / 'state.json').read_text())['ready'], ready)
+                publication = json.loads((evidence / 'publication.json').read_text())
+                self.assertEqual(publication['roles']['server']['action'], 'reuse')
+                self.assertFalse(any(call[0] == 'docker' for call in self.calls()[call_count:]))
+                if ready:
+                    self.assertTrue(json.loads((evidence / 'after/acceptance.json').read_text())['passed'])
 
     def test_cli_unavailable_artifact_platform_and_current_readiness_stop(self):
         for failure in ('missingArtifact', 'unavailable-platform', 'wrongPodImage',
