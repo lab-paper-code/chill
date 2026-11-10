@@ -385,10 +385,12 @@ func TestRecoveryMissingCatalogProfileAllowsOnlyExactPhysicalRetirement(t *testi
 			status.Ready = false
 			status.State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ContainerID: status.ContainerID}}
 			current.Status.Phase = core.PodSucceeded
-			if err := api.Status().Update(ctx, current); err != nil {
+			// Publish kubelet status to the clientset before the store read can
+			// let normal removal release the finalizer and delete both copies.
+			if _, err := kube.CoreV1().Pods(current.Namespace).UpdateStatus(ctx, current, meta.UpdateOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			if err := api.syncPod(ctx, current); err != nil {
+			if err := api.Status().Update(ctx, current); err != nil {
 				t.Fatal(err)
 			}
 			select {
