@@ -329,7 +329,7 @@ func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operat
 			return errors.New("operation instance belongs to different physical Node/source")
 		}
 		for _, i := range o.Runtime.Instances() {
-			if i.ID == operation.Instance && i.Node != operation.Node {
+			if (operation.Instance != "" && i.ID == operation.Instance || operation.Instance == "" && i.PodUID == uid) && i.Node != operation.Node {
 				return errors.New("operation physical instance Node observation changed")
 			}
 		}
