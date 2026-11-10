@@ -8,6 +8,7 @@ type schedulerReplayAction struct {
 	action   Action
 	started  bool
 	done     bool
+	blocked  bool
 	start    float64
 	finish   float64
 	trial    OperationTrial
@@ -44,6 +45,9 @@ func (s *schedulerReplayState) completeActions() bool {
 }
 
 func (s *schedulerReplayState) dependenciesReady(a *schedulerReplayAction) bool {
+	if a.blocked || a.action.Status == schedulerActionFailed {
+		return false
+	}
 	if a.action.Status != phaseRunning {
 		for _, id := range a.action.DependsOn {
 			dep := s.actionByID[id]
@@ -138,10 +142,6 @@ func (s *schedulerReplayState) startActions() bool {
 	for _, a := range s.actions {
 		if a.done || a.started {
 			continue
-		}
-		if a.action.Status == schedulerActionFailed {
-			s.out.reasons = append(s.out.reasons, "ActionFailed:"+a.action.ID+":"+a.action.Reason)
-			return false
 		}
 		if !s.dependenciesReady(a) {
 			continue

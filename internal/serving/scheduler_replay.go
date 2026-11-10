@@ -329,8 +329,28 @@ func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings
 }
 
 func (s *schedulerReplayState) blockedReplayPrerequisite() bool {
+	// Failed effects and their dependents cannot progress or satisfy dependencies.
+	for changed := true; changed; {
+		changed = false
+		for _, action := range s.actions {
+			if action.done || action.started || action.blocked || action.action.Status == phaseRunning {
+				continue
+			}
+			blocked := action.action.Status == schedulerActionFailed
+			for _, id := range action.action.DependsOn {
+				if dep := s.actionByID[id]; dep != nil && dep.blocked {
+					blocked = true
+					break
+				}
+			}
+			if blocked {
+				action.blocked = true
+				changed = true
+			}
+		}
+	}
 	for _, action := range s.actions {
-		if !action.done {
+		if !action.done && !action.blocked {
 			return true
 		}
 	}
