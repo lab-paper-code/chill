@@ -36,9 +36,11 @@ workload stage도 같다(0–25초 수신 769, 제때 151, queue p50 약 1.9초)
 
 부하 중 기존 IC 공급은 jetsono 한 instance(batch 16, 약 0.65초)였다. 처리량은 약 24 req/s이고 수요는 약 32 req/s다. 부족분은 약 25%인데 제때 처리는 3% 수준으로 떨어졌다. queue가 요청 lifetime(2초) 가까이 차서, 실행되는 요청이 이미 기한을 넘긴 상태로 처리되기 때문이다(실패 원인 `context deadline exceeded`, batch 16 안에서 실행).
 
-firstfloor executor에는 기한을 지킬 수 없는 요청을 실행 전에 버리는 정책(`deadlinePolicy` `drop`·`defer`, `internal/firstfloor/scheduler.go:373-445`)이 있다. 그러나 기본값이 `keep`이고(`types.go:39-44`), 이 Run의 실행 정책 913건이 모두 `keep`이다. `internal/serving`(계획기·prepare)에는 이 정책을 정하는 경로가 없다.
+firstfloor executor에는 기한을 지킬 수 없는 요청을 실행 전에 버리는 정책(`deadlinePolicy` `drop`·`defer`, `internal/firstfloor/scheduler.go:373-445`)이 있다. 이 정책은 profile의 측정 조건(`Profile.Condition.Firstfloor.DeadlinePolicy`)으로 고정된다. launch는 profile의 정책으로 executor를 띄우고(`kube/scheduler_operations_launch.go:432`), replay는 instance 정책과 profile 정책이 다르면 후보를 거부한다(`scheduler_replay_actions.go:122-128`, `ImmutableNativeDeadlinePolicyMismatch`). 이 Run의 IC profile은 모두 `keep`으로 측정됐다(실행 정책 913건 `keep`, `defer`는 다른 model path 1개). 따라서 계획기는 IC에 다른 과부하 정책을 고를 수 없다.
 
-**원인:** 과부하 시 기한을 넘길 요청에 기존 공급을 소모하는 executor 정책이 시스템 수준에서 정해지지 않았다. 이 때문에 공급 부족 25%가 실패 97%로 증폭된다. 이것이 첫 60초 실패량의 가장 큰 원인이다. `drop`이었다면 이 구간 제때 비율이 처리량/수요(약 75%)에 가까웠을 것으로 추정한다 [INFERENCE: 같은 도착열 재생으로 확정 필요].
+한편 replay는 `drop`·`defer`를 이미 모델링한다(`scheduler_replay.go:693`, `scheduler_replay_requests.go:333-406`). 과부하가 아닐 때 세 정책의 service 시간은 같고, 차이는 기한을 이미 지킬 수 없는 요청을 실행하느냐뿐이다.
+
+**원인:** 과부하 시 동작(기한을 넘길 요청을 실행할지)이 서비스 수준의 운영 규칙으로 정해지지 않고, profile 측정 조건으로 묶여 있다. IC profile이 `keep`이라 공급 부족 25%가 실패 97%로 증폭됐다. 이것이 첫 60초 실패량의 가장 큰 원인이다. `drop`이었다면 이 구간 제때 비율이 처리량/수요(약 75%)에 가까웠을 것으로 추정한다 [INFERENCE: 같은 도착열 재생으로 확정 필요].
 
 ### 2.2 수요 증가 → 실효 공급 경로
 
@@ -113,7 +115,7 @@ genesis2 IC prepare 6.73초에는 Pod 생성, 컨테이너 시작, ORT CUDA 초�
 | 순서 | 단위 | 대상 | 내용 | 완료 기준 |
 |---|---|---|---|---|
 | 1 | G0 과부하 goodput 재생 | 2.1 | 같은 도착열(excess·workload 부하 구간)을 jetsono profile로 `keep`·`drop`·`defer` 각각 재생해 제때 처리 수를 비교한다. 계획기 replay가 executor 정책을 어떻게 모델링하는지 확인한다. 코드 변경 없음 | 정책별 제때 처리 수와 계획기 예측 일치 여부 확정 |
-| 2 | G1 executor 과부하 정책 | 2.1 | G0 결과로 정한다. 정책을 계획기가 정하는 실행 조건(prepare policy)에 넣고, replay가 같은 정책으로 예측하게 한다. profile 측정 조건과 다른 정책이면 그 차이를 판단 근거에 남긴다 | 같은 도착열에서 과부하 구간 제때 처리 증가, 정상 구간 결과 동일 |
+| 2 | G1 과부하 정책의 소유 위치 | 2.1 | G0 결과로 정한다. 후보: (a) deadline 정책을 profile 식별 조건에서 빼고 서비스 수준 운영 규칙으로 정한다. profile의 service 분포는 그대로 쓰고 replay가 그 정책으로 예측한다. (b) 현 계약을 유지하고 필요한 정책으로 profile을 다시 측정한다. (a)는 profile 계약 변경이므로 사용자 결정 대상이다 | 같은 도착열에서 과부하 구간 제때 처리 증가, 정상 구간 결과 동일 |
 | 3 | O2 측정 CR 증분 관측 | 2.5 | `Admit`이 측정 CR 전체를 매번 List하지 않게 한다. terminal CR은 다시 읽지 않는다. Nodes·Pods·DeviceClasses는 같은 주기의 관측을 공유한다. 대기 순서·terminal 판정·measurement taint 단일 writer 계약은 유지 | `Admit` p50 < 0.1초, 기존 admission 회귀 통과 |
 | 4 | A1 진행과 평가 분리 | 2.4 | Tick 평가를 불변 입력 위에서 lock 밖으로 옮기고 그동안 Continue가 진행한다. 불변식: Continue 이후 과거 snapshot을 현재로 재게시하지 않는다. 승인 시 최신 설정·예약·실물 상태를 적용한다. 오래된 평가로 fence를 지우거나 admission 기준을 되돌리지 않는다. Ready-expansion 평가와 action 기록 선행 조건을 유지 | prepare 완료→route 시작 ≤ 0.5초. 회귀: 평가 중 진행, 설정 변경, writer-fence 보존, snapshot 시각 역행 없음, 동시 owner·Ready-subset |
 | 5 | W1 요청 window 재사용 | 2.5 | server가 쓴 요청 기록을 Tick·Continue마다 다시 읽지 않고 메모리 window를 갱신한다. 기록 누락·gap 판정(`schedulerRequestCoverageError`)과 재시작 복원은 기존 log에서 한다. Continue는 진행에 필요한 상태만 갱신한다 | window p50 < 0.05초, Continue capture 감소, 재시작 뒤 같은 window |
