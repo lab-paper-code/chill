@@ -40,7 +40,7 @@ test("control323: BEO paging retains later copy sources, rejects stalled/error p
 
 test("request profile history preserves paging, query policy and summary decoding",async()=>{
   const require=createRequire(import.meta.url)
-  const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")+"\nexports.capture=GuidedMeasurementRequestPage"
+  const source=readFileSync(new URL("../hooks/use-measurement-data.ts",import.meta.url),"utf8")+"\nexports.capture=useRequestProfileHistory"
   const code=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const warmingRetry=()=>false,warmingDelay=()=>1000
   class ApiError extends Error {
@@ -54,8 +54,6 @@ test("request profile history preserves paging, query policy and summary decodin
     let options:Options|undefined
     const state={error:null,isPending:true}
     const modules:Record<string,unknown>={
-      react:{useEffect:()=>{}},
-      "next/navigation":{useSearchParams:()=>new URLSearchParams("input=form"),useRouter:()=>({})},
       "@tanstack/react-query":{useQuery:(value:Options)=>{options=value;return state}},
       "@/lib/client":{ApiError,warmingRetry,warmingDelay,useSession:()=>({token,config:{namespace:"ns"}}),useChillQuery:()=>({}),decodeResponse:(body:string,decoder:(text:string)=>unknown)=>{
         assert.equal(decoder,measurementSummary.parseMeasurementJSON)
@@ -71,7 +69,6 @@ test("request profile history preserves paging, query policy and summary decodin
         return {body:JSON.stringify({readProjection:{version:"measurement-summary.v2",shapes:[["id","completedItems"]],values:[{$o:[0,id,"PRECISE_INTEGER"]}]},profiles:["~0"],page,readAt:first?"first-page":"final-page"}).replace('"PRECISE_INTEGER"',"18446744073709551615")}
       }},
       "@/lib/measurement-summary":measurementSummary,
-      "@/hooks/use-measurement-data":{useMeasurementPlans:()=>({}),useCoverageInventory:()=>({}),useMeasurementCoverage:()=>({})},
     }
     const exports={} as {capture:()=>unknown}
     new Function("require","exports",code)((name:string)=>modules[name]??(name.startsWith("@/")||name.endsWith(".css")?{}:require(name)),exports)

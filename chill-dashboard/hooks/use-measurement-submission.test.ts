@@ -310,9 +310,8 @@ test("P2 profile kind selector survives profile-only dependency failures and cov
     const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
     const modules:Record<string,unknown>={
       "next/navigation":{useSearchParams:()=>new URLSearchParams(dependency==="coverage"?"input=form&variantId=selected":"input=form"),useRouter:()=>({replace:()=>{}})},
-      "@tanstack/react-query":{useQuery:()=>dependency==="profiles"?{error:{status:503},isPending:false}:{data:{profiles:[]},isPending:false}},
       "@/lib/client":{useSession:()=>({config:{namespace:"ns"},token:"fixture"}),useChillQuery:(path:string)=>path===dependency?{error:{status:503}}:{data:{items:[]}}},
-      "@/hooks/use-measurement-data":{useMeasurementPlans:()=>({data:{items:[]}}),useCoverageInventory:()=>({data:{classes:[]}}),useMeasurementCoverage:()=>({})},
+      "@/hooks/use-measurement-data":{useRequestProfileHistory:()=>dependency==="profiles"?{error:{status:503},isPending:false}:{data:{profiles:[]},isPending:false},useMeasurementPlans:()=>({data:{items:[]}}),useCoverageInventory:()=>({data:{classes:[]}}),useMeasurementCoverage:()=>({})},
       "@/components/read-region":{QueryGate:({query,children}:{query:{error?:unknown};children?:ReactNode})=>query.error?createElement("p",null,"조회 실패"):children},
       "@/components/screen":{Screen:container},
       "@/components/measurement-navigation":{MeasurementNavigation:()=>null},

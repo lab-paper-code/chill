@@ -3,8 +3,7 @@
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useState, type ReactNode } from "react"
-import { useQuery } from "@tanstack/react-query"
-import { ApiError, decodeResponse, relay, warmingRetry, warmingDelay, isCoverageWarming, useChillQuery, useSession } from "@/lib/client"
+import { ApiError, isCoverageWarming, useChillQuery, useSession } from "@/lib/client"
 import { QueryGate, SourceJSON } from "@/components/read-region"
 import { MeasurementRequestSource } from "@/components/measurement-request-source"
 import { Screen, Row, Rows } from "@/components/screen"
@@ -12,11 +11,10 @@ import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { DatasetResource, PreprocessorResource, ModelList, WorkloadSummary } from "@/lib/domain"
-import type { MeasurementVariant, ProfilesView } from "@/lib/read-types"
+import type { MeasurementVariant } from "@/lib/read-types"
 import { advancedFields, begin, emptyDraft, updateDraft, manifest, nodeReason, pathReason, steps, view, type Advanced, type Context, type Draft, datasetGap, requestNumber, requestInputs, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestCopySource, requestCopyQuery, requestHref, type RequestRejectionGuidance } from "@/lib/measurement-request"
-import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { deviceLabel, resolveMeasurementPrefill, serverCompatibility, staticCompatibility, type MeasurementPrefill } from "@/lib/measurement-coverage"
-import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage, useMeasurementPlans } from "@/hooks/use-measurement-data"
+import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage, useMeasurementPlans, useRequestProfileHistory } from "@/hooks/use-measurement-data"
 import { MeasurementNavigation } from "@/components/measurement-navigation"
 import { executionPathLabel } from "@/lib/measurements"
 import { MeasurementKindSelector } from "@/features/dispatch-occupancy-request"
@@ -73,7 +71,7 @@ export function MeasurementRequestPage() {
 }
 
 function GuidedMeasurementRequestPage() {
-  const { config, token } = useSession(), params = useSearchParams(),router=useRouter()
+  const { config } = useSession(), params = useSearchParams(),router=useRouter()
   const from = params.get("from"),namespace=params.get("namespace")??config.namespace
   const plans = useMeasurementPlans(namespace)
   const models = useChillQuery<ModelList>("v1/models")
@@ -82,18 +80,7 @@ function GuidedMeasurementRequestPage() {
   const datasets = useChillQuery<{items:DatasetResource[]}>("v1/datasets")
   const inventory = useCoverageInventory()
   const coverage=useMeasurementCoverage(namespace,!!params.get("variantId"))
-  const profiles=useQuery<ProfilesView,ApiError>({queryKey:["chill","request-profile-history"],enabled:!!token,retry:warmingRetry,retryDelay:warmingDelay,queryFn:async({signal})=>{
-    const all:NonNullable<ProfilesView["profiles"]>=[]
-    let offset=0
-    for(;;) {
-      const response=await relay(`v1/scheduler/profiles?${new URLSearchParams({view:"summary",summary:"v2",limit:"50",offset:String(offset)})}`,token,signal)
-      const page=decodeResponse(response.body,parseMeasurementJSON) as ProfilesView
-      all.push(...page.profiles??[])
-      if(page.page?.nextOffset===undefined)return {...page,profiles:all}
-      if(page.page.nextOffset<=offset)throw new ApiError(0,"프로파일 페이지가 전진하지 않습니다",null)
-      offset=page.page.nextOffset
-    }
-  }})
+  const profiles=useRequestProfileHistory()
   const copy=from?requestCopySource(from,namespace,params.get("fromUID")||params.get("uid"),plans.data?.items??[]):undefined
   useEffect(()=>{
     if(!copy?.source||params.get("fromNamespace")&&params.get("fromNamespace")!==namespace)return

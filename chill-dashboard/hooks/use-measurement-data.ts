@@ -73,6 +73,21 @@ export function useMeasurementCoverage(namespace:string,enabled=true) {
   return {...result,data:result.error?undefined:result.data}
 }
 
+export function useRequestProfileHistory() {
+  const {token}=useSession()
+  return useQuery<ProfilesView,ApiError>({queryKey:["chill","request-profile-history"],enabled:!!token,retry:warmingRetry,retryDelay:warmingDelay,queryFn:async({signal})=>{
+    const all:NonNullable<ProfilesView["profiles"]>=[]
+    let offset=0
+    for(;;) {
+      const page=await readPage<ProfilesView>(`v1/scheduler/profiles?${new URLSearchParams({view:"summary",summary:"v2",limit:"50",offset:String(offset)})}`,token,signal)
+      all.push(...page.profiles??[])
+      if(page.page?.nextOffset===undefined)return {...page,profiles:all}
+      if(page.page.nextOffset<=offset)throw new ApiError(0,"프로파일 페이지가 전진하지 않습니다",null)
+      offset=page.page.nextOffset
+    }
+  }})
+}
+
 export function useCoverageProfiles(cell:MeasurementCoverageCell,enabled:boolean) {
   const {token}=useSession()
   const filters=coverageProfileQuery(cell)

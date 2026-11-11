@@ -122,7 +122,7 @@ v3 프로파일 측정 요청은 사용자가 고른 실제 Workload 이름을 `
 
 첫 프로파일 측정은 보관된 EvaluationRun/Stage/LoadScenario 없이 기존 Workload와 측정 요청만으로 시작한다. 서버는 추가 대기 없이 실제 측정한 idle/service 쌍을 보존하며, 관측하지 않은 idle 구간의 커버리지를 주장하지 않는다.
 
-커버리지·inventory·모델 호환성·BEO 전체 페이지·커버리지 상세 프로파일/회차 조회는 `hooks/use-measurement-data.ts`, 공통 URL 필터 UI는 `components/measurement-filters.tsx`가 소유한다. 각 화면은 소유 모듈을 직접 import한다. query key·페이지 전진/취소·권한 오류 처리·UID 비교·summary 정밀 디코딩과 필터 URL 갱신 규칙은 기존 계약을 유지한다.
+커버리지·inventory·모델 호환성·BEO 전체 페이지·요청 작성용 프로파일 이력·커버리지 상세 프로파일/회차 조회는 `hooks/use-measurement-data.ts`, 공통 URL 필터 UI는 `components/measurement-filters.tsx`가 소유한다. 각 화면은 소유 모듈을 직접 import한다. query key·페이지 전진/취소·권한 오류 처리·UID 비교·summary 정밀 디코딩과 필터 URL 갱신 규칙은 기존 계약을 유지한다.
 
 ### 표시용 읽기 projection
 
