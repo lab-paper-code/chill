@@ -170,7 +170,7 @@ func mutateFrozenWorkload(t *testing.T, native client.Client, workload *api.Work
 	var err error
 	switch mutation {
 	case "status-only":
-		live.Status.Admission = api.WorkloadAdmission{Allowed: true, Reason: "Observed", ObservedAt: metav1.Now()}
+		live.Status.Admission = api.WorkloadAdmissionStatus{Allowed: true, Reason: "Observed", ObservedAt: metav1.Now()}
 		err = native.Status().Update(ctx, live)
 	case "slo", "p100":
 		live.Spec.SLO.Percentile = 99

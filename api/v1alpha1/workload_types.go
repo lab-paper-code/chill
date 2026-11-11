@@ -21,6 +21,10 @@ type WorkloadSpec struct {
 	// +optional
 	DatasetRef *CatalogReference `json:"datasetRef,omitempty"`
 	SLO        WorkloadSLO       `json:"slo"`
+	// Admission owns the serving overload policy and gateway queue bound.
+	// +optional
+	// +kubebuilder:default={policy:Reject,maxQueuedRequests:1024}
+	Admission WorkloadAdmission `json:"admission"`
 	// RequestLifetime bounds a request independently of its SLO.
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s') && duration(self) <= duration('129s')",message="requestLifetime must be positive and at most 129s"
@@ -63,11 +67,38 @@ type WorkloadAppliedDefinition struct {
 	// +optional
 	DatasetRef *WorkloadAppliedDatasetReference `json:"datasetRef,omitempty"`
 	SLO        WorkloadSLO                      `json:"slo"`
+	Admission  WorkloadAdmission                `json:"admission"`
 	// +optional
 	RequestLifetime *metav1.Duration `json:"requestLifetime,omitempty"`
 }
 
+// AdmissionPolicy controls requests predicted to miss their SLO deadline.
+// +kubebuilder:validation:Enum=Reject;Delay
+type AdmissionPolicy string
+
+const (
+	AdmissionPolicyReject AdmissionPolicy = "Reject"
+	AdmissionPolicyDelay  AdmissionPolicy = "Delay"
+)
+
+// WorkloadAdmission is frozen into each applied Definition.
 type WorkloadAdmission struct {
+	// +optional
+	// +kubebuilder:default=Reject
+	Policy AdmissionPolicy `json:"policy"`
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=1024
+	MaxQueuedRequests int32 `json:"maxQueuedRequests"`
+}
+
+// DefaultWorkloadAdmission supplies defaults at the HTTP write boundary.
+// Stored applied definitions must retain their recorded values without defaults.
+func DefaultWorkloadAdmission() WorkloadAdmission {
+	return WorkloadAdmission{Policy: AdmissionPolicyReject, MaxQueuedRequests: 1024}
+}
+
+type WorkloadAdmissionStatus struct {
 	Allowed    bool        `json:"allowed"`
 	Reason     string      `json:"reason,omitempty"`
 	ObservedAt metav1.Time `json:"observedAt"`
@@ -105,7 +136,7 @@ type WorkloadOperation struct {
 type WorkloadStatus struct {
 	// +optional
 	AppliedDefinition *WorkloadAppliedDefinition `json:"appliedDefinition,omitempty"`
-	Admission         WorkloadAdmission          `json:"admission"`
+	Admission         WorkloadAdmissionStatus    `json:"admission"`
 	// +optional
 	Operation *WorkloadOperation `json:"operation,omitempty"`
 }
@@ -158,6 +189,12 @@ func ValidateWorkload(name string, spec WorkloadSpec) error {
 	}
 	if spec.SLO.TargetLatency.Duration <= 0 {
 		errs = append(errs, field.Invalid(field.NewPath("spec", "slo", "targetLatency"), spec.SLO.TargetLatency.String(), "must be a positive duration"))
+	}
+	if spec.Admission.Policy != AdmissionPolicyReject && spec.Admission.Policy != AdmissionPolicyDelay {
+		errs = append(errs, field.NotSupported(field.NewPath("spec", "admission", "policy"), spec.Admission.Policy, []string{"Reject", "Delay"}))
+	}
+	if spec.Admission.MaxQueuedRequests < 1 {
+		errs = append(errs, field.Invalid(field.NewPath("spec", "admission", "maxQueuedRequests"), spec.Admission.MaxQueuedRequests, "must be at least 1"))
 	}
 	if lifetime := spec.RequestLifetime; lifetime != nil {
 		path := field.NewPath("spec", "requestLifetime")

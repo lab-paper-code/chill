@@ -25,6 +25,7 @@ func TestStoreFinalizerAndDeletionConfirmation(t *testing.T) {
 			ModelRef:        edgev1alpha1.CatalogReference{Name: "detector"},
 			PreprocessorRef: edgev1alpha1.CatalogReference{Name: "imagenet"},
 			SLO:             edgev1alpha1.WorkloadSLO{Percentile: 99, TargetLatency: metav1.Duration{Duration: time.Second}},
+			Admission:       edgev1alpha1.DefaultWorkloadAdmission(),
 		},
 	}
 	if err := store.CreateWorkload(ctx, obj); err != nil {
@@ -40,7 +41,7 @@ func TestStoreFinalizerAndDeletionConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated, err := store.UpdateWorkloadStatus(ctx, before, edgev1alpha1.WorkloadStatus{Admission: edgev1alpha1.WorkloadAdmission{Allowed: false, Reason: "Deleting", ObservedAt: metav1.Now()}})
+	updated, err := store.UpdateWorkloadStatus(ctx, before, edgev1alpha1.WorkloadStatus{Admission: edgev1alpha1.WorkloadAdmissionStatus{Allowed: false, Reason: "Deleting", ObservedAt: metav1.Now()}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -148,6 +148,7 @@ func appliedStatus(d *serving.Definition) *api.WorkloadAppliedDefinition {
 		ModelRef:           api.WorkloadAppliedCatalogReference{Name: d.Model.Name, UID: types.UID(d.Model.UID), Generation: d.Model.Generation},
 		PreprocessorRef:    api.WorkloadAppliedCatalogReference{Name: d.Preprocessor.Name, UID: types.UID(d.Preprocessor.UID), Generation: d.Preprocessor.Generation},
 		SLO:                api.WorkloadSLO{Percentile: d.SLO.Percentile, TargetLatency: metav1.Duration{Duration: d.SLO.TargetLatency}},
+		Admission:          api.WorkloadAdmission{Policy: api.AdmissionPolicy(d.Admission.Policy), MaxQueuedRequests: d.Admission.MaxQueuedRequests},
 	}
 	if d.RequestLifetime != nil {
 		status.RequestLifetime = &metav1.Duration{Duration: *d.RequestLifetime}
@@ -163,9 +164,9 @@ func (m *Manager) persist(ctx context.Context, w *api.Workload, status api.Workl
 		status.AppliedDefinition = appliedStatus(d)
 	}
 	if state, err := m.runtime.State(w.Name); err == nil && state.Applied != nil && state.Applied.UID == string(w.UID) {
-		status.Admission = api.WorkloadAdmission{Allowed: state.Admission, Reason: state.Reason, ObservedAt: metav1.NewTime(state.ObservedAt)}
+		status.Admission = api.WorkloadAdmissionStatus{Allowed: state.Admission, Reason: state.Reason, ObservedAt: metav1.NewTime(state.ObservedAt)}
 	} else {
-		status.Admission = api.WorkloadAdmission{Reason: "AppliedDefinitionUnavailable", ObservedAt: metav1.Now()}
+		status.Admission = api.WorkloadAdmissionStatus{Reason: "AppliedDefinitionUnavailable", ObservedAt: metav1.Now()}
 	}
 	old := w.Status
 	// Admission timestamps are observations, not a per-poll status write trigger.
@@ -221,7 +222,7 @@ func (m *Manager) fail(ctx context.Context, w *api.Workload, cause error) error 
 	if d := m.applied(w); d != nil {
 		status.AppliedDefinition = appliedStatus(d)
 	}
-	status.Admission = api.WorkloadAdmission{Reason: failureReason(cause), ObservedAt: now}
+	status.Admission = api.WorkloadAdmissionStatus{Reason: failureReason(cause), ObservedAt: now}
 	m.failed[w.UID] = status
 	writeErr := m.persist(ctx, w, status)
 	if writeErr == nil {
@@ -445,7 +446,7 @@ func (m *Manager) restoreWorkload(ctx context.Context, w *api.Workload, sharedIn
 		if err == nil {
 			want, err = Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 		}
-		if err != nil || want.Identity() != d.Identity() || want.SLO != d.SLO || !reflect.DeepEqual(want.Dataset, d.Dataset) {
+		if err != nil || want.Identity() != d.Identity() || want.SLO != d.SLO || want.Admission != d.Admission || !reflect.DeepEqual(want.RequestLifetime, d.RequestLifetime) || !reflect.DeepEqual(want.Dataset, d.Dataset) {
 			return managementError("AppliedStateUnconfirmed", "desired and recorded applied definitions differ", "status.appliedDefinition")
 		}
 		if err := m.persist(ctx, w, status); err != nil {
@@ -555,7 +556,7 @@ func (m *Manager) UpdateWorkload(ctx context.Context, name, resourceVersion stri
 		err = m.fail(ctx, w, err)
 		return m.view(w), false, err
 	}
-	// SLO and dataset changes keep the accepted execution and apply without drain (WM-16).
+	// SLO, dataset, lifetime and admission changes keep the accepted execution and apply without drain (WM-16).
 	if before != nil && before.SameExecution(d) {
 		if err := m.apply(ctx, w, d); err != nil {
 			err = m.fail(ctx, w, err)

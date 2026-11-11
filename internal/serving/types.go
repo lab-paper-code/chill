@@ -33,6 +33,27 @@ const (
 	reasonGatewayOverloaded      = "GatewayOverloaded"
 )
 
+// Overload admission codes and stages are shared by gateway and executor paths.
+const (
+	CodeQueueFull          = "QueueFull"
+	CodeDeadlineInfeasible = "DeadlineInfeasible"
+	AdmissionUnknown       = "AdmissionUnknown"
+	AdmissionStageGateway  = "gateway"
+	AdmissionStageExecutor = "executor"
+)
+
+type AdmissionPolicy string
+
+const (
+	AdmissionPolicyReject AdmissionPolicy = "Reject"
+	AdmissionPolicyDelay  AdmissionPolicy = "Delay"
+)
+
+type Admission struct {
+	Policy            AdmissionPolicy `json:"policy"`
+	MaxQueuedRequests int32           `json:"maxQueuedRequests"`
+}
+
 // Error carries a consumer-visible failure without depending on its transport.
 type Error struct {
 	Code    string `json:"code"`
@@ -111,11 +132,12 @@ type Definition struct {
 	// Dataset is absent until the Workload names one; admission waits with MissingDataset.
 	Dataset         *DatasetReference `json:"dataset,omitempty"`
 	SLO             SLO               `json:"slo"`
+	Admission       Admission         `json:"admission"`
 	RequestLifetime *time.Duration    `json:"requestLifetime,omitempty"`
 }
 
-// Identity names the accepted model and preprocessing definition. SLO and
-// dataset changes advance the Workload generation.
+// Identity names the accepted model and preprocessing definition. SLO, dataset,
+// lifetime and admission changes advance the Workload generation.
 func (d *Definition) Identity() string {
 	return fmt.Sprintf("%s/%d/%s/%d/%s/%d", d.UID, d.Generation, d.Model.UID, d.Model.Generation, d.Preprocessor.UID, d.Preprocessor.Generation)
 }

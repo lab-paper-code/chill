@@ -41,6 +41,27 @@ spec:
               WorkloadSpec declares the desired logical model, its preprocessing, the
               measurement dataset and the request SLO.
             properties:
+              admission:
+                default:
+                  maxQueuedRequests: 1024
+                  policy: Reject
+                description: Admission owns the serving overload policy and gateway
+                  queue bound.
+                properties:
+                  maxQueuedRequests:
+                    default: 1024
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  policy:
+                    default: Reject
+                    description: AdmissionPolicy controls requests predicted to miss
+                      their SLO deadline.
+                    enum:
+                    - Reject
+                    - Delay
+                    type: string
+                type: object
               datasetRef:
                 description: |-
                   DatasetRef names the records active measurement samples from. Without it
@@ -127,6 +148,23 @@ spec:
                 type: object
               appliedDefinition:
                 properties:
+                  admission:
+                    description: WorkloadAdmission is frozen into each applied Definition.
+                    properties:
+                      maxQueuedRequests:
+                        default: 1024
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      policy:
+                        default: Reject
+                        description: AdmissionPolicy controls requests predicted to
+                          miss their SLO deadline.
+                        enum:
+                        - Reject
+                        - Delay
+                        type: string
+                    type: object
                   datasetRef:
                     properties:
                       name:
@@ -201,6 +239,7 @@ spec:
                     format: int64
                     type: integer
                 required:
+                - admission
                 - modelRef
                 - preprocessorRef
                 - slo

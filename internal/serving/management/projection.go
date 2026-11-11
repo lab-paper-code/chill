@@ -50,7 +50,9 @@ func Snapshot(w *api.Workload, model *api.ModelSpec, p *api.Preprocessor, datase
 	d := &serving.Definition{Name: w.Name, UID: string(w.UID), Generation: w.Generation,
 		Model:        serving.Model{Name: model.Name, UID: string(model.UID), Generation: model.Generation},
 		Preprocessor: serving.Preprocessor{Name: p.Name, UID: string(p.UID), Generation: p.Generation},
-		SLO:          serving.SLO{Percentile: w.Spec.SLO.Percentile, TargetLatency: w.Spec.SLO.TargetLatency.Duration}}
+		SLO:          serving.SLO{Percentile: w.Spec.SLO.Percentile, TargetLatency: w.Spec.SLO.TargetLatency.Duration},
+		Admission: serving.Admission{Policy: serving.AdmissionPolicy(w.Spec.Admission.Policy),
+			MaxQueuedRequests: w.Spec.Admission.MaxQueuedRequests}}
 	if w.Spec.RequestLifetime != nil {
 		lifetime := w.Spec.RequestLifetime.Duration
 		d.RequestLifetime = &lifetime

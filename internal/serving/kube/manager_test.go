@@ -215,6 +215,7 @@ func managerWorkloadSpec() api.WorkloadSpec {
 	spec.DatasetRef = &api.CatalogReference{Name: "data"}
 	spec.SLO.Percentile = 99
 	spec.SLO.TargetLatency.Duration = time.Second
+	spec.Admission = api.DefaultWorkloadAdmission()
 	return spec
 }
 
@@ -395,6 +396,48 @@ func TestManagerSLOUpdatePreservesAcceptedSnapshot(t *testing.T) {
 	}
 	if dispatched["first"].Definition.SLO.TargetLatency != time.Second || first.Applied.SLO.TargetLatency != 2*time.Second || first.Operation.Phase != completedWorkloadPhase || first.Operation.AppliedAt == nil {
 		t.Fatal("SLO replacement changed the accepted snapshot or was not actually completed")
+	}
+	finish <- struct{}{}
+	completeManagerResponses(t, m, receipts, calls)
+}
+
+func TestManagerAdmissionUpdatePreservesAcceptedSnapshot(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newManagerHarness(t)
+	createManagerCatalog(t, m)
+	first, err := m.CreateWorkload(ctx, "first", managerWorkloadSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipts, calls, finish, dispatched := startManagerCalls(t, m, managerProfile(first.Applied), "first")
+	original := dispatched["first"].Definition
+	for _, admission := range []api.WorkloadAdmission{
+		{Policy: api.AdmissionPolicyDelay, MaxQueuedRequests: 1024},
+		{Policy: api.AdmissionPolicyDelay, MaxQueuedRequests: 17},
+	} {
+		first, err = m.GetWorkload(ctx, "first")
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec := first.Desired.Spec
+		spec.Admission = admission
+		previous := first.Applied
+		var accepted bool
+		first, accepted, err = m.UpdateWorkload(ctx, "first", first.Desired.ResourceVersion, spec)
+		if err != nil || accepted {
+			t.Fatalf("admission-only update = %v, %v", accepted, err)
+		}
+		if first.Applied.Identity() == previous.Identity() || !first.Applied.SameExecution(previous) ||
+			first.Applied.Admission.Policy != serving.AdmissionPolicy(admission.Policy) || first.Applied.Admission.MaxQueuedRequests != admission.MaxQueuedRequests {
+			t.Fatalf("admission update = %+v", first.Applied)
+		}
+		persisted, err := m.store.GetWorkload(ctx, "first")
+		if err != nil || persisted.Status.AppliedDefinition.Admission != admission {
+			t.Fatalf("persisted admission = %+v, %v", persisted, err)
+		}
+	}
+	if original.Admission != (serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}) {
+		t.Fatal("admission update changed the accepted snapshot")
 	}
 	finish <- struct{}{}
 	completeManagerResponses(t, m, receipts, calls)

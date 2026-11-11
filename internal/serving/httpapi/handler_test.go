@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	api "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
 func TestExpiredOperationCanDeliverTimeoutResponse(t *testing.T) {
@@ -55,5 +57,32 @@ func TestExpiredOperationCanDeliverTimeoutResponse(t *testing.T) {
 					response.StatusCode, body.Code, decodeErr, closeErr)
 			}
 		})
+	}
+}
+
+func TestWorkloadAdmissionWriteDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		input  string
+		policy api.AdmissionPolicy
+		queued int32
+	}{
+		{`{"spec":{}}`, api.AdmissionPolicyReject, 1024},
+		{`{"spec":{"admission":{}}}`, api.AdmissionPolicyReject, 1024},
+		{`{"spec":{"admission":{"policy":"Delay"}}}`, api.AdmissionPolicyDelay, 1024},
+		{`{"spec":{"admission":{"maxQueuedRequests":1}}}`, api.AdmissionPolicyReject, 1},
+		{`{"spec":{"admission":{"maxQueuedRequests":0}}}`, api.AdmissionPolicyReject, 0},
+	} {
+		var body struct {
+			Spec api.WorkloadSpec `json:"spec"`
+		}
+		body.Spec.Admission = api.DefaultWorkloadAdmission()
+		h := &Handler{config: HandlerConfig{MaxRequestBytes: 1024}}
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/workloads", strings.NewReader(tc.input))
+		if err := h.decode(httptest.NewRecorder(), r, &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Spec.Admission.Policy != tc.policy || body.Spec.Admission.MaxQueuedRequests != tc.queued {
+			t.Fatalf("decoded %s: %+v", tc.input, body.Spec.Admission)
+		}
 	}
 }

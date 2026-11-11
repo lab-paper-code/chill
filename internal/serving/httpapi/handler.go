@@ -276,6 +276,7 @@ func (h *Handler) management(w http.ResponseWriter, r *http.Request) {
 				Name string           `json:"name"`
 				Spec api.WorkloadSpec `json:"spec"`
 			}
+			body.Spec.Admission = api.DefaultWorkloadAdmission()
 			err = h.decode(w, r, &body)
 			if err == nil {
 				value, err = h.manager.CreateWorkload(ctx, body.Name, body.Spec)
@@ -285,6 +286,7 @@ func (h *Handler) management(w http.ResponseWriter, r *http.Request) {
 			var body struct {
 				Spec api.WorkloadSpec `json:"spec"`
 			}
+			body.Spec.Admission = api.DefaultWorkloadAdmission()
 			var version string
 			var accepted bool
 			version, err = precondition(r)

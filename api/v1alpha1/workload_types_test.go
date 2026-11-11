@@ -3,12 +3,15 @@ package v1alpha1_test
 import (
 	"encoding/json"
 	"math"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 )
 
 func TestValidateWorkload(t *testing.T) {
@@ -16,6 +19,31 @@ func TestValidateWorkload(t *testing.T) {
 		ModelRef:        edgev1alpha1.CatalogReference{Name: "detector.v2"},
 		PreprocessorRef: edgev1alpha1.CatalogReference{Name: "imagenet"},
 		SLO:             edgev1alpha1.WorkloadSLO{Percentile: 99, TargetLatency: metav1.Duration{Duration: 100 * time.Millisecond}},
+		Admission:       edgev1alpha1.DefaultWorkloadAdmission(),
+	}
+	if valid.Admission.Policy != edgev1alpha1.AdmissionPolicyReject || valid.Admission.MaxQueuedRequests != 1024 {
+		t.Fatalf("admission defaults = %+v", valid.Admission)
+	}
+	for _, tc := range []struct {
+		name      string
+		admission edgev1alpha1.WorkloadAdmission
+		field     string
+	}{
+		{"reject", edgev1alpha1.WorkloadAdmission{Policy: edgev1alpha1.AdmissionPolicyReject, MaxQueuedRequests: 1}, ""},
+		{"delay", edgev1alpha1.WorkloadAdmission{Policy: edgev1alpha1.AdmissionPolicyDelay, MaxQueuedRequests: math.MaxInt32}, ""},
+		{"empty policy", edgev1alpha1.WorkloadAdmission{MaxQueuedRequests: 1024}, "spec.admission.policy"},
+		{"unknown policy", edgev1alpha1.WorkloadAdmission{Policy: "Keep", MaxQueuedRequests: 1024}, "spec.admission.policy"},
+		{"zero queue", edgev1alpha1.WorkloadAdmission{Policy: edgev1alpha1.AdmissionPolicyReject}, "spec.admission.maxQueuedRequests"},
+		{"negative queue", edgev1alpha1.WorkloadAdmission{Policy: edgev1alpha1.AdmissionPolicyReject, MaxQueuedRequests: -1}, "spec.admission.maxQueuedRequests"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := valid
+			spec.Admission = tc.admission
+			err := edgev1alpha1.ValidateWorkload("detector-fast", spec)
+			if tc.field == "" && err != nil || tc.field != "" && (err == nil || !strings.Contains(err.Error(), tc.field)) {
+				t.Fatalf("admission %+v: %v", tc.admission, err)
+			}
+		})
 	}
 	for _, lifetime := range []time.Duration{0, -time.Second, 99 * time.Millisecond, 130 * time.Second} {
 		spec := valid
@@ -90,5 +118,27 @@ func TestWorkloadDurationDecodingRejectsOverflowAndMissingUnits(t *testing.T) {
 	}
 	if spec.SLO.TargetLatency.Duration != 100*time.Millisecond {
 		t.Fatalf("duration = %v", spec.SLO.TargetLatency.Duration)
+	}
+}
+
+func TestWorkloadAdmissionSchemaDefaults(t *testing.T) {
+	data, err := os.ReadFile("../../config/crd/bases/edge.dacs.io_workloads.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := yaml.Unmarshal(data, &crd); err != nil {
+		t.Fatal(err)
+	}
+	admission := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["admission"]
+	var defaults edgev1alpha1.WorkloadAdmission
+	if err := json.Unmarshal(admission.Default.Raw, &defaults); err != nil {
+		t.Fatal(err)
+	}
+	if defaults != edgev1alpha1.DefaultWorkloadAdmission() ||
+		string(admission.Properties["policy"].Default.Raw) != `"Reject"` ||
+		string(admission.Properties["maxQueuedRequests"].Default.Raw) != "1024" ||
+		*admission.Properties["maxQueuedRequests"].Minimum != 1 {
+		t.Fatalf("admission schema defaults or minimum changed: %+v", admission)
 	}
 }
