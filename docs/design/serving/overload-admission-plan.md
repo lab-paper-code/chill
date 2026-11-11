@@ -65,6 +65,7 @@ flowchart LR
 - 이 집합을 공유 `ChooseBatch`(같은 Workload·Definition 호환성, EDF, deferred FIFO, batch 선택, fill 대기)로 결정적으로 진행시켜 이 요청이 끝나는 시각을 얻는다. batch 처리 시간은 profile `ServiceDistribution`의 SLO percentile 값이다.
 - 실행 중 batch는 BatchID로 한 번만 센다. 남은 시간은 경과 시간 조건부(생존) 분포의 SLO percentile이다(기존 `SampleResidual`과 같은 조건화, `service_distribution.go:203-280`). 관측 경과가 profile 지원 범위를 넘으면 그 실행기는 판단 불가로 둔다.
 - 응답 reserve는 수락 때 고정한 `completionMarginMS`(POST reserve)다.
+- 예상 완료 시각이 남은 최종 기한과 같아도 완료 불가다. native의 최종 기한 검사(`requestError`, `>=`)와 같은 경계를 쓴다.
 - 이 값은 단계별 분위수를 이어 붙인 **판단 규칙**이며 E2E 완료 시간의 분위수 보장이 아니다. 최종 판단은 executor 재확인이 한다.
 - 계산은 runtime과 replay가 공유하는 함수 하나로 둔다(`internal/serving`).
 - 판단 입력(profile 분포·정책·관측 상태)이 없는 실행기는 후보에서 뺀다. 남은 후보가 모두 판단 불가이면 완료 불가와 구분한 `AdmissionUnknown` 상태로 최종 기한까지 큐에서 기다린다. runtime과 replay가 같은 규칙을 쓴다. 조용한 근사나 무검사 배정은 하지 않는다.

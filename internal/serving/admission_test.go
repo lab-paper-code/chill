@@ -190,6 +190,16 @@ func TestAdmissionCandidateLifetimeMissIsKnownInfeasible(t *testing.T) {
 	}
 }
 
+func TestAdmissionCompletionAtLifetimeIsInfeasible(t *testing.T) {
+	candidate := admissionTestRequest("candidate")
+	lifetime := float64(20)
+	candidate.RemainingLifetimeMS = &lifetime
+	got := EstimateAdmission(AdmissionInput{Policy: admissionTestPolicy(), Candidate: candidate})
+	if !got.Known || !got.Infeasible || got.Completion != 20*time.Millisecond || lifetime != 20 {
+		t.Fatalf("completion at native timeout must be infeasible without mutating lifetime: %+v remaining=%v", got, lifetime)
+	}
+}
+
 func TestAdmissionFillWakesAtEarliestQueuedLifetime(t *testing.T) {
 	p := admissionTestPolicy()
 	p.MaxBatchWaitMS = 100

@@ -227,7 +227,9 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 		if candidate {
 			completion := clock - age + service + int64(in.Candidate.Context.CompletionMarginMS*float64(time.Millisecond))
 			remaining, limited := admissionRemainingLifetime(in.Candidate)
-			return AdmissionEstimate{Completion: time.Duration(completion), Known: true, OutsideSupport: outsideSupport, Infeasible: limited && float64(completion)/float64(time.Millisecond) > remaining}
+			// Native expires a request at its deadline (requestError uses >=), so
+			// completing exactly at the remaining lifetime is already a timeout.
+			return AdmissionEstimate{Completion: time.Duration(completion), Known: true, OutsideSupport: outsideSupport, Infeasible: limited && float64(completion)/float64(time.Millisecond) >= remaining}
 		}
 		activeRemaining = service
 	}
