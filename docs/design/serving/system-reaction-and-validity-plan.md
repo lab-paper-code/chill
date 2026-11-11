@@ -29,7 +29,9 @@ genesis1 한 대가 control plane, CHILL 서버, KubeEdge `cloudcore`를 맡고,
 
 1. **cloudcore 거절 폭주:** `kubeedge/cloudcore-58b8b98d88` ReplicaSet의 Pod가 2026-11-08 20:30부터 11-11 01:56까지 genesis1에서 `Pod was rejected: The node had condition: [DiskPressure]`로 **12,344번** Failed가 됐다. 현재 cluster 전체 Pod는 12,728개이고 그중 Failed가 12,445개다. Kubernetes의 terminated Pod GC는 기본 임계값(12,500개)을 넘어야 동작하므로 이 Pod들은 지워지지 않고 남는다.
 2. **CHILL 서버 퇴거:** 서버 Pod `chill-serving-entrypoint-6b64bf88b4-lfzgh`(11-10 17:36 생성)와 `-556f49d48c-2q4z2`(18:13:57 생성)가 `ephemeral-storage` 부족으로 퇴거됐다(`Q7/post-load/pods.json`). Q7의 열린 gap은 모두 `Boot=2026-11-10T18:14:07`의 `UnknownExecutorInfluence`다. 이 `Boot`는 다음 프로세스가 읽은 **이전 run의 시작 시각**이다(`observation_log_run.go:39-48`). 즉 18:14:07에 시작한 `-556f49d48c` 프로세스의 종료 tail이 unclean으로 판정됐다. 그 원인이 이 퇴거라는 연결은 시각상 일치한다 [INFERENCE: unclean marker와 퇴거를 직접 연결한 기록은 없다].
-3. **edge Pod 종료 정지:** orangepi의 executor Pod `serving-81a9e87d4ef4e0960a01`(`546fb520`)은 01:50:38에 생성됐다. 01:56:26에 taint manager가 이 Pod를 삭제했는데, 마지막 cloudcore 거절(01:56:23)의 3초 뒤다. orangepi는 01:57:20부터 다시 Ready지만, Pod는 4시간이 지난 지금도 `Pending`, `Terminating` 상태에 CHILL finalizer `serving-source-termination`를 단 채 남아 있다. `PodTerminated`(`native_source.go:109-123`)는 phase가 Succeeded나 Failed일 때만 종료를 인정한다. 그래서 컨테이너를 한 번도 시작하지 않은 이 Pod의 gap은 닫히지 않는다 [INFERENCE: cloudcore가 정지된 동안 내려진 삭제를 edge가 terminal phase로 보고하지 못했다]. 현행 계약에서 이 gap 하나가 모든 workload의 D1을 `NOT_EVALUATED`로 만든다(`hack/evaluation/raw.py:53-58`).
+3. **edge Pod 종료 정지 (확정):** orangepi edgecore 로그(KST)에 따르면 cloud 연결이 01:50:17 UTC에 끊겼다(`websocket: close 1006`, "reconnect after 30s"). CHILL은 21초 뒤인 01:50:38에 orangepi에 executor Pod `serving-81a9e87d4ef4e0960a01`(`546fb520`)을 만들었다. Node 상태는 heartbeat 유예 때문에 아직 Ready였다. edge는 이 Pod를 받지 못했다. orangepi에는 sandbox가 없고(`crictl pods`), edgecore가 이 Pod를 처음 언급한 것은 재연결 뒤인 01:57:13의 executor Service(Endpoints) 한 건뿐이다. 그 사이 01:55:56에 Node가 NotReady가 되어 taint manager가 01:56:26에 Pod를 삭제했다. 재연결 뒤 edge는 삭제 중인 Pod를 만들지도, 상태를 보고하지도 않는다. 그래서 Pod는 phase `Pending`, 컨테이너 상태 없음으로 CHILL finalizer에 걸려 남는다. `PodTerminated`(`native_source.go:109-123`)는 terminal phase를 요구하므로 gap은 닫히지 않는다. 이 상태는 같은 Node가 정상이어도 영원히 바뀌지 않는다. 현행 계약에서 이 gap 하나가 모든 workload의 D1을 `NOT_EVALUATED`로 만든다(`hack/evaluation/raw.py:53-58`).
+
+   이 Pod는 executor를 한 번도 실행하지 않았다는 사실을 Node 쪽에서 확인할 수 있다(sandbox 없음). 하지만 현행 계약에는 "한 번도 시작하지 않음"을 종료 증거로 받아들이는 경로가 없다. 해법은 둘 중 하나다. (a) 운영: edge가 terminal phase를 보고하게 한다. kubelet 표준 동작은 삭제된 미시작 Pod를 Failed로 끝내지만 edged는 받지 않은 Pod에 대해 그렇게 하지 않는다. (b) 계약: 컨테이너 ID가 한 번도 없었던 Pod는 실행 영향이 없으므로 gap을 만들지 않거나, 확인 즉시 닫는다. (b)는 관측 계약 변경이라 사용자 결정 사항이다.
 
 관측 계약(물리 종료로만 gap을 닫는다)은 의도대로 동작했다. Q7의 genesis2 gap은 04:35:21에 실제로 닫혔다. 결함은 운영 환경에 있다.
 
@@ -74,7 +76,7 @@ genesis1 한 대가 control plane, CHILL 서버, KubeEdge `cloudcore`를 맡고,
 ### 3.6 P6 Dashboard (부분 확정)
 
 - 확정: 계약 오류 처리에서 `WebSocket.close(1002)`를 호출한다(`chill-dashboard/lib/live.ts:386-402`). 브라우저는 1000과 3000~4999만 허용하므로 `InvalidAccessError`가 난다. 같은 처리가 `blocked=true`로 자동 재접속도 막는다.
-- 미확정: 실제로 거부된 프레임. 저장된 hello는 현행 계약을 만족한다.
+- 미확정: 실제로 거부된 프레임. 저장된 hello는 현행 계약을 만족한다. 현행 서버 producer와 TS parser의 모든 프레임 필드·타입·nullability를 대조했지만, 실제 producer 경로에서 거부를 만드는 불일치는 없었다. Q5의 dashboard 이미지(`036e00a`)와 서버(`4b2a25f1`)는 둘 다 마지막 live 계약 변경 `0321dae8`(queue gauge)을 포함하므로 버전 불일치도 배제된다. 코드상 남는 가능성은 이론적인 것뿐이다(nil slice를 가리키는 delta 포인터, uint64 counter 2^53 초과, `ExpectedSource.Reference` 비객체). 따라서 다음 발생 때 거부 프레임과 사유를 남기는 것이 원인을 확정하는 유일한 경로다.
 - 504는 observation 조회가 BFF의 10초 한도를 넘어 생긴다. writer barrier와 JSONL 스캔을 거치므로 P4와 연결된다.
 
 ## 4. 수정 계획
