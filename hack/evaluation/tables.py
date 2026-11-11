@@ -7,13 +7,15 @@ def sections(path):
     if not Path(path).exists():
         return None
     value = json.loads(Path(path).read_text())
-    if value.get('schema') != 'e5-judgment.v3':
-        raise ValueError('FrozenInputInvalid: judgment v3 required')
+    if value.get('schema') != 'e5-judgment.v4':
+        raise ValueError('FrozenInputInvalid: judgment v4 required')
     return value
 
 
 def publication_requests(judgment):
     fields = ('offered', 'clientRows', 'unfinishedOrUnsent', 'collectionLoss', 'outcomes', 'completedLatencyNS',
+              'outcomeClasses', 'timeoutCauses', 'onTimeSuccessRate', 'goodputRequestsPerSecond', 'loadLengthSeconds',
+              'rejections', 'gatewayWaitNS', 'executorWaitNS',
               'gatewayCompletedLatencyNS', 'serverOutcomes', 'latencyScope', 'scheduledLatencyNS', 'actualLatencyNS',
               'clientFailures', 'clientUnknown', 'quantileNanos', 'quantileStatus',
               'deadlineSuccess', 'deadlineSuccessFraction', 'requiredSuccessfulRank', 'D1', 'slo', 'workload',
@@ -32,15 +34,18 @@ def publication_requests(judgment):
 def render(root, repository=None, *, evaluation=None):
     if evaluation is None:
         evaluation = json.loads((Path(root) / 'e5-summary.json').read_text())
-        if evaluation.get('schema') != 'e5-summary.v4':
-            raise ValueError('FrozenInputInvalid: summary v4 required')
-    lines = ['Evaluation: ' + evaluation['status'], 'stage | workload | offered | completed | deadline success | SLO | declared-meter J']
+    if evaluation.get('schema') != 'e5-summary.v5':
+        raise ValueError('FrozenInputInvalid: summary v5 required')
+    lines = ['Evaluation: ' + evaluation['status'],
+             'stage | workload | offered | completed | on-time success rate | goodput req/s | completed latency ns p50/p95/p99/max | SLO | declared-meter J']
     for stage in evaluation.get('stages', []):
         kpis = stage['kpis']
         energy = kpis.get('wholePoolJoules')
         for name, result in kpis['requests'].items():
             lines.append(' | '.join(str(value) for value in (stage['id'], name, result['offered'], result['completedLatencyNS']['samples'],
-                                                           result['deadlineSuccess'], result['D1'], 'UNKNOWN' if energy is None else energy)))
+                                                           result.get('onTimeSuccessRate'), result.get('goodputRequestsPerSecond'),
+                                                           '/'.join(str(result['completedLatencyNS'].get(key)) for key in ('p50', 'p95', 'p99', 'max')),
+                                                           result['D1'], 'UNKNOWN' if energy is None else energy)))
             for gap in result.get('observationGaps', []):
                 lines.append('Observation gap: ' + json.dumps(gap, sort_keys=True))
     lines.append('SLO denominator: the complete frozen planned population, not successful responses. Meter energy includes every declared node, whether serving or idle.')

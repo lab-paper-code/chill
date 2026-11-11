@@ -1245,14 +1245,140 @@ spec:
                             the producer drained marker is absent.
                           format: int64
                           type: integer
+                        completedLatencyNS:
+                          properties:
+                            max:
+                              nullable: true
+                              type: number
+                            mean:
+                              nullable: true
+                              type: number
+                            p50:
+                              nullable: true
+                              type: number
+                            p95:
+                              nullable: true
+                              type: number
+                            p99:
+                              nullable: true
+                              type: number
+                            samples:
+                              format: int64
+                              type: integer
+                          required:
+                          - max
+                          - mean
+                          - p50
+                          - p95
+                          - p99
+                          - samples
+                          type: object
                         deadlineSuccess:
                           format: int64
                           type: integer
+                        executorWaitNS:
+                          properties:
+                            max:
+                              nullable: true
+                              type: number
+                            mean:
+                              nullable: true
+                              type: number
+                            p50:
+                              nullable: true
+                              type: number
+                            p95:
+                              nullable: true
+                              type: number
+                            p99:
+                              nullable: true
+                              type: number
+                            samples:
+                              format: int64
+                              type: integer
+                          required:
+                          - max
+                          - mean
+                          - p50
+                          - p95
+                          - p99
+                          - samples
+                          type: object
+                        gatewayWaitNS:
+                          description: Wait samples exclude requests that did not
+                            enter the corresponding queue.
+                          properties:
+                            max:
+                              nullable: true
+                              type: number
+                            mean:
+                              nullable: true
+                              type: number
+                            p50:
+                              nullable: true
+                              type: number
+                            p95:
+                              nullable: true
+                              type: number
+                            p99:
+                              nullable: true
+                              type: number
+                            samples:
+                              format: int64
+                              type: integer
+                          required:
+                          - max
+                          - mean
+                          - p50
+                          - p95
+                          - p99
+                          - samples
+                          type: object
+                        goodputRequestsPerSecond:
+                          description: Goodput uses the Workload load length, or its
+                            closed-through cutoff, not drain time.
+                          nullable: true
+                          type: number
+                        loadLengthSeconds:
+                          type: number
                         offered:
                           description: Offered counts frozen arrivals scheduled at
                             or before ClosedThrough.
                           format: int64
                           type: integer
+                        onTimeSuccessRate:
+                          nullable: true
+                          type: number
+                        outcomeClasses:
+                          description: EvaluationRequestOutcomeClasses are mutually
+                            exclusive and sum to offered.
+                          properties:
+                            failed:
+                              format: int64
+                              type: integer
+                            incomplete:
+                              format: int64
+                              type: integer
+                            late:
+                              format: int64
+                              type: integer
+                            onTime:
+                              format: int64
+                              type: integer
+                            rejected:
+                              format: int64
+                              type: integer
+                            timeout:
+                              format: int64
+                              type: integer
+                          required:
+                          - failed
+                          - incomplete
+                          - late
+                          - onTime
+                          - rejected
+                          - timeout
+                          type: object
                         outcomes:
                           additionalProperties:
                             format: int64
@@ -1260,6 +1386,93 @@ spec:
                           type: object
                         reachable:
                           type: boolean
+                        rejections:
+                          items:
+                            properties:
+                              code:
+                                enum:
+                                - QueueFull
+                                - DeadlineInfeasible
+                                type: string
+                              count:
+                                format: int64
+                                type: integer
+                              executorWaitNS:
+                                properties:
+                                  max:
+                                    nullable: true
+                                    type: number
+                                  mean:
+                                    nullable: true
+                                    type: number
+                                  p50:
+                                    nullable: true
+                                    type: number
+                                  p95:
+                                    nullable: true
+                                    type: number
+                                  p99:
+                                    nullable: true
+                                    type: number
+                                  samples:
+                                    format: int64
+                                    type: integer
+                                required:
+                                - max
+                                - mean
+                                - p50
+                                - p95
+                                - p99
+                                - samples
+                                type: object
+                              gatewayWaitNS:
+                                properties:
+                                  max:
+                                    nullable: true
+                                    type: number
+                                  mean:
+                                    nullable: true
+                                    type: number
+                                  p50:
+                                    nullable: true
+                                    type: number
+                                  p95:
+                                    nullable: true
+                                    type: number
+                                  p99:
+                                    nullable: true
+                                    type: number
+                                  samples:
+                                    format: int64
+                                    type: integer
+                                required:
+                                - max
+                                - mean
+                                - p50
+                                - p95
+                                - p99
+                                - samples
+                                type: object
+                              policy:
+                                enum:
+                                - Reject
+                                - Delay
+                                type: string
+                              stage:
+                                enum:
+                                - gateway
+                                - executor
+                                type: string
+                            required:
+                            - code
+                            - count
+                            - executorWaitNS
+                            - gatewayWaitNS
+                            - policy
+                            - stage
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
                         requiredSuccessfulRank:
                           format: int64
                           type: integer
@@ -1310,26 +1523,247 @@ spec:
                                 type: integer
                               durationSeconds:
                                 type: number
+                              executorWaitNS:
+                                properties:
+                                  max:
+                                    nullable: true
+                                    type: number
+                                  mean:
+                                    nullable: true
+                                    type: number
+                                  p50:
+                                    nullable: true
+                                    type: number
+                                  p95:
+                                    nullable: true
+                                    type: number
+                                  p99:
+                                    nullable: true
+                                    type: number
+                                  samples:
+                                    format: int64
+                                    type: integer
+                                required:
+                                - max
+                                - mean
+                                - p50
+                                - p95
+                                - p99
+                                - samples
+                                type: object
+                              gatewayWaitNS:
+                                description: Wait samples exclude requests that did
+                                  not enter the corresponding queue.
+                                properties:
+                                  max:
+                                    nullable: true
+                                    type: number
+                                  mean:
+                                    nullable: true
+                                    type: number
+                                  p50:
+                                    nullable: true
+                                    type: number
+                                  p95:
+                                    nullable: true
+                                    type: number
+                                  p99:
+                                    nullable: true
+                                    type: number
+                                  samples:
+                                    format: int64
+                                    type: integer
+                                required:
+                                - max
+                                - mean
+                                - p50
+                                - p95
+                                - p99
+                                - samples
+                                type: object
+                              goodputRequestsPerSecond:
+                                description: Goodput uses the Workload load length,
+                                  or its closed-through cutoff, not drain time.
+                                nullable: true
+                                type: number
                               id:
                                 type: string
+                              loadLengthSeconds:
+                                type: number
                               offered:
                                 format: int64
                                 type: integer
+                              onTimeSuccessRate:
+                                nullable: true
+                                type: number
+                              outcomeClasses:
+                                description: EvaluationRequestOutcomeClasses are mutually
+                                  exclusive and sum to offered.
+                                properties:
+                                  failed:
+                                    format: int64
+                                    type: integer
+                                  incomplete:
+                                    format: int64
+                                    type: integer
+                                  late:
+                                    format: int64
+                                    type: integer
+                                  onTime:
+                                    format: int64
+                                    type: integer
+                                  rejected:
+                                    format: int64
+                                    type: integer
+                                  timeout:
+                                    format: int64
+                                    type: integer
+                                required:
+                                - failed
+                                - incomplete
+                                - late
+                                - onTime
+                                - rejected
+                                - timeout
+                                type: object
                               rate:
                                 type: number
+                              rejections:
+                                items:
+                                  properties:
+                                    code:
+                                      enum:
+                                      - QueueFull
+                                      - DeadlineInfeasible
+                                      type: string
+                                    count:
+                                      format: int64
+                                      type: integer
+                                    executorWaitNS:
+                                      properties:
+                                        max:
+                                          nullable: true
+                                          type: number
+                                        mean:
+                                          nullable: true
+                                          type: number
+                                        p50:
+                                          nullable: true
+                                          type: number
+                                        p95:
+                                          nullable: true
+                                          type: number
+                                        p99:
+                                          nullable: true
+                                          type: number
+                                        samples:
+                                          format: int64
+                                          type: integer
+                                      required:
+                                      - max
+                                      - mean
+                                      - p50
+                                      - p95
+                                      - p99
+                                      - samples
+                                      type: object
+                                    gatewayWaitNS:
+                                      properties:
+                                        max:
+                                          nullable: true
+                                          type: number
+                                        mean:
+                                          nullable: true
+                                          type: number
+                                        p50:
+                                          nullable: true
+                                          type: number
+                                        p95:
+                                          nullable: true
+                                          type: number
+                                        p99:
+                                          nullable: true
+                                          type: number
+                                        samples:
+                                          format: int64
+                                          type: integer
+                                      required:
+                                      - max
+                                      - mean
+                                      - p50
+                                      - p95
+                                      - p99
+                                      - samples
+                                      type: object
+                                    policy:
+                                      enum:
+                                      - Reject
+                                      - Delay
+                                      type: string
+                                    stage:
+                                      enum:
+                                      - gateway
+                                      - executor
+                                      type: string
+                                  required:
+                                  - code
+                                  - count
+                                  - executorWaitNS
+                                  - gatewayWaitNS
+                                  - policy
+                                  - stage
+                                  type: object
+                                type: array
+                                x-kubernetes-list-type: atomic
                               requiredSuccessfulRank:
                                 format: int64
                                 type: integer
+                              timeoutCauses:
+                                description: EvaluationRequestTimeoutCauses partitions
+                                  timeout; server evidence takes precedence.
+                                properties:
+                                  clientSocket:
+                                    format: int64
+                                    type: integer
+                                  serverFinalDeadline:
+                                    format: int64
+                                    type: integer
+                                required:
+                                - clientSocket
+                                - serverFinalDeadline
+                                type: object
                             required:
                             - completedLatencyNS
                             - deadlineSuccess
                             - durationSeconds
+                            - executorWaitNS
+                            - gatewayWaitNS
+                            - goodputRequestsPerSecond
                             - id
+                            - loadLengthSeconds
                             - offered
+                            - onTimeSuccessRate
+                            - outcomeClasses
                             - rate
+                            - rejections
                             - requiredSuccessfulRank
+                            - timeoutCauses
                             type: object
                           type: array
+                        timeoutCauses:
+                          description: EvaluationRequestTimeoutCauses partitions timeout;
+                            server evidence takes precedence.
+                          properties:
+                            clientSocket:
+                              format: int64
+                              type: integer
+                            serverFinalDeadline:
+                              format: int64
+                              type: integer
+                          required:
+                          - clientSocket
+                          - serverFinalDeadline
+                          type: object
                         unfinishedOrUnsent:
                           description: |-
                             UnfinishedOrUnsent excludes collection loss; in-flight requests with client rows
@@ -1337,13 +1771,22 @@ spec:
                           format: int64
                           type: integer
                       required:
+                      - completedLatencyNS
                       - deadlineSuccess
+                      - executorWaitNS
+                      - gatewayWaitNS
+                      - goodputRequestsPerSecond
+                      - loadLengthSeconds
                       - offered
+                      - onTimeSuccessRate
+                      - outcomeClasses
                       - outcomes
                       - reachable
+                      - rejections
                       - requiredSuccessfulRank
                       - slo
                       - substages
+                      - timeoutCauses
                       - unfinishedOrUnsent
                       type: object
                     type: object

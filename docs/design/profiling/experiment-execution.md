@@ -256,7 +256,7 @@ stage의 settingsPatch 부재는 공통 patch 상속이며, 명시된 stage patc
 Workload name/UID 불일치는 실행을 중단하지만 generation과 sourceSHA는 관측 사실이다.
 raw provenance 오류는 지표를 전역 무효화하지 않고, 모호한 requestID만 격리해 수와 사유를 남긴다.
 `definitionID`는 사용할 수 있는 HTTP final의 단일 관측 신원이 있을 때만 채운다.
-정책 v2 저장 계약은 `e5-summary.v4`, `e5-judgment.v3`, binding v4다.
+정책 v2의 과부하 admission 저장 계약은 `e5-summary.v5`, `e5-judgment.v4`, binding v4다.
 bridge/reader의 외곽 unknown-field 거절은 유지하고, 원래 JSON 객체로 보존하는 KPI·definition
 내부에는 새 strict 스키마를 만들지 않는다. 이미 게시된 과거 null은 수정·재게시하지 않는다.
 
@@ -315,7 +315,7 @@ prepare에서 LoadScenario·카탈로그를 **한 번만** name+UID(Workload는 
 
 host-built/uploaded input 파일·transitive bundle은 생성·다운로드하지 않는다. endpoint·CA/token projections·시간 상한·workers/lifetime는 동결 ConfigMap의 operational 값이다. Job은 evaluator가 직접 조립하고 `loadGenerator.nodeName`을 모든 generator Pod에 그대로 전달한다.
 
-저장 계약은 binding `e5-binding.v4`, inputs `evaluation-inputs.v2alpha1`, snapshot `evaluation-snapshot.v2alpha1`, judgment `e5-judgment.v3`, summary `e5-summary.v4`다. 단일 reader이며 과거 불변 증거를 새 의미로 재해석하지 않는다.
+저장 계약은 binding `e5-binding.v4`, inputs `evaluation-inputs.v2alpha1`, snapshot `evaluation-snapshot.v2alpha1`, judgment `e5-judgment.v4`, summary `e5-summary.v5`다. 단일 reader이며 과거 불변 증거를 새 의미로 재해석하지 않는다.
 
 `failurePolicy: v2`는 SLO·부하 충실도·offered/tail 에너지·주입 실현·drain·정리·발행을 독립 결과로 보존한다. lateness/gap 정책은 보고용 라벨이며, 부분 적분은 observedJoules와 coverage로 남기고 완전한 wholePoolJoules로 주장하지 않는다. power sourceIdentity·node/meter·from/to 범위 검증은 유지한다. CPU/throttle 카운터, NotReady, 경쟁 부하와 provenance label은 거절 조건이 아니다. 부하 0은 부하/SLO 주장, 전력 전무는 에너지 주장을 중단한다.
 

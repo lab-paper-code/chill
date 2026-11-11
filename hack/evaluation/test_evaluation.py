@@ -417,7 +417,7 @@ class EvaluationTests(unittest.TestCase):
             request = {'offered': 1, 'clientRows': 1, 'deadlineSuccess': 1, 'D1': 'OBSERVED_THRESHOLD_MET',
                        'completedLatencyNS': {'samples': 1}, 'workloadUID': scenario['workloads'][0]['uid'],
                        'definitionID': 'observed-definition', 'issuanceFidelity': {}}
-            evidence_io.save(scope / 'judgment.json', {'schema': 'e5-judgment.v3', 'status': 'MEASURED_DESCRIPTIVE',
+            evidence_io.save(scope / 'judgment.json', {'schema': 'e5-judgment.v4', 'status': 'MEASURED_DESCRIPTIVE',
                 'requests': {NAME: request}, 'components': {'slo': {'status': 'PASS'}},
                 'power': {'complete': True, 'wholePoolJoules': 1}})
             complete = {'execution': {'status': 'Complete', 'reason': 'ProcedureComplete'},
@@ -428,7 +428,7 @@ class EvaluationTests(unittest.TestCase):
             if measurement:
                 records['experiments/run/stages/one/judge/result.json']['measurement'] = measurement
                 request['D1'] = 'FAIL'
-                evidence_io.save(scope / 'judgment.json', {'schema': 'e5-judgment.v3', 'status': 'FAIL',
+                evidence_io.save(scope / 'judgment.json', {'schema': 'e5-judgment.v4', 'status': 'FAIL',
                     'requests': {NAME: request}, 'components': {'slo': {'status': 'FAIL'}},
                     'power': {'complete': True, 'wholePoolJoules': 1}})
             if lost:
@@ -1818,7 +1818,7 @@ class EvaluationTests(unittest.TestCase):
                 return original_module(name, path)
             with patch.object(evidence_io, 'module', side_effect=modules):
                 judgment = judgment_rules.judge(root / 'binding.json', root)
-            self.assertEqual(judgment['schema'], 'e5-judgment.v3')
+            self.assertEqual(judgment['schema'], 'e5-judgment.v4')
             self.assertEqual(judgment['status'], 'FAIL')
             self.assertEqual(judgment['requests'][NAME]['offered'], 2)
             self.assertEqual(judgment['requests'][NAME]['deadlineSuccess'], 0)

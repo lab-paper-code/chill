@@ -190,6 +190,7 @@ type EvaluationProvisionalD1 struct {
 }
 
 type EvaluationProvisionalRequests struct {
+	EvaluationRequestMetrics `json:",inline"`
 	// Offered counts frozen arrivals scheduled at or before ClosedThrough.
 	Offered                int64            `json:"offered"`
 	DeadlineSuccess        int64            `json:"deadlineSuccess"`
@@ -212,13 +213,59 @@ type EvaluationRequestSLO struct {
 }
 
 type EvaluationProvisionalSubstage struct {
-	ID                     string                 `json:"id"`
-	DurationSeconds        float64                `json:"durationSeconds"`
-	Rate                   float64                `json:"rate"`
-	Offered                int64                  `json:"offered"`
-	DeadlineSuccess        int64                  `json:"deadlineSuccess"`
-	RequiredSuccessfulRank int64                  `json:"requiredSuccessfulRank"`
-	CompletedLatencyNS     EvaluationRequestStats `json:"completedLatencyNS"`
+	EvaluationRequestMetrics `json:",inline"`
+	ID                       string  `json:"id"`
+	DurationSeconds          float64 `json:"durationSeconds"`
+	Rate                     float64 `json:"rate"`
+	Offered                  int64   `json:"offered"`
+	DeadlineSuccess          int64   `json:"deadlineSuccess"`
+	RequiredSuccessfulRank   int64   `json:"requiredSuccessfulRank"`
+}
+
+// EvaluationRequestMetrics describes one frozen arrival cohort, including drain completions.
+type EvaluationRequestMetrics struct {
+	OutcomeClasses EvaluationRequestOutcomeClasses `json:"outcomeClasses"`
+	TimeoutCauses  EvaluationRequestTimeoutCauses  `json:"timeoutCauses"`
+	// +nullable
+	OnTimeSuccessRate *float64 `json:"onTimeSuccessRate"`
+	// Goodput uses the Workload load length, or its closed-through cutoff, not drain time.
+	// +nullable
+	GoodputRequestsPerSecond *float64               `json:"goodputRequestsPerSecond"`
+	LoadLengthSeconds        float64                `json:"loadLengthSeconds"`
+	CompletedLatencyNS       EvaluationRequestStats `json:"completedLatencyNS"`
+	// Wait samples exclude requests that did not enter the corresponding queue.
+	GatewayWaitNS  EvaluationRequestStats `json:"gatewayWaitNS"`
+	ExecutorWaitNS EvaluationRequestStats `json:"executorWaitNS"`
+	// +listType=atomic
+	Rejections []EvaluationRequestRejections `json:"rejections"`
+}
+
+// EvaluationRequestOutcomeClasses are mutually exclusive and sum to offered.
+type EvaluationRequestOutcomeClasses struct {
+	OnTime     int64 `json:"onTime"`
+	Late       int64 `json:"late"`
+	Rejected   int64 `json:"rejected"`
+	Timeout    int64 `json:"timeout"`
+	Failed     int64 `json:"failed"`
+	Incomplete int64 `json:"incomplete"`
+}
+
+// EvaluationRequestTimeoutCauses partitions timeout; server evidence takes precedence.
+type EvaluationRequestTimeoutCauses struct {
+	ServerFinalDeadline int64 `json:"serverFinalDeadline"`
+	ClientSocket        int64 `json:"clientSocket"`
+}
+
+type EvaluationRequestRejections struct {
+	// +kubebuilder:validation:Enum=QueueFull;DeadlineInfeasible
+	Code string `json:"code"`
+	// +kubebuilder:validation:Enum=gateway;executor
+	Stage string `json:"stage"`
+	// +kubebuilder:validation:Enum=Reject;Delay
+	Policy         string                 `json:"policy"`
+	Count          int64                  `json:"count"`
+	GatewayWaitNS  EvaluationRequestStats `json:"gatewayWaitNS"`
+	ExecutorWaitNS EvaluationRequestStats `json:"executorWaitNS"`
 }
 
 type EvaluationRequestStats struct {

@@ -62,8 +62,8 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 | 단계 결과 | `evaluation-step.v1alpha1` | `hack/evaluation/evaluation.py` `result_record`; controller `jobs.go` `validateResult` |
 | 입력 동결 | `evaluation-snapshot.v2alpha1` / `evaluation-inputs.v2alpha1` | `hack/evaluation/input_snapshot.py` |
 | binding | `e5-binding.v4` | `hack/evaluation/conductor.py` `bind`, `evidence_io.load_binding` |
-| 판정 | `e5-judgment.v3` | `hack/evaluation/judgment.py` `judge` |
-| 요약 | `e5-summary.v4` | `judgment.py`, `tables.py` |
+| 판정 | `e5-judgment.v4` | `hack/evaluation/judgment.py` `judge` |
+| 요약 | `e5-summary.v5` | `judgment.py`, `tables.py` |
 | 실패 정책 | `failurePolicy: v2`(부분 관측 보존, 하나 이상하면 전체 폐기 금지) | binding·phase·archive·judgment 공통 |
 | 게시 | `serving-experiment.v1alpha1`(정의 `evaluation-definition.v1alpha1`) | `hack/evaluation/publication.py` |
 
@@ -81,9 +81,27 @@ turn unknown evidence into an SLO failure or success. Zero-offer workloads remai
 `NOT_OFFERED`. `open:true` influence has no end at `clearAt`, which remains
 provenance only. Non-overlapping gaps, ordinary missing finals and observed SLO
 failures retain their existing judgments. Meter energy remains independently
-evaluated from its own coverage. Provisional status keeps its existing typed
-count-only contract; recovery provenance is retained in raw snapshots and final
-artifacts, not emitted as unsupported provisional fields.
+evaluated from its own coverage. Provisional status exposes typed request metrics;
+recovery provenance remains in raw snapshots and final artifacts.
+
+The overload-admission cutover reads only judgment v4 and summary v5. Historical
+artifacts retain their original meaning and are not rewritten. `outcomes` remains
+the client diagnostic count. `outcomeClasses` partitions the frozen offered
+population into `onTime`, `late`, `rejected`, `timeout`, `failed`, and `incomplete`.
+Both successful classes require a client 2xx full-body response and a server
+`completed` final with `executionComplete`. A client socket timeout followed by
+native completion remains a timeout. `timeoutCauses` partitions timeouts into
+`serverFinalDeadline` (when evidenced) and `clientSocket`.
+
+`onTimeSuccessRate` uses offered as denominator. `goodputRequestsPerSecond` uses
+each Workload's load length, including on-time drain completions from that arrival
+cohort. Provisional `loadLengthSeconds` is clipped at that Workload's
+`closedThrough` cutoff; neither drain time nor the cross-Workload wall window
+extends it. `completedLatencyNS` reports only onTime+late and never decides D1.
+`rejections[]` groups explicit `policy × stage × code`, with queue wait statistics
+per group. `gatewayWaitNS` and `executorWaitNS` also report cohort queue waits.
+Missing waits have no sample; actual zero waits remain samples with value zero. Missing
+admission metadata never receives a retroactive default.
 
 Producer release uses one future UTC instant written atomically into every Pod's
 release file after all producers are ready. Serial execs receive two seconds per

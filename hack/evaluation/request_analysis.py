@@ -103,6 +103,78 @@ def request_timing(row, final, received_ns, start_ns):
             'entranceDelayMeaning': 'Gateway receivedAt minus client sentAtUnixNS; cross-host clock offset/uncertainty retained, including negative values; not one-way network latency'}
 
 
+def rejection(value):
+    """Read explicit overload metadata; never infer a policy from old rows."""
+    if (isinstance(value, dict) and value.get('code') in ('QueueFull', 'DeadlineInfeasible') and
+            value.get('stage') in ('gateway', 'executor') and value.get('policy') in ('Reject', 'Delay')):
+        return {key: value[key] for key in ('code', 'stage', 'policy')}
+    return None
+
+
+def request_class(row, final, timing, target_ns):
+    """One offered outcome; a client timeout cannot become a native late success."""
+    client = timing['clientOutcome']
+    server = final.get('outcome') if final else None
+    if client in ('unknown', 'unissued'):
+        return 'incomplete', None, None
+    if server == 'timeout':
+        return 'timeout', 'serverFinalDeadline', None
+    if client == 'timeout':
+        return 'timeout', 'clientSocket', None
+    if timing['sloLatencyNS'] is not None:
+        return ('onTime' if timing['sloLatencyNS'] <= target_ns else 'late'), None, None
+    if client == 'http_error':
+        native = rejection(final.get('rejection')) if final else None
+        http = rejection(row.get('rejection'))
+        metadata = native or http
+        if metadata:
+            expected = 429 if metadata['code'] == 'QueueFull' else 503
+            if (row['status'] != expected or server not in (None, 'rejected') or
+                    native and http and native != http or server == 'rejected' and native is None):
+                return 'incomplete', None, None
+            return 'rejected', None, metadata
+        if server == 'rejected':
+            return 'incomplete', None, None
+    if client in ('http_error', 'transport_error', 'canceled') or server in ('error', 'canceled', 'stopped'):
+        return 'failed', None, None
+    return 'incomplete', None, None
+
+
+def request_metrics(rows, finals, target_ns, offered, duration_ns, start_ns):
+    """Reduce an arrival cohort, including its drain completions."""
+    classes = dict.fromkeys(('onTime', 'late', 'rejected', 'timeout', 'failed', 'incomplete'), 0)
+    causes = dict.fromkeys(('serverFinalDeadline', 'clientSocket'), 0)
+    waits = {'gateway': [], 'executor': []}
+    groups = {}
+    for row in rows:
+        final = finals.get(row.get('requestID'))
+        timing = request_timing(row, final, None, start_ns)
+        outcome, cause, metadata = request_class(row, final, timing, target_ns)
+        classes[outcome] += 1
+        if cause:
+            causes[cause] += 1
+        group = None
+        if metadata:
+            key = tuple(metadata[key] for key in ('policy', 'stage', 'code'))
+            group = groups.setdefault(key, {**metadata, 'count': 0, 'gateway': [], 'executor': []})
+            group['count'] += 1
+        for stage in waits:
+            value = final.get(stage + 'WaitNanos') if final else None
+            if type(value) is int and value >= 0:
+                waits[stage].append(value)
+                if group is not None:
+                    group[stage].append(value)
+    classes['incomplete'] += offered - len(rows)
+    return {'outcomeClasses': classes, 'timeoutCauses': causes,
+            'onTimeSuccessRate': classes['onTime'] / offered if offered else None,
+            'loadLengthSeconds': duration_ns / 1e9,
+            'goodputRequestsPerSecond': classes['onTime'] / (duration_ns / 1e9) if duration_ns else None,
+            'gatewayWaitNS': stats(waits['gateway']), 'executorWaitNS': stats(waits['executor']),
+            'rejections': [{**{key: group[key] for key in ('code', 'stage', 'policy', 'count')},
+                            'gatewayWaitNS': stats(group['gateway']), 'executorWaitNS': stats(group['executor'])}
+                           for _, group in sorted(groups.items())]}
+
+
 def slo_quantile(completed, failures, offered, percentile):
     """Failures occupy the infinite tail; missing evidence is never completion."""
     rank = math.ceil(offered * percentile / 100)

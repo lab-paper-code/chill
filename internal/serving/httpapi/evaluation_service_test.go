@@ -115,6 +115,7 @@ func TestEvaluationViewProjectsOnlyRecordedLiveTarget(t *testing.T) {
 func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 	start := metav1.Date(2026, 11, 4, 1, 0, 0, 0, time.UTC)
 	finish := metav1.Date(2026, 11, 4, 1, 1, 0, 0, time.UTC)
+	rate, goodput, latency := 0.5, 0.1, 1.0
 	first := &api.EvaluationStage{
 		ObjectMeta: metav1.ObjectMeta{Name: "z-stage", Namespace: "ns", UID: "first-uid"},
 		Spec:       api.EvaluationStageSpec{StageID: "first"},
@@ -129,6 +130,15 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 				AsOf: "2026-11-04T01:00:59.123456789Z", ClosedThrough: "2026-11-04T01:00:00Z", Provisional: true,
 				Workloads: map[string]api.EvaluationProvisionalRequests{
 					"workload": {Offered: 2, DeadlineSuccess: 1, RequiredSuccessfulRank: 2, Outcomes: map[string]int64{"completed": 1},
+						EvaluationRequestMetrics: api.EvaluationRequestMetrics{
+							OutcomeClasses:    api.EvaluationRequestOutcomeClasses{OnTime: 1, Rejected: 1},
+							TimeoutCauses:     api.EvaluationRequestTimeoutCauses{},
+							OnTimeSuccessRate: &rate, GoodputRequestsPerSecond: &goodput, LoadLengthSeconds: 10,
+							CompletedLatencyNS: api.EvaluationRequestStats{Samples: 1, Mean: &latency, P50: &latency, P95: &latency, P99: &latency, Max: &latency},
+							Rejections: []api.EvaluationRequestRejections{
+								{Code: "QueueFull", Stage: "gateway", Policy: "Reject", Count: 1},
+							},
+						},
 						UnfinishedOrUnsent: 1, CollectionLoss: 2, SLO: api.EvaluationRequestSLO{Percentile: 95, TargetLatencyNanos: 1},
 						Reachable: true, Substages: []api.EvaluationProvisionalSubstage{}},
 				},
@@ -182,6 +192,15 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 				 "measurementVerdict":"PASS",
 				 "provisionalD1":{"asOf":"2026-11-04T01:00:59.123456789Z","closedThrough":"2026-11-04T01:00:00Z","provisional":true,
 					"workloads":{"workload":{"offered":2,"deadlineSuccess":1,"requiredSuccessfulRank":2,"outcomes":{"completed":1},
+						"outcomeClasses":{"onTime":1,"late":0,"rejected":1,"timeout":0,"failed":0,"incomplete":0},
+						"timeoutCauses":{"serverFinalDeadline":0,"clientSocket":0},"onTimeSuccessRate":0.5,
+						"goodputRequestsPerSecond":0.1,"loadLengthSeconds":10,
+						"completedLatencyNS":{"samples":1,"mean":1,"p50":1,"p95":1,"p99":1,"max":1},
+						"gatewayWaitNS":{"samples":0,"mean":null,"p50":null,"p95":null,"p99":null,"max":null},
+						"executorWaitNS":{"samples":0,"mean":null,"p50":null,"p95":null,"p99":null,"max":null},
+						"rejections":[{"code":"QueueFull","stage":"gateway","policy":"Reject","count":1,
+							"gatewayWaitNS":{"samples":0,"mean":null,"p50":null,"p95":null,"p99":null,"max":null},
+							"executorWaitNS":{"samples":0,"mean":null,"p50":null,"p95":null,"p99":null,"max":null}}],
 						"unfinishedOrUnsent":1,"collectionLoss":2,"slo":{"percentile":95,"targetLatencyNanos":1},"reachable":true,"substages":[]}},"generatorQuality":{}},
 				 "progress":[{"phase":"loadStarted","at":"2026-11-04T01:00:01.123456789Z"},{"phase":"drainEnded","at":"2026-11-04T01:01:00Z","producerRowsMissing":{"workload":1}}],
 				 "lastProgressAt":"2026-11-04T01:01:05.123456789Z",

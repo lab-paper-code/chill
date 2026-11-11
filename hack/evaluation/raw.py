@@ -189,7 +189,8 @@ def _digest(row):
     else:
         fields += ('receivedAt', 'definitionID')
         if row.get('kind') == 'final':
-            fields += ('outcome', 'elapsedNanos', 'executionComplete', 'error')
+            fields += ('outcome', 'elapsedNanos', 'executionComplete', 'error', 'rejection',
+                       'admissionPolicy', 'gatewayWaitNanos', 'executorWaitNanos')
     facts = {key: row[key] for key in fields if key in row}
     return hashlib.sha256(json.dumps(facts, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).digest()
 

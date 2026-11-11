@@ -565,8 +565,8 @@ Dataset name/UID references, public settingsPatch, measurement node/meter scope,
 evaluator image/source identity and generator nodeName. There is no scientific
 host input bundle, calibration or CHILL topology restore path.
 
-The pre-7-7 cutover uses **failurePolicy v2**, binding `e5-binding.v4`,
-judgment `e5-judgment.v3` and summary `e5-summary.v4`, with strict single-version
+The overload-admission cutover uses **failurePolicy v2**, binding `e5-binding.v4`,
+judgment `e5-judgment.v4` and summary `e5-summary.v5`, with strict single-version
 readers. Historical evidence is not rewritten. SLO, achieved-load fidelity,
 offered/tail energy, injection realization, drain, cleanup and publication are
 independent outcomes; a defect in one does not erase observations in another.
