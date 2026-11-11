@@ -147,18 +147,28 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 func schedulerApprovalConfiguration(config SchedulerControllerConfig) SchedulerControllerConfig {
 	config.OnDecision, config.OnAction = nil, nil
 	config.DispatchOccupancySnapshot, config.MeterSource = nil, nil
+	// Occupancy policy is the selected cell/value projection below, not raw
+	// cache evidence or unused legacy rows.
+	config.DispatchOccupancy = nil
 	return config
 }
 
 // schedulerApprovalInputs retains admission authority, not advancing observation
 // clocks or historical replay demand. A changed input discards the evaluation;
 // approval never silently rebases a target onto a different physical plan.
-func schedulerApprovalInputs(s serving.SchedulerSnapshot) serving.SchedulerSnapshot {
+func schedulerApprovalInputs(settings serving.SchedulerSettings, s serving.SchedulerSnapshot) serving.SchedulerSnapshot {
+	var occupancy []serving.DispatchOccupancy
+	if len(s.Instances) != 0 || len(s.Options) != 0 {
+		occupancy = serving.SchedulerSelectedOccupancy(settings, s)
+		for i := range occupancy {
+			occupancy[i].RuntimeImage, occupancy[i].Source, occupancy[i].Provenance = "", "", nil
+		}
+	}
 	s = serving.SchedulerSnapshot{
 		Nodes: slices.Clone(s.Nodes), Instances: slices.Clone(s.Instances),
 		Options: slices.Clone(s.Options), Workloads: s.Workloads, Routing: s.Routing,
 		Costs: s.Costs, Baselines: s.Baselines,
-		DispatchOccupancy: s.DispatchOccupancy,
+		DispatchOccupancy: occupancy,
 		Actions:           slices.Clone(s.Actions), Reservations: slices.Clone(s.Reservations),
 	}
 	slices.SortFunc(s.Nodes, func(a, b serving.SchedulerNode) int { return strings.Compare(a.Node.UID, b.Node.UID) })

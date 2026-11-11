@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -268,5 +269,75 @@ func TestSchedulerTargetAdmissionDoesNotBlockProgress(t *testing.T) {
 	}
 	if !c.State().Snapshot.At.Equal(at) {
 		t.Fatal("target admission replaced the progress snapshot")
+	}
+}
+
+func TestSchedulerApprovalUsesAppliedOccupancyCells(t *testing.T) {
+	for _, change := range []string{"provenance-refresh", "unselected-cell-change", "source-change", "applied-value-change", "configuration-provenance-refresh", "configuration-applied-value-change"} {
+		t.Run(change, func(t *testing.T) {
+			c := schedulerCaptureClockController(t, nil)
+			snapshot, err := c.capture(context.Background(), time.Now(), c.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			instance := snapshot.Instances[0]
+			condition := instance.Profile.Condition
+			at := time.Now()
+			initial := []serving.DispatchOccupancy{{
+				Node: instance.Node, PowerMode: condition.PowerMode, Model: condition.LogicalModel,
+				ProfileID: instance.Profile.ID, ExecutionPath: condition.Artifact.ExecutionPath, Batch: instance.MaxBatch,
+				PerRequest: time.Millisecond, Source: "original-record",
+				Provenance: &serving.DispatchOccupancyProvenance{Source: "measured", UpdatedAt: at, Pairs: 10, Value: int64(time.Millisecond)},
+			}, {
+				Node: serving.NodeReference{Name: "unused", UID: "unused"}, PerRequest: time.Second,
+			}}
+			var occupancy atomic.Value
+			occupancy.Store(initial)
+			c.config.DispatchOccupancySnapshot = func() []serving.DispatchOccupancy {
+				return occupancy.Load().([]serving.DispatchOccupancy)
+			}
+			configurationChange := strings.HasPrefix(change, "configuration-")
+			if configurationChange {
+				c.config.DispatchOccupancySnapshot = nil
+				c.config.DispatchOccupancy = initial
+			}
+			c.runs["measurement-owner"] = &actionRun{action: serving.Action{ID: "measurement-owner", Kind: measurementLeaseKind}}
+			done, resume := holdSchedulerEvaluation(t, c)
+			updated := append([]serving.DispatchOccupancy(nil), initial...)
+			provenance := *initial[0].Provenance
+			updated[0].Provenance = &provenance
+			switch strings.TrimPrefix(change, "configuration-") {
+			case "provenance-refresh":
+				provenance.UpdatedAt = at.Add(time.Second)
+				provenance.Pairs++
+				provenance.Window = &serving.OccupancyWindow{}
+				updated[0].Source = "refreshed-record"
+			case "unselected-cell-change":
+				updated[1].PerRequest++
+			case "source-change":
+				provenance.Source = "dom"
+			case "applied-value-change":
+				updated[0].PerRequest++
+				provenance.Value++
+			}
+			if configurationChange {
+				config := c.config
+				config.DispatchOccupancy = updated
+				if err := c.SetConfiguration(config); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				occupancy.Store(updated)
+			}
+			resume()
+			err = <-done
+			if strings.HasSuffix(change, "applied-value-change") {
+				if err == nil || !strings.Contains(err.Error(), "evaluation invalidated") {
+					t.Fatalf("changed applied occupancy was approved: %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("unchanged applied occupancy was discarded after %s: %v", change, err)
+			}
+		})
 	}
 }

@@ -350,7 +350,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 		if err != nil {
 			return decision, err
 		}
-		if !reflect.DeepEqual(schedulerApprovalInputs(snapshot), schedulerApprovalInputs(current)) {
+		if !reflect.DeepEqual(schedulerApprovalInputs(latest.Settings, snapshot), schedulerApprovalInputs(latest.Settings, current)) {
 			return decision, errors.New("scheduler evaluation invalidated: physical state or reservations changed")
 		}
 	}
@@ -371,7 +371,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 	// under its mutex, not the earlier projection from physical observation.
 	observed := serving.SchedulerSnapshot{Actions: snapshot.Actions, Reservations: snapshot.Reservations}
 	live := serving.SchedulerSnapshot{Actions: c.actionsLocked(snapshot.At), Reservations: c.reservationsLocked()}
-	if !reflect.DeepEqual(schedulerApprovalInputs(observed), schedulerApprovalInputs(live)) {
+	if !reflect.DeepEqual(schedulerApprovalInputs(latest.Settings, observed), schedulerApprovalInputs(latest.Settings, live)) {
 		c.mu.Unlock()
 		return decision, errors.New("scheduler evaluation invalidated: live reservations changed")
 	}
@@ -437,7 +437,7 @@ func (c *SchedulerController) recheckEvaluationTarget(
 	if err != nil {
 		return current, latest, err
 	}
-	if !reflect.DeepEqual(schedulerApprovalInputs(current), schedulerApprovalInputs(approved)) {
+	if !reflect.DeepEqual(schedulerApprovalInputs(latest.Settings, current), schedulerApprovalInputs(latest.Settings, approved)) {
 		return current, latest, errors.New("scheduler evaluation invalidated: physical state or reservations changed during admission")
 	}
 	return approved, latest, nil

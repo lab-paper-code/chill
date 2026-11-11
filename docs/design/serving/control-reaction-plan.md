@@ -99,6 +99,10 @@ executor는 100% 바빴지만, 실행한 요청이 모두 이미 SLO를 지킬 �
   lock 밖에서 실행하며, 다시 lock을 잡은 뒤 최신 설정·진행·실물을 확인한다.
   target을 새 실물 상태로 조용히 바꾸지 않는다. executor 완료에 따른 ledger
   변경도 게시 직전 mutex 아래에서 다시 확인한다.
+  Occupancy는 실제 평가가 선택한 cell과 적용값만 비교하고, provenance 갱신 시각·window·
+  표본 수와 선택하지 않은 cell의 변화는 승인 무효화에서 제외한다.
+  요청 모집단은 계속 변하는 입력이며 최종 target replay가 최신 capture를 사용하므로
+  요청 모집단과 routing credit의 변화는 승인 무효화 비교에서 제외한다.
 - decision 기록에는 원래 평가 입력을 남긴다. 현재 state에는 승인 시점의 새 snapshot을
   게시한다. Continue가 그사이 진행했으면 평가를 게시하거나 launch하지 않으므로
   과거 snapshot이 writer fence나 admission `Before`를 되돌리지 않는다.
