@@ -128,6 +128,7 @@ func poolsEligibleChange(d SchedulerDecision, node NodeReference) bool {
 
 // §9.1 소속 도출.
 func TestBuildPoolsDerivesActivePoolsFromInstances(t *testing.T) {
+	const measuredInstanceID = "measured"
 	ref := func(uid string) NodeReference { return NodeReference{Name: "node-" + uid, UID: uid} }
 	bound := func(uid string) []WorkloadReference { return []WorkloadReference{{Name: "name-" + uid, UID: uid}} }
 	instances := []InstanceState{
@@ -135,7 +136,7 @@ func TestBuildPoolsDerivesActivePoolsFromInstances(t *testing.T) {
 		{ID: "binding-only", Node: ref("n2"), Workloads: bound("w2")},
 		{ID: "shared-node", Node: ref("n1"), Workloads: bound("w2")},
 		{ID: "unowned-unbound", Node: ref("n3")},
-		{ID: "measured", Node: ref("m")},
+		{ID: measuredInstanceID, Node: ref("m")},
 	}
 	nodes := []SchedulerNode{
 		{Node: ref("n1"), Ready: true}, {Node: ref("n2"), Ready: true}, {Node: ref("n3"), Ready: true},
@@ -149,7 +150,7 @@ func TestBuildPoolsDerivesActivePoolsFromInstances(t *testing.T) {
 	if want := map[string][]NodeReference{"w1": {ref("n1")}, "w2": {ref("n1"), ref("n2")}}; !reflect.DeepEqual(active, want) {
 		t.Fatalf("active POOLs %v, want %v", active, want)
 	}
-	if len(pools.Measurement) != 1 || pools.Measurement[0].Node != ref("m") || len(pools.Measurement[0].Instances) != 1 || pools.Measurement[0].Instances[0].ID != "measured" {
+	if len(pools.Measurement) != 1 || pools.Measurement[0].Node != ref("m") || len(pools.Measurement[0].Instances) != 1 || pools.Measurement[0].Instances[0].ID != measuredInstanceID {
 		t.Fatalf("measurement POOL %+v", pools.Measurement)
 	}
 	names := func(nodes []PoolNode) (out []string) {

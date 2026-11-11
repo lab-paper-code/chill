@@ -313,39 +313,44 @@ func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings
 	s.routingApplied = c.Keep
 	s.weights = make([]int32, len(s.instances))
 	s.available = make([]bool, len(s.instances))
+	err = s.run(ctx)
+	return s.out, err
+}
+
+func (s *schedulerReplayState) run(ctx context.Context) error {
 	for steps := 1; ; steps++ {
 		if err := ctx.Err(); err != nil {
-			return schedulerReplayResult{}, err
+			return err
 		}
 		if steps > (len(s.requests)+1)*30+len(s.actions)*30+1000 {
 			s.out.reasons = append(s.out.reasons, "ReplayEventBoundExceeded")
-			return s.out, ctx.Err()
+			return ctx.Err()
 		}
 		// Complete physical execution before choosing another UID's nonpreemptive batch.
 		s.expireRequests()
 		s.completeExecution()
 		if s.capacityWindowFailed() {
-			return s.out, nil
+			return nil
 		}
 		if !s.completeActions() {
-			return s.out, ctx.Err()
+			return ctx.Err()
 		}
 		if !s.startActions() {
-			return s.out, ctx.Err()
+			return ctx.Err()
 		}
 		if !s.admitArrivals(ctx) {
-			return s.out, ctx.Err()
+			return ctx.Err()
 		}
 		// Native queue entries never move when the desired configuration changes.
 		if !s.routeRequests(ctx) {
-			return s.out, ctx.Err()
+			return ctx.Err()
 		}
 		if s.capacityWindowFailed() {
-			return s.out, nil
+			return nil
 		}
 		s.receiveNative()
 		if !s.chooseBatches(ctx) {
-			return s.out, ctx.Err()
+			return ctx.Err()
 		}
 		next, remaining := s.nextEvent()
 		// Zero-duration route/drain can unlock an action at the same timestamp.
@@ -355,27 +360,27 @@ func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings
 		if math.IsInf(next, 1) {
 			if remaining && s.blockedReplayPrerequisite() {
 				s.out.reasons = append(s.out.reasons, "NoReadyCapacityOrTransitionPrerequisite")
-				return s.out, ctx.Err()
+				return ctx.Err()
 			}
 			remaining = false // unassigned requests remain explicit unfinished outcomes
 			next = math.Max(s.now, s.horizon)
 		}
 		if !s.accumulateEnergy(math.Min(next, s.horizon)) {
-			return s.out, ctx.Err()
+			return ctx.Err()
 		}
 		if !remaining && next >= s.horizon {
 			break
 		}
 		if next <= s.now {
 			s.out.reasons = append(s.out.reasons, "ReplayNonAdvancingEvent")
-			return s.out, ctx.Err()
+			return ctx.Err()
 		}
 		s.now = next
 	}
 	if !schedulerFinite(s.out.energy) || s.out.energy < 0 {
 		s.out.reasons = append(s.out.reasons, "ExpectedEnergyOutsidePhysicalNumericalRange")
 	}
-	return s.out, ctx.Err()
+	return ctx.Err()
 }
 
 func (s *schedulerReplayState) blockedReplayPrerequisite() bool {
