@@ -85,6 +85,14 @@ evaluated from its own coverage. Provisional status keeps its existing typed
 count-only contract; recovery provenance is retained in raw snapshots and final
 artifacts, not emitted as unsupported provisional fields.
 
+Producer release uses one future UTC instant written atomically into every Pod's
+release file after all producers are ready. Serial execs receive two seconds per
+Pod of transport lead; this is not a measurement or skew threshold. Producers wait
+until that instant within the existing barrier deadline and record actual wall
+and monotonic starts. A release write finishing after the instant fails with
+`BarrierTimeout`. `goUTC` remains the conductor's GO time; producer observations
+determine `startUTC` and the existing skew judgment remains unchanged.
+
 
 ChillServer의 `--evaluation-store-name`, `--evaluation-store-endpoint`, `--evaluation-store-bucket`, `--evaluation-store-region`과 `EVALUATION_STORE_ACCESS_KEY_ID` / `EVALUATION_STORE_SECRET_ACCESS_KEY`는 함께 설정하거나 모두 생략한다.
 설정하면 실험 목록·상세, evaluation template의 저장소·최근 게시, LoadScenario 입력 목록·traceRefs 조회만 전용 저장소를 사용하며 이전 저장소를 병행 조회하지 않는다.

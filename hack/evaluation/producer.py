@@ -75,6 +75,9 @@ def replay_shards(records, offsets, duration_ns, binding, kw):
             if time.monotonic() >= deadline:
                 raise RuntimeError('Finite producer barrier expired; no inference sent')
             time.sleep(.05)
+        start_at = dt.datetime.fromisoformat(Path('/tmp/evaluation-start').read_text()).timestamp()
+        while (remaining := start_at - time.time()) > 0 and time.monotonic() < deadline:
+            time.sleep(min(remaining, max(0, deadline - time.monotonic())))
         if time.monotonic() >= deadline:
             raise RuntimeError('Actual producer barrier expired before release; no inference sent')
         start_ns.value = time.monotonic_ns()

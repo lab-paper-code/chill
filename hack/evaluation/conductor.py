@@ -433,6 +433,19 @@ class CPO:
         if len(statuses) != 1 or statuses[0].get('containerID') != before[0]['containerID'] or statuses[0].get('restartCount') or not statuses[0].get('state', {}).get('running'):
             raise RuntimeError('IdentityMismatch: producer process changed or stopped')
 
+    def release_producers(self, pods):
+        # Transport allowance for serial execs, independent of measurement/skew limits.
+        start_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=2 * len(pods))
+        command = ("from pathlib import Path; import sys; "
+                   "path = Path('/tmp/evaluation-start'); pending = path.with_suffix('.tmp'); "
+                   "pending.write_text(sys.argv[1]); pending.replace(path)")
+        for pod in pods.values():
+            self.io.k(['exec', pod['metadata']['name'], '-c', 'load', '--', 'python3', '-c',
+                       command, start_at.isoformat()])
+            if time.time_ns() > evidence_io.timestamp_ns(start_at.isoformat()):
+                raise RuntimeError('BarrierTimeout: release after start instant')
+        return start_at
+
     def observe_generators(self, folder):
         active = self.io.k(['get', 'jobs', '-l', 'edge.dacs.io/workload-role=load-generator', '-o', 'json'])['items']
         foreign = [job for job in active if not self.owned(job) and not any(
@@ -624,14 +637,13 @@ class CPO:
                         if time.time_ns() >= evidence_io.timestamp_ns(ready[name]['at']) + round(ready[name]['barrierSeconds'] * 1e9):
                             raise RuntimeError('BarrierTimeout: Ready expired')
                     phase['goUTC'] = evidence_io.now()
-                    for pod in pods.values():
-                        self.io.k(['exec', pod['metadata']['name'], '-c', 'load', '--', 'python3', '-c', "from pathlib import Path; Path('/tmp/evaluation-start').touch()"])
+                    start_at = self.release_producers(pods)
                     released = True
                     phase['startUTC'] = phase['goUTC']
                     phase['endUTC'] = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=stage['seconds'])).isoformat()
                     phase['intervalSource'] = 'GO until producer start observations are available'
                     self.record_go(folder, jobs, pods, phase['goUTC'])
-                    deadline = time.monotonic() + stage['seconds'] + self.tb['drainSeconds'] + self.tb['collectSeconds']
+                    deadline = time.monotonic() + max(0, start_at.timestamp() - time.time()) + stage['seconds'] + self.tb['drainSeconds'] + self.tb['collectSeconds']
                 if jobs and len(phase['starts']) == len(jobs):
                     phase['startUTC'] = min(phase['starts'].values(), key=lambda row: evidence_io.timestamp_ns(row['at']))['at']
                     end_ns = max(evidence_io.timestamp_ns(row['at']) for row in phase['starts'].values()) + round(stage['seconds'] * 1e9)

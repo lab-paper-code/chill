@@ -7,6 +7,7 @@ import hashlib
 import gzip
 import io
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import subprocess
@@ -1109,6 +1110,94 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(frozen['generation'], 2)
             self.assertEqual(len(uploads), 1)
 
+    def test_serial_release_aligns_producer_actual_starts(self):
+        producer = input_snapshot.module('scheduled_release_producer', evaluation.HERE / 'producer.py')
+        context = multiprocessing.get_context('fork')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            names = ['one', 'two', 'three']
+            pods = {name: {'metadata': {'name': name}} for name in names}
+            binding = {'shards': 1, 'barrierSeconds': 15, 'payload': [],
+                       'datasetRef': {'name': 'records', 'uid': 'dataset'}}
+            def run_producer(name):
+                def replay(*args, **kwargs):
+                    kwargs['out'].write(json.dumps({'sharedStart': kwargs['start_ns']}) + '\n')
+                with (root / (name + '.jsonl')).open('w') as stream:
+                    with patch.object(producer, 'Path', return_value=root / name), patch.object(sys, 'stdout', stream), \
+                         patch.object(cli, 'prepare_records', return_value=[]), patch.object(cli, 'replay_open_loop', side_effect=replay):
+                        producer.replay_shards([], [], 0, binding, {'workload': NAME, 'new_client': None, 'workers': 1})
+            children = [context.Process(target=run_producer, args=(name,)) for name in names]
+            before = time.monotonic_ns()
+            try:
+                for child in children:
+                    child.start()
+                deadline = time.monotonic() + 10
+                while not all((root / (name + '.jsonl')).exists() and '"evaluationEvent": "ready"' in
+                              (root / (name + '.jsonl')).read_text() for name in names):
+                    self.assertLess(time.monotonic(), deadline, 'producers did not become ready')
+                    time.sleep(.01)
+                writes = []
+                delays = iter((.35, .65, .65))
+                def serial_exec(args):
+                    time.sleep(next(delays))
+                    command, instant = args[-2:]
+                    command = command.replace('/tmp/evaluation-start', str(root / args[1]))
+                    with patch.object(sys, 'argv', ['-c', instant]):
+                        exec(command, {})
+                    writes.append((time.time_ns(), instant))
+                    return {}
+                controller = object.__new__(conductor.CPO)
+                controller.io = SimpleNamespace(k=serial_exec)
+                scheduled = controller.release_producers(pods)
+                for child in children:
+                    child.join(timeout=10)
+                    self.assertEqual(child.exitcode, 0)
+                after = time.monotonic_ns()
+                scheduled_ns = evidence_io.timestamp_ns(scheduled.isoformat())
+                self.assertGreater(writes[-1][0] - writes[0][0], 1_000_000_000)
+                self.assertEqual({instant for _, instant in writes}, {scheduled.isoformat()})
+                starts = []
+                for name in names:
+                    rows = [json.loads(line) for line in (root / (name + '.jsonl')).read_text().splitlines()]
+                    start = next(row for row in rows if row.get('evaluationEvent') == 'start')
+                    starts.append(evidence_io.timestamp_ns(start['at']))
+                    self.assertGreater(starts[-1], scheduled_ns, 'record actual start, not scheduled T')
+                    self.assertLess(starts[-1] - scheduled_ns, 200_000_000)
+                    self.assertLessEqual(before, start['monotonicNS'])
+                    self.assertLessEqual(start['monotonicNS'], after)
+                    self.assertEqual(next(row['sharedStart'] for row in rows if 'sharedStart' in row), start['monotonicNS'])
+                self.assertLess(max(starts) - min(starts), 200_000_000)
+            finally:
+                for child in children:
+                    if child.is_alive():
+                        child.terminate()
+                    child.join()
+
+    def test_release_after_start_instant_fails_barrier(self):
+        controller = object.__new__(conductor.CPO)
+        calls = []
+        controller.io = SimpleNamespace(k=lambda args: calls.append(args))
+        pods = {name: {'metadata': {'name': name}} for name in ('one', 'two')}
+        with patch.object(conductor.time, 'time_ns', return_value=10 ** 30):
+            with self.assertRaisesRegex(RuntimeError, '^BarrierTimeout: release after start instant$'):
+                controller.release_producers(pods)
+        self.assertEqual(len(calls), 1, 'stop releasing producers after a late write')
+
+    def test_scheduled_release_preserves_producer_barrier_expiry(self):
+        producer = input_snapshot.module('expired_scheduled_release', evaluation.HERE / 'producer.py')
+        with tempfile.TemporaryDirectory() as directory:
+            release = Path(directory) / 'release'
+            release.write_text((conductor.dt.datetime.now(conductor.dt.timezone.utc) +
+                                conductor.dt.timedelta(seconds=2)).isoformat())
+            output = io.StringIO()
+            binding = {'shards': 1, 'barrierSeconds': .2, 'payload': [], 'datasetRef': {}}
+            with patch.object(producer, 'Path', return_value=release), patch.object(sys, 'stdout', output), \
+                 patch.object(cli, 'prepare_records', return_value=[]), patch.object(sys, 'stderr', io.StringIO()):
+                with self.assertRaisesRegex(RuntimeError, 'Actual producer barrier expired before release'):
+                    producer.replay_shards([], [], 0, binding, {})
+            rows = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertEqual([row['evaluationEvent'] for row in rows], ['ready'])
+
     def exercise_stage_policy(self, mode):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1311,6 +1400,8 @@ class EvaluationTests(unittest.TestCase):
         phase = evidence_io.load(root / 'measured/phase.json')
         self.assertEqual(phase['status'], 'DRAINED_NOT_EVALUATED' if mode in ('normal', 'hot-log', 'slow-reducer', 'slow-status', 'drain-progress') else 'PARTIAL_DRAIN_NOT_EVALUATED')
         self.assertEqual(set(phase['starts']), {NAME})
+        self.assertEqual(phase['startUTC'], START, 'derive startUTC from observed producer starts')
+        self.assertNotEqual(phase['goUTC'], START, 'keep the actual conductor GO time')
         self.assertTrue(phase['diagnosticErrors'])
         self.assertTrue((root / 'measured/collected.json').exists())
         self.assertFalse((root / 'measured' / (NAME + '-client-end-counter.json')).exists())
