@@ -18,19 +18,36 @@ control376부터 379까지 같은 구조가 반복됐다.
 | 376 | 실행 중 batch 하나가 profile 표본 범위를 넘음 | 모든 후보의 정밀 평가 정지, v1 fallback |
 | 377 | 서버 퇴거로 관측 gap, orangepi edge 단절 | 측정 무효, 판단 근거 상실 |
 | 378 | profile이 jetsono IC 처리량을 31.8 req/s로 봄(실제 22.5) | 수요 증가에 늦게 반응, 과부하 구간 goodput 0 |
-| 379 | orangepi의 멈춘 prepare 하나 | 309개 판단 전부에서 현 상태(keep) 평가 불가, 경로 재적용 139회 |
+| 379 | orangepi Smol prepare 하나가 evidence store 읽기 timeout으로 실패 | 309개 판단 전부에서 현 상태(keep) 평가 불가, 경로 재적용 139회 |
+| 379 | admission 예측을 replay 안에서 요청마다 다시 계산 | Tick 평가 3.6초→9.3초, Tick 191/282가 10초 주기 초과 |
 | 379 | 경로 적용 직후 실행기 상태를 gateway가 판단 불가로 봄 | 실행기는 놀고, 요청 250~355건씩 2초 기한까지 대기 후 timeout |
 
-국소 현상을 하나씩 고치는 대신, 판단 근거를 다루는 방식 세 가지를 바꾼다:
+국소 현상을 하나씩 고치는 대신, 판단 근거를 다루는 방식 네 가지를 바꾼다:
 - 신선도: 빠른 판단(요청 admission)이 느린 관측(제어 주기 snapshot)에 묶이지 않게 한다.
 - 국소화: 모델에 담기지 않는 사실은 그 사실이 닿는 부분만 판단 불가로 만든다.
 - 충실도: 예측과 실제의 차이를 계속 재고 기록한다.
+- 비용: 판단 근거를 만드는 계산이 제어 주기를 넘지 않게 한다. 근거가 늦게 나오면 그 자체로 낡은 근거다.
 
 에너지 목적 달성은 이 근거로 검증하지 않았다.
 
 ## 2. 원문으로 확인한 사실
 
-### 2.1 control379 결과: 첫 60초 실패는 사라졌고, 실패의 모양이 바뀌었다
+### 2.0 판단 계산이 제어 주기를 넘었다 — 확정(이번 작업이 만든 회귀)
+
+| 단계 p50(초) | control378 | control379 Reject excess | 배 |
+|---|---:|---:|---:|
+| Tick evaluate | 3.62 | 9.35 | 2.6 |
+| search | 2.30 | 6.21 | 2.7 |
+| exact | 1.75 | 5.62 | 3.2 |
+| rates | 0.54 | 1.91 | 3.5 |
+| payback | 0.38 | 0.86 | 2.3 |
+| surrogate | 0.56 | 0.65 | 1.2 |
+
+Tick이 10초를 넘은 경우가 control379 전체 191/282다. round는 `Admit` 1.9초가 더해져 p50 12.2초다(`C9/*/control-timings.json`). 늘어난 단계는 모두 replay를 돌리는 단계이고, surrogate만 그대로다. 30초 CPU profile(`C9/reject/e5-feedback-excess-cpu-top.txt`)에서 `sort.Search` 누적 35.6%, `serviceTrial.nearest` 22.6%, `ResidualQuantileNanos` 19.9%, `QuantileNanos` 16.3%다. overload-admission U4가 replay의 dispatch마다 공유 완료 예측(`EstimateAdmission`)을 부르게 했고, 그 예측이 같은 profile 분포의 조건부 분위수를 요청·후보·실행기마다 다시 계산한다. 같은 입력이면 결과가 같은 계산이다.
+
+결과: 판단과 적용이 제어 주기 안에 끝나지 않고, 그 사이 snapshot이 더 낡는다(§2.2와 겹친다).
+
+: 첫 60초 실패는 사라졌고, 실패의 모양이 바뀌었다
 
 | Run·stage | onTime 비율 | late | rejected | timeout | 첫 60초 non-on-time |
 |---|---:|---:|---:|---:|---:|
@@ -59,7 +76,7 @@ gateway는 실행기의 admission 입력이 판단 불가이면 그 실행기로
 
 ### 2.3 멈춘 동작 하나가 모든 판단에서 현 상태 평가를 막았다 — 확정
 
-control379 판단 309개 모두 keep이 `Pending`이었다. 사유는 306건이 `MissingActionInstanceState:prepare-3cbe367f…(orangepi)…`다. orangepi에서 19:39:59에 시작한 prepare가 `partial`로 끝나 멈췄고(edge 단절, control377 G1과 같은 노드), replay가 그 동작의 instance 상태를 모델링하지 못했다. keep을 평가할 수 없으니 매 판단은 비-keep target을 고른다. target은 route 하나뿐이고 기대 에너지는 keep과 같다(차이 중앙값 0 J).
+control379 판단 309개 모두 keep이 `Pending`이었다. 사유는 306건이 `MissingActionInstanceState:prepare-3cbe367f…(orangepi)…`다. orangepi Smol Pod `serving-4b806460d79a9e1b4bbb`의 init `profile`이 evidence store 읽기 timeout(`S3: GetObject … context deadline exceeded`, 19:39:45)으로 실패했고(`C9/pod-errors/0020-…`), prepare는 19:39:59에 `partial`로 끝났다. replay는 이 동작의 instance 상태를 모델링하지 못했다. 실패 원인 자체(일시적 저장소 timeout)는 흔한 국소 사건이다. 문제는 그것이 시스템 전체 판단을 멈춘 것이다. keep을 평가할 수 없으니 매 판단은 비-keep target을 고른다. target은 route 하나뿐이고 기대 에너지는 keep과 같다(차이 중앙값 0 J).
 
 | Run | keep 상태 | route 완료 |
 |---|---|---:|
@@ -105,8 +122,9 @@ gateway 대기 끝 timeout 행에는 대기 이유(판단 불가와 그 원인, 
 | R2 | 모델링할 수 없는 국소 사실(멈춘 동작)이 현 상태 평가 전체를 막는다. 현 상태를 평가하지 못하면 판단은 매 주기 동작을 낸다 | 확정 | §2.3, control376 S1과 같은 구조 |
 | R3 | profile 유효성이 실행 코드·조건과 묶여 있지 않고, serving 결과로 확인하지 않는다 | 확정 | §2.4 |
 | R4 | 비-on-time 요청의 원인과 예측 오차를 기록하지 않는다 | 확정 | §2.5 |
+| R5 | 판단 근거 계산이 같은 입력의 분위수를 반복 계산해 제어 주기를 넘는다 | 확정 | §2.0 |
 
-R2가 route를 매 주기 만들고, R1이 그 route 뒤에 실행기를 멈춰 세운다. 두 원인이 겹쳐 control379의 가장 큰 실패를 만들었다. R3은 R1의 한 경로(실행 중 batch가 profile 범위를 넘으면 판단 불가)를 키우고, 포화 근처의 배치·admission 판단을 틀리게 한다. R4가 없으면 R1~R3의 수정 효과를 다음 Run에서 확인할 수 없다.
+R2가 route를 매 주기 만들고, R1이 그 route 뒤에 실행기를 멈춰 세운다. 두 원인이 겹쳐 control379의 가장 큰 실패를 만들었다. R3은 R1의 한 경로(실행 중 batch가 profile 범위를 넘으면 판단 불가)를 키우고, 포화 근처의 배치·admission 판단을 틀리게 한다. R4가 없으면 R1~R3의 수정 효과를 다음 Run에서 확인할 수 없다. R5는 이번 작업이 만든 회귀이고, 모든 판단을 늦춰 R1의 관측 신선도 문제를 키운다.
 
 ## 4. 수정 방향과 수준
 
@@ -115,12 +133,14 @@ R2가 route를 매 주기 만들고, R1이 그 route 뒤에 실행기를 멈춰 
 | R1 | gateway가 이미 아는 사실(배정, 응답 도착, 실행 완료)로 실행기 상태를 스스로 갱신하고, 제어 경로 관측은 그 사실과 어긋날 때만 권위로 쓴다. 같은 profile로의 route는 admission 입력을 무효로 만들지 않는다 | 판단 불가 실행기로 무검사 배정, 관측 주기 단축으로 덮기 |
 | R2 | 모델링할 수 없는 동작·instance는 그것과 그것을 필요로 하는 후보만 판단 불가로 두고, 나머지 위에서 keep을 평가한다. 어떤 instance를 뺐는지 판단 기록에 남긴다. 현재 상태와 같은 target은 동작을 내지 않는다 | orangepi 예외 처리, 멈춘 동작 자동 삭제 |
 | R3 | serving batch의 service 표본을 profile 분포와 계속 비교해 실행기·profile·batch별 괴리를 기록한다. profile이 serving을 대표하는 조건(이미지 등)은 사용자 결정으로 정한다(§5 결정) | profile 수치 보정, 근거 없는 여유 계수 |
+| R5 | 한 판단 안에서 (분포, 조건, 분위수)가 같은 계산은 한 번만 한다. 결과는 bit 단위로 같아야 한다 | 탐색 예산·finalist 축소, replay에서 admission 예측 제거 |
 | R4 | 모든 비-on-time 요청에 원인(gateway 대기 이유와 그 하위 원인, executor 거절, 실행 실패)을 남기고, 판단마다 직전 판단 예측과 실제의 차이를 남긴다 | 새 지표 체계, 대시보드 확장 우선 |
 
 ## 5. 단위와 순서
 
 | 순서 | 단위 | 내용 | 완료 기준 |
 |---|---|---|---|
+| 0 | E2 판단 계산 회귀 복구 | replay·gateway의 조건부 분위수(`QuantileNanos`, `ResidualQuantileNanos`)를 한 판단(또는 한 dispatch) 안에서 (분포, gap 조건, 경과, 분위수)별로 한 번만 계산한다. control379 판단 입력 재생으로 전후 결과 동일과 시간을 측정한다 | 같은 입력 결과 bit 단위 동일. exact·rates·payback이 control378 수준(exact p50 ≤ 2초)으로 돌아옴 |
 | 1 | A1 원인 기록 | gateway 대기 이유(판단 불가와 하위 조건: 관측 없음·profile 불일치·policy 미지·residual 범위 밖·요청 상태 미지, capacity 없음, 접수 중지, Delay 대기)를 대기 상태 전환마다 요청에 남기고 final 행에 싣는다. 판단 기록에 직전 판단의 서비스별 예측 p 분위수와 그 구간 실제값을 남긴다 | 합성 회귀에서 각 대기 이유가 행에 남는다. 저장 계약 변경은 ADR 0019에 따라 이 작업 단위에서 한 번 |
 | 2 | V1 R1 메커니즘 확정 | control379 19:57:50의 runtime 입력(관측 snapshot, route 전후 native metadata)을 같은 입력으로 재생해 어느 조건이 실행기를 판단 불가로 만들었는지 확정한다. 입력이 남아 있지 않으면 같은 순서(route → 관측 갱신 전 dispatch)를 재현하는 회귀로 확정한다 | 판단 불가 조건 하나 확정, §2.2 갱신 |
 | 3 | G1 gateway 실행기 상태 | V1 결과로 설계한다. gateway가 소유한 사실(배정·응답 도착·실행 완료)로 실행기 상태를 갱신해 관측 주기를 기다리지 않게 한다. route가 같은 profile을 유지하면 admission 입력을 유지한다 | V1 재현 회귀에서 route 직후 대기 timeout 0, 실행기 idle 중 대기 요청 없음. 기존 admission·미실행 증명·물리 점유 회귀 통과 |
@@ -130,13 +150,14 @@ R2가 route를 매 주기 만들고, R1이 그 route 뒤에 실행기를 멈춰 
 
 ```mermaid
 graph LR
+  E2
   A1 --> V1 --> G1
   K1
   F1 --> F2
   D[사용자 결정] --> F2
 ```
 
-A1·K1·F1은 서로 독립이다. G1은 V1, V1은 A1에 의존한다(A1 없이도 재현 회귀로 V1을 시작할 수 있으면 병행). 실패량 기준 우선순위는 G1·K1(control379 최대 실패 묶음) > A1(확정과 다음 실측의 전제) > F1 > F2.
+E2·A1·K1·F1은 서로 독립이다. G1은 V1, V1은 A1에 의존한다(A1 없이도 재현 회귀로 V1을 시작할 수 있으면 병행). 우선순위: E2(이번 작업이 만든 회귀, 모든 판단의 주기 초과) > G1·K1(control379 최대 실패 묶음) > A1(확정과 다음 실측의 전제) > F1 > F2.
 
 ### 사용자 결정 (F2)
 
