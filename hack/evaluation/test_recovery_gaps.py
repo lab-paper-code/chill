@@ -119,6 +119,7 @@ class RecoveryGapTests(unittest.TestCase):
                     self.assertEqual(stored['hour'], inventory['hour'])
                     self.assertEqual(stored['endpoint'], '/api/v1/observations/raw?hour=20261103T00')
                     self.assertEqual(stored['origin'], 'api')
+                self.assertEqual(judged['schema'], 'e5-judgment.v4')
                 projected = tables.publication_requests(judged)[NAME]
                 self.assertEqual(projected['D1'], expected)
                 self.assertEqual(len(projected['observationGaps']), int(expected in ('NOT_EVALUATED', 'NOT_OFFERED')))
@@ -128,7 +129,7 @@ class RecoveryGapTests(unittest.TestCase):
                 if label == 'ordinary-slo-failure':
                     self.assertEqual(projected['substages'][0]['D1'], 'FAIL')
                 self.assertEqual(judged['power']['energyStatus'], 'MEASURED')
-                rendered = tables.render(root, evaluation={'status': judged['status'],
+                rendered = tables.render(root, evaluation={'schema': 'e5-summary.v5', 'status': judged['status'],
                     'stages': [{'id': 'one', 'kpis': {**judged, 'wholePoolJoules': 300}}]})
                 self.assertIn(expected, rendered)
                 if label == 'gap-in-second-part':
