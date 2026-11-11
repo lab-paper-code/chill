@@ -27,6 +27,11 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+const (
+	clusterPodsPath = "/api/v1/pods"
+	finishedControl = "finished-control"
+)
+
 // capturePodAPI keeps the real client-go HTTP List/decode and native consumer
 // paths, while making inventory changes and query counts deterministic.
 type capturePodAPI struct {
@@ -83,7 +88,7 @@ func newCapturePodAPI(t *testing.T, c *SchedulerController) *capturePodAPI {
 		}
 		list := core.PodList{TypeMeta: meta.TypeMeta{Kind: "PodList", APIVersion: "v1"}, ListMeta: meta.ListMeta{ResourceVersion: "1"}}
 		for _, pod := range api.pods {
-			if r.URL.Path != "/api/v1/pods" && r.URL.Path != "/api/v1/namespaces/"+pod.Namespace+"/pods" {
+			if r.URL.Path != clusterPodsPath && r.URL.Path != "/api/v1/namespaces/"+pod.Namespace+"/pods" {
 				continue
 			}
 			if labelSelector.Matches(labels.Set(pod.Labels)) && fieldSelector.Matches(fields.Set{"status.phase": string(pod.Status.Phase)}) {
@@ -148,7 +153,7 @@ func TestSchedulerCaptureSharesOnlyCompleteClusterPodBaseline(t *testing.T) {
 			foreign := captureForeignPod("13")
 			foreign.Spec.NodeName = node.Name
 			terminal := foreign.DeepCopy()
-			terminal.Name, terminal.UID, terminal.Status.Phase = "finished-control", "finished-control", core.PodSucceeded
+			terminal.Name, terminal.UID, terminal.Status.Phase = finishedControl, finishedControl, core.PodSucceeded
 			var rows []observation.ClusterObservation
 			var rowsMu sync.Mutex
 			if cluster {
@@ -271,7 +276,7 @@ func TestObserverCaptureIndependentRefreshAndWatchRestart(t *testing.T) {
 	pod, _, _, _ := observerSourceFixture()
 	foreign := captureForeignPod("13")
 	terminal := foreign.DeepCopy()
-	terminal.Name, terminal.UID, terminal.Status.Phase = "finished-control", "finished-control", core.PodSucceeded
+	terminal.Name, terminal.UID, terminal.Status.Phase = finishedControl, finishedControl, core.PodSucceeded
 	var rows []observation.ClusterObservation
 	var rowsMu sync.Mutex
 	c.observer.config.SelectClusterPod = func(*core.Pod) bool { return true }
@@ -291,7 +296,7 @@ func TestObserverCaptureIndependentRefreshAndWatchRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if query.Path != "/api/v1/pods" || query.Query().Get("fieldSelector") != want {
+		if query.Path != clusterPodsPath || query.Query().Get("fieldSelector") != want {
 			t.Fatalf("inventory selector: got %q, want %q", queries[0], want)
 		}
 	}

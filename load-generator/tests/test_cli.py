@@ -246,6 +246,7 @@ class ReplayTest(unittest.TestCase):
         with tempfile.TemporaryFile(mode="w+") as output:
             with patch.object(producer.sys, "stdout", output), \
                  patch.object(producer.Path, "exists", return_value=True), \
+                 patch.object(producer.Path, "read_text", return_value="1970-01-01T00:00:00+00:00"), \
                  patch("chill_loadgen.cli.arrival_offsets_ns", side_effect=AssertionError("trace regenerated")):
                 producer.replay_shards(
                     [("q1", {"image": b"a"})], offsets, 0, binding,

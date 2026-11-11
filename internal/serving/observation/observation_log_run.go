@@ -115,8 +115,7 @@ func (l *ObservationLog) RecordRecovery(state serving.InstanceState, clear bool)
 		return nil
 	}
 	next := l.run
-	neverStarted := state.NeverStarted && state.ID == "" &&
-		!state.ObservedAt.IsZero() && !state.ObservedAt.Before(l.run.Started)
+	neverStarted := l.neverStartedLocked(state)
 	clear = clear || neverStarted
 	changed := false
 	for _, root := range l.run.Gaps {
@@ -133,7 +132,7 @@ func (l *ObservationLog) RecordRecovery(state serving.InstanceState, clear bool)
 			found = true
 			bind := gap.Instance == "" && state.ID != ""
 			nodeKnown := state.Node.UID != "" && (gap.Node == nil || gap.Node.UID == "")
-			clearing := clear && (gap.ClearAt == nil || (state.Terminated || neverStarted) && gap.Open)
+			clearing := clear && (gap.ClearAt == nil || l.endsInfluenceLocked(*gap, state) && gap.Open)
 			if !bind && !nodeKnown && !clearing {
 				continue
 			}
@@ -222,10 +221,20 @@ func (l *ObservationLog) clearRecoveryGapLocked(gap *serving.ObservationGap, sta
 	if gap.ClearAt == nil {
 		gap.ClearAt = &at
 	}
-	if state.Terminated || state.NeverStarted && state.ID == "" && gap.Instance == "" &&
-		!state.ObservedAt.IsZero() && !state.ObservedAt.Before(l.run.Started) {
+	if l.endsInfluenceLocked(*gap, state) {
 		gap.To, gap.Open = at, false
 	}
+}
+
+// neverStartedLocked is a fresh post-recovery observation of a Pod that never
+// had a container identity, so no request could have reached it.
+func (l *ObservationLog) neverStartedLocked(state serving.InstanceState) bool {
+	return state.NeverStarted && state.ID == "" && !state.ObservedAt.IsZero() && !state.ObservedAt.Before(l.run.Started)
+}
+
+// endsInfluenceLocked: exact termination, or a never-started Pod's unbound gap.
+func (l *ObservationLog) endsInfluenceLocked(gap serving.ObservationGap, state serving.InstanceState) bool {
+	return state.Terminated || gap.Instance == "" && l.neverStartedLocked(state)
 }
 
 func (l *ObservationLog) recoveryGaps(from, to time.Time) []serving.ObservationGap {
