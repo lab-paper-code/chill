@@ -33,3 +33,4 @@ One line per ADR; decisions and consequences remain in each record.
 - [0030 Observation Evidence API Streams](0030-observation-evidence-api-streams.md) — accepted
 - [0031 Configuration Ownership and Freezing Paths](0031-configuration-ownership-and-freezing.md) — accepted
 - [0032 EvaluationRun Execution Boundary](0032-experiment-execution-boundary.md) — accepted
+- [0033 Workload-Owned Overload Admission](0033-overload-admission.md) — accepted

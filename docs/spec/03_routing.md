@@ -93,12 +93,24 @@ firstfloor가 요청별 판단과 각 배치의 실행을 소유하고, CHILL �
 허용 여유를 넘기지 않도록 정한다. 그 범위에서 더 모을 에너지 이득이 있는지는
 evidence 기반 정책으로 판단한다. 시간 여유가 있다는 이유만으로 기다리지 않는다.
 
-요청별 시간 예산은 워크로드의 백분위 SLO를 따른다. 모델의 firstfloor 설정에서
-`deadlinePolicy`를 drop/keep/defer 중 선택하며 기본은 keep이다. drop은 expired 또는
-infeasible queued 요청을 종료하고 keep은 늦은 요청도 실행한다. defer는 infeasible
-head를 후순위 FIFO로 옮겨 normal 요청이 없는 동안 실행한다. 대기열 한도와 명시적인
-timeout/cancel은 normal/deferred에 함께 적용한다. active batch는 SLO만으로 취소하지
-않는다. mode 변경은 재시작/인스턴스 교체로 적용하고 실제 결과와 선택 mode를 기록한다.
+요청별 시간 예산은 워크로드의 백분위 SLO를 따른다. serving 과부하 정책은
+`Workload.spec.admission`이 소유하며 applied Definition에 동결한다.
+`policy=Reject`(기본)는 SLO 안에 완료할 수 없는 요청을 실행 없이 거절한다.
+`Delay`는 정상 요청 뒤로 미뤄 늦은 완료를 허용하며 최종 기한까지 처리한다.
+`maxQueuedRequests`는 gateway 정상·지연 큐 합의 양의 상한이며 기본 1024다.
+정책 변경은 새 Workload generation에 적용하고 이미 수락한 요청의 정책은 유지한다.
+요청별 정책 전달에는 executor 재시작이 필요 없다.
+
+gateway는 완료 가능한 후보를 고르고 executor는 실행 직전에 실제 남은 SLO를
+재확인한다. 판단 입력이 없으면 `AdmissionUnknown`으로 최종 기한까지 기다린다.
+fixed-batch는 기존 SLO 판단 예외를 유지한다. 큐 포화는 `QueueFull`(429),
+완료 불가능 거절은 `DeadlineInfeasible`(503)이며 gateway/executor 단계를 기록한다.
+최종 기한은 수신 때 확정한 요청 lifetime이며 명시 timeout/cancel은 정상·지연 큐에
+함께 적용한다. active batch는 SLO만으로 취소하지 않고 실제 물리 완료까지 점유한다.
+
+ModelSpec firstfloor `deadlinePolicy`(drop/keep/defer, 기본 keep)와 frozen profiling
+RunConfig는 측정 provenance다. serving 요청의 정책은 이 값에서 선택하지 않는다.
+정책 소유와 저장 cutover는 [ADR 0033](../adr/0033-overload-admission.md)을 따른다.
 
 워크로드별 큐·실행 배치 분리와 인스턴스별 단일 배치 실행 계약은 유지한다.
 firstfloor의 실제 적용으로 이 계약을 확인하며, 시간 정보 전달과 정책 적용 지점·
