@@ -2,6 +2,7 @@ package serving
 
 import (
 	"context"
+	"fmt"
 	"math/rand/v2"
 	"reflect"
 	"slices"
@@ -233,6 +234,7 @@ func TestReplaySnapshotRouteUsesFrozenOwnerInsteadOfCandidateGoal(t *testing.T) 
 	owner.ID = "frozen-owner"
 	action := Action{ID: "owner-route", Kind: schedulerActionRoute, Status: schedulerActionPlanned}
 	owner.Actions = []Action{action}
+	action.RouteTarget = &owner // same owner-controlled projection as the snapshot writer
 	snapshot.Actions = []Action{action}
 	snapshot.Reservations = []SchedulerReservation{{Owner: owner.ID, Nodes: []NodeReference{snapshot.Nodes[0].Node}, Target: &owner}}
 	candidate.ID, candidate.Keep = "independent-goal", false
@@ -259,5 +261,121 @@ func TestCapacityCommonScopePreservesIndependentExpansion(t *testing.T) {
 		return plan.Node == blocked && !plan.Eligible && plan.Reason == "ReplayExcludedNode"
 	}) {
 		t.Fatal("same-node resource/power/transition dependency was not excluded")
+	}
+}
+
+func TestReplayTransientRetryRetainsExecutableSupply(t *testing.T) {
+	settings, snapshot, candidate := feedbackFixture()
+	node := poolsAddNode(&snapshot, "retry-node", map[string]float64{"fixed": 10})
+	future := poolsInstance(snapshot.Instances[0], "retry", node, "fixed", snapshot.Workloads[0].UID)
+	future.ID = fmt.Sprintf("target-%s-%s-%d", future.WorkloadUID, future.Profile.ID, future.MaxBatch)
+	snapshot.Actions = []Action{{ID: "previous-attempt", Kind: schedulerActionPrepare, Node: node, Instance: future.ID,
+		Status: schedulerActionFailed, To: schedulerState(future),
+		PreparationFailure: NewPreparationFailure(future, "old-pod", PreparationFailureObservation{Classification: PreparationTransient, ReasonKey: "delivery:ErrImagePull"})}}
+	candidate.Keep = false
+	candidate.Nodes = snapshot.Nodes
+	candidate.Instances = []SchedulerInstance{future}
+	candidate.Routing = map[string]map[string]int32{future.WorkloadUID: {future.ID: schedulerRouteUnits}}
+	settings.DefaultOperationCost[schedulerActionPrepare] = OperationCostValue{Seconds: .001, Joules: .01}
+	candidate.Actions = schedulerPlan(settings, snapshot, candidate)
+	result, err := EvaluateFeedbackCandidate(context.Background(), settings, snapshot, candidate, 0)
+	if err != nil || len(result.InvalidReasons) != 0 || len(result.Workloads) != 1 || result.Workloads[0].OnTime != 2 {
+		t.Fatalf("fresh authorized retry supplies no service: err=%v result=%+v", err, result)
+	}
+}
+
+func TestReplayExcludedDrainDoesNotInvalidateIndependentSupply(t *testing.T) {
+	for _, failedPower := range []bool{false, true} {
+		t.Run(fmt.Sprint("failed-power=", failedPower), func(t *testing.T) {
+			settings, snapshot, candidate := feedbackFixture()
+			node := poolsAddNode(&snapshot, "unknown", map[string]float64{"fixed": 1})
+			unknown := poolsInstance(snapshot.Instances[0], "unknown-executor", node, "fixed", "")
+			if !failedPower {
+				unknown.Profile = nil
+			}
+			snapshot.Instances = append(snapshot.Instances, unknown)
+			uid := snapshot.Workloads[0].UID
+			snapshot.Routing = map[string]map[string]int32{uid: {snapshot.Instances[0].ID: schedulerRouteUnits}}
+			candidate.Keep = false
+			candidate.Nodes, candidate.Instances, candidate.Routing = snapshot.Nodes, snapshot.Instances, snapshot.Routing
+			zero := 0.0
+			lifetime := time.Nanosecond
+			snapshot.Outstanding = []SchedulerRequest{{ID: "unknown-queued", Definition: snapshot.Workloads[0], ReceivedAt: snapshot.At,
+				Phase: phaseQueued, Instance: unknown.ID, NativeSenderElapsedMS: &zero, NativeElapsedNanos: &zero,
+				CompletionMarginMS: &zero, RemainingLifetime: &lifetime}}
+			snapshot.Actions = []Action{{ID: "unknown-drain", Kind: schedulerActionDrain, Node: node, Instance: unknown.ID, Status: phaseRunning}}
+			if failedPower {
+				snapshot.Actions = append(snapshot.Actions, Action{ID: "failed-power", Kind: schedulerActionPower, Node: node, Status: schedulerActionFailed})
+			}
+			result, err := EvaluateFeedbackCandidate(context.Background(), settings, snapshot, candidate, 0)
+			if err != nil || len(result.InvalidReasons) != 0 {
+				t.Fatalf("unmodelable drain invalidated independent candidate: err=%v result=%+v", err, result)
+			}
+			if len(result.Workloads) != 1 || result.Workloads[0].Population != 3 || result.Workloads[0].OnTime != 2 || result.Workloads[0].Timeout != 1 {
+				t.Fatalf("excluded drain lost requests or healthy capacity: %+v", result.Workloads)
+			}
+			state := schedulerReplayState{settings: settings, snap: snapshot, c: candidate, out: schedulerReplayResult{
+				definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{},
+			}}
+			state.initializeInstances()
+			state.initializeActions()
+			state.initializeOutstanding()
+			state.now = 2
+			state.expireRequests()
+			state.completeExecution()
+			drain, occupant := state.actionByID["unknown-drain"], state.byID[unknown.ID]
+			if !drain.blocked || drain.done || drain.started || occupant.outstanding != 1 || len(occupant.queue) != 1 ||
+				snapshot.Actions[0].Status != phaseRunning {
+				t.Fatal("prediction exclusion completed the physical drain or released its outstanding")
+			}
+		})
+	}
+}
+
+func TestReplayFrozenRoutePreservesIndependentWorkload(t *testing.T) {
+	settings, snapshot, candidate := feedbackFixture()
+	source := snapshot.Instances[0]
+	node := poolsAddNode(&snapshot, "second", map[string]float64{"fixed": 1})
+	second := poolsInstance(source, "second", node, "fixed", "second-workload")
+	snapshot.Instances = append(snapshot.Instances, second)
+	snapshot.Routing = map[string]map[string]int32{source.WorkloadUID: {source.ID: schedulerRouteUnits}, second.WorkloadUID: {second.ID: schedulerRouteUnits}}
+	owner := SchedulerCandidate{ID: "first-owner", Nodes: snapshot.Nodes, Instances: []SchedulerInstance{source},
+		Routing: map[string]map[string]int32{source.WorkloadUID: {source.ID: schedulerRouteUnits}}}
+	snapshot.Actions = []Action{{ID: "owner-route", Kind: schedulerActionRoute, Status: schedulerActionPlanned, RouteTarget: &owner}}
+	candidate.Keep = false
+	candidate.Nodes, candidate.Instances, candidate.Routing = snapshot.Nodes, snapshot.Instances, snapshot.Routing
+	state := schedulerReplayState{settings: settings, snap: snapshot, c: candidate, rng: rand.New(rand.NewPCG(1, 0)), routeCredits: map[string][]int64{}}
+	state.initializeInstances()
+	state.initializeActions()
+	if !state.startActions() || state.applied.Routing[second.WorkloadUID][second.ID] != schedulerRouteUnits {
+		t.Fatalf("owner route dropped independent workload: applied=%+v reasons=%v", state.applied.Routing, state.out.reasons)
+	}
+}
+
+func TestReplayObservedSuccessfulRetryIgnoresEarlierAttemptFailure(t *testing.T) {
+	settings, snapshot, candidate := feedbackFixture()
+	actual := &snapshot.Instances[0]
+	actual.PodUID, actual.TargetID = "successful-pod", "stable-target"
+	snapshot.Actions = []Action{{ID: "earlier-attempt", Kind: schedulerActionPrepare, Node: actual.Node, Instance: actual.TargetID,
+		Status: schedulerActionFailed, To: schedulerState(*actual),
+		PreparationFailure: NewPreparationFailure(*actual, "failed-pod", PreparationFailureObservation{Classification: PreparationTransient, ReasonKey: "delivery:ErrImagePull"})}}
+	result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
+	if result.Workloads[0].OnTime != 2 {
+		t.Fatalf("earlier attempt excluded a different successful Pod: %+v", result)
+	}
+}
+
+func TestReplayDoesNotRecoverUnscopedRouteFromReservation(t *testing.T) {
+	settings, snapshot, candidate := feedbackFixture()
+	action := Action{ID: "unscoped-route", Kind: schedulerActionRoute, Status: schedulerActionPlanned}
+	owner := candidate
+	owner.Actions = []Action{action}
+	snapshot.Actions = []Action{action}
+	snapshot.Reservations = []SchedulerReservation{{Owner: "owner", Nodes: []NodeReference{snapshot.Nodes[0].Node}, Target: &owner}}
+	result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
+	if result.Workloads[0].OnTime != 2 || !slices.ContainsFunc(result.Assumptions, func(reason string) bool {
+		return strings.Contains(reason, "unscoped-route") && strings.Contains(reason, "MissingActionRouteTarget")
+	}) {
+		t.Fatalf("route authority was inferred from the unscoped reservation target: %+v", result)
 	}
 }

@@ -79,6 +79,7 @@ func schedulerReplayInitialScope(snapshot SchedulerSnapshot) schedulerReplayScop
 		if action.Status == schedulerActionComplete || action.Status == schedulerActionCancel {
 			continue
 		}
+		failedAttempt := (action.Status == schedulerActionFailed || action.Status == schedulerActionPartial) && action.PreparationFailure != nil
 		reason := ""
 		switch {
 		case action.Status == schedulerActionFailed || action.Status == schedulerActionPartial:
@@ -95,20 +96,22 @@ func schedulerReplayInitialScope(snapshot SchedulerSnapshot) schedulerReplayScop
 			}
 		case action.Kind == schedulerActionRoute && action.Status == phaseRunning:
 			reason = "InProgressRoutingAcknowledgementUnobserved"
-		case action.Kind == schedulerActionRoute && schedulerReplayActionTarget(snapshot, action) == nil:
+		case action.Kind == schedulerActionRoute && action.RouteTarget == nil:
 			reason = "MissingActionRouteTarget"
 		}
 		if reason == "" {
 			continue
 		}
 		scope.actions[action.ID] = reason
-		if action.Node.UID != "" && !((action.Status == schedulerActionFailed || action.Status == schedulerActionPartial) && action.PreparationFailure != nil) {
+		if action.Node.UID != "" && !failedAttempt {
 			scope.nodes[action.Node] = true
 		}
 		if action.Instance != "" && action.Kind == schedulerActionPrepare {
-			scope.instances[action.Instance] = reason
+			if !failedAttempt {
+				scope.instances[action.Instance] = reason
+			}
 			for _, actual := range snapshot.Instances {
-				if actual.ID == action.Instance || actual.TargetID == action.Instance {
+				if schedulerReplayActionAffectsInstance(action, actual) {
 					scope.instances[actual.ID] = reason
 					scope.nodes[actual.Node] = true
 				}
@@ -127,6 +130,16 @@ func schedulerReplayInitialScope(snapshot SchedulerSnapshot) schedulerReplayScop
 	return scope
 }
 
+func schedulerReplayActionAffectsInstance(action Action, actual SchedulerInstance) bool {
+	if (action.Status == schedulerActionFailed || action.Status == schedulerActionPartial) && action.PreparationFailure != nil {
+		// A stable target may already name a later, successful attempt. Only
+		// the failed attempt's exact physical Pod retains its uncertainty.
+		pod := action.PreparationFailure.PodUID
+		return pod != "" && (actual.PodUID == pod || actual.ID == pod)
+	}
+	return actual.ID == action.Instance || actual.TargetID == action.Instance
+}
+
 func (scope *schedulerReplayScope) propagate(snapshot SchedulerSnapshot) {
 	// A blocked owner dependency also freezes physical work on the dependent
 	// Node. Routing only blocks its own descendants, not unrelated destinations.
@@ -140,6 +153,9 @@ func (scope *schedulerReplayScope) propagate(snapshot SchedulerSnapshot) {
 			reason := ""
 			if physical && scope.nodes[action.Node] {
 				reason = "NodeDependencyExcluded"
+			}
+			if scope.instances[action.Instance] != "" {
+				reason = "InstanceDependencyExcluded"
 			}
 			if action.Status != phaseRunning {
 				for _, dep := range action.DependsOn {
@@ -162,18 +178,6 @@ func (scope *schedulerReplayScope) propagate(snapshot SchedulerSnapshot) {
 			}
 		}
 	}
-}
-
-func schedulerReplayActionTarget(snapshot SchedulerSnapshot, action Action) *SchedulerCandidate {
-	if action.RouteTarget != nil {
-		return action.RouteTarget
-	}
-	for _, reservation := range snapshot.Reservations {
-		if reservation.Target != nil && slices.ContainsFunc(reservation.Target.Actions, func(a Action) bool { return a.ID == action.ID }) {
-			return reservation.Target
-		}
-	}
-	return nil
 }
 
 func schedulerReplayScopedSnapshot(snapshot SchedulerSnapshot) SchedulerSnapshot {

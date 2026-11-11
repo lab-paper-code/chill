@@ -489,9 +489,6 @@ func (s *schedulerReplayState) initializeActions() {
 		if a.Status == schedulerActionComplete || a.Status == schedulerActionCancel || s.actionByID[a.ID] != nil {
 			continue
 		}
-		if a.Kind == schedulerActionRoute {
-			a.RouteTarget = schedulerReplayActionTarget(s.snap, a)
-		}
 		x := &schedulerReplayAction{action: a, finish: math.Inf(1)}
 		s.actions = append(s.actions, x)
 		s.actionByID[a.ID] = x
@@ -514,6 +511,9 @@ func (s *schedulerReplayState) initializeActions() {
 		a.blocked = scope.actions[a.action.ID] != ""
 		if a.action.Kind == schedulerActionPrepare || a.action.Kind == schedulerActionRemove || a.action.Kind == schedulerActionPower {
 			a.blocked = a.blocked || scope.nodes[a.action.Node]
+		}
+		if instance := s.byID[a.action.Instance]; instance != nil && instance.excluded {
+			a.blocked = true
 		}
 	}
 	s.blockedReplayPrerequisite()

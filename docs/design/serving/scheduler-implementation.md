@@ -75,8 +75,9 @@ Pure placement and zero-inference proof assertions now live with physical execut
 실제 config/profile·진행 batch snapshot을 기록하고 accepted 정의·SLO는 config 변경으로 재해석하지 않는다.
 
 모든 후보는 snapshot의 같은 physical inventory와 진행 중 owner action에서 시작한다. 예약의 frozen target은 아직 생성되지 않은 prepare를 설명하며 현재 용량·점유로 세지 않는다. 실패·partial action이나 모델 입력이 없는 실행기는 모든 후보의 실행 가능 용량에서 동일하게 제외한다. `decision.reasons`와 replay `assumptions`의 `ReplayExcludedAction`·`ReplayExcludedInstance`는 Node UID, 대상 identity, 이유를 보존한다. 해당 Node의 자원·전력 전이와 owner DAG 후속 동작도 제외하되 실물 allocation·예약·outstanding·요청 모집단·정리 의무는 지우지 않는다. 종료된 prepare의 typed 실패 이력은 기존 조합별 재시도·제외 판정을 유지한다.
+실패한 prepare의 action identity와 재시도에 재사용되는 논리 target identity를 구별한다. typed 실패는 그 시도의 정확한 Pod에만 불확실성을 남기며 이후 성공한 prepare의 용량을 제외하지 않는다. 제외된 실행기의 drain 등 후속 동작도 replay 예측 권한에서 제외하지만 실제 outstanding·owner obligation은 완료 처리하거나 지우지 않는다.
 
-Snapshot route는 해당 owner의 frozen target만 적용한다. 현재 실물·소비 정책·routing과 같은 target은 새 action을 만들지 않는다. 이미 실행 중인 route의 ACK·owner obligation은 원래 장부에 남고, 수요 변화로 batch/wait·routing·배치가 바뀌면 기존 전환을 생성한다.
+Snapshot route writer는 실제 operation의 `controlledTarget(operation)`을 기존 `Action.RouteTarget`에 투영한다. owner가 제어하지 않는 Workload의 과거 routing·instance 행은 snapshot에 넣지 않는다. Replay는 이 owner-controlled target의 UID만 현재 routing에 병합하여 독립 Workload를 유지한다. 예약의 전역 target을 route scope로 재해석하는 과거 snapshot reader는 두지 않는다(ADR 0019); 필드 형태는 같고 의미 전환은 이번 배포에서 함께 적용한다. 현재 실물·소비 정책·routing과 같은 target은 새 action을 만들지 않는다. 이미 실행 중인 route의 ACK·owner obligation은 원래 장부에 남고, 수요 변화로 batch/wait·routing·배치가 바뀌면 기존 전환을 생성한다.
 가상/전환 Node는 PowerMode만 투영하며 CPU inventory를 만들거나 할당하지 않는다. 실제 online CPU는 node-agent 관측이고 `SchedulerNode`/allocation에 ModeCPUs·독점 CPU mask·threads·CPU quota 장부를 두지 않는다. power actuator의 class/readback·정책·물리 Node 신원 검사는 유지한다.
 
 ## 4. 측정 계약과 catalog

@@ -1,5 +1,7 @@
 package serving
 
+import "maps"
+
 type schedulerReplayAction struct {
 	action   Action
 	started  bool
@@ -62,7 +64,15 @@ func (s *schedulerReplayState) applyRoute(target SchedulerCandidate) bool {
 	if s.routingApplied {
 		s.previousRoute = s.applied.Routing
 	}
-	s.applied = target
+	applied := target
+	applied.Routing = maps.Clone(s.previousRoute)
+	if applied.Routing == nil {
+		applied.Routing = map[string]map[string]int32{}
+	}
+	for uid, routing := range target.Routing {
+		applied.Routing[uid] = routing
+	}
+	s.applied = applied
 	invalidate := func(uid string) {
 		if len(s.routeCredits[uid]) == len(s.instances) {
 			return
@@ -81,11 +91,6 @@ func (s *schedulerReplayState) applyRoute(target SchedulerCandidate) bool {
 	}
 	for uid := range target.Routing {
 		invalidate(uid)
-	}
-	for uid := range s.previousRoute {
-		if _, present := target.Routing[uid]; !present {
-			invalidate(uid)
-		}
 	}
 	for uid, credits := range s.routeCredits {
 		for j, i := range s.instances {

@@ -255,6 +255,15 @@ func (c *reservationState) actionsLocked(now time.Time) []serving.Action {
 			continue
 		}
 		a := r.action
+		if a.Kind == servingstate.OperationRoute {
+			a.RouteTarget = nil
+			if r.result != nil {
+				a.RouteTarget = controlledTarget(r.result.Operation)
+				if a.RouteTarget != nil {
+					a.RouteTarget.Actions = nil
+				}
+			}
+		}
 		if a.Status == servingstate.NativeOperationRunning {
 			a.Elapsed = now.Sub(r.started)
 		}

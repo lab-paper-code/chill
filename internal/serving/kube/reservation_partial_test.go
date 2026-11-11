@@ -216,3 +216,28 @@ func TestMixedPhysicalWorkloadKeepsIndependentRouteDelta(t *testing.T) {
 		t.Fatalf("another workload's physical action swallowed the independent route delta: %v", applied)
 	}
 }
+
+func TestActionSnapshotRouteContainsOnlyOwnerControlledWorkloads(t *testing.T) {
+	target := &serving.SchedulerCandidate{ID: "owner", Instances: []serving.SchedulerInstance{
+		{ID: "owned", WorkloadUID: "owned-workload"},
+		{ID: "stale-unrelated", WorkloadUID: "unrelated-workload"},
+	}, Routing: map[string]map[string]int32{
+		"owned-workload":     {"owned": 1000},
+		"unrelated-workload": {"stale-unrelated": 1000},
+	}, Actions: []serving.Action{{ID: "frozen-prepare", Kind: servingstate.OperationPrepare}}}
+	action := serving.Action{ID: "owner-route", Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationRunning, RouteTarget: target}
+	c := &reservationState{runs: map[string]*actionRun{action.ID: {
+		action: action, result: &servingstate.OperationResult{Operation: servingstate.Operation{
+			Kind: servingstate.OperationRoute, Target: target, WorkloadUIDs: []string{"owned-workload"},
+		}},
+	}}}
+	snapshot := serving.SchedulerSnapshot{Actions: c.actionsLocked(time.Now())}
+	scoped := snapshot.Actions[0].RouteTarget
+	if scoped == nil || len(scoped.Routing) != 1 || scoped.Routing["owned-workload"]["owned"] != 1000 ||
+		len(scoped.Instances) != 1 || scoped.Instances[0].ID != "owned" || len(scoped.Actions) != 0 {
+		t.Fatalf("snapshot leaked unrelated frozen route rows: %+v", scoped)
+	}
+	if len(target.Routing) != 2 || len(target.Instances) != 2 || len(target.Actions) != 1 || c.runs[action.ID].action.RouteTarget != target {
+		t.Fatal("snapshot projection rewrote the owner's operation ledger")
+	}
+}
