@@ -17,6 +17,13 @@ CodeGraph is optional, local, absent from CI, and never required for
 contributors. KubeDiagrams is also local and absent from correctness CI. Helm
 rendering remains the deployment-topology authority.
 
+The [external maintainability patterns](external-maintainability-patterns.md)
+reference explains package layout, naming, state ownership, and implementation
+boundaries in Kueue, Volcano, and KEDA, with commit-pinned source examples.
+
+The [CHILL maintainability candidates](maintainability-candidates.md) apply those
+patterns to current source with scoped Before/After proposals and preserved contracts.
+
 ## Evidence rules
 
 | Claim | Required verification |
