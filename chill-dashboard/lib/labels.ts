@@ -77,7 +77,7 @@ const guides: Record<string, Guide> = {
   GatewayOverloaded: ["ChillServer 메모리가 한도에 가까워요.", "잠시 후 다시 보내 주세요."],
   RequestTimeout: ["정한 시간 안에 답을 받지 못했어요.", "잠시 후 다시 보내 주세요."],
   RequestCanceled: ["요청을 취소했어요.", "필요하면 다시 보내 주세요."],
-  SLODeadlineDrop: ["응답 목표 시간을 넘길 것이 확실해서 처리하지 않았어요.", "부하가 줄어든 뒤 다시 보내 주세요."],
+  DeadlineInfeasible: ["응답 목표 시간을 넘길 것이 확실해서 처리하지 않았어요.", "부하가 줄어든 뒤 다시 보내 주세요."],
   PreprocessFailed: ["입력을 처리할 수 있는 형태로 바꾸지 못했어요.", "입력 형식이 전처리기 계약과 맞는지 확인해 주세요."],
   BackendError: ["모델 실행 중 오류가 났어요.", "원본 보기에서 자세한 내용을 확인해 주세요."],
   BackendUnavailable: ["실행기와 연결하지 못했어요.", "실행기 상태를 확인해 주세요."],

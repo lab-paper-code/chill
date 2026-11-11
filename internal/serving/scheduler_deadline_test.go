@@ -20,7 +20,7 @@ func TestReplayCompletionIsNativeCompletionPlusMargin(t *testing.T) {
 			snap.Arrivals = nil
 			d := snap.Workloads[0]
 			d.SLO.TargetLatency = 607 * time.Millisecond
-			snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
+			d.Admission.Policy = AdmissionPolicyReject
 			snap.Instances[0].Profile.Batches[0] = schedulerTestBatchProfile(snap.Instances[0].Profile.Batches[0], []float64{float64(100 * time.Millisecond)})
 			r := SchedulerRequest{ID: "consumed", Definition: d, ReceivedAt: snap.At.Add(-time.Duration(senderMS) * time.Millisecond), Elapsed: time.Duration(senderMS) * time.Millisecond, Phase: phase, Instance: "i1", BatchID: "actual", NativeSenderElapsedMS: &senderMS}
 			want := time.Duration(senderMS)*time.Millisecond + 100*time.Millisecond + 7*time.Millisecond
@@ -43,28 +43,31 @@ func TestReplayCompletionIsNativeCompletionPlusMargin(t *testing.T) {
 	}
 }
 
-func TestSchedulerReplayDeadlineModesPreserveTimeoutPopulation(t *testing.T) {
-	for _, mode := range []string{"", firstfloor.DeadlineKeep, firstfloor.DeadlineDrop, firstfloor.DeadlineDefer} {
-		t.Run("mode="+mode, func(t *testing.T) {
-			s, snap := schedulerFixture()
-			d := snap.Workloads[0]
-			d.SLO.TargetLatency = time.Millisecond
-			snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = mode
-			zero := 0.0
-			snap.Outstanding = []SchedulerRequest{{ID: "infeasible", Definition: d, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero}}
-			keep := schedulerKeepForTest(t, s, snap)
-			e := schedulerRequireEstimate(t, keep, d.UID)
-			if keep.ExpectedJoules == nil || keep.Status != SchedulerStatusOverload {
-				t.Fatalf("supported mode must be evaluable, not missing evidence or caller expiry: %+v", keep)
-			}
-			if mode == firstfloor.DeadlineDrop {
-				if e.Samples != 0 || e.ExpectedNanos != nil || e.PredictedOutcomes["timeout"] != 1 || e.PredictedOutcomes["completed"] != 0 || math.Abs(*keep.ExpectedJoules-1.2) > 1e-9 {
-					t.Fatalf("drop must not execute or contribute successful latency: %+v", keep)
+func TestSchedulerReplayUsesRequestAdmissionPolicy(t *testing.T) {
+	for _, policy := range []AdmissionPolicy{AdmissionPolicyReject, AdmissionPolicyDelay} {
+		for _, mode := range []string{"", firstfloor.DeadlineKeep, firstfloor.DeadlineDrop, firstfloor.DeadlineDefer} {
+			t.Run(string(policy)+"/profile="+mode, func(t *testing.T) {
+				s, snap := schedulerFixture()
+				d := snap.Workloads[0]
+				d.Admission.Policy = policy
+				d.SLO.TargetLatency = time.Millisecond
+				snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = mode
+				zero := 0.0
+				snap.Outstanding = []SchedulerRequest{{ID: "infeasible", Definition: d, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero}}
+				keep := schedulerKeepForTest(t, s, snap)
+				e := schedulerRequireEstimate(t, keep, d.UID)
+				if keep.ExpectedJoules == nil || keep.Status != SchedulerStatusOverload {
+					t.Fatalf("request policy must remain evaluable: %+v", keep)
 				}
-			} else if e.Samples != 1 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(10*time.Millisecond) || e.PredictedOutcomes["timeout"] != 0 {
-				t.Fatalf("keep/defer must execute despite SLO, without expiring caller: %+v", e)
-			}
-		})
+				if policy == AdmissionPolicyReject {
+					if e.Samples != 0 || e.ExpectedNanos != nil || e.PredictedOutcomes["timeout"] != 1 || e.PredictedOutcomes["completed"] != 0 || math.Abs(*keep.ExpectedJoules-1.2) > 1e-9 {
+						t.Fatalf("Reject must not execute or contribute successful latency: %+v", keep)
+					}
+				} else if e.Samples != 1 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(10*time.Millisecond) || e.PredictedOutcomes["timeout"] != 0 {
+					t.Fatalf("Delay must execute despite SLO without expiring caller: %+v", e)
+				}
+			})
+		}
 	}
 }
 
@@ -74,7 +77,7 @@ func TestSchedulerReplayDropsAtSLOBoundaryWhileBatchRuns(t *testing.T) {
 	queued := *d
 	queued.UID = "queued"
 	queued.SLO.TargetLatency = 5 * time.Millisecond
-	snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
+	queued.Admission.Policy = AdmissionPolicyReject
 	snap.Instances[0].Profile.Batches[0] = schedulerTestBatchProfile(snap.Instances[0].Profile.Batches[0], []float64{float64(100 * time.Millisecond)})
 	zero := 0.0
 	snap.Outstanding = []SchedulerRequest{{ID: "active", Definition: d, ReceivedAt: snap.At, Phase: phaseRunning, Instance: "i1", BatchID: "actual", NativeSenderElapsedMS: &zero}, {ID: "queued", Definition: &queued, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero}}
@@ -85,11 +88,7 @@ func TestSchedulerReplayDropsAtSLOBoundaryWhileBatchRuns(t *testing.T) {
 		t.Fatalf("active batch initialization failed: %+v", state.out)
 	}
 	state.admitArrivals()
-	next, remaining := state.nextEvent()
-	if !remaining || next != float64(5*time.Millisecond) || len(state.instances[0].queue) != 1 {
-		t.Fatalf("infeasible prediction must not drop while active; actual expiry must be next: next=%g state=%+v", next, state.instances[0])
-	}
-	state.now = next
+	state.now = float64(5 * time.Millisecond)
 	if !state.chooseBatches(context.Background()) || len(state.instances[0].queue) != 0 || state.instances[0].outstanding != 1 || len(state.instances[0].batch) != 1 || state.out.outcomes[queued.Identity()]["timeout"] != 1 || len(state.out.samples[queued.Identity()]) != 0 {
 		t.Fatalf("deadline boundary must release only queued request: %+v %+v", state.instances[0], state.out)
 	}
@@ -103,12 +102,12 @@ func TestSchedulerReplayDropsAtSLOBoundaryWhileBatchRuns(t *testing.T) {
 func TestSchedulerReplayDeferredFIFOAndNormalEDF(t *testing.T) {
 	s, snap := schedulerFixture()
 	d := snap.Workloads[0]
+	d.Admission.Policy = AdmissionPolicyDelay
 	other := *d
 	other.UID = "other"
 	normal := *d
 	normal.UID = "normal"
 	normal.SLO.TargetLatency = 20 * time.Millisecond
-	snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDefer
 	snap.Instances[0].MaxBatch = 2
 	snap.Instances[0].Profile.Batches = append(snap.Instances[0].Profile.Batches, schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{float64(5 * time.Millisecond)}))
 	zero := 0.0
@@ -134,10 +133,10 @@ func TestSchedulerReplayDeferredFIFOAndNormalEDF(t *testing.T) {
 func TestSchedulerReplayDeferTransitionRunsAfterNormalWork(t *testing.T) {
 	s, snap := schedulerFixture()
 	d := snap.Workloads[0]
+	d.Admission.Policy = AdmissionPolicyDelay
 	expired := *d
 	expired.UID = "expired"
 	expired.SLO.TargetLatency = time.Millisecond
-	snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDefer
 	zero, one := 0.0, 1.0
 	snap.Outstanding = []SchedulerRequest{{ID: "expired", QueueOrder: 0, Definition: &expired, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &one}, {ID: "normal", QueueOrder: 1, Definition: d, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero}}
 	result := schedulerReplayForTest(s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances})
@@ -146,9 +145,10 @@ func TestSchedulerReplayDeferTransitionRunsAfterNormalWork(t *testing.T) {
 	}
 }
 
-func TestSchedulerReplayKeepOverdueUsesMinimumServiceCost(t *testing.T) {
+func TestSchedulerReplayDelayOverdueUsesMinimumServiceCost(t *testing.T) {
 	s, snap := schedulerFixture()
 	d := snap.Workloads[0]
+	d.Admission.Policy = AdmissionPolicyDelay
 	d.SLO.TargetLatency = time.Millisecond
 	snap.Instances[0].MaxBatch = 2
 	snap.Instances[0].Profile.Batches = append(snap.Instances[0].Profile.Batches, schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 5, MemoryBytes: 100}, []float64{float64(5 * time.Millisecond)}))
@@ -158,7 +158,7 @@ func TestSchedulerReplayKeepOverdueUsesMinimumServiceCost(t *testing.T) {
 	}
 	result := schedulerReplayForTest(s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances})
 	if len(result.reasons) > 0 || !reflect.DeepEqual(result.samples[d.Identity()], []float64{float64(5 * time.Millisecond), float64(5 * time.Millisecond), float64(15 * time.Millisecond)}) {
-		t.Fatalf("overdue keep must run fastest fillable batch, even when higher energy: %+v", result)
+		t.Fatalf("overdue Delay must run fastest fillable batch, even when higher energy: %+v", result)
 	}
 }
 
@@ -194,7 +194,7 @@ func TestSchedulerOutstandingExtendsDeferredNativeWitness(t *testing.T) {
 	}
 }
 
-func TestSchedulerReplayCannotSwitchFrozenDeadlineMode(t *testing.T) {
+func TestSchedulerReplayIgnoresMeasuredDeadlineModeChanges(t *testing.T) {
 	_, snap := schedulerFixture()
 	state := schedulerReplayState{snap: snap, c: SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}}
 	state.initializeInstances()
@@ -205,15 +205,15 @@ func TestSchedulerReplayCannotSwitchFrozenDeadlineMode(t *testing.T) {
 	profile.Condition.Firstfloor = &settings
 	target.Profile = &profile
 	state.goal.Instances = []SchedulerInstance{target}
-	if state.applyRoute(state.goal) {
-		t.Fatal("in-place policy update reinterpreted frozen keep as drop")
+	if !state.applyRoute(state.goal) || len(state.out.reasons) != 0 || state.instances[0].policy.DeadlinePolicy != "" {
+		t.Fatalf("measured deadline policy affected serving route: %+v", state.out)
 	}
-	schedulerRequireReason(t, state.out.reasons, "ImmutableNativeDeadlinePolicyMismatch")
 }
 
 func TestSchedulerReplayPolicyUpdatePreservesCapturedSender(t *testing.T) {
 	_, snap := schedulerFixture()
 	d := snap.Workloads[0]
+	d.Admission.Policy = AdmissionPolicyReject
 	snap.Outstanding = []SchedulerRequest{{ID: "pending", Definition: d, ReceivedAt: snap.At.Add(-20 * time.Millisecond), Elapsed: 20 * time.Millisecond, Phase: phasePending}}
 	state := schedulerReplayState{snap: snap, c: SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, routingApplied: true, routeCredits: map[string][]int64{}, weights: make([]int32, 1), available: make([]bool, 1), out: schedulerReplayResult{definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	state.initializeInstances()
@@ -230,7 +230,21 @@ func TestSchedulerReplayPolicyUpdatePreservesCapturedSender(t *testing.T) {
 		t.Fatalf("permitted policy update failed: %+v", state.out)
 	}
 	after := state.nativeRequestState(instance, state.requests[0])
-	if before.Context.SenderElapsedMS != 20 || after.Context.SenderElapsedMS != 20 || firstfloor.RemainingSLOMS(before) != firstfloor.RemainingSLOMS(after) {
+	if before.Context.SenderElapsedMS != 20 || after.Context.SenderElapsedMS != 20 || firstfloor.RemainingSLOMS(before) != firstfloor.RemainingSLOMS(after) || before.Context.AdmissionPolicy != string(AdmissionPolicyReject) || after.Context.AdmissionPolicy != before.Context.AdmissionPolicy {
 		t.Fatalf("policy update changed already admitted native context: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestServingPlanKeysIgnoreMeasuredDeadlinePolicy(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	instance := snapshot.Instances[0]
+	candidate := SchedulerCandidate{Instances: []SchedulerInstance{instance}}
+	option := SchedulerOption{Instance: instance}
+	configKey, conditionKey := schedulerConfigKey(candidate), schedulerOptionCondition(option)
+	for _, policy := range []string{firstfloor.DeadlineDrop, firstfloor.DeadlineDefer, firstfloor.DeadlineKeep} {
+		instance.Profile.Condition.Firstfloor.DeadlinePolicy = policy
+		if schedulerConfigKey(candidate) != configKey || schedulerOptionCondition(option) != conditionKey {
+			t.Fatalf("measurement policy changed a serving plan key: %q", policy)
+		}
 	}
 }

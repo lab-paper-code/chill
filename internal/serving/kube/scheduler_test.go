@@ -486,7 +486,7 @@ func TestScheduledPowerRequestNamesTheMode(t *testing.T) {
 // unrouted instance keeps its Workload. It waits for the planner's route: the
 // Pod's static routing names no weight, as before.
 func TestScheduledPreparationOwnsItsWorkload(t *testing.T) {
-	profile := &serving.Profile{ID: "profile", Condition: profilederivation.CurvePlanSpec{Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 8}}}
+	profile := &serving.Profile{ID: "profile", Condition: profilederivation.CurvePlanSpec{Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 8, DeadlinePolicy: native.DeadlineDrop}}}
 	wanted := serving.SchedulerInstance{ID: "target-w1-profile-1", WorkloadUID: "w1", Profile: profile, Weight: 1, MaxBatch: 1}
 	action := serving.Action{ID: "prepare", Kind: servingstate.OperationPrepare, Instance: wanted.ID}
 	config := SchedulerControllerConfig{Preparations: map[string]servingstate.PrepareSpec{profile.ID: {}}}
@@ -497,6 +497,9 @@ func TestScheduledPreparationOwnsItsWorkload(t *testing.T) {
 	}
 	if op.Prepare.Instance.WorkloadUID != wanted.WorkloadUID {
 		t.Fatal("planner preparation lost the Workload binding used by placement")
+	}
+	if op.Prepare.Config.Policy.DeadlinePolicy != "" || profile.Condition.Firstfloor.DeadlinePolicy != native.DeadlineDrop {
+		t.Fatal("planned preparation copied or changed measured deadline provenance")
 	}
 }
 

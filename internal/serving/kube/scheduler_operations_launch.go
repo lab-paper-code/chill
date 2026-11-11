@@ -429,8 +429,7 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 				template.Instance.Weight = max(1, i.Weight)
 				template.Name = slotName(i.ID)
 				template.Config.Policy = native.Policy{ProfileID: i.Profile.ID, DecisionID: target.ID,
-					DeadlinePolicy: native.EffectiveDeadlinePolicy(i.Profile.Condition.Firstfloor.DeadlinePolicy),
-					MaxBatchSize:   i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / float64(time.Millisecond), FixedBatchSize: i.FixedBatchSize}
+					MaxBatchSize: i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / float64(time.Millisecond), FixedBatchSize: i.FixedBatchSize}
 				for _, d := range workloads {
 					if d != nil && d.UID == i.WorkloadUID {
 						template.Owner = &serving.WorkloadReference{Name: d.Name, UID: d.UID}

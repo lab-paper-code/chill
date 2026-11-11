@@ -595,8 +595,10 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		outcome := "error"
 		switch errorCode(err) {
-		case requestTimeoutCode, "SLODeadlineDrop":
+		case requestTimeoutCode:
 			outcome = timingOutcomeTimeout
+		case serving.CodeDeadlineInfeasible, serving.CodeQueueFull:
+			outcome = "rejected"
 		case requestCanceledCode:
 			outcome = "canceled"
 		case "PreprocessFailed":
@@ -781,11 +783,13 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusConflict
 	case "SettingsConflict":
 		status = http.StatusConflict
-	case "QueueFull":
+	case serving.CodeQueueFull:
 		status = http.StatusTooManyRequests
+	case serving.CodeDeadlineInfeasible:
+		status = http.StatusServiceUnavailable
 	case requestTimeoutCode:
 		status = http.StatusGatewayTimeout
-	case requestCanceledCode, "SLODeadlineDrop":
+	case requestCanceledCode:
 		status = http.StatusRequestTimeout
 	case "PreprocessFailed":
 		status = http.StatusUnprocessableEntity

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	v2 "github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
@@ -356,7 +355,7 @@ func capacityZeroWitnessFixture() (SchedulerSettings, SchedulerSnapshot, NodeRef
 	settings.MaxReplicas, settings.MaxInstances = 1, 3
 	first := snapshot.Workloads[0]
 	first.SLO.TargetLatency = time.Millisecond
-	snapshot.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
+	first.Admission.Policy = AdmissionPolicyReject
 	second := poolsAddWorkload(&snapshot, "w2")
 	settings.AutonomousWorkloads = []string{first.UID, second.UID}
 	secondNode := poolsAddNode(&snapshot, "second", map[string]float64{"fixed": 10})

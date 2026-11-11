@@ -236,8 +236,7 @@ func schedulerPolicyAcknowledged(wanted serving.SchedulerInstance, actual native
 		maxBatch = actual.MaxBatchSize
 	}
 	return actual.Policy.ProfileID == wanted.Profile.ID && maxBatch == wanted.MaxBatch && actual.Policy.FixedBatchSize == wanted.FixedBatchSize &&
-		actual.Policy.MaxBatchWaitMS == float64(wanted.MaxWait)/float64(time.Millisecond) &&
-		native.EffectiveDeadlinePolicy(actual.Policy.DeadlinePolicy) == native.EffectiveDeadlinePolicy(wanted.Profile.Condition.Firstfloor.DeadlinePolicy)
+		actual.Policy.MaxBatchWaitMS == float64(wanted.MaxWait)/float64(time.Millisecond)
 }
 
 func podBudget(pod *core.Pod) (int64, bool) {

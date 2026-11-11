@@ -159,7 +159,7 @@ func TestFeedbackConsumerCapacityWindowAllowsConfiguredTail(t *testing.T) {
 			definition.SLO = SLO{Percentile: tc.percentile, TargetLatency: time.Millisecond}
 			option := snapshot.Options[0]
 			option.Instance.MaxBatch = 1
-			option.Instance.Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
+			definition.Admission.Policy = AdmissionPolicyReject
 			option.Instance.Profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{1e6})}
 			// Isolated arrivals complete at exactly 1ms. A middle simultaneous
 			// burst drops precisely misses requests, then isolated work continues.

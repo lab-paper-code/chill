@@ -116,7 +116,8 @@ func TestPathTimingSampleKeepsFullNativeFailuresSeparate(t *testing.T) {
 	for _, tc := range []struct{ outcome, code, native string }{
 		{"preprocess_failed", preprocessFailedCode, "preprocess_failed"},
 		{outcomeError, "BackendError", "batch_error"},
-		{"timeout", "SLODeadlineDrop", "deadline_drop"},
+		{"rejected", CodeDeadlineInfeasible, "deadline_drop"},
+		{"rejected", CodeQueueFull, "queue_full"},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			row, client := pathTimingEvidence(8, 28, 30, 60, 120, 101)
@@ -128,6 +129,37 @@ func TestPathTimingSampleKeepsFullNativeFailuresSeparate(t *testing.T) {
 				t.Fatalf("full native failure lost finite timing or changed outcome: %+v, available=%v", sample, ok)
 			}
 		})
+	}
+}
+
+func TestPathTimingExecutorRejectionRequiresNativeExchangeEvidence(t *testing.T) {
+	for _, code := range []string{CodeDeadlineInfeasible, CodeQueueFull} {
+		for _, tc := range []struct {
+			name   string
+			mutate func(*RequestRow)
+		}{
+			{"missing native span", func(r *RequestRow) { r.NativeElapsedMS = nil }},
+			{"missing native finish", func(r *RequestRow) { r.NativeExecutionComplete = false }},
+			{"missing native outcome", func(r *RequestRow) { r.NativeOutcome = "" }},
+			{"wrong native outcome", func(r *RequestRow) { r.NativeOutcome = outcomeCompleted }},
+			{"missing synchronous exchange", func(r *RequestRow) { r.ExchangeNanos = nil }},
+			{"incomplete exchange", func(r *RequestRow) { r.ExecutionComplete = false }},
+			{"late native supplement", func(r *RequestRow) { *r.ExchangeNanos = *r.ElapsedNanos + 1 }},
+			{"no dispatch", func(r *RequestRow) { r.ServerTiming = RequestTimings{} }},
+		} {
+			t.Run(code+"/"+tc.name, func(t *testing.T) {
+				row, client := pathTimingEvidence(8, 28, 30, 60, 120, 101)
+				row.Outcome, row.Error, row.NativeOutcome = "rejected", code, "deadline_drop"
+				if code == CodeQueueFull {
+					row.NativeOutcome = "queue_full"
+				}
+				client.Outcome = clientOutcomeHTTPError
+				tc.mutate(&row)
+				if sample, ok := PathTimingSampleFromRequest(row, client); ok || sample != (PathTimingSample{}) {
+					t.Fatalf("unproven executor rejection became reserve evidence: %+v", sample)
+				}
+			})
+		}
 	}
 }
 

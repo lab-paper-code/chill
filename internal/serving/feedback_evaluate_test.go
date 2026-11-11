@@ -20,7 +20,7 @@ func feedbackFixture() (SchedulerSettings, SchedulerSnapshot, SchedulerCandidate
 	settings.CompletionMarginMS = 0
 	settings.ComparisonPeriod = time.Millisecond
 	profile := snapshot.Instances[0].Profile
-	profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineKeep
+	snapshot.Workloads[0].Admission.Policy = AdmissionPolicyDelay
 	profile.Batches = []BatchProfile{
 		schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 2, MemoryBytes: 100}, []float64{30e6}),
 		schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{70e6}),
@@ -69,7 +69,7 @@ func TestFeedbackConsumerZeroWitnessRetainsDropAndPotential(t *testing.T) {
 	settings.CapacityWindows, settings.CapacityPassingWindows, settings.CapacityMinimumRequests = 1, 1, 2
 	settings.CapacityTailSamples = 1
 	snapshot.Workloads[0].SLO.TargetLatency = 10 * time.Millisecond
-	snapshot.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
+	snapshot.Workloads[0].Admission.Policy = AdmissionPolicyReject
 	snapshot.Instances[0].MaxBatch = 1
 	snapshot.PathFeedback = []PathFeedback{{WorkloadUID: snapshot.Workloads[0].UID}}
 	potentials := make([]float64, 0, 2)
@@ -93,18 +93,19 @@ func TestFeedbackConsumerZeroWitnessRetainsDropAndPotential(t *testing.T) {
 	}
 }
 
-func TestFeedbackConsumerKeepAndDeferDrainFiniteCohort(t *testing.T) {
+func TestFeedbackConsumerDelayDrainsFiniteCohortAcrossMeasuredModes(t *testing.T) {
 	for _, mode := range []string{firstfloor.DeadlineKeep, firstfloor.DeadlineDefer} {
 		t.Run(mode, func(t *testing.T) {
 			settings, snapshot, candidate := feedbackFixture()
 			snapshot.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = mode
+			snapshot.Workloads[0].Admission.Policy = AdmissionPolicyDelay
 			snapshot.Instances[0].MaxBatch = 1
 			snapshot.Workloads[0].SLO.TargetLatency = time.Millisecond
 			snapshot.PathFeedback = []PathFeedback{{WorkloadUID: snapshot.Workloads[0].UID, TotalNanos: 20e6, PostNanos: 10e6}}
 			result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 			score := result.Workloads[0]
 			if score.Population != 2 || score.Completed != 2 || score.FailureFraction != 0 || score.Satisfied || *score.SuccessQuantileNanos != 80e6 {
-				t.Fatalf("finite cohort must drain beyond 1ms horizon under native mode: %+v", result)
+				t.Fatalf("finite Delay cohort must drain beyond 1ms horizon regardless of measured mode: %+v", result)
 			}
 		})
 	}
@@ -204,7 +205,7 @@ func TestFeedbackConsumerPotentialCannotInventFutureBatchFill(t *testing.T) {
 	settings, snapshot, candidate := feedbackFixture()
 	snapshot.Arrivals = snapshot.Arrivals[:1]
 	snapshot.Workloads[0].SLO.TargetLatency = 10 * time.Millisecond
-	snapshot.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
+	snapshot.Workloads[0].Admission.Policy = AdmissionPolicyReject
 	snapshot.Instances[0].Profile.Batches = []BatchProfile{
 		schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{60e6}),
 		schedulerTestBatchProfile(BatchProfile{Batch: 2}, []float64{1e6}),

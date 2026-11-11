@@ -247,9 +247,14 @@ func schedulerOptionCondition(o SchedulerOption) string {
 		return ""
 	}
 	p := i.Profile
+	var nativeMaxBatch, nativeMaxQueue int32
+	if p.Condition.Firstfloor != nil {
+		nativeMaxBatch = p.Condition.Firstfloor.MaxBatchSize
+		nativeMaxQueue = p.Condition.Firstfloor.MaxQueueSize
+	}
 	// Artifact and input contracts are executable semantics, not runtime-image
 	// measurement validity. Preserve their option partition.
-	return fmt.Sprint(i.Node, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.Preprocessor, p.Condition.ActiveProtocol.Dataset, p.Condition.PowerMode, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait)
+	return fmt.Sprint(i.Node, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.Preprocessor, p.Condition.ActiveProtocol.Dataset, p.Condition.PowerMode, p.Condition.Firstfloor != nil, nativeMaxBatch, nativeMaxQueue, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait)
 }
 
 func schedulerConfigKey(c SchedulerCandidate) string {
@@ -267,11 +272,7 @@ func schedulerConfigKey(c SchedulerCandidate) string {
 			}
 			weights = append(weights, weight)
 		}
-		deadlinePolicy := ""
-		if i.Profile != nil && i.Profile.Condition.Firstfloor != nil {
-			deadlinePolicy = i.Profile.Condition.Firstfloor.DeadlinePolicy
-		}
-		parts = append(parts, fmt.Sprint(i.ID, i.Node.UID, schedulerState(i), uids, weights, i.Capacity, i.MaxBatch, i.MaxWait, deadlinePolicy))
+		parts = append(parts, fmt.Sprint(i.ID, i.Node.UID, schedulerState(i), uids, weights, i.Capacity, i.MaxBatch, i.MaxWait))
 	}
 	sort.Strings(parts)
 	for _, n := range c.Nodes {

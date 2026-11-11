@@ -1,9 +1,5 @@
 package serving
 
-import (
-	"github.com/lab-paper-code/chill/internal/firstfloor"
-)
-
 type schedulerReplayAction struct {
 	action   Action
 	started  bool
@@ -117,14 +113,6 @@ func (s *schedulerReplayState) applyRoute(target SchedulerCandidate) bool {
 				}
 				if i.config.Profile == nil || v.Profile == nil || i.config.Profile.ID != v.Profile.ID {
 					s.out.reasons = append(s.out.reasons, "ImmutableNativeProfileMismatch:"+v.ID)
-					return false
-				}
-				mode := ""
-				if v.Profile.Condition.Firstfloor != nil {
-					mode = v.Profile.Condition.Firstfloor.DeadlinePolicy
-				}
-				if i.policy.DeadlinePolicy != firstfloor.EffectiveDeadlinePolicy(mode) {
-					s.out.reasons = append(s.out.reasons, "ImmutableNativeDeadlinePolicyMismatch:"+v.ID)
 					return false
 				}
 				i.config = v

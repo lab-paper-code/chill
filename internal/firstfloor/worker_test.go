@@ -30,7 +30,7 @@ func testBatch(size int, energy float64, samples ...ServiceSample) BatchProfile 
 	return BatchProfile{Size: size, EnergyPerItemJ: energy, ServiceSamples: samples, Distribution: distribution}
 }
 func testState(uid string, target float64, rate float64) RequestState {
-	return RequestState{Context: RequestContext{WorkloadUID: uid, Definition: uid + "/1", SLO: SLO{Percentile: 95, TargetMS: target}}, ArrivalRate: rate, Phase: "queued"}
+	return RequestState{Context: RequestContext{WorkloadUID: uid, Definition: uid + "/1", AdmissionPolicy: AdmissionReject, SLO: SLO{Percentile: 95, TargetMS: target}}, ArrivalRate: rate, Phase: "queued"}
 }
 
 func TestMeasuredEnergyRemainsNonnegative(t *testing.T) {
@@ -61,8 +61,8 @@ func TestMeasuredSelector(t *testing.T) {
 	}
 	pair[0].Context.SLO.TargetMS = 1
 	pair[1].Context.SLO.TargetMS = 1
-	if c := ChooseBatch(capped, pair, nil); c.Size != 1 || c.WaitMS != 0 {
-		t.Fatalf("overload choice must honor cap: %+v", c)
+	if c := ChooseBatch(capped, pair, nil); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
+		t.Fatalf("infeasible requests must reject without exceeding the batch cap: %+v", c)
 	}
 	if e := validatePolicy(capped, []int{1, 2}); e != nil {
 		t.Fatal(e)
@@ -95,8 +95,8 @@ func TestMeasuredSelector(t *testing.T) {
 		t.Fatalf("UIDs must never form combined batch: %+v", c)
 	}
 	q = []RequestState{testState("a", 1, 100)}
-	if c := ChooseBatch(p, q, nil); c.Size != 1 || c.WaitMS != 0 {
-		t.Fatalf("late SLO must execute, not drop: %+v", c)
+	if c := ChooseBatch(p, q, nil); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
+		t.Fatalf("late Reject request must not execute: %+v", c)
 	}
 	samples := p
 	samples.Batches = []BatchProfile{testBatch(1, 2, startupSample("trial-a", 1), startupSample("trial-b", 100)), testBatch(2, 1, startupSample("trial-a", 2), startupSample("trial-b", 101))}
@@ -106,7 +106,7 @@ func TestMeasuredSelector(t *testing.T) {
 		t.Fatalf("empirical p50 should leave slack: %+v", c)
 	}
 	q[0].Context.SLO.Percentile = 100
-	if c := ChooseBatch(samples, q, nil); c.Size != 1 || c.WaitMS != 0 {
+	if c := ChooseBatch(samples, q, nil); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
 		t.Fatalf("empirical p100 must not borrow p50 slack: %+v", c)
 	}
 	q = []RequestState{testState("a", 50, 100)}
@@ -131,7 +131,7 @@ func TestCompletionMarginIsReservedOnceRegardlessOfSenderElapsed(t *testing.T) {
 		t.Fatalf("feasible deadline must execute: %+v", c)
 	}
 	for _, sender := range []float64{0, 400, 500} {
-		wire := Request{ID: "wire", Context: RequestContext{RequestID: "wire", WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: sender, CompletionMarginMS: 7, LifetimeMS: 507, SLO: SLO{Percentile: 95, TargetMS: 507}}, Inputs: rawInputs("sample")}
+		wire := Request{ID: "wire", Context: RequestContext{RequestID: "wire", WorkloadUID: "uid", Definition: "uid/1", AdmissionPolicy: AdmissionReject, ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: sender, CompletionMarginMS: 7, LifetimeMS: 507, SLO: SLO{Percentile: 95, TargetMS: 507}}, Inputs: rawInputs("sample")}
 		body, err := json.Marshal(wire)
 		if err != nil {
 			t.Fatal(err)
@@ -208,7 +208,7 @@ func actorRequest(t *testing.T, cfg *Config, id, uid string, target float64) *re
 	if e != nil {
 		t.Fatal(e)
 	}
-	return &request{received: time.Now(), context: RequestContext{RequestID: id, WorkloadUID: uid, Definition: uid + "/1", ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: target}}, data: d, bytes: n}
+	return &request{received: time.Now(), context: RequestContext{RequestID: id, WorkloadUID: uid, Definition: uid + "/1", AdmissionPolicy: AdmissionDelay, ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: target}}, data: d, bytes: n}
 }
 func postJSON(h http.Handler, path string, v any) *httptest.ResponseRecorder {
 	body, e := json.Marshal(v)
@@ -342,7 +342,7 @@ func TestItemFailureAndBatchErrorHTTP(t *testing.T) {
 	s, _ := startTestActor(t, "serving", "0", nil)
 	h := NewHandler(s)
 	send := func(id, value string) *httptest.ResponseRecorder {
-		return postJSON(h, "/v2/models/synthetic/infer", Request{ID: id, Context: RequestContext{RequestID: id, WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 1000}}, Inputs: rawInputs(value)})
+		return postJSON(h, "/v2/models/synthetic/infer", Request{ID: id, Context: RequestContext{RequestID: id, WorkloadUID: "uid", Definition: "uid/1", AdmissionPolicy: AdmissionDelay, ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 1000}}, Inputs: rawInputs(value)})
 	}
 	for _, test := range []struct {
 		value, outcome, reason string
@@ -375,7 +375,7 @@ func TestNativeAllocationFailureHTTPPreservesCategoryAndServing(t *testing.T) {
 						"batchSize": 2, "trialID": "allocation-trial", "inputs": rawInputs(value, value)})
 				}
 				return postJSON(h, "/v2/models/synthetic/infer", Request{
-					ID: value, Context: RequestContext{RequestID: value, WorkloadUID: "uid", Definition: "uid/1",
+					ID: value, Context: RequestContext{RequestID: value, WorkloadUID: "uid", Definition: "uid/1", AdmissionPolicy: AdmissionDelay,
 						ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 1000}}, Inputs: rawInputs(value)})
 			}
 			for _, tc := range []struct{ value, reason string }{
@@ -405,7 +405,7 @@ func TestWorkerHTTPBoundaries(t *testing.T) {
 		h.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)))
 		return recorder
 	}
-	fieldless := Request{ID: "fields", Context: RequestContext{RequestID: "fields", WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 100}}, Inputs: []Field{{Name: "other", Data: [][]byte{[]byte("x")}}}}
+	fieldless := Request{ID: "fields", Context: RequestContext{RequestID: "fields", WorkloadUID: "uid", Definition: "uid/1", AdmissionPolicy: AdmissionReject, ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 100}}, Inputs: []Field{{Name: "other", Data: [][]byte{[]byte("x")}}}}
 	wrongField, e := json.Marshal(fieldless)
 	if e != nil {
 		t.Fatal(e)
@@ -417,7 +417,7 @@ func TestWorkerHTTPBoundaries(t *testing.T) {
 			t.Fatalf("pre-submission rejection must prove no execution: %d %s", reply.Code, reply.Body.String())
 		}
 	}
-	request := Request{ID: "wire", Context: RequestContext{RequestID: "wire", WorkloadUID: "wire-uid", Definition: "wire-uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: 1000, SLO: SLO{Percentile: 99, TargetMS: 1}}, Inputs: rawInputs("sample")}
+	request := Request{ID: "wire", Context: RequestContext{RequestID: "wire", WorkloadUID: "wire-uid", Definition: "wire-uid/1", AdmissionPolicy: AdmissionDelay, ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: 1000, SLO: SLO{Percentile: 99, TargetMS: 1}}, Inputs: rawInputs("sample")}
 	body, e := json.Marshal(request)
 	if e != nil {
 		t.Fatal(e)
@@ -549,6 +549,7 @@ func TestLateQueueMaximumThroughput(t *testing.T) {
 			for i := range queue {
 				queue[i] = testState("a", 1000, 100)
 				queue[i].ElapsedMS = 1100
+				queue[i].Phase = phaseDeferred
 			}
 			if c := ChooseBatch(p, queue, nil); c.Size != tc.want || c.WaitMS != 0 || c.Reason != "maximum_throughput" {
 				t.Fatalf("late queue must minimize service cost per item: want size %d, got %+v", tc.want, c)
@@ -568,17 +569,29 @@ func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 	for i := range late {
 		late[i].Context.RequestID = string(rune('a' + i))
 	}
-	if c := ChooseBatch(p, late, nil); c.Size != 2 || c.WaitMS != 0 {
-		t.Fatalf("keep must run maximum throughput among fillable batches: %+v", c)
+	for i := range late {
+		late[i].Phase = phaseDeferred
 	}
-	for _, mode := range []string{DeadlineDrop, DeadlineDefer} {
-		p.DeadlinePolicy = mode
+	if c := ChooseBatch(p, late, nil); c.Size != 2 || c.WaitMS != 0 {
+		t.Fatalf("deferred work must run maximum throughput among fillable batches: %+v", c)
+	}
+	for _, policy := range []string{AdmissionReject, AdmissionDelay} {
+		for i := range late {
+			late[i].Phase = phaseQueued
+			late[i].Context.AdmissionPolicy = policy
+		}
 		c := ChooseBatch(p, late, nil)
-		if c.RequestID != "a" || c.Size != 0 || c.WaitMS != 0 || c.Reason != "deadline_"+mode {
-			t.Fatalf("infeasible head must receive individual lifecycle transition (%s): %+v", mode, c)
+		reason := OutcomeDeadlineDrop
+		if policy == AdmissionDelay {
+			reason = ReasonDeadlineDefer
+		}
+		if c.RequestID != "a" || c.Size != 0 || c.WaitMS != 0 || c.Reason != reason {
+			t.Fatalf("infeasible head must receive its request policy transition (%s): %+v", policy, c)
 		}
 	}
-	p.DeadlinePolicy = DeadlineDrop
+	for i := range late {
+		late[i].Context.AdmissionPolicy = AdmissionReject
+	}
 	running := testState("running", 1, 0)
 	running.Phase = phaseRunning
 	if c := ChooseBatch(p, append(late, running), nil); c.Size != 0 || c.RequestID != "" {
@@ -588,7 +601,9 @@ func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 	if c := ChooseBatch(p, append(late, running), nil); c.RequestID != "b" || c.Reason != "deadline_drop" {
 		t.Fatalf("expired queued work drops even during an active batch: %+v", c)
 	}
-	p.DeadlinePolicy = DeadlineDefer
+	for i := range late {
+		late[i].Context.AdmissionPolicy = AdmissionDelay
+	}
 	if c := ChooseBatch(p, append(late, running), nil); c.RequestID != "" || c.Size != 0 {
 		t.Fatalf("defer does not demote while another batch is active: %+v", c)
 	}
@@ -626,9 +641,9 @@ func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 }
 
 func TestDeadlineActorModesAndActiveNonpreemption(t *testing.T) {
-	for _, mode := range []string{DeadlineKeep, DeadlineDrop, DeadlineDefer} {
+	for _, mode := range []string{AdmissionReject, AdmissionDelay} {
 		t.Run(mode, func(t *testing.T) {
-			s, cfg := startTestActor(t, modeServing, "250", withDeadline(mode))
+			s, cfg := startTestActor(t, modeServing, "250", withDeadline(DeadlineKeep))
 			active := actorRequest(t, cfg, "active", "a", 1000)
 			activeReply := make(chan result, 1)
 			go func() { activeReply <- s.submit(context.Background(), active) }()
@@ -636,12 +651,13 @@ func TestDeadlineActorModesAndActiveNonpreemption(t *testing.T) {
 				return len(state.Requests) == 1 && state.Requests[0].Phase == phaseRunning
 			})
 			queued := actorRequest(t, cfg, "queued", "b", 30)
+			queued.context.AdmissionPolicy = mode
 			queuedReply := make(chan result, 1)
 			go func() { queuedReply <- s.submit(context.Background(), queued) }()
-			if mode == DeadlineDrop {
+			if mode == AdmissionReject {
 				reply := <-queuedReply
 				p := reply.response.Progress
-				if !errors.Is(reply.err, ErrDeadlineDrop) || !reply.complete || p.Outcome != "deadline_drop" || p.Phase != phaseFinished || !p.ExecutionComplete || p.BatchID != 0 || p.BatchSize != 0 || p.ServiceMS != 0 {
+				if !errors.Is(reply.err, ErrDeadlineInfeasible) || !reply.complete || p.Outcome != "deadline_drop" || p.Phase != phaseFinished || !p.ExecutionComplete || p.BatchID != 0 || p.BatchSize != 0 || p.ServiceMS != 0 {
 					t.Fatalf("queued expiry must prove a finished non-execution: %+v", reply)
 				}
 				state := awaitActorState(t, s, func(state State) bool { return state.CompletedRequests == 1 })
@@ -650,17 +666,14 @@ func TestDeadlineActorModesAndActiveNonpreemption(t *testing.T) {
 				}
 			}
 			next := *cfg
-			next.Policy.DeadlinePolicy = DeadlineKeep
-			if mode == DeadlineKeep {
-				next.Policy.DeadlinePolicy = DeadlineDrop
-			}
-			if err := s.Update(context.Background(), &next); err == nil {
-				t.Fatal("live deadline-mode switch accepted")
+			next.Policy.DeadlinePolicy = DeadlineDrop
+			if err := s.Update(context.Background(), &next); err != nil {
+				t.Fatalf("serving provenance policy switch must not require restart: %v", err)
 			}
 			if reply := <-activeReply; reply.err != nil || !reply.complete {
 				t.Fatalf("active batch must finish normally: %+v", reply)
 			}
-			if mode != DeadlineDrop {
+			if mode != AdmissionReject {
 				reply := <-queuedReply
 				if reply.err != nil || !reply.complete || reply.response.Progress.Outcome != outcomeCompleted || !reflect.DeepEqual(reply.response.Outputs, echoOutputs("sample")) {
 					t.Fatalf("keep/defer overdue work must eventually return exact success: %+v", reply)
@@ -668,13 +681,13 @@ func TestDeadlineActorModesAndActiveNonpreemption(t *testing.T) {
 			}
 			state := awaitActorState(t, s, func(state State) bool { return state.CompletedRequests == 2 && len(state.Requests) == 0 })
 			wantExecutions := uint64(2)
-			if mode == DeadlineDrop {
+			if mode == AdmissionReject {
 				wantExecutions = 1
 			}
 			if state.AcceptedRequests != 2 || state.Executions != wantExecutions {
 				t.Fatalf("drop/defer lifecycle counters must match physical work: %+v", state)
 			}
-			if mode == DeadlineDrop {
+			if mode == AdmissionReject {
 				active = actorRequest(t, cfg, "late-active", "a", 30)
 				reply := s.submit(context.Background(), active)
 				if reply.err != nil || reply.response.Progress.Outcome != outcomeCompleted {
@@ -729,7 +742,7 @@ func TestDeadlinePolicyValidationIncludesProfiling(t *testing.T) {
 
 func TestWorkerDeadlineDropHTTP(t *testing.T) {
 	s, _ := startTestActor(t, modeServing, "0", withDeadline(DeadlineDrop))
-	request := Request{ID: "expired-slo", Context: RequestContext{RequestID: "expired-slo", WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: 100, SLO: SLO{Percentile: 95, TargetMS: 1}}, Inputs: rawInputs("sample")}
+	request := Request{ID: "expired-slo", Context: RequestContext{RequestID: "expired-slo", WorkloadUID: "uid", Definition: "uid/1", AdmissionPolicy: AdmissionReject, ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: 100, SLO: SLO{Percentile: 95, TargetMS: 1}}, Inputs: rawInputs("sample")}
 	body, err := json.Marshal(request)
 	if err != nil {
 		t.Fatal(err)
@@ -737,8 +750,11 @@ func TestWorkerDeadlineDropHTTP(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	NewHandler(s).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v2/models/synthetic/infer", bytes.NewReader(body)))
 	var failure ErrorResponse
-	if recorder.Code != http.StatusRequestTimeout || json.Unmarshal(recorder.Body.Bytes(), &failure) != nil || !failure.ExecutionComplete {
-		t.Fatalf("SLO drop must surface as physically complete HTTP 408: %d %s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusServiceUnavailable || json.Unmarshal(recorder.Body.Bytes(), &failure) != nil || !failure.ExecutionComplete ||
+		failure.Code != CodeDeadlineInfeasible || failure.Stage != AdmissionStageExecutor || failure.Policy != AdmissionReject ||
+		failure.RemainingSLONanos == nil || *failure.RemainingSLONanos >= 0 || failure.ExecutorWaitNanos == nil ||
+		failure.Progress == nil || failure.Progress.BatchID != 0 {
+		t.Fatalf("SLO rejection must return structured non-execution HTTP 503: %d %s", recorder.Code, recorder.Body.String())
 	}
 	state := awaitActorState(t, s, func(state State) bool { return state.CompletedRequests == 1 })
 	if state.AcceptedRequests != 1 || state.Executions != 0 || len(state.Requests) != 0 {
@@ -915,5 +931,129 @@ func TestNativeBundleRejectsDurationOnlyProfiles(t *testing.T) {
 	queue := []RequestState{testState("w", 100, 0), testState("w", 100, 0)}
 	if choice := ChooseBatch(loaded.Policy, queue, nil); choice.Size != 2 || choice.Reason != "available_energy" {
 		t.Fatalf("paired bundle must hydrate a usable conditional native policy: %+v", choice)
+	}
+}
+
+func TestSharedActorUsesFrozenRequestAdmission(t *testing.T) {
+	s, cfg := startTestActor(t, modeServing, "150", withDeadline(DeadlineDrop))
+	active := actorRequest(t, cfg, "blocker", "blocker", 1000)
+	activeReply := make(chan result, 1)
+	go func() { activeReply <- s.submit(context.Background(), active) }()
+	awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 1 && state.Requests[0].Phase == phaseRunning })
+	reject := actorRequest(t, cfg, "reject", "reject", 20)
+	reject.context.AdmissionPolicy = AdmissionReject
+	delayed := actorRequest(t, cfg, "delay", "delay", 20)
+	rejectReply, delayReply := make(chan result, 1), make(chan result, 1)
+	go func() { rejectReply <- s.submit(context.Background(), reject) }()
+	go func() { delayReply <- s.submit(context.Background(), delayed) }()
+	if reply := <-rejectReply; !errors.Is(reply.err, ErrDeadlineInfeasible) || reply.response.Progress.BatchID != 0 {
+		t.Fatalf("Reject must not execute on the shared actor: %+v", reply)
+	}
+	if reply := <-activeReply; reply.err != nil {
+		t.Fatal(reply.err)
+	}
+	if reply := <-delayReply; reply.err != nil || reply.response.Progress.BatchSize != 1 || reply.response.Progress.ExecutorWaitNanos == nil || *reply.response.Progress.ExecutorWaitNanos < int64(100*time.Millisecond) {
+		t.Fatalf("Delay must execute late with its actual queue wait: %+v", reply)
+	}
+	state := awaitActorState(t, s, func(state State) bool { return state.CompletedRequests == 3 })
+	if state.Executions != 2 {
+		t.Fatalf("only blocker and Delay may execute: %+v", state)
+	}
+}
+
+func TestBatchConfirmationRefreshesMonotonicExpiry(t *testing.T) {
+	stale := time.Now().Add(-time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	makeRequest := func(id, policy string) *request {
+		return &request{ctx: context.Background(), context: RequestContext{RequestID: id, AdmissionPolicy: policy, SLO: SLO{TargetMS: 100}}, received: stale, enqueued: stale, bytes: 1, result: make(chan result, 1)}
+	}
+	canceled := makeRequest("cancel", AdmissionDelay)
+	canceled.ctx = ctx
+	timedOut := makeRequest("lifetime", AdmissionDelay)
+	timedOut.lifetime = stale.Add(500 * time.Millisecond)
+	rejected := makeRequest("slo", AdmissionReject)
+	a := schedulerActor{cfg: &Config{Mode: modeServing, Policy: testPolicy()}, queue: []*request{canceled, timedOut, rejected}, queuedBytes: 3}
+	a.startBatch(context.Background(), stale, time.Time{})
+	for _, tc := range []struct {
+		request *request
+		err     error
+	}{{canceled, context.Canceled}, {timedOut, context.DeadlineExceeded}, {rejected, ErrDeadlineInfeasible}} {
+		if reply := <-tc.request.result; !errors.Is(reply.err, tc.err) || !reply.complete || reply.response.Progress.BatchID != 0 {
+			t.Fatalf("confirmation retained expired work: %+v", reply)
+		}
+	}
+	if len(a.queue) != 0 || len(a.active) != 0 || a.queuedBytes != 0 || a.completed != 3 {
+		t.Fatalf("confirmation must reselect after removing expired requests: %+v", a)
+	}
+}
+
+func TestNativeQueueFullAdmissionProofs(t *testing.T) {
+	s, cfg := startTestActor(t, modeServing, "0", func(c *Config) {
+		c.Policy.FixedBatchSize = 2
+		c.MaxQueueBytes = 12
+	})
+	h := NewHandler(s).(*handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	queued := actorRequest(t, cfg, "queued", "queued", 1000)
+	reply := make(chan result, 1)
+	go func() { reply <- s.submit(ctx, queued) }()
+	awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 1 })
+	actor := postJSON(h, "/v2/models/synthetic/infer", nativeIngressRequest("actor-full"))
+	var failure ErrorResponse
+	if actor.Code != http.StatusTooManyRequests || json.Unmarshal(actor.Body.Bytes(), &failure) != nil ||
+		failure.Code != CodeQueueFull || failure.Stage != AdmissionStageExecutor || failure.Policy != AdmissionDelay ||
+		failure.NotAdmitted || !failure.ExecutionComplete || failure.Progress == nil ||
+		failure.Progress.RequestID != "actor-full" || failure.Progress.Outcome != "queue_full" ||
+		failure.Progress.BatchID != 0 || failure.Progress.BatchSize != 0 || failure.RemainingSLONanos == nil || failure.ExecutorWaitNanos != nil {
+		t.Fatalf("actor queue full must prove correlated non-execution without queue wait: %d %s", actor.Code, actor.Body.String())
+	}
+	for range cap(h.admission) {
+		h.admission <- struct{}{}
+	}
+	semaphore := postJSON(h, "/v2/models/synthetic/infer", map[string]any{"invalid": true})
+	failure = ErrorResponse{}
+	if semaphore.Code != http.StatusTooManyRequests || json.Unmarshal(semaphore.Body.Bytes(), &failure) != nil ||
+		failure.Code != CodeQueueFull || failure.Stage != AdmissionStageExecutor || !failure.NotAdmitted ||
+		!failure.ExecutionComplete || failure.Progress != nil || failure.Policy != "" ||
+		failure.RemainingSLONanos != nil || failure.ExecutorWaitNanos != nil {
+		t.Fatalf("pre-decode rejection must not fabricate request evidence: %d %s", semaphore.Code, semaphore.Body.String())
+	}
+	for range cap(h.admission) {
+		<-h.admission
+	}
+	cancel()
+	<-reply
+}
+
+func TestNativeLifetimeTimeoutIsExplicitAndNonpreemptive(t *testing.T) {
+	s, _ := startTestActor(t, modeServing, "200", nil)
+	request := nativeIngressRequest("lifetime")
+	request.Context.LifetimeMS = 30
+	response := postJSON(NewHandler(s), "/v2/models/synthetic/infer", request)
+	var failure ErrorResponse
+	if response.Code != http.StatusRequestTimeout || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != CodeRequestTimeout || failure.ExecutionComplete || failure.Progress != nil {
+		t.Fatalf("active lifetime timeout must remain physically incomplete: %d %s", response.Code, response.Body.String())
+	}
+	state := awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 1 })
+	if state.Requests[0].Phase != phaseRunning || state.CompletedRequests != 0 {
+		t.Fatalf("timeout must retain physical occupancy: %+v", state)
+	}
+	awaitActorState(t, s, func(state State) bool { return state.CompletedRequests == 1 && len(state.Requests) == 0 })
+}
+
+func TestRequestAdmissionValidationAndMissingPolicyFailSafe(t *testing.T) {
+	r := nativeIngressRequest("policy")
+	for _, invalid := range []string{"", DeadlineKeep, "invalid"} {
+		r.Context.AdmissionPolicy = invalid
+		if err := validateContext(r.Context, r.ID); err == nil {
+			t.Fatalf("invalid frozen policy accepted: %q", invalid)
+		}
+		state := testState("uid", 1000, 0)
+		state.Context.AdmissionPolicy = invalid
+		if choice := ChooseBatch(testPolicy(), []RequestState{state}, nil); choice.Size != 0 || choice.Reason != "admission_unknown" {
+			t.Fatalf("missing replay policy must fail closed: %+v", choice)
+		}
 	}
 }

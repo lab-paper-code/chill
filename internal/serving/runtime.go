@@ -638,7 +638,9 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		errors.As(err, &domain)
 		outcome, code = outcomeError, domain.Code
 		switch domain.Code {
-		case "SLODeadlineDrop":
+		case CodeDeadlineInfeasible, CodeQueueFull:
+			outcome = "rejected"
+		case "RequestTimeout":
 			outcome = schedulerOutcomeTimeout
 		case preprocessFailedCode:
 			outcome = firstfloor.OutcomePreprocessFailed

@@ -86,3 +86,33 @@ func TestPreparationSharedCPURetainsMemoryAndDeviceAdmission(t *testing.T) {
 		}
 	}
 }
+
+func TestPreparationIgnoresMeasuredDeadlinePolicy(t *testing.T) {
+	for _, mode := range []string{native.DeadlineKeep, native.DeadlineDrop, native.DeadlineDefer} {
+		t.Run(mode, func(t *testing.T) {
+			spec := measuredCPUPreparationFixture()
+			spec.Instance.Profile.Condition.Firstfloor.DeadlinePolicy = mode
+			if err := servingops.ValidatePreparation(spec); err != nil {
+				t.Fatal("measured deadline provenance constrained serving preparation", err)
+			}
+		})
+	}
+}
+
+func TestSchedulerPolicyAcknowledgmentIgnoresMeasuredDeadlinePolicy(t *testing.T) {
+	wanted := measuredCPUPreparationFixture().Instance
+	wanted.MaxBatch, wanted.MaxWait = 1, time.Millisecond
+	wanted.Profile.Condition.Firstfloor.DeadlinePolicy = native.DeadlineDrop
+	for _, mode := range []string{"", native.DeadlineKeep, native.DeadlineDrop, native.DeadlineDefer} {
+		t.Run(mode, func(t *testing.T) {
+			actual := native.Metadata{Policy: native.Policy{ProfileID: wanted.Profile.ID, MaxBatchSize: 1, MaxBatchWaitMS: 1, DeadlinePolicy: mode}}
+			if !schedulerPolicyAcknowledged(wanted, actual) {
+				t.Fatal("measured deadline provenance constrained serving acknowledgment")
+			}
+			actual.Policy.FixedBatchSize = 1
+			if schedulerPolicyAcknowledged(wanted, actual) {
+				t.Fatal("fixed batch mismatch escaped serving acknowledgment")
+			}
+		})
+	}
+}

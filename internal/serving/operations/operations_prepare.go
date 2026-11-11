@@ -201,8 +201,8 @@ func (o *Operations) EnsurePreparationConfig(ctx context.Context, spec servingst
 		}
 		decisionID := previous.Policy.DecisionID
 		desired := spec.Config
-		previous.Policy = native.Policy{DeadlinePolicy: native.EffectiveDeadlinePolicy(previous.Policy.DeadlinePolicy), FixedBatchSize: previous.Policy.FixedBatchSize}
-		desired.Policy = native.Policy{DeadlinePolicy: native.EffectiveDeadlinePolicy(desired.Policy.DeadlinePolicy), FixedBatchSize: desired.Policy.FixedBatchSize}
+		previous.Policy = native.Policy{FixedBatchSize: previous.Policy.FixedBatchSize}
+		desired.Policy = native.Policy{FixedBatchSize: desired.Policy.FixedBatchSize}
 		if !reflect.DeepEqual(previous, desired) || existing.Data["delivery.json"] != cm.Data["delivery.json"] {
 			return "", errors.New("existing immutable preparation execution config differs")
 		}

@@ -531,7 +531,7 @@ func assertRouteNativeACKs(t *testing.T, target serving.SchedulerCandidate, resu
 	}
 }
 
-func TestRouteRejectsImmutableProfileAndDeadlinePolicyBeforePersistence(t *testing.T) {
+func TestRouteRejectsImmutableProfileAndFixedBatchBeforePersistence(t *testing.T) {
 	operations, target, pods := routeAcknowledgmentFixture(t)
 	for _, instance := range target.Instances {
 		target.Routing[instance.WorkloadUID][instance.ID] = 1
@@ -543,18 +543,16 @@ func TestRouteRejectsImmutableProfileAndDeadlinePolicyBeforePersistence(t *testi
 	if err := operations.Store.Client().Get(ctx, key, original); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{profileInitContainerName, "deadline policy"} {
+	for _, field := range []string{profileInitContainerName, "fixed batch size"} {
 		t.Run(field, func(t *testing.T) {
 			profile := *target.Instances[0].Profile
-			firstfloor := *profile.Condition.Firstfloor
-			profile.Condition.Firstfloor = &firstfloor
+			wanted := target
+			wanted.Instances = slices.Clone(target.Instances)
 			if field == profileInitContainerName {
 				profile.ID = "different-profile"
 			} else {
-				firstfloor.DeadlinePolicy = "drop"
+				wanted.Instances[0].FixedBatchSize = 1
 			}
-			wanted := target
-			wanted.Instances = slices.Clone(target.Instances)
 			wanted.Instances[0].Profile = &profile
 			wantError := "immutable " + field
 			if field == profileInitContainerName {
@@ -572,6 +570,89 @@ func TestRouteRejectsImmutableProfileAndDeadlinePolicyBeforePersistence(t *testi
 				t.Fatalf("immutable %s changed desired config", field)
 			}
 		})
+	}
+}
+
+func TestRouteUsesRequestAdmissionPolicyWithoutRestart(t *testing.T) {
+	operations, target, pods := routeAcknowledgmentFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	definition := operations.Runtime.SchedulerInputs(time.Now).Workloads[0]
+	for j := range target.Instances {
+		instance := &target.Instances[j]
+		profile := *instance.Profile
+		settings := *profile.Condition.Firstfloor
+		settings.DeadlinePolicy = native.DeadlineDefer
+		profile.Condition.Firstfloor = &settings
+		instance.Profile = &profile
+	}
+	for _, pod := range pods {
+		config := &core.ConfigMap{}
+		if err := operations.Store.Client().Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, config); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := operations.Kube.CoreV1().ConfigMaps(pod.Namespace).Create(ctx, config, meta.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := operations.ValidateRoutingPolicies(ctx, target, definition.UID); err != nil {
+		t.Fatal("measured deadline policy blocked static routing", err)
+	}
+	// Exercise the production route-policy writer and native ACK directly.
+	// Synthetic echo does not claim observer-admitted measured readiness.
+	result := servingstate.OperationResult{}
+	for _, instance := range target.Instances {
+		policy := native.Policy{DecisionID: target.ID, ProfileID: instance.Profile.ID,
+			MaxBatchSize: instance.MaxBatch, FixedBatchSize: instance.FixedBatchSize,
+			MaxBatchWaitMS: float64(instance.MaxWait) / float64(time.Millisecond)}
+		if err := operations.ApplyPolicy(ctx, instance.ID, policy, &result); err != nil {
+			t.Fatalf("measured deadline policy blocked native policy update: %v", err)
+		}
+	}
+	assertRouteNativeACKs(t, target, result, len(pods))
+	endpoint, err := servingstate.NativeInstanceEndpoint(ctx, operations.Kube, pods[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := sdk.Spec{Endpoint: endpoint, ModelName: target.Instances[0].Profile.Condition.Actor.Model, Profile: target.Instances[0].Profile}
+	for j, policy := range []serving.AdmissionPolicy{serving.AdmissionPolicyReject, serving.AdmissionPolicyDelay, serving.AdmissionPolicyReject} {
+		updated := *definition
+		updated.Generation += int64(j + 1)
+		updated.Admission.Policy = policy
+		updated.SLO.TargetLatency = time.Nanosecond
+		if err := operations.Runtime.Publish(&updated); err != nil {
+			t.Fatal(err)
+		}
+		received := time.Now().Add(-time.Millisecond)
+		dispatch := serving.Dispatch{RequestID: string(policy) + time.Duration(j).String(), Definition: &updated,
+			Input:      &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "input", Datatype: "BYTES", Data: []byte("sample")}}},
+			ReceivedAt: received, Elapsed: time.Millisecond, Deadline: received.Add(time.Second)}
+		response, err := operations.Native.Execute(ctx, spec, dispatch)
+		if policy == serving.AdmissionPolicyReject {
+			var rejected *serving.Error
+			if !errors.As(err, &rejected) || rejected.Code != serving.CodeDeadlineInfeasible || rejected.Policy != policy || response.StatusCode != http.StatusServiceUnavailable || !response.Finished {
+				t.Fatalf("Reject did not follow request policy: %+v %v", response, err)
+			}
+		} else if err != nil || response.StatusCode != http.StatusOK || !response.Finished {
+			t.Fatalf("Delay did not execute overdue request: %+v %v", response, err)
+		}
+	}
+	for _, pod := range pods {
+		current, err := operations.Kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{})
+		if err != nil || !servingstate.SameRunningContainer(pod, current) {
+			t.Fatalf("request policy update replaced physical executor: %+v %v", current, err)
+		}
+		config := &core.ConfigMap{}
+		if err := operations.Store.Client().Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, config); err != nil {
+			t.Fatal(err)
+		}
+		var nativeConfig native.Config
+		if err := json.Unmarshal([]byte(config.Data["config.json"]), &nativeConfig); err != nil {
+			t.Fatal(err)
+		}
+		if nativeConfig.Policy.DeadlinePolicy != "" {
+			t.Fatal("route copied measured deadline policy into native serving config")
+		}
 	}
 }
 

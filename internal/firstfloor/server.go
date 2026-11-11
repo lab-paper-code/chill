@@ -33,8 +33,8 @@ func identity(s string) bool {
 	return true
 }
 func validateContext(r RequestContext, id string) error {
-	if id != r.RequestID || !identity(id) || !identity(r.WorkloadUID) || !identity(r.Definition) || r.ReceivedAt.IsZero() || !durationOK(r.SenderElapsedMS) || !durationOK(r.CompletionMarginMS) || !durationOK(r.LifetimeMS) || !durationOK(r.SLO.TargetMS) || r.SLO.TargetMS <= 0 || !finite(r.SLO.Percentile) || r.SLO.Percentile <= 0 || r.SLO.Percentile > 100 {
-		return errors.New("complete bounded immutable request identity, receipt, elapsed, SLO and lifetime required")
+	if id != r.RequestID || !identity(id) || !identity(r.WorkloadUID) || !identity(r.Definition) || (r.AdmissionPolicy != AdmissionReject && r.AdmissionPolicy != AdmissionDelay) || r.ReceivedAt.IsZero() || !durationOK(r.SenderElapsedMS) || !durationOK(r.CompletionMarginMS) || !durationOK(r.LifetimeMS) || !durationOK(r.SLO.TargetMS) || r.SLO.TargetMS <= 0 || !finite(r.SLO.Percentile) || r.SLO.Percentile <= 0 || r.SLO.Percentile > 100 {
+		return errors.New("complete bounded immutable request identity, admission policy, receipt, elapsed, SLO and lifetime required")
 	}
 	return nil
 }
@@ -101,7 +101,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case h.admission <- struct{}{}:
 		defer func() { <-h.admission }()
 	default:
-		writeError(w, http.StatusTooManyRequests, ErrQueueFull)
+		writeNativeFailure(w, http.StatusTooManyRequests, ErrorResponse{Error: ErrQueueFull.Error(), Code: CodeQueueFull, Stage: AdmissionStageExecutor, NotAdmitted: true, ExecutionComplete: true})
 		return
 	}
 	req.Body = http.MaxBytesReader(w, req.Body, int64(cfg.MaxRequestBytes))
@@ -219,7 +219,7 @@ func prepareInference(w http.ResponseWriter, ctx context.Context, decoder *json.
 	if r.context.LifetimeMS > 0 {
 		remaining := r.context.LifetimeMS - r.context.SenderElapsedMS - r.context.CompletionMarginMS
 		if remaining <= 0 {
-			writeError(w, http.StatusRequestTimeout, context.DeadlineExceeded)
+			writeFailure(w, http.StatusRequestTimeout, context.DeadlineExceeded, true, nil)
 			return false
 		}
 		r.lifetime = r.received.Add(time.Duration(remaining * float64(time.Millisecond)))
@@ -251,13 +251,24 @@ func (h *handler) submitRequest(w http.ResponseWriter, req *http.Request, r *req
 			status = http.StatusInternalServerError
 		case errors.Is(v.err, ErrQueueFull):
 			status = http.StatusTooManyRequests
+		case errors.Is(v.err, ErrDeadlineInfeasible):
+			status = http.StatusServiceUnavailable
 		case errors.Is(v.err, context.DeadlineExceeded) || errors.Is(v.err, context.Canceled):
 			status = http.StatusRequestTimeout
 		}
-		if r.profile == nil && (failedItem != nil || failedBatch != nil || errors.Is(v.err, ErrDeadlineDrop)) {
+		if r.profile == nil && (failedItem != nil || failedBatch != nil || errors.Is(v.err, ErrDeadlineInfeasible) || errors.Is(v.err, ErrQueueFull)) {
 			progress = &v.response.Progress
 		}
-		writeFailure(w, status, v.err, v.complete, progress)
+		if r.profile == nil && (errors.Is(v.err, ErrDeadlineInfeasible) || errors.Is(v.err, ErrQueueFull)) {
+			code := CodeDeadlineInfeasible
+			if errors.Is(v.err, ErrQueueFull) {
+				code = CodeQueueFull
+			}
+			remaining := int64(RemainingSLOMS(RequestState{Context: r.context, ElapsedMS: progress.NativeElapsedMS}) * float64(time.Millisecond))
+			writeNativeFailure(w, status, ErrorResponse{Error: v.err.Error(), Code: code, Stage: AdmissionStageExecutor, Policy: r.context.AdmissionPolicy, RemainingSLONanos: &remaining, ExecutorWaitNanos: progress.ExecutorWaitNanos, ExecutionComplete: v.complete, Progress: progress})
+		} else {
+			writeFailure(w, status, v.err, v.complete, progress)
+		}
 		return
 	}
 	if r.profile != nil {
@@ -295,9 +306,17 @@ func writeFailure(w http.ResponseWriter, status int, e error, complete bool, p *
 	if errors.As(e, &failedBatch) {
 		failureReason = failedBatch.failureReason
 	}
+	failure := ErrorResponse{Error: s, FailureReason: failureReason, ExecutionComplete: complete, Progress: p}
+	if errors.Is(e, context.DeadlineExceeded) {
+		failure.Stage = AdmissionStageExecutor
+		failure.Code = CodeRequestTimeout
+	}
+	writeNativeFailure(w, status, failure)
+}
+func writeNativeFailure(w http.ResponseWriter, status int, failure ErrorResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(ErrorResponse{Error: s, FailureReason: failureReason, ExecutionComplete: complete, Progress: p}); err != nil {
+	if err := json.NewEncoder(w).Encode(failure); err != nil {
 		slog.Warn("write error response", "error", err)
 	}
 }

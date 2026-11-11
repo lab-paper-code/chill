@@ -216,7 +216,6 @@ func (o *SchedulerService) measuredPreparation(
 	actor.MaxRequestBytes = int(min(o.opts.MaxRequestBytes, int64(native.MaxFrameBytes)))
 	actor.Policy = native.Policy{
 		DecisionID: name, ProfileID: p.ID, MaxBatchSize: p.Batches[len(p.Batches)-1].Batch,
-		DeadlinePolicy: settings.DeadlinePolicy,
 	}
 	spec = servingstate.PrepareSpec{
 		Name: name, Store: binding, MemoryBytes: uint64(memory),

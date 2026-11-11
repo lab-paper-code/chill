@@ -115,6 +115,7 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 		},
 	}
 	profile := measuredAdoptionProfile()
+	profile.Condition.Firstfloor.DeadlinePolicy = native.DeadlineDrop
 	spec, err := service.measuredPreparation(context.Background(), profile, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -126,6 +127,9 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 	if !reflect.DeepEqual(spec.Config.BatchSizes, []int{1, 2, 4}) || spec.Config.Policy.MaxBatchSize != 2 ||
 		spec.MemoryBytes != uint64(profile.Condition.Actor.MemoryLimitBytes) || spec.Store.CredentialsSecretName != "actual-secret" {
 		t.Fatalf("lost measured startup/delivery facts: %+v", spec)
+	}
+	if spec.Config.Policy.DeadlinePolicy != "" || profile.Condition.Firstfloor.DeadlinePolicy != native.DeadlineDrop || spec.Instance.Capacity != int(profile.Condition.Firstfloor.MaxQueueSize) {
+		t.Fatal("measured deadline provenance leaked into serving policy or changed queue capacity")
 	}
 	if spec.Instance.Allocation.GPUUUID != "GPU-measured" ||
 		!strings.Contains(strings.Join(spec.Config.RunnerCommand, " "),

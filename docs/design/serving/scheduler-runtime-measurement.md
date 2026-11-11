@@ -28,6 +28,12 @@ Serving 과부하 정책은 `Workload.spec.admission`의 `Reject`(기본)·`Dela
 
 ModelSpec firstfloor `deadlinePolicy`(drop/keep/defer, 기본 keep)와 frozen profiling RunConfig는 측정 provenance로 유지하며 serving 정책 선택·일치 검사에는 쓰지 않는다. serving 정책은 요청별 전달이므로 변경에 worker/runner 재시작이 필요 없다. ConfigMap→`WatchConfig`→`Scheduler.Update`는 executor 배칭 설정을 같은 worker/runner에 적용한다. profile·initialized capacity 변경은 재시작을 요구하지만, initialized+measured 범위 안의 dynamic batch cap 증가는 재시작이나 warmup을 다시 거치지 않는다. 따라서 시작 warmup은 현재 cap/fixed K만이 아니라 profile의 전체 measured batch 집합을 포함한다. 이후 cap 증가도 이미 warmup한 집합 안에 머물며 planner/native/ACK의 기존 동작은 유지한다. normal/deferred는 count/byte cap을 공유한다. profiling fixed-K는 SLO로 버리지 않고 mode를 immutable 조건/actual metadata에 남긴다. actor/replay는 같은 [선택 함수](scheduler-implementation.md#33-같은-선택-함수의-실행과-replay)를 쓴다. 소유·동결·cutover 계약은 [ADR 0033](../../adr/0033-overload-admission.md)을 따른다.
 
+Native inference context의 필수 `admissionPolicy`는 해당 요청의 applied Definition에서 동결한 `Reject` 또는 `Delay`다. actor의 측정 `deadlinePolicy`는 serving 배치 선택에 쓰지 않는다. batch 선택 뒤 확정 시각을 새 monotonic read로 갱신해 cancel·최종 기한을 제거하고 SLO 가능성을 다시 판단한다. 제거·거절·지연 전이 뒤에는 남은 큐에서 배치를 다시 고른다.
+
+Executor admission 오류는 `code`·`stage=executor`·`policy`·`remainingSLONanos`를 보존한다. `DeadlineInfeasible`은 HTTP 503이며 correlated finished progress의 batch ID·size·service·backend가 모두 0인 미실행 증명을 요구한다. actor `QueueFull`은 HTTP 429와 같은 identity·미실행 증명을 반환하지만 큐에 들어가지 않았으므로 executor 대기는 없다. HTTP semaphore의 pre-decode `QueueFull`은 `notAdmitted=true`이며 policy·progress·SLO·대기를 만들지 않는다. gateway client는 이 exchange의 동결 dispatch policy로만 정규화한다.
+
+`executorWaitNanos`는 native enqueue부터 running 또는 큐 안 종료까지의 monotonic span이다. receipt부터의 `queueMS`와 다르며 아직 enqueue하지 않은 요청에는 없다. native 최종 기한은 HTTP 408 `RequestTimeout`으로 전달하고, active batch의 timeout 응답은 `executionComplete=false`로 물리 점유를 유지한다. SLO admission 거절은 timeout으로 분류하지 않는다.
+
 ## 같은 firstfloor fixed-batch 경로
 
 기존 ProfilingRun/frozen RunConfig/artifact preparation/observer coordinator와 `runtime/ortcpu/runner.py`의 input/warmup/window/output 반복을 재사용한다. profiling mode가 같은 IPC/runner에서 fixed K를 순차 실행하며 fake latency/energy는 필요 없다. Serving policy는 validated measured profile로 만든다.

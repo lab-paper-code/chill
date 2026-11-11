@@ -289,7 +289,7 @@ func (s *schedulerReplayState) nativeRequestState(i *schedulerReplayInstance, r 
 	} else if r.deferred {
 		phase = phaseDeferred
 	}
-	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: r.marginNanos / 1e6, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now + r.nativeAgeNanos) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
+	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, AdmissionPolicy: string(d.Admission.Policy), ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: r.marginNanos / 1e6, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now + r.nativeAgeNanos) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
 }
 
 func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {

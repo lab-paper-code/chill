@@ -8,7 +8,6 @@ import (
 	reflect "reflect"
 	slices "slices"
 
-	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	serving "github.com/lab-paper-code/chill/internal/serving"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
@@ -86,10 +85,6 @@ func ValidatePreparation(spec servingstate.PrepareSpec) error {
 	}
 	if spec.Config.Policy.ProfileID != p.ID || spec.Config.Mode != servingstate.NativeServingMode || len(spec.Config.Policy.Batches) != 0 || spec.Config.ProfilePath != "/profile/bundle.json" {
 		return errors.New("small policy must reference immutable startup profile")
-	}
-	if native.EffectiveDeadlinePolicy(spec.Config.Policy.DeadlinePolicy) !=
-		native.EffectiveDeadlinePolicy(p.Condition.Firstfloor.DeadlinePolicy) {
-		return errors.New("preparation deadline policy differs from measured profile")
 	}
 	if spec.MemoryBytes != spec.Instance.Allocation.MemoryBytes || spec.MemoryBytes > uint64(1<<63-1) {
 		return errors.New("preparation memory must exactly equal selected bounded allocation")

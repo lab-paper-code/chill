@@ -114,7 +114,7 @@ func (w ingressRunnerInput) Write(p []byte) (int, error) {
 }
 
 func nativeIngressRequest(id string) Request {
-	return Request{ID: id, Context: RequestContext{RequestID: id, WorkloadUID: id, Definition: id + "/1", ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 10000}}, Inputs: rawInputs("sample")}
+	return Request{ID: id, Context: RequestContext{RequestID: id, WorkloadUID: id, Definition: id + "/1", AdmissionPolicy: AdmissionDelay, ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 10000}}, Inputs: rawInputs("sample")}
 }
 
 // Queued cancellation and retained active occupancy are also covered by

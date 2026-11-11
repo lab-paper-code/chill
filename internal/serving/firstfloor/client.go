@@ -186,7 +186,7 @@ func (c *Client) Probe(ctx context.Context, spec Spec) (serving.ReadyInstance, e
 	return result, nil
 }
 func progress(p native.Progress) serving.BackendProgress {
-	return serving.BackendProgress{RequestID: p.RequestID, WorkloadUID: p.WorkloadUID, Definition: p.Definition, Phase: p.Phase, At: p.At, Outcome: p.Outcome, BatchID: p.BatchID, BatchSize: p.BatchSize, ProfileID: p.ProfileID, DecisionID: p.DecisionID, QueueMS: p.QueueMS, ServiceMS: p.ServiceMS, BackendMS: p.BackendMS, PreprocessMS: p.PreprocessMS, PostprocessMS: p.PostprocessMS, FirstTokenMS: p.FirstTokenMS, Units: p.Units, NativeElapsedMS: p.NativeElapsedMS, ExecutionComplete: p.ExecutionComplete, ServiceSample: p.ServiceSample}
+	return serving.BackendProgress{RequestID: p.RequestID, WorkloadUID: p.WorkloadUID, Definition: p.Definition, Phase: p.Phase, At: p.At, Outcome: p.Outcome, BatchID: p.BatchID, BatchSize: p.BatchSize, ProfileID: p.ProfileID, DecisionID: p.DecisionID, QueueMS: p.QueueMS, ExecutorWaitNanos: p.ExecutorWaitNanos, ServiceMS: p.ServiceMS, BackendMS: p.BackendMS, PreprocessMS: p.PreprocessMS, PostprocessMS: p.PostprocessMS, FirstTokenMS: p.FirstTokenMS, Units: p.Units, NativeElapsedMS: p.NativeElapsedMS, ExecutionComplete: p.ExecutionComplete, ServiceSample: p.ServiceSample}
 }
 func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (serving.BackendResult, error) {
 	if d.Definition == nil || d.Input == nil || d.RequestID == "" || spec.Profile == nil {
@@ -196,7 +196,7 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	if !d.Deadline.IsZero() {
 		lifetime = float64(d.Deadline.Sub(d.ReceivedAt)) / float64(time.Millisecond)
 	}
-	request := native.Request{ID: d.RequestID, Context: native.RequestContext{RequestID: d.RequestID, WorkloadUID: d.Definition.UID, Definition: d.Definition.Identity(), ReceivedAt: d.ReceivedAt, SenderElapsedMS: float64(d.Elapsed) / float64(time.Millisecond), CompletionMarginMS: d.CompletionMarginMS, SLO: native.SLO{Percentile: d.Definition.SLO.Percentile, TargetMS: float64(d.Definition.SLO.TargetLatency) / float64(time.Millisecond)}, LifetimeMS: lifetime}}
+	request := native.Request{ID: d.RequestID, Context: native.RequestContext{RequestID: d.RequestID, WorkloadUID: d.Definition.UID, Definition: d.Definition.Identity(), AdmissionPolicy: string(d.Definition.Admission.Policy), ReceivedAt: d.ReceivedAt, SenderElapsedMS: float64(d.Elapsed) / float64(time.Millisecond), CompletionMarginMS: d.CompletionMarginMS, SLO: native.SLO{Percentile: d.Definition.SLO.Percentile, TargetMS: float64(d.Definition.SLO.TargetLatency) / float64(time.Millisecond)}, LifetimeMS: lifetime}}
 	request.Inputs = make([]native.Field, len(d.Input.Inputs))
 	for i, field := range d.Input.Inputs {
 		request.Inputs[i] = native.Field{Name: field.Name, Data: [][]byte{field.Data}}
@@ -228,6 +228,29 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 		if err = decode(body, &failure); err != nil {
 			return result, err
 		}
+		if status == http.StatusTooManyRequests && failure.Code != serving.CodeQueueFull ||
+			failure.NotAdmitted && failure.Code != serving.CodeQueueFull {
+			return result, errors.New("native queue rejection lacks explicit admission evidence")
+		}
+		if failure.Code == serving.CodeDeadlineInfeasible || failure.Code == serving.CodeQueueFull {
+			if !validRejection(failure, &d, spec.Profile.ID, status) {
+				return result, errors.New("native rejection lacks correlated no-execution proof")
+			}
+			result.Finished = true
+			if failure.Progress != nil {
+				converted := progress(*failure.Progress)
+				result.Progress = &converted
+			}
+			return result, &serving.Error{Code: failure.Code, Message: failure.Error, Stage: failure.Stage,
+				Policy: d.Definition.Admission.Policy, RemainingSLONanos: failure.RemainingSLONanos, ExecutorWaitNanos: failure.ExecutorWaitNanos}
+		}
+		if failure.Code == "RequestTimeout" {
+			if status != http.StatusRequestTimeout || failure.Stage != serving.AdmissionStageExecutor || failure.NotAdmitted || failure.Progress != nil {
+				return result, errors.New("invalid native request lifetime timeout")
+			}
+			result.Finished = failure.ExecutionComplete
+			return result, &serving.Error{Code: failure.Code, Message: failure.Error, Stage: failure.Stage}
+		}
 		if failure.Progress == nil {
 			result.Finished = failure.ExecutionComplete
 			return result, errors.New(failure.Error)
@@ -236,8 +259,7 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 		var outcome error
 		switch {
 		case !failure.ExecutionComplete:
-		case status == http.StatusRequestTimeout && validDeadlineDrop(p, &d, spec.Profile.ID):
-			outcome = &serving.Error{Code: "SLODeadlineDrop", Message: failure.Error}
+		case failure.Code != "" || failure.NotAdmitted:
 		case status == http.StatusUnprocessableEntity && p.Outcome == native.OutcomePreprocessFailed && executed(p, &d, spec.Profile.ID):
 			outcome = &serving.Error{Code: "PreprocessFailed", Message: failure.Error}
 		case status == http.StatusInternalServerError && p.Outcome == native.OutcomeBatchError && executed(p, &d, spec.Profile.ID):
@@ -264,9 +286,38 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	result.Progress = &converted
 	return result, nil
 }
-func validDeadlineDrop(p *native.Progress, d *serving.Dispatch, profileID string) bool {
-	return p.Outcome == native.OutcomeDeadlineDrop && correlated(p, d, profileID) &&
-		p.BatchID == 0 && p.BatchSize == 0 && p.ServiceMS == 0 && p.BackendMS == 0
+func validRejection(f native.ErrorResponse, d *serving.Dispatch, profileID string, status int) bool {
+	policy := d.Definition.Admission.Policy
+	if policy != serving.AdmissionPolicyReject && policy != serving.AdmissionPolicyDelay ||
+		f.Stage != serving.AdmissionStageExecutor || !f.ExecutionComplete || f.FailureReason != "" {
+		return false
+	}
+	expectedStatus, outcome := http.StatusServiceUnavailable, native.OutcomeDeadlineDrop
+	if f.Code == serving.CodeQueueFull {
+		expectedStatus, outcome = http.StatusTooManyRequests, "queue_full"
+	}
+	if status != expectedStatus {
+		return false
+	}
+	if f.Code == serving.CodeDeadlineInfeasible && policy != serving.AdmissionPolicyReject {
+		return false
+	}
+	if f.NotAdmitted {
+		return f.Code == serving.CodeQueueFull && f.Progress == nil && f.Policy == "" &&
+			f.RemainingSLONanos == nil && f.ExecutorWaitNanos == nil
+	}
+	p := f.Progress
+	if p == nil || f.Policy != string(policy) || f.RemainingSLONanos == nil ||
+		!correlated(p, d, profileID) || p.Outcome != outcome ||
+		p.BatchID != 0 || p.BatchSize != 0 || p.ServiceMS != 0 || p.BackendMS != 0 ||
+		p.PreprocessMS != 0 || p.PostprocessMS != 0 || p.FirstTokenMS != 0 || p.Units != 0 || p.ServiceSample != nil {
+		return false
+	}
+	if f.Code == serving.CodeQueueFull {
+		return f.ExecutorWaitNanos == nil && p.ExecutorWaitNanos == nil
+	}
+	return f.ExecutorWaitNanos != nil && p.ExecutorWaitNanos != nil &&
+		*f.ExecutorWaitNanos == *p.ExecutorWaitNanos
 }
 
 // executed reports a finished record of this request inside an actual batch.
@@ -303,6 +354,9 @@ func ParseProgress(line []byte) (serving.BackendProgress, error) {
 	return progress(p), nil
 }
 func validNativeSpans(p native.Progress) bool {
+	if p.ExecutorWaitNanos != nil && (*p.ExecutorWaitNanos < 0 || float64(*p.ExecutorWaitNanos)/float64(time.Millisecond) > p.QueueMS) {
+		return false
+	}
 	for _, value := range []float64{p.QueueMS, p.ServiceMS, p.BackendMS, p.PreprocessMS, p.PostprocessMS, p.FirstTokenMS, p.NativeElapsedMS} {
 		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
 			return false

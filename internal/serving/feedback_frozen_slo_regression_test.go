@@ -14,6 +14,7 @@ func TestFeedbackConsumerFrozenDefinitionSLOSurvivesCurrentRelaxation(t *testing
 	frozen := *definition
 	frozen.SLO.TargetLatency = 100 * time.Millisecond
 	frozen.SLO.Percentile = 100
+	frozen.Admission.Policy = AdmissionPolicyDelay
 	definition.Generation++
 	definition.SLO.TargetLatency = time.Second
 	definition.SLO.Percentile = 1
@@ -24,11 +25,11 @@ func TestFeedbackConsumerFrozenDefinitionSLOSurvivesCurrentRelaxation(t *testing
 		t.Fatalf("mixed frozen/current evaluation: %+v %v", result, err)
 	}
 	score := result.Workloads[0]
-	if score.Satisfied || score.Completed != 3 || score.FailureFraction != 0 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 200e6 {
-		t.Fatalf("old 100ms obligation must retain 200ms violation despite current 1s target: %+v", result)
+	if score.Satisfied || score.Completed != 3 || score.FailureFraction != 0 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 600e6 {
+		t.Fatalf("deferred old 100ms obligation must retain 600ms violation after normal work: %+v", result)
 	}
 	for _, estimate := range result.SLO {
-		if estimate.Definition == frozen.Identity() && (estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != 200e6 || estimate.NormalizedExceedance != 1) {
+		if estimate.Definition == frozen.Identity() && (estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != 600e6 || estimate.NormalizedExceedance != 5) {
 			t.Fatalf("frozen definition estimate lost its own SLO: %+v", estimate)
 		}
 	}

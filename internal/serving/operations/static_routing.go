@@ -37,7 +37,7 @@ func (o *Operations) ValidateRoutingPolicies(ctx context.Context, target serving
 			if err = json.Unmarshal([]byte(cm.Data["config.json"]), &config); err != nil {
 				return err
 			}
-			if instance.Profile == nil || instance.Profile.Condition.Firstfloor == nil || config.Policy.ProfileID != instance.Profile.ID || native.EffectiveDeadlinePolicy(config.Policy.DeadlinePolicy) != native.EffectiveDeadlinePolicy(instance.Profile.Condition.Firstfloor.DeadlinePolicy) || config.Policy.FixedBatchSize != instance.FixedBatchSize {
+			if instance.Profile == nil || instance.Profile.Condition.Firstfloor == nil || config.Policy.ProfileID != instance.Profile.ID || config.Policy.FixedBatchSize != instance.FixedBatchSize {
 				return fmt.Errorf("instance %s has incompatible immutable native policy", instance.ID)
 			}
 		}

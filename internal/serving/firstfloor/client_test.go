@@ -109,37 +109,165 @@ func TestDeferredProgressRemainsQueuedWithoutCompletion(t *testing.T) {
 	}
 }
 
-func TestDeadlineDropRequiresCorrelatedNoExecutionProof(t *testing.T) {
+func TestActorRejectionsRequireCorrelatedNoExecutionProof(t *testing.T) {
 	definition := &serving.Definition{UID: "uid", Generation: 1,
-		Model: serving.Model{UID: "model", Generation: 1}}
-	for _, uid := range []string{"uid", "another-registration"} {
-		t.Run(uid, func(t *testing.T) {
-			p := &native.Progress{RequestID: "request", WorkloadUID: uid, Definition: definition.Identity(),
-				Phase: "finished", At: time.Now().UTC(), ProfileID: "profile", Outcome: "deadline_drop",
-				QueueMS: 20, NativeElapsedMS: 20, ExecutionComplete: true}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusRequestTimeout)
-				if err := json.NewEncoder(w).Encode(native.ErrorResponse{
-					Error: "SLO deadline reached", ExecutionComplete: true, Progress: p}); err != nil {
-					t.Error(err)
+		Model: serving.Model{UID: "model", Generation: 1}, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject}}
+	for _, code := range []string{serving.CodeDeadlineInfeasible, serving.CodeQueueFull} {
+		for _, tc := range []struct {
+			name   string
+			mutate func(*native.ErrorResponse)
+		}{
+			{"valid", func(*native.ErrorResponse) {}},
+			{"wrong request", func(f *native.ErrorResponse) { f.Progress.RequestID = "another" }},
+			{"wrong workload", func(f *native.ErrorResponse) { f.Progress.WorkloadUID = "another" }},
+			{"wrong definition", func(f *native.ErrorResponse) { f.Progress.Definition = "another" }},
+			{"wrong profile", func(f *native.ErrorResponse) { f.Progress.ProfileID = "another" }},
+			{"wrong outcome", func(f *native.ErrorResponse) { f.Progress.Outcome = "another" }},
+			{"missing timestamp", func(f *native.ErrorResponse) { f.Progress.At = time.Time{} }},
+			{"not finished", func(f *native.ErrorResponse) { f.Progress.Phase = "running" }},
+			{"incomplete progress", func(f *native.ErrorResponse) { f.Progress.ExecutionComplete = false }},
+			{"incomplete response", func(f *native.ErrorResponse) { f.ExecutionComplete = false }},
+			{"missing progress", func(f *native.ErrorResponse) { f.Progress = nil }},
+			{"batch identity", func(f *native.ErrorResponse) { f.Progress.BatchID = 1 }},
+			{"batch execution", func(f *native.ErrorResponse) { f.Progress.BatchSize = 1 }},
+			{"service execution", func(f *native.ErrorResponse) { f.Progress.ServiceMS = 1 }},
+			{"backend execution", func(f *native.ErrorResponse) { f.Progress.BackendMS = 1 }},
+			{"preprocess execution", func(f *native.ErrorResponse) { f.Progress.PreprocessMS = 1 }},
+			{"postprocess execution", func(f *native.ErrorResponse) { f.Progress.PostprocessMS = 1 }},
+			{"token execution", func(f *native.ErrorResponse) { f.Progress.FirstTokenMS = 1 }},
+			{"output units", func(f *native.ErrorResponse) { f.Progress.Units = 1 }},
+			{"invalid spans", func(f *native.ErrorResponse) { f.Progress.QueueMS = -1 }},
+			{"service sample", func(f *native.ErrorResponse) { f.Progress.ServiceSample = &native.ServiceSample{} }},
+			{"wrong code status", func(f *native.ErrorResponse) {
+				if f.Code == serving.CodeQueueFull {
+					f.Code = serving.CodeDeadlineInfeasible
+				} else {
+					f.Code = serving.CodeQueueFull
 				}
-			}))
-			defer server.Close()
-			result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(),
-				Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}},
-				serving.Dispatch{RequestID: "request", Definition: definition, Input: &serving.InferenceInput{}})
-			var domain *serving.Error
-			if uid == "uid" {
-				if !errors.As(err, &domain) || domain.Code != "SLODeadlineDrop" || !result.Finished ||
-					result.StatusCode != http.StatusRequestTimeout || result.Progress == nil ||
-					result.Progress.Outcome != "deadline_drop" {
-					t.Fatalf("verified drop must retain timeout and physical completion: %+v / %v", result, err)
+			}},
+			{"wrong policy", func(f *native.ErrorResponse) { f.Policy = "Delay" }},
+			{"missing policy", func(f *native.ErrorResponse) { f.Policy = "" }},
+			{"wrong stage", func(f *native.ErrorResponse) { f.Stage = serving.AdmissionStageGateway }},
+			{"missing remaining SLO", func(f *native.ErrorResponse) { f.RemainingSLONanos = nil }},
+			{"missing or unexpected wait", func(f *native.ErrorResponse) {
+				if f.ExecutorWaitNanos == nil {
+					f.ExecutorWaitNanos = new(int64)
+				} else {
+					f.ExecutorWaitNanos = nil
 				}
-			} else if err == nil || result.Finished {
-				t.Fatalf("another registration cannot release execution: %+v / %v", result, err)
-			}
-		})
+			}},
+			{"mismatched progress wait", func(f *native.ErrorResponse) { f.Progress.ExecutorWaitNanos = new(int64) }},
+			{"negative wait", func(f *native.ErrorResponse) {
+				wait := int64(-1)
+				f.ExecutorWaitNanos, f.Progress.ExecutorWaitNanos = &wait, &wait
+			}},
+			{"not admitted actor", func(f *native.ErrorResponse) { f.NotAdmitted = true }},
+		} {
+			t.Run(code+"/"+tc.name, func(t *testing.T) {
+				wait, remaining := int64(20*time.Millisecond), -int64(time.Millisecond)
+				p := &native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: definition.Identity(),
+					Phase: "finished", At: time.Now().UTC(), ProfileID: "profile", Outcome: native.OutcomeDeadlineDrop,
+					QueueMS: 20, NativeElapsedMS: 20, ExecutorWaitNanos: &wait, ExecutionComplete: true}
+				f := native.ErrorResponse{Error: "executor rejected request", Code: code, Stage: serving.AdmissionStageExecutor,
+					Policy: "Reject", RemainingSLONanos: &remaining, ExecutorWaitNanos: &wait, ExecutionComplete: true, Progress: p}
+				status := http.StatusServiceUnavailable
+				if code == serving.CodeQueueFull {
+					status, p.Outcome, p.QueueMS, p.ExecutorWaitNanos, f.ExecutorWaitNanos = http.StatusTooManyRequests, "queue_full", 0, nil, nil
+				}
+				tc.mutate(&f)
+				result, err := executeNativeFailure(t, definition, status, f)
+				var domain *serving.Error
+				if tc.name != "valid" {
+					if err == nil || errors.As(err, &domain) || result.Finished || result.Progress != nil {
+						t.Fatalf("invalid rejection released execution: %+v / %v", result, err)
+					}
+					return
+				}
+				if !errors.As(err, &domain) || domain.Code != code || domain.Stage != serving.AdmissionStageExecutor ||
+					domain.Policy != definition.Admission.Policy || domain.RemainingSLONanos == nil || *domain.RemainingSLONanos != remaining ||
+					!result.Finished || result.StatusCode != status || result.Progress == nil || result.Progress.Outcome != p.Outcome {
+					t.Fatalf("verified rejection lost structured evidence: %+v / %v", result, err)
+				}
+				if code == serving.CodeDeadlineInfeasible {
+					if domain.ExecutorWaitNanos == nil || *domain.ExecutorWaitNanos != wait ||
+						result.Progress.ExecutorWaitNanos == nil || *result.Progress.ExecutorWaitNanos != wait {
+						t.Fatal("executor queue wait was lost")
+					}
+				} else if domain.ExecutorWaitNanos != nil || result.Progress.ExecutorWaitNanos != nil {
+					t.Fatal("never-enqueued queue rejection acquired queue wait")
+				}
+			})
+		}
 	}
+}
+
+func TestSemaphoreQueueFullRequiresExplicitUnadmittedProof(t *testing.T) {
+	for _, policy := range []serving.AdmissionPolicy{serving.AdmissionPolicyReject, serving.AdmissionPolicyDelay} {
+		for _, tc := range []struct {
+			name   string
+			mutate func(map[string]any)
+		}{
+			{"valid", func(map[string]any) {}},
+			{"missing marker", func(f map[string]any) { delete(f, "notAdmitted") }},
+			{"false marker", func(f map[string]any) { f["notAdmitted"] = false }},
+			{"incomplete", func(f map[string]any) { f["executionComplete"] = false }},
+			{"missing code", func(f map[string]any) { delete(f, "code") }},
+			{"wrong stage", func(f map[string]any) { f["stage"] = serving.AdmissionStageGateway }},
+			{"native policy", func(f map[string]any) { f["policy"] = string(policy) }},
+			{"native remaining SLO", func(f map[string]any) { f["remainingSLONanos"] = 0 }},
+			{"native wait", func(f map[string]any) { f["executorWaitNanos"] = 0 }},
+			{"native progress", func(f map[string]any) { f["progress"] = native.Progress{} }},
+			{"failure metadata", func(f map[string]any) { f["failureReason"] = native.FailureMemoryAllocation }},
+			{"unknown metadata", func(f map[string]any) { f["unknown"] = true }},
+		} {
+			t.Run(string(policy)+"/"+tc.name, func(t *testing.T) {
+				definition := &serving.Definition{UID: "uid", Admission: serving.Admission{Policy: policy}}
+				f := map[string]any{"error": "queue full", "code": serving.CodeQueueFull,
+					"stage": serving.AdmissionStageExecutor, "notAdmitted": true, "executionComplete": true}
+				tc.mutate(f)
+				result, err := executeNativeFailure(t, definition, http.StatusTooManyRequests, f)
+				var domain *serving.Error
+				if tc.name != "valid" {
+					if err == nil || errors.As(err, &domain) || result.Finished || result.Progress != nil {
+						t.Fatalf("invalid predecode evidence released execution: %+v / %v", result, err)
+					}
+					return
+				}
+				if !errors.As(err, &domain) || domain.Code != serving.CodeQueueFull || domain.Stage != serving.AdmissionStageExecutor ||
+					domain.Policy != policy || domain.RemainingSLONanos != nil || domain.ExecutorWaitNanos != nil ||
+					!result.Finished || result.Progress != nil {
+					t.Fatalf("predecode rejection invented native evidence: %+v / %v", result, err)
+				}
+			})
+		}
+	}
+}
+
+func TestNativeLifetimeTimeoutPreservesPhysicalCompletion(t *testing.T) {
+	for _, complete := range []bool{false, true} {
+		definition := &serving.Definition{UID: "uid", Admission: serving.Admission{Policy: serving.AdmissionPolicyDelay}}
+		result, err := executeNativeFailure(t, definition, http.StatusRequestTimeout, native.ErrorResponse{
+			Error: "request lifetime expired", Code: "RequestTimeout", Stage: serving.AdmissionStageExecutor, ExecutionComplete: complete})
+		var domain *serving.Error
+		if !errors.As(err, &domain) || domain.Code != "RequestTimeout" || domain.Stage != serving.AdmissionStageExecutor ||
+			result.Finished != complete || result.Progress != nil {
+			t.Fatalf("lifetime timeout changed physical completion or fabricated progress: %+v / %v", result, err)
+		}
+	}
+}
+
+func executeNativeFailure(t *testing.T, definition *serving.Definition, status int, failure any) (serving.BackendResult, error) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+		if err := json.NewEncoder(w).Encode(failure); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	return (&Client{HTTPClient: server.Client()}).Execute(context.Background(),
+		Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}},
+		serving.Dispatch{RequestID: "request", Definition: definition, Input: &serving.InferenceInput{}})
 }
 
 func TestModuleFailuresBecomeFinishedRequestOutcomes(t *testing.T) {
@@ -209,22 +337,25 @@ func TestNativeDispatchPreservesOriginalLifetimeSenderElapsedAndMargin(t *testin
 		http.Error(w, "execution not started", http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
-	received := time.Now().Add(-250 * time.Millisecond)
-	result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(),
-		Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}},
-		serving.Dispatch{
-			RequestID: "request", Definition: &serving.Definition{UID: "uid", SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}},
-			Input: &serving.InferenceInput{}, ReceivedAt: received, Deadline: received.Add(2 * time.Second),
-			Elapsed: 250 * time.Millisecond, CompletionMarginMS: 29,
-		})
-	request := <-seen
-	if request.Context.LifetimeMS != 2000 || request.Context.SenderElapsedMS != 250 ||
-		request.Context.CompletionMarginMS != 29 || request.Context.SLO.TargetMS != 1000 ||
-		request.Context.RequestID != "request" || request.Context.WorkloadUID != "uid" {
-		t.Fatalf("native transport rebased or mixed lifetime/SLO/m: %+v", request.Context)
-	}
-	if err == nil || result.Finished {
-		t.Fatal("unexecuted transport failure completed native ownership")
+	for _, policy := range []serving.AdmissionPolicy{serving.AdmissionPolicyReject, serving.AdmissionPolicyDelay} {
+		received := time.Now().Add(-250 * time.Millisecond)
+		result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(),
+			Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}},
+			serving.Dispatch{
+				RequestID: "request", Definition: &serving.Definition{UID: "uid", SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}, Admission: serving.Admission{Policy: policy}},
+				Input: &serving.InferenceInput{}, ReceivedAt: received, Deadline: received.Add(2 * time.Second),
+				Elapsed: 250 * time.Millisecond, CompletionMarginMS: 29,
+			})
+		request := <-seen
+		if request.Context.LifetimeMS != 2000 || request.Context.SenderElapsedMS != 250 ||
+			request.Context.CompletionMarginMS != 29 || request.Context.SLO.TargetMS != 1000 ||
+			request.Context.RequestID != "request" || request.Context.WorkloadUID != "uid" ||
+			request.Context.AdmissionPolicy != string(policy) {
+			t.Fatalf("native transport changed frozen lifetime/SLO/m/policy: %+v", request.Context)
+		}
+		if err == nil || result.Finished {
+			t.Fatal("unexecuted transport failure completed native ownership")
+		}
 	}
 }
 

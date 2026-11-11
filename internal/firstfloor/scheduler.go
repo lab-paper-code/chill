@@ -18,17 +18,19 @@ import (
 
 var ErrQueueFull = errors.New("request queue is full")
 var ErrUnavailable = errors.New("runner is unavailable")
-var ErrDeadlineDrop = fmt.Errorf("request cannot complete within its SLO: %w", context.DeadlineExceeded)
+var ErrDeadlineInfeasible = errors.New("request cannot complete within its SLO")
 
 type request struct {
-	ctx      context.Context
-	context  RequestContext
-	received time.Time
-	data     [][]byte
-	bytes    int
-	result   chan result
-	profile  *ProfileRequest
-	lifetime time.Time
+	ctx         context.Context
+	context     RequestContext
+	received    time.Time
+	data        [][]byte
+	bytes       int
+	result      chan result
+	profile     *ProfileRequest
+	lifetime    time.Time
+	enqueued    time.Time
+	queueExited time.Time
 }
 type result struct {
 	response Response
@@ -89,8 +91,16 @@ func (s *Scheduler) submit(ctx context.Context, r *request) result {
 }
 func (s *Scheduler) Update(ctx context.Context, cfg *Config) error {
 	current := s.config.Load()
-	if EffectiveDeadlinePolicy(cfg.Policy.DeadlinePolicy) != EffectiveDeadlinePolicy(current.Policy.DeadlinePolicy) || cfg.Policy.FixedBatchSize != current.Policy.FixedBatchSize {
-		return errors.New("deadline policy and fixed batch size changes require restart")
+	if cfg.Policy.FixedBatchSize != current.Policy.FixedBatchSize {
+		return errors.New("fixed batch size changes require restart")
+	}
+	if current.Mode != modeServing && EffectiveDeadlinePolicy(cfg.Policy.DeadlinePolicy) != EffectiveDeadlinePolicy(current.Policy.DeadlinePolicy) {
+		return errors.New("profiling deadline policy changes require restart")
+	}
+	switch EffectiveDeadlinePolicy(cfg.Policy.DeadlinePolicy) {
+	case DeadlineDrop, DeadlineKeep, DeadlineDefer:
+	default:
+		return errors.New("deadlinePolicy must be drop, keep or defer")
 	}
 	copyCfg := *cfg
 	copyCfg.Policy = current.Policy
@@ -247,6 +257,14 @@ func (s *Scheduler) run(ctx context.Context) {
 
 func (a *schedulerActor) progress(r *request, phase string, now time.Time, o runnerOutput, complete bool) Progress {
 	p := Progress{RequestID: r.context.RequestID, WorkloadUID: r.context.WorkloadUID, Definition: r.context.Definition, Phase: phase, At: now.UTC(), ExecutionComplete: complete, NativeElapsedMS: milliseconds(now.Sub(r.received))}
+	if !r.enqueued.IsZero() {
+		exit := r.queueExited
+		if exit.IsZero() {
+			exit = now
+		}
+		wait := exit.Sub(r.enqueued).Nanoseconds()
+		p.ExecutorWaitNanos = &wait
+	}
 	inActive := false
 	for _, active := range a.active {
 		if active == r {
@@ -360,9 +378,10 @@ func requestError(r *request, now time.Time) error {
 }
 func (a *schedulerActor) finishQueued(r *request, now time.Time, e error) {
 	a.queuedBytes -= r.bytes
+	r.queueExited = now
 	p := a.progress(r, phaseFinished, now, runnerOutput{}, true)
 	p.Outcome = e.Error()
-	if errors.Is(e, ErrDeadlineDrop) {
+	if errors.Is(e, ErrDeadlineInfeasible) {
 		p.Outcome = OutcomeDeadlineDrop
 	}
 	emitProgress(p)
@@ -377,9 +396,9 @@ func (a *schedulerActor) expireQueued(now time.Time) time.Time {
 		for _, r := range *pending {
 			e := requestError(r, now)
 			state := RequestState{Context: r.context, ElapsedMS: milliseconds(now.Sub(r.received))}
-			drop := a.cfg.Mode == modeServing && index == 0 && a.cfg.Policy.FixedBatchSize == 0 && EffectiveDeadlinePolicy(a.cfg.Policy.DeadlinePolicy) == DeadlineDrop
+			drop := a.cfg.Mode == modeServing && index == 0 && a.cfg.Policy.FixedBatchSize == 0 && requestDeadlinePolicy(state) == DeadlineDrop
 			if e == nil && drop && SLOExpired(state) {
-				e = ErrDeadlineDrop
+				e = ErrDeadlineInfeasible
 			}
 			if e != nil {
 				a.finishQueued(r, now, e)
@@ -407,6 +426,11 @@ func (a *schedulerActor) startBatch(ctx context.Context, now, next time.Time) ti
 	}
 	a.started = time.Time{}
 	for len(a.queue)+len(a.deferred) > 0 {
+		now = time.Now()
+		next = a.expireQueued(now)
+		if len(a.queue)+len(a.deferred) == 0 {
+			break
+		}
 		choice := BatchChoice{}
 		if a.cfg.Mode == modeProfiling {
 			choice = BatchChoice{Size: 1, WorkloadUID: a.queue[0].context.WorkloadUID, Definition: a.queue[0].context.Definition}
@@ -417,6 +441,18 @@ func (a *schedulerActor) startBatch(ctx context.Context, now, next time.Time) ti
 				decisionGap = &age
 			}
 			choice = ChooseBatch(a.cfg.Policy, a.requestStates(now), decisionGap)
+			if choice.Size > 0 {
+				// Recheck cancellation, lifetime and normal SLO feasibility at
+				// confirmation, after the first selection's work has elapsed.
+				now = time.Now()
+				next = a.expireQueued(now)
+				age, known = a.s.runner.decisionIdleNanos()
+				decisionGap = nil
+				if known {
+					decisionGap = &age
+				}
+				choice = ChooseBatch(a.cfg.Policy, a.requestStates(now), decisionGap)
+			}
 		}
 		if choice.Reason == OutcomeDeadlineDrop || choice.Reason == ReasonDeadlineDefer {
 			for i, r := range a.queue {
@@ -430,7 +466,7 @@ func (a *schedulerActor) startBatch(ctx context.Context, now, next time.Time) ti
 					a.deferred = append(a.deferred, r)
 					emitProgress(a.progress(r, phaseDeferred, now, runnerOutput{}, false))
 				} else {
-					a.finishQueued(r, now, ErrDeadlineDrop)
+					a.finishQueued(r, now, ErrDeadlineInfeasible)
 				}
 				break
 			}
@@ -453,6 +489,7 @@ func (a *schedulerActor) startBatch(ctx context.Context, now, next time.Time) ti
 		kept := (*pending)[:0]
 		for _, r := range *pending {
 			if len(a.active) < choice.Size && r.context.WorkloadUID == choice.WorkloadUID && r.context.Definition == choice.Definition {
+				r.queueExited = now
 				a.active = append(a.active, r)
 				a.queuedBytes -= r.bytes
 			} else {
@@ -509,9 +546,13 @@ func (a *schedulerActor) admit(r *request) {
 		return
 	}
 	if len(a.queue)+len(a.deferred) >= a.cfg.MaxQueueRequests || r.bytes > a.cfg.MaxQueueBytes-a.queuedBytes {
-		r.result <- result{err: ErrQueueFull, complete: true}
+		now := time.Now()
+		p := a.progress(r, phaseFinished, now, runnerOutput{}, true)
+		p.Outcome = "queue_full"
+		r.result <- result{response: Response{ModelName: a.cfg.Model, ID: r.context.RequestID, Progress: p, ExecutionComplete: true}, err: ErrQueueFull, complete: true}
 		return
 	}
+	r.enqueued = time.Now()
 	a.observeArrival(r)
 	if a.cfg.Mode == modeProfiling {
 		a.queue = append(a.queue, r)

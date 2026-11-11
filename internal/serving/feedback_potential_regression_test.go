@@ -5,15 +5,13 @@ import (
 	"math"
 	"testing"
 	"time"
-
-	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 func TestFeedbackConsumerAssignedQueueMembershipCountsOnce(t *testing.T) {
 	settings, snapshot, candidate := feedbackFixture()
 	snapshot.Arrivals = nil
 	snapshot.Workloads[0].SLO.TargetLatency = 10 * time.Millisecond
-	snapshot.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
+	snapshot.Workloads[0].Admission.Policy = AdmissionPolicyReject
 	snapshot.Instances[0].Profile.Batches = []BatchProfile{
 		schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{60e6}),
 		schedulerTestBatchProfile(BatchProfile{Batch: 2}, []float64{1e6}),

@@ -132,7 +132,10 @@ func capacityE1Fixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ComparisonPeriod, s.CompletionMarginMS = time.Second, time.Minute, 177
 	d := snap.Workloads[0]
-	d.SLO = SLO{Percentile: 95, TargetLatency: time.Second}
+	// Reject leaves 88/2400 failures on the slow expansion and 34/2400 on
+	// the fast one. p98 keeps this fixture's finite-demand recovery distinction.
+	d.SLO = SLO{Percentile: 98, TargetLatency: time.Second}
+	d.Admission.Policy = AdmissionPolicyReject
 	// E1 placed q1-lut beside q1 on rasp5; with one instance per Workload per
 	// Node (D-R8-1) it stands on a Node of its own with the same service law and chain.
 	lutNode := poolsAddNode(&snap, "lut", map[string]float64{"fixed": 1})
@@ -158,7 +161,7 @@ func capacityE1Fixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 func TestCapacityTransientRuleRejectsCheaperSlowRoute(t *testing.T) {
 	s, snap, genesis3 := capacityE1Fixture()
 	d := capacityDecideForTest(t, s, snap)
-	if d.Target == nil || !poolsOn(*d.Target, genesis3) || poolsOn(*d.Target, NodeReference{UID: "lut"}) {
+	if d.Target == nil || !poolsOn(*d.Target, genesis3) || poolsOn(*d.Target, NodeReference{Name: "node-lut", UID: "lut"}) {
 		t.Fatalf("finite-demand recovery lost faster route: %+v", d)
 	}
 	if len(d.Target.Feedback) != 1 || d.Target.Feedback[0].SuccessQuantileNanos == nil || !schedulerFinite(*d.Target.Feedback[0].SuccessQuantileNanos) {
@@ -169,6 +172,31 @@ func TestCapacityTransientRuleRejectsCheaperSlowRoute(t *testing.T) {
 	fast := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"genesis3": "profile@genesis3-fixed/b1/w1"}), 10.7)
 	if slow.joules >= fast.joules || !fast.better(&slow) {
 		t.Fatalf("direct outcome tuple must outrank cheaper slow route: slow=%+v fast=%+v", slow, fast)
+	}
+}
+
+func TestCapacityRejectAtP95PrefersCheaperFeasibleExpansion(t *testing.T) {
+	s, snap, genesis3 := capacityE1Fixture()
+	snap.Workloads[0].SLO.Percentile = 95
+	p := capacityPlannerForTest(t, s, snap)
+	slow := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"lut": "profile@lut-fixed/b1/w1"}), 20.2)
+	fast := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"genesis3": "profile@genesis3-fixed/b1/w1"}), 10.7)
+	for _, tc := range []struct {
+		result   capacityResult
+		rejected int
+	}{{slow, 88}, {fast, 34}} {
+		if !tc.result.feasible || len(tc.result.feedback) != 1 || !tc.result.feedback[0].Satisfied ||
+			tc.result.feedback[0].Population != 2400 || tc.result.feedback[0].DeadlineDropped != tc.rejected ||
+			tc.result.feedback[0].Completed != 2400-tc.rejected {
+			t.Fatalf("p95 Reject outcome changed: %+v", tc.result)
+		}
+	}
+	if slow.joules >= fast.joules || !slow.better(&fast) {
+		t.Fatalf("both feasible expansions must retain energy preference: slow=%+v fast=%+v", slow, fast)
+	}
+	decision := capacityDecideForTest(t, s, snap)
+	if decision.Target == nil || !poolsOn(*decision.Target, NodeReference{Name: "node-lut", UID: "lut"}) || poolsOn(*decision.Target, genesis3) {
+		t.Fatalf("p95 Reject must choose the cheaper feasible route: %+v", decision)
 	}
 }
 
@@ -1593,6 +1621,7 @@ func TestCapacityQueuedBacklogFailsKeep(t *testing.T) {
 	s, snap, _ := capacityE1Fixture()
 	s.ComparisonPeriod = time.Second
 	snap.Workloads[0].SLO.TargetLatency = 100 * time.Millisecond
+	snap.Workloads[0].Admission.Policy = AdmissionPolicyDelay
 	for q := range 160 {
 		snap.Outstanding = append(snap.Outstanding, SchedulerRequest{ID: fmt.Sprint("queued-", q), Definition: snap.Workloads[0], ReceivedAt: snap.At, Phase: phasePending})
 	}

@@ -22,11 +22,17 @@ const (
 )
 
 const (
-	DeadlineDrop        = "drop"
-	DeadlineKeep        = "keep"
-	DeadlineDefer       = "defer"
-	OutcomeDeadlineDrop = "deadline_drop"
-	ReasonDeadlineDefer = "deadline_defer"
+	DeadlineDrop           = "drop"
+	DeadlineKeep           = "keep"
+	DeadlineDefer          = "defer"
+	AdmissionReject        = "Reject"
+	AdmissionDelay         = "Delay"
+	CodeQueueFull          = "QueueFull"
+	CodeDeadlineInfeasible = "DeadlineInfeasible"
+	CodeRequestTimeout     = "RequestTimeout"
+	AdmissionStageExecutor = "executor"
+	OutcomeDeadlineDrop    = "deadline_drop"
+	ReasonDeadlineDefer    = "deadline_defer"
 	// FailureMemoryAllocation denotes a native allocator rejection, not kernel OOMKilled.
 	FailureMemoryAllocation = "MemoryAllocationFailed"
 	// OutcomePreprocessFailed ends one request whose sample the module rejected (HTTP 422).
@@ -57,6 +63,7 @@ type RequestContext struct {
 	RequestID          string    `json:"requestID"`
 	WorkloadUID        string    `json:"workloadUID"`
 	Definition         string    `json:"definition"`
+	AdmissionPolicy    string    `json:"admissionPolicy"`
 	ReceivedAt         time.Time `json:"receivedAt"`
 	SenderElapsedMS    float64   `json:"senderElapsedMS"`
 	CompletionMarginMS float64   `json:"completionMarginMS"`
@@ -80,6 +87,12 @@ type ErrorResponse struct {
 	FailureReason     string    `json:"failureReason,omitempty"`
 	ExecutionComplete bool      `json:"executionComplete"`
 	Progress          *Progress `json:"progress,omitempty"`
+	Code              string    `json:"code,omitempty"`
+	Stage             string    `json:"stage,omitempty"`
+	Policy            string    `json:"policy,omitempty"`
+	RemainingSLONanos *int64    `json:"remainingSLONanos,omitempty"`
+	ExecutorWaitNanos *int64    `json:"executorWaitNanos,omitempty"`
+	NotAdmitted       bool      `json:"notAdmitted,omitempty"`
 }
 type BatchProfile struct {
 	Size           int                  `json:"size"`
@@ -96,7 +109,7 @@ type Policy struct {
 	ProfileID      string         `json:"profileID"`
 	MaxBatchWaitMS float64        `json:"maxBatchWaitMS"`
 	MaxBatchSize   int            `json:"maxBatchSize,omitempty"`   // Zero permits every initialized measured batch.
-	DeadlinePolicy string         `json:"deadlinePolicy,omitempty"` // Frozen for the instance; omitted means keep.
+	DeadlinePolicy string         `json:"deadlinePolicy,omitempty"` // Measurement provenance; omitted means keep. Serving uses each request's admission policy.
 	FixedBatchSize int            `json:"fixedBatchSize,omitempty"` // Frozen for the instance; zero is dynamic.
 	Batches        []BatchProfile `json:"-"`                        // Immutable bundle, loaded once. Policy file never repeats samples.
 }
@@ -144,6 +157,7 @@ type Progress struct {
 	ProfileID         string         `json:"profileID,omitempty"`
 	DecisionID        string         `json:"decisionID,omitempty"`
 	QueueMS           float64        `json:"queueMS"`
+	ExecutorWaitNanos *int64         `json:"executorWaitNanos,omitempty"`
 	ServiceMS         float64        `json:"serviceMS"`
 	BackendMS         float64        `json:"backendMS"`
 	PreprocessMS      float64        `json:"preprocessMS"`

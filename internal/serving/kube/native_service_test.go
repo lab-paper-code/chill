@@ -297,7 +297,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 			return nil
 		},
 	}).Build()
-	currentPolicy := native.Policy{DecisionID: "manual-static-routing:current", ProfileID: profile.ID, MaxBatchSize: 1, MaxBatchWaitMS: 17}
+	currentPolicy := native.Policy{DecisionID: "manual-static-routing:current", ProfileID: profile.ID, MaxBatchSize: 1, MaxBatchWaitMS: 17, DeadlinePolicy: native.DeadlineDrop}
 	manager.observer.kube = kube
 	operations := &servingops.Operations{Cluster: manager.observer.cluster, Store: manager.store, Kube: kube, Runtime: manager.runtime, Observer: manager.observer, Config: servingops.OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond}}
 	spec := servingstate.PrepareSpec{Name: fixture.Name, MemoryBytes: 1 << 30,
@@ -570,7 +570,7 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 			PreprocessorImage: profile.Condition.Preprocessor.Image, PreprocessorPath: profile.Condition.Preprocessor.Path,
 			Mode: servingstate.NativeServingMode, ProfilePath: "/profile/bundle.json",
 			RunnerCommand: []string{"python3", "--delivery-json", "/config/delivery.json"},
-			Policy:        native.Policy{ProfileID: profile.ID, DeadlinePolicy: profile.Condition.Firstfloor.DeadlinePolicy},
+			Policy:        native.Policy{ProfileID: profile.ID},
 		},
 		MemoryBytes: 1 << 20,
 	}
@@ -622,7 +622,7 @@ func TestPreparationSeedsRoutingBeforeRoute(t *testing.T) {
 				RuntimeImage: profile.Condition.RuntimeImage, MemoryRequestBytes: 1 << 20, MemoryLimitBytes: 1 << 20,
 				ArtifactImage: profile.Condition.Artifact.Image, ArtifactFiles: profile.Condition.Artifact.Files,
 				PreprocessorImage: profile.Condition.Preprocessor.Image, PreprocessorPath: profile.Condition.Preprocessor.Path,
-				Policy: native.Policy{ProfileID: profile.ID, DeadlinePolicy: profile.Condition.Firstfloor.DeadlinePolicy}},
+				Policy: native.Policy{ProfileID: profile.ID}},
 		}
 		if _, err := operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
 			t.Fatalf("%s preparation did not reach Pod creation: %v", name, err)
@@ -684,7 +684,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 			PreprocessorImage: profile.Condition.Preprocessor.Image, PreprocessorPath: profile.Condition.Preprocessor.Path,
 			Mode: servingstate.NativeServingMode, ProfilePath: "/profile/bundle.json",
 			RunnerCommand: []string{"python3", "--delivery-json", "/config/delivery.json"},
-			Policy:        native.Policy{ProfileID: profile.ID, DeadlinePolicy: profile.Condition.Firstfloor.DeadlinePolicy},
+			Policy:        native.Policy{ProfileID: profile.ID},
 		},
 		MemoryBytes: 1 << 20,
 	}

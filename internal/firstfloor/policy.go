@@ -64,6 +64,16 @@ func RemainingSLOMS(r RequestState) float64 {
 	return r.Context.SLO.TargetMS - r.Context.SenderElapsedMS - r.ElapsedMS
 }
 func SLOExpired(r RequestState) bool { return RemainingSLOMS(r) <= 0 }
+func requestDeadlinePolicy(r RequestState) string {
+	switch r.Context.AdmissionPolicy {
+	case AdmissionReject:
+		return DeadlineDrop
+	case AdmissionDelay:
+		return DeadlineDefer
+	default:
+		return ""
+	}
+}
 func requestSlack(r RequestState, b BatchProfile, gap *int64, costs *serviceCosts) float64 {
 	return RemainingSLOMS(r) - r.Context.CompletionMarginMS - costs.cost(b, r.Context.SLO.Percentile, gap)
 }
@@ -164,7 +174,13 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchCho
 		return chooseFixedBatch(p.FixedBatchSize, requests)
 	}
 	head, deferred, active := queueHeads(requests)
-	mode := EffectiveDeadlinePolicy(p.DeadlinePolicy)
+	mode := ""
+	if head >= 0 {
+		mode = requestDeadlinePolicy(requests[head])
+		if mode == "" {
+			return BatchChoice{Reason: "admission_unknown"}
+		}
+	}
 	if mode == DeadlineDrop && head >= 0 && SLOExpired(requests[head]) {
 		r := requests[head]
 		return BatchChoice{RequestID: r.Context.RequestID, WorkloadUID: r.Context.WorkloadUID, Definition: r.Context.Definition, Reason: OutcomeDeadlineDrop}
@@ -197,7 +213,7 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchCho
 		}
 	}
 	if available.Size == 0 {
-		if r.Phase != phaseDeferred && mode != DeadlineKeep {
+		if r.Phase != phaseDeferred {
 			choice.Reason = OutcomeDeadlineDrop
 			if mode == DeadlineDefer {
 				choice.Reason = ReasonDeadlineDefer

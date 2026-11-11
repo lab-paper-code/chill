@@ -56,9 +56,13 @@ type Admission struct {
 
 // Error carries a consumer-visible failure without depending on its transport.
 type Error struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Field   string `json:"field,omitempty"`
+	Code              string          `json:"code"`
+	Message           string          `json:"message"`
+	Field             string          `json:"field,omitempty"`
+	Stage             string          `json:"stage,omitempty"`
+	Policy            AdmissionPolicy `json:"policy,omitempty"`
+	RemainingSLONanos *int64          `json:"remainingSLONanos,omitempty"`
+	ExecutorWaitNanos *int64          `json:"executorWaitNanos,omitempty"`
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -433,6 +437,7 @@ type BackendProgress struct {
 	ProfileID         string                    `json:"profileID,omitempty"`
 	DecisionID        string                    `json:"decisionID,omitempty"`
 	QueueMS           float64                   `json:"queueMS"`
+	ExecutorWaitNanos *int64                    `json:"executorWaitNanos,omitempty"`
 	ServiceMS         float64                   `json:"serviceMS"`
 	BackendMS         float64                   `json:"backendMS"`
 	PreprocessMS      float64                   `json:"preprocessMS"`

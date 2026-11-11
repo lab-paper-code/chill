@@ -49,7 +49,7 @@ func TestReplayCostConsumerEquivalence(t *testing.T) {
 			settings.MinimumDemand[snapshot.Workloads[0].UID] = 256000
 			snapshot.Workloads[0].SLO.TargetLatency = 10 * time.Millisecond
 			snapshot.Instances[0].MaxBatch = 1
-			snapshot.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
+			snapshot.Workloads[0].Admission.Policy = AdmissionPolicyReject
 		}
 		one := keep
 		one.Keep = false

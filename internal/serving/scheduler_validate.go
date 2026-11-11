@@ -263,10 +263,6 @@ func schedulerPolicy(i SchedulerInstance) firstfloor.Policy {
 	p := firstfloor.Policy{
 		ProfileID: i.Profile.ID, MaxBatchSize: i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / 1e6,
 	}
-	if i.Profile.Condition.Firstfloor != nil {
-		p.DeadlinePolicy = i.Profile.Condition.Firstfloor.DeadlinePolicy
-	}
-	p.DeadlinePolicy = firstfloor.EffectiveDeadlinePolicy(p.DeadlinePolicy)
 	p.Batches = i.Profile.NativeBundle().Batches
 	return p
 }
