@@ -37,6 +37,7 @@ export type LiveMessage = (Envelope & {type:"hello";protocol:"chill-live/1";serv
 export type LiveState = {
   snapshot:LiveSnapshot|null;checkpoint:Envelope|null;metrics:LiveMetrics[];events:LiveEvent[];gaps:LiveGap[]
   lastReceivedAt:number|null;lastObservedAt:string|null;lastPower:{bucketAt:string;watts:number}|null;status:string
+  protocolError?:string
   powerScale:number
   definitions:Record<string,LiveWorkload>;resyncRequired:boolean;historyGaps:LiveGap[]
   resumeHistory:LiveResumeHistory|null;eventArchive:Omit<RecordedLivePage,"events"> & {partial:boolean}|null;eventArchiveError:string|null
@@ -46,42 +47,46 @@ export function initialLiveState():LiveState {
   return {snapshot:null,checkpoint:null,metrics:[],events:[],gaps:[],lastReceivedAt:null,lastObservedAt:null,lastPower:null,powerScale:1,status:"idle",definitions:{},resyncRequired:false,historyGaps:[],resumeHistory:null,eventArchive:null,eventArchiveError:null}
 }
 
-function invalid():never { throw new Error("Invalid chill-live/1 message") }
+function invalid(reason="Invalid chill-live/1 message"):never { throw new Error(reason) }
+function field<T>(key:string|number,value:unknown,parse:(value:unknown)=>T):T {
+  try { return parse(value) } catch (error) { throw new Error(`${key}: ${error instanceof Error ? error.message : String(error)}`) }
+}
 function object(value:unknown):Record<string,unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype,null].includes(Object.getPrototypeOf(value))) return invalid()
+  if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype,null].includes(Object.getPrototypeOf(value))) return invalid("Expected object")
   return value as Record<string,unknown>
 }
-function text(value:unknown):string { return typeof value === "string" ? value : invalid() }
-function boolean(value:unknown):boolean { return typeof value === "boolean" ? value : invalid() }
-function number(value:unknown):number { return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : invalid() }
-function count(value:unknown):number { const result=number(value); return Number.isSafeInteger(result) ? result : invalid() }
+function text(value:unknown):string { return typeof value === "string" ? value : invalid("Expected string") }
+function boolean(value:unknown):boolean { return typeof value === "boolean" ? value : invalid("Expected boolean") }
+function number(value:unknown):number { return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : invalid("Expected finite nonnegative number") }
+function count(value:unknown):number { const result=number(value); return Number.isSafeInteger(result) ? result : invalid("Expected safe integer") }
 function timestamp(value:unknown):string {
   const result=text(value)
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(result)) return invalid()
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(result)) return invalid("Expected RFC3339Nano UTC timestamp")
   const date=new Date(result)
-  return Number.isFinite(date.getTime()) && date.toISOString().slice(0,19) === result.slice(0,19) ? result : invalid()
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0,19) === result.slice(0,19) ? result : invalid("Invalid calendar timestamp")
 }
 function nullable<T>(value:unknown,parse:(value:unknown)=>T):T|null { return value === null ? null : parse(value) }
-function array<T>(value:unknown,parse:(value:unknown)=>T):T[] { return Array.isArray(value) ? value.map(parse) : invalid() }
-function map<T>(value:unknown,parse:(value:unknown)=>T):Record<string,T> { return Object.fromEntries(Object.entries(object(value)).map(([key,row])=>[key,parse(row)])) }
-function unique<T>(rows:T[],key:(row:T)=>string):T[] { return new Set(rows.map(key)).size === rows.length ? rows : invalid() }
-function nodeRef(value:unknown) { const row=object(value);return {uid:text(row.uid),name:text(row.name)} }
+function array<T>(value:unknown,parse:(value:unknown)=>T):T[] { return Array.isArray(value) ? value.map((row,index)=>field(index,row,parse)) : invalid("Expected array") }
+function map<T>(value:unknown,parse:(value:unknown)=>T):Record<string,T> { return Object.fromEntries(Object.entries(object(value)).map(([key,row])=>[key,field(key,row,parse)])) }
+function unique<T>(rows:T[],key:(row:T)=>string):T[] { return new Set(rows.map(key)).size === rows.length ? rows : invalid("Duplicate identity") }
+function nodeRef(value:unknown) { const row=object(value);return {uid:field("uid",row.uid,text),name:field("name",row.name,text)} }
 function workload(value:unknown):LiveWorkload {
   const row=object(value)
-  const slo=object(row.slo),ready=object(row.readiness)
-  const percentile=number(slo.percentile),targetLatencyNanos=number(slo.targetLatencyNanos)
-  if (percentile > 100 || !Number.isInteger(targetLatencyNanos)) invalid()
-  return {uid:text(row.uid),name:text(row.name),model:text(row.model),definitionID:nullable(row.definitionID,text),slo:{percentile,targetLatencyNanos},autonomous:boolean(row.autonomous),admission:boolean(row.admission),pending:count(row.pending),readiness:{ready:boolean(ready.ready),reason:text(ready.reason),observedAt:timestamp(ready.observedAt)}}
+  const slo=field("slo",row.slo,object),ready=field("readiness",row.readiness,object)
+  const percentile=field("slo.percentile",slo.percentile,number),targetLatencyNanos=field("slo.targetLatencyNanos",slo.targetLatencyNanos,number)
+  if (percentile > 100) invalid("slo.percentile: Expected value at most 100")
+  if (!Number.isInteger(targetLatencyNanos)) invalid("slo.targetLatencyNanos: Expected integer")
+  return {uid:field("uid",row.uid,text),name:field("name",row.name,text),model:field("model",row.model,text),definitionID:field("definitionID",row.definitionID,value=>nullable(value,text)),slo:{percentile,targetLatencyNanos},autonomous:field("autonomous",row.autonomous,boolean),admission:field("admission",row.admission,boolean),pending:field("pending",row.pending,count),readiness:{ready:field("readiness.ready",ready.ready,boolean),reason:field("readiness.reason",ready.reason,text),observedAt:field("readiness.observedAt",ready.observedAt,timestamp)}}
 }
 function node(value:unknown):LiveNode {
   const row=object(value)
-  return {uid:text(row.uid),name:text(row.name),powerMode:text(row.powerMode),ready:boolean(row.ready),measurement:boolean(row.measurement),...(row.reasons === undefined ? {} : {reasons:array(row.reasons,text)}),observedAt:nullable(row.observedAt,timestamp)}
+  return {uid:field("uid",row.uid,text),name:field("name",row.name,text),powerMode:field("powerMode",row.powerMode,text),ready:field("ready",row.ready,boolean),measurement:field("measurement",row.measurement,boolean),...(row.reasons === undefined ? {} : {reasons:field("reasons",row.reasons,value=>array(value,text))}),observedAt:field("observedAt",row.observedAt,value=>nullable(value,timestamp))}
 }
 function instance(value:unknown):LiveInstance {
   const row=object(value)
-  return {id:text(row.id),node:nodeRef(row.node),ownerWorkloadUID:text(row.ownerWorkloadUID),profileID:text(row.profileID),ready:boolean(row.ready),stopped:boolean(row.stopped),routable:map(row.routable === null ? {} : row.routable,boolean),running:map(row.running === null ? {} : row.running,count),waiting:map(row.waiting === null ? {} : row.waiting,count),observedAt:timestamp(row.observedAt)}
+  return {id:field("id",row.id,text),node:field("node",row.node,nodeRef),ownerWorkloadUID:field("ownerWorkloadUID",row.ownerWorkloadUID,text),profileID:field("profileID",row.profileID,text),ready:field("ready",row.ready,boolean),stopped:field("stopped",row.stopped,boolean),routable:field("routable",row.routable === null ? {} : row.routable,value=>map(value,boolean)),running:field("running",row.running === null ? {} : row.running,value=>map(value,count)),waiting:field("waiting",row.waiting === null ? {} : row.waiting,value=>map(value,count)),observedAt:field("observedAt",row.observedAt,timestamp)}
 }
-function decision(value:unknown):LiveDecision { const row=object(value);return {at:timestamp(row.at),state:text(row.state),reason:text(row.reason),explanation:text(row.explanation)} }
+function decision(value:unknown):LiveDecision { const row=object(value);return {at:field("at",row.at,timestamp),state:field("state",row.state,text),reason:field("reason",row.reason,text),explanation:field("explanation",row.explanation,text)} }
 export function liveActionKey(row:LiveAction):string { return JSON.stringify([row.id,row.node.uid,row.startedAt]) }
 /** Shared by the live board and operating menu: history and plans are not executing changes. */
 export function isLiveActionActive(row:{status:string;completedAt?:string}):boolean { return !row.completedAt && (row.status === "starting" || row.status === "running") }
@@ -89,78 +94,84 @@ function action(value:unknown):LiveAction {
   const row=object(value)
   let expectedSource:LiveAction["expectedSource"]=null
   if (row.expectedSource !== null) {
-    const source=object(row.expectedSource)
-    if (source.statistic !== "mean") invalid()
-    object(source.reference)
-    expectedSource={costID:text(source.costID),reference:source.reference,statistic:"mean",trialCount:count(source.trialCount)}
+    const source=field("expectedSource",row.expectedSource,object)
+    if (source.statistic !== "mean") invalid("expectedSource.statistic: Expected mean")
+    field("expectedSource.reference",source.reference,object)
+    expectedSource={costID:field("expectedSource.costID",source.costID,text),reference:source.reference,statistic:"mean",trialCount:field("expectedSource.trialCount",source.trialCount,count)}
   }
-  return {id:text(row.id),kind:text(row.kind),node:nodeRef(row.node),workloadUID:text(row.workloadUID),status:text(row.status),startedAt:timestamp(row.startedAt),...(row.completedAt === undefined ? {} : {completedAt:timestamp(row.completedAt)}),expectedSeconds:nullable(row.expectedSeconds,number),expectedSource}
+  return {id:field("id",row.id,text),kind:field("kind",row.kind,text),node:field("node",row.node,nodeRef),workloadUID:field("workloadUID",row.workloadUID,text),status:field("status",row.status,text),startedAt:field("startedAt",row.startedAt,timestamp),...(row.completedAt === undefined ? {} : {completedAt:field("completedAt",row.completedAt,timestamp)}),expectedSeconds:field("expectedSeconds",row.expectedSeconds,value=>nullable(value,number)),expectedSource}
 }
 function reservation(value:unknown):LiveReservation {
   const row=object(value)
-  return {owner:text(row.owner),nodes:array(row.nodes,nodeRef),workloadUIDs:array(row.workloadUIDs === null ? [] : row.workloadUIDs,text),podUIDs:array(row.podUIDs === null ? [] : row.podUIDs,text),instances:array(row.instances === null ? [] : row.instances,text),reason:text(row.reason),explanation:text(row.explanation)}
+  return {owner:field("owner",row.owner,text),nodes:field("nodes",row.nodes,value=>array(value,nodeRef)),workloadUIDs:field("workloadUIDs",row.workloadUIDs === null ? [] : row.workloadUIDs,value=>array(value,text)),podUIDs:field("podUIDs",row.podUIDs === null ? [] : row.podUIDs,value=>array(value,text)),instances:field("instances",row.instances === null ? [] : row.instances,value=>array(value,text)),reason:field("reason",row.reason,text),explanation:field("explanation",row.explanation,text)}
 }
 function metric(value:unknown):LiveMetric {
   const row=object(value)
-  const result={received:count(row.received),completed:count(row.completed),failed:count(row.failed),withinSLO:count(row.withinSLO),latencySamples:count(row.latencySamples),p50ms:nullable(row.p50ms,number),p90ms:nullable(row.p90ms,number),p95ms:nullable(row.p95ms,number),p99ms:nullable(row.p99ms,number)}
-  if (result.withinSLO > result.completed || result.latencySamples > result.completed + result.failed) invalid()
+  const result={received:field("received",row.received,count),completed:field("completed",row.completed,count),failed:field("failed",row.failed,count),withinSLO:field("withinSLO",row.withinSLO,count),latencySamples:field("latencySamples",row.latencySamples,count),p50ms:field("p50ms",row.p50ms,value=>nullable(value,number)),p90ms:field("p90ms",row.p90ms,value=>nullable(value,number)),p95ms:field("p95ms",row.p95ms,value=>nullable(value,number)),p99ms:field("p99ms",row.p99ms,value=>nullable(value,number))}
+  if (result.withinSLO > result.completed) invalid("withinSLO: Exceeds completed")
+  if (result.latencySamples > result.completed + result.failed) invalid("latencySamples: Exceeds completed + failed")
   return result
 }
-function gap(value:unknown):LiveGap { const row=object(value);const result={from:timestamp(row.from),to:timestamp(row.to),scope:text(row.scope),reason:text(row.reason)};return compareAt(result.from,result.to) <= 0 ? result : invalid() }
+function gap(value:unknown):LiveGap { const row=object(value);const result={from:field("from",row.from,timestamp),to:field("to",row.to,timestamp),scope:field("scope",row.scope,text),reason:field("reason",row.reason,text)};return compareAt(result.from,result.to) <= 0 ? result : invalid("from: Exceeds to") }
 const snapshotKeys=["workloads","nodes","instances","routing","decision","actions","reservations"]
 function projection(row:Record<string,unknown>,full:boolean):LiveDelta {
   const result:LiveDelta={}
   for (const key of snapshotKeys) if (full || Object.hasOwn(row,key)) {
-    switch (key) {
-      case "workloads": result.workloads=unique(array(row.workloads,workload),row=>row.uid);break
-      case "nodes": result.nodes=unique(array(row.nodes,node),row=>row.uid);break
-      case "instances": result.instances=unique(array(row.instances,instance),row=>row.id);break
-      case "actions": result.actions=unique(array(row.actions,value=>action(value)),liveActionKey);break
-      case "routing": result.routing=map(row.routing,value=>map(value,number));break
-      case "decision": result.decision=nullable(row.decision,decision);break
-      case "reservations": result.reservations=array(row.reservations,reservation);break
-    }
+    field(key,row[key],value=>{
+      switch (key) {
+        case "workloads": result.workloads=unique(array(value,workload),row=>row.uid);break
+        case "nodes": result.nodes=unique(array(value,node),row=>row.uid);break
+        case "instances": result.instances=unique(array(value,instance),row=>row.id);break
+        case "actions": result.actions=unique(array(value,action),liveActionKey);break
+        case "routing": result.routing=map(value,value=>map(value,number));break
+        case "decision": result.decision=nullable(value,decision);break
+        case "reservations": result.reservations=array(value,reservation);break
+      }
+    })
   }
   return result
 }
 function cluster(value:unknown):LiveCluster {
   const row=object(value)
-  if (row.kind !== "pod" && row.kind !== "issue") return invalid()
-  const result:LiveCluster={kind:row.kind,at:timestamp(row.at),event:text(row.event)}
-  for (const key of ["source","reason","previousReason"] as const) if (row[key] !== undefined) result[key]=text(row[key])
+  if (row.kind !== "pod" && row.kind !== "issue") return invalid("kind: Expected pod or issue")
+  const result:LiveCluster={kind:row.kind,at:field("at",row.at,timestamp),event:field("event",row.event,text)}
+  for (const key of ["source","reason","previousReason"] as const) if (row[key] !== undefined) result[key]=field(key,row[key],text)
   if (row.pod !== undefined) {
-    const pod=object(row.pod)
-    result.pod={uid:text(pod.uid)}
-    for (const key of ["namespace","name","node","phase","ready"] as const) if (pod[key] !== undefined) result.pod[key]=text(pod[key])
+    const pod=field("pod",row.pod,object)
+    result.pod={uid:field("pod.uid",pod.uid,text)}
+    for (const key of ["namespace","name","node","phase","ready"] as const) if (pod[key] !== undefined) result.pod[key]=field(`pod.${key}`,pod[key],text)
   }
   return result
 }
 function sequenceRange(value:unknown):LiveSequenceRange {
   const row=object(value)
-  const fromSeq=count(row.fromSeq),toSeq=count(row.toSeq)
-  return fromSeq > 0 && fromSeq <= toSeq ? {fromSeq,toSeq} : invalid()
+  const fromSeq=field("fromSeq",row.fromSeq,count),toSeq=field("toSeq",row.toSeq,count)
+  return fromSeq > 0 && fromSeq <= toSeq ? {fromSeq,toSeq} : invalid("fromSeq: Expected positive value at most toSeq")
 }
 function resumeHistory(value:unknown):LiveResumeHistory {
   const row=object(value)
-  if ((row.reason!=="fresh" && row.reason!=="checkpoint-unmatched") || row.replayed!==false) return invalid()
-  const requested=object(row.requested),retained=object(row.retained)
-  const result:LiveResumeHistory={reason:row.reason,replayed:false,requested:{afterSeq:count(requested.afterSeq),throughSeq:count(requested.throughSeq),...(requested.at===undefined?{}:{at:timestamp(requested.at)})},retained:{events:nullable(retained.events,sequenceRange),power:nullable(retained.power,sequenceRange)},gaps:array(row.gaps,value=>{
+  if (row.reason!=="fresh" && row.reason!=="checkpoint-unmatched") return invalid("reason: Expected fresh or checkpoint-unmatched")
+  if (row.replayed!==false) return invalid("replayed: Expected false")
+  const requested=field("requested",row.requested,object),retained=field("retained",row.retained,object)
+  const result:LiveResumeHistory={reason:row.reason,replayed:false,requested:{afterSeq:field("requested.afterSeq",requested.afterSeq,count),throughSeq:field("requested.throughSeq",requested.throughSeq,count),...(requested.at===undefined?{}:{at:field("requested.at",requested.at,timestamp)})},retained:{events:field("retained.events",retained.events,value=>nullable(value,sequenceRange)),power:field("retained.power",retained.power,value=>nullable(value,sequenceRange))},gaps:field("gaps",row.gaps,value=>array(value,value=>{
     const row=object(value)
-    if ((row.scope!=="events" && row.scope!=="power") || row.reason!=="NoRetainedFrames") return invalid()
+    if (row.scope!=="events" && row.scope!=="power") return invalid("scope: Expected events or power")
+    if (row.reason!=="NoRetainedFrames") return invalid("reason: Expected NoRetainedFrames")
     return {...sequenceRange({fromSeq:row.fromSeq,toSeq:row.toSeq}),scope:row.scope,reason:row.reason}
-  })}
-  if (Object.values(result.retained).some(range=>range && range.toSeq>result.requested.throughSeq) || result.gaps.some(gap=>gap.fromSeq<=result.requested.afterSeq || gap.toSeq>result.requested.throughSeq)) return invalid()
+  }))}
+  if (Object.values(result.retained).some(range=>range && range.toSeq>result.requested.throughSeq)) return invalid("retained: Exceeds requested.throughSeq")
+  if (result.gaps.some(gap=>gap.fromSeq<=result.requested.afterSeq || gap.toSeq>result.requested.throughSeq)) return invalid("gaps: Outside requested sequence range")
   return result
 }
 function eventPayload(row:Record<string,unknown>):LiveEvent {
-  const base={type:"event" as const,at:timestamp(row.at)}
-  if (row.kind==="decision" && row.action===undefined && row.cluster===undefined) return {...base,kind:"decision",decision:decision(row.decision)}
-  if (row.kind==="cluster" && row.action===undefined && row.decision===undefined) return {...base,kind:"cluster",cluster:cluster(row.cluster)}
-  if (row.kind!=="action" || row.cluster!==undefined || row.decision!==undefined) return invalid()
-  const payload=object(row.action),parsed=action(payload),phase=payload.phase
-  if (phase!=="started" && phase!=="completed" && phase!=="failed") return invalid()
+  const base={type:"event" as const,at:field("at",row.at,timestamp)}
+  if (row.kind==="decision" && row.action===undefined && row.cluster===undefined) return {...base,kind:"decision",decision:field("decision",row.decision,decision)}
+  if (row.kind==="cluster" && row.action===undefined && row.decision===undefined) return {...base,kind:"cluster",cluster:field("cluster",row.cluster,cluster)}
+  if (row.kind!=="action" || row.cluster!==undefined || row.decision!==undefined) return invalid("kind: Expected matching decision, cluster or action payload")
+  const payload=field("action",row.action,object),parsed=field("action",payload,action),phase=payload.phase
+  if (phase!=="started" && phase!=="completed" && phase!=="failed") return invalid("action.phase: Expected started, completed or failed")
   const result:LiveActionEvent={...parsed,phase}
-  if (payload.result!==undefined) {const row=object(payload.result);result.result={status:text(row.status),...(row.error===undefined?{}:{error:text(row.error)})}}
+  if (payload.result!==undefined) {const row=field("action.result",payload.result,object);result.result={status:field("action.result.status",row.status,text),...(row.error===undefined?{}:{error:field("action.result.error",row.error,text)})}}
   return {...base,kind:"action",action:result}
 }
 /** Archive rows have no live envelope and cannot advance its checkpoint. */
@@ -200,46 +211,50 @@ export function parseRecordedLivePage(value:unknown):RecordedLivePage|null {
   } catch {return null}
 }
 /** Reject malformed frames before they enter the authenticated Query cache. */
-export function parseLiveMessage(input:string|unknown):LiveMessage|null {
+export function parseLiveMessage(input:string|unknown,onReject?:(reason:string)=>void):LiveMessage|null {
+  let frameType="unknown"
   try {
     if (typeof input === "string") {
-      if (input.length > 1<<20 || new TextEncoder().encode(input).length > 1<<20) return null
+      if (input.length > 1<<20 || new TextEncoder().encode(input).length > 1<<20) return invalid("Frame exceeds 1 MiB")
       input=JSON.parse(input)
     }
-    const row=object(input),base={seq:count(row.seq),at:timestamp(row.at)}
+    const row=object(input)
+    if (typeof row.type === "string") frameType=row.type
+    const base={seq:field("seq",row.seq,count),at:field("at",row.at,timestamp)}
     switch (row.type) {
       case "hello": {
-        const retainFrom=count(row.retainFrom)
-        if (row.protocol !== "chill-live/1" || retainFrom > base.seq+1 || retainFrom === 0) return null
-        return {...base,type:"hello",protocol:"chill-live/1",serverAt:timestamp(row.serverAt),retainFrom}
+        const retainFrom=field("retainFrom",row.retainFrom,count)
+        if (row.protocol !== "chill-live/1") return invalid("protocol: Expected chill-live/1")
+        if (retainFrom > base.seq+1 || retainFrom === 0) return invalid("retainFrom: Expected positive value at most seq + 1")
+        return {...base,type:"hello",protocol:"chill-live/1",serverAt:field("serverAt",row.serverAt,timestamp),retainFrom}
       }
-      case "snapshot": return {...base,type:"snapshot",...projection(row,true),...(row.history===undefined?{}:{history:resumeHistory(row.history)})} as LiveMessage
+      case "snapshot": return {...base,type:"snapshot",...projection(row,true),...(row.history===undefined?{}:{history:field("history",row.history,resumeHistory)})} as LiveMessage
       case "delta": {
         const result:LiveDelta=projection(row,false)
         if (row.removed !== undefined) {
-          const removed=object(row.removed)
+          const removed=field("removed",row.removed,object)
           result.removed={}
-          if (removed.instances !== undefined) result.removed.instances=array(removed.instances,text)
-          if (removed.actions !== undefined) result.removed.actions=array(removed.actions,value=>{
+          if (removed.instances !== undefined) result.removed.instances=field("removed.instances",removed.instances,value=>array(value,text))
+          if (removed.actions !== undefined) result.removed.actions=field("removed.actions",removed.actions,value=>array(value,value=>{
             const key=text(value),tuple=JSON.parse(key)
-            if (!Array.isArray(tuple) || tuple.length !== 3 || tuple.some(value=>typeof value !== "string")) return invalid()
-            timestamp(tuple[2]);return key
-          })
+            if (!Array.isArray(tuple) || tuple.length !== 3 || tuple.some(value=>typeof value !== "string")) return invalid("Expected action identity tuple")
+            field("startedAt",tuple[2],timestamp);return key
+          }))
         }
         return {...base,type:"delta",...result}
       }
       case "metrics": {
-        const bucketAt=timestamp(row.bucketAt),pool=object(row.pool)
-        if (new Date(bucketAt).getTime()%1000 || /\.[0-9]*[1-9][0-9]*Z$/.test(bucketAt)) return null
-        return {...base,type:"metrics",bucketAt,chill_obslog_queue_length:count(row.chill_obslog_queue_length),chill_obslog_oldest_wait_seconds:number(row.chill_obslog_oldest_wait_seconds),workloads:map(row.workloads,metric),nodes:map(row.nodes,value=>{const node=object(value);return {watts:nullable(node.watts,number),observedAt:nullable(node.observedAt,timestamp)}}),pool:{wholeWatts:nullable(pool.wholeWatts,number),activeWatts:nullable(pool.activeWatts,number)},...(row.gaps === undefined ? {} : {gaps:array(row.gaps,gap)})}
+        const bucketAt=field("bucketAt",row.bucketAt,timestamp),pool=field("pool",row.pool,object)
+        if (new Date(bucketAt).getTime()%1000 || /\.[0-9]*[1-9][0-9]*Z$/.test(bucketAt)) return invalid("bucketAt: Expected whole UTC second")
+        return {...base,type:"metrics",bucketAt,chill_obslog_queue_length:field("chill_obslog_queue_length",row.chill_obslog_queue_length,count),chill_obslog_oldest_wait_seconds:field("chill_obslog_oldest_wait_seconds",row.chill_obslog_oldest_wait_seconds,number),workloads:field("workloads",row.workloads,value=>map(value,metric)),nodes:field("nodes",row.nodes,value=>map(value,value=>{const node=object(value);return {watts:field("watts",node.watts,value=>nullable(value,number)),observedAt:field("observedAt",node.observedAt,value=>nullable(value,timestamp))}})),pool:{wholeWatts:field("pool.wholeWatts",pool.wholeWatts,value=>nullable(value,number)),activeWatts:field("pool.activeWatts",pool.activeWatts,value=>nullable(value,number))},...(row.gaps === undefined ? {} : {gaps:field("gaps",row.gaps,value=>array(value,gap))})}
       }
       case "event": {
         return {...eventPayload(row),...base} as Envelope & LiveEvent
       }
-      case "heartbeat": return {...base,type:"heartbeat",serverAt:timestamp(row.serverAt)}
-      default:return null
+      case "heartbeat": return {...base,type:"heartbeat",serverAt:field("serverAt",row.serverAt,timestamp)}
+      default:return invalid("type: Unknown live frame type")
     }
-  } catch { return null }
+  } catch (error) { onReject?.(`${frameType}: ${error instanceof Error ? error.message : String(error)}`);return null }
 }
 export function compareAt(a:string,b:string):number {
   const normalized=(at:string)=>at.slice(0,19)+"."+(at.slice(19,-1).replace(/^\./,"")).padEnd(9,"0")
@@ -364,9 +379,11 @@ export function connectLive(token:string,read:()=>LiveState,update:(change:(stat
     current.onopen=()=>{if (socket!==current || closed) return;current.send(JSON.stringify({type:"auth",token}));touch(current)}
     current.onmessage=event=>{
       if (socket!==current || closed || blocked) return
-      const message=typeof event.data === "string" ? parseLiveMessage(event.data) : null
+      let rejection="unknown: Expected JSON text frame"
+      const message=typeof event.data === "string" ? parseLiveMessage(event.data,reason=>{rejection=reason}) : null
       if (!message || (!hello && message.type!=="hello") || (hello && message.type==="hello")) {
-        blocked=true;status("protocol-error");clearTimers();current.close(1002,"Invalid live message");return
+        if (message) rejection=`${message.type}: ${hello ? "Unexpected duplicate hello" : "Expected hello before other frames"}`
+        blocked=true;update(state=>({...state,status:"protocol-error",protocolError:rejection}));clearTimers();current.close(4002,"Invalid live message");return
       }
       touch(current)
       if (message.type === "hello") {

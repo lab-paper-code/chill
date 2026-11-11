@@ -398,17 +398,45 @@ test("additive response metadata keeps the live connection and consumed projecti
   assert.equal(store.state.events.at(-1)?.cluster?.pod?.name,"new-pod")
 })
 
-test("malformed payload closes the connection before data can enter the cache",t=>{
-  const {store,connection}=browser(t)
-  const socket=FakeSocket.sockets[0]
-  socket.open();socket.message(hello());socket.message({...snapshot(),workloads:"not an array"})
+for (const {name,payload,reason} of [
+  {name:"collection",payload:{...snapshot(),workloads:"not an array"},reason:/snapshot: workloads: Expected array/},
+  {name:"nested field",payload:{...snapshot(),actions:[{...action,expectedSource:{costID:"cost-a",reference:null,statistic:"mean",trialCount:1}}]},reason:/snapshot: actions: 0: expectedSource.reference: Expected object/},
+  {name:"unsafe counter",payload:{...metrics(1,0),workloads:{"pool-a":{...metric,received:2**53}}},reason:/metrics: workloads: pool-a: received: Expected safe integer/},
+  {name:"envelope",payload:{...snapshot(),seq:-1},reason:/snapshot: seq: Expected finite nonnegative number/},
+  {name:"hello contract",payload:{...hello(),protocol:"chill-live/2"},reason:/hello: protocol: Expected chill-live\/1/},
+  {name:"unknown type",payload:{type:"future",seq:1,at},reason:/future: type: Unknown live frame type/},
+  {name:"invalid JSON",payload:"{",reason:/unknown: .+/},
+]) test(`malformed ${name} closes with an application code and retains the parser rejection`,t=>{
+  const {store,connection,document}=browser(t)
+  const socket=FakeSocket.sockets[0],close=t.mock.method(socket,"close")
+  socket.open();socket.message(hello())
+  socket.onmessage?.({data:typeof payload==="string" ? payload : JSON.stringify(payload)})
+  const code=close.mock.calls[0]?.arguments[0]
+  assert.ok(code!==undefined && code>=4000 && code<=4999)
+  assert.notEqual(code,1002)
   assert.equal(socket.closed,true)
   assert.equal(store.state.snapshot,null)
   assert.equal(store.state.status,"protocol-error")
+  assert.match(store.state.protocolError??"",reason)
   t.mock.timers.tick(60_000)
+  document.visibilityState="hidden";document.dispatchEvent(new Event("visibilitychange"))
+  document.visibilityState="visible";document.dispatchEvent(new Event("visibilitychange"))
   assert.equal(FakeSocket.sockets.length,1)
+  assert.equal(store.state.status,"protocol-error")
+  assert.match(store.state.protocolError??"",reason)
   connection.reconnect()
   assert.equal(FakeSocket.sockets.length,2)
+})
+
+for (const duplicate of [false,true]) test(`hello ordering rejection is retained (${duplicate ? "duplicate" : "missing"})`,t=>{
+  const {store}=browser(t)
+  const socket=FakeSocket.sockets[0],close=t.mock.method(socket,"close")
+  socket.open()
+  if (duplicate) socket.message(hello())
+  socket.message(duplicate ? hello() : snapshot())
+  assert.equal(close.mock.calls[0]?.arguments[0],4002)
+  assert.equal(store.state.status,"protocol-error")
+  assert.match(store.state.protocolError??"",duplicate ? /hello: Unexpected duplicate hello/ : /snapshot: Expected hello before other frames/)
 })
 
 test("snapshot history preserves fresh/unmatched retention metadata without seeding observations",()=>{
