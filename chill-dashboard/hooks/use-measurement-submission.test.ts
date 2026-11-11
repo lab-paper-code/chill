@@ -322,6 +322,7 @@ test("P2 profile kind selector survives profile-only dependency failures and cov
     const html=renderToStaticMarkup(createElement(exports.MeasurementRequestPage as ComponentType))
     assert.match(html,/<select aria-label="측정 종류">/,dependency)
     assert.match(html,/value="dispatch-occupancy"/,dependency)
+    if(dependency==="profiles")assert.match(html,/조회 실패/,dependency)
   }
 })
 

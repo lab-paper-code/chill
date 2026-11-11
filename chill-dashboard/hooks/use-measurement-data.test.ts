@@ -37,3 +37,68 @@ test("control323: BEO paging retains later copy sources, rejects stalled/error p
     assert.equal(exports.useMeasurementPlans("ns").data,state.data,"failed refresh retains the last complete list")
   }
 })
+
+test("request profile history preserves paging, query policy and summary decoding",async()=>{
+  const require=createRequire(import.meta.url)
+  const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")+"\nexports.capture=GuidedMeasurementRequestPage"
+  const code=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const warmingRetry=()=>false,warmingDelay=()=>1000
+  class ApiError extends Error {
+    status:number
+    constructor(status:number,message:string){super(message);this.status=status}
+  }
+  type Page={profiles:{id:string;completedItems:bigint}[];page:{offset:number;limit:number;total:number;nextOffset?:number};readAt:string}
+  type Options={queryKey:string[];enabled:boolean;retry:unknown;retryDelay:unknown;queryFn:(context:{signal:AbortSignal})=>Promise<Page>}
+  for(const token of ["fixture",""])for(const outcome of ["complete","stalled","denied"]) {
+    const signal=new AbortController().signal,paths:string[]=[],failure=new Error("follow-up failed")
+    let options:Options|undefined
+    const state={error:null,isPending:true}
+    const modules:Record<string,unknown>={
+      react:{useEffect:()=>{}},
+      "next/navigation":{useSearchParams:()=>new URLSearchParams("input=form"),useRouter:()=>({})},
+      "@tanstack/react-query":{useQuery:(value:Options)=>{options=value;return state}},
+      "@/lib/client":{ApiError,warmingRetry,warmingDelay,useSession:()=>({token,config:{namespace:"ns"}}),useChillQuery:()=>({}),decodeResponse:(body:string,decoder:(text:string)=>unknown)=>{
+        assert.equal(decoder,measurementSummary.parseMeasurementJSON)
+        return decoder(body)
+      },relay:async(path:string,requestToken:string,requestSignal:AbortSignal)=>{
+        assert.equal(requestToken,token)
+        assert.equal(requestSignal,signal)
+        paths.push(path)
+        assert.ok(paths.length<=2,"stalled pagination must stop before a third request")
+        if(paths.length===2&&outcome==="denied")throw failure
+        const first=paths.length===1,offset=first?0:50,id=first?"A":"B"
+        const page={offset,limit:50,total:2,...(first||outcome==="stalled"?{nextOffset:50}:{})}
+        return {body:JSON.stringify({readProjection:{version:"measurement-summary.v2",shapes:[["id","completedItems"]],values:[{$o:[0,id,"PRECISE_INTEGER"]}]},profiles:["~0"],page,readAt:first?"first-page":"final-page"}).replace('"PRECISE_INTEGER"',"18446744073709551615")}
+      }},
+      "@/lib/measurement-summary":measurementSummary,
+      "@/hooks/use-measurement-data":{useMeasurementPlans:()=>({}),useCoverageInventory:()=>({}),useMeasurementCoverage:()=>({})},
+    }
+    const exports={} as {capture:()=>unknown}
+    new Function("require","exports",code)((name:string)=>modules[name]??(name.startsWith("@/")||name.endsWith(".css")?{}:require(name)),exports)
+    exports.capture()
+    assert.ok(options,"capture the production request-history query")
+    assert.deepEqual(options.queryKey,["chill","request-profile-history"])
+    assert.equal(options.enabled,!!token)
+    assert.equal(typeof options.retry,"function")
+    assert.equal(typeof options.retryDelay,"function")
+    assert.equal(options.retry,warmingRetry)
+    assert.equal(options.retryDelay,warmingDelay)
+    if(outcome==="complete")assert.deepEqual(await options.queryFn({signal}),{
+      profiles:[{id:"A",completedItems:18446744073709551615n},{id:"B",completedItems:18446744073709551615n}],
+      page:{offset:50,limit:50,total:2},readAt:"final-page",
+    })
+    else if(outcome==="stalled")await assert.rejects(options.queryFn({signal}),(error:unknown)=>{
+      assert.ok(error instanceof ApiError)
+      assert.equal(error.status,0)
+      assert.equal(error.message,"프로파일 페이지가 전진하지 않습니다")
+      return true
+    })
+    else await assert.rejects(options.queryFn({signal}),(error:unknown)=>error===failure,"follow-up failure must reject, not return partial [A]")
+    assert.equal(paths.length,2)
+    paths.forEach((path,index)=>{
+      const url=new URL(path,"https://local.invalid")
+      assert.equal(url.pathname,"/v1/scheduler/profiles")
+      assert.deepEqual([...url.searchParams],[["view","summary"],["summary","v2"],["limit","50"],["offset",String(index*50)]])
+    })
+  }
+})
