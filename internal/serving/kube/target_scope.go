@@ -156,43 +156,11 @@ func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate
 	policies := []string{}
 	touched := make(map[string][]string, len(selected.Routing))
 	for uid, wanted := range selected.Routing {
-		routeOnly := !servingstate.HasPhysicalWorkloadScope(parent.result.Operation.Target.Instances, parent.result.Before, parent.scope.Nodes, uid)
 		ready, newer, held, withdrawn := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 		instances := map[string]serving.SchedulerInstance{}
-		owned := map[string]bool{}
-		for _, original := range parent.result.Operation.Target.Instances {
-			if original.WorkloadUID != uid {
-				continue
-			}
-			id := original.ID
-			actual := schedulerPhysicalState(id, physical)
-			if actual != nil {
-				id = actual.ID
-			}
-			policyChanged := actual != nil && actual.Native != nil && !schedulerPolicyAcknowledged(original, actual.Native.Metadata)
-			if routeOnly || slices.Contains(parent.scope.Nodes, original.Node) || policyChanged {
-				owned[id] = true
-			}
-		}
-		for id := range parent.result.Before.Routing[uid] {
-			if routeOnly || slices.Contains(parent.scope.Instances, id) {
-				owned[id] = true
-			}
-		}
+		owned := routeOwnedDestinations(parent, uid, physical)
 		// Routing intent changes weights without granting policy or writer ownership.
-		deltaIDs := maps.Clone(owned)
-		before, final := parent.result.Before.Routing[uid], parent.result.Operation.Target.Routing[uid]
-		for _, weights := range [2]map[string]int32{before, final} {
-			for id := range weights {
-				if before[id] == final[id] {
-					continue
-				}
-				if actual := schedulerPhysicalState(id, physical); actual != nil {
-					id = actual.ID
-				}
-				deltaIDs[id] = true
-			}
-		}
+		deltaIDs := routeIntentDestinations(owned, parent.result.Before.Routing[uid], parent.result.Operation.Target.Routing[uid], physical)
 		for _, actual := range c.state.Snapshot.Instances {
 			newer[actual.ID], held[actual.ID], withdrawn[actual.ID] = c.routeInstanceFenceLocked(parent, uid, current[uid], actual)
 			if schedulerTargetReady(actual, c.state.Snapshot, physical, false) {
@@ -230,24 +198,7 @@ func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate
 			}
 		}
 		touched[uid] = servingstate.RouteWriterDestinations(owned, held)
-		// Owned weights claim their existing share first. Intent-only weights
-		// determine the ratio of the remaining share after newer writer fences.
-		rebaseCurrent := current[uid]
-		copiedCurrent := false
-		for id, weight := range delta {
-			if owned[id] {
-				continue
-			}
-			if !copiedCurrent {
-				rebaseCurrent = maps.Clone(current[uid])
-				if rebaseCurrent == nil {
-					rebaseCurrent = map[string]int32{}
-				}
-				copiedCurrent = true
-			}
-			rebaseCurrent[id] = weight
-			delete(delta, id)
-		}
+		rebaseCurrent, delta := separateRouteIntent(current[uid], delta, owned)
 		result.Routing[uid] = serving.SchedulerRebaseRouting(rebaseCurrent, delta, ready, newer)
 		ids := make([]string, 0, len(result.Routing[uid]))
 		for id := range result.Routing[uid] {
@@ -259,6 +210,74 @@ func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate
 		}
 	}
 	return result, policies, touched
+}
+
+// routeOwnedDestinations returns the destinations whose policy and route writer
+// this owner holds: its physical scope, policy changes, or every destination of
+// a route-only owner.
+func routeOwnedDestinations(parent *actionRun, uid string, physical []serving.InstanceState) map[string]bool {
+	routeOnly := !servingstate.HasPhysicalWorkloadScope(parent.result.Operation.Target.Instances, parent.result.Before, parent.scope.Nodes, uid)
+	owned := map[string]bool{}
+	for _, original := range parent.result.Operation.Target.Instances {
+		if original.WorkloadUID != uid {
+			continue
+		}
+		id := original.ID
+		actual := schedulerPhysicalState(id, physical)
+		if actual != nil {
+			id = actual.ID
+		}
+		policyChanged := actual != nil && actual.Native != nil && !schedulerPolicyAcknowledged(original, actual.Native.Metadata)
+		if routeOnly || slices.Contains(parent.scope.Nodes, original.Node) || policyChanged {
+			owned[id] = true
+		}
+	}
+	for id := range parent.result.Before.Routing[uid] {
+		if routeOnly || slices.Contains(parent.scope.Instances, id) {
+			owned[id] = true
+		}
+	}
+	return owned
+}
+
+// routeIntentDestinations adds every destination whose frozen weight the owner
+// changed between its admission routing and its final target.
+func routeIntentDestinations(owned map[string]bool, before, final map[string]int32, physical []serving.InstanceState) map[string]bool {
+	ids := maps.Clone(owned)
+	for _, weights := range [2]map[string]int32{before, final} {
+		for id := range weights {
+			if before[id] == final[id] {
+				continue
+			}
+			if actual := schedulerPhysicalState(id, physical); actual != nil {
+				id = actual.ID
+			}
+			ids[id] = true
+		}
+	}
+	return ids
+}
+
+// separateRouteIntent lets owned weights claim their share first; intent-only
+// weights set the ratio of the remaining share after newer writer fences.
+func separateRouteIntent(current, delta map[string]int32, owned map[string]bool) (map[string]int32, map[string]int32) {
+	rebaseCurrent := current
+	copied := false
+	for id, weight := range delta {
+		if owned[id] {
+			continue
+		}
+		if !copied {
+			rebaseCurrent = maps.Clone(current)
+			if rebaseCurrent == nil {
+				rebaseCurrent = map[string]int32{}
+			}
+			copied = true
+		}
+		rebaseCurrent[id] = weight
+		delete(delta, id)
+	}
+	return rebaseCurrent, delta
 }
 
 func (c *reservationState) routeInstanceFenceLocked(parent *actionRun, uid string, current map[string]int32, actual serving.SchedulerInstance) (newer, held, withdrawn bool) {

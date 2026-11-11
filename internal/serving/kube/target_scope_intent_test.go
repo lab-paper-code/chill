@@ -12,10 +12,11 @@ import (
 func TestRebasePreservesFrozenRoutingIntentOutsidePhysicalScope(t *testing.T) {
 	c, base, source := acknowledgedHandoffFixture(t)
 	uid := base.Instances[0].WorkloadUID
-	var instances []serving.SchedulerInstance
-	var all []serving.ReadyInstance
-	var profiles []serving.Profile
-	for _, id := range []string{"JetsonX", "rasp5", "JetsonO"} {
+	ids := []string{"JetsonX", "rasp5", "JetsonO"}
+	instances := make([]serving.SchedulerInstance, 0, len(ids))
+	all := make([]serving.ReadyInstance, 0, len(ids))
+	profiles := make([]serving.Profile, 0, len(ids))
+	for _, id := range ids {
 		instance := base.Instances[0]
 		profile := *instance.Profile
 		profile.ID, profile.NodeName, profile.Condition.NodeUID = id, id, id
