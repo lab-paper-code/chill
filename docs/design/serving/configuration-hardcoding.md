@@ -51,7 +51,7 @@ power 앞뒤 1분 support는 coverage 상한에 맞는 C다. 새 settings나 Dec
 
 ## 4. 기존 기동 기록 최소 보강
 
-기존 `cluster` stream의 `event:"server-start"` 행을 재사용한다. Pod UID/namespace/name은 기존 필드, process 시작 시각은 `run()`의 실제 `started`다. 추가할 측정 관련 값은 `queueLimit`=1024, `sourceIntervalNanos`=1000000000, `profileIntervalNanos`=60000000000뿐이다. 운영 overlay source2초를 선택하면 2000000000을 기록한다. 기존 append 실패→기동 실패를 유지한다. 새 scheduler startup 행은 없고 scheduler 비활성 때도 별도 행을 만들지 않는다.
+기존 `cluster` stream의 `event:"server-start"` 행을 재사용한다. Pod UID/namespace/name은 기존 필드, process 시작 시각은 `run()`의 실제 `started`다. 추가할 측정 관련 값은 `sourceIntervalNanos`=1000000000, `profileIntervalNanos`=60000000000뿐이다. gateway 큐 상한은 Workload `spec.admission.maxQueuedRequests`(기본 1024)를 Definition에 동결해 기록하며 기동 행에는 넣지 않는다. 운영 overlay source2초를 선택하면 2000000000을 기록한다. 기존 append 실패→기동 실패를 유지한다. 새 scheduler startup 행은 없고 scheduler 비활성 때도 별도 행을 만들지 않는다.
 
 startup 전용 값은 pointer/omitempty로 일반·과거 행의 부재를 보존한다. 적용 뒤 후속 append 실패가 rollback을 뜻하지 않는다.
 

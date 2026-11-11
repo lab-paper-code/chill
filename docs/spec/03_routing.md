@@ -108,6 +108,25 @@ fixed-batch는 기존 SLO 판단 예외를 유지한다. 큐 포화는 `QueueFul
 최종 기한은 수신 때 확정한 요청 lifetime이며 명시 timeout/cancel은 정상·지연 큐에
 함께 적용한다. active batch는 SLO만으로 취소하지 않고 실제 물리 완료까지 점유한다.
 
+gateway와 replay가 쓰는 `EstimateAdmission`은 native snapshot의 나이, 관측 요청,
+미관측 assignment와 새 요청을 공유 `ChooseBatch`로 진행한다. 실행 중 batch는
+BatchID별 한 번만 세고, service 경과를 조건으로 한 생존 분위수를 남은 시간으로
+쓴다. batch별 service 분위수와 수락 때 동결한 POST reserve를 합친 **판단 규칙**이며
+E2E 분위수 보장이 아니다. service 표본이 남지 않거나 필요한 입력이 없으면 판단은
+unknown이다. idle은 기존 nearest-gap 모형을 유지하며, 관측 idle 지원 범위 밖의
+예측이 거절을 결정했으면 `outsideSupport: true`를 거절 metadata에 남긴다.
+
+정상 요청과 지연 요청은 하나의 gateway 소유 큐에 보존하고 두 번의 유한 순회로
+처리한다. 공유 실행기로 갈 수 있는 다른 Workload의 정상 요청도 지연 요청보다
+먼저 처리한다. 지연 요청은 예상 완료가 가장 이른 실행기로 배정한다.
+
+HTTP 오류의 기존 `code`·`message` 필드는 유지하고 overload 거절에 `stage`,
+`policy`, 선택적 `predictedCompletionNanos`·`remainingSLONanos`를 추가한다.
+server final 행의 적용 정책은 `admissionPolicy`, 거절 결정은 `rejection`에 둔다.
+`gatewayWaitNanos`는 enqueue부터 dispatch 또는 큐 안 종료까지, `executorWaitNanos`는
+native enqueue부터 running 또는 큐 안 종료까지의 monotonic span이다. 해당 큐에
+들어가지 않았으면 필드를 생략하며, 실제 0ns 대기는 숫자 0으로 보존한다.
+
 ModelSpec firstfloor `deadlinePolicy`(drop/keep/defer, 기본 keep)와 frozen profiling
 RunConfig는 측정 provenance다. serving 요청의 정책은 이 값에서 선택하지 않는다.
 정책 소유와 저장 cutover는 [ADR 0033](../adr/0033-overload-admission.md)을 따른다.

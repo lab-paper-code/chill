@@ -490,7 +490,7 @@ evidence API 작업의 활성 수용 기준이 아니다. 미배선 구현(`e947
 
 - `SCH-71` 운영 중 조정할 serving 정책은 기존 settings API에서 조회·변경한다. 아래 필드를 생략하면 현재 기본값을 채우고 응답·판단에는 실제 선택값을 남긴다. 유효 범위의 비기본값도 실제 소비해야 하며 하나의 값만 허용하는 필드는 두지 않는다.
 - `SCH-72` 판단 적용값의 권위는 기존 Decision.Settings다. PUT 사전/후속 행을 유지하고 초기·외부 설정은 실제 사용 Decision으로 해석한다. 첫 판단 전 모든 적용 이벤트 복원·refresh 합성 행·초기 before=after 행·별도 provenance 저장소는 요구하지 않는다. 출처는 실제 보존 참조/binding 범위만 주장한다.
-- `SCH-73` 기존 cluster stream의 server-start를 재사용한다. 기존 Pod UID/namespace/name과 run()의 실제 started를 쓰고 queueLimit·sourceIntervalNanos·profileIntervalNanos만 보강한다. 기존 append 실패→기동 실패를 유지한다. 별도 scheduler startup 행은 없다. request/drain timeout·directory interval·control scope는 기존 설정 유지다.
+- `SCH-73` 기존 cluster stream의 server-start를 재사용한다. 기존 Pod UID/namespace/name과 run()의 실제 started를 쓰고 sourceIntervalNanos·profileIntervalNanos만 보강한다. gateway 큐 상한은 Workload `spec.admission.maxQueuedRequests`를 Definition에 동결한다. 기존 append 실패→기동 실패를 유지한다. 별도 scheduler startup 행은 없다. request/drain timeout·directory interval·control scope는 기존 설정 유지다.
 - `SCH-74` 추가 용량 설정은 CapacityInput·용량 행·모든 typed 소비자에 전달하며 판단 snapshot을 섞지 않는다. CI는 BEO 측정 정책, reuse는 요청 annotation, power1분은 C다. 입력 경계에서 구조·의미를 검증하며 새 바이트/hash 관문은 없다.
 
 ### 9.1 추가 settings 필드

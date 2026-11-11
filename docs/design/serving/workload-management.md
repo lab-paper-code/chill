@@ -152,7 +152,7 @@ worker duration은 monotonic, SDK `ObservedAt`은 local receipt, remote UTC는 �
 
 ### evaluation의 ChillServer 메모리와 CPU 상한
 
-완료까지 원본, 배정 후 JSON base64 본문(원본의 4/3)을 보유한다. 상한은 인스턴스 `maxQueueSize`의 합+Workload별 `--queue-limit:1024`; `maxQueueBytes:64MiB`는 아래 설정에서 제한을 더 줄이지 않는다.
+완료까지 원본, 배정 후 JSON base64 본문(원본의 4/3)을 보유한다. 상한은 인스턴스 `maxQueueSize`의 합+Workload별 `spec.admission.maxQueuedRequests`(기본 1024, Definition에 동결); `maxQueueBytes:64MiB`는 아래 설정에서 제한을 더 줄이지 않는다.
 
 | Workload | 원본 평균/최대 | 원본+본문 | queue | 최악 인스턴스/몫 | 유입 큐 몫 |
 |---|---|---|---|---|---|
@@ -205,7 +205,7 @@ POOL 전환은 신규 인스턴스 실제 준비/연결 후 route 편입, 제외
 | `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 값 serving namespace. 측정 조회/제출/삭제/profile 범위 |
 | memory limit4Gi, `goMemLimit:3GiB` | GOMEMLIMIT는 메모리 보호 설정이다. CPU request/limit·limits.cpu 기반 GOMAXPROCS는 없고 Go runtime 기본·자동 병렬성을 쓴다. 과거6CPU 수치는 당시 실행 조건의 기록이다. |
 | `goDebug:""` | 비면 미설정, evaluation `GODEBUG=gctrace=1`(GC마다 stderr1행) |
-| queue1024/request30s/drain2m | `--queue-limit,--request-timeout,--drain-timeout`; SLO timeout 아님 |
+| request30s/drain2m | `--request-timeout,--drain-timeout`; SLO timeout 아님. gateway 큐 상한은 Workload `spec.admission.maxQueuedRequests`(기본 1024) |
 | source1s/profile1m | source/profile refresh, 관측 upload1분 |
 | maxRequest8388608/maxEvidence67108864/maxQueryEvents1000 | body/evidence/raw page 상한 |
 | observationDefinitions/Outcomes `[]` | 반복 `--observation-definition,--observation-outcome` 기본 필터 |

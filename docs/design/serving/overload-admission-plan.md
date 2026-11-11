@@ -155,3 +155,20 @@ U3는 U2의 executor 거절 응답 계약을 쓰므로 U2 뒤다. U5·U7은 U3�
 ## 6. main 실수용
 
 control378과 같은 E5, IC Workload `admission.policy=Reject`. 판정: 과부하 구간 기한 내 성공률·goodput, 결과 분류(offered 합 일치), 완료 latency 분포, 정책별 거절 사유·대기 분포, 첫 60초 실패 수(control378 939). 같은 조건 `Delay` 한 번으로 늦은 완료 비중을 비교한다.
+
+## 7. 구현 중 확인한 사실: profile과 실제 serving 처리 시간 차이
+
+완료 가능성 판단(gateway 예측·executor 재확인)과 계획기 replay는 모두 profile의 service 분포를 쓴다. control378 jetsono IC에서 둘이 크게 다르다.
+
+| 항목 | batch 16 처리 시간 |
+|---|---:|
+| profile `chill-system/seq-jetsono-ic-cpu-mode-15w/9d509455…`, nearest busy-gap 분위수 | 0.503초 (capacity 31.8 req/s) |
+| control378 excess 2.5–30초 실제 batch 39개(native running→finished) 중앙값 | 0.690초 (preprocess 303ms + backend 351ms, 지속 22.5 req/s) |
+
+실제가 약 37% 길다. 근거: `ops/pools-deploy/intent/overload-admission/jetsono-ic-control378-excess-batches.json`, `jetsono-ic-profile-catalog-row.json`.
+
+영향:
+- 계획기는 jetsono 한 instance가 31 req/s를 감당한다고 보았을 수 있다. control378 첫 판단의 미증설(control-reaction-plan §2.3 D0)과 연결될 가능성이 있다 [INFERENCE].
+- admission은 profile 기준으로 판단하므로, 실제 처리가 더 느리면 완료 가능하다고 보고 받아들인 요청이 SLO를 넘길 수 있다. executor 재확인도 같은 profile을 쓰므로 이 오차를 잡지 못한다.
+
+이 작업은 admission 구조를 profile과 일관되게 구현하고 검증한다(과부하 fixture는 profile 처리 시간으로 control378의 과부하 비율 1.38을 재현한다). profile–serving 차이의 원인(측정 조건, preprocess 경합, 전력 모드)은 별도 단위로 조사한다. 실측(§6)에서 실행된 요청의 SLO 초과 비율이 이 차이의 크기를 보여 준다.
