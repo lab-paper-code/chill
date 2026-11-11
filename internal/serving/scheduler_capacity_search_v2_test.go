@@ -177,7 +177,7 @@ func TestCapacityFunnelPostFilterReverts(t *testing.T) {
 	alternative.operationBounds = nil
 	alternative.record.Key = "alternative"
 	p.plans[0] = append(p.plans[0], &alternative)
-	p.keepWatts = p.evaluate([]int{0}, 0).joules / p.period
+	p.keepWatts = p.evaluate([]int{0}, 0).joules / p.periodSeconds
 	a, b := p.evaluate([]int{1}, 0), p.evaluate([]int{2}, 0)
 	if !p.minimumGain(a).withinUncertainty || p.minimumGain(b).withinUncertainty {
 		t.Fatal("fixture must reject the uncertain nominal winner and retain the alternative")
@@ -207,7 +207,7 @@ func capacityV2MultiOptionFixture() *capacityPlanner {
 	alternative.items = [][]capacityItem{{{id: "faster", routingWeight: 40, throughput: 40, e: .5}}}
 	alternative.record.Key, alternative.after = "faster", 26
 	p.plans[0] = append(p.plans[0], &alternative)
-	p.settings.ComparisonPeriod, p.period = time.Second, 1
+	p.settings.ComparisonPeriod, p.periodSeconds = time.Second, 1
 	capacityRawPlannerForTest(p)
 	return p
 }
@@ -283,7 +283,7 @@ func TestCapacitySearchV2Steps(t *testing.T) {
 			var previous SchedulerPlanSearchStep
 			for _, step := range p.searched.Steps {
 				if step.Start != capacitySearchStartKeep && step.Start != "empty" && step.Start != "priced" ||
-					step.ComparisonWindow != time.Duration(p.period*1e9) {
+					step.ComparisonWindow != time.Duration(p.periodSeconds*1e9) {
 					t.Fatalf("invalid start/window: %+v", step)
 				}
 				pricedOrigin = pricedOrigin || step.Start == "priced" && step.K == 0
@@ -547,7 +547,7 @@ func TestCapacityV2DeltaDoesNotConsumeExactReplay(t *testing.T) {
 		t.Fatal("scalar Delta invoked demand replay")
 	}
 	evaluator := newCapacityExact(planner)
-	exactKeep := planner.evaluateCurrentKeep(planner.period)
+	exactKeep := planner.evaluateCurrentKeep(planner.periodSeconds)
 	if cached() != 1 || len(exactKeep.feedback) == 0 {
 		t.Fatalf("keep did not consume common replay: %+v", exactKeep)
 	}
@@ -582,14 +582,14 @@ func TestCapacityExactKeepPreservesActualRoutesAndEnergyOffset(t *testing.T) {
 	capacityLoad(settings, &snapshot, definition, 50)
 	capacityFeedbackForTest(settings, &snapshot)
 	planner := capacityPlannerForTest(t, settings, snapshot)
-	actual := planner.evaluateCurrentKeep(planner.period)
+	actual := planner.evaluateCurrentKeep(planner.periodSeconds)
 	selected := planner.evaluate(make([]int, len(planner.plans)), 0)
 	if actual.keep != true || selected.keep || !selected.better(&actual) || selected.keepJoules != actual.joules {
 		t.Fatalf("actual keep/reroute distinction lost: actual=%+v selected=%+v", actual, selected)
 	}
 	evaluator := newCapacityExact(planner)
 	evaluator.SeedKeep(selected)
-	if planner.keepWatts != actual.joules/planner.period {
+	if planner.keepWatts != actual.joules/planner.periodSeconds {
 		t.Fatal("reroute replaced actual keep energy offset")
 	}
 	if err := planner.testDecisionRates(selected); err != nil {

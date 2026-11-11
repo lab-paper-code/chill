@@ -43,7 +43,7 @@ func capacityDeltaAssert(t testing.TB, p *capacityPlanner, s *searchState, n, q 
 	t.Helper()
 	key := s.delta(n, q)
 	choice := capacityDeltaChoice(s.table, key.choice)
-	energy := p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.period)
+	energy := p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.periodSeconds)
 	physicalKeep := true
 	for node, j := range choice {
 		physicalKeep = physicalKeep && p.plans[node][j].keep
@@ -135,7 +135,7 @@ func capacityDeltaWalk(t testing.TB, p *capacityPlanner, rng *rand.Rand) {
 
 // Tiny fixtures are scalar/energy-only; callers must not run demand replay.
 func capacityDeltaTiny(rates []float64, rate float64) *capacityPlanner {
-	p := &capacityPlanner{ctx: context.Background(), settings: capacityTestSettings, period: 60}
+	p := &capacityPlanner{ctx: context.Background(), settings: capacityTestSettings, periodSeconds: 60}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{Percentile: 100, TargetLatency: time.Second}}, rate: rate}}
 	for n, mu := range rates {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
@@ -150,7 +150,7 @@ func TestCapacityDeltaClampBoundaries(t *testing.T) {
 	beforePre, afterPost, beyondH := 0, 0, 0
 	for _, horizon := range []float64{1, 10, 30} {
 		p := e5Planner(map[int]float64{0: 20, 1: 40, 2: .3}, evaluationNodes(), e5Start)
-		p.period = horizon
+		p.periodSeconds = horizon
 		tab := p.planTable()
 		choice := make([]int, len(p.plans))
 		for n := range choice {

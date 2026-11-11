@@ -27,7 +27,7 @@ func TestSchedulerTransitionReserveSettings(t *testing.T) {
 }
 
 func TestCapacityCombinedHorizonBoundary(t *testing.T) {
-	p := &capacityPlanner{period: 60, settings: capacityTestSettings}
+	p := &capacityPlanner{periodSeconds: 60, settings: capacityTestSettings}
 	for n := range 2 {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: string(rune('a' + n))}})
 		p.plans = append(p.plans, []*capacityPlan{{keep: true, record: SchedulerNodePlan{Eligible: true}}, {record: SchedulerNodePlan{Eligible: true}}})
@@ -36,18 +36,18 @@ func TestCapacityCombinedHorizonBoundary(t *testing.T) {
 	p.plans[0][1].preMax = 10
 	p.plans[1][1].postMax = 51
 	for _, choice := range [][]int{{1, 0}, {0, 1}} {
-		res := p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.period)
+		res := p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.periodSeconds)
 		if res.exclusion != "" {
 			t.Fatalf("individual chain rejected: %s", res.exclusion)
 		}
 	}
 	choice := []int{1, 1}
-	res := p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.period)
+	res := p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.periodSeconds)
 	if res.exclusion != "" || !p.admits(&res) || res.period != 60 {
 		t.Fatal("combined chain changed the common horizon or eligibility")
 	}
 	p.plans[1][1].postMax = 50
-	res = p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.period)
+	res = p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.periodSeconds)
 	if res.exclusion != "" || !p.admits(&res) || res.period != 60 {
 		t.Fatal("exact horizon boundary changed the common window rule")
 	}

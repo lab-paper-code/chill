@@ -121,17 +121,17 @@ func TestCapacityDeltaRetainedArithmetic(t *testing.T) {
 	if math.Abs(key.joules-exact.joules) > 1e-9 {
 		t.Fatal("retained fold or clamped Node energy differs")
 	}
-	nodeJ := tab.energy(0, key.route, p.period)
-	mainJ := p.plans[0][0].energy(key.route, p.period)
+	nodeJ := tab.energy(0, key.route, p.periodSeconds)
+	mainJ := p.plans[0][0].energy(key.route, p.periodSeconds)
 	if nodeJ < 0 || nodeJ != mainJ {
 		t.Fatalf("clamped node J=%.17g main J=%.17g", nodeJ, mainJ)
 	}
-	t.Logf("r=%g H=%g H-r<tauPost: main=delta Node J=%.17g max-J-diff=0", key.route, p.period, nodeJ)
+	t.Logf("r=%g H=%g H-r<tauPost: main=delta Node J=%.17g max-J-diff=0", key.route, p.periodSeconds, nodeJ)
 }
 
 func TestCapacityEnergyExplicitRouteBeforePreparation(t *testing.T) {
 	p := capacityDeltaTiny([]float64{4, 5}, 2)
-	p.period = 3
+	p.periodSeconds = 3
 	plan := *p.plans[0][0]
 	plan.keep, plan.preMean, plan.preMax, plan.postMean = false, 5, 6, 7
 	plan.preJ, plan.postJ, plan.mid, plan.after = 11, 13, 17, 19
@@ -139,7 +139,7 @@ func TestCapacityEnergyExplicitRouteBeforePreparation(t *testing.T) {
 	tab := p.planTable()
 	q := tab.byPlan[0][1]
 	for _, route := range []float64{0, 2, 6, 10} {
-		if got, want := tab.energy(q, route, p.period), plan.energy(route, p.period); got != want || got < 0 {
+		if got, want := tab.energy(q, route, p.periodSeconds), plan.energy(route, p.periodSeconds); got != want || got < 0 {
 			t.Fatalf("route=%g scalar energy=%g node energy=%g", route, got, want)
 		}
 	}

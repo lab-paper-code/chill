@@ -268,11 +268,11 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 		p.plans = append(p.plans, plans)
 		p.compared = append(p.compared, true)
 	}
-	p.period = s.ComparisonPeriod.Seconds()
+	p.periodSeconds = s.ComparisonPeriod.Seconds()
 	p.snapshot.Routing = p.keep.Routing
 	p.keep.Nodes, p.keep.Instances = p.snapshot.Nodes, p.snapshot.Instances
 	// The baseline uses only the unchanged energy equations, without replay.
-	p.keepWatts = p.evaluateEnergyAtWindow(make([]int, len(p.plans)), 0, nil, p.period).joules / p.period
+	p.keepWatts = p.evaluateEnergyAtWindow(make([]int, len(p.plans)), 0, nil, p.periodSeconds).joules / p.periodSeconds
 	return p
 }
 

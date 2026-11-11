@@ -179,7 +179,7 @@ func TestOperationCostHorizonIsScoredOverCommonWindow(t *testing.T) {
 }
 
 func TestOperationCostCandidatesShareDecisionHorizon(t *testing.T) {
-	p := &capacityPlanner{period: 600, keepWatts: 10, compared: []bool{true}}
+	p := &capacityPlanner{periodSeconds: 600, keepWatts: 10, compared: []bool{true}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "node"}}}
 	p.plans = [][]*capacityPlan{{
 		{keep: true, before: 10},
@@ -187,9 +187,9 @@ func TestOperationCostCandidatesShareDecisionHorizon(t *testing.T) {
 		{preMax: 100, preMean: 100, preJ: 1000, after: 5},
 		{preMax: 700, preMean: 700, preJ: 7000, postJ: 50, after: 5},
 	}}
-	keep := p.evaluateEnergyAtWindow([]int{0}, 0, nil, p.period)
+	keep := p.evaluateEnergyAtWindow([]int{0}, 0, nil, p.periodSeconds)
 	for _, j := range []int{1, 2, 3} {
-		res := p.evaluateEnergyAtWindow([]int{j}, p.routeOf([]int{j}), nil, p.period)
+		res := p.evaluateEnergyAtWindow([]int{j}, p.routeOf([]int{j}), nil, p.periodSeconds)
 		if res.period != 600 || keep.joules != p.keepWatts*res.period {
 			t.Fatalf("candidate %d: H=%g keep=%g, want H=600 keep=%g", j, res.period, keep.joules, p.keepWatts*res.period)
 		}
@@ -290,7 +290,7 @@ func TestOperationCostLiveSnapshotReplay(t *testing.T) {
 	beforeEligible := 0
 	for _, plans := range before.plans {
 		for _, p := range plans {
-			if p.preMax+p.postMax > before.period {
+			if p.preMax+p.postMax > before.periodSeconds {
 				p.record.Eligible = false
 			}
 			if p.record.Eligible {

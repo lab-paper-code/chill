@@ -151,7 +151,7 @@ type capacityBuilder struct {
 
 // capacityWindowResult includes energy only for complete replay populations.
 type capacityWindowResult struct {
-	latency       float64
+	latencyMS     float64
 	requestJoules float64
 	requests      int
 	met           bool
@@ -270,7 +270,7 @@ func (b *capacityBuilder) judge(ctx context.Context, lambda float64) (CapacityJu
 		if err != nil {
 			return j, err
 		}
-		j.PercentileMS = append(j.PercentileMS, window.latency)
+		j.PercentileMS = append(j.PercentileMS, window.latencyMS)
 		requestJoules += window.requestJoules
 		requests += window.requests
 		if window.met {
@@ -320,7 +320,7 @@ func (s *schedulerReplayState) capacityWindowFailed() bool {
 		if r.completed {
 			end = r.completion
 		}
-		if r.expired || r.dropped || r.failed || r.accountedAge+end-r.arrival > float64(limit.slo.TargetLatency) {
+		if r.expired || r.dropped || r.failed || r.accountedAgeNanos+end-r.arrival > float64(limit.slo.TargetLatency) {
 			r.capacityMiss = true
 			limit.missed++
 		}
@@ -393,17 +393,17 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	}
 	if limit.failed {
 		// Partial energy is excluded because the request population is incomplete.
-		return capacityWindowResult{latency: -1}, nil
+		return capacityWindowResult{latencyMS: -1}, nil
 	}
 	if len(estimate.Reasons) != 0 {
 		return capacityWindowResult{}, fmt.Errorf("capacity replay: %s", strings.Join(estimate.Reasons, ", "))
 	}
-	result := capacityWindowResult{latency: -1, requestJoules: limit.requestJoules, requests: n}
+	result := capacityWindowResult{latencyMS: -1, requestJoules: limit.requestJoules, requests: n}
 	for _, e := range estimate.SLO {
 		if e.UID != w.UID || e.ExpectedNanos == nil {
 			continue
 		}
-		result.latency = *e.ExpectedNanos / 1e6
+		result.latencyMS = *e.ExpectedNanos / 1e6
 		result.met = *e.ExpectedNanos <= float64(w.SLO.TargetLatency)
 		return result, nil
 	}

@@ -101,7 +101,7 @@ func SchedulerTargetAdmission(ctx context.Context, settings SchedulerSettings, s
 	if bridge != nil {
 		route = bridge.route
 	}
-	energy := p.evaluateEnergyForRoutes(choice, route, bridge, p.period, target.Routing)
+	energy := p.evaluateEnergyForRoutes(choice, route, bridge, p.periodSeconds, target.Routing)
 	if !schedulerAdmissionSameTarget(p.candidate(energy), target) {
 		return "TargetRouteUnavailable", nil
 	}
@@ -109,14 +109,14 @@ func SchedulerTargetAdmission(ctx context.Context, settings SchedulerSettings, s
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	result.keepJoules = p.keepWatts * p.period
+	result.keepJoules = p.keepWatts * p.periodSeconds
 	if !p.admits(&result) {
 		if result.exclusion != "" {
 			return result.exclusion, nil
 		}
 		return "TargetPhysicalAdmissionRejected", nil
 	}
-	actual := p.evaluateCurrentKeep(p.period)
+	actual := p.evaluateCurrentKeep(p.periodSeconds)
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

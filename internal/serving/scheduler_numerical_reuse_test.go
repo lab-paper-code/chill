@@ -16,7 +16,7 @@ func TestNumericalReplayBothSearchConsumers(t *testing.T) {
 			settings, snapshot, _ := capacityE1Fixture()
 			settings.PlanSearchStrategy, settings.PlanSearchWorkers = strategy, 1
 			p := capacityPlannerForTest(t, settings, snapshot)
-			keep := p.evaluateCurrentKeep(p.period)
+			keep := p.evaluateCurrentKeep(p.periodSeconds)
 			slow := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"lut": "profile@lut-fixed/b1/w1"}), 20.2)
 			fast := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"genesis3": "profile@genesis3-fixed/b1/w1"}), 10.7)
 			if slow.joules >= fast.joules || !fast.better(&slow) {

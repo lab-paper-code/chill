@@ -1021,7 +1021,7 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int) *capacityPlanne
 		p.plans = append(p.plans, plans)
 		p.compared = append(p.compared, len(plans) > 1)
 	}
-	p.period = p.settings.ComparisonPeriod.Seconds()
+	p.periodSeconds = p.settings.ComparisonPeriod.Seconds()
 	capacityRawPlannerForTest(p)
 	return p
 }
@@ -1066,7 +1066,7 @@ func TestCapacitySearchMatchesBruteForce(t *testing.T) {
 // can serve κ 30 alone at 25 W and Nodes 1 and 2 can empty. Changing one or
 // two Nodes loses κ or costs more; changing all three saves 5 W.
 func capacityThreeNodeSwap() *capacityPlanner {
-	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
+	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 60, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 29}}
 	for n := range 3 {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
@@ -1120,7 +1120,7 @@ func TestCapacitySearchThreeNodesFindsWhatTwoMiss(t *testing.T) {
 // capacityTwinSwap saves gain J over T=60s and carries a deterministic
 // operation bound. Profiles supply nominal energy only.
 func capacityTwinSwap(gain, bound float64) *capacityPlanner {
-	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
+	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 60, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 10}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
 	a, b := SchedulerInstance{ID: "a"}, SchedulerInstance{ID: "b"}
@@ -1155,7 +1155,7 @@ func TestCapacityTransitionNeedsGainBeyondDeterministicBound(t *testing.T) {
 
 func capacityRecoverySwapForTest(gain, bound float64) *capacityPlanner {
 	p := capacityTwinSwap(gain, bound)
-	p.settings.ComparisonPeriod, p.period = time.Second, 1
+	p.settings.ComparisonPeriod, p.periodSeconds = time.Second, 1
 	p.plans[0][0].items[0][0].routingWeight = 1
 	p.plans[0][0].items[0][0].throughput = 1
 	capacityRawPlannerForTest(p)
@@ -1348,7 +1348,7 @@ func TestCapacityEmptiedStartObeysReplicasOff(t *testing.T) {
 // emptied, four changed Nodes, beyond k = 3 from keep. The second start, every
 // Node emptied, reaches it in one step.
 func TestCapacitySearchEmptyStartFindsFourNodeChange(t *testing.T) {
-	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
+	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 60, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 39.5}}
 	for n := range 4 {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
@@ -1420,7 +1420,7 @@ func TestCapacitySearchBudgetCutRetainsAcceptedSteps(t *testing.T) {
 	p := capacityTwinSwap(100, 0)
 	p.settings.PlanSearchWorkers = 1
 	deadline := time.Now().Add(time.Second)
-	changed := p.evaluateEnergyAtWindow([]int{1}, 0, nil, p.period)
+	changed := p.evaluateEnergyAtWindow([]int{1}, 0, nil, p.periodSeconds)
 	p.ctx = &capacitySearchDeadlineContext{Context: context.Background(), deadline: deadline, planner: p, changedKey: changed.key}
 	best, err := p.search(deadline)
 	if err != nil || best.keep || !p.searched.BudgetCut {
@@ -1608,7 +1608,7 @@ func TestCapacityQueuedBacklogFailsKeep(t *testing.T) {
 // backlog; queued requests affect the SLO judgment, not request energy.
 func TestCapacityBacklogDoesNotChangeWeightsOrRequestEnergy(t *testing.T) {
 	support := []float64{42.01676682274319, 48.2933028258133, 114.5538148895834, 144.47154833104395}
-	p := &capacityPlanner{ctx: context.Background(), period: 147, settings: capacityTestSettings}
+	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 147, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: 861 * time.Millisecond}}, rate: 12.8, queued: 160}}
 	choice := []int{}
 	for n, k := range support {
@@ -1761,8 +1761,8 @@ func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 	}
 	retained := min(150.0, res.sums[0][1])
 	want := retained*10*capacityInputEnergy(snap.Instances[0]) + (150-retained)*10*mean + 150*(res.period-10)*mean
-	if p.period != 60 || math.Abs(res.joules-node-want) > 1e-6 {
-		t.Fatalf("request energy %g, want %g (T %g)", res.joules-node, want, p.period)
+	if p.periodSeconds != 60 || math.Abs(res.joules-node-want) > 1e-6 {
+		t.Fatalf("request energy %g, want %g (T %g)", res.joules-node, want, p.periodSeconds)
 	}
 }
 
@@ -1999,7 +1999,7 @@ func TestCapacityPlannerDecisionIgnoresInputOrder(t *testing.T) {
 
 // §9 6 기간과 기록: an exact tie keeps the current configuration.
 func TestCapacityExactTieKeepsCurrent(t *testing.T) {
-	p := &capacityPlanner{ctx: context.Background(), period: 60, settings: capacityTestSettings}
+	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 60, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 50}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
 	item := capacityItem{id: "i", routingWeight: 100, throughput: 100, e: 1, weight: 1}
@@ -2044,7 +2044,7 @@ func TestCapacityUnroutedTwinKeepsCurrent(t *testing.T) {
 func TestCapacityProportionalWeightsIgnoreDemandAndBacklog(t *testing.T) {
 	ids := []string{"q1", "lut", "g3", "opi"}
 	support := []float64{25.288198615188904, 25.68831509322024, 70.93509923703007, 7.53273799179367}
-	p := &capacityPlanner{ctx: context.Background(), period: 152, settings: capacityTestSettings}
+	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 152, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: 971 * time.Millisecond}}}}
 	p.keep.Routing = map[string]map[string]int32{"w": {"q1": 643, "lut": 357}}
 	for n, id := range ids {
@@ -2060,7 +2060,7 @@ func TestCapacityProportionalWeightsIgnoreDemandAndBacklog(t *testing.T) {
 		queued int
 	}{{39.32, 0}, {40.1, 52}, {39.32, 0}, {39.43, 3}, {40.73, 0}, {39.83, 1}, {40.23, 2}} {
 		p.ws[0].rate, p.ws[0].queued = tick.rate, tick.queued
-		res := p.evaluateEnergyAtWindow(make([]int, len(ids)), 0, nil, p.period)
+		res := p.evaluateEnergyAtWindow(make([]int, len(ids)), 0, nil, p.periodSeconds)
 		if want := map[string]int32{"q1": 195, "lut": 198, "g3": 549, "opi": 58}; !maps.Equal(res.weights[0], want) {
 			t.Fatalf("λ %g q %d: weights %v, want %v", tick.rate, tick.queued, res.weights[0], want)
 		}

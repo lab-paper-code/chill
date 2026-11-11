@@ -43,7 +43,7 @@ func TestCapacityEveryProfileVariantRetained(t *testing.T) {
 
 func TestCapacityDeltaFrozen130And190ms(t *testing.T) {
 	p := capacityDeltaTiny([]float64{50}, 10)
-	p.period, p.ws[0].queued, p.ws[0].totalNanos = 1, 2, 20e6
+	p.periodSeconds, p.ws[0].queued, p.ws[0].totalNanos = 1, 2, 20e6
 	p.ws[0].d.SLO.TargetLatency = 100 * time.Millisecond
 	base := p.plans[0][0]
 	for _, spec := range []struct{ mu, service float64 }{{50, 20e6}, {25, 40e6}} {

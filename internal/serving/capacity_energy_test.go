@@ -34,16 +34,16 @@ func TestCapacityJudgmentEnergyUsesCompleteWindows(t *testing.T) {
 	s.CapacityWindows, s.CapacityPassingWindows = 3, 2
 	b := capacityBuilder{settings: s, percentile: 95, replay: func(_ context.Context, _ float64, n, seed int) (capacityWindowResult, error) {
 		if seed == 1 {
-			return capacityWindowResult{latency: -1}, nil
+			return capacityWindowResult{latencyMS: -1}, nil
 		}
-		return capacityWindowResult{latency: 1, requestJoules: float64(seed * n), requests: n, met: true}, nil
+		return capacityWindowResult{latencyMS: 1, requestJoules: float64(seed * n), requests: n, met: true}, nil
 	}}
 	j, err := b.judge(context.Background(), 1)
 	if err != nil || j.EnergyPerInputJoules != 2.5 || len(j.PercentileMS) != 3 {
 		t.Fatalf("exclude incomplete window from energy and population: %+v, %v", j, err)
 	}
 	b.replay = func(context.Context, float64, int, int) (capacityWindowResult, error) {
-		return capacityWindowResult{latency: -1}, nil
+		return capacityWindowResult{latencyMS: -1}, nil
 	}
 	j, err = b.judge(context.Background(), 1)
 	if err != nil || j.EnergyPerInputJoules != 0 {

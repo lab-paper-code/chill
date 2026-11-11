@@ -330,7 +330,7 @@ type capacityPlanner struct {
 	index                    map[string]int
 	plans                    [][]*capacityPlan // per Node; plans[n][0] is keep
 	compared                 []bool
-	period                   float64
+	periodSeconds            float64
 	keepWatts                float64 // keep energy is linear in the common comparison window
 	examined                 int
 	searched                 SchedulerPlanSearch

@@ -125,7 +125,7 @@ func TestFeedbackConsumerAllowedTailReachesBothPlannerSearches(t *testing.T) {
 			settings.PlanSearchStrategy = strategy
 			settings.AutonomousWorkloads = []string{snapshot.Workloads[0].UID}
 			planner := capacityPlannerForTest(t, settings, snapshot)
-			keep := planner.evaluateCurrentKeep(planner.period)
+			keep := planner.evaluateCurrentKeep(planner.periodSeconds)
 			chosen, err := planner.search(time.Now().Add(time.Minute))
 			if err != nil || !keep.feasible || !chosen.feasible || chosen.exclusion != "" || chosen.joules > keep.joules {
 				t.Fatalf("allowed tail lost feasibility or energy order: keep=%+v chosen=%+v err=%v", keep, chosen, err)
@@ -175,7 +175,7 @@ func TestFeedbackConsumerCapacityWindowAllowsConfiguredTail(t *testing.T) {
 			if err != nil || window.met != tc.met {
 				t.Fatalf("capacity consumer rejected allowed tail or admitted excess: %+v %v", window, err)
 			}
-			if tc.met && (window.requests != n || window.latency != 1 || window.requestJoules != float64(n-tc.misses)) {
+			if tc.met && (window.requests != n || window.latencyMS != 1 || window.requestJoules != float64(n-tc.misses)) {
 				t.Fatalf("passing window lost full population or success-only evidence: %+v", window)
 			}
 		})

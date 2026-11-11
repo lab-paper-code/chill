@@ -312,11 +312,11 @@ func (s *schedulerReplayState) capturePotential(request *schedulerReplayRequest,
 func (s *schedulerReplayState) potentialLatency(instance *schedulerReplayInstance, request *schedulerReplayRequest, wait float64) float64 {
 	if request.returning {
 		if request.source.NativeOutcome == "" || request.source.NativeOutcome == "completed" {
-			return request.accountedAge + request.completion - request.arrival
+			return request.accountedAgeNanos + request.completion - request.arrival
 		}
 		return math.Inf(1)
 	}
-	base := request.accountedAge + s.now - request.arrival + wait + request.marginNanos
+	base := request.accountedAgeNanos + s.now - request.arrival + wait + request.marginNanos
 	residual := 0.0
 	if len(instance.batch) > 0 {
 		residual = max(0, instance.finish-s.now)
@@ -344,7 +344,7 @@ func (s *schedulerReplayState) potentialLatency(instance *schedulerReplayInstanc
 		service, support, ok := batch.ServiceDistribution.QuantileNanos(gap, request.source.Definition.SLO.Percentile)
 		s.out.conditional.record(gap, support)
 		if ok {
-			best = min(best, base+float64(service)+float64(batch.Batch)*instance.occupancy)
+			best = min(best, base+float64(service)+float64(batch.Batch)*instance.occupancyNanos)
 		}
 	}
 	return best

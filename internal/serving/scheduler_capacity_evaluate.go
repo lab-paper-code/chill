@@ -247,7 +247,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 	}
 	res := p.evaluateAtRoute(choice, r, bridge)
 	if slices.IndexFunc(choice, func(j int) bool { return j != 0 }) < 0 {
-		actual := p.evaluateCurrentKeep(p.period)
+		actual := p.evaluateCurrentKeep(p.periodSeconds)
 		if !res.better(&actual) {
 			return actual
 		}
@@ -255,8 +255,8 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 	return res
 }
 func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *schedulerBridgeSchedule) capacityResult {
-	res := p.evaluateAtWindow(choice, r, bridge, p.period)
-	res.keepJoules = p.keepWatts * p.period
+	res := p.evaluateAtWindow(choice, r, bridge, p.periodSeconds)
+	res.keepJoules = p.keepWatts * p.periodSeconds
 	if res.keep {
 		res.keepJoules = res.joules
 	}

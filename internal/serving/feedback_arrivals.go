@@ -57,7 +57,7 @@ func (s *schedulerReplayState) feedbackArrivalRequest(source SchedulerRequest, i
 	return &schedulerReplayRequest{
 		source: source, identity: identity, arrival: at,
 		native: math.Inf(1), expires: math.Inf(1),
-		preNanos: pre, accountedAge: pre, marginNanos: feedback.PostNanos,
+		preNanos: pre, accountedAgeNanos: pre, marginNanos: feedback.PostNanos,
 	}
 }
 

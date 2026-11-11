@@ -157,7 +157,7 @@ func (s *schedulerReplayState) completeExecution() {
 			}
 			key := r.identity
 			if !r.expired && !r.dropped && !r.failed {
-				latency := r.accountedAge + r.completion - r.arrival
+				latency := r.accountedAgeNanos + r.completion - r.arrival
 				s.out.samples[key] = append(s.out.samples[key], latency)
 				if s.out.outcomes[key] == nil {
 					s.out.outcomes[key] = map[string]int{}
@@ -235,7 +235,7 @@ func (s *schedulerReplayState) receiveNative() {
 		if r.dispatched && !r.returning && !r.completed && r.native <= s.now {
 			r.native = math.Inf(1)
 			r.queueAt = s.now
-			r.nativeAge = -s.now
+			r.nativeAgeNanos = -s.now
 			i := s.byID[r.source.Instance]
 			i.queue = append(i.queue, r)
 			uid := r.source.Definition.UID
@@ -289,7 +289,7 @@ func (s *schedulerReplayState) nativeRequestState(i *schedulerReplayInstance, r 
 	} else if r.deferred {
 		phase = phaseDeferred
 	}
-	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: r.marginNanos / 1e6, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now + r.nativeAge) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
+	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: r.marginNanos / 1e6, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now + r.nativeAgeNanos) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
 }
 
 func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
@@ -376,7 +376,7 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 			// Trace gap selects S; arrivals/queue already supplied the gap.
 			// Retain the current occupancy model without treating it as native S.
 			i.nativeFinish = s.now + duration
-			i.finish = i.nativeFinish + i.occupancy*float64(len(i.batch))
+			i.finish = i.nativeFinish + i.occupancyNanos*float64(len(i.batch))
 			s.addBatchEnergy(i, b, duration)
 			break
 		}

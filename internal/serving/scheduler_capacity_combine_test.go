@@ -81,7 +81,7 @@ func TestCapacityCombineFrozenProduct(t *testing.T) {
 func TestCapacityCombineMatchesFrozenExhaustiveOracle(t *testing.T) {
 	for _, horizon := range []float64{1, 10, 30} {
 		p := e5Planner(map[int]float64{0: 20, 1: 40}, evaluationNodes(), e5Start)
-		p.period = horizon
+		p.periodSeconds = horizon
 		tab := p.planTable()
 		problem := p.scalarProblem(tab, time.Time{})
 		candidates, stats := v2.Candidates(problem, problem.Table, 0, 16, 0, time.Time{})

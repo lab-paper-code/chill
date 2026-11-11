@@ -92,7 +92,7 @@ func (s *searchState) delta(n, q int) orderKey {
 	key.feasible, key.final, key.keep, key.searchable, key.bounded = true, true, true, true, true
 	key.weightsExceeded, key.unroutedPrepare = false, false
 	key.joules, key.route, key.countExcess = 0, 0, 0
-	key.period, key.keepJoules = p.period, p.keepWatts*p.period
+	key.period, key.keepJoules = p.periodSeconds, p.keepWatts*p.periodSeconds
 	for node, current := range s.choice {
 		if node == n {
 			current = q
@@ -106,7 +106,7 @@ func (s *searchState) delta(n, q int) orderKey {
 	}
 	for node, current := range key.choice {
 		if p.compared[node] {
-			key.joules += t.energy(current, key.route, p.period)
+			key.joules += t.energy(current, key.route, p.periodSeconds)
 		}
 	}
 	total := s.total + t.others[q] - t.others[s.choice[n]]
@@ -118,7 +118,7 @@ func (s *searchState) delta(n, q int) orderKey {
 		count := sum.count + sum.pending
 		key.bounded = key.bounded && count <= p.settings.MaxReplicas && (p.settings.Controls.Replicas || count == ws.current)
 		key.countExcess += max(0, count-p.settings.MaxReplicas)
-		excess, eligible := capacityHeuristic(ws, sum.routingRate, sum.retainedRoutingRate, sum.serviceNanos, key.route, p.period)
+		excess, eligible := capacityHeuristic(ws, sum.routingRate, sum.retainedRoutingRate, sum.serviceNanos, key.route, p.periodSeconds)
 		key.excesses[t.excessIndex[w]], key.satisfied[w] = excess, excess == 0 && eligible
 		key.demand[w], key.supply[w] = ws.rate, sum.routingRate
 		key.feasible = key.feasible && key.satisfied[w]
@@ -134,8 +134,8 @@ func (s *searchState) delta(n, q int) orderKey {
 		if sum.retainedWeight > 0 {
 			initial = min(ws.rate, sum.retainedRoutingRate) * sum.retainedEnergy / sum.retainedWeight
 		}
-		before := min(key.route, p.period)
-		key.joules += initial*before + max(0, ws.rate-sum.retainedRoutingRate)*before*mean + ws.rate*mean*max(0, p.period-key.route)
+		before := min(key.route, p.periodSeconds)
+		key.joules += initial*before + max(0, ws.rate-sum.retainedRoutingRate)*before*mean + ws.rate*mean*max(0, p.periodSeconds-key.route)
 	}
 	key.bounded = key.bounded && total <= p.settings.MaxInstances
 	key.instances = total

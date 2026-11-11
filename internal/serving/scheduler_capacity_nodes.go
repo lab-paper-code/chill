@@ -120,7 +120,7 @@ func (p *capacityPlanner) build() error {
 	common := p.keep.Nodes
 	p.plans = make([][]*capacityPlan, len(p.snapshot.Nodes))
 	p.compared = make([]bool, len(p.snapshot.Nodes))
-	p.period = p.settings.ComparisonPeriod.Seconds()
+	p.periodSeconds = p.settings.ComparisonPeriod.Seconds()
 	for n := range p.snapshot.Nodes {
 		if err := p.ctx.Err(); err != nil {
 			return err

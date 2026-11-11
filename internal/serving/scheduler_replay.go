@@ -30,31 +30,31 @@ const (
 )
 
 type schedulerReplayRequest struct {
-	source        SchedulerRequest
-	identity      string // source.Definition.Identity(), formatted once
-	arrival       float64
-	native        float64
-	queueAt       float64
-	senderMS      float64
-	completed     bool
-	dispatched    bool
-	returning     bool
-	completion    float64
-	observed      bool
-	running       bool
-	expired       bool
-	deferred      bool
-	dropped       bool
-	failed        bool
-	expires       float64
-	capacityMiss  bool    // counted once against the capacity window's fixed population
-	preNanos      float64 // synthetic PRE, never added to accepted requests
-	marginNanos   float64 // frozen POST
-	nativeAge     float64 // captured native age; advances only after native receipt
-	accountedAge  float64 // S+N for native requests, actual server age otherwise
-	potential     float64 // conditional failure excess, never a completion time
-	hasPotential  bool
-	minimumDemand bool
+	source            SchedulerRequest
+	identity          string // source.Definition.Identity(), formatted once
+	arrival           float64
+	native            float64
+	queueAt           float64
+	senderMS          float64
+	completed         bool
+	dispatched        bool
+	returning         bool
+	completion        float64
+	observed          bool
+	running           bool
+	expired           bool
+	deferred          bool
+	dropped           bool
+	failed            bool
+	expires           float64
+	capacityMiss      bool    // counted once against the capacity window's fixed population
+	preNanos          float64 // synthetic PRE, never added to accepted requests
+	marginNanos       float64 // frozen POST
+	nativeAgeNanos    float64 // captured native age; advances only after native receipt
+	accountedAgeNanos float64 // S+N for native requests, actual server age otherwise
+	potential         float64 // conditional failure excess, never a completion time
+	hasPotential      bool
+	minimumDemand     bool
 }
 
 type schedulerReplayInstance struct {
@@ -73,7 +73,7 @@ type schedulerReplayInstance struct {
 	outstanding      int
 	policy           firstfloor.Policy
 	arrivalTimes     map[string][]float64
-	occupancy        float64 // selected measured, DOM or configured extra ns/request
+	occupancyNanos   float64 // selected measured, DOM or configured extra ns/request
 }
 
 type schedulerReplayResult struct {
@@ -390,7 +390,7 @@ func (s *schedulerReplayState) initializeInstances() {
 			x.policy = schedulerPolicy(i)
 		}
 		if o := ResolveDispatchOccupancy(s.settings, s.snap.DispatchOccupancy, i); o != nil {
-			x.occupancy = float64(o.PerRequest)
+			x.occupancyNanos = float64(o.PerRequest)
 		}
 		s.instances = append(s.instances, x)
 		s.byID[i.ID] = x
@@ -472,7 +472,7 @@ func (s *schedulerReplayState) initializeOutstanding() {
 	for _, r := range outstanding {
 		x := &schedulerReplayRequest{source: r, identity: r.Definition.Identity(), observed: true, arrival: 0, native: math.Inf(1), expires: math.Inf(1), queueAt: -float64(r.QueueAge), running: r.Phase == phaseRunning, deferred: r.Phase == phaseDeferred}
 		x.marginNanos = s.settings.CompletionMarginMS * 1e6
-		x.accountedAge = float64(r.Elapsed)
+		x.accountedAgeNanos = float64(r.Elapsed)
 		if r.CompletionMarginMS != nil {
 			x.marginNanos = *r.CompletionMarginMS * 1e6
 		} else {
@@ -480,14 +480,14 @@ func (s *schedulerReplayState) initializeOutstanding() {
 			s.out.assumptions = appendUnique(s.out.assumptions, "accepted/historical request has no captured POST; configured CompletionMarginMS is an initial model assumption, not frozen evidence")
 		}
 		if r.NativeElapsedNanos != nil {
-			x.nativeAge = *r.NativeElapsedNanos
+			x.nativeAgeNanos = *r.NativeElapsedNanos
 			if r.NativeSenderElapsedMS != nil {
-				x.accountedAge = *r.NativeSenderElapsedMS*1e6 + x.nativeAge
+				x.accountedAgeNanos = *r.NativeSenderElapsedMS*1e6 + x.nativeAgeNanos
 			}
 		} else {
-			x.nativeAge = float64(r.QueueAge)
+			x.nativeAgeNanos = float64(r.QueueAge)
 			if r.NativeSenderElapsedMS != nil {
-				x.nativeAge = max(0, float64(r.Elapsed)-*r.NativeSenderElapsedMS*1e6)
+				x.nativeAgeNanos = max(0, float64(r.Elapsed)-*r.NativeSenderElapsedMS*1e6)
 			}
 		}
 		if r.NativeSenderElapsedMS != nil {
@@ -527,7 +527,7 @@ func (s *schedulerReplayState) initializeOutstanding() {
 				if r.NativeSenderElapsedMS == nil {
 					x.senderMS = float64(r.Elapsed) / 1e6
 				} else {
-					x.accountedAge = x.senderMS * 1e6
+					x.accountedAgeNanos = x.senderMS * 1e6
 				}
 			case phaseQueued, phaseDeferred:
 				i.queue = append(i.queue, x)
@@ -537,9 +537,9 @@ func (s *schedulerReplayState) initializeOutstanding() {
 				x.returning = true
 				if r.NativeElapsedNanos != nil && r.NativeSenderElapsedMS != nil {
 					// POST is measured from S+N, including native return and marshalling.
-					consumed := max(0, float64(r.Elapsed)-x.accountedAge)
+					consumed := max(0, float64(r.Elapsed)-x.accountedAgeNanos)
 					x.completion = max(0, x.marginNanos-consumed)
-					x.accountedAge += x.marginNanos - x.completion
+					x.accountedAgeNanos += x.marginNanos - x.completion
 				} else {
 					// Historical requests without captured S/N retain the explicit model.
 					x.completion = max(0, x.marginNanos-float64(r.ReturnElapsed))
