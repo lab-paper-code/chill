@@ -69,36 +69,42 @@ type schedulerReplayRequest struct {
 }
 
 type schedulerReplayInstance struct {
-	config               SchedulerInstance
-	loaded               bool
-	ready                bool
-	stopped              bool
-	excluded             bool // retains physical occupancy and outstanding, never executable supply
-	queue                []*schedulerReplayRequest
-	batch                []*schedulerReplayRequest
-	finish               float64
-	nativeFinish         float64 // service ends before retained dispatch occupancy/path return
-	lastNativeFinish     float64
-	hasNativeFinish      bool
-	gapNanos             int64 // reusable query storage; no per-dispatch allocation
-	wake                 float64
-	outstanding          int
-	policy               firstfloor.Policy
-	arrivalTimes         map[string][]float64
-	arrivalsKnown        bool
-	occupancyNanos       float64 // selected measured, DOM or configured extra ns/request
-	batchStarted         float64
-	batchElapsed         int64
-	batchIdle            int64
-	hasBatchIdle         bool
-	exchangeKnown        bool
-	exchangeElapsed      int64
-	admissionObserved    []firstfloor.RequestState
-	admissionAssignments []firstfloor.RequestState
-	admissionCalls       []*schedulerReplayRequest
-	admissionArrivals    map[string]admissionArrival
-	admissionUnknown     bool
-	admissionNormal      int
+	config                   SchedulerInstance
+	loaded                   bool
+	ready                    bool
+	stopped                  bool
+	excluded                 bool // retains physical occupancy and outstanding, never executable supply
+	queue                    []*schedulerReplayRequest
+	batch                    []*schedulerReplayRequest
+	finish                   float64
+	nativeFinish             float64 // service ends before retained dispatch occupancy/path return
+	lastNativeFinish         float64
+	hasNativeFinish          bool
+	lastNativeFinishEarliest float64
+	hasNativeFinishBounds    bool
+	idleUnknown              bool
+	gapNanos                 int64 // reusable query storage; no per-dispatch allocation
+	gapUpperNanos            int64
+	wake                     float64
+	outstanding              int
+	policy                   firstfloor.Policy
+	arrivalTimes             map[string][]float64
+	arrivalsKnown            bool
+	occupancyNanos           float64 // selected measured, DOM or configured extra ns/request
+	batchStarted             float64
+	batchElapsed             int64
+	batchIdle                int64
+	hasBatchIdle             bool
+	batchIdleUpper           int64
+	hasBatchIdleBounds       bool
+	exchangeKnown            bool
+	exchangeElapsed          int64
+	admissionObserved        []firstfloor.RequestState
+	admissionAssignments     []firstfloor.RequestState
+	admissionCalls           []*schedulerReplayRequest
+	admissionArrivals        map[string]admissionArrival
+	admissionUnknown         bool
+	admissionNormal          int
 }
 
 type schedulerReplayResult struct {
@@ -174,6 +180,21 @@ func (i *schedulerReplayInstance) idleNanos(now float64) *int64 {
 	}
 	i.gapNanos = int64(math.Max(0, now-i.lastNativeFinish))
 	return &i.gapNanos
+}
+
+func (i *schedulerReplayInstance) idleUpperNanos(now float64) *int64 {
+	if !i.hasNativeFinishBounds {
+		return nil
+	}
+	i.gapUpperNanos = int64(math.Max(0, now-i.lastNativeFinishEarliest))
+	return &i.gapUpperNanos
+}
+
+func (i *schedulerReplayInstance) runningIdleUpper() *int64 {
+	if i.hasBatchIdleBounds {
+		return &i.batchIdleUpper
+	}
+	return nil
 }
 
 // schedulerReplayEstimate replays candidate c once with seed and records each
@@ -432,18 +453,27 @@ func (s *schedulerReplayState) initializeInstances() {
 		x := &schedulerReplayInstance{config: i, loaded: loaded, ready: loaded && i.Ready, stopped: i.Stopped, finish: math.Inf(1), wake: 0, arrivalTimes: map[string][]float64{}}
 		x.excluded = scope.instances[i.ID] != ""
 		x.arrivalsKnown = !loaded || i.ArrivalAgesMS != nil
+		x.idleUnknown = loaded && i.AdmissionIdleUnknown
+		spanAt := i.ObservedAt
+		if !i.NativeSpanAt.IsZero() {
+			spanAt = i.NativeSpanAt
+		}
 		if loaded {
 			for uid, ages := range i.ArrivalAgesMS {
 				history := make([]float64, 0, min(2, len(ages)))
 				for _, age := range ages[:min(2, len(ages))] {
-					history = append(history, -age*1e6-float64(max(s.snap.At.Sub(i.ObservedAt), 0)))
+					history = append(history, -age*1e6-float64(max(s.snap.At.Sub(spanAt), 0)))
 				}
 				x.arrivalTimes[uid] = history
 			}
 		}
 		if loaded && i.LastServiceEndAgeNanos != nil {
-			age := *i.LastServiceEndAgeNanos + max(int64(0), int64(s.snap.At.Sub(i.ObservedAt)))
+			age := *i.LastServiceEndAgeNanos + max(int64(0), int64(s.snap.At.Sub(spanAt)))
 			x.lastNativeFinish, x.hasNativeFinish = -float64(age), true
+			if i.LastServiceEndAgeUpperNanos != nil {
+				upper := *i.LastServiceEndAgeUpperNanos + max(int64(0), int64(s.snap.At.Sub(spanAt)))
+				x.lastNativeFinishEarliest, x.hasNativeFinishBounds = -float64(upper), true
+			}
 		}
 		if i.Profile != nil {
 			x.policy = schedulerPolicy(i)
@@ -710,6 +740,10 @@ func (s *schedulerReplayState) initializeRunning() bool {
 		}
 		gap := head.source.PrecedingIdleNanos
 		if head.source.ExchangeElapsedNanos == nil {
+			if i.idleUnknown {
+				s.out.reasons = appendUnique(s.out.reasons, "UnknownNativeServiceEnd:"+i.config.ID)
+				return false
+			}
 			// Actor-running begins before packing/IPC. No native S has elapsed;
 			// current idle age is a lower-bound decision approximation of G.
 			gap = i.idleNanos(s.now)

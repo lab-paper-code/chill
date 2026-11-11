@@ -107,6 +107,12 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			instance.Ready = false
 		}
 		captureNativeState(&instance, state.Native)
+		instance.NativeSpanAt = state.NativeSpanAt
+		if state.LastServiceEndAgeUpperNanos != nil {
+			upper := *state.LastServiceEndAgeUpperNanos
+			instance.LastServiceEndAgeUpperNanos = &upper
+		}
+		instance.AdmissionIdleUnknown = state.AdmissionIdleUnknown
 		for _, pod := range pods.Items {
 			if string(pod.UID) != uid {
 				continue

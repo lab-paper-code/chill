@@ -332,8 +332,13 @@ type SchedulerInstance struct {
 	FixedBatchSize int                            `json:"fixedBatchSize,omitempty"` // Strict baseline B; autonomous control never moves it.
 	MaxWait        time.Duration                  `json:"maxWaitNanos"`
 	ObservedAt     time.Time                      `json:"observedAt"`
-	// LastServiceEndAgeNanos is worker-clock idle age at ObservedAt, not HTTP return age.
-	// Nil means this physical actor has no known completed native exchange.
+	// NativeSpanAt anchors derived native idle/arrival spans. Zero means the
+	// unchanged physical observation; ObservedAt always retains probe provenance.
+	NativeSpanAt                time.Time `json:"nativeSpanAt,omitzero"`
+	LastServiceEndAgeUpperNanos *int64    `json:"lastServiceEndAgeUpperNanos,omitempty"`
+	AdmissionIdleUnknown        bool      `json:"admissionIdleUnknown,omitempty"`
+	// LastServiceEndAgeNanos is worker-clock idle age at the native span anchor.
+	// With an upper age it is an interval bound; nil means physical startup.
 	LastServiceEndAgeNanos *int64 `json:"lastServiceEndAgeNanos,omitempty"`
 	// ArrivalAgesMS freezes the native actor's bounded, most-recent-first
 	// accepted arrival history at ObservedAt, including already finished work.

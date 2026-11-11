@@ -17,6 +17,7 @@ type serviceCostEntry struct {
 }
 type serviceCosts struct {
 	quantiles *QuantileCache
+	gapWidth  int64
 	local     [16]serviceCostEntry
 	count     int
 	extra     []serviceCostEntry
@@ -40,7 +41,13 @@ func (costs *serviceCosts) cost(b BatchProfile, percentile float64, gap *int64) 
 			return entry.cost
 		}
 	}
-	value, _, known := costs.quantiles.QuantileNanos(b.Distribution, gap, percentile)
+	var value int64
+	var known bool
+	if gap != nil && costs.gapWidth > 0 {
+		value, _, known = costs.quantiles.MaximumQuantileNanos(b.Distribution, *gap, *gap+costs.gapWidth, percentile)
+	} else {
+		value, _, known = costs.quantiles.QuantileNanos(b.Distribution, gap, percentile)
+	}
 	cost := math.Inf(1)
 	if known {
 		cost = float64(value) / float64(time.Millisecond)
@@ -165,19 +172,19 @@ func batchFeasible(requests []RequestState, head int, b BatchProfile, gap *int64
 // is never preempted; only expired queued drops can be selected while active.
 // ponytail: bounded O(requests*profiles*b) scan; index only if measured CPU warrants it.
 func ChooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchChoice {
-	return ChooseBatchWithQuantiles(p, requests, gapDecision, nil)
+	return ChooseBatchWithQuantiles(p, requests, gapDecision, nil, nil)
 }
 
 // ChooseBatchWithQuantiles shares exact conditional queries with its caller's
 // dispatch. The actor uses ChooseBatch and keeps its call-local cost storage.
-func ChooseBatchWithQuantiles(p Policy, requests []RequestState, gapDecision *int64, quantiles *QuantileCache) BatchChoice {
-	choice := chooseBatch(p, requests, gapDecision, quantiles)
+func ChooseBatchWithQuantiles(p Policy, requests []RequestState, gapDecision, gapUpper *int64, quantiles *QuantileCache) BatchChoice {
+	choice := chooseBatch(p, requests, gapDecision, gapUpper, quantiles)
 	choice.DecisionIdleNanos = gapDecision
 	choice.DecisionIdleApproximate = true
 	return choice
 }
 
-func chooseBatch(p Policy, requests []RequestState, gapDecision *int64, quantiles *QuantileCache) BatchChoice {
+func chooseBatch(p Policy, requests []RequestState, gapDecision, gapUpper *int64, quantiles *QuantileCache) BatchChoice {
 	if p.FixedBatchSize > 0 {
 		return chooseFixedBatch(p.FixedBatchSize, requests)
 	}
@@ -190,6 +197,12 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision *int64, quantile
 		}
 	}
 	costs := serviceCosts{quantiles: quantiles}
+	if gapUpper != nil {
+		if gapDecision == nil || *gapDecision < 0 || *gapUpper < *gapDecision {
+			return BatchChoice{Reason: "admission_unknown"}
+		}
+		costs.gapWidth = *gapUpper - *gapDecision
+	}
 	// Missing conditional support is not evidence of infeasibility. Native can
 	// still execute a measured batch; gateway prediction remains unknown.
 	if mode == DeadlineDrop && head >= 0 && SLOExpired(requests[head]) && !math.IsInf(minimumService(p, requests[head], gapDecision, &costs), 1) {
@@ -263,6 +276,14 @@ func energyGainWait(p Policy, requests []RequestState, head, count int, availabl
 	if r.ArrivalRate <= 0 {
 		return choice
 	}
+	// Follow-up service starts after this projected batch, so its gap is
+	// known zero even when the first batch's physical idle gap is bounded.
+	following := costs
+	var followCosts serviceCosts
+	if costs.gapWidth > 0 {
+		followCosts.quantiles = costs.quantiles
+		following = &followCosts
+	}
 	for _, b := range p.Batches {
 		if b.Size <= count || b.EnergyPerItemJ >= available.EnergyPerItemJ || !allowedBatch(p, b.Size) {
 			continue
@@ -285,7 +306,7 @@ func energyGainWait(p Policy, requests []RequestState, head, count int, availabl
 				allowed = math.Min(allowed, p.MaxBatchWaitMS-q.QueueMS)
 			} else {
 				zero := int64(0)
-				slack -= minimumService(p, q, &zero, costs)
+				slack -= minimumService(p, q, &zero, following)
 			}
 			allowed = math.Min(allowed, slack)
 		}

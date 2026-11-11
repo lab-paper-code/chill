@@ -465,7 +465,18 @@ func (r *Runtime) instanceDrainedLocked(id string) bool {
 func (r *Runtime) SchedulerInputs(clock func() time.Time) SchedulerSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	now := clock()
+	return r.schedulerInputsLocked(clock())
+}
+
+// SchedulerInputsAndInstances returns the owned physical and request views used
+// by capture after its blocking external reads have finished.
+func (r *Runtime) SchedulerInputsAndInstances(clock func() time.Time) (SchedulerSnapshot, []InstanceState) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.schedulerInputsLocked(clock()), r.instancesLocked()
+}
+
+func (r *Runtime) schedulerInputsLocked(now time.Time) SchedulerSnapshot {
 	routing, credits := r.schedulerRoutingLocked()
 	return SchedulerSnapshot{
 		At: now, Workloads: r.schedulerDefinitionsLocked(), Outstanding: r.schedulerOutstandingLocked(now),

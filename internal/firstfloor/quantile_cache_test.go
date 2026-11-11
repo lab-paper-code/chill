@@ -28,11 +28,17 @@ func TestQuantileCachePreservesValuesSupportAndUnknown(t *testing.T) {
 					if got != want || gotSupport != support || gotKnown != known {
 						t.Fatal("quantile cache changed result")
 					}
+					if percentile == 100 && d.SupportsGap(idle) != known {
+						t.Fatal("support-only availability differs from the original quantile query")
+					}
 					for _, elapsed := range []int64{0, 5, 100} {
 						want, support, known := d.ResidualQuantileNanos(idle, elapsed, percentile)
 						got, gotSupport, gotKnown := cache.ResidualQuantileNanos(d, idle, elapsed, percentile)
 						if got != want || gotSupport != support || gotKnown != known {
 							t.Fatal("residual cache changed result")
+						}
+						if percentile == 100 && d.SupportsResidual(idle, elapsed) != known {
+							t.Fatal("support-only survival differs from the original residual query")
 						}
 					}
 				}

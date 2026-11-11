@@ -320,6 +320,13 @@ type InstanceState struct {
 	AssignedUnknown map[string]int    `json:"assignedUnknown"`
 	ObservedAt      time.Time         `json:"observedAt"`
 	Native          *firstfloor.State `json:"native,omitempty"`
+	// NativeSpanAt is the local anchor of Native's derived spans after owned
+	// completion reconciliation. Zero means the unchanged probe's ObservedAt.
+	NativeSpanAt time.Time `json:"nativeSpanAt,omitzero"`
+	// A gateway completion bounds the last service end rather than inventing
+	// its timestamp. Native.LastServiceEndAgeNanos is the lower idle age.
+	LastServiceEndAgeUpperNanos *int64 `json:"lastServiceEndAgeUpperNanos,omitempty"`
+	AdmissionIdleUnknown        bool   `json:"admissionIdleUnknown,omitempty"`
 	// NativeVerified belongs to this publication's successful exact-identity
 	// physical probe, independently of catalog admission for dispatch.
 	// Retained Native after a failed read is not fresh drain evidence.

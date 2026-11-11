@@ -38,7 +38,7 @@ func testRuntimeAdmissionPreIPCCompletion(t *testing.T, node string, maxBatch in
 	i.State.Native.Metadata.Policy.MaxBatchSize = maxBatch
 	i.Execute = func(context.Context, Dispatch) (BackendResult, error) {
 		<-finish
-		return BackendResult{Finished: true}, nil
+		return BackendResult{Finished: true, Progress: &BackendProgress{Phase: phaseFinished, BatchID: batchID, BatchSize: 1, BackendMS: 0.000001, ExecutionComplete: true}}, nil
 	}
 	r.mu.Unlock()
 	first, receipt := admissionRuntimeCall(t, r, "w1", time.Now(), time.Now().Add(time.Second))
@@ -100,7 +100,11 @@ func TestRuntimeAdmissionCompletionRequiresPhysicalIdentityAndProof(t *testing.T
 			}
 			i.State.Native.Requests = []firstfloor.RequestState{q}
 			c := &Call{receipt: Receipt{ID: q.Context.RequestID, UID: q.Context.WorkloadUID}, identity: q.Context.Definition, instance: i,
-				assignment: &Assignment{Instance: i.State.ID, Node: i.State.Node}, backendDone: true}
+				assignment: &Assignment{Instance: i.State.ID, Node: i.State.Node, DispatchedAt: time.Now().Add(-10 * time.Millisecond)}, backendDone: true,
+				progress: &BackendProgress{Phase: phaseFinished, BatchID: q.BatchID, BatchSize: q.BatchSize, ExecutionComplete: true}}
+			if q.BatchID != 0 {
+				c.progress.BackendMS = 0.000001
+			}
 			switch name {
 			case "timeout", "transport failure":
 				c.backendDone = false
@@ -142,7 +146,8 @@ func TestRuntimeAdmissionCompletionPreservesRunningMembersAndRejectsStaleProbe(t
 	i.outstanding = 2
 	for j, q := range []firstfloor.RequestState{a, b} {
 		c := &Call{receipt: Receipt{ID: q.Context.RequestID, UID: q.Context.WorkloadUID}, identity: q.Context.Definition, instance: i,
-			assignment: &Assignment{Instance: i.State.ID, Node: i.State.Node}, backendDone: true}
+			assignment: &Assignment{Instance: i.State.ID, Node: i.State.Node, DispatchedAt: time.Now().Add(-10 * time.Millisecond)}, backendDone: true,
+			progress: &BackendProgress{Phase: phaseFinished, BatchID: q.BatchID, BatchSize: q.BatchSize, BackendMS: 0.000001, ExecutionComplete: true}}
 		r.releaseLocked(c)
 		if len(i.State.Native.Requests) != 1-j {
 			t.Fatal("completed batch member remained in admission state")
@@ -155,6 +160,9 @@ func TestRuntimeAdmissionCompletionPreservesRunningMembersAndRejectsStaleProbe(t
 		t.Fatal("fully completed running batch did not reset the decision idle anchor")
 	}
 	i.State.Native = &observed
+	i.State.NativeSpanAt = time.Time{}
+	i.State.LastServiceEndAgeUpperNanos = nil
+	i.State.AdmissionIdleUnknown = false
 	i.installAdmissionSnapshot()
 	if len(i.State.Native.Requests) != 0 {
 		t.Fatal("in-flight stale probe resurrected completed requests")

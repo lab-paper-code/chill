@@ -369,7 +369,8 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	instance := o.Instance
 	instance.ID, instance.TargetID, instance.OwnerWorkloadUID = "capacity", "", ""
 	instance.WorkloadUID, instance.Ready, instance.Stopped = w.UID, true, false
-	instance.LastServiceEndAgeNanos = nil           // each synthetic window starts a new actor
+	instance.LastServiceEndAgeNanos = nil // each synthetic window starts a new actor
+	instance.LastServiceEndAgeUpperNanos, instance.NativeSpanAt, instance.AdmissionIdleUnknown = nil, time.Time{}, false
 	instance.ArrivalAgesMS = map[string][]float64{} // known empty native arrival history
 	instance.Weight, instance.ObservedAt = 1, at
 	snapshot := SchedulerSnapshot{

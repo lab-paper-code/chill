@@ -88,6 +88,9 @@ func TestResidualQuantileMatchesOriginalTrialSummation(t *testing.T) {
 					if got != want || gotSupport != support || gotKnown != known {
 						t.Fatalf("trials=%d elapsed=%d percentile=%g: got (%d,%+v,%v), want (%d,%+v,%v)", trials, elapsed, percentile, got, gotSupport, gotKnown, want, support, known)
 					}
+					if percentile == 100 && d.SupportsResidual(gap, elapsed) != known {
+						t.Fatal("support-only survival changed the original executor-known result")
+					}
 				}
 			}
 		}

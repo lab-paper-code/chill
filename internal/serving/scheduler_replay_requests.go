@@ -167,6 +167,9 @@ func (s *schedulerReplayState) completeExecution() {
 	for _, i := range s.instances {
 		if i.finish <= s.now {
 			i.lastNativeFinish, i.hasNativeFinish = i.nativeFinish, true
+			i.hasNativeFinishBounds = false
+			i.hasBatchIdleBounds = false
+			i.idleUnknown = false
 			for _, r := range i.batch {
 				r.running = false
 				r.returning = true
@@ -423,7 +426,7 @@ func (s *schedulerReplayState) estimateAdmission(i *schedulerReplayInstance, r *
 	if i.admissionUnknown {
 		return AdmissionEstimate{}
 	}
-	in := AdmissionInput{Policy: i.policy, Observed: i.admissionObserved, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.idleNanos(s.now), Candidate: s.gatewayRequestState(i, r)}
+	in := AdmissionInput{Policy: i.policy, Observed: i.admissionObserved, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.idleNanos(s.now), LastServiceEndAgeUpperNanos: i.idleUpperNanos(s.now), RunningGapUpperNanos: i.runningIdleUpper(), Candidate: s.gatewayRequestState(i, r)}
 	return projectAdmission(in, &s.admissionScratch)
 }
 
@@ -462,7 +465,7 @@ func (s *schedulerReplayState) prepareAdmissionInstance(i *schedulerReplayInstan
 	i.admissionCalls = i.admissionCalls[:0]
 	clear(i.admissionArrivals)
 	i.admissionNormal = 0
-	i.admissionUnknown = !replayHasCapacity(i) || i.config.Profile == nil || !i.arrivalsKnown && i.policy.FixedBatchSize == 0
+	i.admissionUnknown = !replayHasCapacity(i) || i.config.Profile == nil || (!i.arrivalsKnown || i.idleUnknown) && i.policy.FixedBatchSize == 0
 	if i.admissionUnknown {
 		return
 	}
@@ -472,7 +475,7 @@ func (s *schedulerReplayState) prepareAdmissionInstance(i *schedulerReplayInstan
 	for _, r := range i.batch {
 		i.admissionObserved = append(i.admissionObserved, s.nativeRequestState(i, r))
 	}
-	i.admissionUnknown = !admissionExecutorKnown(AdmissionInput{Policy: i.policy, Observed: i.admissionObserved, LastServiceEndAgeNanos: i.idleNanos(s.now)}, &s.admissionScratch.quantiles)
+	i.admissionUnknown = !admissionExecutorKnown(AdmissionInput{Policy: i.policy, Observed: i.admissionObserved, LastServiceEndAgeNanos: i.idleNanos(s.now), LastServiceEndAgeUpperNanos: i.idleUpperNanos(s.now), RunningGapUpperNanos: i.runningIdleUpper()})
 	if i.admissionUnknown {
 		return
 	}
@@ -693,6 +696,10 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 			s.out.reasons = appendUnique(s.out.reasons, "MissingFeedbackProfile:"+i.config.ID)
 			return false
 		}
+		if i.idleUnknown && len(i.batch) == 0 {
+			s.out.reasons = appendUnique(s.out.reasons, "UnknownNativeServiceEnd:"+i.config.ID)
+			return false
+		}
 		for _, batch := range i.config.Profile.Batches {
 			if batch.Batch <= i.config.MaxBatch && batch.ServiceDistribution == nil {
 				s.out.reasons = appendUnique(s.out.reasons, "MissingConditionalServiceSupport:"+i.config.ID)
@@ -721,7 +728,7 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 			}
 			s.entries, s.states = entries, states
 			gapDecision := i.idleNanos(s.now)
-			choice := firstfloor.ChooseBatch(i.policy, states, gapDecision)
+			choice := firstfloor.ChooseBatchWithQuantiles(i.policy, states, gapDecision, i.idleUpperNanos(s.now), nil)
 			if choice.Reason == firstfloor.OutcomeDeadlineDrop || choice.Reason == firstfloor.ReasonDeadlineDefer {
 				if !s.transitionQueuedChoice(i, choice) {
 					return false
@@ -763,13 +770,24 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 			if gap != nil {
 				i.batchIdle = *gap
 			}
-			sample, support, ok := b.ServiceDistribution.Sample(gap, s.rng)
+			var durationNanos int64
+			var support firstfloor.ConditionalSupport
+			var ok bool
+			if upper := i.idleUpperNanos(s.now); upper != nil && gap != nil {
+				i.hasBatchIdleBounds, i.batchIdleUpper = true, *upper
+				durationNanos, _, support, ok = b.ServiceDistribution.MaximumQuantileNanos(*gap, *upper, s.rng.Float64()*100)
+				s.out.assumptions = appendUnique(s.out.assumptions, "gateway-completion gap interval uses the exact maximum conditional inverse-CDF envelope until the next simulated service completion")
+			} else {
+				var sample firstfloor.ServiceSample
+				sample, support, ok = b.ServiceDistribution.Sample(gap, s.rng)
+				durationNanos = sample.ServiceDurationNanos
+			}
 			s.out.conditional.record(gap, support)
 			if !ok {
 				s.out.reasons = append(s.out.reasons, "MissingConditionalServiceSupport:"+i.config.ID)
 				return false
 			}
-			duration := float64(sample.ServiceDurationNanos)
+			duration := float64(durationNanos)
 			// Trace gap selects S; arrivals/queue already supplied the gap.
 			// Retain the current occupancy model without treating it as native S.
 			i.nativeFinish = s.now + duration

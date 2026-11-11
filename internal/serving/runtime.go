@@ -82,6 +82,7 @@ type Call struct {
 	deferred                                     bool
 	admissionState                               string
 	admissionComplete                            bool
+	admissionNoExecution                         bool
 	backendContext                               context.Context
 	cancelBackend                                context.CancelFunc
 	transportDone, backendDone, responseRecorded bool
@@ -90,21 +91,21 @@ type Call struct {
 
 type runtimeInstance struct {
 	ReadyInstance
-	podRouting           map[string]int32
-	outstanding          int
-	finalizing           int
-	bindings             map[string]bool
-	recoveryRecorded     bool
-	admissionProfile     string
-	admissionBatches     []firstfloor.BatchProfile
-	admissionObserved    map[admissionRequestKey]struct{}
-	admissionCalls       []*Call
-	admissionAssignments []firstfloor.RequestState
-	admissionArrivals    map[string]admissionArrival
-	admissionUnknown     bool
-	admissionNormal      int
-	admissionAt          time.Time
-	admissionCompleted   map[admissionRequestKey]time.Time
+	podRouting                 map[string]int32
+	outstanding                int
+	finalizing                 int
+	bindings                   map[string]bool
+	recoveryRecorded           bool
+	admissionProfile           string
+	admissionBatches           []firstfloor.BatchProfile
+	admissionObserved          map[admissionRequestKey]struct{}
+	admissionCalls             []*Call
+	admissionAssignments       []firstfloor.RequestState
+	admissionArrivals          map[string]admissionArrival
+	admissionUnknown           bool
+	admissionNormal            int
+	admissionCompleted         map[admissionRequestKey]admissionCompletion
+	admissionSourceIdleUnknown bool
 }
 type routeEntry struct {
 	instance *runtimeInstance
@@ -631,7 +632,7 @@ func (r *Runtime) beginAdmissionLocked(now time.Time) {
 	}
 	for _, i := range r.instances {
 		if !i.admissionUnknown {
-			i.prepareAdmissionAssignments(now, &r.admissionScratch.quantiles)
+			i.prepareAdmissionAssignments(now)
 		}
 	}
 	for _, w := range r.workloads {
@@ -698,7 +699,7 @@ func compareAdmissionAssignments(a, b *Call) int {
 	return strings.Compare(a.receipt.ID, b.receipt.ID)
 }
 
-func (i *runtimeInstance) prepareAdmissionAssignments(now time.Time, quantiles *firstfloor.QuantileCache) {
+func (i *runtimeInstance) prepareAdmissionAssignments(now time.Time) {
 	slices.SortFunc(i.admissionCalls, compareAdmissionAssignments)
 	for _, c := range i.admissionCalls {
 		at := now
@@ -712,8 +713,8 @@ func (i *runtimeInstance) prepareAdmissionAssignments(now time.Time, quantiles *
 	}
 	policy := i.State.Native.Metadata.Policy
 	policy.Batches = i.admissionBatches
-	i.admissionUnknown = policy.FixedBatchSize == 0 && (i.State.ObservedAt.IsZero() || policy.ProfileID != i.Profile.ID ||
-		!admissionExecutorKnown(AdmissionInput{Policy: policy, Observed: i.State.Native.Requests, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.State.Native.LastServiceEndAgeNanos}, quantiles))
+	i.admissionUnknown = policy.FixedBatchSize == 0 && (i.State.AdmissionIdleUnknown || i.State.ObservedAt.IsZero() || policy.ProfileID != i.Profile.ID ||
+		!admissionExecutorKnown(AdmissionInput{Policy: policy, Observed: i.State.Native.Requests, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.State.Native.LastServiceEndAgeNanos, LastServiceEndAgeUpperNanos: i.State.LastServiceEndAgeUpperNanos}))
 }
 
 func (r *Runtime) endAdmissionLocked() {
@@ -744,7 +745,7 @@ func (r *Runtime) estimateLocked(i *runtimeInstance, c *Call, now time.Time) Adm
 		i.admissionAssignments[j] = q
 	}
 	age := max(now.Sub(i.nativeAdmissionAt()), 0)
-	return projectAdmission(AdmissionInput{Policy: policy, Observed: native.Requests, Assignments: i.admissionAssignments, SnapshotAge: age, LastServiceEndAgeNanos: native.LastServiceEndAgeNanos, Candidate: candidate}, &r.admissionScratch)
+	return projectAdmission(AdmissionInput{Policy: policy, Observed: native.Requests, Assignments: i.admissionAssignments, SnapshotAge: age, LastServiceEndAgeNanos: native.LastServiceEndAgeNanos, LastServiceEndAgeUpperNanos: i.State.LastServiceEndAgeUpperNanos, Candidate: candidate}, &r.admissionScratch)
 }
 
 func admissionCallState(c *Call, now time.Time) firstfloor.RequestState {
@@ -1613,6 +1614,9 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) (result erro
 			i.OwnerWorkloadUID = candidate.OwnerWorkloadUID
 			i.State.ObservedAt, i.State.Native = candidate.State.ObservedAt, candidate.State.Native
 			i.State.NativeVerified = candidate.State.NativeVerified
+			i.State.NativeSpanAt = candidate.State.NativeSpanAt
+			i.State.LastServiceEndAgeUpperNanos = candidate.State.LastServiceEndAgeUpperNanos
+			i.State.AdmissionIdleUnknown = candidate.State.AdmissionIdleUnknown
 			i.installAdmissionSnapshot()
 			i.State.Allocation = candidate.State.Allocation
 			i.State.ActualImageID = candidate.State.ActualImageID
@@ -1751,6 +1755,7 @@ func (r *Runtime) finishAbsentLocked(state InstanceState) {
 			continue
 		}
 		c.backendDone = true
+		c.admissionNoExecution = true
 		c.phase = phaseFinished
 		if err := r.event(c, "backend_finished", outcomeError, "NativeRequestAbsent"); err != nil {
 			r.observationError = err

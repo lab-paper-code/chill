@@ -9,10 +9,10 @@ type QuantileCache struct {
 	entries map[quantileQuery]quantileResult
 }
 type quantileQuery struct {
-	distribution      *ServiceDistribution
-	gap, elapsed      int64
-	percentile        uint64
-	startup, residual bool
+	distribution                *ServiceDistribution
+	gap, elapsed, upper         int64
+	percentile                  uint64
+	startup, residual, interval bool
 }
 type quantileResult struct {
 	value   int64
@@ -27,6 +27,34 @@ func (c *QuantileCache) QuantileNanos(d *ServiceDistribution, gap *int64, percen
 }
 func (c *QuantileCache) ResidualQuantileNanos(d *ServiceDistribution, gap *int64, elapsed int64, percentile float64) (int64, ConditionalSupport, bool) {
 	return c.query(d, gap, elapsed, percentile, true)
+}
+
+func (c *QuantileCache) MaximumQuantileNanos(d *ServiceDistribution, lower, upper int64, percentile float64) (int64, ConditionalSupport, bool) {
+	return c.maximumQuery(d, lower, upper, 0, percentile, false)
+}
+
+func (c *QuantileCache) MaximumResidualQuantileNanos(d *ServiceDistribution, lower, upper, elapsed int64, percentile float64) (int64, ConditionalSupport, bool) {
+	return c.maximumQuery(d, lower, upper, elapsed, percentile, true)
+}
+
+func (c *QuantileCache) maximumQuery(d *ServiceDistribution, lower, upper, elapsed int64, percentile float64, residual bool) (int64, ConditionalSupport, bool) {
+	if lower == upper {
+		return c.query(d, &lower, elapsed, percentile, residual)
+	}
+	key := quantileQuery{distribution: d, gap: lower, upper: upper, elapsed: elapsed, percentile: math.Float64bits(percentile), interval: true, residual: residual}
+	if c != nil {
+		if result, found := c.entries[key]; found {
+			return result.value, result.support, result.known
+		}
+	}
+	value, _, support, known := d.maximumQuantileNanos(lower, upper, elapsed, percentile, residual)
+	if c != nil {
+		if c.entries == nil {
+			c.entries = make(map[quantileQuery]quantileResult)
+		}
+		c.entries[key] = quantileResult{value, support, known}
+	}
+	return value, support, known
 }
 func (c *QuantileCache) query(d *ServiceDistribution, gap *int64, elapsed int64, percentile float64, residual bool) (int64, ConditionalSupport, bool) {
 	key := quantileQuery{distribution: d, elapsed: elapsed, percentile: math.Float64bits(percentile), startup: gap == nil, residual: residual}

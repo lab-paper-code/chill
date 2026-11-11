@@ -134,3 +134,31 @@ func TestCaptureNativeStateFreezesBoundedArrivalHistory(t *testing.T) {
 		t.Fatal("known-empty native history and missing evidence collapsed")
 	}
 }
+
+func TestCaptureNativeDerivedSpansKeepsLocalAnchorAndBounds(t *testing.T) {
+	observed := time.Unix(1000, 0)
+	anchor := observed.Add(100 * time.Millisecond)
+	lower, upper := int64(0), int64(30*time.Millisecond)
+	node := &core.Node{}
+	node.Name, node.UID = "node", "node-uid"
+	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+	state := serving.InstanceState{ID: "executor", PodUID: "pod", Node: ref, Ready: true, ObservedAt: observed, NativeSpanAt: anchor,
+		LastServiceEndAgeUpperNanos: &upper, AdmissionIdleUnknown: true,
+		Native: &native.State{Ready: true, LastServiceEndAgeNanos: &lower, ArrivalAgesMS: map[string][]float64{"w": {3, 7}}}}
+	snapshot := serving.SchedulerSnapshot{At: anchor.Add(10 * time.Millisecond)}
+	sn := serving.SchedulerNode{Node: ref}
+	captureNodePods(&snapshot, &sn, node, &core.PodList{}, map[string]serving.InstanceState{"executor": state}, nil)
+	if len(snapshot.Instances) != 1 {
+		t.Fatal("capture lost the physical executor")
+	}
+	captured := snapshot.Instances[0]
+	if !captured.ObservedAt.Equal(observed) || !captured.NativeSpanAt.Equal(anchor) || !captured.AdmissionIdleUnknown ||
+		captured.LastServiceEndAgeUpperNanos == nil || *captured.LastServiceEndAgeUpperNanos != upper {
+		t.Fatalf("capture changed derived-span provenance or bounds: %+v", captured)
+	}
+	upper = 999
+	state.Native.ArrivalAgesMS["w"][0] = 999
+	if *captured.LastServiceEndAgeUpperNanos != int64(30*time.Millisecond) || captured.ArrivalAgesMS["w"][0] != 3 {
+		t.Fatal("capture retained mutable derived native spans")
+	}
+}

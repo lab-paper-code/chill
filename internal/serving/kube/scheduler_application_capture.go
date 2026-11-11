@@ -82,7 +82,7 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 	}
 	power := map[string]time.Duration{}
 	physical := map[string]serving.InstanceState{}
-	physicalStates := c.runtime.Instances()
+	current, physicalStates := c.runtime.SchedulerInputsAndInstances(time.Now)
 	for _, state := range physicalStates {
 		key := state.ID
 		if key == "" {
@@ -130,7 +130,6 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 	c.mu.Lock()
 	c.powerTargets = power
 	c.mu.Unlock()
-	current := c.runtime.SchedulerInputs(time.Now)
 	s.At, s.Workloads, s.Outstanding = current.At, current.Workloads, current.Outstanding
 	s.Routing, s.RoutingCredits = current.Routing, current.RoutingCredits
 	capturePathFeedback(&s, window.PathSamples, config.Settings.CompletionMarginMS)

@@ -34,8 +34,9 @@ type serviceNeighbors struct{ a, b []ServiceSample }
 // ServiceDistribution is immutable after hydration. Quantile queries use local
 // scratch; up to 32 physical trials need no heap-backed scratch.
 type ServiceDistribution struct {
-	trials   []serviceTrial
-	services []int64 // immutable global candidates for large selected groups
+	trials                  []serviceTrial
+	services                []int64 // immutable global candidates for large selected groups
+	maxStartup, maxKnownGap int64
 }
 
 func NewServiceDistribution(samples []ServiceSample) (*ServiceDistribution, error) {
@@ -51,6 +52,11 @@ func NewServiceDistribution(samples []ServiceSample) (*ServiceDistribution, erro
 		}
 		// Own the pointer values as well as the rows; callers may retain raw evidence.
 		s = s.Clone()
+		if s.PrecedingIdleNanos == nil {
+			d.maxStartup = max(d.maxStartup, s.ServiceDurationNanos)
+		} else {
+			d.maxKnownGap = max(d.maxKnownGap, s.ServiceDurationNanos)
+		}
 		if _, ok := byTrial[s.TrialID]; !ok {
 			trialIDs = append(trialIDs, s.TrialID)
 		}
@@ -315,6 +321,25 @@ func (d *ServiceDistribution) QuantileNanos(gap *int64, percentile float64) (int
 	return value, support, ok
 }
 
+// SupportsGap answers empirical availability without computing an unused
+// percentile. Every nonnegative known gap has a nearest group when any trial
+// has groups; startup instead requires an actual startup record.
+func (d *ServiceDistribution) SupportsGap(gap *int64) bool {
+	return d.SupportsResidual(gap, 0)
+}
+
+// SupportsResidual includes the exact nearest-survivor retry: any surviving
+// known-gap group can be selected on retry; startup cannot borrow warm records.
+func (d *ServiceDistribution) SupportsResidual(gap *int64, elapsed int64) bool {
+	if d == nil || elapsed < 0 || gap != nil && *gap < 0 {
+		return false
+	}
+	if gap == nil {
+		return d.maxStartup > elapsed
+	}
+	return d.maxKnownGap > elapsed
+}
+
 // ResidualQuantileNanos returns the inverse CDF of S-elapsed conditional on
 // S > elapsed, with exactly SampleResidual's nearest/trial conditioning.
 // No surviving empirical record leaves the result unknown.
@@ -326,8 +351,8 @@ func (d *ServiceDistribution) ResidualQuantileNanos(gap *int64, elapsed int64, p
 	// Neighbors and elapsed cutoffs are invariant during the inverse-CDF
 	// search. Preserve trial order and float summation, but compute them once.
 	type residualNeighbors struct {
-		a, b    []ServiceSample
-		expired int
+		a, b               []ServiceSample
+		expiredA, expiredB int
 	}
 	var local [32]residualNeighbors
 	nearest := local[:0]
@@ -338,9 +363,9 @@ func (d *ServiceDistribution) ResidualQuantileNanos(gap *int64, elapsed int64, p
 	for i := range d.trials {
 		a, b, distance, outside := d.trials[i].nearest(gap)
 		if n := len(a) + len(b); n > 0 {
-			expired := serviceUpperBound(a, elapsed) + serviceUpperBound(b, elapsed)
-			nearest = append(nearest, residualNeighbors{a, b, expired})
-			total += float64(n-expired) / float64(n)
+			expiredA, expiredB := serviceUpperBound(a, elapsed), serviceUpperBound(b, elapsed)
+			nearest = append(nearest, residualNeighbors{a, b, expiredA, expiredB})
+			total += float64(n-expiredA-expiredB) / float64(n)
 			support.TrialCount++
 			support.DistanceNanos = max(support.DistanceNanos, distance)
 			support.OutsideSupport = support.OutsideSupport || outside
@@ -363,22 +388,40 @@ func (d *ServiceDistribution) ResidualQuantileNanos(gap *int64, elapsed int64, p
 	if total == 0 {
 		return 0, support, false
 	}
-	index := sort.Search(len(d.services), func(j int) bool {
-		value := d.services[j]
+	selected := 0
+	for _, trial := range nearest {
+		selected += len(trial.a) + len(trial.b) - trial.expiredA - trial.expiredB
+	}
+	candidates := d.services
+	var values [32]int64
+	if selected <= len(values) && selected < len(d.services) {
+		candidates = values[:0]
+		for _, trial := range nearest {
+			for _, sample := range trial.a[trial.expiredA:] {
+				candidates = append(candidates, sample.ServiceDurationNanos)
+			}
+			for _, sample := range trial.b[trial.expiredB:] {
+				candidates = append(candidates, sample.ServiceDurationNanos)
+			}
+		}
+		slices.Sort(candidates)
+	}
+	index := sort.Search(len(candidates), func(j int) bool {
+		value := candidates[j]
 		if value <= elapsed {
 			return false
 		}
 		mass := 0.0
 		for _, trial := range nearest {
 			n := len(trial.a) + len(trial.b)
-			mass += float64(serviceUpperBound(trial.a, value)+serviceUpperBound(trial.b, value)-trial.expired) / float64(n)
+			mass += float64(serviceUpperBound(trial.a, value)+serviceUpperBound(trial.b, value)-trial.expiredA-trial.expiredB) / float64(n)
 		}
 		return mass > 0 && mass/total >= percentile/100
 	})
-	if index == len(d.services) {
+	if index == len(candidates) {
 		return 0, support, false
 	}
-	return d.services[index] - elapsed, support, true
+	return candidates[index] - elapsed, support, true
 }
 
 // Only selected records can increase the CDF. Collect them when they fit local
