@@ -30,6 +30,8 @@ test("incident history uses a meaningful interval and preserves target identity"
 test("protocol reservations and power-mode failures have Korean causes and checks",()=>{
   assert.equal(displayHelpers.reservationReason("measurement-handback:n: await fresh exact ACK/untouched/absence proof, terminal siblings and settled power"),"장치 반환·실행 종료·전력 안정 확인 대기")
   assert.equal(liveReason("PowerModeUnavailable"),"전력모드 확인 불가")
+  assert.equal(liveReason("DeadlineInfeasible"),"SLO 기한 내 완료 불가로 거절")
+  assert.equal(liveReason("QueueFull"),"대기 큐가 가득 차 거절")
   const diagnosis=displayHelpers.incidentDiagnosis("node jetson-nano did not reach power mode MAXN within 15m0s")
   assert.equal(diagnosis.reason,"전력모드 전환 시간 초과")
   assert.equal(diagnosis.mode,"MAXN")
@@ -572,6 +574,9 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   assert.equal((detail.match(/data-sheet="true"/g)??[]).length,1)
   assert.ok(detail.indexOf("서비스 SLO")<detail.indexOf("근거 조회 중"))
   assert.match(detail,/판단 근거 · 선택 당시/)
+  assert.match(detail,/완료율 \(종료 요청 기준\) %/)
+  assert.match(detail,/SLO 안 \(종료 요청 기준\) %/)
+  assert.doesNotMatch(detail,/성공률 %|기한 내 성공률/)
   query=new URLSearchParams({at})
   assert.match(render(),/21:00:00 KST/)
   const around=new URL(displayHelpers.incidentHistoryHref(undefined,at),"http://local")

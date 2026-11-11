@@ -85,7 +85,7 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
       <Conditions changes={changes} path={path} definitions={definitions} poll={poll} setPoll={setPoll}/>
       {data&&!changes&&<RowDialog label="구간 통계" hint="결과별 건수와 응답 시간" title="구간 통계" description="고른 기간 전체를 집계했어요. 아래 요청 목록과 따로 계산해요.">
         <Facts items={[["전체 요청",`${data.total}건`],["조건에 맞는 요청",`${data.selected}건`],...Object.entries(data.outcomes).map(([key,value]):[string,string]=>[outcomeLabels[key]??"기타 결과",`${value}건`])]}/>
-        {data.cohorts?.length?<><h3 className="font-semibold">적용 설정별 응답 시간</h3><Facts items={data.cohorts.map((row):[string,string]=>[definitionLabel(row.definition),`표본 ${row.sampleCount}건 · ${row.quantileNanos==null?"값 없음":`${row.percentile===undefined?"백분위 정보 없음":`${row.percentile}% 기준`} ${ms(row.quantileNanos)}`} · 목표 ${row.targetLatencyNanos==null?"없음":ms(row.targetLatencyNanos)}`])}/>
+        {data.cohorts?.length?<><h3 className="font-semibold">적용 설정별 완료 요청 응답 시간</h3><p className="text-sm text-muted-foreground">명시적 completed 결과의 지연만 포함합니다. 거절·시간 초과·오류는 위 결과별 건수에서 확인합니다.</p><Facts items={data.cohorts.map((row):[string,string]=>[definitionLabel(row.definition),`표본 ${row.sampleCount}건 · ${row.quantileNanos==null?"값 없음":`${row.percentile===undefined?"백분위 정보 없음":`${row.percentile}% 기준`} ${ms(row.quantileNanos)}`} · 목표 ${row.targetLatencyNanos==null?"없음":ms(row.targetLatencyNanos)}`])}/>
           <ChartAreaInteractive data={data.cohorts.map(row=>({definition:row.definition,quantileNanos:row.quantileNanos===null?null:Number(row.quantileNanos),label:definitionLabel(row.definition)}))}/></>:<p>응답 시간 표본이 없어요.</p>}
         <SourceJSON inline title="적용 설정 원본 보기" value={definitions}/>
       </RowDialog>}

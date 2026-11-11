@@ -204,12 +204,11 @@ export function experimentServiceResults(stage:ExperimentStage,run:Experiment) {
   const components=object(stage.kpis.components),verdicts=object(object(components.slo).workloads),fidelity=object(components.loadFidelity)
   return experimentRows(stage).map(row=>{
     const declared=run.definition?.workloads.filter(workload=>row.uid?workload.uid===row.uid:workload.name===row.name)
-    const latency=object(row.original.completedLatencyNS),success=resultMetric(row,"success")
+    const success=resultMetric(row,"success")
     return {row,verdict:verdicts[row.name]??row.original.D1,
       declaredSLO:declared?.length===1?declared[0].slo:null,appliedSLO:frozenSLO(row,run),
-      success:success.numerator,offered:success.denominator,fraction:finite(success.value),
-      p95:finite(resultMetric(row,"p95").value),p50:finite(latency.p50)===null?null:Number(latency.p50)/1e6,
-      outcomes:object(row.original.outcomes),fidelity:object(fidelity[row.name]??row.original.issuanceFidelity)}
+      success:success.numerator,offered:success.denominator,
+      outcomes:object(row.original.outcomeClasses),fidelity:object(fidelity[row.name]??row.original.issuanceFidelity)}
   })
 }
 

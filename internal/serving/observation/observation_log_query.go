@@ -53,8 +53,8 @@ func (l *ObservationLog) Query(ctx context.Context, uid string, from, to time.Ti
 	result := ObservationResult{
 		UID: uid, From: from, To: to, DefinitionFilter: definitions, OutcomeFilter: outcomes,
 		Outcomes: map[string]int{}, QuantileMethod: "gonum/stat.Empirical",
-		SamplePopulation: "requests received in [from,to); final rows excluding canceled, incomplete and delivery_failed; " +
-			"positive monotonic elapsed latency",
+		SamplePopulation: "requests received in [from,to); completed outcomes only; " +
+			"positive monotonic elapsed latency; other outcomes counted separately",
 	}
 	if uid == "" || (!from.IsZero() && !to.IsZero() && !from.Before(to)) || limit < 0 {
 		return result, &serving.Error{Code: "InvalidQuery", Message: "invalid observation query"}

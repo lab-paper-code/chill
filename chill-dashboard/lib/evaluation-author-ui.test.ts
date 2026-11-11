@@ -319,7 +319,7 @@ test("R17b: author help uses constraint rows and evidence options use server nam
 
 test("R17b: result detail retains preparation outcome and separates candidate and baseline results",()=>{
   const runner=hookRunner(),params=new URLSearchParams("a=publication")
-  const stage=(id:string)=>({id,from:"2026-11-01T00:00:00Z",to:"2026-11-01T00:01:00Z",kpis:{wholePoolJoules:id==="candidate"?60:100,requests:{camera:{offered:600,deadlineSuccessFraction:id==="candidate"?0.9:0.8,completedLatencyNS:{p95:id==="candidate"?1000000:2000000,samples:37}},sensor:{offered:100,deadlineSuccessFraction:0.5,completedLatencyNS:{p95:3000000,samples:8}}}}})
+  const stage=(id:string)=>({id,from:"2026-11-01T00:00:00Z",to:"2026-11-01T00:01:00Z",kpis:{wholePoolJoules:id==="candidate"?60:100,requests:{camera:{offered:600,onTimeSuccessRate:id==="candidate"?0.9:0.8,deadlineSuccessFraction:id==="candidate"?0.9:0.8,completedLatencyNS:{p95:id==="candidate"?1000000:2000000,samples:37}},sensor:{offered:100,onTimeSuccessRate:0.5,deadlineSuccessFraction:0.5,completedLatencyNS:{p95:3000000,samples:8}}}}})
   let run:Record<string,unknown>={id:"publication",stages:[],outcome:{execution:{status:"Failed"},measurement:{verdict:"NOT_EVALUATED"},cleanup:{status:"Complete"}}}
   const modules={...primitives,react:{...runner.react,useEffect:()=>{},useMemo:(fn:()=>unknown)=>fn(),useRef:()=>({current:null})},"lucide-react":{TriangleAlert:"svg"},recharts:{},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:run})},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/features/experiments-conclusion":{ExperimentOutcome:"outcome",ExperimentVerdict:"verdict",ExperimentStageResults:"result-matrix",usePublishedExperimentFacts:()=>({data:null}),useHistoricalExperiments:()=>({runs:[run],pending:false,error:null})}}
   const {ExperimentsPage}=load("../features/experiments.tsx",modules)
@@ -351,7 +351,7 @@ test("R17b: result detail retains preparation outcome and separates candidate an
   const drawerTree=elements(runner.render(drawer.type as (props:Record<string,unknown>)=>unknown,{...drawer.props,row:values.props.row,run:recorded}))
   const drawerValues=drawerTree.find(element=>element.props.row&&typeof element.type==="function")!
   const samples=renderToStaticMarkup(createElement(drawerValues.type as ComponentType<Record<string,unknown>>,{...drawerValues.props,service:"camera"}))
-  assert.match(samples,/p95 표본[^<]*37/)
+  assert.match(samples,/표본[^<]*37/)
   assert.doesNotMatch(samples,/>sensor</)
   assert.ok(drawerTree.some(element=>element.type==="select"&&element.props.value===""))
   const resultRow=experimentHelpers.object(values.props.row)

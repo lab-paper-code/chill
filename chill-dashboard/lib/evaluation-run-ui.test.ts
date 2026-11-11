@@ -336,7 +336,7 @@ test("additional recorded stage condition types preserve their state reason and 
 })
 
 test("active request projection renders provisional counts, server reachability and generator quality without a verdict",()=>{
-  const provisionalD1={asOf:"2026-11-03T00:02:30Z",closedThrough:"2026-11-03T00:02:00Z",provisional:true,workloads:{camera:{offered:20,deadlineSuccess:8,requiredSuccessfulRank:19,outcomes:{completed:9,timeout:2,error:1,"unfinished-or-no-final":8},unfinishedOrUnsent:11,slo:{percentile:95,targetLatencyNanos:125000000},reachable:false,substages:[{id:"gentle",offered:20,deadlineSuccess:8,requiredSuccessfulRank:19}]}},generatorQuality:{camera:{issued:12,unissued:8,issuanceFraction:0.6,status:"PARTIAL",generatorQuality:{status:"OBSERVED",thresholdLabel:"EXCEEDS_REPORTED_THRESHOLD",policy:{latenessToleranceNS:5000000},exceeding:2,denominator:12}}}}
+  const provisionalD1={asOf:"2026-11-03T00:02:30Z",closedThrough:"2026-11-03T00:02:00Z",provisional:true,workloads:{camera:{offered:20,deadlineSuccess:8,onTimeSuccessRate:.4,requiredSuccessfulRank:19,outcomeClasses:{onTime:8,late:1,rejected:0,timeout:2,failed:1,incomplete:8},unfinishedOrUnsent:11,slo:{percentile:95,targetLatencyNanos:125000000},reachable:false,substages:[{id:"gentle",offered:20,deadlineSuccess:8,requiredSuccessfulRank:19}]}},generatorQuality:{camera:{issued:12,unissued:8,issuanceFraction:0.6,status:"PARTIAL",generatorQuality:{status:"OBSERVED",thresholdLabel:"EXCEEDS_REPORTED_THRESHOLD",policy:{latenessToleranceNS:5000000},exceeding:2,denominator:12}}}}
   const run={...baseRun,phase:"Running",finishedAt:undefined,stages:[{id:"trial",finishedAt:null,provisionalD1}]}
   const html=renderRun(run),screen=text(html)
   assert.match(screen,/실행 중 · 잠정/)
@@ -350,7 +350,9 @@ test("active request projection renders provisional counts, server reachability 
   assert.match(screen,/허용 지연 초과/)
   const table=html.match(/<table[^>]*aria-label="서비스별 결과"[\s\S]*?<\/table>/)?.[0]??""
   assert.match(text(table),/진행 중/)
-  assert.doesNotMatch(table,/FAIL|PASS|통과|실패/)
+  assert.doesNotMatch(table,/FAIL|PASS|통과/)
+  assert.match(table,/실패 1/)
+  assert.match(table,/기한 내 성공률 40\.00%/)
   assert.equal([...table.matchAll(/width:([\d.]+)%/g)].reduce((total,match)=>total+Number(match[1]),0),100,"overlapping pending aggregate must not double-count outcome segments")
   const reachable=structuredClone(run)
   reachable.stages[0].provisionalD1.workloads.camera.reachable=true

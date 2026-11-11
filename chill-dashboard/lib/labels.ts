@@ -210,6 +210,7 @@ const statusWords: Record<string, string> = {
     Accepted: "접수됨", Applying: "적용 중", Applied: "적용됨", Draining: "기존 요청 마무리 중",
     Completed: "완료", Failed: "실패", True: "정상", False: "확인 필요", Unknown: "확인 중",
     completed: "완료", error: "오류", rejected: "거절", timeout: "시간 초과",
+    onTime: "기한 내 성공", late: "늦은 완료", failed: "실패", unfinished: "미완료",
     canceled: "취소", incomplete: "처리 중", delivery_failed: "응답 전달 실패",
     pending: "배정 대기", assigned: "배정됨", queued: "실행 대기", running: "실행 중", returning: "응답 보내는 중",
     deferred: "목표 시간을 넘겨 뒤로 미뤄짐",

@@ -98,39 +98,49 @@ function ExperimentEnergy({stage}:{stage:ExperimentStage}) {
 }
 
 type StageResultsProps = {run:Experiment;stage:ExperimentStage;provisional?:never}|{provisional:Published;run?:never;stage?:never}
+const resultDistribution=(value:unknown)=>{
+  const stats=object(value)
+  return <><span className="block">p50 / p95 / p99 / max</span><span className="block">{["p50","p95","p99","max"].map(key=>typeof stats[key]==="number"||typeof stats[key]==="bigint"?formatMeasurementDuration(stats[key] as number|bigint):"미기록").join(" / ")}</span><span className="block text-muted-foreground">표본 {resultNumber(stats.samples)}</span></>
+}
 export function ExperimentStageResults({run,stage,provisional,service="",onSelect}:StageResultsProps&{service?:string;onSelect?:(service:string)=>void}) {
   const results=(provisional?experimentRows({kpis:{requests:provisional.workloads}}).map(row=>({
     row,verdict:undefined,declaredSLO:null,appliedSLO:null,success:row.original.deadlineSuccess,offered:row.original.offered,
-    fraction:ratio(undefined,row.original.deadlineSuccess,row.original.offered),p95:null,p50:null,
-    outcomes:object(row.original.outcomes),
+    outcomes:object(row.original.outcomeClasses),
     fidelity:object(object(provisional.generatorQuality)[row.name]),
   })):experimentServiceResults(stage,run)).filter(({row})=>!service||row.name===service)
   const parts=[...new Set(results.flatMap(({row})=>row.substages?.flatMap(part=>typeof part.id==="string"?[part.id]:[])??[]))]
-  const outcomes=[["completed","완료","bg-ok"],["timeout","시간 초과","bg-heat"],["error","오류","bg-destructive"],["unfinished-or-no-final","미완료","bg-muted-foreground"]] as const
+  const outcomes=[["onTime","기한 내 성공","bg-ok"],["late","늦은 완료","bg-chart-4"],["rejected","거절","bg-chart-3"],["timeout","시간 초과","bg-heat"],["failed","실패","bg-destructive"],["incomplete","미완료","bg-muted-foreground"]] as const
   const sloText=(slo:unknown)=>{const value=object(slo),target=value.targetLatencyNanos;return Object.keys(value).length?`p${finite(value.percentile)??"미기록"} · ${typeof target==="number"||typeof target==="bigint"?formatMeasurementDuration(target):"미기록 ms"}`:"미기록"}
   return <div className="min-w-0 space-y-4">
     {provisional&&<header className="space-y-1"><h2 className="font-semibold">실행 중 · 잠정</h2><p className="text-sm tabular-nums">asOf {resultTime(provisional.asOf)} · 집계 마감 {resultTime(provisional.closedThrough)} (KST)</p><p className="text-xs text-muted-foreground">현재 요청은 집계 마감까지의 예정 도착입니다. 결과 대기·미발행 포함은 진행 중 요청을 포함하며 이후 성공으로 바뀔 수 있습니다. 요청 배출 전에는 판정하지 않습니다.</p></header>}
     <div className="overflow-x-auto">
       <table aria-label="서비스별 결과" className="w-full text-left text-sm tabular-nums">
-        <thead><tr>{["서비스","D1 판정",provisional?"적용 SLO":"선언 SLO",provisional?"성공 / 필요":"성공 / 요청",provisional?"현재 요청 · 도달 상태":"완료 지연 p95 / p50 (ms)",provisional?"요청 결과":"클라이언트 증거·요청 결과",provisional?"부하 발행률":"발행 증거 비율"].map(label=><th scope="col" key={label} className="whitespace-nowrap p-2 font-medium">{label}</th>)}</tr></thead>
-        <tbody>{results.map(({row,verdict,declaredSLO,appliedSLO,success,offered,fraction,p95,p50,outcomes:counts,fidelity})=>{
-          const total=provisional?finite(offered):finite(fidelity.issued)??finite(row.original.clientRows)
+        <thead><tr>{["서비스","D1 판정",provisional?"적용 SLO":"선언 SLO",provisional?"기한 내 성공 / 필요":"기한 내 성공 / 요청","완료 지연 (ms)",provisional?"요청 결과":"클라이언트 증거·요청 결과","대기·거절 (ms)",provisional?"부하 발행률":"발행 증거 비율"].map(label=><th scope="col" key={label} className="whitespace-nowrap p-2 font-medium">{label}</th>)}</tr></thead>
+        <tbody>{results.map(({row,verdict,declaredSLO,appliedSLO,success,offered,outcomes:counts,fidelity})=>{
+          const total=finite(offered),goodput=finite(row.original.goodputRequestsPerSecond),rejections=Array.isArray(row.original.rejections)?row.original.rejections.map(object):null
           return <tr key={row.source} className="border-t align-top">
             <th scope="row" className="max-w-52 break-words p-2 font-medium">{onSelect?<button className="min-h-11 max-w-52 whitespace-normal break-words text-left underline focus-visible:outline-2 focus-visible:outline-primary" onClick={()=>onSelect(row.name)}>{row.name} 결과 자세히</button>:row.name}</th>
             <td className={`whitespace-nowrap p-2 font-medium ${!provisional&&verdict==="FAIL"?"text-destructive":""}`}>{provisional?"진행 중":resultWord(verdict)}</td>
             <td className="whitespace-nowrap p-2">{provisional?sloText(row.original.slo):<>{declaredSLO?sloText(declaredSLO):"미기록"}<span className="block text-xs text-muted-foreground">{appliedSLO?`적용 확인: ${sloText(appliedSLO)}`:"적용 미확인"}</span></>}</td>
-            <td className="min-w-32 whitespace-nowrap p-2"><span>{resultNumber(success)} / {resultNumber(provisional?row.original.requiredSuccessfulRank:offered)}</span><div className="text-xs text-muted-foreground">{resultPercent(fraction)}</div></td>
-            <td className="whitespace-nowrap p-2">{provisional?<>{resultNumber(offered)}<span className={`block text-xs ${row.original.reachable===false?"text-destructive":"text-muted-foreground"}`}>{row.original.reachable===true?"도달 가능":row.original.reachable===false?"도달 불가":"미기록"}</span></>:<>{resultNumber(p95,"ms")} / {resultNumber(p50,"ms")}<span className="block text-xs text-muted-foreground">p95 표본 {resultNumber(row.metrics.find(metric=>metric.key.endsWith(".p95"))?.denominator)}</span></>}</td>
+            <td className="min-w-44 whitespace-nowrap p-2"><span>{resultNumber(success)} / {resultNumber(provisional?row.original.requiredSuccessfulRank:offered)}</span><div className="text-xs">기한 내 성공률 {resultPercent(finite(row.original.onTimeSuccessRate))}</div><div className="text-xs">Goodput {goodput===null?"미기록":goodput.toLocaleString("ko-KR",{maximumSignificantDigits:3})} req/s</div>{provisional&&<div className={`text-xs ${row.original.reachable===false?"text-destructive":"text-muted-foreground"}`}>현재 요청 {resultNumber(offered)} · {row.original.reachable===true?"도달 가능":row.original.reachable===false?"도달 불가":"미기록"}</div>}</td>
+            <td className="whitespace-nowrap p-2 text-xs">{resultDistribution(row.original.completedLatencyNS)}<span className="block text-muted-foreground">onTime + late 완료 표본 · 판정과 별도</span></td>
             <td className="min-w-64 p-2">
               <div aria-hidden="true" className="mb-1 flex h-3 overflow-hidden rounded-sm bg-muted">{outcomes.map(([key,,color])=>{const count=finite(counts[key]);return count!==null&&total!==null&&total>0?<span key={key} className={color} style={{width:`${count/total*100}%`}}/>:null})}</div>
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">{outcomes.map(([key,label,color])=><span key={key} className="whitespace-nowrap"><i aria-hidden="true" className={`mr-1 inline-block size-2 ${color}`}/>{label} {resultNumber(counts[key])}</span>)}</div>
-              <div className="mt-1 text-xs text-muted-foreground">{provisional?<>결과 대기·미발행 포함 {resultNumber(row.original.unfinishedOrUnsent)}<span className="block">위 결과 분류와 겹치는 집계 · 미발행 {resultNumber(fidelity.unissued)}</span></>:<><span className="block">클라이언트 수집 {resultNumber(row.original.clientRows)}</span><span className="block">클라이언트 행 누락 {resultNumber(fidelity.missingClientRows)} · 초과 {resultNumber(fidelity.extraClientRows)}</span><span className="block">발행 증거 부족 {resultNumber(fidelity.unissued)}</span><span className="block">gateway 관측 미기록</span></>}
+              <span className="block text-xs text-muted-foreground">예정 요청 전체 기준 · {resultNumber(total)}건</span>
+              <div className="mt-1 text-xs text-muted-foreground">{provisional?<>결과 대기·미발행 포함 {resultNumber(row.original.unfinishedOrUnsent)}<span className="block">위 결과 분류와 겹치는 집계 · 미발행 {resultNumber(fidelity.unissued)}</span></>:<><span className="block">클라이언트 수집 {resultNumber(row.original.clientRows)}</span><span className="block">클라이언트 행 누락 {resultNumber(fidelity.missingClientRows)} · 초과 {resultNumber(fidelity.extraClientRows)}</span><span className="block">발행 증거 부족 {resultNumber(fidelity.unissued)}</span></>}
                 {typeof row.original.identityMismatchClientRows==="number"&&row.original.identityMismatchClientRows>0&&<span className="block">신원 불일치 행 {resultNumber(row.original.identityMismatchClientRows)}</span>}
               </div>
             </td>
+            <td className="min-w-72 p-2 text-xs">
+              <div>gateway 대기 {resultDistribution(row.original.gatewayWaitNS)}</div>
+              <div className="mt-2">executor 대기 {resultDistribution(row.original.executorWaitNS)}</div>
+              <details className="mt-2"><summary className="min-h-11 cursor-pointer">거절 code × stage × policy</summary>{rejections===null?<p>미기록</p>:rejections.length?rejections.map((rejection,index)=><div className="mt-2" key={index}><p>{String(rejection.code??"미기록")} × {String(rejection.stage??"미기록")} × {String(rejection.policy??"미기록")} · {resultNumber(rejection.count)}건</p><div>gateway 대기 {resultDistribution(rejection.gatewayWaitNS)}</div><div>executor 대기 {resultDistribution(rejection.executorWaitNS)}</div></div>):<p>거절 0건</p>}</details>
+              <p className="text-muted-foreground">큐에 들어가지 않은 단계는 표본 없음</p>
+            </td>
             <td className="whitespace-nowrap p-2">{resultPercent(finite(fidelity.issuanceFraction))}<span className="block text-xs text-muted-foreground">{!provisional&&fidelity.status==="PARTIAL"?"부분 증거":resultWord(fidelity.status)}</span></td>
           </tr>
-        })}{!results.length&&<tr><td colSpan={7} className="p-3 text-muted-foreground">서비스 결과 미기록</td></tr>}</tbody>
+        })}{!results.length&&<tr><td colSpan={8} className="p-3 text-muted-foreground">서비스 결과 미기록</td></tr>}</tbody>
       </table>
     </div>
     <section aria-label="구간별 성공" className="space-y-2">

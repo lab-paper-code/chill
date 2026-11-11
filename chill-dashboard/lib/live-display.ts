@@ -283,6 +283,8 @@ export function liveReason(reason:string|null|undefined):string {
   if(!reason)return "미제공"
   if(reason==="PowerModeUnavailable")return "전력모드 확인 불가"
   if(reason==="PowerModeObservationUnavailable")return "전력모드 관측 불가"
+  if(reason==="DeadlineInfeasible")return "SLO 기한 내 완료 불가로 거절"
+  if(reason==="QueueFull")return "대기 큐가 가득 차 거절"
   if(reason==="PowerTransitionUnavailable")return "전력 전환 근거 없음"
   if(reason==="PlacementInventoryMissing")return "배치 인벤토리 없음"
   if(reason==="Feasible")return "실행 가능"

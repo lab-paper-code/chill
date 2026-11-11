@@ -26,7 +26,7 @@ test("saved r2b client evidence gap is not asserted to be unsent traffic",()=>{
   const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:r2b,stage:r2b.stages[0]}))
   assert.match(html,/클라이언트 행 누락 4,125/)
   assert.match(html,/클라이언트 수집 130,031/)
-  assert.match(html,/gateway 관측 미기록/)
+  assert.match(html,/gateway 대기/)
   assert.doesNotMatch(html,/미발행 4,125|부분 발행/)
   assert.match(html,/발행 증거 부족 4,125/)
 })
@@ -179,7 +179,7 @@ test("published operator results expose service failures, declared SLO, outcomes
   const stage={id:"measured",from:run.from,to:run.to,kpis:{
     status:"FAIL",wholePoolJoules:null,
     components:{slo:{status:"FAIL",workloads:{camera:"FAIL",sensor:"OBSERVED_THRESHOLD_MET"}},loadFidelity:{camera:{status:"PARTIAL",issuanceFraction:.8,issued:80,unissued:20,generatorQuality:{exceeding:2,denominator:80,thresholdLabel:"WITHIN_REPORTED_THRESHOLD",policy:{latenessToleranceNS:50000000}}},sensor:{status:"OBSERVED",issuanceFraction:1,unissued:0}},drain:{complete:false,reasons:["ProducerEOFWithoutCompleteDrain"]}},
-    requests:{camera:{workloadUID:"camera",definitionID:"camera/1/model/1/preprocessor/1",identitySource:{store:"evidence",key:"unlinked-snapshot"},offered:100,deadlineSuccess:15,deadlineSuccessFraction:.15,D1:"OBSERVED_THRESHOLD_MET",outcomes:{completed:40,timeout:10,error:29,"unfinished-or-no-final":1},completedLatencyNS:{p50:1200000000,p95:1950000000},substages:[{id:"low",offered:40,deadlineSuccess:12},{id:"high",offered:60,deadlineSuccess:3}]},sensor:{workloadUID:"sensor",offered:10,deadlineSuccess:10,D1:"OBSERVED_THRESHOLD_MET",outcomes:{completed:10},substages:[{id:"low",offered:4,deadlineSuccess:4},{id:"high",offered:6,deadlineSuccess:6}]}},
+    requests:{camera:{workloadUID:"camera",definitionID:"camera/1/model/1/preprocessor/1",identitySource:{store:"evidence",key:"unlinked-snapshot"},offered:100,deadlineSuccess:15,onTimeSuccessRate:.15,deadlineSuccessFraction:.15,D1:"OBSERVED_THRESHOLD_MET",outcomeClasses:{onTime:15,late:25,rejected:20,timeout:10,failed:29,incomplete:1},completedLatencyNS:{p50:1200000000,p95:1950000000},substages:[{id:"low",offered:40,deadlineSuccess:12},{id:"high",offered:60,deadlineSuccess:3}]},sensor:{workloadUID:"sensor",offered:10,deadlineSuccess:10,onTimeSuccessRate:1,D1:"OBSERVED_THRESHOLD_MET",outcomeClasses:{onTime:10},substages:[{id:"low",offered:4,deadlineSuccess:4},{id:"high",offered:6,deadlineSuccess:6}]}},
     power:{energyStatus:"UNAVAILABLE",nodes:[{node:{name:"worker-a"}}],energyCoverage:{maximumGapSeconds:9.121},reasons:["Declared Node worker-a: partial/unavailable source or coverage below reporting policy"]},
   }}
   const publication={...run,comparisons:[],stages:[stage],outcome:{measurement:{verdict:"FAIL"}},definition:{workloads:[{name:"camera",uid:"camera",generation:1,model:{uid:"model",generation:1},preprocessor:{uid:"preprocessor",generation:1},slo:{percentile:95,targetLatencyNanos:1000000000}},{name:"sensor",uid:"sensor",slo:{percentile:99,targetLatencyNanos:36000000}}],spec:{stages:[]},loadScenarios:[]}} as unknown as Experiment
@@ -189,10 +189,10 @@ test("published operator results expose service failures, declared SLO, outcomes
   const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:publication,stage}))
   const matrix=html.match(/<table[^>]+aria-label="서비스별 결과"[\s\S]*?<\/table>/)?.[0]??""
   assert.equal((matrix.match(/<tbody>[\s\S]*?<\/tbody>/)?.[0].match(/<tr\b/g)??[]).length,2)
-  for(const value of ["선언 SLO","p95","1,000","p99","36","적용 미확인","15 / 100","15.00%","1,950","1,200","완료 40","시간 초과 10","오류 29","미완료 1","발행 증거 부족 20","80.00%","부분 증거"])assert.ok(matrix.includes(value),value)
+  for(const value of ["선언 SLO","p95","1,000","p99","36","적용 미확인","15 / 100","15.00%","1,950","1,200","기한 내 성공 15","늦은 완료 25","거절 20","시간 초과 10","실패 29","미완료 1","발행 증거 부족 20","80.00%","부분 증거"])assert.ok(matrix.includes(value),value)
   const sensor=matrix.match(/<tr[^>]*>[\s\S]*?sensor[\s\S]*?<\/tr>/g)?.at(-1)??""
   assert.ok(sensor.includes("시간 초과 미기록"))
-  assert.ok(sensor.includes("오류 미기록"))
+  assert.ok(sensor.includes("실패 미기록"))
   assert.ok(sensor.includes("미완료 미기록"))
   const parts=html.match(/<table[^>]+aria-label="구간별 성공률"[\s\S]*?<\/table>/)?.[0]??""
   for(const value of ["low","high","12 / 40","3 / 60","30.00%","5.00%"])assert.ok(parts.includes(value),value)
@@ -207,7 +207,7 @@ test("missing publication outcomes and zero offered remain unrecorded, never a p
   const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:{...run,stages:[stage]},stage}))
   assert.match(html,/0 \/ 0/)
   assert.doesNotMatch(html,/0\.00%|통과|완료 0|오류 0|미완료 0|미발행 0/)
-  assert.match(html,/완료 미기록/)
+  assert.match(html,/기한 내 성공 미기록/)
 })
 
 test("review: declared and identity-linked applied SLO retain sub-ms precision",()=>{
@@ -286,4 +286,35 @@ test("final and provisional SLOs preserve fractional percentiles and large wire 
       assert.ok(html.includes(targetLatencyNanos===undefined?"p99.5 · 미기록 ms":`p99.5 · ${measurements.formatMeasurementDuration(targetLatencyNanos)}`))
     }
   }
+})
+
+test("overload outcomes, published success and goodput stay visible beside fast completed latency",()=>{
+  const stats=(samples:number,value:number)=>({samples,p50:samples?value:null,p95:samples?value:null,p99:samples?value:null,max:samples?value:null})
+  const requests={camera:{
+    offered:100,deadlineSuccess:2,requiredSuccessfulRank:95,onTimeSuccessRate:.02,goodputRequestsPerSecond:.2,
+    D1:"FAIL",outcomeClasses:{onTime:2,late:1,rejected:90,timeout:3,failed:2,incomplete:2},
+    outcomes:{completed:3,http_error:90,transport_error:2,canceled:3},
+    completedLatencyNS:stats(3,1000000),gatewayWaitNS:stats(100,2000000),executorWaitNS:stats(6,3000000),
+    rejections:[{code:"DeadlineInfeasible",stage:"gateway",policy:"Reject",count:80,gatewayWaitNS:stats(80,2000000),executorWaitNS:stats(0,0)},
+      {code:"QueueFull",stage:"executor",policy:"Delay",count:10,gatewayWaitNS:stats(10,4000000),executorWaitNS:stats(10,5000000)}],
+  }}
+  const measured={...stage("overload"),kpis:{requests,components:{slo:{workloads:{camera:"FAIL"}},loadFidelity:{camera:{issued:10}}}}}
+  for(const provisional of [false,true]) {
+    const props=provisional?{provisional:{workloads:requests,generatorQuality:{camera:{issued:10}}}}:{run:{...run,stages:[measured]},stage:measured}
+    const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,props))
+    const text=html.replace(/<[^>]+>/g,"")
+    for(const value of ["기한 내 성공률 2.00%","Goodput 0.2 req/s","기한 내 성공 2","늦은 완료 1","거절 90","시간 초과 3","실패 2","미완료 2","예정 요청 전체 기준 · 100건","onTime + late 완료 표본","표본 3","1.00 ms / 1.00 ms / 1.00 ms / 1.00 ms","DeadlineInfeasible × gateway × Reject · 80건","QueueFull × executor × Delay · 10건","gateway 대기","executor 대기","2.00 ms / 2.00 ms / 2.00 ms / 2.00 ms","5.00 ms / 5.00 ms / 5.00 ms / 5.00 ms"])assert.ok(text.includes(value),value)
+    assert.match(html,/width:90%/)
+    assert.doesNotMatch(html,/width:900%|http_error|transport_error|canceled|오류 0/)
+    assert.match(html,provisional?/진행 중/:/>FAIL</)
+  }
+})
+
+test("outcome classes never fall back to client outcomes or recompute a missing published success rate",()=>{
+  const measured={...stage("missing"),kpis:{requests:{camera:{offered:100,deadlineSuccess:2,outcomes:{completed:99,http_error:1},completedLatencyNS:{p95:1000000}}}}}
+  const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:{...run,stages:[measured]},stage:measured}))
+  assert.match(html,/기한 내 성공률 미기록/)
+  assert.match(html,/기한 내 성공 미기록/)
+  assert.match(html,/거절 미기록/)
+  assert.doesNotMatch(html,/2\.00%|완료 99|거절 1/)
 })

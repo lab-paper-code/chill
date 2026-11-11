@@ -85,3 +85,60 @@ func TestHistoricalRequestQueryReadsOnlyRequiredEvidenceAndKeepsLateFinalStatist
 		t.Fatalf("request rows read %d irrelevant profile catalogs", archive.catalogReads)
 	}
 }
+
+func TestRequestQuerySeparatesCompletedLatencyFromAllOtherOutcomes(t *testing.T) {
+	ctx := context.Background()
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	at := observationTestHour.Add(time.Second)
+	clock.set(at)
+	definition := &serving.Definition{Name: "overloaded", UID: archiveTestUID, Generation: 1, SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}}
+	if err := log.DefinitionRecord(definition); err != nil {
+		t.Fatal(err)
+	}
+	outcomes := []string{"completed", "rejected", "timeout", "error", "canceled", "delivery_failed", "incomplete", "", ""}
+	for index, outcome := range outcomes {
+		id := string(rune('a' + index))
+		events := []serving.RequestEvent{{Kind: "received", At: at}}
+		if index != len(outcomes)-1 {
+			events = append(events, serving.RequestEvent{Kind: "accepted", At: at})
+		}
+		elapsed := time.Millisecond
+		if outcome == "completed" {
+			elapsed = 100 * time.Millisecond
+		}
+		events = append(events, serving.RequestEvent{Kind: "response_finished", At: at.Add(elapsed), ElapsedNanos: int64(elapsed), Outcome: outcome})
+		for _, event := range events {
+			event.RequestID, event.WorkloadUID, event.Definition, event.ReceivedAt = id, definition.UID, definition.Identity(), at
+			if err := log.RequestEvent(event); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := log.RequestClosed(id, serving.RequestTimings{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := log.Query(ctx, definition.UID, at, at.Add(time.Second), nil, nil, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != len(outcomes) || result.Selected != len(outcomes) || len(result.Requests) != 1 || len(result.Cohorts) != 1 {
+		t.Fatalf("population/page accounting: %+v", result)
+	}
+	for _, outcome := range outcomes[:7] {
+		want := 1
+		if outcome == "incomplete" {
+			want = 2
+		}
+		if result.Outcomes[outcome] != want {
+			t.Fatalf("%s count = %d, want %d", outcome, result.Outcomes[outcome], want)
+		}
+	}
+	if result.Outcomes["pending"] != 1 {
+		t.Fatalf("outcome-less elapsed row became completion: %+v", result.Outcomes)
+	}
+	cohort := result.Cohorts[0]
+	if cohort.Total != len(outcomes) || cohort.SampleCount != 1 || len(cohort.LatencyNanos) != 1 ||
+		cohort.LatencyNanos[0] != float64(100*time.Millisecond) || cohort.QuantileNanos == nil || *cohort.QuantileNanos != float64(100*time.Millisecond) {
+		t.Fatalf("non-completed latency entered distribution: %+v", cohort)
+	}
+}

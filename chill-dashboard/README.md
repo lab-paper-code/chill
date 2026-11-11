@@ -112,6 +112,9 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 실험 게시 디코딩·타입은 `lib/experiments.ts`, 비교·차트 projection은 `lib/experiment-comparison.ts`, 정밀 scheduler 근거 구간·활동은 `lib/scheduler-history.ts`, 실험 선택 URL·History 변경은 `lib/dashboard-routes.ts`가 소유한다. 호출부는 소유 모듈을 직접 import하며 게시 identity·나노초 경계·null/0·표시 정밀도·URL 매개변수 계약은 그대로 유지한다.
 
+실험 결론은 게시된 `outcomeClasses`의 `onTime`·`late`·`rejected`·`timeout`·`failed`·`incomplete`를 예정 요청 전체 기준으로 표시한다. `onTimeSuccessRate`·`goodputRequestsPerSecond`와 완료 표본(`onTime`+`late`)의 p50·p95·p99·max를 함께 읽으며, D1은 서버 게시값을 그대로 쓴다. gateway/executor 대기와 `code × stage × policy` 거절별 대기는 해당 큐에 들어간 표본만 표시한다. 과거 결과에 새 필드가 없으면 미기록이며 클라이언트 outcome으로 새 분류를 추정하지 않는다.
+관측 요청 조회의 latency 분포도 명시적 `completed`만 포함하며, outcome 없는 elapsed 행은 완료로 간주하지 않는다. live 화면의 완료율·SLO 안 비율은 **종료 요청 기준**이며 실험의 offered 분모 기한 내 성공률과 구분한다.
+
 실행 목록의 실행 상태 셀과 실행 상세 요약은 서버 `stopRequested`가 있을 때만 중지 요청·요청자·KST 시각을 고정 높이 슬롯에 표시한다. 빈 요청자는 미기록이며, 해당 실행의 중지 버튼은 숨긴다. DELETE 접수 응답만으로 중지 요청 표시를 만들지 않고 기존 phase·풀 반환 규칙을 유지한다.
 
 게시 에너지는 MEASURED의 `power.wholePoolJoules`만 풀 전체로, PARTIAL의 `power.observedJoules`는 관측 J(일부 노드 coverage 미달)로 표시한다. 평균 전력도 같은 범위를 따르며 차트는 풀 전체·관측을 별도 계열로 구분한다. UNAVAILABLE은 수치 대신 미기록과 게시 사유를 보여준다. 상태 없는 과거 게시만 기존 최상위 wholePoolJoules를 사용한다. 회귀 원자료 `lib/fixtures/experiment-partial-energy.json`은 control-330의 7-7 r2 게시(`72234778-e8b5-44a2-94c4-5125bad5c69d`) 원문이다.

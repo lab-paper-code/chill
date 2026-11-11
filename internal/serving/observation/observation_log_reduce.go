@@ -28,8 +28,6 @@ func requestOutcome(row *serving.RequestRow) string {
 	switch {
 	case row.Outcome != "":
 		return row.Outcome
-	case row.ElapsedNanos != nil:
-		return outcomeCompleted
 	case row.Accepted():
 		return outcomeIncomplete
 	default:
@@ -72,8 +70,7 @@ func (result *ObservationResult) aggregate(ctx context.Context, definitions map[
 		}
 		cohort.Total++
 		cohort.Outcomes[outcome]++
-		switch outcome {
-		case outcomeDeliveryFailed, outcomeIncomplete, outcomeCanceled:
+		if outcome != outcomeCompleted {
 			continue
 		}
 		if row.ElapsedNanos != nil && *row.ElapsedNanos > 0 {
