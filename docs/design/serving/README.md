@@ -29,6 +29,7 @@ Cold start는 TLS·인증·HTTP 구성을 완료한 뒤 listener를 먼저 열�
 | [control-loop-degradation-plan](control-loop-degradation-plan.md) | plan: control375 국소 실패의 제어 정지(Pod-only 검증, 실패 owner 예약, 잔여 시간 무효, 실패 action), Tick 반응 시간, Completed Pod 정리 |
 | [control-apply-latency-plan](control-apply-latency-plan.md) | plan: control376 검증 route의 rebase 왜곡, 범위 밖 실행 중 batch, refresh 분해 |
 | [system-reaction-and-validity-plan](system-reaction-and-validity-plan.md) | plan: control377 공통 원인(genesis1 DiskPressure: 서버 퇴거 gap·12k Failed Pod·edge 종료 정지), OnCluster 전체 재목록 회귀, 직렬 release, action 기록 투영, 시작 상태 |
+| [control-reaction-plan](control-reaction-plan.md) | plan: control378 수요 증가→실효 공급 25~31초 중 제어 구조 지연 18~23초(평가에 직렬화된 stage 진행, 첫 판단 미증설), 판단 기록 1.5MB/행(M0 15배), server 메모리 여유 |
 | [capacity-table-evidence](capacity-table-evidence.md) | completed: 당시 전체 격자 κ·탐색의 역사적 근거; 현행 수치 계약은 승인 M0 |
 | [scheduler-operations](scheduler-operations.md) | active: Pod-bound Service/수동원자실행 |
 | [scheduler-srs-audit](scheduler-srs-audit.md) | completed: 당시 SRS대조 결과·증거 경계 |
