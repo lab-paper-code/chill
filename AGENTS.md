@@ -83,6 +83,7 @@ Use the cheapest authoritative evidence for the claim being made.
 |---|---|
 | Go behavior within one package | focused `go test`, then `make lint` and `make test` before handoff |
 | Profiler worker / firstfloor native measurement path | `make test-native` |
+| Deployment CLI / offline evaluation fixtures | `make test-deploy` |
 | New production package or internal import | `make arch-check` |
 | Go semantic path covered by the golden queries | `make gopls-check` or `make code-intelligence-check` |
 | API types or generated Kubernetes artifacts | `make manifests generate`, inspect generated drift, then relevant tests |

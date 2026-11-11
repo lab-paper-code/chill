@@ -152,10 +152,11 @@ test-serving-entrypoint-rbac: ## Verify the rendered ChillServer grants measurem
 
 .PHONY: test-deploy
 test-deploy: ## Exercise the deployment CLI offline with process-backed tools and TLS fixtures.
-	python3 -B -m unittest discover -s hack/deploy -p 'test_*.py'
-	python3 -B hack/evaluation/test_evaluation.py
-	python3 -B hack/evaluation/test_producer_capture.py
-	python3 -B hack/evaluation/test_recovery_gaps.py
+	# One process per test keeps class fixtures, environment changes and cwd writes isolated.
+	{ printf '%s\n' hack/evaluation/test_evaluation.py hack/evaluation/test_producer_capture.py hack/evaluation/test_recovery_gaps.py; \
+	  python3 -B -c 'import sys, unittest; loader = unittest.TestLoader(); suite = loader.discover("hack/deploy", pattern="test_*.py"); loader.errors and sys.exit("\n".join(loader.errors)); tests = lambda suite: (test for child in suite for test in (tests(child) if isinstance(child, unittest.TestSuite) else (child,))); print("\n".join(test.id() for test in tests(suite)))'; \
+	} | xargs -r -P 8 -n 1 bash -c \
+	  'case "$$1" in *.py) exec python3 -B "$$1";; *) PYTHONPATH=hack/deploy exec python3 -B -m unittest "$$1";; esac' _
 
 .PHONY: test
 test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow test-serving-entrypoint-rbac test-deployment-config test-deploy ## Run tests.
