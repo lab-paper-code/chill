@@ -74,3 +74,32 @@ func TestResidualKeepsOriginalNearestWhenAnyTrialSurvives(t *testing.T) {
 		}
 	}
 }
+
+func TestResidualQuantileUsesSurvivalConditioning(t *testing.T) {
+	batch := pairedBatch(t, 1, 1,
+		pairedSample("a", 0, 5), pairedSample("a", 0, 80),
+		pairedSample("b", 0, 5), pairedSample("b", 0, 100), pairedSample("b", 0, 100), pairedSample("b", 0, 100),
+	)
+	gap := int64(0)
+	elapsed := int64(50 * time.Millisecond)
+	for _, tc := range []struct {
+		percentile float64
+		want       time.Duration
+	}{{0, 30 * time.Millisecond}, {39, 30 * time.Millisecond}, {41, 50 * time.Millisecond}, {100, 50 * time.Millisecond}} {
+		got, support, ok := batch.Distribution.ResidualQuantileNanos(&gap, elapsed, tc.percentile)
+		if !ok || got != int64(tc.want) || support.TrialCount != 2 {
+			t.Fatalf("p%v survival quantile = %v %+v %v, want %v", tc.percentile, time.Duration(got), support, ok, tc.want)
+		}
+	}
+	retry := pairedBatch(t, 1, 1,
+		pairedSample("a", 0, 5), pairedSample("a", 20, 80),
+		pairedSample("b", 0, 5), pairedSample("b", 20, 110),
+	)
+	got, _, ok := retry.Distribution.ResidualQuantileNanos(&gap, elapsed, 100)
+	if !ok || got != int64(60*time.Millisecond) {
+		t.Fatalf("nearest surviving retry = %v %v", got, ok)
+	}
+	if _, _, ok := retry.Distribution.ResidualQuantileNanos(&gap, int64(110*time.Millisecond), 99); ok {
+		t.Fatal("elapsed beyond all empirical service support acquired a residual")
+	}
+}

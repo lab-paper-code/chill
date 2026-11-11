@@ -315,6 +315,62 @@ func (d *ServiceDistribution) QuantileNanos(gap *int64, percentile float64) (int
 	return value, support, ok
 }
 
+// ResidualQuantileNanos returns the inverse CDF of S-elapsed conditional on
+// S > elapsed, with exactly SampleResidual's nearest/trial conditioning.
+// No surviving empirical record leaves the result unknown.
+func (d *ServiceDistribution) ResidualQuantileNanos(gap *int64, elapsed int64, percentile float64) (int64, ConditionalSupport, bool) {
+	var support ConditionalSupport
+	if d == nil || elapsed < 0 || gap != nil && *gap < 0 || math.IsNaN(percentile) || percentile < 0 || percentile > 100 {
+		return 0, support, false
+	}
+	support = d.support(gap)
+	total := 0.0
+	for i := range d.trials {
+		a, b, _, _ := d.trials[i].nearest(gap)
+		if n := len(a) + len(b); n > 0 {
+			total += float64(n-serviceUpperBound(a, elapsed)-serviceUpperBound(b, elapsed)) / float64(n)
+		}
+	}
+	retry := total == 0
+	if retry {
+		support = ConditionalSupport{}
+		for i := range d.trials {
+			a, b, distance, outside := d.trials[i].nearestSurvivors(gap, elapsed)
+			if len(a)+len(b) > 0 {
+				total++
+				support.TrialCount++
+				support.DistanceNanos = max(support.DistanceNanos, distance)
+				support.OutsideSupport = support.OutsideSupport || outside
+			}
+		}
+	}
+	if total == 0 {
+		return 0, support, false
+	}
+	index := sort.Search(len(d.services), func(j int) bool {
+		value := d.services[j]
+		if value <= elapsed {
+			return false
+		}
+		mass := 0.0
+		for i := range d.trials {
+			a, b, _, _ := d.trials[i].nearest(gap)
+			if retry {
+				a, b, _, _ = d.trials[i].nearestSurvivors(gap, elapsed)
+			}
+			n := len(a) + len(b)
+			if n > 0 {
+				mass += float64(serviceUpperBound(a, value)+serviceUpperBound(b, value)-serviceUpperBound(a, elapsed)-serviceUpperBound(b, elapsed)) / float64(n)
+			}
+		}
+		return mass > 0 && mass/total >= percentile/100
+	})
+	if index == len(d.services) {
+		return 0, support, false
+	}
+	return d.services[index] - elapsed, support, true
+}
+
 // Only selected records can increase the CDF. Collect them when they fit local
 // scratch and shrink the search; otherwise reuse the hydrated global candidates.
 // Large groups keep the original search cost without query-time copies or sorts.
