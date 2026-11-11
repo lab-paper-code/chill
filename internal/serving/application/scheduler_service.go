@@ -283,6 +283,18 @@ func (o *SchedulerService) RecordDecision(
 	return nil
 }
 func (o *SchedulerService) RecordAction(result servingstate.OperationResult) error {
+	refs := &observation.SchedulerReferences{}
+	operation := result.Operation
+	if operation.Target != nil {
+		target := refs.Candidate(*operation.Target)
+		operation.Target = &target
+	}
+	if operation.Prepare != nil {
+		prepare := *operation.Prepare
+		prepare.Instance = refs.Instance(prepare.Instance)
+		operation.Prepare = &prepare
+	}
+	result.Operation = operation
 	expected, err := json.Marshal(result.Operation)
 	if err != nil {
 		return err
@@ -302,7 +314,7 @@ func (o *SchedulerService) RecordAction(result servingstate.OperationResult) err
 	}
 	recordedAt := time.Now().UTC()
 	if err := o.observationLog.SchedulerRecord(observation.SchedulerObservation{
-		At: recordedAt, Action: &event,
+		At: recordedAt, Action: &event, References: refs,
 	}); err != nil {
 		return err
 	}

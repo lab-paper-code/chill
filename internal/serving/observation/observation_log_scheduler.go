@@ -105,6 +105,8 @@ type SchedulerObservation struct {
 	// Offset is the original window's append offset.
 	// schedulerLine deliberately does not persist this read-side reference.
 	Offset *int `json:"offset,omitempty"`
+	// References carries catalog bodies projected before action payload marshaling.
+	References *SchedulerReferences `json:"-"`
 }
 
 // schedulerLine is the stored scheduler record. Immutable bodies live in the
@@ -137,7 +139,7 @@ type ObservationMeter struct {
 
 func costRef(c serving.OperationCost) string    { return c.ID + "@" + c.Reference.Key }
 func baselineRef(b serving.NodeBaseline) string { return b.ID + "@" + b.Reference.Key }
-func (o *observationReferences) add(kind, key string, body any) {
+func (o *SchedulerReferences) add(kind, key string, body any) {
 	o.rows = append(o.rows, observationReference{kind: kind, key: key, body: body})
 }
 
@@ -147,21 +149,25 @@ type observationReference struct {
 	encoded   []byte
 }
 
-type observationReferences struct{ rows []observationReference }
+// SchedulerReferences projects scheduler bodies into their stored catalog references.
+type SchedulerReferences struct{ rows []observationReference }
 
 func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 	if event.At.IsZero() {
 		return &serving.Error{Code: "InvalidObservation", Message: "scheduler observation time is required"}
 	}
-	refs := &observationReferences{}
+	refs := event.References
+	if refs == nil {
+		refs = &SchedulerReferences{}
+	}
 	line := schedulerLine{At: event.At, Control: event.Control, Settings: event.Settings, Action: event.Action}
 	if d := event.Decision; d != nil {
 		recorded := *d
-		recorded.Keep = refs.candidate(d.Keep)
+		recorded.Keep = refs.Candidate(d.Keep)
 		if d.Target != nil && d.Target.ID == d.Keep.ID {
 			recorded.Target = &serving.SchedulerCandidate{ID: d.Target.ID, Keep: true}
 		} else if d.Target != nil {
-			target := refs.candidate(*d.Target)
+			target := refs.Candidate(*d.Target)
 			recorded.Target = &target
 		}
 		line.Decision = &recorded
@@ -199,12 +205,12 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 		}
 		recorded.Options = slices.Clone(s.Options)
 		for i := range recorded.Options {
-			recorded.Options[i].Instance = refs.instance(recorded.Options[i].Instance)
+			recorded.Options[i].Instance = refs.Instance(recorded.Options[i].Instance)
 		}
 		recorded.Reservations = slices.Clone(s.Reservations)
 		for i, reservation := range s.Reservations {
 			if reservation.Target != nil {
-				target := refs.candidate(*reservation.Target)
+				target := refs.Candidate(*reservation.Target)
 				recorded.Reservations[i].Target = &target
 			}
 		}
@@ -226,13 +232,13 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 }
 
 // Stored records keep profile IDs; the catalog holds profile bodies.
-func (o *observationReferences) candidate(c serving.SchedulerCandidate) serving.SchedulerCandidate {
+func (o *SchedulerReferences) Candidate(c serving.SchedulerCandidate) serving.SchedulerCandidate {
 	c.Instances = o.instances(c.Instances)
 	c.Actions = o.actions(c.Actions)
 	return c
 }
 
-func (o *observationReferences) actions(actions []serving.Action) []serving.Action {
+func (o *SchedulerReferences) actions(actions []serving.Action) []serving.Action {
 	first := slices.IndexFunc(actions, func(a serving.Action) bool { return a.RouteTarget != nil })
 	if first < 0 {
 		return actions
@@ -240,22 +246,23 @@ func (o *observationReferences) actions(actions []serving.Action) []serving.Acti
 	recorded := slices.Clone(actions)
 	for k := first; k < len(recorded); k++ {
 		if target := recorded[k].RouteTarget; target != nil {
-			stage := o.candidate(*target)
+			stage := o.Candidate(*target)
 			recorded[k].RouteTarget = &stage
 		}
 	}
 	return recorded
 }
 
-func (o *observationReferences) instances(instances []serving.SchedulerInstance) []serving.SchedulerInstance {
+func (o *SchedulerReferences) instances(instances []serving.SchedulerInstance) []serving.SchedulerInstance {
 	recorded := slices.Clone(instances)
 	for i := range recorded {
-		recorded[i] = o.instance(recorded[i])
+		recorded[i] = o.Instance(recorded[i])
 	}
 	return recorded
 }
 
-func (o *observationReferences) instance(instance serving.SchedulerInstance) serving.SchedulerInstance {
+// Instance records the profile body in the catalog and retains its ID.
+func (o *SchedulerReferences) Instance(instance serving.SchedulerInstance) serving.SchedulerInstance {
 	if instance.Profile != nil {
 		o.add(observationProfileCatalog, instance.Profile.ID, instance.Profile)
 		instance.ProfileID, instance.Profile = instance.Profile.ID, nil
