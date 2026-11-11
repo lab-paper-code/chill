@@ -31,7 +31,7 @@ Cold start는 TLS·인증·HTTP 구성을 완료한 뒤 listener를 먼저 열�
 | [system-reaction-and-validity-plan](system-reaction-and-validity-plan.md) | plan: control377 공통 원인(genesis1 DiskPressure: 서버 퇴거 gap·12k Failed Pod·edge 종료 정지), OnCluster 전체 재목록 회귀, 직렬 release, action 기록 투영, 시작 상태 |
 | [control-reaction-plan](control-reaction-plan.md) | plan: control378 수요 증가 직후 실패의 불필요 비용 목록 — 과부하 중 기한 초과 요청 실행(executor `keep`), 매 round 측정 CR 6,567개 전체 List(Admit 1.9초), 평가에 직렬화된 진행, 요청 window 재읽기, 평가 계산, 판단 기록 1.2MB/행 |
 | [overload-admission-plan](overload-admission-plan.md) | plan: 완료 가능성 기반 admission(gateway 예측·executor 재확인, Workload별 Reject·Delay·maxQueuedRequests), SLO 기한과 최종 기한 분리, 기한 내 성공률·goodput·결과 분류 지표 |
-| [decision-fidelity-plan](decision-fidelity-plan.md) | plan: control379 남은 실패의 공통 원인 — 요청 admission이 제어 주기 관측에 묶여 route 직후 실행기 idle 중 대기 timeout, 멈춘 동작 하나로 keep 평가 전면 불가(route 139회), profile과 serving 괴리(최대 3배, 이미지 불일치 5/7), 실패 원인 미기록 |
+| [decision-fidelity-plan](decision-fidelity-plan.md) | plan: control379 남은 실패·비용의 공통 원인 — gateway 실행기 상태가 관측으로만 갱신(pre-IPC running 하나로 10초 무배정), 후보 간 초기 물리 상태 불일치(실패한 prepare 하나로 keep 평가 불가, route 139회), profile 대표성 미검증(예측 p95 213ms vs 실제 828ms), 판단 계산 회귀(Tick 191/282가 10초 초과), 원인 미기록 |
 | [capacity-table-evidence](capacity-table-evidence.md) | completed: 당시 전체 격자 κ·탐색의 역사적 근거; 현행 수치 계약은 승인 M0 |
 | [scheduler-operations](scheduler-operations.md) | active: Pod-bound Service/수동원자실행 |
 | [scheduler-srs-audit](scheduler-srs-audit.md) | completed: 당시 SRS대조 결과·증거 경계 |
