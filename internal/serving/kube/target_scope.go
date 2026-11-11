@@ -179,6 +179,20 @@ func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate
 				owned[id] = true
 			}
 		}
+		// Routing intent changes weights without granting policy or writer ownership.
+		deltaIDs := maps.Clone(owned)
+		before, final := parent.result.Before.Routing[uid], parent.result.Operation.Target.Routing[uid]
+		for _, weights := range [2]map[string]int32{before, final} {
+			for id := range weights {
+				if before[id] == final[id] {
+					continue
+				}
+				if actual := schedulerPhysicalState(id, physical); actual != nil {
+					id = actual.ID
+				}
+				deltaIDs[id] = true
+			}
+		}
 		for _, actual := range c.state.Snapshot.Instances {
 			newer[actual.ID], held[actual.ID], withdrawn[actual.ID] = c.routeInstanceFenceLocked(parent, uid, current[uid], actual)
 			if schedulerTargetReady(actual, c.state.Snapshot, physical, false) {
@@ -188,8 +202,11 @@ func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate
 			}
 		}
 		delta := map[string]int32{}
-		for id := range owned {
-			delta[id] = 0
+		for id := range deltaIDs {
+			// Owned destinations retain their existing explicit withdrawal.
+			if owned[id] || !newer[id] && !withdrawn[id] {
+				delta[id] = 0
+			}
 		}
 		for _, instance := range selected.Instances {
 			if instance.WorkloadUID != uid {
@@ -200,20 +217,38 @@ func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate
 			if actual != nil {
 				id = actual.ID
 			}
-			if !owned[id] || newer[id] || withdrawn[id] {
+			if !deltaIDs[id] || newer[id] || withdrawn[id] {
 				continue
 			}
 			delta[id] = wanted[instance.ID]
 			if schedulerTargetReady(instance, c.state.Snapshot, physical, false) {
 				instance.ID = id
 				ready[id], instances[id] = true, instance
-				if delta[id] > 0 && (!held[id] || !schedulerPolicyAcknowledged(instance, actual.Native.Metadata)) {
+				if owned[id] && delta[id] > 0 && (!held[id] || !schedulerPolicyAcknowledged(instance, actual.Native.Metadata)) {
 					policies = append(policies, id)
 				}
 			}
 		}
 		touched[uid] = servingstate.RouteWriterDestinations(owned, held)
-		result.Routing[uid] = serving.SchedulerRebaseRouting(current[uid], delta, ready, newer)
+		// Owned weights claim their existing share first. Intent-only weights
+		// determine the ratio of the remaining share after newer writer fences.
+		rebaseCurrent := current[uid]
+		copiedCurrent := false
+		for id, weight := range delta {
+			if owned[id] {
+				continue
+			}
+			if !copiedCurrent {
+				rebaseCurrent = maps.Clone(current[uid])
+				if rebaseCurrent == nil {
+					rebaseCurrent = map[string]int32{}
+				}
+				copiedCurrent = true
+			}
+			rebaseCurrent[id] = weight
+			delete(delta, id)
+		}
+		result.Routing[uid] = serving.SchedulerRebaseRouting(rebaseCurrent, delta, ready, newer)
 		ids := make([]string, 0, len(result.Routing[uid]))
 		for id := range result.Routing[uid] {
 			ids = append(ids, id)

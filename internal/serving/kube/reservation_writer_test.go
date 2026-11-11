@@ -199,7 +199,9 @@ func TestRouteWritersPreserveEveryNewerCommittedShare(t *testing.T) {
 		Actions: []serving.Action{{ID: "c-route", Kind: servingstate.OperationRoute, Node: third.Node}}}
 	dispatch(newerC)
 	before, _ := c.runtime.SchedulerRouting()
-	if before[uid][a.ID] != 630 || before[uid][b.ID] != 270 || before[uid][third.ID] != 100 {
+	// C's verified target changes a 700→600 without owning Node a: the applied
+	// route is C's evaluated composition, not a proportional rebase of a and b.
+	if before[uid][a.ID] != 600 || before[uid][b.ID] != 300 || before[uid][third.ID] != 100 {
 		t.Fatalf("unexpected committed composition after B and C: %v", before)
 	}
 	c.mu.Lock()
