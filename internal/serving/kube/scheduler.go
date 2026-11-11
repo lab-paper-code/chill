@@ -93,6 +93,9 @@ type SchedulerController struct {
 	powerTargets map[string]time.Duration
 	// measureStep measures one step of an operation-cost measurement.
 	measureStep func(context.Context, SchedulerControllerConfig, servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error)
+	// measurements caches payloads against each round's direct metadata baseline.
+	// tickMu owns the cache and every consumer's selected-object copies.
+	measurements []*measurementCache
 }
 
 // NewSchedulerController configures control without taking ownership of routing.

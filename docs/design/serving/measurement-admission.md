@@ -24,6 +24,44 @@ ChillServer가 `chill.dacs.io/measurement:NoSchedule` taint를 소유한다. Nod
 BEO/MLIB 자식 ProfilingRun은 루트 승인 뒤 생성하므로 별도 요청하지 않는다.
 - BEO의 결정적 curve-plan 오류(불가능한 batch set·Run 입력)는 기존 Failed/InvalidRunSpec, MeasurementComplete=False로 종료한다. CPU 할당량 선택이나 allocatable 검사는 없다. execution/actuation policy 오류의 terminal 의미와 정상 물리 반환 절차는 유지한다. Kubernetes/Evidence Store 일시 읽기·쓰기 오류를 측정 조건 자체의 실패로 바꾸지 않는다.
 
+#### 측정 루트 payload의 증분 조회 (O2)
+
+ChillServer는 controller-runtime manager를 실행하지 않는다. 매 Admit는
+여섯 측정 종류의 metadata-only List를 round context로 직접 읽어 현재
+namespace/name·UID·resourceVersion을 확인한다. UID와 opaque resourceVersion이
+모두 같은 객체는 캐시의 decoded payload와 terminal 판정을 재사용한다.
+새 객체·변경 객체만 direct GET하고, 목록에서 사라진 identity는 캐시에서
+지운다. terminal→대기 변경과 같은 이름의 새 UID도 같은 경로로 반영한다.
+읽기 실패·취소 시 그 round는 승인·반환 판단을 하지 않는다.
+재시작·새 namespace의 초기 캐시는 종류별 full List 한 번으로 채운 뒤
+metadata boundary를 검증한다. terminal 6,500개의 cold GET fan-out을 피한다.
+캐시는 전체 payload를 보유하며 삭제된 identity와 제외된 namespace를 해제한다.
+
+모든 종류의 metadata boundary가 완료된 뒤에 대기루트를 creationTimestamp와
+namespace/name으로 정렬한다. Watch 전달 지연·선택적 bookmark·resourceVersion의
+수치 비교에 의존하지 않는다. operation/occupancy가 참조하는 완료 BEO도
+같은 boundary로 검증한 캐시에서 읽어 profile 선택 근거를 유지한다.
+승인·반환이 읽거나 patch하는 객체는 별도 복사하여 캐시를 바꾸지 않는다.
+terminal 판정, tickMu와 taint 단일 writer는 그대로 유지한다.
+
+Node taint·resourceVersion·power pending, serving Pod 존재와 DeviceClass 전력
+계약은 매 Admit의 direct List를 유지한다. Tick은 요청 window 읽기와 Admit의
+taint 변경/비동기 반환 이후 live 사실을 새로 읽어야 하므로 Admit 목록을
+재사용하지 않는다. 이 목록 공유에는 window 이전의 낡은 관측이나 이미 바뀐
+taint를 Tick에 전달하지 않는 별도 round 계약이 필요하다.
+
+2026-11-12 로컬 fake benchmark `BenchmarkAdmitTerminalProfilingRuns`:
+terminal ProfilingRun 6,500개, condition message 각 4,050 bytes, cold baseline은
+측정에서 제외했다. metadata 응답은 **817,915 bytes/round**이며 매 round
+실제로 JSON decode한다. Intel i7-8700K·Go 1.26.4, 3회 실행의 중앙값:
+**300,955,307 → 15,254,678 ns/op**,
+**132,529,174 → 8,020,336 B/op**,
+**71,811 → 19,708 allocs/op**.
+3 round의 full payload 조회는 기존 19,500개에서 초기 List의 6,500개로
+줄었고 변경 없는 terminal payload의 개별 GET은 0회다. fake의 metadata
+응답 경로를 사용한 비용 비교이며 live Admit p50·네트워크 왕복 지연 측정은
+아니다. full payload 캐시의 상주 메모리는 이 B/op 수치에 포함되지 않는다.
+
 ### 2.2 승인과 거절
 
 노드당 승인1개다. 대기루트는 creationTimestamp, namespace/name 순이며 기다리는 앞 루트가 그 노드 줄을 잡는다. 거절은 terminal이고 다음 루트를 같은 주기에 평가한다.
@@ -79,5 +117,5 @@ Node taint/admission/runner annotation은 stored science evidence가 아니다. 
 
 - 검사 불변식: 노드별 생성순서·거절시taint없음, 예약/전력pending경합, 반환실패taint유지·재시작복구, 예상외generation 무효, 수동작업/자동제어격리, runner exactidentity·회수, 순서실패·취소·재시작 기록, strict권한을 확인한다. 이 목록은 현재source의 통과기록이 아니다.
 - live E-A1~8: MLIB 승인/최저모드반환 지연; serving BEO거절/SLO보호; 비CHILL Pod보존; PMTC runner/시도목표; opcost3기록; host serving-<hash> remove; 루트삭제/재시작회수; invalid/MeasurementInvalid 수와 출처를 확인한다. 결과는 [live evidence](../../plans/2026-10-13-scheduler-live-evidence-campaign.md)가 권위다.
-- Measurement CRD 통합은 미채택 M5 제안이다. watch승인은 polling진입지연(E-A1)이 문제가 될 때의 대안이며 현재 구현약속이 아니다. POOL 측정owner/Dashboard 선택불가(DB-FR-34)는 해당 UI수용과 구분한다.
+- Measurement CRD 통합은 미채택 M5 제안이다. O2는 주기 Admit의 metadata 검증과 payload 재사용이며, 이벤트 즉시 승인을 도입하지 않는다. POOL 측정owner/Dashboard 선택불가(DB-FR-34)는 해당 UI수용과 구분한다.
 - 측정밖 재부팅·미확인 전력은 노드만 제외하고 독립 판단을 계속하는 [node-agent 계약](../platform/node-agent.md)을 따른다. 별도 전역 Pending 질문으로 유지하지 않는다.

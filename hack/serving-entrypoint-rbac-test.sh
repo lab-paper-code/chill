@@ -184,6 +184,10 @@ if not grants(serving[0], "jobs", "list"):
 profiles = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoint-profiles"]
 if not profiles:
     sys.exit("profile namespace Role is missing")
+for kind in ("batchenergyoptimizations", "profilingruns", "modelloadedidlebaselines",
+             "powermodetransitioncosts", "operationcostmeasurements", "dispatchoccupancymeasurements"):
+    if not all(grants(r, kind, "get") and not grants(r, kind, "watch") for r in profiles):
+        sys.exit("a profile namespace Role needs admission get without watch for " + kind)
 for kind in ("operationcostmeasurements", "dispatchoccupancymeasurements"):
     if not all(grants(r, kind, "patch") and grants(r, kind + "/status", "patch") for r in profiles):
         sys.exit("a profile namespace Role lacks " + kind + " and status patch")

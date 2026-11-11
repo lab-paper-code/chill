@@ -41,73 +41,6 @@ type measurementRoot struct {
 	terminal bool
 }
 
-// measurementRoots lists the measurement objects of the namespaces.
-func (c *SchedulerController) measurementRoots(ctx context.Context, namespaces []string) ([]measurementRoot, error) {
-	var roots []measurementRoot
-	for _, namespace := range namespaces {
-		var beos edge.BatchEnergyOptimizationList
-		if err := c.store.client.List(ctx, &beos, client.InNamespace(namespace)); err != nil {
-			return nil, err
-		}
-		for i := range beos.Items {
-			o := &beos.Items[i]
-			// A curve plan resolution failure is retried by its controller.
-			terminal := o.Status.Phase == catalogCompletePhase || o.Status.Phase == campaignFailedPhase && o.Status.Outcome != "CurvePlanResolutionFailed"
-			roots = append(roots, measurementRoot{object: o, node: o.Spec.State.TargetNode, terminal: terminal})
-		}
-		var baselines edge.ModelLoadedIdleBaselineList
-		if err := c.store.client.List(ctx, &baselines, client.InNamespace(namespace)); err != nil {
-			return nil, err
-		}
-		for i := range baselines.Items {
-			o := &baselines.Items[i]
-			terminal := o.Status.Phase == edge.ModelLoadedIdleBaselinePhaseComplete || o.Status.Phase == edge.ModelLoadedIdleBaselinePhaseInsufficient
-			roots = append(roots, measurementRoot{object: o, node: o.Spec.State.TargetNode, terminal: terminal})
-		}
-		var runs edge.ProfilingRunList
-		if err := c.store.client.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
-			return nil, err
-		}
-		for i := range runs.Items {
-			o := &runs.Items[i]
-			if owner := meta.GetControllerOf(o); owner != nil && (owner.Kind == "BatchEnergyOptimization" || owner.Kind == "ModelLoadedIdleBaseline") {
-				continue
-			}
-			done := false
-			for _, condition := range o.Status.Conditions {
-				done = done || condition.Type == edge.ProfilingRunConditionExecutionComplete && condition.Status != meta.ConditionUnknown
-			}
-			roots = append(roots, measurementRoot{object: o, node: o.Spec.TargetNode, terminal: done})
-		}
-		var transitions edge.PowerModeTransitionCostList
-		if err := c.store.client.List(ctx, &transitions, client.InNamespace(namespace)); err != nil {
-			return nil, err
-		}
-		for i := range transitions.Items {
-			o := &transitions.Items[i]
-			terminal := o.Status.Phase == edge.PowerModeTransitionCostPhaseComplete || o.Status.Phase == edge.PowerModeTransitionCostPhaseFailed
-			roots = append(roots, measurementRoot{object: o, node: o.Spec.TargetNode, terminal: terminal})
-		}
-		var costs edge.OperationCostMeasurementList
-		if err := c.store.client.List(ctx, &costs, client.InNamespace(namespace)); err != nil {
-			return nil, err
-		}
-		for i := range costs.Items {
-			o := &costs.Items[i]
-			roots = append(roots, measurementRoot{object: o, node: o.Spec.Node, terminal: measurementTerminal(o.Status.Phase)})
-		}
-		var occupancies edge.DispatchOccupancyMeasurementList
-		if err := c.store.client.List(ctx, &occupancies, client.InNamespace(namespace)); err != nil {
-			return nil, err
-		}
-		for i := range occupancies.Items {
-			o := &occupancies.Items[i]
-			roots = append(roots, measurementRoot{object: o, node: o.Spec.Node, terminal: measurementTerminal(o.Status.Phase)})
-		}
-	}
-	return roots, nil
-}
-
 // Admit is the single writer of the measurement taint. It grants a waiting
 // measurement an empty Node, refuses a Node that runs a CHILL serving Pod, and
 // starts the hand-back of a Node whose measurement ended or vanished. Holding
@@ -118,6 +51,9 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 	c.mu.Lock()
 	config := c.config
 	c.mu.Unlock()
+	// Keep physical occupancy, power policy and taint/RV reads direct. Tick
+	// refreshes after its request window and after Admit can change taints or
+	// start asynchronous hand-back; sharing these lists would age that proof.
 	observedAt := time.Now()
 	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
 	if err != nil {
@@ -131,7 +67,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 	}
 	c.releaseObservedScopes(nodes.Items, pods.Items, nil, observedAt)
 	busy := c.reservedNodes()
-	roots, err := c.measurementRoots(ctx, config.MeasurementNamespaces)
+	roots, err := c.measurementRoots(ctx, config.MeasurementNamespaces, nodes.Items)
 	if err != nil {
 		return err
 	}
