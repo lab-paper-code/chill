@@ -131,9 +131,9 @@ func TestClientWindowAddsNativeEvidenceWithoutRewritingReports(t *testing.T) {
 		row := serving.RequestRow{
 			Kind: serving.RequestRowFinal, RequestID: id, WorkloadUID: definition.UID, DefinitionID: definition.Identity(),
 			ReceivedAt: from, Instance: "instance", AcceptedNanos: &accepted, ExchangeNanos: &exchange,
-			ElapsedNanos: &elapsed, ServerTiming: timing, ExecutionComplete: id == "full-reply", Outcome: "completed",
+			ElapsedNanos: &elapsed, ServerTiming: timing, ExecutionComplete: id == "full-reply", Outcome: outcomeCompleted,
 		}
-		outcome := "completed"
+		outcome := outcomeCompleted
 		code := 200
 		if id == timedOut {
 			row.Outcome, row.Error = timedOut, "RequestTimeout"

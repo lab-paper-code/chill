@@ -162,7 +162,7 @@ func TestCapacityTransientRuleRejectsCheaperSlowRoute(t *testing.T) {
 	s, snap, genesis3 := capacityE1Fixture()
 	d := capacityDecideForTest(t, s, snap)
 	if d.Target == nil || !poolsOn(*d.Target, genesis3) || poolsOn(*d.Target, NodeReference{Name: "node-lut", UID: "lut"}) {
-		t.Fatalf("finite-demand recovery lost faster route: %+v", d)
+		t.Fatalf("finite-demand recovery lost faster route: target=%+v exclusions=%v", d.Target, d.Capacity.Search.Excluded)
 	}
 	if len(d.Target.Feedback) != 1 || d.Target.Feedback[0].SuccessQuantileNanos == nil || !schedulerFinite(*d.Target.Feedback[0].SuccessQuantileNanos) {
 		t.Fatalf("selected route lacks finite-success evidence: %+v", d.Target.Feedback)
@@ -196,7 +196,7 @@ func TestCapacityRejectAtP95PrefersCheaperFeasibleExpansion(t *testing.T) {
 	}
 	decision := capacityDecideForTest(t, s, snap)
 	if decision.Target == nil || !poolsOn(*decision.Target, NodeReference{Name: "node-lut", UID: "lut"}) || poolsOn(*decision.Target, genesis3) {
-		t.Fatalf("p95 Reject must choose the cheaper feasible route: %+v", decision)
+		t.Fatalf("p95 Reject must choose the cheaper feasible route: target=%+v exclusions=%v", decision.Target, decision.Capacity.Search.Excluded)
 	}
 }
 

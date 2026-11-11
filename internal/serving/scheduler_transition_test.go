@@ -143,7 +143,8 @@ func TestCompletedSemanticRouteSurvivesWitnessAndOrdinalRefresh(t *testing.T) {
 }
 
 func TestConsumedPolicyAndActualTargetChangesStillReplanRoute(t *testing.T) {
-	for _, change := range []string{"batch", "wait", "capacity", "deadline", "routing", "physical target"} {
+	const deadlineChange = "deadline"
+	for _, change := range []string{"batch", "wait", "capacity", deadlineChange, "routing", "physical target"} {
 		t.Run(change, func(t *testing.T) {
 			snapshot, target := moveFixture(t)
 			completed := requireTransitionAction(t, target.Actions, schedulerActionRoute)
@@ -158,7 +159,7 @@ func TestConsumedPolicyAndActualTargetChangesStillReplanRoute(t *testing.T) {
 				target.Instances[0].MaxWait = time.Millisecond
 			case "capacity":
 				target.Instances[0].Capacity++
-			case "deadline":
+			case deadlineChange:
 				profile := *target.Instances[0].Profile
 				policy := *profile.Condition.Firstfloor
 				policy.DeadlinePolicy = "drop"
@@ -171,7 +172,7 @@ func TestConsumedPolicyAndActualTargetChangesStillReplanRoute(t *testing.T) {
 				target.Routing = map[string]map[string]int32{"w1": {snapshot.Instances[0].ID: 1}}
 			}
 			target.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target)
-			if updated := requireTransitionAction(t, target.Actions, schedulerActionRoute); change == "deadline" && (updated.ID != completed.ID || updated.Status != schedulerActionComplete) || change != "deadline" && (updated.ID == completed.ID || updated.Status != schedulerActionPlanned) {
+			if updated := requireTransitionAction(t, target.Actions, schedulerActionRoute); change == deadlineChange && (updated.ID != completed.ID || updated.Status != schedulerActionComplete) || change != deadlineChange && (updated.ID == completed.ID || updated.Status != schedulerActionPlanned) {
 				t.Fatalf("real consumed quantity/target change reused an old completed route: %+v", updated)
 			}
 		})
@@ -410,13 +411,13 @@ func TestOverlappingResourceChangeWaitsForAcceptedResponseBeforeRemoval(t *testi
 	state.initializeInstances()
 	state.initializeActions()
 	state.initializeOutstanding()
-	state.admitArrivals()
+	state.admitArrivals(context.Background())
 	state.routeCredits = map[string][]int64{}
 	state.weights, state.available = make([]int32, len(state.instances)), make([]bool, len(state.instances))
 	if !state.startActions() || state.actionByID[stop.ID].done || state.actionByID[remove.ID].started {
 		t.Fatalf("future target bypassed the accepted-ingress stop guard: %+v", state.out)
 	}
-	state.routeRequests()
+	state.routeRequests(context.Background())
 	for _, request := range state.requests {
 		if !request.dispatched || request.source.Instance != snapshot.Instances[0].ID {
 			t.Fatalf("accepted input moved to the future instance instead of its actual route: %+v", request)

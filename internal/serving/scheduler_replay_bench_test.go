@@ -3,6 +3,7 @@ package serving
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 )
@@ -40,4 +41,68 @@ func schedulerReplayWindow(n int) (SchedulerSettings, SchedulerSnapshot) {
 		snap.Arrivals = append(snap.Arrivals, SchedulerArrival{ID: fmt.Sprintf("a%07d", j), At: start.Add(time.Duration(j) * gap), Definition: d, Accepted: true, Compute: true, WorkloadUID: d.UID, Lifetime: time.Second})
 	}
 	return s, snap
+}
+
+func blockedReplayDispatch(tb testing.TB, executors, queued int, full bool) *schedulerReplayState {
+	tb.Helper()
+	s := replayAdmissionState(tb)
+	prototype := *s.instances[0]
+	s.instances = nil
+	s.byID = make(map[string]*schedulerReplayInstance)
+	definition := s.snap.Workloads[0]
+	definition.Admission.MaxQueuedRequests = int32(queued)
+	for j := range executors {
+		instance := prototype
+		instance.config.ID = fmt.Sprintf("executor-%d", j)
+		if full {
+			instance.outstanding = instance.config.Capacity
+		} else {
+			instance.outstanding = 1
+			instance.exchangeKnown, instance.batchElapsed = true, int64(time.Second)
+			instance.batch = []*schedulerReplayRequest{{source: SchedulerRequest{ID: fmt.Sprintf("running-%d", j), Definition: definition}, identity: definition.Identity(), running: true}}
+		}
+		s.instances = append(s.instances, &instance)
+		s.byID[instance.config.ID] = &instance
+	}
+	for j := range queued {
+		request := replayAdmissionPending(s, fmt.Sprintf("queued-%d", j), definition)
+		request.expires = math.Inf(1)
+	}
+	return s
+}
+
+func TestReplayDispatchCachesUnknownExecutorsBeforeScanningQueue(t *testing.T) {
+	for _, full := range []bool{false, true} {
+		s := blockedReplayDispatch(t, 64, 4096, full)
+		ctx := &capacityCountingContext{Context: context.Background()}
+		if !s.routeRequests(ctx) || ctx.calls > 2*len(s.instances)+8 {
+			t.Fatalf("blocked dispatch repeatedly scanned the large queue: calls=%d executors=%d", ctx.calls, len(s.instances))
+		}
+		for _, request := range s.live {
+			if request.dispatched || request.dropped {
+				t.Fatal("unknown/no-capacity executor fabricated admission or rejection")
+			}
+		}
+	}
+}
+
+func BenchmarkReplayDispatchBlockedExecutors(b *testing.B) {
+	for _, executors := range []int{32, 128} {
+		for _, queued := range []int{1024, 4096} {
+			for _, full := range []bool{false, true} {
+				b.Run(fmt.Sprintf("executors=%d/queued=%d/full=%t", executors, queued, full), func(b *testing.B) {
+					s := blockedReplayDispatch(b, executors, queued, full)
+					ctx := context.Background()
+					s.routeRequests(ctx) // allocate reusable executor indexes before measuring
+					b.ReportAllocs()
+					b.ResetTimer()
+					for range b.N {
+						if !s.routeRequests(ctx) {
+							b.Fatal("dispatch canceled")
+						}
+					}
+				})
+			}
+		}
+	}
 }

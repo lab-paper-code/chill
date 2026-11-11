@@ -327,7 +327,7 @@ func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
 	// Clamp operational d only; never rewrite the incoming signed measurement.
 	measured.PerRequest, measured.Provenance.Value = -100, -100
 	got = ResolveDispatchOccupancy(s, []DispatchOccupancy{measured, dom}, i)
-	if got.PerRequest != 0 || got.Provenance.Value != 0 || got.Provenance.Source != "measured" ||
+	if got.PerRequest != 0 || got.Provenance.Value != 0 || got.Provenance.Source != occupancySourceMeasured ||
 		measured.PerRequest != -100 || measured.Provenance.Value != -100 {
 		t.Fatalf("signed fact mutated or operational d not clamped: %+v %+v", measured, got)
 	}

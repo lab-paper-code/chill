@@ -641,8 +641,13 @@ func TestSchedulerExpiredLifetimesDoNotBecomeCheapSuccessfulSamples(t *testing.T
 	snap.Outstanding = nil
 	snap.Arrivals = []SchedulerArrival{{ID: "trace", At: snap.At.Add(-s.ObservationWindow), Definition: d, Compute: true, Lifetime: life}}
 	pe := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), d.UID)
-	if pe.PredictedOutcomes["timeout"] != 1 {
-		t.Fatalf("arrival lifetime must freeze into repeated demand: %+v", pe)
+	if pe.PredictedOutcomes[schedulerOutcomeRejected] != 1 || pe.Samples != 0 {
+		t.Fatalf("Reject must not execute when frozen lifetime cannot contain service: %+v", pe)
+	}
+	d.Admission.Policy = AdmissionPolicyDelay
+	delayed := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), d.UID)
+	if delayed.PredictedOutcomes[schedulerOutcomeTimeout] != 1 || delayed.Samples != 0 {
+		t.Fatalf("Delay must keep infeasible-lifetime ingress until final timeout: %+v", delayed)
 	}
 	snap.Arrivals[0].Lifetime = 0
 	d.SLO.TargetLatency = time.Millisecond

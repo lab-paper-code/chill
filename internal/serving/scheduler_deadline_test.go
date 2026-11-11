@@ -87,7 +87,7 @@ func TestSchedulerReplayDropsAtSLOBoundaryWhileBatchRuns(t *testing.T) {
 	if !state.initializeRunning() || !state.chooseBatches(context.Background()) {
 		t.Fatalf("active batch initialization failed: %+v", state.out)
 	}
-	state.admitArrivals()
+	state.admitArrivals(context.Background())
 	next, remaining := state.nextEvent()
 	if !remaining || next != float64(5*time.Millisecond) {
 		t.Fatalf("per-request Reject must wake at SLO boundary: %g %v", next, remaining)
@@ -222,8 +222,8 @@ func TestSchedulerReplayPolicyUpdatePreservesCapturedSender(t *testing.T) {
 	state := schedulerReplayState{snap: snap, c: SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, routingApplied: true, routeCredits: map[string][]int64{}, weights: make([]int32, 1), available: make([]bool, 1), out: schedulerReplayResult{definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	state.initializeInstances()
 	state.initializeOutstanding()
-	state.admitArrivals()
-	state.routeRequests()
+	state.admitArrivals(context.Background())
+	state.routeRequests(context.Background())
 	state.receiveNative()
 	instance := state.instances[0]
 	before := state.nativeRequestState(instance, state.requests[0])

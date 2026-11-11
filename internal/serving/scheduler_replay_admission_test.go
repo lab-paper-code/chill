@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func replayAdmissionState(t *testing.T) *schedulerReplayState {
+func replayAdmissionState(t testing.TB) *schedulerReplayState {
 	t.Helper()
 	settings, snapshot := schedulerFixture()
 	settings.AutonomousWorkloads = nil
@@ -42,7 +42,7 @@ func TestReplayAdmissionChoosesFeasibleExecutor(t *testing.T) {
 	s.byID["fast"] = &fast
 	s.weights, s.available = make([]int32, 2), make([]bool, 2)
 	r := replayAdmissionPending(s, "candidate", s.snap.Workloads[0])
-	s.routeRequests()
+	s.routeRequests(context.Background())
 	if !r.dispatched || r.source.Instance != "fast" || r.dropped {
 		t.Fatalf("infeasible executor survived shared admission: %+v", r)
 	}
@@ -71,10 +71,10 @@ func TestReplayAdmissionUnknownAndNoCapacityWaitForLifetime(t *testing.T) {
 			if cause == "no capacity" {
 				want = "NoCapacity"
 			}
-			if selected, state := s.chooseAdmission(r); selected >= 0 || state != want {
+			if selected, state := s.chooseAdmission(context.Background(), r); selected >= 0 || state != want {
 				t.Fatalf("decision must distinguish absent capacity from unknown evidence: %s %d, want %s", state, selected, want)
 			}
-			s.routeRequests()
+			s.routeRequests(context.Background())
 			if r.dispatched || r.dropped || r.gatewayDeferred {
 				t.Fatalf("unknown/capacity became an infeasibility rejection: %+v", r)
 			}
@@ -100,7 +100,7 @@ func TestReplayAdmissionRejectDelayAndSharedNormalPriority(t *testing.T) {
 			s.instances[0].config.Capacity = 1
 			r := replayAdmissionPending(s, "delayed", &delayed)
 			n := replayAdmissionPending(s, "normal", &normal)
-			s.routeRequests()
+			s.routeRequests(context.Background())
 			if !n.dispatched || r.dispatched || (policy == AdmissionPolicyReject && !r.dropped) || (policy == AdmissionPolicyDelay && !r.gatewayDeferred) {
 				t.Fatalf("all Workloads' normal requests must precede delayed dispatch: delayed=%+v normal=%+v", r, n)
 			}
@@ -114,14 +114,14 @@ func TestReplayGatewayDeferredSnapshotRestoresWithoutNativeInstance(t *testing.T
 	d.Admission.Policy = AdmissionPolicyDelay
 	s.snap.Outstanding = []SchedulerRequest{{ID: "gateway-delay", Definition: d, ReceivedAt: s.snap.At, Phase: phaseDeferred}}
 	s.initializeOutstanding()
-	s.admitArrivals()
+	s.admitArrivals(context.Background())
 	if len(s.out.reasons) != 0 || len(s.live) != 1 || !s.live[0].gatewayDeferred || s.live[0].dispatched || len(s.instances[0].queue) != 0 {
 		t.Fatalf("gateway delay restored as native work: %+v", s)
 	}
 	if reasons := schedulerValidateRequest(s.snap.Outstanding[0], map[string]bool{"i1": true}, nil); len(reasons) != 0 {
 		t.Fatalf("gateway deferred snapshot requires no native identity: %v", reasons)
 	}
-	s.routeRequests()
+	s.routeRequests(context.Background())
 	if !s.live[0].dispatched || s.live[0].deferred {
 		t.Fatalf("restored gateway delay lost its policy: %+v", s.live[0])
 	}
@@ -131,12 +131,13 @@ func TestReplayAdmissionQueueLimitAndRejectedDemand(t *testing.T) {
 	s := replayAdmissionState(t)
 	d := s.snap.Workloads[0]
 	d.Admission.MaxQueuedRequests = 2
+	s.instances[0].outstanding = s.instances[0].config.Capacity
 	for _, id := range []string{"normal", "delay", "new"} {
 		r := replayAdmissionPending(s, id, d)
 		r.gatewayDeferred = id == "delay"
 	}
 	s.live, s.arrived = nil, 0
-	s.admitArrivals()
+	s.admitArrivals(context.Background())
 	if len(s.live) != 2 || s.out.outcomes[d.Identity()][schedulerOutcomeRejected] != 1 {
 		t.Fatalf("queue limit must count normal and delayed requests together: %+v", s.out)
 	}
@@ -230,10 +231,10 @@ func runReplayAdmissionOverload(t *testing.T, fixture admissionOverloadFixture, 
 		if step >= 20000 {
 			t.Fatal("replay overload event bound exceeded")
 		}
-		s.admitArrivals()
 		s.expireRequests()
 		s.completeExecution()
-		s.routeRequests()
+		s.admitArrivals(context.Background())
+		s.routeRequests(context.Background())
 		s.receiveNative()
 		if !s.chooseBatches(context.Background()) {
 			t.Fatalf("replay overload failed: %+v", s.out)
@@ -333,8 +334,82 @@ func TestReplayAdmissionFixedBatchKeepsStrictBaselineException(t *testing.T) {
 	s.instances[0].policy.Batches = nil
 	s.instances[0].arrivalsKnown = false
 	r := replayAdmissionPending(s, "fixed-candidate", s.snap.Workloads[0])
-	s.routeRequests()
+	s.routeRequests(context.Background())
 	if !r.dispatched || r.dropped || r.gatewayDeferred {
 		t.Fatalf("strict fixed-batch baseline acquired dynamic SLO admission: %+v", r)
+	}
+}
+
+func TestFeedbackGatewayDeferredNeedsNoNativeElapsedContext(t *testing.T) {
+	settings, snapshot, candidate := feedbackFixture()
+	snapshot.Arrivals = nil
+	definition := snapshot.Workloads[0]
+	definition.Admission.Policy = AdmissionPolicyDelay
+	lifetime := time.Second
+	snapshot.Outstanding = []SchedulerRequest{{ID: "gateway-deferred", Definition: definition, ReceivedAt: snapshot.At.Add(-20 * time.Millisecond), Elapsed: 20 * time.Millisecond, Phase: phaseDeferred, RemainingLifetime: &lifetime}}
+	result, err := evaluateFeedbackCandidate(context.Background(), settings, snapshot, candidate, 1, nil)
+	if err != nil || len(result.InvalidReasons) != 0 || len(result.Workloads) != 1 || result.Workloads[0].Population != 1 || result.Workloads[0].OnTime != 1 {
+		t.Fatalf("gateway-deferred request became missing native evidence: %+v %v", result, err)
+	}
+	if snapshot.Outstanding[0].NativeElapsedNanos != nil || snapshot.Outstanding[0].NativeSenderElapsedMS != nil {
+		t.Fatal("feedback fabricated native timing for gateway ingress")
+	}
+}
+
+func TestReplayQueueLimitDispatchesBetweenSimultaneousArrivals(t *testing.T) {
+	for _, policy := range []AdmissionPolicy{AdmissionPolicyReject, AdmissionPolicyDelay} {
+		t.Run(string(policy), func(t *testing.T) {
+			settings, snapshot, candidate := feedbackFixture()
+			snapshot.Workloads[0].Admission = Admission{Policy: policy, MaxQueuedRequests: 1}
+			result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
+			score := result.Workloads[0]
+			if score.Population != 2 || score.OnTime != 2 || score.Rejected != 0 {
+				t.Fatalf("free executor must drain each Accept before the next queue-limit check: %+v", result)
+			}
+		})
+	}
+}
+
+type replayCancelContext struct {
+	context.Context
+	remaining int
+}
+
+func (ctx *replayCancelContext) Err() error {
+	ctx.remaining--
+	if ctx.remaining <= 0 {
+		return context.Canceled
+	}
+	return nil
+}
+
+func TestReplayDispatchHonorsCancellationDuringPreparation(t *testing.T) {
+	s := replayAdmissionState(t)
+	for j := range 100 {
+		replayAdmissionPending(s, fmt.Sprintf("pending-%d", j), s.snap.Workloads[0])
+	}
+	ctx := &replayCancelContext{Context: context.Background(), remaining: 8}
+	if s.routeRequests(ctx) || s.admissionPrepared {
+		t.Fatal("canceled preparation continued dispatch or retained mutable indexes")
+	}
+	for _, request := range s.live {
+		if request.dispatched || request.dropped {
+			t.Fatalf("canceled preparation changed request outcome: %+v", request)
+		}
+	}
+}
+
+func TestReplayPreparedActorStartsWithKnownEmptyArrivalHistory(t *testing.T) {
+	s := replayAdmissionState(t)
+	instance := s.instances[0]
+	instance.arrivalsKnown = false
+	instance.arrivalTimes["stale"] = []float64{-1, -2}
+	s.actions = []*schedulerReplayAction{{action: Action{Kind: schedulerActionPrepare, Instance: instance.config.ID}, started: true}}
+	if !s.completeActions() || !instance.arrivalsKnown || len(instance.arrivalTimes) != 0 {
+		t.Fatal("new physical actor inherited absent or stale arrival evidence")
+	}
+	request := replayAdmissionPending(s, "after-prepare", s.snap.Workloads[0])
+	if !s.routeRequests(context.Background()) || !request.dispatched {
+		t.Fatalf("prepared capacity remained permanently AdmissionUnknown: %+v", request)
 	}
 }

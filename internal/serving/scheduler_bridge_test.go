@@ -104,7 +104,7 @@ func TestCapacityBridgeQueuedIngressReplayAC45(t *testing.T) {
 	state.initializeInstances()
 	state.initializeActions()
 	state.initializeOutstanding()
-	state.admitArrivals()
+	state.admitArrivals(context.Background())
 	state.weights = make([]int32, len(state.instances))
 	state.available = make([]bool, len(state.instances))
 	for range len(actions) * 2 {
@@ -117,7 +117,7 @@ func TestCapacityBridgeQueuedIngressReplayAC45(t *testing.T) {
 			}
 		}
 		if state.routingApplied && state.applied.ID == actions[stage].RouteTarget.ID {
-			state.routeRequests()
+			state.routeRequests(context.Background())
 			if state.byID[actions[prepare].Instance].outstanding != 2 {
 				t.Fatal("queued gateway ingress did not move to the prepared bridge")
 			}

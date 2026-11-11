@@ -58,7 +58,7 @@ func evaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, 
 		if request.Phase == phaseReturning && (request.NativeOutcome == firstfloor.OutcomeDeadlineDrop || request.NativeOutcome == firstfloor.OutcomePreprocessFailed || request.NativeOutcome == firstfloor.OutcomeBatchError) {
 			continue // known terminal failure needs no new execution prediction
 		}
-		if request.Phase == phaseQueued || request.Phase == phaseDeferred || request.Phase == phaseRunning || request.Phase == phaseReturning {
+		if request.Phase == phaseQueued || request.Phase == phaseDeferred && request.Instance != "" || request.Phase == phaseRunning || request.Phase == phaseReturning {
 			if request.NativeSenderElapsedMS == nil || request.NativeElapsedNanos == nil {
 				invalid = appendUnique(invalid, "MissingNativeElapsedContext:"+request.ID)
 			}

@@ -303,8 +303,8 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 	state.initializeOutstanding()
 	next := &schedulerReplayRequest{source: SchedulerRequest{ID: "next", Definition: d, ReceivedAt: snapshot.At}, identity: d.Identity(), native: math.Inf(1), expires: math.Inf(1)}
 	state.requests = append(state.requests, next)
-	state.admitArrivals()
-	state.routeRequests()
+	state.admitArrivals(context.Background())
+	state.routeRequests(context.Background())
 	if actualNext == "" || !next.dispatched || next.source.Instance != actualNext {
 		t.Fatalf("post-capture credits predicted %s, next real dispatch was %s", next.source.Instance, actualNext)
 	}
@@ -885,8 +885,8 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	if !replay.applyRoute(replay.goal) {
 		t.Fatalf("candidate cannot be replayed: %v", replay.out.reasons)
 	}
-	replay.admitArrivals()
-	replay.routeRequests()
+	replay.admitArrivals(context.Background())
+	replay.routeRequests(context.Background())
 	if err = r.ApplySchedulerTarget(candidate); err != nil {
 		t.Fatal(err)
 	}

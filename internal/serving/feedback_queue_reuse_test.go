@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"math/rand/v2"
 	"testing"
 	"time"
@@ -54,7 +55,7 @@ func TestFeedbackExpiryPotentialReadsEachQueueMutation(t *testing.T) {
 	state := schedulerReplayState{settings: settings, snap: snapshot, c: candidate, out: schedulerReplayResult{definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	state.initializeInstances()
 	state.initializeOutstanding()
-	state.admitArrivals()
+	state.admitArrivals(context.Background())
 	state.expireRequests()
 	if !state.requests[0].hasPotential || state.requests[0].potential != 0 || !state.requests[1].hasPotential || state.requests[1].potential != 5 || state.out.conditional.Queries != 3 || state.potentialQueues != nil {
 		t.Fatalf("same-time expiry froze queue state: first=%+v second=%+v evidence=%+v", state.requests[0], state.requests[1], state.out.conditional)
