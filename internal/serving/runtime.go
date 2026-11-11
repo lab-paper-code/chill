@@ -119,30 +119,30 @@ type runtimeWorkload struct {
 // The owner lock protects routing and physical ownership, never observation
 // filesystem work. An assigned call reserves capacity before FIFO admission.
 type Runtime struct {
-	mu                DiagnosticLock
-	config            RuntimeConfig
-	ctx               context.Context
-	cancel            context.CancelFunc
-	workloads         map[string]*runtimeWorkload
-	names             map[string]string
-	instances         map[string]*runtimeInstance
-	profiles          []Profile
-	measurement       []NodeReference
-	routingControlled bool
-	completionMargin  float64
-	pathFeedback      map[string]float64
-	routeTargets      map[string]map[string]int32
-	calls             map[string]*Call
-	definitions       map[string]*Definition
-	changed           chan struct{}
-	observationError  error
-	recovery          ObservationRecovery
-	closing           *Call
-	finalizing        int
-	shuttingDown      bool
-	executionsStopped bool
-	executions        sync.WaitGroup
-	overloaded        atomic.Bool
+	mu                 DiagnosticLock
+	config             RuntimeConfig
+	ctx                context.Context
+	cancel             context.CancelFunc
+	workloads          map[string]*runtimeWorkload
+	names              map[string]string
+	instances          map[string]*runtimeInstance
+	profiles           []Profile
+	measurement        []NodeReference
+	routingControlled  bool
+	completionMarginMS float64
+	pathFeedbackMS     map[string]float64
+	routeTargets       map[string]map[string]int32
+	calls              map[string]*Call
+	definitions        map[string]*Definition
+	changed            chan struct{}
+	observationError   error
+	recovery           ObservationRecovery
+	closing            *Call
+	finalizing         int
+	shuttingDown       bool
+	executionsStopped  bool
+	executions         sync.WaitGroup
+	overloaded         atomic.Bool
 }
 
 func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
@@ -402,8 +402,8 @@ func (r *Runtime) Accept(receipt *Receipt, input *InferenceInput) (*Call, error)
 		return nil, failure(reasonGatewayOverloaded, "gateway live heap is near its memory limit")
 	}
 	c := &Call{runtime: r, receipt: *receipt, definition: w.definition, identity: w.identity, input: input, reply: make(chan callResult, 1)}
-	c.completionMarginMS, c.completionMarginSet = r.completionMargin, true
-	if margin, ok := r.pathFeedback[receipt.UID]; ok {
+	c.completionMarginMS, c.completionMarginSet = r.completionMarginMS, true
+	if margin, ok := r.pathFeedbackMS[receipt.UID]; ok {
 		c.completionMarginMS = margin
 	}
 	if err := r.event(c, phaseAccepted, "", ""); err != nil {
@@ -1131,7 +1131,7 @@ func (r *Runtime) SetMeasurementNodes(nodes []NodeReference) {
 func (r *Runtime) SetCompletionMargin(ms float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.completionMargin = ms
+	r.completionMarginMS = ms
 }
 
 // SetPathFeedback publishes the committed Tick's empirical POST reserves.
@@ -1139,10 +1139,10 @@ func (r *Runtime) SetCompletionMargin(ms float64) {
 func (r *Runtime) SetPathFeedback(feedback []PathFeedback) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.pathFeedback = make(map[string]float64, len(feedback))
+	r.pathFeedbackMS = make(map[string]float64, len(feedback))
 	for _, value := range feedback {
 		if value.Source == pathFeedbackEmpirical {
-			r.pathFeedback[value.WorkloadUID] = value.PostNanos / float64(time.Millisecond)
+			r.pathFeedbackMS[value.WorkloadUID] = value.PostNanos / float64(time.Millisecond)
 		}
 	}
 }
