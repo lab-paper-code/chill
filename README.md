@@ -85,6 +85,8 @@ Set `TEST_PYTHON=/path/to/python3` for `make test-loadgen` (also used by `make t
 ```sh
 make lint                 # golangci-lint
 make test                 # generate, vet, unit + envtest (no e2e)
+make test-native          # real firstfloor profiling trials (~6 min; profiler/firstfloor changes)
+make test-deploy          # deployment CLI + evaluation fixtures, one process per test (8 parallel)
 make helm-lint helm-template
 make arch-check           # package dependency rules (.go-arch-lint.yml)
 make build                # bin/chill-server, bin/kubectl-chill, ...

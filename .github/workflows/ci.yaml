@@ -52,6 +52,10 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Run native profiling integration test
+        # Excluded from make test: real firstfloor trials wait about six minutes.
+        run: make test-native
+
       - name: Check Helm chart
         run: |
           make helm-lint
