@@ -15,14 +15,14 @@ func Select[R any](strategy string) protocol.Engine[R] {
 	case protocol.V1:
 		return v1.Engine[R]{}
 	case protocol.V2:
-		return second[R]{}
+		return v2WithV1Fallback[R]{}
 	}
 	return nil
 }
 
-type second[R any] struct{}
+type v2WithV1Fallback[R any] struct{}
 
-func (second[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (protocol.Outcome[R], error) {
+func (v2WithV1Fallback[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (protocol.Outcome[R], error) {
 	started := time.Now()
 	result, err := (v2.Engine[R]{}).Search(p, exact)
 	if err != nil || result.Found {

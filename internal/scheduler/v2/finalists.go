@@ -63,18 +63,18 @@ func (f *v2Finalists) add(key protocol.Rank, start string) {
 }
 
 type v2Search struct {
-	s             *state
-	current, best protocol.Rank
-	finalists     v2Finalists
-	stats         CoreStats
-	limit, active int
-	Deadline      time.Time
-	Start         string
-	moves         [][]int
-	second        []int
-	ranked        [][]v2Merit
-	activePlans   [][]int
-	allActive     bool
+	s               *state
+	current, best   protocol.Rank
+	finalists       v2Finalists
+	stats           CoreStats
+	limit, active   int
+	Deadline        time.Time
+	Start           string
+	moves           [][]int
+	secondMovePlans []int
+	ranked          [][]v2Merit
+	activePlans     [][]int
+	allActive       bool
 }
 
 func newV2Search(p protocol.Problem, t *protocol.Table, choice []int, evaluations, finalists, active int, deadline time.Time) *v2Search {
@@ -102,7 +102,7 @@ func newV2Search(p protocol.Problem, t *protocol.Table, choice []int, evaluation
 		c.activePlans[n] = make([]int, 0, min(c.active+2, len(p.Plans[n])))
 		largest = max(largest, len(p.Plans[n]))
 	}
-	c.second = make([]int, 0, largest)
+	c.secondMovePlans = make([]int, 0, largest)
 	return c
 }
 

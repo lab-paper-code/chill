@@ -88,8 +88,8 @@ func (c *v2Search) sweepTwo() {
 			c.s.apply(n, q)
 			for _, other := range nodes[i+1:] {
 				// Every searchable second variant remains reachable after the first move.
-				c.second = c.movePlans(other, c.second)
-				for _, second := range c.second {
+				c.secondMovePlans = c.movePlans(other, c.secondMovePlans)
+				for _, second := range c.secondMovePlans {
 					key, ok := c.evaluate(other, second)
 					if !ok {
 						c.s.apply(n, old)
