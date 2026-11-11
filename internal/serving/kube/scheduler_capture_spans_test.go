@@ -77,11 +77,7 @@ func TestSchedulerTickReusesRefreshListsAndRecordsCaptureSpans(t *testing.T) {
 					}
 					event := rows[0].Control
 					assertRefreshListSpans(t, event)
-					windowParts := event.WindowBarrier + event.WindowScan + event.WindowDecode + event.WindowJoin + event.WindowSort
-					if event.WindowBarrier <= 0 || event.WindowScan <= 0 || event.WindowJoin <= 0 || event.WindowSort <= 0 ||
-						event.WindowDecode < 0 || windowParts > event.Window {
-						t.Fatalf("invalid disjoint window timing: %+v", event)
-					}
+					assertWindowSpans(t, event)
 					if event.Window <= 0 || event.RefreshList < listElapsed || event.SourceProbe < 0 || event.Rest < 0 ||
 						event.Window+event.RefreshList+event.SourceProbe+event.Rest != event.Capture {
 						t.Fatalf("capture sub-spans overlap, omit live I/O, or exceed capture: %+v; List duration=%s", event, listElapsed)
@@ -89,6 +85,15 @@ func TestSchedulerTickReusesRefreshListsAndRecordsCaptureSpans(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func assertWindowSpans(t *testing.T, event *observation.SchedulerControlObservation) {
+	t.Helper()
+	windowParts := event.WindowBarrier + event.WindowScan + event.WindowDecode + event.WindowJoin + event.WindowSort + event.WindowCache
+	if event.WindowBarrier <= 0 || event.WindowScan <= 0 || event.WindowJoin <= 0 || event.WindowSort <= 0 ||
+		event.WindowDecode < 0 || event.WindowCache < 0 || event.WindowBudgetFallbacks < 0 || windowParts > event.Window {
+		t.Fatalf("invalid disjoint window timing: %+v", event)
 	}
 }
 

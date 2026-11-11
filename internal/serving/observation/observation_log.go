@@ -148,6 +148,8 @@ type ObservationLog struct {
 	windowSegments  map[string]*windowSegment
 	windowSpan      time.Duration
 	occupancySpan   time.Duration
+	windowNow       time.Time
+	windowRecords   int
 }
 
 func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
@@ -677,10 +679,7 @@ func (l *ObservationLog) writeBatch(batch *observationBatch) error {
 			committed.source = nil // Only submission uses immutable source identity.
 			l.catalog[row.catalogID] = committed
 		}
-		var windowSize int64
-		if err == nil && (row.stream == observationRequestStream || row.stream == observationClientStream) {
-			windowSize = l.segments[l.segment(row.stream, row.at)].size
-		}
+		windowSize := l.windowAppendSizeLocked(row)
 		l.mu.Unlock()
 		if err != nil {
 			return err

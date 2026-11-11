@@ -388,6 +388,8 @@ type observationRead struct {
 	scanTime        time.Duration
 	decodeTime      time.Duration
 	sortTime        time.Duration
+	cacheWindow     bool
+	cacheTime       time.Duration
 }
 
 type observationOpenFile struct {

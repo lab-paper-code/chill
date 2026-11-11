@@ -86,11 +86,13 @@ type SchedulerControlObservation struct {
 	RefreshDeviceClasses time.Duration `json:"refreshDeviceClassesNanos"`
 	RefreshServices      time.Duration `json:"refreshServicesNanos"`
 
-	WindowBarrier time.Duration `json:"windowBarrierNanos"`
-	WindowScan    time.Duration `json:"windowScanNanos"`
-	WindowDecode  time.Duration `json:"windowDecodeNanos"`
-	WindowJoin    time.Duration `json:"windowJoinNanos"`
-	WindowSort    time.Duration `json:"windowSortNanos"`
+	WindowBarrier         time.Duration `json:"windowBarrierNanos"`
+	WindowScan            time.Duration `json:"windowScanNanos"`
+	WindowDecode          time.Duration `json:"windowDecodeNanos"`
+	WindowJoin            time.Duration `json:"windowJoinNanos"`
+	WindowSort            time.Duration `json:"windowSortNanos"`
+	WindowCache           time.Duration `json:"windowCacheNanos"`
+	WindowBudgetFallbacks int           `json:"windowBudgetFallbacks"`
 }
 
 type SchedulerObservation struct {
@@ -430,19 +432,21 @@ func (l *ObservationLog) LoadWindowTimed(ctx context.Context, from, to time.Time
 	}
 	defer read.close()
 	read.timing = timing
+	read.cacheWindow = true
 	joined := time.Now()
 	defer func() {
 		if timing != nil {
-			timing.WindowJoin += time.Since(joined) - read.scanTime - read.decodeTime - read.sortTime
+			timing.WindowJoin += time.Since(joined) - read.scanTime - read.decodeTime - read.sortTime - read.cacheTime
 			timing.WindowScan += read.scanTime
 			timing.WindowDecode += read.decodeTime
 			timing.WindowSort += read.sortTime
+			timing.WindowCache += read.cacheTime
 		}
 	}()
 	result.Coverage = read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}, observationClientStream: {from, to}})
 	result.GapUntil = result.Coverage.GapUntil(from)
 	nativeRows := map[string]serving.RequestRow{}
-	l.retainWindow(from, false, read.now)
+	l.retainWindow(from, to, false, read.now)
 	rows, err := l.windowRequests(read, nativeRows, from, to)
 	if err != nil {
 		return result, err

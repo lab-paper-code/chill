@@ -27,7 +27,7 @@ func (l *ObservationLog) ScanOccupancyRowsBounded(ctx context.Context, uid, node
 		return nil, err
 	}
 	defer read.close()
-	l.retainWindow(from.Add(-tail), true, read.now)
+	l.retainWindow(from.Add(-tail), to.Add(tail), true, read.now)
 	keep := func(r *serving.RequestRow) bool {
 		return (uid == "" || r.WorkloadUID == uid) && (node == "" || r.Node == nil || r.Node.UID == node)
 	}

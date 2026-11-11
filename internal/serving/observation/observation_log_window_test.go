@@ -129,8 +129,10 @@ func TestWindowConcurrentWriterAndOccupancy(t *testing.T) {
 	from, to := observationTestHour, observationTestHour.Add(time.Minute)
 	errors := make(chan error, 3)
 	var workers sync.WaitGroup
+	workers.Add(3)
 	for worker := range 3 {
-		workers.Go(func() {
+		go func() {
+			defer workers.Done()
 			for i := range 100 {
 				var err error
 				switch worker {
@@ -147,7 +149,7 @@ func TestWindowConcurrentWriterAndOccupancy(t *testing.T) {
 					return
 				}
 			}
-		})
+		}()
 	}
 	workers.Wait()
 	close(errors)
@@ -172,7 +174,7 @@ func TestWindowPrunesAfterConsumersStop(t *testing.T) {
 			t.Fatal(err)
 		}
 		if minute == 1 {
-			if _, err := log.LoadWindow(ctx, observationTestHour, at.Add(time.Second)); err != nil {
+			if _, err := log.LoadWindow(ctx, observationTestHour, at); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -251,7 +253,7 @@ func BenchmarkLoadWindow(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, err := log.LoadWindow(ctx, at.Add(-time.Minute), at.Add(time.Second)); err != nil {
 			b.Fatal(err)
 		}

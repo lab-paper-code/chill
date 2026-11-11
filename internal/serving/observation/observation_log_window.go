@@ -10,6 +10,10 @@ import (
 
 type windowTimingKey struct{}
 
+// Ceiling: 32,768 decoded rows across request/client segments. Larger windows
+// use the exact log reader; this bounds cache retention without limiting demand.
+const windowCacheMaxRecords = 32 * 1024
+
 func (r *observationRead) decodeWindow(raw []byte, value any) error {
 	if r.timing == nil {
 		return json.Unmarshal(raw, value)
@@ -34,6 +38,7 @@ type windowSegment struct {
 	at      time.Time
 	size    int64
 	records []windowRecord
+	bypass  bool
 }
 
 func (r *observationRead) decodeWindowRecord(stream string, raw []byte) windowRecord {
@@ -48,102 +53,245 @@ func (r *observationRead) decodeWindowRecord(stream string, raw []byte) windowRe
 	return record
 }
 
+func (l *ObservationLog) windowAppendSizeLocked(row *observationAppend) int64 {
+	if row.stream != observationRequestStream && row.stream != observationClientStream {
+		return 0
+	}
+	return l.segments[l.segment(row.stream, row.at)].size
+}
+
 // commitWindowAppend runs after a successful whole append, before its barrier
 // can complete. Uncached old segments are restored from the log on first use.
 func (l *ObservationLog) commitWindowAppend(row *observationAppend, size int64) {
 	if row.stream != observationRequestStream && row.stream != observationClientStream {
 		return
 	}
+	name := l.segment(row.stream, row.at)
 	l.windowMu.Lock()
-	defer l.windowMu.Unlock()
-	if l.windowSegments == nil {
+	if row.at.After(l.windowNow) {
+		rotated := row.at.Truncate(time.Minute).After(l.windowNow.Truncate(time.Minute))
+		l.windowNow = row.at
+		if rotated {
+			l.pruneWindowLocked()
+		}
+	}
+	if !l.windowCacheEligibleLocked(row.at.Truncate(time.Minute)) {
+		l.windowMu.Unlock()
 		return
 	}
-	name := l.segment(row.stream, row.at)
 	segment := l.windowSegments[name]
+	if segment != nil && (segment.bypass || size <= segment.size) {
+		l.windowMu.Unlock()
+		return
+	}
+	if segment == nil && size != int64(len(row.data)) {
+		l.windowMu.Unlock()
+		return
+	}
+	if l.windowRecords >= windowCacheMaxRecords {
+		l.bypassWindowLocked(name, row.at, size)
+		l.windowMu.Unlock()
+		return
+	}
+	l.windowMu.Unlock()
+
+	// JSON and all file work stay outside the cache lock, including the writer.
+	record := (&observationRead{}).decodeWindowRecord(row.stream, row.data)
+	record.end = size
+	l.windowMu.Lock()
+	defer l.windowMu.Unlock()
+	if !l.windowCacheEligibleLocked(row.at.Truncate(time.Minute)) {
+		return
+	}
+	segment = l.windowSegments[name]
+	if segment != nil && (segment.bypass || size <= segment.size) {
+		return
+	}
+	previous := int64(0)
+	if segment != nil {
+		previous = segment.size
+	}
+	if previous != size-int64(len(row.data)) {
+		return // Keep the contiguous prefix; the next read restores the missing suffix.
+	}
+	if l.windowRecords >= windowCacheMaxRecords {
+		l.bypassWindowLocked(name, row.at, size)
+		return
+	}
 	if segment == nil {
-		l.pruneWindowLocked(row.at)
-		if size != int64(len(row.data)) {
-			return
-		}
 		segment = &windowSegment{at: row.at.Truncate(time.Minute)}
 		l.windowSegments[name] = segment
 	}
-	if size <= segment.size {
-		return
-	} // A cold capture may already contain it.
-	record := (&observationRead{}).decodeWindowRecord(row.stream, row.data)
-	record.end = size
 	segment.records = append(segment.records, record)
 	segment.size = size
+	l.windowRecords++
 }
 
-func (l *ObservationLog) retainWindow(from time.Time, occupancy bool, now time.Time) {
+func (l *ObservationLog) retainWindow(from, to time.Time, occupancy bool, now time.Time) {
 	l.windowMu.Lock()
 	defer l.windowMu.Unlock()
-	if l.windowSegments == nil {
-		l.windowSegments = map[string]*windowSegment{}
+	if now.After(l.windowNow) {
+		l.windowNow = now
 	}
-	span := min(max(now.Sub(from), 0), l.config.Retention)
-	if occupancy {
-		l.occupancySpan = span
-	} else {
-		l.windowSpan = span
+	// Historical queries neither enlarge nor enable the rolling writer cache.
+	if !to.Before(now.Truncate(time.Minute)) {
+		if l.windowSegments == nil {
+			l.windowSegments = map[string]*windowSegment{}
+		}
+		span := min(max(to.Sub(from), 0), l.config.Retention)
+		if occupancy {
+			l.occupancySpan = span
+		} else {
+			l.windowSpan = span
+		}
 	}
-	l.pruneWindowLocked(now)
+	l.pruneWindowLocked()
 }
 
-// Prune on writer rotation too: disabling the consumers must not turn this
-// rolling window into an ever-growing second copy of the observation log.
-func (l *ObservationLog) pruneWindowLocked(now time.Time) {
-	floor := now.Add(-max(l.windowSpan, l.occupancySpan)).Truncate(time.Minute)
+func (l *ObservationLog) windowCacheEligibleLocked(at time.Time) bool {
+	floor := l.windowNow.Add(-max(l.windowSpan, l.occupancySpan)).Truncate(time.Minute)
+	return l.windowSegments != nil && !at.Before(floor) && !at.After(l.windowNow.Truncate(time.Minute))
+}
+
+// Prune on writer rotation too: stopped consumers cannot retain the whole log.
+func (l *ObservationLog) pruneWindowLocked() {
 	for name, segment := range l.windowSegments {
-		if segment.at.Before(floor) {
+		if !l.windowCacheEligibleLocked(segment.at) {
+			l.windowRecords -= len(segment.records)
 			delete(l.windowSegments, name)
 		}
 	}
 }
 
-func (l *ObservationLog) windowFile(read *observationRead, stream string, file observationOpenFile) ([]windowRecord, error) {
+func (l *ObservationLog) bypassWindowLocked(name string, at time.Time, size int64) {
+	if segment := l.windowSegments[name]; segment != nil {
+		l.windowRecords -= len(segment.records)
+		size = max(size, segment.size)
+	}
+	l.windowSegments[name] = &windowSegment{at: at.Truncate(time.Minute), size: size, bypass: true}
+}
+
+func (l *ObservationLog) publishWindowFile(file observationOpenFile, records []windowRecord, budget bool) bool {
 	l.windowMu.Lock()
 	defer l.windowMu.Unlock()
-	if l.windowSegments == nil {
-		l.windowSegments = map[string]*windowSegment{}
+	if !l.windowCacheEligibleLocked(file.at) {
+		return budget
 	}
-	segment := l.windowSegments[file.file.Name()]
-	if segment == nil {
-		segment = &windowSegment{at: file.at}
+	current := l.windowSegments[file.file.Name()]
+	if current != nil && current.bypass {
+		return true
 	}
-	if segment.size < file.size {
-		if _, err := file.file.Seek(segment.size, io.SeekStart); err != nil {
-			return nil, err
-		}
-		var scanner observationScanner
-		end := segment.size
-		records := segment.records
-		started, decodeBefore := time.Now(), read.decodeTime
-		err := scanner.scan(observationContextReader{ctx: read.ctx, source: file.file}, file.size-segment.size, func(raw []byte) error {
-			record := read.decodeWindowRecord(stream, raw)
-			end += int64(len(raw)) + 1
-			record.end = end
-			records = append(records, record)
-			return record.err
-		})
-		if read.timing != nil {
-			read.scanTime += time.Since(started) - (read.decodeTime - decodeBefore)
-		}
-		if err != nil {
-			return nil, err
-		}
-		segment.records, segment.size = records, file.size
-		l.windowSegments[file.file.Name()] = segment
+	if current != nil && current.size >= file.size {
+		return budget // A concurrent writer/reader already published this prefix.
 	}
-	// The writer may have advanced beyond this read's frozen complete prefix.
-	records := segment.records
+	previous := 0
+	if current != nil {
+		previous = len(current.records)
+	}
+	if budget || l.windowRecords-previous+len(records) > windowCacheMaxRecords {
+		l.bypassWindowLocked(file.file.Name(), file.at, file.size)
+		return true
+	}
+	l.windowRecords += len(records) - previous
+	l.windowSegments[file.file.Name()] = &windowSegment{at: file.at, size: file.size, records: records}
+	return false
+}
+
+func (l *ObservationLog) windowFile(read *observationRead, stream string, file observationOpenFile, visit func(windowRecord) error) error {
+	l.windowMu.Lock()
+	var snapshot windowSegment
+	if segment := l.windowSegments[file.file.Name()]; segment != nil {
+		snapshot = *segment
+	}
+	retain := read.cacheWindow && l.windowCacheEligibleLocked(file.at) && !snapshot.bypass
+	available := windowCacheMaxRecords - l.windowRecords + len(snapshot.records)
+	l.windowMu.Unlock()
+	budget := snapshot.bypass
+	defer func() {
+		if budget && read.timing != nil {
+			read.timing.WindowBudgetFallbacks++
+		}
+	}()
+	records := snapshot.records
 	for len(records) > 0 && records[len(records)-1].end > file.size {
 		records = records[:len(records)-1]
 	}
-	return records, nil
+	var visiting time.Duration
+	checked := func(record windowRecord) error {
+		if err := read.ctx.Err(); err != nil {
+			return err
+		}
+		if record.err != nil {
+			return record.err
+		}
+		if read.timing == nil {
+			return visit(record)
+		}
+		started := time.Now()
+		err := visit(record)
+		visiting += time.Since(started)
+		return err
+	}
+	if err := func() error {
+		started := time.Now()
+		defer func() {
+			if read.timing != nil {
+				read.cacheTime += time.Since(started) - visiting
+			}
+		}()
+		for _, record := range records {
+			if err := checked(record); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		return err
+	}
+	var end int64
+	if len(records) > 0 {
+		end = records[len(records)-1].end
+	}
+	if end >= file.size {
+		return nil
+	}
+	// Build a private complete prefix. Neither a visitor nor any I/O runs under
+	// windowMu, and a bounded occupancy cold miss does not populate the cache.
+	var candidate []windowRecord
+	if retain {
+		candidate = append(candidate, records...)
+	}
+	if _, err := file.file.Seek(end, io.SeekStart); err != nil {
+		return err
+	}
+	var scanner observationScanner
+	started, decodeBefore, visitingBefore := time.Now(), read.decodeTime, visiting
+	err := scanner.scan(observationContextReader{ctx: read.ctx, source: file.file}, file.size-end, func(raw []byte) error {
+		record := read.decodeWindowRecord(stream, raw)
+		end += int64(len(raw)) + 1
+		record.end = end
+		if err := checked(record); err != nil {
+			return err
+		}
+		if retain {
+			if len(candidate) >= available {
+				budget, retain, candidate = true, false, nil
+			} else {
+				candidate = append(candidate, record)
+			}
+		}
+		return nil
+	})
+	if read.timing != nil {
+		read.scanTime += time.Since(started) - (read.decodeTime - decodeBefore) - (visiting - visitingBefore)
+	}
+	if err != nil {
+		return err
+	}
+	if read.cacheWindow && (retain || budget) {
+		budget = l.publishWindowFile(file, candidate, budget)
+	}
+	return nil
 }
 
 func (l *ObservationLog) scanWindowRows(read *observationRead, stream string, visit func(windowRecord) error) error {
@@ -178,20 +326,8 @@ func (l *ObservationLog) scanWindowRows(read *observationRead, stream string, vi
 			if !file.at.Truncate(time.Hour).Equal(source.hour) {
 				continue
 			}
-			records, err := l.windowFile(read, stream, file)
-			if err != nil {
+			if err := l.windowFile(read, stream, file, visit); err != nil {
 				return err
-			}
-			for _, record := range records {
-				if err := read.ctx.Err(); err != nil {
-					return err
-				}
-				if record.err != nil {
-					return record.err
-				}
-				if err := visit(record); err != nil {
-					return err
-				}
 			}
 		}
 	}
