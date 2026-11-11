@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 const completedWorkloadPhase = "Completed"
@@ -797,5 +799,92 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	}
 	if err := controller.authorize(servingstate.Operation{WorkloadUID: string(w.Desired.UID)}); err != nil {
 		t.Fatal("404 retained deletion reservation", err)
+	}
+}
+
+func TestManagerPendingDeletionProtectsCatalogUntilConfirmation(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newManagerHarness(t)
+	model := createManagerCatalog(t, m)
+	pre, err := m.GetPreprocessor(ctx, "pre")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataset, err := m.GetDataset(ctx, "data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := m.CreateWorkload(ctx, "pending-deletion", managerWorkloadSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := m.store.client.(*managerAPI)
+	backing := native.Client
+	failConfirmation := true
+	confirmationFailures := 0
+	native.Client = interceptor.NewClient(backing.(client.WithWatch), interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			err := c.Get(ctx, key, obj, opts...)
+			// Let finalizer patches and status writes finish before failing confirmation.
+			if _, ok := obj.(*api.Workload); ok && key.Name == w.Desired.Name && failConfirmation && apierrors.IsNotFound(err) {
+				confirmationFailures++
+				return errors.New("deletion confirmation unavailable")
+			}
+			return err
+		},
+	})
+	if _, err := m.DeleteWorkload(ctx, w.Desired.Name, w.Desired.ResourceVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Advance(ctx); err == nil || !strings.Contains(err.Error(), "deletion confirmation unavailable") {
+		t.Fatalf("pending deletion advance = %v", err)
+	}
+	list := &api.WorkloadList{}
+	if err := backing.List(ctx, list); err != nil {
+		t.Fatal(err)
+	}
+	for _, current := range list.Items {
+		if current.UID == w.Desired.UID {
+			t.Fatal("pending Workload still exists in backing list")
+		}
+	}
+	if confirmationFailures == 0 {
+		t.Fatal("deletion confirmation GET did not fail")
+	}
+	if err := m.DeleteDataset(ctx, dataset.Name, dataset.ResourceVersion); managerCode(err) != "DatasetReferenced" {
+		t.Fatalf("pending dataset deletion = %v", err)
+	}
+	if err := m.DeletePreprocessor(ctx, pre.Name, pre.ResourceVersion); managerCode(err) != "PreprocessorReferenced" {
+		t.Fatalf("pending preprocessor deletion = %v", err)
+	}
+	if err := m.DeleteModel(ctx, model.Name, model.ResourceVersion); managerCode(err) != "ModelReferenced" || !strings.Contains(err.Error(), w.Desired.Name) {
+		t.Fatalf("pending model deletion = %v", err)
+	}
+	for _, object := range []client.Object{dataset.DeepCopy(), pre.DeepCopy(), model.DeepCopy()} {
+		if err := backing.Get(ctx, client.ObjectKeyFromObject(object), object); err != nil {
+			t.Fatalf("rejected catalog deletion removed %T: %v", object, err)
+		}
+	}
+	if _, err := m.CreateWorkload(ctx, w.Desired.Name, managerWorkloadSpec()); managerCode(err) != "RegistrationConflict" {
+		t.Fatalf("pending registration = %v", err)
+	}
+	if err := m.reservations.reservation.authorize(servingstate.Operation{WorkloadUID: string(w.Desired.UID)}); err == nil {
+		t.Fatal("pending deletion released reservation before confirmation")
+	}
+	failConfirmation = false
+	if err := m.Advance(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.reservations.reservation.authorize(servingstate.Operation{WorkloadUID: string(w.Desired.UID)}); err != nil {
+		t.Fatal("404 retained deletion reservation", err)
+	}
+	if err := m.DeleteDataset(ctx, dataset.Name, dataset.ResourceVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeletePreprocessor(ctx, pre.Name, pre.ResourceVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeleteModel(ctx, model.Name, model.ResourceVersion); err != nil {
+		t.Fatal(err)
 	}
 }
