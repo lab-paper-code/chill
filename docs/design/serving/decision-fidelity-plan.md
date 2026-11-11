@@ -51,7 +51,7 @@ gateway에서 실행기를 배정받지 못하고 최종 기한(2초)에 끝난 
 - 실제 batch 12743은 19:57:50.495에 끝났고, 다음 batch 12744는 19:58:00.562에 시작했다. 10.07초 동안 실행기는 놀았고 IC 요청 268건이 gateway에서 기다리다 끝났다.
 - profile 불일치나 잔여 시간 범위 초과가 아니다. profile은 일치하고 관측 시각도 있다. route는 관측 갱신을 일으켜 이 짧은 상태를 채집할 기회를 만든다.
 
-다른 묶음의 조건은 아직 분류하지 않았다.
+V1 분류(`ops/pools-deploy/intent/decision-fidelity-20261112/v1-x1-report.md`): PLC 20:04:35(lattepanda, 요청 `332ab73b…`, `exchangeElapsedNanos=null`, 실행 공백 11.7초)도 같은 메커니즘으로 확정했다. IC 20:08:35, 20:34:32, 20:38:18, 20:41:38은 그 순간의 native 원문이 저장되지 않아 하위 조건을 확정하지 못했다. 이 결손은 A1이 다룬다.
 
 ### 2.3 실패한 prepare 하나가 모든 판단에서 keep 평가를 막았다 — 확정
 
@@ -117,7 +117,16 @@ Tick 191/282(4 stage 합)가 10초를 넘었다. round는 `Admit` 약 1.9초가 
 
 gateway 대기 끝 timeout 행에는 대기 이유가 없다(`error=RequestTimeout`만). §2.2의 메커니즘은 route 기록에 우연히 남은 `before.native`로 찾았다. 판단은 예측을 남기지만 그 예측이 같은 조건에서 얼마나 맞았는지는 남기지 않는다.
 
-### 2.8 아직 설명하지 못한 실패
+### 2.8 X1 분해 결과와 남은 실패
+
+X1 결과(같은 보고서 §3-6):
+- jetsonx IC `maxBatchSize=2` 구간의 완료 p95·executor 대기가 `16` 구간보다 높다(예: Reject excess 942 vs 567ms). b1/b2 실행 상한 약 33.1 req/s 대비 offered 32.0 req/s로 여유 3.4%이며 limit 2 구간에서 native 대기가 쌓였다. 정책 왕복은 K1이 다룬다.
+- executor 거절 361건은 모두 미실행 `deadline_drop`이다. 직접 원인은 약 0.94초 executor 대기로 재확인 시 남은 SLO가 약 45ms였다. gateway가 왜 받아들였는지는 허용 시점 예측이 저장되지 않아 확정 불가다(A1).
+- Delay 배정 뒤 timeout 207건은 모두 batch 실행 전 종결이다. 17건은 executor deferred 체류가 직접 관측됐다(Delay 정책상 가능한 결과).
+- late는 대부분 gateway 또는 executor 대기 ≥500ms와 함께 나타나고, Delay workload late 79건 중 62건이 큰 gateway timeout 묶음 직후 3초 안에 들어왔다.
+- **새 문제(T1):** Reject excess late 64건 중 34건에서 backend exchange 시간에서 native elapsed를 뺀 값이 500ms를 넘는다(최대 1,244ms). gateway의 worker HTTP 구간에 있고 native 측정 밖이다. 연결 대기·전송·native handler 진입 전 중 어느 것인지 기록이 없다.
+
+분해 전 목록:
 
 - executor 거절 Reject 361건(excess 121, workload 240). Delay는 0.
 - Delay에서 instance 배정 뒤 timeout: excess 82, workload 125(gateway-only timeout은 5, 656. workload client socket timeout 13 별도).
@@ -154,7 +163,7 @@ R2가 매 판단 route를 만들고, route가 관측 갱신을 일으켜 R1의 �
 | G1 gateway 실행기 상태 | R1. §4 계약대로 완료·미실행 증거로 상태 갱신 | 19:57:50 상태 전이(pre-IPC running 관측 → 완료 → 다음 관측 전 dispatch)를 재현하는 회귀에서 대기 timeout 0. 기존 admission·미실행 증명·물리 점유 회귀 통과 |
 | V1 다른 묶음 분류 | §2.2의 나머지 묶음과 PLC 묶음을 같은 방식(route 기록의 before.native, 관측 시각)으로 분류 | 묶음별 판단 불가 조건 기록. G1 범위 밖 조건이 나오면 계획 갱신 |
 | K1 후보 공통 초기 상태 | R2. §4 계약대로 | control379 판단 입력 재생에서 keep 평가 성공. 같은 실물·정책·routing의 불필요 재적용 0(수요 변화에 필요한 전환은 유지). control376 S1 회귀 유지 |
-| A1 원인·예측 오차 기록 | R5 | 합성 회귀에서 대기 이유·거절·예측 오차가 행에 남는다 |
+| A1 원인·예측 오차 기록 | R5. 허용 시점 gateway 예측(predicted completion, 입력 snapshot identity·나이, ACK policy, 미관측 assignment 수)을 requestID로 final에 연결. 대기 상태 전환과 하위 이유(PreIPCRunning·ProfileMismatch·MissingPolicyOrBatch·ResidualUnsupported·MissingObservedAt·NoCapacity·AdmissionStopped), normal→deferred 전환 시각. T1: worker HTTP 구간 분해(transport acquire/connect/write/first-byte, native handler-entry/decode/enqueue, native finish→response-write) | 합성 회귀에서 대기 이유·거절·허용 예측·전송 구간이 행에 남는다 |
 | X1 미설명 실패 분해 | §2.4 완료 latency 상승·executor 대기 증가(route 왕복·batch 제한 변경의 영향), §2.8 항목. A1 기록이 없는 control379는 원문 결합으로 할 수 있는 만큼 분해한다 | 항목별 원인 또는 필요한 추가 기록 확정 |
 | F1 대표성 측정 | R3 측정 | control378·379 원문으로 정정된 cohort 계약을 재현 |
 | F2 대표성 정책 | 사용자 결정 뒤 | 결정에 따름 |
@@ -222,6 +231,7 @@ control379와 같은 E5(Reject·Delay). 판정:
 | 단위 | 상태 | 커밋 |
 |---|---|---|
 | E2 | 진행 | |
+| V1·X1 | 완료(보고서) | |
 | G1 | 대기(E2 뒤) | |
 | K1 | 진행 | |
 | O2 | 진행 | |
