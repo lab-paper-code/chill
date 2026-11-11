@@ -1,12 +1,17 @@
 """Arrival-cohort overload metrics and strict stored-contract cutover."""
 import json
 from pathlib import Path
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 import judgment
 import raw
 import tables
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'load-generator/src'))
+from chill_loadgen import cli
 
 
 class OverloadAdmissionTest(unittest.TestCase):
@@ -33,7 +38,8 @@ class OverloadAdmissionTest(unittest.TestCase):
         metadata = {'code': code, 'stage': stage, 'policy': policy}
         self.index['finals']['r' + str(index)] = {'outcome': 'rejected', 'executionComplete': False,
                                                 'rejection': metadata, 'admissionPolicy': policy, **waits}
-        return self.client(index, 'http_error', 1, 429 if code == 'QueueFull' else 503, rejection=metadata)
+        return self.client(index, 'http_error', 1, 429 if code == 'QueueFull' else 503,
+                           rejectionCode=code, rejectionStage=stage, rejectionPolicy=policy)
 
     def reduce(self, rows):
         return judgment.reduce_requests(self.config, self.phase, {'model': rows}, {'uid': self.index})['model']
@@ -158,6 +164,45 @@ class OverloadAdmissionTest(unittest.TestCase):
         self.assertEqual(result['outcomeClasses']['failed'], 1)
         self.assertEqual(result['rejections'], [])
         self.index['finals']['r0'] = {'outcome': 'rejected'}
+        self.assertEqual(self.reduce([row])['outcomeClasses']['failed'], 1)
+
+    def test_loadgen_rejection_row_joins_without_final_and_quarantines_conflicts(self):
+        metadata = {'code': 'DeadlineInfeasible', 'stage': 'gateway', 'policy': 'Delay'}
+        response = SimpleNamespace(status_code=503, request_id='r0', workload_uid='uid',
+                                   elapsed_nanos=7, body=json.dumps(metadata).encode())
+        row = self.client(0)
+        cli._infer(SimpleNamespace(infer=lambda *_: response), 'model', b'inputs', row,
+                   SimpleNamespace(enqueue=lambda _: None))
+        self.assertEqual(row['outcome'], 'http_error')
+        self.assertEqual(row['rejectionCode'], metadata['code'])
+        self.assertEqual(row['rejectionStage'], metadata['stage'])
+        self.assertEqual(row['rejectionPolicy'], metadata['policy'])
+        self.assertNotIn('rejection', row)
+        result = self.reduce([row])
+        self.assertEqual(result['outcomeClasses']['rejected'], 1)
+        self.assertEqual(result['rejections'][0]['policy'], 'Delay')
+        self.index['finals']['r0'] = {'outcome': 'rejected', 'rejection': metadata}
+        self.assertEqual(self.reduce([row])['outcomeClasses']['rejected'], 1)
+        for field, value in (('stage', 'executor'), ('policy', 'Reject')):
+            with self.subTest(conflicting=field):
+                self.index['finals']['r0']['rejection'] = {**metadata, field: value}
+                result = self.reduce([row])
+                self.assertEqual(result['outcomeClasses']['incomplete'], 10)
+                self.assertEqual(result['rejections'], [])
+
+    def test_complete_non_admission_http_rejections_are_failed(self):
+        for status, code in ((400, 'InvalidInput'), (401, 'Unauthorized'), (403, 'Forbidden'), (422, 'InvalidInput')):
+            with self.subTest(status=status):
+                row = self.client(0, 'http_error', status=status, rejectionCode=code)
+                self.index['finals']['r0'] = {'outcome': 'rejected', 'executionComplete': False, 'error': code}
+                result = self.reduce([row])
+                self.assertEqual(result['outcomeClasses']['failed'], 1)
+                self.assertEqual(result['outcomeClasses']['incomplete'], 9)
+                self.assertEqual(result['outcomeClasses']['rejected'], 0)
+                self.assertEqual(result['rejections'], [])
+
+    def test_partial_admission_metadata_is_incomplete(self):
+        row = self.client(0, 'http_error', status=503, rejectionCode='DeadlineInfeasible', rejectionStage='gateway')
         self.assertEqual(self.reduce([row])['outcomeClasses']['incomplete'], 10)
 
     def test_raw_final_conflicts_include_admission_facts(self):

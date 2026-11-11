@@ -112,7 +112,11 @@ def rejection(value):
 
 
 def request_class(row, final, timing, target_ns):
-    """One offered outcome; a client timeout cannot become a native late success."""
+    """Join flat client rejection fields with server admission facts.
+
+    Non-admission HTTP rejections are failures. A client timeout cannot become
+    a native late success; incomplete is reserved for missing/conflicting facts.
+    """
     client = timing['clientOutcome']
     server = final.get('outcome') if final else None
     if client in ('unknown', 'unissued'):
@@ -125,7 +129,11 @@ def request_class(row, final, timing, target_ns):
         return ('onTime' if timing['sloLatencyNS'] <= target_ns else 'late'), None, None
     if client == 'http_error':
         native = rejection(final.get('rejection')) if final else None
-        http = rejection(row.get('rejection'))
+        http = rejection({'code': row.get('rejectionCode'), 'stage': row.get('rejectionStage'),
+                          'policy': row.get('rejectionPolicy')})
+        if (final and 'rejection' in final and native is None or
+                row.get('rejectionCode') in ('QueueFull', 'DeadlineInfeasible') and http is None):
+            return 'incomplete', None, None
         metadata = native or http
         if metadata:
             expected = 429 if metadata['code'] == 'QueueFull' else 503
@@ -133,8 +141,6 @@ def request_class(row, final, timing, target_ns):
                     native and http and native != http or server == 'rejected' and native is None):
                 return 'incomplete', None, None
             return 'rejected', None, metadata
-        if server == 'rejected':
-            return 'incomplete', None, None
     if client in ('http_error', 'transport_error', 'canceled') or server in ('error', 'canceled', 'stopped'):
         return 'failed', None, None
     return 'incomplete', None, None
