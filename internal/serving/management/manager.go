@@ -386,6 +386,9 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	for i := range list.Items {
 		w := &list.Items[i]
 		if err := m.restoreWorkload(ctx, w, interruptedModels[w.Spec.ModelRef.Name] || interruptedPreprocessors[w.Spec.PreprocessorRef.Name]); err != nil {
+			if failureReason(err) == serving.DefinitionAdmissionInvalid {
+				return err
+			}
 			err = m.fail(ctx, w, err)
 			if _, unwritten := m.failed[w.UID]; unwritten || !m.observationLog.Health().Healthy {
 				errs = append(errs, err)

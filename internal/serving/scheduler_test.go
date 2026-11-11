@@ -227,6 +227,37 @@ func TestSchedulerWindowPopulationAndZeroSample(t *testing.T) {
 	}
 }
 
+func TestSchedulerRejectsInvalidDefinitionAdmission(t *testing.T) {
+	for _, source := range []string{"workload", "outstanding", "arrival"} {
+		t.Run(source, func(t *testing.T) {
+			for _, admission := range []Admission{
+				{}, {Policy: "Unknown", MaxQueuedRequests: 1},
+				{Policy: AdmissionPolicyReject}, {Policy: AdmissionPolicyDelay, MaxQueuedRequests: -1},
+			} {
+				settings, snapshot := schedulerFixture()
+				d := *snapshot.Workloads[0]
+				d.Admission = admission
+				switch source {
+				case "workload":
+					snapshot.Workloads[0] = &d
+				case "outstanding":
+					snapshot.Outstanding = []SchedulerRequest{{ID: "queued", Definition: &d, ReceivedAt: snapshot.At, Phase: phasePending}}
+				case "arrival":
+					snapshot.Arrivals = []SchedulerArrival{{ID: "offered", Definition: &d, At: snapshot.At, Compute: true}}
+				}
+				decision, err := EvaluateScheduler(context.Background(), settings, snapshot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				schedulerRequireReason(t, decision.Reasons, DefinitionAdmissionInvalid+":"+d.Identity())
+				if decision.Target != nil || decision.Keep.ExpectedJoules != nil {
+					t.Fatalf("invalid definition reached replay: %+v", decision)
+				}
+			}
+		})
+	}
+}
+
 func TestSchedulerObservationTimeBounds(t *testing.T) {
 	for _, source := range []string{
 		"missing cutoff", "future cutoff", "future node", "missing node time", "future instance", "missing instance time",

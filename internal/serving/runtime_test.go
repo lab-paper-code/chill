@@ -3,6 +3,7 @@ package serving
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -57,6 +58,71 @@ func TestShutdownCannotReopenAdmission(t *testing.T) {
 	}
 	if state, err := runtime.State(definition.Name); err != nil || state.Admission || state.Reason != "ShuttingDown" {
 		t.Fatalf("shutdown state changed: %+v %v", state, err)
+	}
+}
+
+func TestRuntimePublishRejectsInvalidDefinitionAdmission(t *testing.T) {
+	for _, closed := range []bool{false, true} {
+		publish := "open"
+		if closed {
+			publish = "closed"
+		}
+		t.Run(publish, func(t *testing.T) {
+			r, _, _ := routingRuntime(t, map[string]int32{"w1": 1})
+			original := r.workloads["w1"].definition
+			for _, admission := range []Admission{
+				{}, {Policy: "Unknown", MaxQueuedRequests: 1},
+				{Policy: AdmissionPolicyReject}, {Policy: AdmissionPolicyDelay, MaxQueuedRequests: -1},
+			} {
+				d := *original
+				d.Name, d.UID, d.Admission = "invalid-workload", "invalid-uid", admission
+				var err error
+				if closed {
+					err = r.PublishClosed(&d, "RestartDrain")
+				} else {
+					err = r.Publish(&d)
+				}
+				var domain *Error
+				if !errors.As(err, &domain) || domain.Code != DefinitionAdmissionInvalid ||
+					!strings.Contains(domain.Message, d.Name) || !strings.Contains(domain.Message, d.Identity()) {
+					t.Fatalf("invalid admission %+v publication error: %v", admission, err)
+				}
+				definitions, _ := r.config.ObservationLog.RuntimeFacts()
+				if definitions[d.Identity()] != nil || r.RetainedDefinition(d.Identity()) != nil {
+					t.Fatal("invalid publication persisted a definition")
+				}
+				if _, err := r.State(d.Name); !hasRuntimeError(err, "WorkloadNotFound") {
+					t.Fatalf("invalid definition registered: %v", err)
+				}
+			}
+			if state, err := r.State(original.Name); err != nil || state.Applied != original {
+				t.Fatalf("invalid publication changed existing registration: %+v %v", state, err)
+			}
+		})
+	}
+}
+
+type admissionRuntimeFacts struct {
+	RuntimeObservation
+	definition *Definition
+	pending    []RequestRow
+}
+
+func (o admissionRuntimeFacts) RuntimeFacts() (map[string]*Definition, []RequestRow) {
+	return map[string]*Definition{o.definition.Identity(): o.definition}, o.pending
+}
+
+func TestRuntimeRestoreRejectsInvalidPendingDefinitionAdmission(t *testing.T) {
+	r, _, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	d := *r.workloads["w1"].definition
+	d.Admission = Admission{}
+	now := time.Now()
+	log := admissionRuntimeFacts{RuntimeObservation: r.config.ObservationLog, definition: &d,
+		pending: []RequestRow{{RequestID: "unfinished", DefinitionID: d.Identity(), Node: &NodeReference{UID: "node"}, DispatchedAt: &now}}}
+	restored, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: log})
+	var domain *Error
+	if restored != nil || !errors.As(err, &domain) || domain.Code != DefinitionAdmissionInvalid || !strings.Contains(domain.Message, d.Identity()) {
+		t.Fatalf("invalid pending definition restored: runtime=%v error=%v", restored, err)
 	}
 }
 

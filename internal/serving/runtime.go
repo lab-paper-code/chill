@@ -185,6 +185,10 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 			cancel()
 			return nil, errors.New("unfinished assignment has no retained definition")
 		}
+		if err := d.validateAdmission(); err != nil {
+			cancel()
+			return nil, err
+		}
 		w := r.workloads[d.UID]
 		if w == nil {
 			w = &runtimeWorkload{definition: d, identity: row.DefinitionID, stopped: true, reason: "RestartDrain", calls: map[string]*Call{}}
@@ -1304,6 +1308,9 @@ func (r *Runtime) validatePublicationLocked(d *Definition) error {
 	}
 	if r.shuttingDown {
 		return failure(reasonShuttingDown, "entry point is shutting down")
+	}
+	if err := d.validateAdmission(); err != nil {
+		return err
 	}
 	if other := r.names[d.Name]; other != "" && other != d.UID {
 		return failure("RegistrationConflict", "old registration is still attached")

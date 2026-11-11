@@ -92,6 +92,9 @@ func schedulerValidateSnapshot(snapshot SchedulerSnapshot) []string {
 		if d.SLO.Percentile <= 0 || d.SLO.Percentile > 100 || !schedulerFinite(d.SLO.Percentile) || d.SLO.TargetLatency <= 0 {
 			reasons = appendUnique(reasons, "InvalidSLO:"+d.UID)
 		}
+		if err := d.validateAdmission(); err != nil {
+			reasons = appendUnique(reasons, DefinitionAdmissionInvalid+":"+d.Identity())
+		}
 	}
 	return reasons
 }

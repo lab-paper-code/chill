@@ -54,6 +54,8 @@ type Admission struct {
 	MaxQueuedRequests int32           `json:"maxQueuedRequests"`
 }
 
+const DefinitionAdmissionInvalid = "DefinitionAdmissionInvalid"
+
 // Error carries a consumer-visible failure without depending on its transport.
 type Error struct {
 	Code                     string          `json:"code"`
@@ -156,6 +158,13 @@ type Definition struct {
 // lifetime and admission changes advance the Workload generation.
 func (d *Definition) Identity() string {
 	return fmt.Sprintf("%s/%d/%s/%d/%s/%d", d.UID, d.Generation, d.Model.UID, d.Model.Generation, d.Preprocessor.UID, d.Preprocessor.Generation)
+}
+
+func (d *Definition) validateAdmission() error {
+	if (d.Admission.Policy != AdmissionPolicyReject && d.Admission.Policy != AdmissionPolicyDelay) || d.Admission.MaxQueuedRequests < 1 {
+		return failure(DefinitionAdmissionInvalid, "workload %q (%s), definition %q has invalid admission: policy=%q maxQueuedRequests=%d", d.Name, d.UID, d.Identity(), d.Admission.Policy, d.Admission.MaxQueuedRequests)
+	}
+	return nil
 }
 
 // SameExecution reports whether both definitions run the same model and

@@ -604,6 +604,67 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	}
 }
 
+func TestManagerRestoreMissingDefinitionAdmissionFailsBeforeStatusWrite(t *testing.T) {
+	ctx := context.Background()
+	m, config := newManagerHarness(t)
+	createManagerCatalog(t, m)
+	view, err := m.CreateWorkload(ctx, "service", managerWorkloadSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := m.store.GetWorkload(ctx, view.Desired.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.observationLog.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(view.Applied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy map[string]json.RawMessage
+	if err := json.Unmarshal(body, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	delete(legacy, "admission")
+	body, err = json.Marshal(map[string]any{"identity": view.Applied.Identity(), "definition": legacy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(config.Directory, "v1alpha5", "definitions.jsonl"), append(body, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	log, err := observation.NewObservationLog(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = log.Close(ctx) })
+	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := management.NewManager(m.reservations, m.store, rt, log, m.observer, management.ManagerConfig{DrainTimeout: time.Hour,
+		Actor: func(ctx context.Context) (string, string) { return PrincipalFromContext(ctx).Actor() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = restarted.Initialize(ctx)
+	if managerCode(err) != serving.DefinitionAdmissionInvalid || !strings.Contains(err.Error(), view.Applied.Identity()) || !strings.Contains(err.Error(), view.Desired.Name) {
+		t.Fatalf("missing stored admission did not fail clearly: %v", err)
+	}
+	after, err := m.store.GetWorkload(ctx, view.Desired.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ResourceVersion != before.ResourceVersion || !reflect.DeepEqual(after.Status, before.Status) {
+		t.Fatalf("invalid retained definition wrote status: before=%+v after=%+v", before.Status, after.Status)
+	}
+	if _, err := rt.State(view.Desired.Name); managerCode(err) != "WorkloadNotFound" {
+		t.Fatalf("invalid retained definition registered: %v", err)
+	}
+}
+
 func assertObservationLogActor(t *testing.T, observationLog *observation.ObservationLog, uid, kind, username, actorUID string) {
 	t.Helper()
 	observed, err := observationLog.Query(context.Background(), uid, time.Time{}, time.Time{}, nil, nil, 0, "")
