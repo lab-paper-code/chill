@@ -2,7 +2,8 @@
 
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
-import { ApiError, decodeResponse, relay, useChillQueries, useSession, warmingRetry, warmingDelay } from "@/lib/client"
+import { useChillQueries, useSession } from "@/lib/client"
+import { ApiError, decodeResponse, relay, warmingRetry, warmingDelay } from "@/lib/client-transport"
 import { Button } from "@/components/ui/button"
 import { decodeExperiment, decodeExperimentPage, experimentOutcome, experimentPath, finite, historicalPublicationIDs, injectionRows, object, publishedText, recordedComparisons, type Experiment, type ExperimentFacts as RecordedFacts, type ExperimentPage, type ExperimentStage, type Published } from "@/lib/experiments"
 import { campaignScoreboard, comparisonValidity, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentRows, experimentServiceResults, publishedEnergy, ratio, settingsPatchEntries, settingsPatchKeyLabel, settingsPatchValueLabel, stageLoadParts, stageSeconds } from "@/lib/experiment-comparison"

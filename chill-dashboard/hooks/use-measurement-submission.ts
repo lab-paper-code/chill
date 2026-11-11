@@ -2,7 +2,8 @@
 
 import { useRef, useState, type Dispatch, type SetStateAction } from "react"
 import { useRouter } from "next/navigation"
-import { ApiError, useChillMutation } from "@/lib/client"
+import { useChillMutation } from "@/lib/client"
+import { ApiError } from "@/lib/client-transport"
 import type { MeasurementMutation, MeasurementPreflight } from "@/lib/read-types"
 import { updateDraft, manifest, requestHref, steps, view, type Context, type Draft } from "@/lib/measurement-request"
 import type { Compatibility } from "@/lib/measurement-coverage"

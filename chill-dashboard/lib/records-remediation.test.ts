@@ -14,12 +14,14 @@ import * as live from "./live.ts"
 import * as sourceExport from "./source-export.ts"
 import type { ObservationResult } from "./read-types.ts"
 import * as capacity from "./capacity.ts"
+import * as summary from "./measurement-summary.ts"
 
 const require=createRequire(import.meta.url)
 const box=({children}:{children?:ReactNode})=>createElement("div",null,children)
 function load(file:string,modules:Record<string,unknown>){const exports:Record<string,unknown>={};const compiled=transpileModule(readFileSync(new URL(file,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText;new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports);return exports}
+const transport=load("./client-transport.ts",{"@/lib/measurement-summary":summary})
 function modulesFor(params:URLSearchParams,query:(path:string,options?:{enabled?:boolean})=>unknown):Record<string,unknown>{
-  return {react:require("react"),"next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:()=>{}}),usePathname:()=>"/records"},"next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},"@/lib/client":{useSession:()=>({config:{pageSize:25,maxPageSize:100,maxWindowHours:24}}),useChillQuery:query},"@/lib/scheduler":scheduler,"@/lib/scheduler-history":refs,"@/lib/workload-identity":identity,"@/lib/read-types":{},"@/lib/date-time":{},"@/lib/live-display":{displayTime:(value:string)=>value},"@/features/scheduler":{judgmentLabels:{Keep:"현재 구성 유지"},actionNodeName:(node:{name:string})=>node.name,actionKinds:{route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제"}},"./scheduler":{actionNodeName:(node:{name:string})=>node.name,actionKinds:{route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제"},actionStatuses:{complete:"완료"}},"@/features/scheduler-settings":{},"./scheduler-transitions":{CurrentTransitionEvidence:()=>createElement("p",null,"현재 동작 대체")},"@/features/scheduler-history":{when:(value:string)=>value},"@/lib/source-export":{safeSource:(value:unknown)=>value},"@/lib/labels":{statusLabel:(value:string)=>value},"@/components/read-region":{QueryGate:box,SourceJSON:()=>null,SourceExport:()=>null},"@/components/screen":{Screen:box,Rows:box,Row:({href,label}:{href:string;label:string})=>createElement("a",{href},label),RowDialog:()=>null,Facts:({items}:{items:[string,ReactNode][]})=>createElement("dl",null,items.map(([key,value])=>createElement("div",{key},key,value))),Empty:()=>null},"@/components/records-navigation":{RecordsNavigation:()=>null,RecordsRange:()=>null},"@/components/ui/button":{Button:box},"@/components/ui/input":{},"@/components/ui/sheet":{Sheet:box,SheetContent:box,SheetHeader:box,SheetTitle:box},"@/components/chart-area-interactive":{},"@/components/stage-breakdown":{duration:(value:number)=>String(value)}}
+  return {"@/lib/client-transport":transport,react:require("react"), "next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:()=>{}}),usePathname:()=>"/records"},"next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},"@/lib/client":{useSession:()=>({config:{pageSize:25,maxPageSize:100,maxWindowHours:24}}),useChillQuery:query},"@/lib/scheduler":scheduler,"@/lib/scheduler-history":refs,"@/lib/workload-identity":identity,"@/lib/read-types":{},"@/lib/date-time":{},"@/lib/live-display":{displayTime:(value:string)=>value},"@/features/scheduler":{judgmentLabels:{Keep:"현재 구성 유지"},actionNodeName:(node:{name:string})=>node.name,actionKinds:{route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제"}},"./scheduler":{actionNodeName:(node:{name:string})=>node.name,actionKinds:{route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제"},actionStatuses:{complete:"완료"}},"@/features/scheduler-settings":{},"./scheduler-transitions":{CurrentTransitionEvidence:()=>createElement("p",null,"현재 동작 대체")},"@/features/scheduler-history":{when:(value:string)=>value},"@/lib/source-export":{safeSource:(value:unknown)=>value},"@/lib/labels":{statusLabel:(value:string)=>value},"@/components/read-region":{QueryGate:box,SourceJSON:()=>null,SourceExport:()=>null},"@/components/screen":{Screen:box,Rows:box,Row:({href,label}:{href:string;label:string})=>createElement("a",{href},label),RowDialog:()=>null,Facts:({items}:{items:[string,ReactNode][]})=>createElement("dl",null,items.map(([key,value])=>createElement("div",{key},key,value))),Empty:()=>null},"@/components/records-navigation":{RecordsNavigation:()=>null,RecordsRange:()=>null},"@/components/ui/button":{Button:box},"@/components/ui/input":{},"@/components/ui/sheet":{Sheet:box,SheetContent:box,SheetHeader:box,SheetTitle:box},"@/components/chart-area-interactive":{},"@/components/stage-breakdown":{duration:(value:number)=>String(value)}}
 }
 
 test("scheduler changes cannot be intercepted by an unconditional Next redirect",async()=>{
@@ -80,7 +82,7 @@ test("identity changes retain request and power API kinds and their own cursor",
       let state=0
       class Client {async cancelQueries(){}clear(){}getDefaultOptions(){return {}}}
       const modules={react:{createContext:()=>({}),useState:(initial:unknown)=>{const index=state++;return [index===2?"old-token":typeof initial==="function"?(initial as ()=>unknown)():initial,()=>{}]},useEffect:()=>{},useCallback:(callback:(value:string)=>Promise<void>)=>{callbacks.push(callback);return callback}},"@tanstack/react-query":{QueryClient:Client,QueryCache:class{},MutationCache:class{}},"next/navigation":{useRouter:()=>({replace:(value:string)=>urls.push(value)})},"@/components/ui/button":{},"@/components/ui/input":{},"@/components/ui/dialog":{},"@/components/brand":{},"lucide-react":{},"@/lib/scheduler":{},"@/lib/session-token":{}}
-      Object.assign(modules,{"@/lib/measurement-summary":{}})
+      Object.assign(modules,{"@/lib/client-transport":transport})
       const exports=load("../lib/client.tsx",modules)
       ;(exports.SessionProvider as (props:{children:null})=>unknown)({children:null})
       await callbacks[0]("new-token")
@@ -131,6 +133,7 @@ test("public request reads and the real download preserve optional server timing
   const modules=modulesFor(params,()=>({}))
   const client=load("./client.tsx",{
     ...modules,
+    "@/lib/client-transport":transport,
     react:{...require("react"),useContext:()=>({token:"test-token",config:{pollIntervalMs:5000}}),useSyncExternalStore:()=>true},
     "@tanstack/react-query":{useQuery:(options:{queryKey:string[];queryFn:(context:{signal:AbortSignal})=>Promise<unknown>})=>{
       const path=options.queryKey[1];queries.set(path,options);return {data:results.get(path)}
@@ -143,6 +146,7 @@ test("public request reads and the real download preserve optional server timing
   let download:(()=>void)|undefined
   const readRegion=load("../components/read-region.tsx",{
     ...modules,"@/lib/source-export":sourceExport,
+    "@/lib/client-transport":transport,
     "@/components/ui/dialog":{},
     "lucide-react":{Download:box},
     "@/components/ui/button":{Button:({onClick,children}:{onClick:()=>void;children:ReactNode})=>{download=onClick;return createElement("button",null,children)}},

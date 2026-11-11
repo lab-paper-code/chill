@@ -8,12 +8,16 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as live from "./live.ts"
 import * as history from "./live-history.ts"
+import * as measurementSummary from "./measurement-summary.ts"
 
 const now=Date.parse("2026-11-03T12:00:00Z"),from=new Date(now-900000).toISOString(),to=new Date(now).toISOString(),at="2026-11-03T11:59:00.123456789Z"
 const event={type:"event",at,kind:"cluster",cluster:{kind:"pod",at,event:"changed",pod:{uid:"pod-a",ready:"False"}}}
 const coverage={from:null,to:null,sources:[{from,to,stream:"cluster",source:"archive",store:"s3",key:"exact-object"}],gaps:[{from,to,stream:"cluster",reason:"MissingArchive"}]}
 const page=(nextCursor?:string)=>({from,to,events:[event],coverage,...(nextCursor?{nextCursor}:{})})
 const updateState=(read:()=>live.LiveState,write:(state:live.LiveState)=>void)=>(change:(state:live.LiveState)=>live.LiveState)=>write(change(read()))
+const require=createRequire(import.meta.url),transport:Record<string,unknown>={}
+const transportCode=transpileModule(readFileSync(new URL("./client-transport.ts",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS}}).outputText
+new Function("require","exports",transportCode)((name:string)=>name==="@/lib/measurement-summary"?measurementSummary:require(name),transport)
 
 test("recent archive stops at five pages and passes the opaque cursor with identical bounds",async()=>{
   let state=live.initialLiveState();const paths:string[]=[],abort=new AbortController()
@@ -83,7 +87,8 @@ test("provider leaves retention status to the live header instead of placing it 
   const modules:Record<string,unknown>={
     react:React,"@tanstack/react-query":{skipToken:Symbol(),useQuery:()=>({data:state}),useQueryClient:()=>({})},
     "next/navigation":{useSearchParams:()=>new URLSearchParams(),usePathname:()=>"/"},
-    "@/lib/client":{useSession:()=>({token:"secret",epoch:1,config:{},signals:new Set()}),relay:()=>{}},
+    "@/lib/client":{useSession:()=>({token:"secret",epoch:1,config:{},signals:new Set()})},
+    "@/lib/client-transport":{...transport,relay:()=>{}},
     "@/lib/live":live,"@/lib/live-fixture":{},"@/lib/live-history":{},
     "@/components/read-region":{SourceJSON:()=>null},
   }
@@ -142,7 +147,8 @@ test("provider seed reentry uses the current identity and cancels the previous i
     react:{...React,useEffect:(effect:()=>void|(()=>void))=>{effects.push(effect)}},
     "@tanstack/react-query":{skipToken:Symbol(),useQuery:({queryKey}:{queryKey:unknown})=>({data:queryClient.getQueryData(queryKey)??live.initialLiveState()}),useQueryClient:()=>queryClient},
     "next/navigation":{useSearchParams:()=>new URLSearchParams(),usePathname:()=>path},
-    "@/lib/client":{ApiError:class extends Error{},useSession:()=>({token,epoch,config:{},signals}),relay:(path:string,requestToken:string,signal:AbortSignal)=>{
+    "@/lib/client":{useSession:()=>({token,epoch,config:{},signals})},
+    "@/lib/client-transport":{...transport,ApiError:class extends Error{},relay:(path:string,requestToken:string,signal:AbortSignal)=>{
       const {promise,resolve}=Promise.withResolvers<{data:unknown}>()
       requests.push({path,token:requestToken,signal,resolve});return promise
     }},

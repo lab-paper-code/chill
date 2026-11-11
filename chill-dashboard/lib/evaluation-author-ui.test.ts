@@ -125,12 +125,12 @@ test("403 server permission messages render in both experiment and load forms wi
   }
   const source={name:"load",uid:"original",spec:{future:"draft"},inUse:[]}
   let gets=0
-  const client={ApiError,useChillMutation:()=>({isPending:false,mutateAsync:async(input:{path:string;method:string})=>{
+  const client={useChillMutation:()=>({isPending:false,mutateAsync:async(input:{path:string;method:string})=>{
     if(input.path.endsWith("/preflight"))return {data:{checks:[{id:"server",passed:true}]}}
     throw new ApiError(403,"Forbidden",{message:"needs role X"})
   }}),useChillQuery:(path:string)=>({data:path==="v1/evaluations/load-scenarios/load"?source:undefined,refetch:async()=>{gets++;return {data:source,error:null}}})}
   const parent=hookRunner(),child=hookRunner()
-  const modules={...primitives,react:parent.react,"@/lib/client":client,"@/components/evaluation-author-fields":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select",useUnsavedAuthor:()=>{}}}
+  const modules={...primitives,react:parent.react,"@/lib/client-transport":{ApiError},"@/lib/client":client,"@/components/evaluation-author-fields":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select",useUnsavedAuthor:()=>{}}}
   const {LoadScenarioAuthorPage}=load("../features/load-scenario-author.tsx",modules)
   const editor=elements(parent.render(LoadScenarioAuthorPage,{name:"load"})).find(element=>element.props.editing===true&&typeof element.props.onSaved==="function")!
   // The child shares the module's mocked React bindings, but has an independent hook state.
@@ -149,7 +149,7 @@ test("403 server permission messages render in both experiment and load forms wi
   assert.equal(elements(tree).find(element=>element.type==="fieldset")?.props.disabled,false)
   assert.equal(gets,0,"a definitive denial is not an unknown replacement outcome")
   const runner=hookRunner(),error=new ApiError(403,"Forbidden",{message:"needs role X"})
-  const {EvaluationSubmit}=load("../features/evaluation-request.tsx",{...primitives,react:runner.react,"@/lib/client":{...client,useChillMutation:()=>({error})}})
+  const {EvaluationSubmit}=load("../features/evaluation-request.tsx",{...primitives,react:runner.react,"@/lib/client-transport":{ApiError},"@/lib/client":{...client,useChillMutation:()=>({error})}})
   const experiment=elements(runner.render(EvaluationSubmit,{name:"run",spec:{}}))
   const failure=experiment.find(element=>element.props.error===error)!
   assert.match(renderToStaticMarkup(createElement(failure.type as ComponentType<{error:ApiError}>,{error})),/>needs role X</)

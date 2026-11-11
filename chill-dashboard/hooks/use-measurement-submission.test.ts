@@ -22,6 +22,9 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
+  const transport:Record<string,unknown>={}
+  const transportCode=transpileModule(readFileSync(new URL("../lib/client-transport.ts",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS}}).outputText
+  runInNewContext(transportCode,{exports:transport,require:(name:string)=>name==="@/lib/measurement-summary"?measurementSummary:require(name)})
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   let mutationIndex=0,stateIndex=0
   const states:unknown[]=[]
@@ -43,7 +46,8 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
     }},
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query?`${query}&input=form`:"input=form")},
-    "@/lib/client":{useChillMutation:()=>({isPending:false,reset:()=>{},...mutations[mutationIndex++]}),isCoverageWarming:()=>false},
+    "@/lib/client":{useChillMutation:()=>({isPending:false,reset:()=>{},...mutations[mutationIndex++]})},
+    "@/lib/client-transport":{...transport,isCoverageWarming:()=>false},
     "@/components/read-region":{SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>{if(inline)bodies.push(value);return null},SourceExport:()=>null},
     "@/components/measurement-request-source":{MeasurementRequestSource:({value}:{value:unknown})=>{bodies.push(value);return null}},
     "@/components/screen":{Screen:container,Rows:container,RowDialog:()=>null},

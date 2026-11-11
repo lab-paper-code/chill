@@ -9,13 +9,17 @@ import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import * as icons from "lucide-react"
 import type * as Client from "./client.tsx"
+import type * as Transport from "./client-transport.ts"
+import * as summary from "./measurement-summary.ts"
 import type * as ReadRegion from "../components/read-region.tsx"
 
 const require=createRequire(import.meta.url)
-const modules:Record<string,unknown>={"lucide-react":icons,"next/navigation":{},"@/components/ui/button":{},"@/components/ui/input":{},"@/components/ui/dialog":{},"@/components/brand":{},"@/lib/scheduler":{},"@/lib/session-token":{},"@/lib/measurement-summary":{}}
-const exports={} as typeof Client
+const modules:Record<string,unknown>={"lucide-react":icons,"next/navigation":{},"@/components/ui/button":{},"@/components/ui/input":{},"@/components/ui/dialog":{},"@/components/brand":{},"@/lib/scheduler":{},"@/lib/session-token":{},"@/lib/measurement-summary":summary}
+const exports={} as typeof Transport
 const source=readFileSync(new URL("./client.tsx",import.meta.url),"utf8")
-new Function("require","exports",transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>modules[name]??require(name),exports)
+const transportSource=readFileSync(new URL("./client-transport.ts",import.meta.url),"utf8")
+new Function("require","exports",transpileModule(transportSource,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>modules[name]??require(name),exports)
+modules["@/lib/client-transport"]=exports
 
 test("CoverageWarming is initialization, retries Retry-After and resolves real data",async()=>{
   let calls=0
@@ -43,7 +47,7 @@ test("shared QueryGate renders initialization as a status rather than an HTTP er
   const gate={} as typeof ReadRegion
   const wrap=({children}:{children?:ReactNode})=>createElement("div",{},children)
   const body=readFileSync(new URL("../components/read-region.tsx",import.meta.url),"utf8")
-  const dependencies:Record<string,unknown>={"lucide-react":icons,"@/lib/client":{...exports,useSession:()=>({token:"token"})},"@/components/ui/button":{Button:wrap},"@/components/ui/dialog":{},"@/lib/source-export":{},"@/lib/scheduler":{},"@/lib/labels":{explain:()=>["오류"],statusLabel:()=>""}}
+  const dependencies:Record<string,unknown>={"lucide-react":icons,"@/lib/client-transport":exports,"@/lib/client":{useSession:()=>({token:"token"})},"@/components/ui/button":{Button:wrap},"@/components/ui/dialog":{},"@/lib/source-export":{},"@/lib/scheduler":{},"@/lib/labels":{explain:()=>["오류"],statusLabel:()=>""}}
   new Function("require","exports",transpileModule(body,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>dependencies[name]??require(name),gate)
   const query={error:new exports.ApiError(503,"",{code:"CoverageWarming"}),isPending:false,isFetching:false,dataUpdatedAt:0,refetch:()=>{}}
   const html=renderToStaticMarkup(createElement(gate.QueryGate,{query},null))
@@ -67,11 +71,11 @@ test("data-dependent polling stops for terminal measurements, hidden tabs and de
 })
 
 test("poll predicates receive a failed detail status while retaining the cached measurement",()=>{
-  let interval:(query:{state:{data?:{phase:string|null};error?:Client.ApiError|null}})=>number|false=()=>false
+  let interval:(query:{state:{data?:{phase:string|null};error?:Transport.ApiError|null}})=>number|false=()=>false
   const client={} as typeof Client
   const dependencies:Record<string,unknown>={...modules,react:{...require("react"),useContext:()=>({token:"token",config:{pollIntervalMs:5000}}),useSyncExternalStore:()=>true},"@tanstack/react-query":{useQuery:(options:{refetchInterval:typeof interval})=>{interval=options.refetchInterval;return {data:undefined,error:null}}}}
   new Function("require","exports",transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>dependencies[name]??require(name),client)
-  client.useChillQuery<{phase:string|null}>("v1/namespaces/ns/dispatch-occupancy-measurements/removed",{poll:(data,error?:Client.ApiError|null)=>error?.status!==404&&(!data?.phase||data.phase==="Measuring")})
+  client.useChillQuery<{phase:string|null}>("v1/namespaces/ns/dispatch-occupancy-measurements/removed",{poll:(data,error?:Transport.ApiError|null)=>error?.status!==404&&(!data?.phase||data.phase==="Measuring")})
   const pending={phase:null}
   assert.equal(interval({state:{data:pending}}),5000)
   assert.equal(interval({state:{data:pending,error:new exports.ApiError(404,"missing",null)}}),false)

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as domain from "./domain.ts"
+import * as measurementSummary from "./measurement-summary.ts"
 
 type Tree={type:unknown;props:Record<string,unknown>}
 const require=createRequire(import.meta.url)
@@ -15,7 +16,7 @@ function hooks() {
 function load(path:string,modules:Record<string,unknown>):Record<string,(props:Record<string,unknown>)=>unknown> {
   const compiled=transpileModule(readFileSync(new URL(path,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports={}
-  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name==="@/hooks/use-catalog-resource"?load("../hooks/use-catalog-resource.ts",modules):name.startsWith("@/")?{}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name==="@/lib/client-transport"?modules[name]=load("./client-transport.ts",{"@/lib/measurement-summary":measurementSummary}):name==="@/hooks/use-catalog-resource"?load("../hooks/use-catalog-resource.ts",modules):name.startsWith("@/")?{}:require(name),exports)
   return exports
 }
 const base={"next/navigation":{useSearchParams:()=>new URLSearchParams()},"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},"@/lib/domain":domain}

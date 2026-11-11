@@ -15,6 +15,8 @@ import * as measurements from "./measurements.ts"
 import * as scheduler from "./scheduler.ts"
 import * as labels from "./labels.ts"
 import type * as Client from "./client.tsx"
+import type * as Transport from "./client-transport.ts"
+import * as summary from "./measurement-summary.ts"
 import type * as ReadRegion from "../components/read-region.tsx"
 import type * as Conclusion from "../features/experiments-conclusion.tsx"
 
@@ -22,7 +24,7 @@ const require=createRequire(import.meta.url)
 function load<T>(path:string,modules:Record<string,unknown>):T {
   const exports={}
   const source=readFileSync(new URL(path,import.meta.url),"utf8")
-  new Function("require","exports",transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>name in modules?modules[name]:name.startsWith("@/")?{}:require(name),exports)
+  new Function("require","exports",transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>name in modules?modules[name]:(name.startsWith("@/")&&name!=="@/lib/client-transport")?{}:require(name),exports)
   return exports as T
 }
 // Exact 40,900-byte HTTP 200 body saved at 2026-11-04T10:18:42.058Z in
@@ -33,23 +35,25 @@ const path=experiments.experimentPath(publication.id)
 const wrap=({children}:{children?:React.ReactNode})=>React.createElement("div",null,children)
 function harness() {
   const cache=new query.QueryClient()
-  let options:query.QueryObserverOptions<experiments.Experiment,Client.ApiError>={queryKey:[]}
+  const transport=load<typeof Transport>("./client-transport.ts",{"@/lib/measurement-summary":summary})
+  let options:query.QueryObserverOptions<experiments.Experiment,Transport.ApiError>={queryKey:[]}
   const client=load<typeof Client>("./client.tsx",{
+    "@/lib/client-transport":transport,
     react:{...React,useContext:()=>({token:"fixture",config:{pollIntervalMs:5000}}),useSyncExternalStore:()=>true},
     "@tanstack/react-query":{...query,useQuery:(value:typeof options)=>{options=value;return {}}},
     "next/navigation":{},"lucide-react":icons,
   })
   client.useChillQuery<experiments.Experiment>(path,{decoder:experiments.decodeExperiment})
   const gate=load<typeof ReadRegion>("../components/read-region.tsx",{
-    "@/lib/client":client,"@/lib/scheduler":scheduler,"@/lib/labels":labels,"lucide-react":icons,
+    "@/lib/client-transport":transport,"@/lib/client":client,"@/lib/scheduler":scheduler,"@/lib/labels":labels,"lucide-react":icons,
     "@/lib/source-export":{safeSource:(value:unknown)=>value},"@/components/ui/button":{Button:wrap},
     "@/components/ui/dialog":Object.fromEntries(["Dialog","DialogTrigger","DialogContent","DialogDescription","DialogHeader","DialogTitle"].map(name=>[name,wrap])),
   })
   const conclusion=load<typeof Conclusion>("../features/experiments-conclusion.tsx",{
-    "next/link":{default:"a"},"@/lib/client":client,"@/lib/experiments":experiments,
+    "next/link":{default:"a"},"@/lib/client-transport":transport,"@/lib/client":client,"@/lib/experiments":experiments,
     "@/lib/experiment-comparison":comparison,"@/lib/measurements":measurements,"@/components/ui/button":{Button:wrap},
   })
-  return {cache,client,observe:()=>new query.QueryObserver(cache,options),render:(result:query.QueryObserverResult<experiments.Experiment,Client.ApiError>)=>renderToStaticMarkup(React.createElement(gate.QueryGate,{query:{...result,refetch:()=>{}}},result.data&&React.createElement(conclusion.ExperimentStageResults,{run:result.data,stage:result.data.stages[0]})))}
+  return {cache,client,transport,observe:()=>new query.QueryObserver(cache,options),render:(result:query.QueryObserverResult<experiments.Experiment,Transport.ApiError>)=>renderToStaticMarkup(React.createElement(gate.QueryGate,{query:{...result,refetch:()=>{}}},result.data&&React.createElement(conclusion.ExperimentStageResults,{run:result.data,stage:result.data.stages[0]})))}
 }
 async function connect(server:Server) {
   const listening=Promise.withResolvers<void>()
@@ -112,7 +116,7 @@ for(const failure of ["timeout","transport"] as const)test(`RUN-2 diagnostic: ge
   const unsubscribe=observer.subscribe(()=>{})
   try {
     const result=await observer.refetch()
-    assert.ok(result.error instanceof app.client.ApiError)
+    assert.ok(result.error instanceof app.transport.ApiError)
     assert.equal(result.error.status,failure==="transport"?0:504)
     assert.equal(result.data,undefined)
     assert.equal(requests,1)

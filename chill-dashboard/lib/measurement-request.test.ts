@@ -271,6 +271,10 @@ test("failed request detail renders failure evidence, current results, checks an
   const source=readFileSync(new URL("../features/measurement-plans.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
+  const transport:Record<string,unknown>={}
+  const transportSource=readFileSync(new URL("./client-transport.ts",import.meta.url),"utf8")
+  const transportCode=transpileModule(transportSource,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS}}).outputText
+  runInNewContext(transportCode,{exports:transport,Error,require:(name:string)=>name==="@/lib/measurement-summary"?measurementSummary:require(name)})
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const assessment=retainedAssessment
   const data={campaign:{...plan.metadata,spec:plan.spec,phase:"Failed",conditions:[{type:"Complete",status:"False",reason:"NativePreparationFailed",message:"Pod image missing"}]},assessment,resultRows:[] as ResultRow[],result:{excludedTrials:[{run:{namespace:"ns",name:"failed-child",uid:"child"}}]}}
@@ -279,6 +283,7 @@ test("failed request detail renders failure evidence, current results, checks an
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({push:()=>{}})},
     "@tanstack/react-query":{useQueryClient:()=>({})},
+    "@/lib/client-transport":transport,
     "@/lib/client":{useChillQuery:(path:string)=>queryError&&path.endsWith("/result")?{error:queryError}:{data},useChillMutation:()=>({})},
     "@/lib/measurement-request":requestHelpers,
     "@/lib/measurement-assessment":{assessmentReasons:()=>[]},

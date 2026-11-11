@@ -17,7 +17,8 @@ test("control323: BEO paging retains later copy sources, rejects stalled/error p
     const error=new Error(outcome),state={error:null as Error|null,data:{items:[plan]}}
     const modules:Record<string,unknown>={
       "@tanstack/react-query":{useQuery:(options:{enabled:boolean;queryFn:typeof queryFn})=>{assert.equal(options.enabled,true);queryFn=options.queryFn;return state}},
-      "@/lib/client":{useSession:()=>({token:"fixture"}),ApiError:class extends Error {constructor(_status:number,body:string){super(body)}},decodeResponse:(body:string,decoder:(text:string)=>unknown)=>decoder(body),relay:async(path:string,_token:string,requestSignal:AbortSignal)=>{
+      "@/lib/client":{useSession:()=>({token:"fixture"})},
+      "@/lib/client-transport":{ApiError:class extends Error {constructor(_status:number,body:string){super(body)}},decodeResponse:(body:string,decoder:(text:string)=>unknown)=>decoder(body),relay:async(path:string,_token:string,requestSignal:AbortSignal)=>{
         assert.equal(requestSignal,signal)
         paths.push(path)
         const offset=new URL(path,"https://local.invalid").searchParams.get("offset")
@@ -55,7 +56,8 @@ test("request profile history preserves paging, query policy and summary decodin
     const state={error:null,isPending:true}
     const modules:Record<string,unknown>={
       "@tanstack/react-query":{useQuery:(value:Options)=>{options=value;return state}},
-      "@/lib/client":{ApiError,warmingRetry,warmingDelay,useSession:()=>({token,config:{namespace:"ns"}}),useChillQuery:()=>({}),decodeResponse:(body:string,decoder:(text:string)=>unknown)=>{
+      "@/lib/client":{useSession:()=>({token,config:{namespace:"ns"}}),useChillQuery:()=>({})},
+      "@/lib/client-transport":{ApiError,warmingRetry,warmingDelay,decodeResponse:(body:string,decoder:(text:string)=>unknown)=>{
         assert.equal(decoder,measurementSummary.parseMeasurementJSON)
         return decoder(body)
       },relay:async(path:string,requestToken:string,requestSignal:AbortSignal)=>{

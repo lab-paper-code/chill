@@ -1,7 +1,7 @@
 "use client"
 
 import type { UseQueryResult } from "@tanstack/react-query"
-import type { ApiError } from "@/lib/client"
+import type { ApiError } from "@/lib/client-transport"
 import { useChillQuery } from "@/lib/client"
 import { evaluationLastProgressAt, evaluationProgressOngoing, evaluationRemaining, type ActiveEvaluations, type EvaluationPhaseSummary, type EvaluationStageProgress, type EvaluationProgressProcedure, type EvaluationProgressEvent, type EvaluationProgressOwner } from "@/lib/evaluation-active"
 import { StatusCell } from "@/components/status-cell"

@@ -9,13 +9,17 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as experiments from "./experiments.ts"
 import * as measurements from "./measurements.ts"
+import * as measurementSummary from "./measurement-summary.ts"
 import type { Experiment, ExperimentStage } from "./experiments.ts"
 import { parseSchedulerJSON } from "./scheduler.ts"
 
 const require=createRequire(import.meta.url)
+const transport:Record<string,unknown>={}
+const transportCode=transpileModule(readFileSync(new URL("./client-transport.ts",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS}}).outputText
+new Function("require","exports",transportCode)((name:string)=>name==="@/lib/measurement-summary"?measurementSummary:require(name),transport)
 const compiled=transpileModule(readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
 const components:Record<string,ComponentType<{run?:Experiment;runs?:Experiment[];pending?:boolean;error?:boolean;stage?:ExperimentStage;provisional?:experiments.Published}>>={}
-const modules:Record<string,unknown>={"@/lib/client":{},"@/components/ui/button":{},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experiments,"@/lib/measurements":measurements,"lucide-react":{TriangleAlert:()=>null}}
+const modules:Record<string,unknown>={"@/lib/client":{},"@/lib/client-transport":transport,"@/components/ui/button":{},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experiments,"@/lib/measurements":measurements,"lucide-react":{TriangleAlert:()=>null}}
 new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),components)
 const r2b=experiments.decodeExperiment(readFileSync(new URL("./fixtures/experiment-r2b-results.json",import.meta.url),"utf8"))
 test("saved r2b client evidence gap is not asserted to be unsent traffic",()=>{
@@ -147,7 +151,8 @@ test("control323: published facts follow real pages by ID and preserve absent fa
     const error=new Error("denied")
     const dependencies={...modules,
       "@tanstack/react-query":{useQuery:(options:{queryFn:typeof queryFn})=>{queryFn=options.queryFn;return {}}},
-      "@/lib/client":{useSession:()=>({token:"fixture"}),decodeResponse:(body:string,decoder:(body:string)=>unknown)=>decoder(body),relay:async(path:string,_token:string,actual:AbortSignal)=>{
+      "@/lib/client":{useSession:()=>({token:"fixture"})},
+      "@/lib/client-transport":{...transport,decodeResponse:(body:string,decoder:(body:string)=>unknown)=>decoder(body),relay:async(path:string,_token:string,actual:AbortSignal)=>{
         paths.push(path);assert.equal(actual,signal)
         const offset=Number(new URL(path,"https://local.invalid").searchParams.get("offset"))
         if(offset&&outcome==="denied")throw error

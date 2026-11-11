@@ -6,7 +6,9 @@ import * as React from "react"
 import * as query from "@tanstack/react-query"
 import * as icons from "lucide-react"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
-import type { ChillMutationInput, RelayResponse } from "./client.tsx"
+import type { ChillMutationInput } from "./client.tsx"
+import type { RelayResponse } from "./client-transport.ts"
+import * as summary from "./measurement-summary.ts"
 
 const require=createRequire(import.meta.url)
 for(const reason of ["unmount","logout"] as const)test(`warming mutation makes no further HTTP requests after ${reason}`,async()=>{
@@ -15,8 +17,12 @@ for(const reason of ["unmount","logout"] as const)test(`warming mutation makes n
   const modules:Record<string,unknown>={
     react:{...React,useState:(initial:unknown)=>[typeof initial==="function"?initial():initial,()=>{}],useRef:(current:unknown)=>({current}),useContext:()=>session,useEffect:(effect:()=>undefined|(()=>void))=>{const cleanup=effect();if(cleanup)cleanups.push(cleanup)}},
     "@tanstack/react-query":{...query,useMutation:(options:query.MutationObserverOptions<RelayResponse,Error,ChillMutationInput>)=>{observer=new query.MutationObserver(client,{...options,retryDelay:()=>0});return {mutateAsync:(input:ChillMutationInput)=>observer!.mutate(input)}}},
-    "lucide-react":icons,"next/navigation":{},"@/components/ui/button":{},"@/components/ui/input":{},"@/components/ui/dialog":{},"@/components/brand":{},"@/lib/scheduler":{},"@/lib/session-token":{},"@/lib/measurement-summary":{},
+    "lucide-react":icons,"next/navigation":{},"@/components/ui/button":{},"@/components/ui/input":{},"@/components/ui/dialog":{},"@/components/brand":{},"@/lib/scheduler":{},"@/lib/session-token":{},
   }
+  const transport={}
+  const transportSource=readFileSync(new URL("./client-transport.ts",import.meta.url),"utf8")
+  new Function("require","exports",transpileModule(transportSource,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS}}).outputText)((name:string)=>name==="@/lib/measurement-summary"?summary:require(name),transport)
+  modules["@/lib/client-transport"]=transport
   const exports:{useChillMutation?:()=>{mutateAsync:(input:ChillMutationInput)=>Promise<RelayResponse>}}={}
   const source=readFileSync(new URL("./client.tsx",import.meta.url),"utf8")
   new Function("require","exports",transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>modules[name]??require(name),exports)

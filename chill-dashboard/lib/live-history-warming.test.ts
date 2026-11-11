@@ -4,12 +4,12 @@ import { setImmediate as nextTurn } from "node:timers/promises"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import * as React from "react"
-import * as icons from "lucide-react"
+import * as summary from "./measurement-summary.ts"
 import { renderToStaticMarkup } from "react-dom/server"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as live from "./live.ts"
 import * as history from "./live-history.ts"
-import type * as Client from "./client.tsx"
+import type * as Client from "./client-transport.ts"
 
 const require=createRequire(import.meta.url)
 function load<T extends object>(file:string,modules:Record<string,unknown>):T {
@@ -18,7 +18,7 @@ function load<T extends object>(file:string,modules:Record<string,unknown>):T {
   new Function("require","exports",code)((name:string)=>modules[name]??require(name),exports)
   return exports
 }
-const client=load<typeof Client>("./client.tsx",{"lucide-react":icons,"next/navigation":{},"@/components/ui/button":{},"@/components/ui/input":{},"@/components/ui/dialog":{},"@/components/brand":{},"@/lib/scheduler":{},"@/lib/session-token":{},"@/lib/measurement-summary":{}})
+const client=load<typeof Client>("./client-transport.ts",{"@/lib/measurement-summary":summary})
 
 for(const outcome of ["recover","unmount","session"] as const)test(`provider event seed handles CoverageWarming and ${outcome}`,async t=>{
   t.mock.timers.enable({apis:["setTimeout"]})
@@ -29,7 +29,7 @@ for(const outcome of ["recover","unmount","session"] as const)test(`provider eve
     react:{...React,useEffect:(effect:()=>void|(()=>void))=>{effects.push(effect)}},
     "@tanstack/react-query":{skipToken:Symbol(),useQuery:()=>({data:state}),useQueryClient:()=>queryClient},
     "next/navigation":{useSearchParams:()=>new URLSearchParams(),usePathname:()=>"/"},
-    "@/lib/client":{...client,useSession:()=>({token:"token",epoch:1,config:{},signals})},
+    "@/lib/client-transport":client,"@/lib/client":{useSession:()=>({token:"token",epoch:1,config:{},signals})},
     "@/lib/live":{...live,connectLive:()=>({close:()=>{},reconnect:()=>{}})},
     "@/lib/live-fixture":{},"@/lib/live-history":history,
     "@/components/read-region":{SourceJSON:()=>null},
@@ -78,7 +78,7 @@ test("exhausted event seed offers an explicit retry that restores the archive",a
     react:{...React,useMemo:(create:()=>unknown)=>create(),useCallback:(callback:unknown)=>callback,useRef:(current:unknown)=>({current}),useState:()=>[attempt,(next:number|((value:number)=>number))=>{attempt=typeof next==="function"?next(attempt):next}],useEffect:(run:()=>void|(()=>void),deps:readonly unknown[])=>{effects.push({run,deps})}},
     "@tanstack/react-query":{skipToken:Symbol(),useQuery:()=>({data:state}),useQueryClient:()=>queryClient},
     "next/navigation":{useSearchParams:()=>new URLSearchParams(),usePathname:()=>"/"},
-    "@/lib/client":{...client,useSession:()=>({token:"token",epoch:1,config:{},signals})},
+    "@/lib/client-transport":client,"@/lib/client":{useSession:()=>({token:"token",epoch:1,config:{},signals})},
     "@/lib/live":{...live,connectLive:()=>({close:()=>{},reconnect:()=>{}})},
     "@/lib/live-fixture":{},"@/lib/live-history":history,
     "@/components/read-region":{SourceJSON:()=>null},

@@ -12,14 +12,15 @@ import * as displayHelpers from "./live-display.ts"
 import { initialLiveState } from "./live.ts"
 import * as resourcesData from "../features/resources-data.ts"
 import type { OperatingPowerSeries } from "./read-types.ts"
-import type * as ClientModule from "./client.tsx"
+import type * as ClientModule from "./client-transport.ts"
 import * as icons from "lucide-react"
+import * as summary from "./measurement-summary.ts"
 
 const require=createRequire(import.meta.url)
 function load(file:string,modules:Record<string,unknown>){
   const exports:Record<string,(props:Record<string,unknown>)=>ReactElement>={}
   const code=transpileModule(readFileSync(new URL(file,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
-  new Function("require","exports",code)((name:string)=>modules[name]??(name==="lucide-react"?icons:name.startsWith("@/")||name.startsWith("./")?{}:require(name)),exports)
+  new Function("require","exports",code)((name:string)=>modules[name]??(name==="lucide-react"?icons:(name.startsWith("@/")&&name!=="@/lib/client-transport")||name.startsWith("./")?{}:require(name)),exports)
   return exports
 }
 test("rendered power chart retains interval timestamps, breaks nulls and labels measured zero",()=>{
@@ -253,7 +254,7 @@ test("device power preserves the chart and observation range inside disclosures"
 })
 
 test("live power visibly identifies an old bucket response after the real decoder error boundary",()=>{
-  const client=load("./client.tsx",{"lucide-react":{}}) as unknown as Pick<typeof ClientModule,"decodeResponse"|"ApiError">
+  const client=load("./client-transport.ts",{"@/lib/measurement-summary":summary}) as unknown as Pick<typeof ClientModule,"decodeResponse"|"ApiError">
   const from="2026-11-03T03:00:00Z",to="2026-11-03T03:00:05Z"
   const body=JSON.stringify({from,to,bucketNanos:5_000_000_000,buckets:[{from,to,scope:"whole-pool-wall",nodes:[],wholePoolJoules:null,wholePoolMeanWatts:null,activePoolJoules:null,activePoolMeanWatts:null,complete:false,readFailures:0,maximumSampleGapSeconds:0,reasons:["no observed samples in bucket"],coverage:{from:null,to:null,sources:[],gaps:[]}}]})
   let error:InstanceType<typeof client.ApiError>|undefined

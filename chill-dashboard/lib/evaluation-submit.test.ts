@@ -40,7 +40,8 @@ test("manual evaluation replacement re-read unlocks deleted and unchanged drafts
     const modules:Record<string,unknown>={
       react:{...React,useState:(initial:unknown)=>{const index=cursor++;if(!(index in values))values[index]=typeof initial==="function"?initial():initial;return [values[index],(next:unknown)=>{values[index]=typeof next==="function"?next(values[index]):next}]}},
       "@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},
-      "@/lib/client":{ApiError,useChillMutation:()=>mutationIndex++===0?pre:send,useChillQuery:()=>lookup},
+      "@/lib/client-transport":{ApiError},
+      "@/lib/client":{useChillMutation:()=>mutationIndex++===0?pre:send,useChillQuery:()=>lookup},
       "@/lib/evaluation-request":requestHelpers,"@/lib/evaluation-author":authorHelpers,"@/lib/scheduler":scheduler,
       "@/lib/evaluation-active":activeHelpers,"@/lib/scheduler-settings":settings,
       "@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/features/evaluation-author":{},"@/features/evaluation-active":{},"@/lib/measurements":measurementHelpers,"@/components/ui/button":{Button},
@@ -79,6 +80,7 @@ test("active evaluation injection table translates wire action names",()=>{
   const active={items:[{name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",plannedSeconds:60,injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0},{id:"cordon",action:"cordon-delete",offsetSeconds:0},{id:"restore",action:"uncordon",offsetSeconds:10},{id:"future",action:"FutureAction",outcome:"FutureOutcome",offsetSeconds:20}]}}]}
   const modules:Record<string,unknown>={
     "@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/evaluations/active"?active:{items:[]}}),useChillMutation:()=>({})},
+    "@/lib/client-transport":{ApiError},
     "@/lib/evaluation-active":activeHelpers,
     "@/lib/status":{STATUS_AXES},"@/components/status-cell":{StatusCell:container},
     "@/components/ui/dialog":{Dialog:container,DialogContent:container,DialogDescription:container,DialogHeader:container,DialogTitle:container},
@@ -100,6 +102,7 @@ test("compact experiment status keeps cleanup, running, empty and denied states 
   let answer:unknown
   const modules:Record<string,unknown>={
     "@/lib/client":{useChillQuery:()=>answer},
+    "@/lib/client-transport":{ApiError},
     "@/lib/evaluation-active":activeHelpers,
     "@/lib/status":{STATUS_AXES},
     "@/components/status-cell":{StatusCell:({axis,label}:{axis:string;label:string})=>React.createElement("span",{"data-axis":axis},label)},
@@ -126,6 +129,7 @@ test("return observation requires matching UID and explicit pool release, not re
   const modules:Record<string,unknown>={
     "@tanstack/react-query":{useQueryClient:()=>({})},
     "@/lib/client":{useChillQuery:()=>({data:observed}),useChillMutation:()=>({isSuccess:true})},
+    "@/lib/client-transport":{ApiError},
     "@/lib/evaluation-request":requestHelpers,"@/lib/evaluation-author":authorHelpers,"@/lib/scheduler":scheduler,
     "@/lib/evaluation-active":activeHelpers,"@/lib/scheduler-settings":settings,
     "@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurementHelpers,"@/features/evaluation-active":{},
@@ -183,6 +187,7 @@ function hookRunner() {
 }
 function loadUI(path:string,modules:Record<string,unknown>={}) {
   const defaults:Record<string,unknown>={
+    "@/lib/client-transport":{ApiError},
     "@/lib/evaluation-request":requestHelpers,"@/lib/evaluation-author":authorHelpers,"@/lib/scheduler":scheduler,
     "@/lib/evaluation-active":activeHelpers,"@/lib/scheduler-settings":settings,
     "@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurementHelpers,"@/features/evaluation-active":{EvaluationActiveDetails:"active"},
@@ -247,7 +252,7 @@ test("single execution control preserves UID, denied responses and uncertain out
     const send={isPending:false,isSuccess:false,error:null as ApiError|null,mutateAsync:async(input:unknown)=>{writes.push(input);send.error=error;throw error}}
     const modules={
       react:runner.react,"next/navigation":{useSearchParams:()=>new URLSearchParams("uid=old"),useRouter:()=>({replace:()=>{}})},
-      "@/lib/client":{ApiError,useChillMutation:()=>send,useChillQuery:(path:string)=>({data:run,refetch:async()=>{reads.push(path)}})},
+      "@/lib/client":{useChillMutation:()=>send,useChillQuery:(path:string)=>({data:run,refetch:async()=>{reads.push(path)}})},
     }
     const {EvaluationRunPage}=loadUI("../features/evaluation-request.tsx",modules)
     const action=elements(runner.render(EvaluationRunPage,{name:run.name})).find(item=>item.props.run===run)!
@@ -298,7 +303,7 @@ test("execution acceptance links to the actual response UID and never submits af
   const pre={data:undefined as unknown,isPending:false,error:null,mutate:()=>{pre.data={data:{checks:[{id:"valid",passed:true}]}}}}
   const send={isPending:false,error:null,mutateAsync:async(input:unknown)=>{writes.push(input);return {data:{name:"actual/run",uid:"response-uid"}}}}
   const {EvaluationSubmit}=loadUI("../features/evaluation-request.tsx",{
-    react:runner.react,"@/lib/client":{ApiError,useChillMutation:()=>mutationIndex++===0?pre:send,useChillQuery:()=>({refetch:async()=>({})})},
+    react:runner.react,"@/lib/client":{useChillMutation:()=>mutationIndex++===0?pre:send,useChillQuery:()=>({refetch:async()=>({})})},
   })
   let spec={question:"first"}
   const render=()=>{mutationIndex=0;return elements(runner.render(EvaluationSubmit,{name:"draft",spec,onSubmitted:(value:unknown)=>accepted.push(value)}))}

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
+import * as measurementSummary from "./measurement-summary.ts"
 export type Tree={type:unknown;props:Record<string,unknown>}
 const require=createRequire(import.meta.url)
 export function elements(node:unknown):Tree[] {
@@ -32,6 +33,6 @@ export function load(path:string,modules:Record<string,unknown>):Record<string,(
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports={}
   const extracted:Record<string,string>={"@/components/evaluation-author-fields":"../components/evaluation-author-fields.tsx","@/features/settings-patch-editor":"../features/settings-patch-editor.tsx","@/components/unreadable-experiments":"../components/unreadable-experiments.tsx"}
-  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:Object.hasOwn(extracted,name)?load(extracted[name],modules):name.startsWith("@/")?{}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name==="@/lib/client-transport"?modules[name]=load("./client-transport.ts",{"@/lib/measurement-summary":measurementSummary}):Object.hasOwn(extracted,name)?load(extracted[name],modules):name.startsWith("@/")?{}:require(name),exports)
   return exports
 }

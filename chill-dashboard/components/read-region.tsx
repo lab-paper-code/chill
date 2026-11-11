@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { ApiError, errorDetails, isCoverageWarming, useSession } from "@/lib/client"
+import { useSession } from "@/lib/client"
+import { ApiError, errorDetails, isCoverageWarming } from "@/lib/client-transport"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { safeSource } from "@/lib/source-export"

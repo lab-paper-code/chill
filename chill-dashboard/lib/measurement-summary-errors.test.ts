@@ -14,6 +14,8 @@ import * as assessment from "./measurement-assessment.ts"
 import * as measurements from "./measurements.ts"
 import * as requestHelpers from "./measurement-request.ts"
 import * as occupancy from "./dispatch-occupancy.ts"
+import type * as Transport from "./client-transport.ts"
+import type * as Client from "./client.tsx"
 
 const require=createRequire(import.meta.url)
 const container=({children}:{children?:React.ReactNode})=>React.createElement("div",null,children)
@@ -22,7 +24,7 @@ function load<T>(path:string,modules:Record<string,unknown>,extra:Record<string,
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports:Record<string,unknown>={}
   modules={"lucide-react":{TriangleAlert:()=>null,RefreshCw:()=>null,Braces:()=>null},...modules}
-  runInNewContext(compiled,{exports,Error,URLSearchParams,...extra,require:(name:string)=>name==="@/hooks/use-measurement-data"?{...load<object>("../hooks/use-measurement-data.ts",modules,extra),...modules[name] as object}:name in modules?modules[name]:name.startsWith("@/")||name.endsWith(".css")?{}:require(name)})
+  runInNewContext(compiled,{exports,Error,URLSearchParams,...extra,require:(name:string)=>name==="@/hooks/use-measurement-data"?{...load<object>("../hooks/use-measurement-data.ts",modules,extra),...modules[name] as object}:name in modules?modules[name]:(name.startsWith("@/")&&name!=="@/lib/client-transport")||name.endsWith(".css")?{}:require(name)})
   return exports as T
 }
 
@@ -32,31 +34,33 @@ test("summary decoding failures retain a common API error and visible cause for 
   const body=JSON.stringify({readProjection:{version:"measurement-summary.v1",values,shapes:[]},items:"~30"})
   let queryFn:((context:{signal:AbortSignal})=>Promise<unknown>)|undefined
   const capture=({queryFn:fn}:{queryFn:typeof queryFn})=>{queryFn=fn;return {error:null}}
-  const client=load<{ApiError:new(...args:never[])=>Error;useChillQuery:(path:string,options:{decoder:(body:string)=>unknown})=>unknown}>("./client.tsx",{
+  const transport=load<typeof Transport>("./client-transport.ts",{"@/lib/measurement-summary":summary},{fetch:async()=>({ok:true,status:200,text:async()=>body,headers:new Headers()}),performance})
+  const client=load<typeof Client>("./client.tsx",{
+    "@/lib/client-transport":transport,
     react:{...React,useContext:()=>({token:"test",config:{namespace:"ns"}}),useSyncExternalStore:()=>true},
     "@tanstack/react-query":{useQuery:capture},
     "@/lib/scheduler":scheduler,
     "@/lib/measurement-summary":summary,
   },{fetch:async()=>({ok:true,status:200,text:async()=>body,headers:new Headers()}),performance})
   const coverage=load<{CoverageError:React.ComponentType<{error:unknown;retry:()=>void}>}>("../features/measurement-coverage.tsx",{
-    "@/lib/client":client,"@/lib/measurement-summary":summary,
+    "@/lib/client-transport":transport,"@/lib/client":client,"@/lib/measurement-summary":summary,
     "@tanstack/react-query":{useQuery:capture},
     "next/navigation":{useSearchParams:()=>new URLSearchParams()},
     "next/link":{__esModule:true,default:container},
     "@/components/ui/button":{Button:container},
   },{fetch:async()=>({ok:true,status:200,text:async()=>body})})
   const region=load<{QueryGate:React.ComponentType<{query:unknown}>}>("../components/read-region.tsx",{
-    "@/lib/client":client,"@/lib/scheduler":scheduler,"@/lib/source-export":sourceExport,
+    "@/lib/client-transport":transport,"@/lib/client":client,"@/lib/scheduler":scheduler,"@/lib/source-export":sourceExport,
     "@/lib/labels":{explain:()=>["일반 조회 오류"],statusLabel:()=>""},
     "@/components/ui/button":{Button:container},
     "@/components/ui/dialog":Object.fromEntries(["Dialog","DialogContent","DialogDescription","DialogHeader","DialogTitle","DialogTrigger"].map(key=>[key,container])),
   })
   for(const kind of ["coverage","beo","profiles"]) {
-    if(kind==="coverage")load<{useMeasurementCoverage:(namespace:string)=>unknown}>("../hooks/use-measurement-data.ts",{"@/lib/client":client,"@/lib/measurement-summary":summary,"@tanstack/react-query":{useQuery:capture},"next/navigation":{useSearchParams:()=>new URLSearchParams()}}).useMeasurementCoverage("ns")
+    if(kind==="coverage")load<{useMeasurementCoverage:(namespace:string)=>unknown}>("../hooks/use-measurement-data.ts",{"@/lib/client-transport":transport,"@/lib/client":client,"@/lib/measurement-summary":summary,"@tanstack/react-query":{useQuery:capture},"next/navigation":{useSearchParams:()=>new URLSearchParams()}}).useMeasurementCoverage("ns")
     else client.useChillQuery(kind,{decoder:summary.parseMeasurementJSON})
     let error:Error&{status?:number;body?:string;data?:{code?:string}}|undefined
     try {await queryFn!({signal:new AbortController().signal})}catch(caught){error=caught as typeof error}
-    assert.ok(error instanceof client.ApiError,kind)
+    assert.ok(error instanceof transport.ApiError,kind)
     assert.equal(error?.status,0,kind)
     assert.equal(error?.data?.code,"MeasurementSummaryInvalid",kind)
     assert.match(error?.body??"",/측정 요약 확장 한도 초과/,kind)
@@ -70,24 +74,21 @@ test("summary decoding failures retain a common API error and visible cause for 
 })
 
 test("paged request defaults and coverage timestamps render second-page summary rejection causes",async(t)=>{
-  const client=load<{ApiError:new(status:number,body:string,data:unknown)=>Error;decodeResponse:(body:string,decoder:(body:string)=>unknown)=>unknown}>("./client.tsx",{
-    "@/lib/scheduler":scheduler,"@/lib/measurement-summary":summary,
-  })
-  const region=load<{QueryGate:React.ComponentType<{query:unknown;children?:React.ReactNode}>}>("../components/read-region.tsx",{
-    "@/lib/client":{...client,useSession:()=>({token:"test"})},"@/lib/scheduler":scheduler,"@/lib/source-export":sourceExport,
-    "@/lib/labels":{explain:()=>["일반 조회 오류"],statusLabel:()=>""},
-    "@/components/ui/button":{Button:container},
-    "@/components/ui/dialog":Object.fromEntries(["Dialog","DialogContent","DialogDescription","DialogHeader","DialogTitle","DialogTrigger"].map(key=>[key,container])),
-  })
   const values:unknown[]=[0]
   for(let i=0;i<30;i++)values.push([`~${i}`,`~${i}`])
   const invalid=JSON.stringify({readProjection:{version:"measurement-summary.v1",values,shapes:[]},profiles:"~30"})
   for(const kind of ["request","coverage"]) await t.test(kind,async()=>{
     const calls:string[]=[]
     const fetch=async(path:string)=>{calls.push(path);return {ok:true,status:200,headers:new Headers(),text:async()=>calls.length===1?JSON.stringify({profiles:[{id:"first-page",measuredAt:"2026-11-01T00:00:00Z"}],page:{nextOffset:50}}):invalid}}
-    const pagedClient=load<typeof client>("./client.tsx",{
+    const pagedClient=load<typeof Transport>("./client-transport.ts",{
       "@/lib/scheduler":scheduler,"@/lib/measurement-summary":summary,
     },{fetch,performance})
+    const region=load<{QueryGate:React.ComponentType<{query:unknown;children?:React.ReactNode}>}>("../components/read-region.tsx",{
+      "@/lib/client-transport":pagedClient,"@/lib/client":{useSession:()=>({token:"test"})},"@/lib/scheduler":scheduler,"@/lib/source-export":sourceExport,
+      "@/lib/labels":{explain:()=>["일반 조회 오류"],statusLabel:()=>""},
+      "@/components/ui/button":{Button:container},
+      "@/components/ui/dialog":Object.fromEntries(["Dialog","DialogContent","DialogDescription","DialogHeader","DialogTitle","DialogTrigger"].map(key=>[key,container])),
+    })
     let queryFn:((context:{signal:AbortSignal})=>Promise<unknown>)|undefined
     let state:Record<string,unknown>={isPending:true,error:null,data:undefined,isFetching:false,dataUpdatedAt:0,refetch:()=>{}}
     const modules={
@@ -95,7 +96,7 @@ test("paged request defaults and coverage timestamps render second-page summary 
       "next/navigation":{useSearchParams:()=>new URLSearchParams(kind==="request"?"input=form":""),useRouter:()=>({replace:()=>{}})},
       "next/link":{__esModule:true,default:container},
       "@tanstack/react-query":{useQuery:({queryFn:fn}:{queryFn:typeof queryFn})=>{queryFn=fn;return state}},
-      "@/lib/client":{...pagedClient,useSession:()=>({token:"test",config:{namespace:"ns"}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/workloads")?[]:{items:[]},error:null}),useChillMutation:()=>({isPending:false})},
+      "@/lib/client-transport":pagedClient,"@/lib/client":{useSession:()=>({token:"test",config:{namespace:"ns"}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/workloads")?[]:{items:[]},error:null}),useChillMutation:()=>({isPending:false})},
       "@/lib/measurement-summary":summary,"@/lib/measurement-coverage":coverageHelpers,"@/lib/measurement-assessment":assessment,
       "@/lib/measurements":measurements,"@/lib/measurement-request":requestHelpers,
       "@/lib/dispatch-occupancy":occupancy,

@@ -11,7 +11,8 @@ import * as helpers from "./experiments.ts"
 import * as measurements from "./measurements.ts"
 import { parseSchedulerJSON } from "./scheduler.ts"
 import type { Experiment } from "./experiments.ts"
-import type * as ClientModule from "./client.tsx"
+import type * as ClientModule from "./client-transport.ts"
+import * as summary from "./measurement-summary.ts"
 import type * as ConclusionModule from "../features/experiments-conclusion.tsx"
 import type * as ExperimentsModule from "../features/experiments.tsx"
 
@@ -20,10 +21,11 @@ function load<T>(path:string,modules:Record<string,unknown>):T {
   const source=readFileSync(new URL(path,import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports:Record<string,unknown>={}
-  new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:name.startsWith("@/")||name==="next/navigation"?{}:name.endsWith(".css")?{}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:(name.startsWith("@/")&&name!=="@/lib/client-transport")||name==="next/navigation"?{}:name.endsWith(".css")?{}:require(name),exports)
   return exports as T
 }
-const {ApiError}=load<typeof ClientModule>("./client.tsx",{"lucide-react":{}})
+const transport=load<typeof ClientModule>("./client-transport.ts",{"@/lib/measurement-summary":summary})
+const {ApiError}=transport
 const fixture=JSON.parse(readFileSync(new URL("./fixtures/experiment-213.json",import.meta.url),"utf8")).publication as Experiment
 const run:Experiment={...fixture,id:"candidate",comparisons:[{left:{stageID:fixture.stages[0].id},right:{historical:{publicationID:"baseline",stageID:"baseline-stage"}},reason:"선언된 과거 비교"}]}
 
@@ -44,7 +46,7 @@ function harness(publication:Experiment=run) {
   const modules:Record<string,unknown>={
     "react/jsx-runtime":{...runtime,jsx:track("jsx"),jsxs:track("jsxs")},
     "@tanstack/react-query":{useQuery:()=>facts},
-    "@/lib/client":{ApiError,useChillQueries:(paths:string[])=>{historicalPaths.push(paths);return queries.slice(0,paths.length)},useSession:()=>({config:{namespace:"test",maxPageSize:25}}),useChillQuery:(path:string)=>{paths.push(path);return {data:path.startsWith("v1/experiments?")?helpers.decodeExperimentPage(JSON.stringify(catalog)):publication,error:null,isFetching:false,refetch:()=>{}}}},
+    "@/lib/client-transport":transport,"@/lib/client":{useChillQueries:(paths:string[])=>{historicalPaths.push(paths);return queries.slice(0,paths.length)},useSession:()=>({config:{namespace:"test",maxPageSize:25}}),useChillQuery:(path:string)=>{paths.push(path);return {data:path.startsWith("v1/experiments?")?helpers.decodeExperimentPage(JSON.stringify(catalog)):publication,error:null,isFetching:false,refetch:()=>{}}}},
     "@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":helpers,"@/lib/measurements":measurements,"@/lib/scheduler":{parseSchedulerJSON},
     "next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},"next/navigation":{useSearchParams:()=>params},
     "recharts":{...Object.fromEntries(["CartesianGrid","ComposedChart","ResponsiveContainer","Tooltip","XAxis","YAxis"].map(name=>[name,container])),Bar:(props:typeof charts[number])=>{charts.push(props);return null},Line:(props:typeof charts[number])=>{charts.push(props);return null}},

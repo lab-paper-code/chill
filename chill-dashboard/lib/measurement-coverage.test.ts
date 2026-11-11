@@ -239,7 +239,7 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshne
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
     "@tanstack/react-query":{useQuery:({queryKey,refetchInterval}:{queryKey:string[];refetchInterval?:(query:{state:{data?:{cells:MeasurementCoverageCell[]};error:{status:number}|null}})=>number|false})=>{if(refetchInterval)inspectInterval?.(refetchInterval);return {data:queryKey[1]==="coverage-inventory"?inventory:queryKey[1]==="model-compatibility"?[]:queryKey[1]==="coverage-profile-times"?{profiles:[]}:data,error:null,isFetching,refetch:()=>{}}}},
-    "@/lib/client":{useSession:()=>({config:{namespace:"ns",pollIntervalMs:5000}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/observations/occupancy")?undefined:{runs:[]},error:null,isPending:path.startsWith("v1/observations/occupancy")}),isCoverageWarming:()=>false},
+    "@/lib/client":{useSession:()=>({config:{namespace:"ns",pollIntervalMs:5000}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/observations/occupancy")?undefined:{runs:[]},error:null,isPending:path.startsWith("v1/observations/occupancy")})},
     "@/lib/measurement-coverage":coverageHelpers,
     "@/lib/measurement-assessment":assessmentHelpers,
     "@/lib/measurements":measurementHelpers,
@@ -260,6 +260,7 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshne
     runInNewContext(code,{exports:result,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
     return result
   }
+  modules["@/lib/client-transport"]={...loadShared("./client-transport.ts"),isCoverageWarming:()=>false}
   modules["@/hooks/use-measurement-data"]=loadShared("../hooks/use-measurement-data.ts")
   modules["@/components/measurement-filters"]=loadShared("../components/measurement-filters.tsx")
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})

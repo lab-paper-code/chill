@@ -124,6 +124,9 @@ v3 프로파일 측정 요청은 사용자가 고른 실제 Workload 이름을 `
 
 커버리지·inventory·모델 호환성·BEO 전체 페이지·요청 작성용 프로파일 이력·커버리지 상세 프로파일/회차 조회는 `hooks/use-measurement-data.ts`, 공통 URL 필터 UI는 `components/measurement-filters.tsx`가 소유한다. 각 화면은 소유 모듈을 직접 import한다. query key·페이지 전진/취소·권한 오류 처리·UID 비교·summary 정밀 디코딩과 필터 URL 갱신 규칙은 기존 계약을 유지한다.
 
+브라우저 HTTP 전송·summary 협상·decoder 오류 분류·`ApiError`·warming 재시도 정책은 `lib/client-transport.ts`가 소유한다. 세션·인증 변경·요청 취소 수명·query/mutation hook은 `lib/client.tsx`에 남으며, 호출부는 각 소유 모듈을 직접 import한다.
+
+
 ### 표시용 읽기 projection
 
 - 서비스 목록은 `GET /api/v1/workloads?view=summary`를 사용한다. `supportedInputs`는 path·artifact·profiles `{id}`만 전송하며 프로파일 수는 `profiles.length`로 계산한다. 원 조건·근거는 무쿼리 목록/단건 조회에 남는다.
@@ -251,7 +254,7 @@ retain integer literals while removing credentials.
 게시 결과의 서비스 자세히는 같은 기간 사건을 자동 조회하지 않는다. 사용자가 `같은 기간 사건 조회` 버튼을 누르면 후보/기준 각각의 실제 `from/to`로 최근 10개(`order=desc`)를 조회한다. 범위는 선택 서비스가 아닌 `같은 기간 사건 · 클러스터 전체`다. `nextCursor`가 있으면 `일부 기록`과 다음 cursor로 이어지는 `더 보기`를 제공하고, 보존 공백은 서버 `gapUntil`로 표시한다. 현재 페이지를 구간 전체나 사건 총수로 표시하지 않는다.
 사건 행은 원본 offset과 kind/at/id/node/startedAt로 정확한 기록을 연다. `/records`의 `returnTo`는 API에 보내지 않는 UI 상태이며 앱 내부 `/experiments` 경로만 허용한다. `실험 구간으로 돌아가기`는 게시 ID, `al/as/b/bs`, 서비스와 목록 offset이 포함된 원래 URL로 돌아가 같은 Sheet를 복원한다. 구간 사건과 성능의 시간 대응은 인과 판정이 아니다.
 
-회차 3 결과 첫 진입의 `status:0 / 응답 본문 미수신`은 `lib/client.tsx`에서 fetch가 Response를 반환하기 전 거절된 경로지만, 저장 자료에는 실패 원본 예외·AbortSignal 상태·CDP `loadingFailed`가 없어 원인은 미확정이다. relay timeout은 504이며 브라우저 요청은 동일 origin이다. 정상 TanStack observer 취소는 상태를 복원하므로 이를 오류 노출의 원인으로 단정해 억제하지 않는다. `lib/experiment-result-transport.test.ts`는 실제 loopback HTTP와 저장된 40,900B 응답(`lib/fixtures/experiment-r3-7-7-results.json`)으로 취소·복귀, 결과 렌더링, 연결 실패와 504의 오류 표시를 구별한다.
+회차 3 결과 첫 진입의 `status:0 / 응답 본문 미수신`은 `lib/client-transport.ts`에서 fetch가 Response를 반환하기 전 거절된 경로지만, 저장 자료에는 실패 원본 예외·AbortSignal 상태·CDP `loadingFailed`가 없어 원인은 미확정이다. relay timeout은 504이며 브라우저 요청은 동일 origin이다. 정상 TanStack observer 취소는 상태를 복원하므로 이를 오류 노출의 원인으로 단정해 억제하지 않는다. `lib/experiment-result-transport.test.ts`는 실제 loopback HTTP와 저장된 40,900B 응답(`lib/fixtures/experiment-r3-7-7-results.json`)으로 취소·복귀, 결과 렌더링, 연결 실패와 504의 오류 표시를 구별한다.
 
 live-r3 로컬 게이트(2026-11-04): Node 24.14.0, offline frozen install(479개 재사용·다운로드 0), tsc·eslint, 운영 summary fixture를 포함한 테스트 **654/654**, 기본 Next build 통과. OPS-1·RUN-1·OPS-2·Job 사유는 수정 전 동작 회귀 실패를 확인했다. RUN-2의 취소·복귀 진단은 정상 결과 렌더링으로 통과했으며 운영에서 발생한 원래 오류를 재현한 것은 아니다. 운영 클러스터·대시보드에는 접근하지 않았다.
 

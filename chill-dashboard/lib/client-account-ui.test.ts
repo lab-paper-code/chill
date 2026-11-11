@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 
 import * as React from "react"
+import * as summary from "./measurement-summary.ts"
 test("access form exposes token storage and expiry as facts without changing authentication",()=>{
   const require=createRequire(import.meta.url),exports:Record<string,ComponentType>={}
   const wrap=({children}:{children?:ReactNode})=>createElement("div",{},children)
@@ -18,8 +19,11 @@ test("access form exposes token storage and expiry as facts without changing aut
     "@/components/ui/dialog":{Dialog:wrap,DialogContent:wrap,DialogDescription:wrap,DialogHeader:wrap,DialogTitle:wrap,DialogTrigger:wrap},
     "@/components/brand":{BrandMark:()=>null,FinField:()=>null},"lucide-react":{KeyRound:()=>null},
     "@/lib/scheduler":{},"@/lib/session-token":{},
-    "@/lib/measurement-summary":{},
   }
+  const transport={}
+  const transportSource=readFileSync(new URL("./client-transport.ts",import.meta.url),"utf8")
+  new Function("require","exports",transpileModule(transportSource,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS}}).outputText)((name:string)=>name==="@/lib/measurement-summary"?summary:require(name),transport)
+  modules["@/lib/client-transport"]=transport
   const source=readFileSync(new URL("./client.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)

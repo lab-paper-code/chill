@@ -19,6 +19,11 @@ import * as experimentHelpers from "./experiments.ts"
 import type { EvaluationDefinition } from "./evaluation-definition.ts"
 import * as measurementHelpers from "./measurements.ts"
 import * as icons from "lucide-react"
+import * as measurementSummary from "./measurement-summary.ts"
+
+const require=createRequire(import.meta.url),transport:Record<string,unknown>={}
+const transportCode=transpileModule(readFileSync(new URL("./client-transport.ts",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS}}).outputText
+new Function("require","exports",transportCode)((name:string)=>name==="@/lib/measurement-summary"?measurementSummary:require(name),transport)
 
 test("R18: list facts render without per-item detail requests and absent facts stay unrecorded",()=>{
   const facts={name:"기록된 실험",question:"기록된 질문",stages:[{id:stage.id,row:"기록 행",settingsPatchKeys:["maxReplicas","controls.power","minimumDemand.camera","future.setting"],loadScenarioRef:{name:"시나리오 이름",uid:"load-uid"}},{id:"unchanged",settingsPatchKeys:[]},{id:"unrecorded",settingsPatchKeys:null}],sloSources:[{name:"camera",uid:"camera",generation:9007199254740993n,slo:{percentile:95,targetLatencyNanos:50000000}},{name:"큰 지연",uid:"large-latency",slo:{percentile:95,targetLatencyNanos:9007199254740993n}}],loadSources:[{name:"기록 부하",uid:"load-uid"}]}
@@ -28,7 +33,7 @@ test("R18: list facts render without per-item detail requests and absent facts s
   const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports={} as {useHistoricalExperiments:(runs:Experiment[])=>unknown;ExperimentFacts:ComponentType<{run:Experiment}>;ExperimentResultRow:ComponentType<{run:Experiment;runs:Experiment[];pending:boolean;error:boolean}>},paths:string[][]=[]
-  const modules:Record<string,unknown>={"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{useChillQueries:(ids:string[])=>{paths.push(ids);return []}},"@/components/ui/button":{Button:({children}:{children?:ReactNode})=>createElement("button",{},children)},"next/link":{__esModule:true,default:({children}:{children?:ReactNode})=>createElement("a",{},children)}}
+  const modules:Record<string,unknown>={"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client-transport":transport,"@/lib/client":{useChillQueries:(ids:string[])=>{paths.push(ids);return []}},"@/components/ui/button":{Button:({children}:{children?:ReactNode})=>createElement("button",{},children)},"next/link":{__esModule:true,default:({children}:{children?:ReactNode})=>createElement("a",{},children)}}
   new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
   exports.useHistoricalExperiments([run])
   assert.deepEqual(paths,[[]])
@@ -895,7 +900,7 @@ test("R14: rendered experiment judgment exposes one status and cause counts with
   const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,ComponentType<{run:Experiment}>>={}
-  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiment-comparison"?comparisonHelpers:name==="@/lib/dashboard-routes"?routeHelpers:name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="lucide-react"?{TriangleAlert:(props:Record<string,unknown>)=>createElement("svg",props)}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiment-comparison"?comparisonHelpers:name==="@/lib/dashboard-routes"?routeHelpers:name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client-transport"?transport:name==="@/lib/client"?{}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="lucide-react"?{TriangleAlert:(props:Record<string,unknown>)=>createElement("svg",props)}:require(name),exports)
   const run=definedRun([{...stage,id:"candidate",kpis:{...stage.kpis,measurementRules:{window:10},requests:{camera:{offered:10}}}},{...stage,id:"baseline",kpis:{...stage.kpis,measurementRules:{window:20},requests:{camera:{offered:10}}}}],[["candidate","baseline"]])
   const judgment=renderToStaticMarkup(createElement(exports.ExperimentJudgment,{run}))
   assert.match(judgment,/참고/)
@@ -933,7 +938,7 @@ test("R17: legacy result rows render absolute stage KPIs instead of an empty del
   const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,ComponentType<{run:Experiment;runs:Experiment[];pending:boolean;error:boolean}>>={}
-  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiment-comparison"?comparisonHelpers:name==="@/lib/dashboard-routes"?routeHelpers:name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="next/link"?{__esModule:true,default:(props:Record<string,unknown>)=>createElement("a",props)}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiment-comparison"?comparisonHelpers:name==="@/lib/dashboard-routes"?routeHelpers:name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client-transport"?transport:name==="@/lib/client"?{}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="next/link"?{__esModule:true,default:(props:Record<string,unknown>)=>createElement("a",props)}:require(name),exports)
   const run=decodeExperiment(publishedText(recorded.publication))
   const markup=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run,runs:[run],pending:false,error:false}))
   assert.equal((markup.match(/<tr\b/g)??[]).length,1)
@@ -975,7 +980,7 @@ test("R18: solo measured values, SLO verdict and frozen metadata render real obj
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   type RenderProps={run:Experiment;stage?:ExperimentStage;runs?:Experiment[];pending?:boolean;error?:boolean}
   const require=createRequire(import.meta.url),exports={} as {useHistoricalExperiments:(runs:Experiment[])=>{runs:Experiment[]};ExperimentResultRow:ComponentType<RenderProps>;ExperimentMetadata:ComponentType<RenderProps>}
-  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiment-comparison"?comparisonHelpers:name==="@/lib/dashboard-routes"?routeHelpers:name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{useChillQueries:()=>[{data:run,isPending:false}]}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="next/link"?{__esModule:true,default:(props:Record<string,unknown>)=>createElement("a",props)}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiment-comparison"?comparisonHelpers:name==="@/lib/dashboard-routes"?routeHelpers:name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client-transport"?transport:name==="@/lib/client"?{useChillQueries:()=>[{data:run,isPending:false}]}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="next/link"?{__esModule:true,default:(props:Record<string,unknown>)=>createElement("a",props)}:require(name),exports)
   const listed={...run,definition:undefined,comparisons:[]}
   const markup=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run,runs:[run],pending:false,error:false}))
   assert.match(markup,/변경 없음/)
@@ -997,7 +1002,7 @@ test("R18 review: frozen rules render Korean item/value/unit rows without policy
   const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports={} as {ExperimentMetadata:ComponentType<{run:Experiment;stage:ExperimentStage}>}
-  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiment-comparison"?comparisonHelpers:name==="@/lib/dashboard-routes"?routeHelpers:name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiment-comparison"?comparisonHelpers:name==="@/lib/dashboard-routes"?routeHelpers:name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client-transport"?transport:name==="@/lib/client"?{}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:require(name),exports)
   const rules={harnessRepositoryCommit:"abc123",energyCoverage:object(stage.kpis.measurementRules).energyCoverage,evidenceSource:"api",gcMeaning:"runtime-metrics-delta"}
   const run=definedRun([{...stage,id:"candidate",kpis:{measurementRules:rules,requests:{camera:{workloadUID:"camera",definitionID:"camera-v1"}}}}])
   const markup=renderToStaticMarkup(createElement(exports.ExperimentMetadata,{run,stage:run.stages[0]}))
@@ -1026,7 +1031,7 @@ test("R18 review: interval Sheet renders each stage policy and service SLO only 
     return exports
   }
   const element=(tag:string)=>function Element({children}:{children?:ReactNode}){return createElement(tag,{},children)}
-  const shared={"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{},"@/components/ui/button":{Button:element("button")},"next/link":{__esModule:true,default:element("a")}}
+  const shared={"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{},"@/lib/client-transport":transport,"@/components/ui/button":{Button:element("button")},"next/link":{__esModule:true,default:element("a")}}
   Object.assign(shared,{"@/components/unreadable-experiments":load("../components/unreadable-experiments.tsx",shared)})
   const conclusion=load("../features/experiments-conclusion.tsx",shared)
   const features=load("../features/experiments.tsx",{...shared,"@/lib/scheduler":{parseSchedulerJSON},"next/navigation":{},"lucide-react":icons,"recharts":{},"@/components/ui/dialog":{},"@/components/ui/tooltip":{},"@/components/read-region":{SourceJSON:()=>null,SourceExport:()=>null},"@/components/screen":{},"@/components/ui/sheet":Object.fromEntries(["Sheet","SheetContent","SheetHeader","SheetTitle"].map(name=>[name,element("div")])),"@/features/experiments-conclusion":conclusion,"@/features/scheduler-evidence":{SchedulerIntervalEvents:()=>null},"@/features/evaluation-request":{}},"\nexports.IntervalDrawer=IntervalDrawer;")
@@ -1045,6 +1050,7 @@ function reviewExperimentUI(params:URLSearchParams,identity:{name:string;uid:str
   const modules:Record<string,unknown>={
     "@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,
     "@/lib/client":{useChillQuery:()=>({data:identity})},"next/navigation":{useSearchParams:()=>params},
+    "@/lib/client-transport":transport,
     "next/link":{__esModule:true,default:({children,href}:{children:ReactNode;href:string})=>createElement("a",{href},children)},
     "@/components/ui/button":{Button:({children}:{children:ReactNode})=>createElement("span",{},children)},
     recharts:{ResponsiveContainer:()=>null},

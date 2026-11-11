@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import type { UseQueryResult } from "@tanstack/react-query"
-import type { ApiError } from "@/lib/client"
+import type { ApiError } from "@/lib/client-transport"
 import { useChillQuery } from "@/lib/client"
 import type { ObservationResult, PoolsView, SchedulerSettings, SchedulerView } from "@/lib/read-types"
 import { resourceHref, type WorkloadView } from "@/lib/domain"

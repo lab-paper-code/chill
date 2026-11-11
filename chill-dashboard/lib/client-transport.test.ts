@@ -4,13 +4,13 @@ import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as summary from "./measurement-summary.ts"
-import type * as Client from "./client.tsx"
+import type * as Client from "./client-transport.ts"
 
 const require=createRequire(import.meta.url)
 function load(fetch:typeof globalThis.fetch):typeof Client {
   const modules:Record<string,unknown>={"lucide-react":{},"next/navigation":{},"@/components/ui/button":{},"@/components/ui/input":{},"@/components/ui/dialog":{},"@/components/brand":{},"@/lib/scheduler":{},"@/lib/session-token":{},"@/lib/measurement-summary":summary}
   const exports={} as typeof Client
-  const source=readFileSync(new URL("./client.tsx",import.meta.url),"utf8")
+  const source=readFileSync(new URL("./client-transport.ts",import.meta.url),"utf8")
   let ticks=0
   new Function("require","exports","fetch","performance","Error",transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>modules[name]??require(name),exports,fetch,{now:()=>100+37.5*ticks++},Error)
   return exports

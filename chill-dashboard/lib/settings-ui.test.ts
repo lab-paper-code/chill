@@ -11,6 +11,7 @@ import * as labels from "./labels.ts"
 import * as settingDefinitions from "./scheduler-settings.ts"
 import * as capacity from "./capacity.ts"
 import * as schedulerSelection from "./scheduler-selection.ts"
+import * as measurementSummary from "./measurement-summary.ts"
 
 type Tree={type:unknown;props:Record<string,unknown>}
 const require=createRequire(import.meta.url)
@@ -29,7 +30,7 @@ function load(path:string,modules:Record<string,unknown>):Record<string,(props:R
   const compiled=transpileModule(readFileSync(new URL(path,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports={}
   modules={"@/lib/scheduler-selection":schedulerSelection,...modules}
-  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name==="@/hooks/use-catalog-resource"?load("../hooks/use-catalog-resource.ts",modules):name==="@/features/catalog-editor"?load("../features/catalog-editor.tsx",modules):name==="@/lib/scheduler-settings"?settingDefinitions:name.startsWith("@/")?{}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name==="@/lib/client-transport"?modules[name]=load("./client-transport.ts",{"@/lib/measurement-summary":measurementSummary}):name==="@/hooks/use-catalog-resource"?load("../hooks/use-catalog-resource.ts",modules):name==="@/features/catalog-editor"?load("../features/catalog-editor.tsx",modules):name==="@/lib/scheduler-settings"?settingDefinitions:name.startsWith("@/")?{}:require(name),exports)
   return exports
 }
 const base={"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({push:()=>{},replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},"@/lib/domain":domain,"@/lib/scheduler":scheduler,"@/lib/source-export":sourceExport,"@/components/screen":{Screen:"main",Facts:"facts",Rows:"rows",Row:"row",RowDialog:"row-dialog"},"@/components/data-table":{DataTable:"table"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},"@/components/ui/sheet":{Sheet:"sheet",SheetContent:"aside",SheetHeader:"header",SheetTitle:"h2",SheetTrigger:"trigger"},"@/components/read-region":{QueryGate:"query",StatusBadge:"status"},"@/components/settings-navigation":{SettingsNavigation:"tabs"},"@/features/service-hub":{ServiceAdmission:"admission"}}
@@ -368,7 +369,7 @@ test("service settings forms retain unknown UIDs, validate rates and submit one 
   const runner=hooks(),sent:{path:string;method:string;body:string}[]=[],settings={...Object.fromEntries(settingDefinitions.settingFields.map(field=>[field.key,field.defaultValue??(field.key.endsWith("Nanos")?1000000000n:1)])),servingMemoryBytes:18446744073709551615n,capacityBisectionWidth:.005,controls:{placement:true,resources:true,replicas:true,routing:true,batching:true,power:true,membership:true},autonomousWorkloads:["retired"],minimumDemand:{known:.3,retired:20},excludedNodes:["meter"]}
   let params=new URLSearchParams({section:"targets",edit:"autonomousWorkloads",workload:"known"})
   class ApiError extends Error {}
-  const {SchedulerSettingsPage,SettingChanges}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{useSearchParams:()=>params,useRouter:()=>({push:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams},replace:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams}})},"@/lib/client":{ApiError,useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:{path:string;method:string;body:string})=>{sent.push(input);return {body:'{"appliedAt":"2026-11-03T00:00:00Z"}'}}}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/workloads?view=summary"?[{desired:{metadata:{uid:"known",name:"카메라"}}},{desired:{metadata:{uid:"new",name:"추가 서비스"}}}]:path==="v1/scheduler/state"?{results:[],snapshot:{nodes:[]}}:undefined,refetch:async()=>({data:settings})})}})
+  const {SchedulerSettingsPage,SettingChanges}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{useSearchParams:()=>params,useRouter:()=>({push:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams},replace:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams}})},"@/lib/client-transport":{ApiError},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:{path:string;method:string;body:string})=>{sent.push(input);return {body:'{"appliedAt":"2026-11-03T00:00:00Z"}'}}}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/workloads?view=summary"?[{desired:{metadata:{uid:"known",name:"카메라"}}},{desired:{metadata:{uid:"new",name:"추가 서비스"}}}]:path==="v1/scheduler/state"?{results:[],snapshot:{nodes:[]}}:undefined,refetch:async()=>({data:settings})})}})
   let tree=elements(runner.render(SchedulerSettingsPage))
   let editor=tree.find(node=>node.props.editKey==="autonomousWorkloads")!
   let form=elements(runner.render(editor.type as (props:Record<string,unknown>)=>unknown,editor.props))
@@ -542,7 +543,7 @@ test("versioned settings use their baseline ETag, refresh on 409 and require exp
       if(status!==200){mutation.error=new ApiError();throw mutation.error}
       return {body:'{"appliedAt":"2026-11-03T00:00:00Z"}',etag:tag}
     }}
-    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{ApiError,useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>mutation,useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string|null},data:unknown)=>void})=>{
+    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client-transport":{ApiError},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>mutation,useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string|null},data:unknown)=>void})=>{
       if(path==="v1/scheduler/settings"){if(!reads){reads++;options?.onResponse?.({etag:tag},initial)}return {data:initial,refetch:async()=>{reads++;options?.onResponse?.({etag:tag},initial);return {data:initial}}}}
       return {refetch:async()=>({})}
     }}})
@@ -631,7 +632,7 @@ test("unknown-outcome recovery adopts the fetched settings and ETag together for
   let current:Record<string,unknown>={controls:{},excludedNodes:[]},tag='"7"',published=false,updatedAt=0
   class ApiError extends Error {status=504;unknownOutcome=true}
   const mutation:{error?:ApiError;reset:()=>void;mutateAsync:(input:unknown)=>Promise<never>}={reset:()=>{delete mutation.error},mutateAsync:async input=>{sent.push(input);mutation.error=new ApiError();throw mutation.error}}
-  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{ApiError,useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>mutation,useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string},data:unknown)=>void})=>{
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client-transport":{ApiError},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>mutation,useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string},data:unknown)=>void})=>{
     if(path==="v1/scheduler/settings"){if(!published){published=true;options?.onResponse?.({etag:tag},current)}return {data:current,dataUpdatedAt:updatedAt,isFetching:false,refetch:async()=>{updatedAt=Date.now()+1000;options?.onResponse?.({etag:tag},current);return {data:current}}}}
     return {data:path.startsWith("v1/observations/scheduler")?{events:[]}:undefined,isSuccess:true,isFetching:false,refetch:async()=>({})}
   }}})

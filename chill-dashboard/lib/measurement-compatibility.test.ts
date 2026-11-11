@@ -7,7 +7,7 @@ import {relayPlan} from "./relay.ts"
 import {serverConfig} from "./server-config.ts"
 import * as scheduler from "./scheduler.ts"
 import * as summary from "./measurement-summary.ts"
-import type * as Client from "./client.tsx"
+import type * as Client from "./client-transport.ts"
 import type {MeasurementPlanList} from "./read-types.ts"
 
 const require=createRequire(import.meta.url)
@@ -15,7 +15,7 @@ const config=serverConfig({CHILL_BASE_URL:"https://query.invalid",CHILL_NAMESPAC
 function load<T>(file:string,modules:Record<string,unknown>,fetch?:unknown):T {
   const code=transpileModule(readFileSync(new URL(file,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports={}
-  new Function("require","exports","fetch",code)((name:string)=>modules[name]??(name.startsWith("@/")||name.endsWith(".css")||name==="lucide-react"||name==="next/navigation"?{}:require(name)),exports,fetch)
+  new Function("require","exports","fetch",code)((name:string)=>modules[name]??((name.startsWith("@/")&&name!=="@/lib/client-transport")||name.endsWith(".css")||name==="lucide-react"||name==="next/navigation"?{}:require(name)),exports,fetch)
   return exports as T
 }
 const items=Array.from({length:279},(_,index)=>({metadata:{name:`request-${index}`,namespace:"ns",uid:`uid-${index}`}}))
@@ -34,11 +34,11 @@ for(const mode of ["old-query","new-query","downgrade-mid-page"] as const)test(`
     const body={items:paged?items.slice(offset,end):items,identity:"~3",readProjection:{version:query.has("summary")?"measurement-summary.v2":"measurement-summary.v1",shapes:[],values:query.has("summary")?["ns","request","uid",{$s:["~0","~1","~2"]}]:["ns/request/uid","unused","unused","ns/request/uid"]},...(paged?{page:{offset,limit:50,total:items.length,...(end<items.length?{nextOffset:end}:{})}}:{})}
     return {ok:true,status:200,headers:new Headers(),text:async()=>JSON.stringify(body)}
   }
-  const client=load<typeof Client>("./client.tsx",{"@/lib/scheduler":scheduler,"@/lib/measurement-summary":summary},fetch)
+  const client=load<typeof Client>("./client-transport.ts",{"@/lib/scheduler":scheduler,"@/lib/measurement-summary":summary},fetch)
   let queryFn:({signal}:{signal:AbortSignal})=>Promise<MeasurementPlanList>=async()=>({items:[]})
   const state={data:undefined,error:null}
   const feature=load<{useMeasurementPlans:(namespace:string)=>unknown}>("../hooks/use-measurement-data.ts",{
-    "@/lib/client":{...client,useSession:()=>({token:"fixture"})},"@/lib/measurement-summary":summary,
+    "@/lib/client-transport":client,"@/lib/client":{useSession:()=>({token:"fixture"})},"@/lib/measurement-summary":summary,
     "@tanstack/react-query":{useQuery:(options:{queryFn:typeof queryFn})=>{queryFn=options.queryFn;return state}},
   })
   feature.useMeasurementPlans("ns")
@@ -54,7 +54,7 @@ test("control323 review: coverage/profiles negotiate with old Query without retr
   for(const route of ["v1/namespaces/ns/measurement-coverage?view=summary&summary=v2&node=node-a","v1/scheduler/profiles?view=summary&summary=v2&limit=50&offset=100"]) {
     for(const status of [400,403,503]) {
       const paths:string[]=[]
-      const client=load<typeof Client>("./client.tsx",{"@/lib/scheduler":scheduler,"@/lib/measurement-summary":summary},async(path:string)=>{
+      const client=load<typeof Client>("./client-transport.ts",{"@/lib/scheduler":scheduler,"@/lib/measurement-summary":summary},async(path:string)=>{
         const incoming=new URL(path,"https://dashboard.invalid")
         paths.push(relayPlan("GET",incoming.pathname.slice("/api/chill/".length).split("/"),incoming.search,config).path)
         const legacy=!incoming.searchParams.has("summary")

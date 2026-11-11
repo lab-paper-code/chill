@@ -3,7 +3,8 @@
 import { useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { useQueryClient, type UseQueryResult, type UseMutationResult } from "@tanstack/react-query"
-import { ApiError, useChillMutation, useChillQuery, type ChillMutationInput, type RelayResponse } from "@/lib/client"
+import { useChillMutation, useChillQuery, type ChillMutationInput } from "@/lib/client"
+import { ApiError, type RelayResponse } from "@/lib/client-transport"
 import type { ModelResource, ModelSpec, PreprocessorResource, PreprocessorSpec, DatasetResource, DatasetSpec, WorkloadResource, WorkloadSpec, WorkloadView, WorkloadSummary } from "@/lib/domain"
 
 export type Kind = "models" | "workloads" | "preprocessors" | "datasets"
