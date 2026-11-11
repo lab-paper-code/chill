@@ -252,7 +252,7 @@ Go 구현 변경은 관련 focused test와 저장소의 lint, test, architecture
 | C1 | 진행 | 26개 심볼 이동, 소비자 코드 변경 없음. `referenceWorkloads`의 삭제 확인 중 보호를 고정하는 테스트가 없어 먼저 추가한다. |
 | C2 | 진행 | 소비자 2개 파일과 테스트 2개. 요청 이력 query의 직접 검증이 없어 먼저 추가한다. |
 | C3 | 진행 (C2 뒤) | 운영 소비자 17개가 모두 두 모듈을 import하게 되어 import 수는 줄지 않는다. 대신 `client.tsx`가 React 세션·UI만 갖게 되어 전송 규칙(오류 분류, warming, summary 협상)의 소유 파일이 생긴다. 테스트 loader 약 25곳 전환이 비용이다. 전송 빈칸(본문 읽기 실패, 결과 미확인, token 가림, decoder 분류, warming delay 경계)을 먼저 고정한다. |
-| C4 | 현 구조 유지, 종료 | 직접 `client.Client`를 보관하면 생성 뒤 `Store` client를 교체하는 fixture 13곳(공유 harness 소비자 20개 이상)이 interceptor를 우회한다. 교체를 따라가려면 forwarding이 다시 필요하다. 인터페이스 하나 제거의 이득이 fixture 재배선 비용과 연결 분리 위험보다 작다. |
+| C4 | 현 구조 유지, 종료 | `kube/store.go`의 `Client()`는 호출할 때마다 현재 client를 돌려준다. 직접 `client.Client`를 보관하면 생성 뒤 `Store` client를 교체하는 fixture 13곳 중 Operations 경로에 영향 있는 12곳(공유 harness 소비자 20개 이상)이 interceptor를 우회한다. 교체를 따라가려면 forwarding이 다시 필요하다. 인터페이스 하나 제거의 이득이 fixture 재배선 비용과 연결 분리 위험보다 작다. |
 
 ### DAG
 
@@ -268,7 +268,7 @@ graph LR
 ```
 
 - 레인 A(C5), B(C1), T(C2→C3)는 파일이 겹치지 않아 병렬로 진행한다. 레인마다 별도 worktree와 branch를 쓰고, 통합 담당이 완료 순서대로 rebase해 push한다.
-- T3는 T2 뒤다. C2와 C3가 `features/measurement-request.tsx`와 `hooks/use-measurement-data.ts`의 import를 함께 바꾸기 때문이다.
+- T3는 T2 뒤다. C2와 C3가 `features/measurement-request.tsx`, `hooks/use-measurement-data.ts`와 관련 테스트 module map(`hooks/use-measurement-data.test.ts`, `hooks/use-measurement-submission.test.ts`, S6 loader)을 함께 바꾸기 때문이다.
 - 후보 하나가 끝날 때마다 정확성 리뷰와 메모리·연산 리뷰를 따로 받고, gate를 통과하면 push한다.
 
 ### 단계별 완료 조건
@@ -277,13 +277,13 @@ graph LR
 |---|---|---|
 | A1 | `Runtime.completionMargin`→`completionMarginMS`, `Runtime.pathFeedback`→`pathFeedbackMS` | `go test ./internal/serving/` |
 | A2 | `second`→`v2WithV1Fallback`, `v2Search.second`→`secondMovePlans` | `go test ./internal/scheduler/...` |
-| A3 | `capacityWindowResult.latency`→`latencyMS`, `capacityPlanner.period`→`periodSeconds`, replay `nativeAge`·`accountedAge`·`occupancy`→`*Nanos` | `go test ./internal/serving/` |
-| B1 | `TestManagerPendingDeletionProtectsCatalogUntilConfirmation`: 목록에서 사라진 Workload의 확인 GET 실패 동안 Dataset·Preprocessor·Model 삭제 거부(Model은 오류에 Workload 이름 포함), reservation 유지, 404 뒤 해제 | 현재 코드에서 통과, `go test ./internal/serving/kube -run TestManager` |
+| A3 | `capacityWindowResult.latency`→`latencyMS`, `capacityPlanner.period`→`periodSeconds`, `schedulerReplayRequest.nativeAge`·`accountedAge`→`nativeAgeNanos`·`accountedAgeNanos`, `schedulerReplayInstance.occupancy`→`occupancyNanos`. `capacityReplay.occupancy`(`DispatchOccupancy` 객체)는 대상이 아니다 | `go test ./internal/serving/` |
+| B1 | `TestManagerPendingDeletionProtectsCatalogUntilConfirmation`: backing 목록에서 대상 UID 부재와 확인 GET 실패 횟수를 확인한다. 그동안 Dataset·Preprocessor·Model 삭제가 거부되고(Model은 오류에 Workload 이름 포함, Preprocessor 참조만으로도 같은 코드가 나오기 때문) 거부된 catalog 객체가 남아 있으며 reservation이 유지된다. 404 뒤 Dataset→Preprocessor→Model 순서 삭제가 성공한다 | 현재 코드에서 통과, `go test ./internal/serving/kube -run TestManager` |
 | B2 | Model·Preprocessor·Dataset CRUD와 참조 helper 26개를 `management/manager_catalog.go`로 이동. 공유 업데이트(`sharedGroup`, `startSharedUpdate`, `advanceGroup`)와 공용 참조 검증은 `manager.go`에 유지 | 같은 테스트, `go test ./internal/serving/...` |
-| T1 | 화면 query의 두 페이지 합산, offset 정체, 후속 실패, 동일 Signal, key·enabled·retry, 실제 summary 디코딩; S7 profiles 실패 시 오류 표시 | 현재 코드에서 통과 |
-| T2 | `useRequestProfileHistory()`를 `hooks/use-measurement-data.ts`에 추가하고 `readPage` 재사용. 화면의 직접 HTTP import 제거. S7 실패 주입을 새 hook 경계로 이동. S6는 실제 hook 자동 연결 유지 | T1 단언 그대로 통과, `pnpm typecheck lint test` |
-| T3 | 본문 읽기 실패의 status·헤더·RTT 보존, 결과 미확인 분기, token 가림, decoder identity 분류, warming delay clamp | 현재 코드에서 통과 |
-| T4 | `RelayResponse`, `ApiError`, `errorDetails`, `isCoverageWarming`, `warmingRetry`, `warmingDelay`, `decodeResponse`, `relay`를 `lib/client-transport.ts`로 이동. 운영 소비자 17개, 테스트 loader 전체 전환. `ApiError` 정의 하나, 같은 decoder 인스턴스 | T3·기존 단언 그대로 통과, `pnpm typecheck lint test`, 영향 화면 실제 확인 |
+| T1 | 화면 query의 두 페이지 합산과 종료 페이지 metadata, offset 정체, 후속 실패, 제공한 Signal과 같은 Signal, key·enabled, 실제 또는 명시 fixture인 `warmingRetry`·`warmingDelay`의 함수 참조, 실제 summary 디코딩. S7은 selector 존재와 profiles 오류 표시를 모두 단언 | 현재 코드에서 통과 |
+| T2 | `useRequestProfileHistory()`를 `hooks/use-measurement-data.ts`에 추가하고 `readPage` 재사용. `GuidedMeasurementRequestPage` 안에서 호출하고 원래 query 결과를 그대로 반환한다. 화면의 직접 HTTP import 제거. S7 실패 주입을 새 hook 경계로 이동. S6는 실제 hook 자동 연결 유지 | T1 단언 그대로 통과, `chill-dashboard/`에서 `pnpm typecheck && pnpm lint && pnpm test` |
+| T3 | fetch 실패와 `response.text()` 실패를 각각 실행해 status·헤더·RTT(고정 clock) 보존. 결과 미확인은 GET `false`, 일반 POST `true`, `/preflight`·`?dryRun=All` `false`, `/preflight?variantId=…` 현재 동작 `true`(이번에 교정하지 않음). token 두 번 모두 가림, `requestPath` query 제거. 실제 측정 decoder, 일반 throwing decoder, 측정 decoder wrapper(`DashboardPrecisionUnsupported`) 분류. warming delay clamp | 현재 코드에서 통과 |
+| T4 | `RelayResponse`, `ApiError`, `errorDetails`, `isCoverageWarming`, `warmingRetry`, `warmingDelay`, `decodeResponse`, `relay`를 `lib/client-transport.ts`로 이동. 운영 소비자 17개, 테스트 loader 전체 전환. 테스트 연결망마다 transport exports를 한 번 평가해 공유하고, 기존 fetch·performance·Error 주입을 transport 평가에도 유지한다. `.tsx`로 추론하는 loader에는 새 `.ts`를 명시 map으로 연결한다. 관대한 `{}` fallback으로 계약 테스트를 통과시키지 않는다 | T3·기존 단언 그대로 통과, `pnpm typecheck && pnpm lint && pnpm test`, 영향 화면 실제 확인 |
 
 Gate: Go 후보는 `make lint`, `make test TEST_PYTHON=<3.10 이상>`, `make arch-check`, `make gopls-check`. 대시보드 후보는 `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`와 영향 화면의 브라우저 확인.
 
