@@ -111,8 +111,11 @@ Observer는 실제 startup Config의 model, Pod UID/container/Node UID와 단일
 이 exact 관측의 빈 request 목록만 executor-local recovery UNKNOWN을 해제할 수 있다.
 현재 profile이 없으면 Ready/Execute/새 routing 권한은 여전히 없으며 옛 reader를 쓰지 않는다.
 정상 remove의 routing/outstanding 거절·native drain·UID finalizer/actual 종료·404 증명은
-그대로다. 현재 빈 실행기 관측은 과거 `UnknownExecutorInfluence`를 닫지 않으며,
-그 영향 구간은 exact physical termination 뒤에만 경계가 생긴다.
+그대로다. 컨테이너 identity가 있는 실행기의 현재 빈 관측은 과거 `UnknownExecutorInfluence`를 닫지 않으며,
+그 영향 구간은 exact physical termination 뒤에만 경계가 생긴다. 예외로 복구 시작 뒤
+`PodAwaitingExecutor`인 Pod(firstfloor containerID·Running·Terminated·lastTerminationState 이력 없음)를
+관측하면 같은 PodUID의 컨테이너에 결합되지 않은 gap(`Instance==""`)만 관측 시각으로 닫고 `ClearAt`도 기록한다.
+요청 대상 instance ID는 `PodUID/containerID`이므로 컨테이너 identity가 없던 Pod에는 요청을 보낼 수 없었다.
 
 ### 정책 반영 대기 표시 — SCH-48, AC-34~35
 

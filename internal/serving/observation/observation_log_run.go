@@ -115,6 +115,9 @@ func (l *ObservationLog) RecordRecovery(state serving.InstanceState, clear bool)
 		return nil
 	}
 	next := l.run
+	neverStarted := state.NeverStarted && state.ID == "" &&
+		!state.ObservedAt.IsZero() && !state.ObservedAt.Before(l.run.Started)
+	clear = clear || neverStarted
 	changed := false
 	for _, root := range l.run.Gaps {
 		if root.Instance != "" || root.Reason != "UncleanObservationTail" ||
@@ -130,7 +133,7 @@ func (l *ObservationLog) RecordRecovery(state serving.InstanceState, clear bool)
 			found = true
 			bind := gap.Instance == "" && state.ID != ""
 			nodeKnown := state.Node.UID != "" && (gap.Node == nil || gap.Node.UID == "")
-			clearing := clear && (gap.ClearAt == nil || state.Terminated && gap.Open)
+			clearing := clear && (gap.ClearAt == nil || (state.Terminated || neverStarted) && gap.Open)
 			if !bind && !nodeKnown && !clearing {
 				continue
 			}
@@ -219,7 +222,8 @@ func (l *ObservationLog) clearRecoveryGapLocked(gap *serving.ObservationGap, sta
 	if gap.ClearAt == nil {
 		gap.ClearAt = &at
 	}
-	if state.Terminated {
+	if state.Terminated || state.NeverStarted && state.ID == "" && gap.Instance == "" &&
+		!state.ObservedAt.IsZero() && !state.ObservedAt.Before(l.run.Started) {
 		gap.To, gap.Open = at, false
 	}
 }

@@ -474,6 +474,10 @@ func (o *Observer) restoreSources(pods []corev1.Pod) {
 			o.sources[key] = source
 		}
 		source.podState = pod.DeepCopy()
+		source.instance.State.NeverStarted = source.containerID == "" && servingstate.PodAwaitingExecutor(pod)
+		if source.instance.State.NeverStarted {
+			source.instance.State.ObservedAt = time.Now().UTC()
+		}
 		if source.terminated == nil {
 			source.terminated = map[string]bool{}
 		}

@@ -281,6 +281,8 @@ type InstanceState struct {
 	// CreatedThisRun is the gateway's exact successful Pod-create proof,
 	// never a conclusion drawn from native status or readiness.
 	CreatedThisRun bool `json:"-"`
+	// NeverStarted is a fresh PodAwaitingExecutor observation, not termination.
+	NeverStarted bool `json:"-"`
 }
 
 // PoolsState derives POOL membership from actual instances. A Workload's

@@ -1255,10 +1255,12 @@ func (r *Runtime) updateInstanceRecoveryLocked(i *runtimeInstance, candidate *Re
 	verifiedEmpty := candidate.State.ID != "" && candidate.State.Node.UID != "" && candidate.State.NativeVerified &&
 		!candidate.State.ObservedAt.Before(r.recovery.Started) &&
 		candidate.State.Native != nil && len(candidate.State.Native.Requests) == 0
+	neverStarted := candidate.State.NeverStarted && candidate.State.ID == "" &&
+		!candidate.State.ObservedAt.IsZero() && !candidate.State.ObservedAt.Before(r.recovery.Started)
 	// Exact termination also closes a historical late-inference influence
 	// interval after physical CLEAR or a later clean boot.
 	if candidate.State.PodUID != "" &&
-		(terminated || candidate.State.RecoveryUnknown && verifiedEmpty) {
+		(terminated || candidate.State.RecoveryUnknown && (verifiedEmpty || neverStarted)) {
 		proof := candidate.State
 		if terminated {
 			proof.Terminated = true

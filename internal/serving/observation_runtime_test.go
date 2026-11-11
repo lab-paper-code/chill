@@ -543,3 +543,26 @@ func hasRuntimeError(err error, code string) bool {
 	var domain *Error
 	return errors.As(err, &domain) && domain.Code == code
 }
+
+func TestRecoveryNeverStartedPodRequiresFreshObservation(t *testing.T) {
+	r, _, _, log, _ := runtimeAsyncFixture(t, true)
+	pending := ReadyInstance{State: InstanceState{PodUID: "pending", NeverStarted: true,
+		ObservedAt: log.boot.Started.Add(-time.Second)}}
+	if err := r.InstallInstances([]ReadyInstance{pending}); err != nil {
+		t.Fatal(err)
+	}
+	if !r.InstanceRecoveryUnknown(pending.State.PodUID) {
+		t.Fatal("pre-recovery pending observation released recovery")
+	}
+	pending.State.ObservedAt = time.Now().UTC()
+	if err := r.InstallInstances([]ReadyInstance{pending}); err != nil {
+		t.Fatal(err)
+	}
+	if r.InstanceRecoveryUnknown(pending.State.PodUID) {
+		t.Fatal("fresh never-started observation retained recovery")
+	}
+	state := r.Instances()[0]
+	if state.ID != "" || state.Terminated || state.Stopped || state.Ready {
+		t.Fatalf("never-started recovery changed physical lifecycle: %+v", state)
+	}
+}
