@@ -205,3 +205,28 @@ control379와 같은 E5(Reject·Delay). 판정:
 - 고른 target의 예측 p95와 실제 완료 p95, executor 대기 분포. 예측 오차로 비교할 때는 적용 상태·horizon·수요·요청 모집단이 일치하는 구간만 쓴다(§4 R5)
 - 실행기·profile·batch별 serving/profile 괴리(F1)
 - 서비스별 onTime 비율·goodput, 에너지(전체 POOL, 같은 H의 keep·선택 후보)
+
+## 8. 실행 (2026-11-12)
+
+사용자 결정: F1·F2(profile 대표성)는 보류한다. 나머지는 아래 레인으로 진행한다. 레인마다 별도 worktree, 통합 담당이 rebase해 합친다.
+
+| 레인 | 단위 | 주 파일 |
+|---|---|---|
+| L1 | E2 → G1 | `internal/serving/admission.go`, `runtime.go`, `scheduler_replay_requests.go`(admission 부분) |
+| L2 | K1 | `scheduler_replay.go`, `scheduler_replay_actions.go`, capacity 후보 생성 |
+| L3 | O2 | `internal/serving/kube/admission.go` |
+| L4 | W1 → 진행·평가 분리 | observation window, `kube` capture, `application/scheduler_service.go` |
+| L5 | A1 (L1 뒤) | `observation_records.go`, `runtime.go` 대기 이유, 판단 기록 |
+| 분석 | V1, X1 | 코드 변경 없음, 결과로 이 문서 갱신 |
+
+| 단위 | 상태 | 커밋 |
+|---|---|---|
+| E2 | 진행 | |
+| G1 | 대기(E2 뒤) | |
+| K1 | 진행 | |
+| O2 | 진행 | |
+| W1 | 진행 | |
+| 진행·평가 분리 | 대기(W1 뒤) | |
+| A1 | 대기(G1 뒤) | |
+| V1·X1 | 진행 | |
+| F1·F2 | 보류(사용자 결정) | |
