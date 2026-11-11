@@ -98,6 +98,11 @@ func TestRecordActionStoresProfileReferences(t *testing.T) {
 		t.Fatalf("action projection too large: full=%d stored=%d", len(full), len(stored))
 	}
 	t.Logf("action bytes: full result=%d stored expected+actual=%d", len(full), len(stored))
+	assertCatalogProfile(t, directory, profile)
+}
+
+func assertCatalogProfile(t *testing.T, directory string, profile serving.Profile) {
+	t.Helper()
 	catalogs, err := filepath.Glob(filepath.Join(directory, "*", "*", "catalog.*.jsonl"))
 	if err != nil || len(catalogs) != 1 {
 		t.Fatalf("catalog files: %v %v", catalogs, err)
@@ -106,7 +111,7 @@ func TestRecordActionStoresProfileReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer catalog.Close()
+	defer func() { _ = catalog.Close() }()
 	decoder := json.NewDecoder(catalog)
 	for {
 		var row observation.CatalogRow
@@ -123,7 +128,7 @@ func TestRecordActionStoresProfileReferences(t *testing.T) {
 			if !reflect.DeepEqual(restored, profile) {
 				t.Fatal("catalog did not preserve full action profile")
 			}
-			break
+			return
 		}
 	}
 }
