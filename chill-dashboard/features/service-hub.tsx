@@ -6,7 +6,7 @@ import type { UseQueryResult } from "@tanstack/react-query"
 import type { ApiError } from "@/lib/client-transport"
 import { useChillQuery } from "@/lib/client"
 import type { ObservationResult, PoolsView, SchedulerSettings, SchedulerView } from "@/lib/read-types"
-import { resourceHref, type WorkloadView } from "@/lib/domain"
+import { admissionPolicies, resourceHref, type WorkloadView } from "@/lib/domain"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Facts, RowDialog, Rows } from "@/components/screen"
@@ -62,6 +62,7 @@ export function ServiceAppliedFacts({ view }: { view: WorkloadView }) {
       ["적용 세대", String(applied.generation)], ["적용 모델", applied.model.name], ["적용 모델 입출력 처리", applied.preprocessor.name],
       ["적용 데이터", applied.dataset?.name ?? "미설정"], ["목표 비율 (%)", String(applied.slo.percentile)],
       ["목표 지연 (ms)", (applied.slo.targetLatencyNanos / 1e6).toLocaleString("ko-KR", { maximumFractionDigits: 3 })],
+      ["과부하 정책", admissionPolicies[applied.admission?.policy] ?? "미기록"], ["대기 상한", applied.admission ? `${applied.admission.maxQueuedRequests}건` : "미기록"], ["최종 기한", applied.requestLifetime === undefined ? "서버 기본값" : `${applied.requestLifetime / 1e9}s`],
       ...applied.preprocessor.input.map((field): [string, string] => [`입력 ${field.name}`, `${field.format} · 최대 ${field.maxBytes.toLocaleString("ko-KR")} B`]),
     ] as [string, string][] : []),
     ["측정 실행 경로 (개)", String(view.supportedInputs.length)],
@@ -72,7 +73,7 @@ export function ServiceAppliedFacts({ view }: { view: WorkloadView }) {
 export function ServiceDefinition({ view }: { view: WorkloadView }) {
   const { desired, appliedDefinition: applied } = view
   return <section id="definition" className="min-w-0 space-y-3 rounded-xl border p-4"><h2 className="font-semibold">정의·설정</h2>
-    <Facts items={[["모델", desired.spec.modelRef.name], ["모델 입출력 처리", desired.spec.preprocessorRef.name], ["데이터", desired.spec.datasetRef?.name ?? "미설정"], ["목표 비율 (%)", desired.spec.slo.percentile], ["목표 지연", desired.spec.slo.targetLatency], ["측정 입력", `${view.supportedInputs.length}개`]]} />
+    <Facts items={[["모델", desired.spec.modelRef.name], ["모델 입출력 처리", desired.spec.preprocessorRef.name], ["데이터", desired.spec.datasetRef?.name ?? "미설정"], ["목표 비율 (%)", desired.spec.slo.percentile], ["목표 지연", desired.spec.slo.targetLatency], ["과부하 정책", admissionPolicies[desired.spec.admission?.policy] ?? "미기록"], ["대기 상한", desired.spec.admission ? `${desired.spec.admission.maxQueuedRequests}건` : "미기록"], ["최종 기한", desired.spec.requestLifetime ?? "서버 기본값"], ["측정 입력", `${view.supportedInputs.length}개`]]} />
     <div className="flex flex-wrap gap-4 text-sm">
       <Link href={applied ? resourceHref("models", applied.model.name, applied.model.uid) : `/models/${encodeURIComponent(desired.spec.modelRef.name)}`}>모델</Link>
       <Link href={applied ? resourceHref("preprocessors", applied.preprocessor.name, applied.preprocessor.uid) : `/preprocessors/${encodeURIComponent(desired.spec.preprocessorRef.name)}`}>모델 입출력 처리</Link>

@@ -8,7 +8,7 @@ import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { backendsByFormat, datatypes, formatText, positiveIntegers, resourceHref as href, sloTarget as target, workloadSpec, type ModelResource, type ModelList, type ModelSpec, type ModelArtifact, type ExecutionPath, type TensorContract, fieldFormats, type RawField, type PreprocessorArtifact, type PreprocessorResource, type PreprocessorSpec, type DatasetResource, type DatasetSpec, type WorkloadSummary } from "@/lib/domain"
+import { admissionPolicies, backendsByFormat, datatypes, formatText, positiveIntegers, resourceHref as href, sloTarget as target, workloadSpec, type ModelResource, type ModelList, type ModelSpec, type ModelArtifact, type ExecutionPath, type TensorContract, fieldFormats, type RawField, type PreprocessorArtifact, type PreprocessorResource, type PreprocessorSpec, type DatasetResource, type DatasetSpec, type WorkloadSummary } from "@/lib/domain"
 import { explain } from "@/lib/labels"
 import { ServiceAdmission } from "@/features/service-hub"
 import { DataTable } from "@/components/data-table"
@@ -174,7 +174,7 @@ export const fieldList = (fields: { name: string; format: string; maxBytes?: num
 function brief(spec: Spec): [string, string][] {
   if ("input" in spec) return [["입력", fieldList(spec.input.fields)], ["출력", fieldList(spec.output.fields)], ["대상 모델 파일", spec.artifacts.map(a => `${a.target.model} · ${a.target.artifact}`).join(", ") || "없음"]]
   if ("source" in spec) return [["데이터 위치", `${spec.source.image} · ${spec.source.path}`], ["기록 필드", fieldList(spec.fields)]]
-  return "modelRef" in spec ? [["모델", spec.modelRef.name], ["전처리기", spec.preprocessorRef.name], ["데이터셋", spec.datasetRef?.name ?? "정하지 않음"], ["응답 목표", target(spec)]] : [["모델 파일", spec.artifacts.map(a => a.name).join(", ") || "없음"], ["실행 방식", spec.executionPaths.map(p => p.name).join(", ") || "없음"]]
+  return "modelRef" in spec ? [["모델", spec.modelRef.name], ["전처리기", spec.preprocessorRef.name], ["데이터셋", spec.datasetRef?.name ?? "정하지 않음"], ["응답 목표", target(spec)], ["과부하 정책", admissionPolicies[spec.admission?.policy] ?? "미기록"], ["대기 상한", spec.admission ? `${spec.admission.maxQueuedRequests}건` : "미기록"], ["최종 기한", spec.requestLifetime ?? "서버 기본값"]] : [["모델 파일", spec.artifacts.map(a => a.name).join(", ") || "없음"], ["실행 방식", spec.executionPaths.map(p => p.name).join(", ") || "없음"]]
 }
 export function DefinitionSummary({ spec }: { spec: Spec }) {
   const items: [string, string][] = "input" in spec ? [
@@ -271,6 +271,7 @@ export function Problem({ r, kind }: { r: ResourceState; kind: Kind }) {
   const [meaning, step] = failure?.code ? explain(failure.code) : ["변경을 저장하지 못했어요."]
   return <div role="alert" className="notice">
     <p className="font-medium">{error.unknownOutcome ? "저장 결과를 확인하지 못했어요" : meaning}</p>
+    {kind === "workloads" && failure?.message && <p>{failure.message}</p>}
     <p>작성한 내용은 그대로 있어요. {failure?.field?.includes("slo") ? "응답 목표를 확인해 주세요." : failure?.field?.includes("preprocessorRef") ? "선택한 전처리기를 확인해 주세요." : failure?.field?.includes("datasetRef") ? "선택한 데이터셋이 있고 전처리기 입력 필드를 담는지 확인해 주세요." : failure?.field?.includes("target") ? "대상 모델과 모델 파일을 확인해 주세요." : failure?.field?.includes("model") ? "선택한 모델을 확인해 주세요." : failure?.field?.includes("source") ? "보관 주소와 위치를 확인해 주세요." : failure?.field?.includes("artifact") ? "모델 파일과 입력 정보를 확인해 주세요." : failure?.field?.includes("execution") ? "실행 방식을 확인해 주세요." : /input|output|fields/.test(failure?.field ?? "") ? "입력과 출력 필드를 확인해 주세요. 연결된 서비스의 전처리기와 데이터셋 필드가 맞아야 해요." : step ?? "자세한 이유를 확인하고 다시 시도해 주세요."} 결과가 불확실하면 현재 상태를 먼저 확인해 주세요. 자동으로 다시 보내지 않아요.</p>
     <div className="flex flex-wrap gap-2"><SourceJSON title="변경 오류 자세히" value={{ status: error.status, error: failure, body: error.body }} />{r.name ? <Button size="sm" variant="outline" onClick={() => void r.detail.refetch()}>최신 상태 확인</Button> : <Button asChild size="sm" variant="outline"><Link href={`/${kind}`}>목록에서 확인</Link></Button>}</div>
   </div>
@@ -311,6 +312,9 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
   const [datasetRef, setDatasetRef] = useState(original && "modelRef" in original.spec ? original.spec.datasetRef?.name ?? "" : "")
   const [percentile, setPercentile] = useState(original && "slo" in original.spec ? String(original.spec.slo.percentile) : "99.5")
   const [latency, setLatency] = useState(original && "slo" in original.spec ? original.spec.slo.targetLatency : "100ms")
+  const [policy, setPolicy] = useState<string>(original && "modelRef" in original.spec ? original.spec.admission?.policy ?? "Reject" : "Reject")
+  const [maxQueuedRequests, setMaxQueuedRequests] = useState(original && "modelRef" in original.spec ? original.spec.admission?.maxQueuedRequests ?? 1024 : 1024)
+  const [requestLifetime, setRequestLifetime] = useState(original && "modelRef" in original.spec ? original.spec.requestLifetime ?? "" : "")
   const [spec, setSpec] = useState<ModelSpec>(original && "executionPaths" in original.spec ? structuredClone(original.spec) : { artifacts: [emptyArtifact()], executionPaths: [emptyPath()] })
   const [pre, setPre] = useState<PreprocessorSpec>(original && "input" in original.spec ? structuredClone(original.spec) : { input: { fields: [emptyField()] }, output: { fields: [{ name: "", format: "UTF8" }] }, artifacts: [emptyTarget()] })
   const [dataset, setDataset] = useState<DatasetSpec>(original && "source" in original.spec ? structuredClone(original.spec) : { source: { image: "", path: "" }, fields: [emptyField()] })
@@ -331,7 +335,7 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
   const locked = r.blocked || r.conflict
   const back: [string, string] = original ? [href(kind, original.metadata.name, r.expectedUID || original.metadata.uid), original.metadata.name] : [`/${kind}`, kindLabel(kind)]
   function draft(): Spec {
-    if (kind === "workloads") return workloadSpec(model, preprocessorRef, datasetRef, percentile, latency)
+    if (kind === "workloads") return workloadSpec(model, preprocessorRef, datasetRef, percentile, latency, { policy, maxQueuedRequests }, requestLifetime)
     if (kind === "preprocessors") { if (!pre.input.fields.length || !pre.output.fields.length || !pre.artifacts.length) throw new Error("입력 필드, 출력 필드, 대상 모델 파일을 하나 이상 설정해 주세요."); return pre }
     if (kind === "datasets") { if (!dataset.fields.length) throw new Error("기록 필드를 하나 이상 설정해 주세요."); return dataset }
     if (!spec.artifacts.length || !spec.executionPaths.length || spec.artifacts.some(a => a.format === "rknn" && !a.input?.tensors.length)) throw new Error("모델 파일, RKNN 파일의 입력, 실행 방식을 하나 이상 설정해 주세요.")
@@ -430,7 +434,14 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
           }),
         ]} />
       </QueryGate>}
-      {step === "slo" && <><Field label="목표 비율 · %"><Input aria-label="목표 비율 · %" type="number" step="any" min="0" max="100" required value={percentile} onChange={event => setPercentile(event.target.value)} /></Field><details><summary className="min-h-11 cursor-pointer py-2">도움말</summary>0보다 크고 100 이하여야 해요.</details><DurationField value={latency} set={setLatency} /></>}
+      {step === "slo" && <>
+        <Field label="목표 비율 · %"><Input aria-label="목표 비율 · %" type="number" step="any" min="0" max="100" required value={percentile} onChange={event => setPercentile(event.target.value)} /></Field>
+        <details><summary className="min-h-11 cursor-pointer py-2">도움말</summary>0보다 크고 100 이하여야 해요.</details>
+        <DurationField value={latency} set={setLatency} />
+        <Field label="과부하 정책"><select aria-label="과부하 정책" className={select} value={policy} onChange={event => setPolicy(event.target.value)}>{Object.entries(admissionPolicies).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+        <Integer label="대기 상한" value={maxQueuedRequests} set={setMaxQueuedRequests} note="접수 후 대기할 수 있는 요청 수예요. 1 이상의 정수로 정해 주세요." />
+        <Field label="요청 최종 기한"><Input aria-label="요청 최종 기한" value={requestLifetime} onChange={event => setRequestLifetime(event.target.value)} placeholder="예: 2s, 1m30s" aria-describedby="request-lifetime-help" /><span id="request-lifetime-help" className="text-xs text-muted-foreground">SLO는 응답 목표이고, 최종 기한은 요청을 기다리는 한도예요. 비우면 서버 기본값을 써요. SLO 목표 이상, 129s 이하인지는 저장할 때 확인해요. 실행 중인 작업은 강제로 멈추지 않아요.</span></Field>
+      </>}
       {step === "fields" && <><RawFields label="입력 필드" fields={pre.input.fields} set={fields => setPre({ ...pre, input: { fields } })} blank={emptyField} /><RawFields label="출력 필드" fields={pre.output.fields} set={fields => setPre({ ...pre, output: { fields } })} blank={() => ({ name: "", format: "UTF8" as const })} /><Field label="최대 생성 토큰 · 선택"><Input aria-label="최대 생성 토큰 · 선택" type="number" min={1} max={2147483647} step={1} value={pre.maxNewTokens ?? ""} onChange={event => setPre({ ...pre, maxNewTokens: Number.isNaN(event.target.valueAsNumber) ? undefined : event.target.valueAsNumber })} /></Field></>}
       {step === "targets" && <QueryGate query={models}>{pre.artifacts.map((a, i) => {
         const change = (value: Partial<PreprocessorArtifact>) => setPre({ ...pre, artifacts: pre.artifacts.map((x, j) => j === i ? { ...x, ...value } : x) })

@@ -266,3 +266,24 @@ test("JPEG input leads with a user label and retains its original contract key",
   assert.ok(elements(tree).some(node=>node.props["aria-label"]==="사진 고르기"))
   assert.ok(elements(tree).some(node=>node.props.children==="계약 키 · image"))
 })
+
+test("service desired and frozen applied admission facts keep their own values and deadline units", () => {
+  const h = harness()
+  const view = {
+    ...idle,
+    desired: { ...idle.desired, spec: { ...idle.desired.spec, admission: { policy: "Delay", maxQueuedRequests: 37 }, requestLifetime: "1m2s" } },
+    appliedDefinition: { name: "idle", uid: "service-uid", generation: 1, model: { name: "model" }, preprocessor: { name: "input", input: [] }, slo: { percentile: 95, targetLatencyNanos: 1e9 }, admission: { policy: "Reject", maxQueuedRequests: 11 }, requestLifetime: 2500000001 },
+  }
+  for (const tree of [h.services.WorkloadState({ view }), h.hub.ServiceDefinition({ view })]) {
+    const facts = new Map(elements(tree).find(node => node.type === "facts")!.props.items as [string, unknown][])
+    assert.equal(facts.get("과부하 정책"), domain.admissionPolicies.Delay)
+    assert.equal(facts.get("대기 상한"), "37건")
+    assert.equal(facts.get("최종 기한"), "1m2s")
+  }
+  const applied = new Map(h.hub.ServiceAppliedFacts({ view }).props.items as [string, unknown][])
+  assert.equal(applied.get("과부하 정책"), domain.admissionPolicies.Reject)
+  assert.equal(applied.get("대기 상한"), "11건")
+  assert.equal(applied.get("최종 기한"), "2.500000001s")
+  const fallback = new Map(h.hub.ServiceAppliedFacts({ view: { ...view, appliedDefinition: { ...view.appliedDefinition, requestLifetime: undefined } } }).props.items as [string, unknown][])
+  assert.equal(fallback.get("최종 기한"), "서버 기본값")
+})

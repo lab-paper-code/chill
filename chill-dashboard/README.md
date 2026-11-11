@@ -69,6 +69,8 @@ HF/KServe/BentoML/MLflow에서 참고한 분리 원칙과 지원하지 않는 �
 파일·직접 입력 분리는 [BentoML의 config-file·config-dict 옵션](https://github.com/bentoml/BentoML/blob/1ddd7e782f1ce74a0a37f51c70a44474eb58d5e1/src/bentoml_cli/deployment.py#L125-L136)을 참고했다.
 자산 제작·게시 경계는 [카탈로그 안내](../config/samples/catalog/README.md#참고한-외부-패턴과-chill-경계)에 있다.
 
+서비스 등록·수정의 응답 목표 단계에서 과부하 정책(`Reject`/`Delay`), 대기 상한(기본 1024건), 요청 최종 기한(선택)을 설정한다. `Reject`는 기한 내 완료할 수 없는 요청을 거절하고, `Delay`는 뒤로 미뤄 늦은 완료를 허용한다. SLO는 응답 목표이고 최종 기한은 요청 대기 한도이며, 실행 중인 작업을 강제로 중단하지 않는다. 최종 기한을 비우면 서버 기본값을 사용한다. 시간 문법은 폼에서 확인하고 SLO 목표 이상·129s 이하 범위는 서버가 검증하며 오류 메시지를 표시한다. 수정은 원래 과부하 정책·대기 상한·최종 기한을 보존한다. 서비스 상태와 정의·설정은 원하는 값을, 적용 정의는 동결된 값을 표시한다. 적용 정의의 `requestLifetime`은 서버의 나노초 JSON 수치를 초로 변환한다.
+
 
 ## Fixed upstream source and license
 

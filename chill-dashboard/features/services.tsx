@@ -8,7 +8,7 @@ import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
 import { statusLabel } from "@/lib/labels"
 import { Facts, RowDialog, Rows, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
-import { definitionIdentity, resourceHref as href, type WorkloadSummary, type WorkloadView } from "@/lib/domain"
+import { admissionPolicies, definitionIdentity, resourceHref as href, type WorkloadSummary, type WorkloadView } from "@/lib/domain"
 import type { ObservationCohort, SchedulerSettings, SchedulerWorkloadState } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { ServiceAdmission, ServiceReadiness, ServiceAppliedFacts, ServiceDefinition, ServicePlacement, serviceListReturn, useServiceSignals, type ServiceSignals } from "@/features/service-hub"
@@ -22,6 +22,7 @@ export function WorkloadState({ view }: { view: WorkloadView }) {
   return <>
     <Facts items={[
       ["모델", view.desired.spec.modelRef.name], ["모델 입출력 처리", view.desired.spec.preprocessorRef.name], ["데이터", view.desired.spec.datasetRef?.name ?? "미설정"], ["목표 비율 (%)", view.desired.spec.slo.percentile], ["목표 지연", view.desired.spec.slo.targetLatency],
+      ["과부하 정책", admissionPolicies[view.desired.spec.admission?.policy] ?? "미기록"], ["대기 상한", view.desired.spec.admission ? `${view.desired.spec.admission.maxQueuedRequests}건` : "미기록"], ["최종 기한", view.desired.spec.requestLifetime ?? "서버 기본값"],
       ["적용된 모델", view.appliedDefinition?.model.name ?? "미적용"],
       ["준비", statusLabel(view.readiness)], ...(view.reason && statusLabel(view.reason) !== statusLabel(view.readiness) ? [["사유", statusLabel(view.reason)] as [string, string]] : []), ["접수 허용", view.admission ? "허용" : "차단"],
       ["배정 대기", `${view.pending}건`], ["배정됨", `${view.assigned}건`], ["측정 입력", `${view.supportedInputs.length}개`],

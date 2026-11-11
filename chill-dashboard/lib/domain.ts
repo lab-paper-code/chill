@@ -24,7 +24,8 @@ export type PreprocessorResource = { apiVersion?: string; kind?: string; metadat
 export type DatasetResource = { apiVersion?: string; kind?: string; metadata: Metadata; spec: DatasetSpec }
 type CatalogRef = { name: string }
 type AppliedRef = { name: string; uid: string; generation: number }
-export type WorkloadSpec = { modelRef: CatalogRef; preprocessorRef: CatalogRef; datasetRef?: CatalogRef; slo: { percentile: number; targetLatency: string } }
+export const admissionPolicies = { Reject: "기한 내 완료 불가 요청 거절(기본)", Delay: "뒤로 미뤄 처리 — 늦은 완료 허용" } as const
+export type WorkloadSpec = { modelRef: CatalogRef; preprocessorRef: CatalogRef; datasetRef?: CatalogRef; slo: { percentile: number; targetLatency: string }; admission: { policy: keyof typeof admissionPolicies; maxQueuedRequests: number }; requestLifetime?: string }
 export type Operation = { kind: string; phase: string; targetGeneration: number; targetCatalogUID?: string; targetCatalogGeneration?: number; acceptedAt: string; appliedAt?: string; completedAt?: string; reason?: string; error?: string; actorUsername?: string; actorUID?: string }
 // The only artifact format → firstfloor backend pairs ChillServer accepts (internal/modelcatalog/catalog.go:107-123).
 export const backendsByFormat: Record<string, readonly string[]> = { onnx: ["ort-cpu", "ort-cuda"], rknn: ["rknnlite"] }
@@ -38,6 +39,9 @@ export type AppliedDefinition = {
   preprocessor: AppliedRef & { input: RawField[]; output: Omit<RawField, "maxBytes">[]; maxNewTokens?: number }
   dataset?: Omit<AppliedRef, "generation">
   slo: { percentile: number; targetLatencyNanos: number }
+  admission: WorkloadSpec["admission"]
+  // serving.Definition uses *time.Duration: encoding/json emits integer nanoseconds.
+  requestLifetime?: number
 }
 export type ObjectIdentity = { store: string; key: string; size: number }
 export type SupportedInput = { executionPath: string; artifact: string; profiles: { id: string; reference: ObjectIdentity; evidence: ObjectIdentity[]; condition: unknown }[] }
@@ -52,13 +56,17 @@ export const sloTarget = (spec: WorkloadSpec) => `${spec.slo.percentile}%의 요
 export const definitionIdentity = (applied: AppliedDefinition) => `${applied.uid}/${applied.generation}/${applied.model.uid}/${applied.model.generation}/${applied.preprocessor.uid}/${applied.preprocessor.generation}`
 
 // An empty dataset leaves datasetRef out; the service registers and waits with MissingDataset.
-export function workloadSpec(model: string, preprocessor: string, dataset: string, percentile: string, latency: string): WorkloadSpec {
+export function workloadSpec(model: string, preprocessor: string, dataset: string, percentile: string, latency: string, admission: { policy: string; maxQueuedRequests: number }, requestLifetime = ""): WorkloadSpec {
   const p = Number(percentile)
   if (!percentile.trim() || !Number.isFinite(p) || p <= 0 || p > 100) throw new Error("SLO 백분위는 0 < p ≤ 100 이어야 합니다.")
   if (!model) throw new Error("모델 참조가 필요합니다.")
   if (!preprocessor) throw new Error("전처리기 참조가 필요합니다.")
   if (!latency.trim()) throw new Error("SLO 목표 지연과 단위가 필요합니다. Go API가 양수와 범위를 검증합니다.")
-  return { modelRef: { name: model }, preprocessorRef: { name: preprocessor }, ...(dataset ? { datasetRef: { name: dataset } } : {}), slo: { percentile: p, targetLatency: latency } }
+  if (admission.policy !== "Reject" && admission.policy !== "Delay") throw new Error("과부하 정책은 Reject 또는 Delay여야 해요.")
+  if (!Number.isInteger(admission.maxQueuedRequests) || admission.maxQueuedRequests < 1) throw new Error("대기 상한은 1 이상의 정수여야 해요.")
+  // Go duration syntax; the server checks lifetime bounds against the SLO and 129s.
+  if (requestLifetime && !/^[+-]?(?:0|(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))+)$/.test(requestLifetime)) throw new Error("요청 최종 기한은 시간과 단위로 적어 주세요. 예: 2s, 1m30s")
+  return { modelRef: { name: model }, preprocessorRef: { name: preprocessor }, ...(dataset ? { datasetRef: { name: dataset } } : {}), slo: { percentile: p, targetLatency: latency }, admission: { policy: admission.policy, maxQueuedRequests: admission.maxQueuedRequests }, ...(requestLifetime ? { requestLifetime } : {}) }
 }
 export function positiveIntegers(text: string): number[] {
   const parts = text.split(/[\s,]+/).filter(Boolean)
