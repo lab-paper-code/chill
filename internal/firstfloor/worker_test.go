@@ -974,7 +974,7 @@ func TestBatchConfirmationRefreshesMonotonicExpiry(t *testing.T) {
 	timedOut.lifetime = stale.Add(500 * time.Millisecond)
 	rejected := makeRequest("slo", AdmissionReject)
 	a := schedulerActor{cfg: &Config{Mode: modeServing, Policy: testPolicy()}, queue: []*request{canceled, timedOut, rejected}, queuedBytes: 3}
-	a.startBatch(context.Background(), stale, time.Time{})
+	a.startBatch(context.Background(), time.Time{})
 	for _, tc := range []struct {
 		request *request
 		err     error

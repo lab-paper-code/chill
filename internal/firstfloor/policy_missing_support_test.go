@@ -1,6 +1,10 @@
 package firstfloor
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+)
 
 func TestChooseBatchMissingConditionalSupportExecutesWithoutRejection(t *testing.T) {
 	gap := int64(0)
@@ -23,5 +27,31 @@ func TestChooseBatchMissingConditionalSupportExecutesWithoutRejection(t *testing
 		if known.Size != 0 || known.Reason != want {
 			t.Fatalf("%s lost feasibility enforcement with known support: %+v", admission, known)
 		}
+	}
+}
+
+func TestActorMissingStartupSupportDoesNotExpireRejectAsInfeasible(t *testing.T) {
+	s, cfg := startTestActor(t, modeServing, "0", func(cfg *Config) {
+		cfg.Policy.MaxBatchSize = 1
+		cfg.Policy.MaxBatchWaitMS = 0
+		cfg.Policy.Batches = []BatchProfile{testBatch(1, 1, pairedSample("known-gap-only", 1, 10))}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	request := actorRequest(t, cfg, "missing-startup", "workload", 1)
+	request.context.AdmissionPolicy = AdmissionReject
+	request.context.SenderElapsedMS = 2
+	reply := s.submit(ctx, request)
+	if reply.err != nil || reply.response.Progress.BatchID == 0 || reply.response.Progress.Outcome != outcomeCompleted {
+		t.Fatalf("actor rejected an unknown startup quantile before ChooseBatch could execute: %+v", reply)
+	}
+	// The completed exchange supplies a known gap for the next request. The
+	// same expired SLO must then reject without a second physical execution.
+	known := actorRequest(t, cfg, "known-gap", "workload", 1)
+	known.context.AdmissionPolicy = AdmissionReject
+	known.context.SenderElapsedMS = 2
+	reply = s.submit(ctx, known)
+	if reply.err != ErrDeadlineInfeasible || reply.response.Progress.BatchID != 0 || !reply.complete {
+		t.Fatalf("known support lost the actor's pre-execution rejection: %+v", reply)
 	}
 }

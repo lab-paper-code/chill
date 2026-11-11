@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"reflect"
 	"sort"
@@ -213,7 +214,7 @@ func (s *Scheduler) run(ctx context.Context) {
 		now := time.Now()
 		a.cfg = s.config.Load()
 		next := a.expireQueued(now)
-		next = a.startBatch(ctx, now, next)
+		next = a.startBatch(ctx, next)
 		if !timer.Stop() {
 			select {
 			case <-timer.C:
@@ -391,12 +392,19 @@ func (a *schedulerActor) finishQueued(r *request, now time.Time, e error) {
 
 func (a *schedulerActor) expireQueued(now time.Time) time.Time {
 	var next time.Time
+	var costs serviceCosts
+	var gap *int64
+	if a.cfg.Mode == modeServing && a.cfg.Policy.FixedBatchSize == 0 && len(a.queue) > 0 && a.s != nil && a.s.runner != nil {
+		if age, known := a.s.runner.decisionIdleNanos(); known {
+			gap = &age
+		}
+	}
 	for index, pending := range []*[]*request{&a.queue, &a.deferred} {
 		kept := (*pending)[:0]
 		for _, r := range *pending {
 			e := requestError(r, now)
 			state := RequestState{Context: r.context, ElapsedMS: milliseconds(now.Sub(r.received))}
-			drop := a.cfg.Mode == modeServing && index == 0 && a.cfg.Policy.FixedBatchSize == 0 && requestDeadlinePolicy(state) == DeadlineDrop
+			drop := e == nil && a.cfg.Mode == modeServing && index == 0 && a.cfg.Policy.FixedBatchSize == 0 && requestDeadlinePolicy(state) == DeadlineDrop && !math.IsInf(minimumService(a.cfg.Policy, state, gap, &costs), 1)
 			if e == nil && drop && SLOExpired(state) {
 				e = ErrDeadlineInfeasible
 			}
@@ -420,13 +428,13 @@ func (a *schedulerActor) expireQueued(now time.Time) time.Time {
 	}
 	return next
 }
-func (a *schedulerActor) startBatch(ctx context.Context, now, next time.Time) time.Time {
+func (a *schedulerActor) startBatch(ctx context.Context, next time.Time) time.Time {
 	if len(a.active) != 0 {
 		return next
 	}
 	a.started = time.Time{}
 	for len(a.queue)+len(a.deferred) > 0 {
-		now = time.Now()
+		now := time.Now()
 		next = a.expireQueued(now)
 		if len(a.queue)+len(a.deferred) == 0 {
 			break
