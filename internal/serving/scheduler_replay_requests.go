@@ -424,7 +424,7 @@ func (s *schedulerReplayState) estimateAdmission(i *schedulerReplayInstance, r *
 		return AdmissionEstimate{}
 	}
 	in := AdmissionInput{Policy: i.policy, Observed: i.admissionObserved, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.idleNanos(s.now), Candidate: s.gatewayRequestState(i, r)}
-	return i.admissionProjections.project(in, &s.admissionScratch)
+	return projectAdmission(in, &s.admissionScratch)
 }
 
 func replayAdmissionArrival(at time.Time, history []float64) admissionArrival {
@@ -454,7 +454,6 @@ func (s *schedulerReplayState) gatewayRequestState(i *schedulerReplayInstance, r
 }
 
 func (s *schedulerReplayState) prepareAdmissionInstance(i *schedulerReplayInstance) {
-	clear(i.admissionProjections)
 	clear(i.admissionObserved)
 	i.admissionObserved = i.admissionObserved[:0]
 	clear(i.admissionAssignments)
@@ -575,7 +574,6 @@ func (s *schedulerReplayState) endAdmission() {
 	s.admissionPrepared = false
 	s.admissionScratch.quantiles.Reset()
 	for _, i := range s.instances {
-		clear(i.admissionProjections)
 		clear(i.admissionObserved)
 		i.admissionObserved = i.admissionObserved[:0]
 		clear(i.admissionAssignments)

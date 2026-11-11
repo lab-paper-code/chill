@@ -267,34 +267,3 @@ func BenchmarkAdmissionProjectionBacklog(b *testing.B) {
 		})
 	}
 }
-
-func TestAdmissionProjectionReusesOnlyIdenticalDispatchInputs(t *testing.T) {
-	in := AdmissionInput{Policy: admissionTestPolicy(), Candidate: admissionTestRequest("candidate")}
-	var projections admissionProjections
-	var scratch admissionScratch
-	for range 2 {
-		if got, want := projections.project(in, &scratch), EstimateAdmission(in); got != want {
-			t.Fatalf("cached projection=%+v, want %+v", got, want)
-		}
-	}
-	if len(projections) != 1 {
-		t.Fatal("identical projection was not reused")
-	}
-	zero := int64(0)
-	in.LastServiceEndAgeNanos = &zero
-	projections.project(in, &scratch)
-	in.Assignments = []firstfloor.RequestState{admissionTestRequest("assigned")}
-	if got, want := projections.project(in, &scratch), EstimateAdmission(in); got != want {
-		t.Fatalf("assignment change reused stale projection: %+v, want %+v", got, want)
-	}
-	lifetime := float64(1)
-	in.Candidate.RemainingLifetimeMS = &lifetime
-	projections.project(in, &scratch)
-	lifetime = 1000
-	if got, want := projections.project(in, &scratch), EstimateAdmission(in); got != want {
-		t.Fatalf("lifetime pointer mutation reused stale projection: %+v, want %+v", got, want)
-	}
-	if len(projections) != 5 {
-		t.Fatalf("distinct projection inputs were conflated: %d", len(projections))
-	}
-}

@@ -103,7 +103,6 @@ type runtimeInstance struct {
 	admissionArrivals    map[string]admissionArrival
 	admissionUnknown     bool
 	admissionNormal      int
-	admissionProjections admissionProjections
 	admissionAt          time.Time
 	admissionCompleted   map[admissionRequestKey]time.Time
 }
@@ -655,7 +654,6 @@ func admissionInstanceAvailable(i *runtimeInstance) bool {
 
 func (i *runtimeInstance) indexAdmissionSnapshot() {
 	clear(i.admissionCalls[:cap(i.admissionCalls)])
-	clear(i.admissionProjections)
 	i.admissionCalls = i.admissionCalls[:0]
 	clear(i.admissionAssignments[:cap(i.admissionAssignments)])
 	i.admissionAssignments = i.admissionAssignments[:0]
@@ -722,7 +720,6 @@ func (r *Runtime) endAdmissionLocked() {
 	r.admissionPrepared = false
 	r.admissionScratch.quantiles.Reset()
 	for _, i := range r.instances {
-		clear(i.admissionProjections)
 		clear(i.admissionObserved)
 		clear(i.admissionArrivals)
 		clear(i.admissionCalls[:cap(i.admissionCalls)])
@@ -747,7 +744,7 @@ func (r *Runtime) estimateLocked(i *runtimeInstance, c *Call, now time.Time) Adm
 		i.admissionAssignments[j] = q
 	}
 	age := max(now.Sub(i.nativeAdmissionAt()), 0)
-	return i.admissionProjections.project(AdmissionInput{Policy: policy, Observed: native.Requests, Assignments: i.admissionAssignments, SnapshotAge: age, LastServiceEndAgeNanos: native.LastServiceEndAgeNanos, Candidate: candidate}, &r.admissionScratch)
+	return projectAdmission(AdmissionInput{Policy: policy, Observed: native.Requests, Assignments: i.admissionAssignments, SnapshotAge: age, LastServiceEndAgeNanos: native.LastServiceEndAgeNanos, Candidate: candidate}, &r.admissionScratch)
 }
 
 func admissionCallState(c *Call, now time.Time) firstfloor.RequestState {

@@ -44,51 +44,6 @@ type admissionScratch struct {
 	idle          int64
 }
 
-// One executor's immutable observation and append-only assignments live for one
-// dispatch. Only equal candidate spans and assignment prefixes share a projection.
-type admissionProjections map[admissionProjectionKey]AdmissionEstimate
-
-type admissionProjectionKey struct {
-	candidate                            firstfloor.RequestState
-	age                                  time.Duration
-	assignments                          int
-	idle, precedingIdle, exchangeElapsed int64
-	lifetime                             float64
-	present                              uint8
-}
-
-func (p *admissionProjections) project(in AdmissionInput, scratch *admissionScratch) AdmissionEstimate {
-	key := admissionProjectionKey{candidate: in.Candidate, age: in.SnapshotAge, assignments: len(in.Assignments)}
-	if in.LastServiceEndAgeNanos != nil {
-		key.present |= 1
-		key.idle = *in.LastServiceEndAgeNanos
-	}
-	if in.Candidate.RemainingLifetimeMS != nil {
-		key.present |= 2
-		key.lifetime = *in.Candidate.RemainingLifetimeMS
-		key.candidate.RemainingLifetimeMS = nil
-	}
-	if in.Candidate.PrecedingIdleNanos != nil {
-		key.present |= 4
-		key.precedingIdle = *in.Candidate.PrecedingIdleNanos
-		key.candidate.PrecedingIdleNanos = nil
-	}
-	if in.Candidate.ExchangeElapsedNanos != nil {
-		key.present |= 8
-		key.exchangeElapsed = *in.Candidate.ExchangeElapsedNanos
-		key.candidate.ExchangeElapsedNanos = nil
-	}
-	if result, found := (*p)[key]; found {
-		return result
-	}
-	result := projectAdmission(in, scratch)
-	if *p == nil {
-		*p = make(admissionProjections)
-	}
-	(*p)[key] = result
-	return result
-}
-
 // Executor-level failures do not depend on a candidate's percentile. Check
 // these once per dispatch, including whether any running service can survive.
 func admissionExecutorKnown(in AdmissionInput, quantiles *firstfloor.QuantileCache) bool {

@@ -323,20 +323,36 @@ func (d *ServiceDistribution) ResidualQuantileNanos(gap *int64, elapsed int64, p
 	if d == nil || elapsed < 0 || gap != nil && *gap < 0 || math.IsNaN(percentile) || percentile < 0 || percentile > 100 {
 		return 0, support, false
 	}
-	support = d.support(gap)
+	// Neighbors and elapsed cutoffs are invariant during the inverse-CDF
+	// search. Preserve trial order and float summation, but compute them once.
+	type residualNeighbors struct {
+		a, b    []ServiceSample
+		expired int
+	}
+	var local [32]residualNeighbors
+	nearest := local[:0]
+	if len(d.trials) > cap(nearest) {
+		nearest = make([]residualNeighbors, 0, len(d.trials))
+	}
 	total := 0.0
 	for i := range d.trials {
-		a, b, _, _ := d.trials[i].nearest(gap)
+		a, b, distance, outside := d.trials[i].nearest(gap)
 		if n := len(a) + len(b); n > 0 {
-			total += float64(n-serviceUpperBound(a, elapsed)-serviceUpperBound(b, elapsed)) / float64(n)
+			expired := serviceUpperBound(a, elapsed) + serviceUpperBound(b, elapsed)
+			nearest = append(nearest, residualNeighbors{a, b, expired})
+			total += float64(n-expired) / float64(n)
+			support.TrialCount++
+			support.DistanceNanos = max(support.DistanceNanos, distance)
+			support.OutsideSupport = support.OutsideSupport || outside
 		}
 	}
-	retry := total == 0
-	if retry {
+	if total == 0 {
 		support = ConditionalSupport{}
+		nearest = nearest[:0]
 		for i := range d.trials {
 			a, b, distance, outside := d.trials[i].nearestSurvivors(gap, elapsed)
 			if len(a)+len(b) > 0 {
+				nearest = append(nearest, residualNeighbors{a: a, b: b})
 				total++
 				support.TrialCount++
 				support.DistanceNanos = max(support.DistanceNanos, distance)
@@ -353,15 +369,9 @@ func (d *ServiceDistribution) ResidualQuantileNanos(gap *int64, elapsed int64, p
 			return false
 		}
 		mass := 0.0
-		for i := range d.trials {
-			a, b, _, _ := d.trials[i].nearest(gap)
-			if retry {
-				a, b, _, _ = d.trials[i].nearestSurvivors(gap, elapsed)
-			}
-			n := len(a) + len(b)
-			if n > 0 {
-				mass += float64(serviceUpperBound(a, value)+serviceUpperBound(b, value)-serviceUpperBound(a, elapsed)-serviceUpperBound(b, elapsed)) / float64(n)
-			}
+		for _, trial := range nearest {
+			n := len(trial.a) + len(trial.b)
+			mass += float64(serviceUpperBound(trial.a, value)+serviceUpperBound(trial.b, value)-trial.expired) / float64(n)
 		}
 		return mass > 0 && mass/total >= percentile/100
 	})

@@ -106,3 +106,18 @@ func BenchmarkReplayDispatchBlockedExecutors(b *testing.B) {
 		}
 	}
 }
+
+func TestReplayAdmissionProjectionDoesNotAllocatePerCandidate(t *testing.T) {
+	s := replayAdmissionState(t)
+	r := replayAdmissionPending(s, "candidate", s.snap.Workloads[0])
+	ctx := context.Background()
+	var estimate AdmissionEstimate
+	allocations := testing.AllocsPerRun(100, func() {
+		s.beginAdmission(ctx)
+		estimate = s.estimateAdmission(s.instances[0], r)
+		s.endAdmission()
+	})
+	if !estimate.Known || allocations != 0 {
+		t.Fatalf("warm dispatch projection: estimate=%+v allocations=%g, want 0", estimate, allocations)
+	}
+}
