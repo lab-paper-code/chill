@@ -209,6 +209,11 @@ type observerRefresh struct {
 	clusterPods      *corev1.PodList
 	nodesObservedAt  time.Time
 	listNanos        time.Duration
+	nodesNanos       time.Duration
+	podsNanos        time.Duration
+	resourcesNanos   time.Duration
+	classesNanos     time.Duration
+	servicesNanos    time.Duration
 	sourceProbeNanos time.Duration
 }
 
@@ -252,7 +257,8 @@ func (o *Observer) refreshLocked(ctx context.Context) (result observerRefresh, e
 	result.nodesObservedAt = listStarted.UTC()
 	nodes, err := o.kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	result.nodes = nodes
-	result.listNanos += time.Since(listStarted)
+	result.nodesNanos = time.Since(listStarted)
+	result.listNanos += result.nodesNanos
 	if err != nil {
 		return result, o.refreshFailure(err)
 	}
@@ -264,7 +270,8 @@ func (o *Observer) refreshLocked(ctx context.Context) (result observerRefresh, e
 	}
 	listStarted = time.Now()
 	pods, err := o.kube.CoreV1().Pods(o.clusterWatchNamespace()).List(ctx, podOptions)
-	result.listNanos += time.Since(listStarted)
+	result.podsNanos = time.Since(listStarted)
+	result.listNanos += result.podsNanos
 	if err != nil {
 		return result, o.refreshFailure(err)
 	}
@@ -277,13 +284,15 @@ func (o *Observer) refreshLocked(ctx context.Context) (result observerRefresh, e
 	}
 	listStarted = time.Now()
 	resources, err := o.store.SourceResources(ctx, pods.Items, o.config.Namespace)
-	result.listNanos += time.Since(listStarted)
+	result.resourcesNanos = time.Since(listStarted)
+	result.listNanos += result.resourcesNanos
 	if err != nil {
 		return result, o.refreshFailure(err)
 	}
 	listStarted = time.Now()
 	err = o.store.client.List(ctx, &result.classes)
-	result.listNanos += time.Since(listStarted)
+	result.classesNanos = time.Since(listStarted)
+	result.listNanos += result.classesNanos
 	if err != nil {
 		return result, o.refreshFailure(err)
 	}
@@ -322,7 +331,8 @@ func (o *Observer) refreshLocked(ctx context.Context) (result observerRefresh, e
 	// UID label, including terminal Pods, to verify identity and duplicates.
 	listStarted = time.Now()
 	services, servicesErr := o.kube.CoreV1().Services(o.config.Namespace).List(ctx, metav1.ListOptions{})
-	result.listNanos += time.Since(listStarted)
+	result.servicesNanos = time.Since(listStarted)
+	result.listNanos += result.servicesNanos
 	servicesByName := map[string]*corev1.Service{}
 	if servicesErr == nil {
 		for i := range services.Items {

@@ -79,6 +79,12 @@ type SchedulerControlObservation struct {
 	Record      time.Duration                     `json:"recordNanos"`
 	Launch      time.Duration                     `json:"launchNanos"`
 	Evaluation  serving.SchedulerEvaluationTiming `json:"evaluation"`
+
+	RefreshNodes         time.Duration `json:"refreshNodesNanos"`
+	RefreshPods          time.Duration `json:"refreshPodsNanos"`
+	RefreshResources     time.Duration `json:"refreshResourcesNanos"`
+	RefreshDeviceClasses time.Duration `json:"refreshDeviceClassesNanos"`
+	RefreshServices      time.Duration `json:"refreshServicesNanos"`
 }
 
 type SchedulerObservation struct {

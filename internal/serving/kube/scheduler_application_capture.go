@@ -45,6 +45,11 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 	refreshed, err := c.observer.refresh(ctx)
 	if timing != nil {
 		timing.RefreshList = refreshed.listNanos
+		timing.RefreshNodes = refreshed.nodesNanos
+		timing.RefreshPods = refreshed.podsNanos
+		timing.RefreshResources = refreshed.resourcesNanos
+		timing.RefreshDeviceClasses = refreshed.classesNanos
+		timing.RefreshServices = refreshed.servicesNanos
 		timing.SourceProbe = refreshed.sourceProbeNanos
 	}
 	if err != nil {
@@ -57,7 +62,9 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 		listStarted := time.Now()
 		pods, err = c.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{FieldSelector: nonTerminalPodSelector})
 		if timing != nil {
-			timing.RefreshList += time.Since(listStarted)
+			elapsed := time.Since(listStarted)
+			timing.RefreshList += elapsed
+			timing.RefreshPods += elapsed
 		}
 		if err != nil {
 			return s, err

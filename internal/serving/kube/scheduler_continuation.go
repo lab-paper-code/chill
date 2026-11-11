@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // Completions coalesces action outcomes; receiving is not proof of success.
@@ -15,25 +17,48 @@ func (c *SchedulerController) Completions() <-chan struct{} { return c.completio
 
 // Continue advances only already admitted owners. It shares Tick's serialization
 // with configuration changes, but never evaluates or admits another candidate.
-func (c *SchedulerController) Continue(ctx context.Context, now time.Time) error {
+func (c *SchedulerController) Continue(ctx context.Context, now time.Time) (err error) {
+	started := time.Now()
+	event := observation.SchedulerControlObservation{Scope: "continue", TickAt: now, StartedAt: started.UTC(), Phase: "lock"}
+	stage, stageStarted := &event.LockWait, started
+	next := func(phase string, elapsed *time.Duration) {
+		*stage += time.Since(stageStarted)
+		event.Phase, stage, stageStarted = phase, elapsed, time.Now()
+	}
+	defer func() {
+		finished := time.Now()
+		*stage += finished.Sub(stageStarted)
+		event.Rest = event.Capture - event.Window - event.RefreshList - event.SourceProbe
+		event.FinishedAt, event.Elapsed = finished.UTC(), finished.Sub(started)
+		if err != nil {
+			event.Error = err.Error()
+		}
+		if recordErr := c.observationLog.SchedulerRecord(observation.SchedulerObservation{At: event.FinishedAt, Control: &event}); recordErr != nil {
+			ctrl.Log.Error(recordErr, "record scheduler Continue completion")
+		}
+	}()
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
+	next("capture", &event.Capture)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	c.mu.Lock()
 	config := c.config
 	c.mu.Unlock()
-	snapshot, err := c.captureReconciled(ctx, now, config, true, nil)
+	snapshot, err := c.captureReconciled(ctx, now, config, true, &event)
 	if err != nil {
 		return err
 	}
+	event.DecisionAt = snapshot.At
+	next("publish", &event.Publish)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	c.publishSnapshotLocked(&snapshot)
+	next("launch", &event.Launch)
 	c.continueTransitionsLocked(config.Settings, true, func(target serving.SchedulerCandidate) {
 		c.launchTargetLocked(ctx, target, config)
 	})

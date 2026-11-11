@@ -59,7 +59,7 @@ control376에서 두 정책 모두 genesis2 IC 증설을 정밀 평가로 고르
 |---|---|---|---|
 | 1 | R1 route 의도 보존 | rebase에서 routing weight 변경 집합과 writer·정책 소유 집합을 분리한다. 변경 destination은 owner의 frozen `Before.Routing`과 frozen 최종 target routing을 비교해 식별하고, delta 값은 실행 중인 stage의 `selected.Routing`(Ready-subset·bridge 포함)에서 읽는다. 기존 물리·정책 변경 집합과 writer watermark·정책 적용 대상(`owned`)은 그대로다. 다른 owner의 `newer/held/withdrawn` fence와 기존 동시 owner 합성(`reservation_partial_test.go`)을 유지 | 18:31:36 입력에서 rebased route가 537/463. 기존 동시 owner·Ready-subset·bridge 회귀 통과 |
 | 2 | S1 범위 밖 실행 중 batch | 생존 표본이 전혀 없으면 남은 시간을 같은 gap 조건 분포에서 새로 뽑은 service 시간으로 둔다(명시적 재시작 대체모델). 실제 남은 시간은 이 표본보다 길거나 짧을 수 있어 SLO·에너지 순위에 양방향 편향이 생기며 보수성을 보장하지 않는다. assumptions와 conditional evidence에 `RunningResidualBeyondSupport`로 instance·batch·elapsed·profile 최대·적용 모델을 남긴다. 해당 batch 하나의 시간에만 영향을 주고 replay 전체를 무효로 하지 않는다. D40 계약을 바꾼다 | 18:39 입력에서 정밀 평가가 진행되고 keep·후보 결과에 가정이 기록됨 |
-| 3 | T1 refresh 분해 | `refreshListNanos`를 List 종류별(Nodes, Pods, 자원, DeviceClasses, Services) 시간으로 나눠 기록한다. Continue와 route 적용의 refresh 시간도 기록한다 | 다음 실측에서 6.2초의 지배 List와 route·Continue의 refresh 비중 확정 |
+| 3 | T1 refresh 분해 | `refreshListNanos`를 List 종류별(Nodes, Pods, 자원, DeviceClasses, Services) 시간으로 나눠 기록한다. Continue의 capture 시간도 같은 구간으로 기록한다. route 적용 내부 refresh 시간은 Operations 인터페이스 확장이 필요해 다음 단위로 둔다 | 다음 실측에서 6.2초의 지배 List와 Continue의 refresh 비중 확정 |
 
 R1이 첫 1분 이후 실패의 직접 원인이다. S1은 판단 정지의 직접 원인이다.
 

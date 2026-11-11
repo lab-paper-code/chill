@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -75,9 +76,67 @@ func TestSchedulerTickReusesRefreshListsAndRecordsCaptureSpans(t *testing.T) {
 						t.Fatalf("capture completion unavailable: %+v %v", rows, err)
 					}
 					event := rows[0].Control
+					assertRefreshListSpans(t, event)
 					if event.Window <= 0 || event.RefreshList < listElapsed || event.SourceProbe < 0 || event.Rest < 0 ||
 						event.Window+event.RefreshList+event.SourceProbe+event.Rest != event.Capture {
 						t.Fatalf("capture sub-spans overlap, omit live I/O, or exceed capture: %+v; List duration=%s", event, listElapsed)
+					}
+				}
+			}
+		})
+	}
+}
+
+func assertRefreshListSpans(t *testing.T, event *observation.SchedulerControlObservation) {
+	t.Helper()
+	if event.RefreshNodes <= 0 || event.RefreshPods <= 0 || event.RefreshResources <= 0 ||
+		event.RefreshDeviceClasses <= 0 || event.RefreshServices <= 0 {
+		t.Fatalf("missing per-List timing: %+v", event)
+	}
+	total := event.RefreshNodes + event.RefreshPods + event.RefreshResources + event.RefreshDeviceClasses + event.RefreshServices
+	if total > event.RefreshList {
+		t.Fatalf("per-List spans exceed refresh total: %s > %s", total, event.RefreshList)
+	}
+}
+
+func TestSchedulerContinueRecordsCaptureSpans(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		name := "success"
+		if fail {
+			name = "failed-node-list"
+		}
+		t.Run(name, func(t *testing.T) {
+			controller := schedulerEmptyPoolController(t)
+			if fail {
+				controller.kube.(*kubefake.Clientset).PrependReactor(listVerb, "nodes", func(ktesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("node List failed")
+				})
+			}
+			at := time.Now().UTC()
+			err := controller.Continue(context.Background(), at)
+			if (err != nil) != fail {
+				t.Fatalf("Continue error = %v, want failure %t", err, fail)
+			}
+			for _, summary := range []bool{false, true} {
+				rows, _, _, _, err := controller.observationLog.SchedulerObservationPage(context.Background(), at, time.Now().Add(time.Second), 100, 0, observation.SchedulerObservationSelection{Summary: summary})
+				if err != nil || len(rows) != 1 || rows[0].Control == nil {
+					t.Fatalf("Continue completion unavailable: %+v %v", rows, err)
+				}
+				event := rows[0].Control
+				if event.Scope != "continue" || !event.TickAt.Equal(at) || event.Status != "" ||
+					event.Evaluate != 0 || event.Window <= 0 || event.RefreshNodes <= 0 ||
+					event.Rest < 0 || event.Window+event.RefreshList+event.SourceProbe+event.Rest != event.Capture {
+					t.Fatalf("invalid Continue capture record: %+v", event)
+				}
+				if fail {
+					if event.Error == "" || event.RefreshPods != 0 || event.RefreshResources != 0 ||
+						event.RefreshDeviceClasses != 0 || event.RefreshServices != 0 || event.RefreshNodes != event.RefreshList {
+						t.Fatalf("failed Continue recorded unexecuted Lists: %+v", event)
+					}
+				} else {
+					assertRefreshListSpans(t, event)
+					if event.Error != "" || event.Publish <= 0 || event.Launch <= 0 {
+						t.Fatalf("successful Continue lost completion spans: %+v", event)
 					}
 				}
 			}

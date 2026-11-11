@@ -220,11 +220,16 @@ Tick 완료 행의 동기 제출도 포함한다. `admitError`와 Tick의 `error
 capture 하위 구간은 `windowNanos`(LoadWindow), `refreshListNanos`(Node·Pod·source resource·DeviceClass·Service List),
 `sourceProbeNanos`(병렬 native probe와 후속 UID 확인의 `probes.Wait`), `restNanos`(잠금 대기·관측 정리·snapshot 조립·reconcile 등 나머지)다.
 namespace-only observer의 전체 POOL Pod List도 `refreshListNanos`에 포함한다.
+List 종류별 `refreshNodesNanos`, `refreshPodsNanos`, `refreshResourcesNanos`(SourceResources의 Deployment·ReplicaSet 조회),
+`refreshDeviceClassesNanos`, `refreshServicesNanos`도 기록하며 합은 `refreshListNanos` 이하이다.
+namespace-only observer의 전체 POOL Pod List 시간은 `refreshPodsNanos`에도 더한다.
+`scope:"continue"`는 같은 capture 하위 구간과 lock 대기·publish·launch 시간을 기록한다.
+Continue는 기존 owner만 진행하며 평가 처분은 기록하지 않는다.
 하위 구간은 중복 없이 `captureNanos`로 합산하며 오류·중도 반환도 실제 실행한 구간만 기록한다.
 capture는 refresh의 Node·DeviceClass List를 재사용한다. Node의 `observedAt`은 해당 List 요청 직전의 보수적인 하한이다.
 `recordNanos`는 기존 OnDecision callback 전체이며 실패한 callback 시간도 포함한다.
 완료 행 자체의 제출은 해당 행의 종료 경계 뒤이므로 `elapsedNanos`에 포함하지 않는다.
-두 scope 모두 Keep·오류·중도 반환을 기록하며 `phase`는 마지막 진입 단계다.
+모든 scope는 오류·중도 반환을 기록하며 `phase`는 마지막 진입 단계다. Tick은 Keep도 기록한다.
 평가 처분 `status`·`targetID`·`fallback`은 Tick 완료 행만 제공한다.
 round는 호출 식별·전체 시간·오류만 소유하며 Tick의 빈 오류 반환값에서 처분을 추정하지 않는다.
 결정 callback이 기록 후 취소해도 Tick 행의 처분과 `decisionAt`은 유지한다.
