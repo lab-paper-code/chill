@@ -80,6 +80,7 @@ Use a virtual environment for local installation. SmolVLM preprocessor tests
 retain their optional runtime-image dependency skip; CI does not install those extras.
 Deployment CLI smoke tests also require full Git history to archive the pinned
 historical power-source commit; CI checks out with `fetch-depth: 0`.
+Set `TEST_PYTHON=/path/to/python3` for `make test-loadgen` (also used by `make test`); load-generator tests require Python 3.10+.
 
 ```sh
 make lint                 # golangci-lint

@@ -43,6 +43,7 @@ RKNN_OUTPUT ?=
 RKNN_CONVERSION_RECORD ?=
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
+TEST_PYTHON ?= python3
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -140,7 +141,8 @@ test-artifact-tools: ## Run model-artifact build-tool and preprocessor module te
 
 .PHONY: test-loadgen
 test-loadgen: ## Run load-generator tests.
-	PYTHONPATH=load-generator/src python3 -m unittest discover -s load-generator/tests
+	@$(TEST_PYTHON) -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else "test-loadgen requires Python >= 3.10 (production image uses Python 3.12); set TEST_PYTHON=/path/to/python3.10+")'
+	PYTHONPATH=load-generator/src $(TEST_PYTHON) -m unittest discover -s load-generator/tests
 
 .PHONY: test-helm-release-flow
 test-helm-release-flow: ## Verify values-file and explicit image precedence in the Helm release flow.
