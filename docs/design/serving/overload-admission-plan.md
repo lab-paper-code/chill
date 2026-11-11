@@ -74,7 +74,7 @@ flowchart LR
 
 **실행 직전(executor, `internal/firstfloor`).** batch 확정 직전에 최신 monotonic 시각으로 각 요청의 취소·최종 기한을 검사하고, 정상 요청의 실제 남은 SLO 예산을 다시 계산한다(`ChooseBatch`, `policy.go:61-68,138-217` 재사용). 만료 요청을 제거하면 batch를 다시 고른다. 현재 `expireQueued`는 `startBatch` 진입 전에 한 번만 돌고 `startBatch`는 고정 `now`를 쓴다(`scheduler.go:204-211,373-482`). profiling 분기는 그대로 둔다. 불가능한 요청은 그 요청의 정책을 따른다: Reject는 실행 없이 종료(기존 drop 경로), Delay는 executor 지연 큐(기존 defer 경로). 실행 중인 batch는 선점하지 않는다.
 
-**거절 응답.** 과부하 admission 거절은 같은 구조를 쓴다(인증·입력 오류 계약은 그대로): `code`(`QueueFull`·`DeadlineInfeasible`), `stage`(`gateway`·`executor`), `policy`, `predictedCompletionNanos`(gateway 판단 시), `remainingSLONanos`. executor 거절은 기존 미실행 증명(`internal/serving/firstfloor/client.go:275-290`)을 유지해 timeout과 구분한다. HTTP: `QueueFull` 429(기존), `DeadlineInfeasible` 503. 현재 `SLODeadlineDrop`(408, timeout으로 분류)은 `DeadlineInfeasible`로 대체한다(`path_timing.go:92` 소비자 포함). native queue-full(actor·HTTP semaphore 두 진입점)도 구조화 응답·requestID 상관·미실행 증명을 갖춘 `QueueFull stage=executor`로 전달한다. native lifetime timeout은 `BackendUnavailable`이 아니라 명시적 `RequestTimeout`으로 변환한다(`firstfloor/client.go:231-260`, `runtime.go:634-638`). 429·503 모두 평가에서 실패로 남고 자동 재시도는 추가하지 않는다.
+**거절 응답.** 과부하 admission 거절은 같은 구조를 쓴다(인증·입력 오류 계약은 그대로): `code`(`QueueFull`·`DeadlineInfeasible`), `stage`(`gateway`·`executor`), `policy`, `predictedCompletionNanos`(gateway 판단 시), `remainingSLONanos`. executor 거절은 기존 미실행 증명(`internal/serving/firstfloor/client.go:275-290`)을 유지해 timeout과 구분한다. HTTP: `QueueFull` 429(기존), `DeadlineInfeasible` 503. 현재 `SLODeadlineDrop`(408, timeout으로 분류)은 `DeadlineInfeasible`로 대체한다(`path_timing.go:92` 소비자 포함). native queue-full도 `QueueFull stage=executor`로 전달한다. actor queue-full은 검증된 요청 identity·미실행 증명으로 처리한다. HTTP semaphore의 pre-decode queue-full(`internal/firstfloor/server.go:101-115`)은 native가 요청을 아직 모르므로 명시적 미접수 응답으로 검증하고, gateway가 그 exchange의 동결 Dispatch identity·policy로 정규화한다. 없는 native progress는 합성하지 않는다. native lifetime timeout은 `BackendUnavailable`이 아니라 명시적 `RequestTimeout`으로 변환한다(`firstfloor/client.go:231-260`, `runtime.go:634-638`). 429·503 모두 평가에서 실패로 남고 자동 재시도는 추가하지 않는다.
 
 ### 2.4 계획기 replay 일치
 
@@ -141,7 +141,7 @@ U3는 U2의 executor 거절 응답 계약을 쓰므로 U2 뒤다. U5·U7은 U3�
 
 ## 5. 검증
 
-- **과부하 재현 회귀(핵심 수용 기준).** 실제 measured batch 크기별 service 분포(jetsono IC profile)와 fill 조건을 쓰는 dynamic fixture에 31 req/s, SLO 1초, lifetime 2초를 30초 넣는다. 허용 기준:
+- **과부하 재현 회귀(핵심 수용 기준).** 실제 measured batch 크기별 service 분포(jetsono IC profile)와 fill 조건을 쓰는 dynamic fixture에 31 req/s, SLO 1초, lifetime 2초를 30초 넣는다. arrival trace·service sample 순서와 seed·POST reserve·초기 상태·판정 시각을 동결한다. 변경 전·Reject·Delay의 예상 outcome 개수와 허용 오차를 fixture에 수치로 적고 assert한다. runtime·replay 개수 일치는 같은 가상 시각과 같은 service sequence에서 검사한다. 허용 기준:
   - 변경 전 코드: 기한 내 성공이 0에 가깝다(control378과 같은 모양). 이 fixture가 원래 결함을 재현함을 먼저 보인다.
   - Reject: 기한 내 성공 수가 변경 전보다 크고, 실행된 요청 중 SLO 초과 비율이 작다. 거절은 성공으로 세지 않는다. 기대 비율(처리량/수요)은 batch fill과 작은 batch 성능을 무시한 상한 가설이며 판정 기준이 아니다.
   - Delay: 결과가 onTime·late·timeout으로 분류되고 합이 offered와 같다. Reject와의 우열은 단정하지 않는다(지연 batch 실행 중 도착한 정상 요청이 막힐 수 있다).
