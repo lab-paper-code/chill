@@ -424,7 +424,7 @@ func (s *schedulerReplayState) estimateAdmission(i *schedulerReplayInstance, r *
 		return AdmissionEstimate{}
 	}
 	in := AdmissionInput{Policy: i.policy, Observed: i.admissionObserved, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.idleNanos(s.now), Candidate: s.gatewayRequestState(i, r)}
-	return projectAdmission(in, &s.admissionScratch)
+	return i.admissionProjections.project(in, &s.admissionScratch)
 }
 
 func replayAdmissionArrival(at time.Time, history []float64) admissionArrival {
@@ -454,6 +454,7 @@ func (s *schedulerReplayState) gatewayRequestState(i *schedulerReplayInstance, r
 }
 
 func (s *schedulerReplayState) prepareAdmissionInstance(i *schedulerReplayInstance) {
+	clear(i.admissionProjections)
 	clear(i.admissionObserved)
 	i.admissionObserved = i.admissionObserved[:0]
 	clear(i.admissionAssignments)
@@ -472,7 +473,7 @@ func (s *schedulerReplayState) prepareAdmissionInstance(i *schedulerReplayInstan
 	for _, r := range i.batch {
 		i.admissionObserved = append(i.admissionObserved, s.nativeRequestState(i, r))
 	}
-	i.admissionUnknown = !admissionExecutorKnown(AdmissionInput{Policy: i.policy, Observed: i.admissionObserved, LastServiceEndAgeNanos: i.idleNanos(s.now)})
+	i.admissionUnknown = !admissionExecutorKnown(AdmissionInput{Policy: i.policy, Observed: i.admissionObserved, LastServiceEndAgeNanos: i.idleNanos(s.now)}, &s.admissionScratch.quantiles)
 	if i.admissionUnknown {
 		return
 	}
@@ -486,6 +487,7 @@ func (s *schedulerReplayState) prepareAdmissionInstance(i *schedulerReplayInstan
 
 func (s *schedulerReplayState) beginAdmission(ctx context.Context) bool {
 	s.admissionPrepared, s.admissionReady = true, false
+	s.admissionScratch.quantiles.Reset()
 	s.dispatchUIDs = s.dispatchUIDs[:0]
 	if s.admissionPending == nil {
 		s.admissionPending = make(map[string][]*schedulerReplayRequest)
@@ -521,7 +523,12 @@ func (s *schedulerReplayState) beginAdmission(ctx context.Context) bool {
 			q.ArrivalRate = i.admissionArrivals[r.source.Definition.UID].rate()
 			i.admissionAssignments = append(i.admissionAssignments, q)
 		}
-		i.admissionUnknown = !admissionExecutorKnown(AdmissionInput{Policy: i.policy, Observed: i.admissionObserved, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.idleNanos(s.now)})
+		for _, q := range i.admissionAssignments {
+			if i.policy.FixedBatchSize == 0 && !admissionLifetimeExpired(q) && !admissionRequestKnown(q) {
+				i.admissionUnknown = true
+				break
+			}
+		}
 		s.admissionReady = s.admissionReady || !i.admissionUnknown
 	}
 	slices.Sort(s.dispatchUIDs)
@@ -566,7 +573,9 @@ func (s *schedulerReplayState) indexAdmissionRequests(ctx context.Context) bool 
 
 func (s *schedulerReplayState) endAdmission() {
 	s.admissionPrepared = false
+	s.admissionScratch.quantiles.Reset()
 	for _, i := range s.instances {
+		clear(i.admissionProjections)
 		clear(i.admissionObserved)
 		i.admissionObserved = i.admissionObserved[:0]
 		clear(i.admissionAssignments)

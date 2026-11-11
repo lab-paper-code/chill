@@ -99,6 +99,7 @@ type schedulerReplayInstance struct {
 	admissionArrivals    map[string]admissionArrival
 	admissionUnknown     bool
 	admissionNormal      int
+	admissionProjections admissionProjections
 }
 
 type schedulerReplayResult struct {

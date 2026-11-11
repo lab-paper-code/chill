@@ -36,6 +36,7 @@ type AdmissionEstimate struct {
 }
 
 type admissionScratch struct {
+	quantiles     firstfloor.QuantileCache
 	states        []firstfloor.RequestState
 	lifetimes     []float64
 	rates         map[string]float64
@@ -43,9 +44,54 @@ type admissionScratch struct {
 	idle          int64
 }
 
+// One executor's immutable observation and append-only assignments live for one
+// dispatch. Only equal candidate spans and assignment prefixes share a projection.
+type admissionProjections map[admissionProjectionKey]AdmissionEstimate
+
+type admissionProjectionKey struct {
+	candidate                            firstfloor.RequestState
+	age                                  time.Duration
+	assignments                          int
+	idle, precedingIdle, exchangeElapsed int64
+	lifetime                             float64
+	present                              uint8
+}
+
+func (p *admissionProjections) project(in AdmissionInput, scratch *admissionScratch) AdmissionEstimate {
+	key := admissionProjectionKey{candidate: in.Candidate, age: in.SnapshotAge, assignments: len(in.Assignments)}
+	if in.LastServiceEndAgeNanos != nil {
+		key.present |= 1
+		key.idle = *in.LastServiceEndAgeNanos
+	}
+	if in.Candidate.RemainingLifetimeMS != nil {
+		key.present |= 2
+		key.lifetime = *in.Candidate.RemainingLifetimeMS
+		key.candidate.RemainingLifetimeMS = nil
+	}
+	if in.Candidate.PrecedingIdleNanos != nil {
+		key.present |= 4
+		key.precedingIdle = *in.Candidate.PrecedingIdleNanos
+		key.candidate.PrecedingIdleNanos = nil
+	}
+	if in.Candidate.ExchangeElapsedNanos != nil {
+		key.present |= 8
+		key.exchangeElapsed = *in.Candidate.ExchangeElapsedNanos
+		key.candidate.ExchangeElapsedNanos = nil
+	}
+	if result, found := (*p)[key]; found {
+		return result
+	}
+	result := projectAdmission(in, scratch)
+	if *p == nil {
+		*p = make(admissionProjections)
+	}
+	(*p)[key] = result
+	return result
+}
+
 // Executor-level failures do not depend on a candidate's percentile. Check
 // these once per dispatch, including whether any running service can survive.
-func admissionExecutorKnown(in AdmissionInput) bool {
+func admissionExecutorKnown(in AdmissionInput, quantiles *firstfloor.QuantileCache) bool {
 	if in.Policy.FixedBatchSize > 0 {
 		return true
 	}
@@ -60,8 +106,8 @@ func admissionExecutorKnown(in AdmissionInput) bool {
 			return false
 		}
 	}
-	running, _, ok := admissionRunningResidual(in.Policy, in.Observed, 100)
-	if !ok || running == 0 && !admissionIdleSupported(in.Policy, in.LastServiceEndAgeNanos) {
+	running, _, ok := admissionRunningResidual(in.Policy, in.Observed, 100, quantiles)
+	if !ok || running == 0 && !admissionIdleSupported(in.Policy, in.LastServiceEndAgeNanos, quantiles) {
 		return false
 	}
 	for _, q := range in.Assignments {
@@ -87,12 +133,12 @@ func admissionPolicyKnown(p firstfloor.Policy, idle *int64) bool {
 	return true
 }
 
-func admissionIdleSupported(p firstfloor.Policy, idle *int64) bool {
+func admissionIdleSupported(p firstfloor.Policy, idle *int64, quantiles *firstfloor.QuantileCache) bool {
 	for _, b := range p.Batches {
 		if b.Size < 1 || p.MaxBatchSize > 0 && b.Size > p.MaxBatchSize {
 			continue
 		}
-		if _, _, ok := b.Distribution.QuantileNanos(idle, 100); ok {
+		if _, _, ok := quantiles.QuantileNanos(b.Distribution, idle, 100); ok {
 			return true
 		}
 	}
@@ -100,7 +146,7 @@ func admissionIdleSupported(p firstfloor.Policy, idle *int64) bool {
 }
 
 // A running batch has one physical residual, regardless of its member rows.
-func admissionRunningResidual(p firstfloor.Policy, states []firstfloor.RequestState, percentile float64) (int64, bool, bool) {
+func admissionRunningResidual(p firstfloor.Policy, states []firstfloor.RequestState, percentile float64, quantiles *firstfloor.QuantileCache) (int64, bool, bool) {
 	var batch uint64
 	var remaining int64
 	outside := false
@@ -119,7 +165,7 @@ func admissionRunningResidual(p firstfloor.Policy, states []firstfloor.RequestSt
 		if b == nil {
 			return 0, false, false
 		}
-		value, support, ok := b.Distribution.ResidualQuantileNanos(q.PrecedingIdleNanos, *q.ExchangeElapsedNanos, percentile)
+		value, support, ok := quantiles.ResidualQuantileNanos(b.Distribution, q.PrecedingIdleNanos, *q.ExchangeElapsedNanos, percentile)
 		if !ok {
 			return 0, false, false
 		}
@@ -132,10 +178,11 @@ func admissionRunningResidual(p firstfloor.Policy, states []firstfloor.RequestSt
 // deferred FIFO, fill wait, and survival-conditional running batch residuals.
 // Missing state or empirical support leaves admission unknown, never unchecked.
 func EstimateAdmission(in AdmissionInput) AdmissionEstimate {
-	if !admissionExecutorKnown(in) {
+	var scratch admissionScratch
+	if !admissionExecutorKnown(in, &scratch.quantiles) {
 		return AdmissionEstimate{}
 	}
-	return projectAdmission(in, &admissionScratch{})
+	return projectAdmission(in, &scratch)
 }
 
 // projectAdmission owns reusable projection storage; immutable native snapshots
@@ -163,7 +210,7 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 		scratch.idle = *in.LastServiceEndAgeNanos
 		idle = &scratch.idle
 	}
-	activeRemaining, outsideSupport, ok := admissionRunningResidual(in.Policy, states, in.Candidate.Context.SLO.Percentile)
+	activeRemaining, outsideSupport, ok := admissionRunningResidual(in.Policy, states, in.Candidate.Context.SLO.Percentile, &scratch.quantiles)
 	if !ok {
 		return unknown
 	}
@@ -203,7 +250,7 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 			continue
 		}
 		slices.SortStableFunc(states, compareAdmissionQueue)
-		choice := firstfloor.ChooseBatch(in.Policy, states, idle)
+		choice := firstfloor.ChooseBatchWithQuantiles(in.Policy, states, idle, &scratch.quantiles)
 		if choice.Reason == firstfloor.OutcomeDeadlineDrop || choice.Reason == firstfloor.ReasonDeadlineDefer {
 			states, ok = admissionTransition(states, choice, candidateID)
 			if !ok {
@@ -220,7 +267,7 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 			clock += step
 			continue
 		}
-		service, candidate, outside, valid := admissionProjectBatch(in, states, choice, idle)
+		service, candidate, outside, valid := admissionProjectBatch(in, states, choice, idle, &scratch.quantiles)
 		if !valid {
 			return unknown
 		}
@@ -357,12 +404,12 @@ func admissionTransition(states []firstfloor.RequestState, choice firstfloor.Bat
 	return slices.Delete(states, index, index+1), true
 }
 
-func admissionProjectBatch(in AdmissionInput, states []firstfloor.RequestState, choice firstfloor.BatchChoice, idle *int64) (int64, bool, bool, bool) {
+func admissionProjectBatch(in AdmissionInput, states []firstfloor.RequestState, choice firstfloor.BatchChoice, idle *int64, quantiles *firstfloor.QuantileCache) (int64, bool, bool, bool) {
 	b := admissionBatch(in.Policy, choice.Size)
 	if b == nil || choice.Size <= 0 {
 		return 0, false, false, false
 	}
-	service, support, ok := b.Distribution.QuantileNanos(idle, in.Candidate.Context.SLO.Percentile)
+	service, support, ok := quantiles.QuantileNanos(b.Distribution, idle, in.Candidate.Context.SLO.Percentile)
 	if !ok {
 		return 0, false, false, false
 	}

@@ -102,6 +102,7 @@ type runtimeInstance struct {
 	admissionArrivals    map[string]admissionArrival
 	admissionUnknown     bool
 	admissionNormal      int
+	admissionProjections admissionProjections
 }
 type routeEntry struct {
 	instance *runtimeInstance
@@ -611,6 +612,7 @@ func (a admissionArrival) rate() float64 {
 
 func (r *Runtime) beginAdmissionLocked(now time.Time) {
 	r.admissionPrepared = true
+	r.admissionScratch.quantiles.Reset()
 	for _, i := range r.instances {
 		i.indexAdmissionSnapshot()
 	}
@@ -627,7 +629,7 @@ func (r *Runtime) beginAdmissionLocked(now time.Time) {
 	}
 	for _, i := range r.instances {
 		if !i.admissionUnknown {
-			i.prepareAdmissionAssignments(now)
+			i.prepareAdmissionAssignments(now, &r.admissionScratch.quantiles)
 		}
 	}
 	for _, w := range r.workloads {
@@ -650,6 +652,7 @@ func admissionInstanceAvailable(i *runtimeInstance) bool {
 
 func (i *runtimeInstance) indexAdmissionSnapshot() {
 	clear(i.admissionCalls[:cap(i.admissionCalls)])
+	clear(i.admissionProjections)
 	i.admissionCalls = i.admissionCalls[:0]
 	clear(i.admissionAssignments[:cap(i.admissionAssignments)])
 	i.admissionAssignments = i.admissionAssignments[:0]
@@ -694,7 +697,7 @@ func compareAdmissionAssignments(a, b *Call) int {
 	return strings.Compare(a.receipt.ID, b.receipt.ID)
 }
 
-func (i *runtimeInstance) prepareAdmissionAssignments(now time.Time) {
+func (i *runtimeInstance) prepareAdmissionAssignments(now time.Time, quantiles *firstfloor.QuantileCache) {
 	slices.SortFunc(i.admissionCalls, compareAdmissionAssignments)
 	for _, c := range i.admissionCalls {
 		at := now
@@ -709,12 +712,14 @@ func (i *runtimeInstance) prepareAdmissionAssignments(now time.Time) {
 	policy := i.State.Native.Metadata.Policy
 	policy.Batches = i.admissionBatches
 	i.admissionUnknown = policy.FixedBatchSize == 0 && (i.State.ObservedAt.IsZero() || policy.ProfileID != i.Profile.ID ||
-		!admissionExecutorKnown(AdmissionInput{Policy: policy, Observed: i.State.Native.Requests, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.State.Native.LastServiceEndAgeNanos}))
+		!admissionExecutorKnown(AdmissionInput{Policy: policy, Observed: i.State.Native.Requests, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.State.Native.LastServiceEndAgeNanos}, quantiles))
 }
 
 func (r *Runtime) endAdmissionLocked() {
 	r.admissionPrepared = false
+	r.admissionScratch.quantiles.Reset()
 	for _, i := range r.instances {
+		clear(i.admissionProjections)
 		clear(i.admissionObserved)
 		clear(i.admissionArrivals)
 		clear(i.admissionCalls[:cap(i.admissionCalls)])
@@ -739,7 +744,7 @@ func (r *Runtime) estimateLocked(i *runtimeInstance, c *Call, now time.Time) Adm
 		i.admissionAssignments[j] = q
 	}
 	age := max(now.Sub(i.State.ObservedAt), 0)
-	return projectAdmission(AdmissionInput{Policy: policy, Observed: native.Requests, Assignments: i.admissionAssignments, SnapshotAge: age, LastServiceEndAgeNanos: native.LastServiceEndAgeNanos, Candidate: candidate}, &r.admissionScratch)
+	return i.admissionProjections.project(AdmissionInput{Policy: policy, Observed: native.Requests, Assignments: i.admissionAssignments, SnapshotAge: age, LastServiceEndAgeNanos: native.LastServiceEndAgeNanos, Candidate: candidate}, &r.admissionScratch)
 }
 
 func admissionCallState(c *Call, now time.Time) firstfloor.RequestState {
