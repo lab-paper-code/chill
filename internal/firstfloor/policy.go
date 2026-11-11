@@ -181,7 +181,10 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchCho
 			return BatchChoice{Reason: "admission_unknown"}
 		}
 	}
-	if mode == DeadlineDrop && head >= 0 && SLOExpired(requests[head]) {
+	var costs serviceCosts
+	// Missing conditional support is not evidence of infeasibility. Native can
+	// still execute a measured batch; gateway prediction remains unknown.
+	if mode == DeadlineDrop && head >= 0 && SLOExpired(requests[head]) && !math.IsInf(minimumService(p, requests[head], gapDecision, &costs), 1) {
 		r := requests[head]
 		return BatchChoice{RequestID: r.Context.RequestID, WorkloadUID: r.Context.WorkloadUID, Definition: r.Context.Definition, Reason: OutcomeDeadlineDrop}
 	}
@@ -199,7 +202,6 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchCho
 	count := compatibleCount(requests, head)
 	var available, throughput BatchProfile
 	perItemCost := math.Inf(1)
-	var costs serviceCosts
 	for _, b := range p.Batches {
 		if b.Size < 1 || b.Size > count || !allowedBatch(p, b.Size) {
 			continue
@@ -208,7 +210,7 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchCho
 		if throughput.Size == 0 || cost < perItemCost || cost == perItemCost && b.Size > throughput.Size {
 			throughput, perItemCost = b, cost
 		}
-		if r.Phase != phaseDeferred && batchFeasible(requests, head, b, gapDecision, &costs) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
+		if r.Phase != phaseDeferred && (math.IsInf(cost, 1) || batchFeasible(requests, head, b, gapDecision, &costs)) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
 			available = b
 		}
 	}
@@ -224,6 +226,10 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchCho
 		return choice
 	}
 	choice.Size, choice.Reason = available.Size, "available_energy"
+	if math.IsInf(costs.cost(available, r.Context.SLO.Percentile, gapDecision), 1) {
+		choice.Reason = "missing_conditional_support"
+		return choice
+	}
 	return energyGainWait(p, requests, head, count, available, choice, gapDecision, &costs)
 }
 func queueHeads(requests []RequestState) (head, deferred int, active bool) {
