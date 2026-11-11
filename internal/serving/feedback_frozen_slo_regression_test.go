@@ -43,6 +43,7 @@ func TestFeedbackConsumerFrozenDefinitionPercentileSurvivesCurrentChange(t *test
 	definition.SLO.TargetLatency = 50 * time.Millisecond
 	frozen := *definition
 	frozen.SLO.Percentile = 100
+	frozen.Admission.Policy = AdmissionPolicyDelay
 	definition.Generation++
 	definition.SLO.Percentile = 1
 	zero := 0.0

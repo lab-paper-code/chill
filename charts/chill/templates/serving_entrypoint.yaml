@@ -116,7 +116,6 @@ spec:
             - {{ printf "--evaluation-store-bucket=%s" .Values.evaluation.store.bucket | quote }}
             - {{ printf "--evaluation-store-region=%s" .Values.evaluation.store.region | quote }}
             {{- end }}
-            - {{ printf "--queue-limit=%s" (.Values.servingEntrypoint.queueLimit | toJson) | quote }}
             - {{ printf "--request-timeout=%s" .Values.servingEntrypoint.requestTimeout | quote }}
             - {{ printf "--operation-timeout=%s" .Values.servingEntrypoint.operationTimeout | quote }}
             - {{ printf "--resource-release=%s" .Release.Name | quote }}

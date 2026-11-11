@@ -8,6 +8,8 @@ import (
 	"runtime/debug"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 // The guard rejects new requests while the live heap exceeds
@@ -21,7 +23,7 @@ func TestHeapOverloadRejectsNewRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = observationLog.Close(context.Background()) }()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +32,8 @@ func TestHeapOverloadRejectsNewRequests(t *testing.T) {
 	if err = r.Publish(d); err != nil {
 		t.Fatal(err)
 	}
-	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "i", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true}, Profile: p, Capacity: 4,
+	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "i", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(),
+		Native: &firstfloor.State{Metadata: firstfloor.Metadata{Policy: firstfloor.Policy{ProfileID: p.ID, MaxBatchSize: snapshot.Instances[0].MaxBatch}}}}, Profile: p, Capacity: 4,
 		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
 		t.Fatal(err)
 	}

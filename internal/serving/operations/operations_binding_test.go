@@ -73,7 +73,7 @@ func TestRemoveBindingMatchesPodOrExactExecutorIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			t.Cleanup(cancel)
-			runtime, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: bindingObservation{}})
+			runtime, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: bindingObservation{}})
 			if err != nil {
 				t.Fatal(err)
 			}

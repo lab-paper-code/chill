@@ -38,11 +38,11 @@ func TestShutdownCannotReopenAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
-	runtime, err := NewRuntime(ctx, RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
+	runtime, err := NewRuntime(ctx, RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
-	definition := &Definition{Name: "workload", UID: "uid", Generation: 1, Model: Model{UID: "model", Generation: 1}, SLO: SLO{Percentile: 99, TargetLatency: time.Second}}
+	definition := &Definition{Name: "workload", UID: "uid", Generation: 1, Model: Model{UID: "model", Generation: 1}, SLO: SLO{Percentile: 99, TargetLatency: time.Second}, Admission: Admission{Policy: AdmissionPolicyReject, MaxQueuedRequests: 1024}}
 	if err = runtime.Publish(definition); err != nil {
 		t.Fatal(err)
 	}

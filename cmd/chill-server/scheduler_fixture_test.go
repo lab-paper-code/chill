@@ -89,7 +89,7 @@ func schedulerTestDependencies(t *testing.T, config application.SchedulerConfigu
 			t.Error(err)
 		}
 	})
-	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
+	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}

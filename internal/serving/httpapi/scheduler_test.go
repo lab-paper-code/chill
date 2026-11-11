@@ -146,7 +146,7 @@ func settingsServiceForTest(
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := serving.NewRuntime(context.Background(), serving.RuntimeConfig{QueueLimit: 8, ObservationLog: observationLog})
+	execution, err := serving.NewRuntime(context.Background(), serving.RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}

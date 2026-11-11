@@ -497,6 +497,9 @@ func (r *Runtime) schedulerOutstandingLocked(now time.Time) []SchedulerRequest {
 			continue
 		}
 		request := SchedulerRequest{ID: call.receipt.ID, Definition: call.definition, QueueOrder: queueOrder[call], ReceivedAt: call.receipt.ReceivedAt, Elapsed: now.Sub(call.receipt.ReceivedAt), Phase: phasePending}
+		if call.deferred {
+			request.Phase = phaseDeferred
+		}
 		if call.completionMarginSet {
 			margin := call.completionMarginMS
 			request.CompletionMarginMS = &margin

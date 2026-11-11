@@ -443,7 +443,7 @@ func measuredProfile(node *core.Node) *serving.Profile {
 // kindDefinition is a Workload of model that kindProfile of model matches.
 func kindDefinition(uid, model string, profile *serving.Profile) *serving.Definition {
 	c := profile.Condition
-	return &serving.Definition{Name: "workload-" + uid, UID: uid, Generation: 1,
+	return &serving.Definition{Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}, Name: "workload-" + uid, UID: uid, Generation: 1,
 		SLO:          serving.SLO{Percentile: 99, TargetLatency: time.Second},
 		Dataset:      &serving.DatasetReference{Name: "data", UID: "data-uid"},
 		Preprocessor: serving.Preprocessor{Name: "pre", Input: []serving.RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []serving.RawField{{Name: "y", Format: "UTF8"}}},

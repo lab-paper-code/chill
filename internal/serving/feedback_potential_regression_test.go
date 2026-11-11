@@ -33,6 +33,7 @@ func TestFeedbackConsumerFailurePotentialIncludesBusyResidual(t *testing.T) {
 			snapshot.Instances[0].MaxBatch = 1
 			snapshot.Instances[0].Capacity = 1
 			snapshot.Workloads[0].SLO.TargetLatency = 10 * time.Millisecond
+			snapshot.Workloads[0].Admission.Policy = AdmissionPolicyDelay
 			zero, native := 0.0, 20e6
 			elapsed := int64(20e6)
 			life := time.Millisecond

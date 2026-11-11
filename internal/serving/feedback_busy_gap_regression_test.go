@@ -18,6 +18,7 @@ func TestFeedbackConsumerBusyPotentialUsesNextBatchGap(t *testing.T) {
 		snapshot.Arrivals = nil
 		snapshot.Instances[0].MaxBatch = 1
 		snapshot.Workloads[0].SLO.TargetLatency = 10 * time.Millisecond
+		snapshot.Workloads[0].Admission.Policy = AdmissionPolicyDelay
 		busy, idle := int64(0), int64(100e6)
 		snapshot.Instances[0].LastServiceEndAgeNanos = &idle
 		// Conditional gap selection happens within each physical trial.

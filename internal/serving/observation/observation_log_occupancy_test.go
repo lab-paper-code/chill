@@ -16,7 +16,7 @@ func TestScanOccupancyRowsKeepsErrorsOpenAndLateNative(t *testing.T) {
 	l, clock := clockedObservationLog(t, ObservationLogConfig{OccupancyTail: 3 * time.Minute}, observationTestHour)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: l})
+	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: l})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestNativeSupplementsPreserveRestartDrainAssignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = reopened.Close(ctx) }()
-	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: reopened})
+	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: reopened})
 	if err != nil {
 		t.Fatal(err)
 	}

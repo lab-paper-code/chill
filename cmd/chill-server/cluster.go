@@ -24,7 +24,7 @@ func serverStartCluster(
 ) observation.ClusterObservation {
 	return observation.ClusterObservation{
 		Kind: "pod", At: started, Event: "server-start",
-		QueueLimit: &opts.queueLimit, SourceInterval: &opts.sourceInterval, ProfileInterval: &opts.profileInterval,
+		SourceInterval: &opts.sourceInterval, ProfileInterval: &opts.profileInterval,
 		Pod: &observation.ClusterPod{UID: podUID, Namespace: namespace, Name: name},
 	}
 }

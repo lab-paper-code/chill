@@ -33,10 +33,9 @@ func TestClusterPublishesOnlyCommittedRows(t *testing.T) {
 	}
 	started := time.Unix(123, 456).UTC()
 	row := serverStartCluster("self-uid", "system", "server", started, options{
-		queueLimit: 1024, sourceInterval: 2 * time.Second, profileInterval: time.Minute,
+		sourceInterval: 2 * time.Second, profileInterval: time.Minute,
 	})
-	if row.At != started || row.QueueLimit == nil || *row.QueueLimit != 1024 ||
-		row.SourceInterval == nil || *row.SourceInterval != 2*time.Second ||
+	if row.At != started || row.SourceInterval == nil || *row.SourceInterval != 2*time.Second ||
 		row.ProfileInterval == nil || *row.ProfileInterval != time.Minute {
 		t.Fatalf("startup selection lost: %+v", row)
 	}
@@ -72,7 +71,7 @@ func TestClusterPublishesOnlyCommittedRows(t *testing.T) {
 }
 
 func TestServerStartFreezesSelectedMeasurementConfiguration(t *testing.T) {
-	for _, args := range [][]string{nil, {"--queue-limit=27", "--source-interval=2s", "--profile-interval=3m"}} {
+	for _, args := range [][]string{nil, {"--source-interval=2s", "--profile-interval=3m"}} {
 		var opts options
 		flags := flag.NewFlagSet("server-start", flag.ContinueOnError)
 		opts.bindFlags(flags)
@@ -81,11 +80,11 @@ func TestServerStartFreezesSelectedMeasurementConfiguration(t *testing.T) {
 		}
 		started := time.Now().UTC()
 		row := serverStartCluster("uid", "namespace", "server", started, opts)
-		wantQueue, wantSource, wantProfile := 1024, time.Second, time.Minute
+		wantSource, wantProfile := time.Second, time.Minute
 		if len(args) > 0 {
-			wantQueue, wantSource, wantProfile = 27, 2*time.Second, 3*time.Minute
+			wantSource, wantProfile = 2*time.Second, 3*time.Minute
 		}
-		if row.At != started || *row.QueueLimit != wantQueue || *row.SourceInterval != wantSource ||
+		if row.At != started || *row.SourceInterval != wantSource ||
 			*row.ProfileInterval != wantProfile {
 			t.Fatalf("startup record did not freeze selected config: %+v", row)
 		}

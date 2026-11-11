@@ -385,7 +385,7 @@ func TestRuntimeTimingRestoresOnlyAssignedStagesAndKeepsFinalClosed(t *testing.T
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = reopened.Close(context.Background()) })
-	restored, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: reopened})
+	restored, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: reopened})
 	if err != nil {
 		t.Fatal(err)
 	}

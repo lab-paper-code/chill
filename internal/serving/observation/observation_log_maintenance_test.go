@@ -155,7 +155,7 @@ func TestFlushPinsFilesAcrossRotationAndClose(t *testing.T) {
 func TestBlockedAssignmentCrashRequiresFreshExecutorProof(t *testing.T) {
 	ctx := context.Background()
 	log, _ := clockedObservationLog(t, ObservationLogConfig{}, time.Now().UTC())
-	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: log})
+	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: log})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestBlockedAssignmentCrashRequiresFreshExecutorProof(t *testing.T) {
 	complete := sync.OnceFunc(func() { close(finish) })
 	t.Cleanup(complete)
 	candidate := serving.ReadyInstance{
-		State:   serving.InstanceState{ID: instance.ID, PodUID: "pod", Node: instance.Node, Profile: instance.Profile.ID, Ready: true},
+		State:   serving.InstanceState{ID: instance.ID, PodUID: "pod", Node: instance.Node, Profile: instance.Profile.ID, Ready: true, ObservedAt: time.Now(), Native: fixtureAdmissionNative(instance.Profile)},
 		Profile: instance.Profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
 		Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 			executing <- struct{}{}
@@ -224,7 +224,7 @@ func TestBlockedAssignmentCrashRequiresFreshExecutorProof(t *testing.T) {
 	if rows := readRequestRows(t, config.Directory); len(rows) != 0 {
 		t.Fatalf("unwritten assignment fabricated on restart: %+v", rows)
 	}
-	restored, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: restarted})
+	restored, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: restarted})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestWorkerFailureRetainsFIFOAndRuntimeFailure(t *testing.T) {
 		t.Run(stream, func(t *testing.T) {
 			ctx := context.Background()
 			log, clock := clockedObservationLog(t, ObservationLogConfig{}, time.Now().UTC())
-			runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: log})
+			runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: log})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -707,7 +707,7 @@ func assertCleanMixedReopen(t *testing.T, log *ObservationLog) {
 func TestAsyncWriteFailureDoesNotFinishExecutingRequest(t *testing.T) {
 	ctx := context.Background()
 	log, _ := clockedObservationLog(t, ObservationLogConfig{}, time.Now().UTC())
-	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: log})
+	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: log})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -737,7 +737,7 @@ func TestAsyncWriteFailureDoesNotFinishExecutingRequest(t *testing.T) {
 		return file.Write(data)
 	}
 	if err := runtime.InstallInstances([]serving.ReadyInstance{{
-		State:   serving.InstanceState{ID: instance.ID, Node: instance.Node, Profile: instance.Profile.ID, Ready: true},
+		State:   serving.InstanceState{ID: instance.ID, Node: instance.Node, Profile: instance.Profile.ID, Ready: true, ObservedAt: time.Now(), Native: fixtureAdmissionNative(instance.Profile)},
 		Profile: instance.Profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
 		Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 			close(executing)

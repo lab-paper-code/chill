@@ -136,8 +136,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 	backendCtx, cancelBackend := context.WithCancel(context.Background())
 	defer cancelBackend()
 	execution, err := serving.NewRuntime(backendCtx, serving.RuntimeConfig{
-		QueueLimit: opts.queueLimit, ObservationLog: observationLog,
-		Diagnostics: recorder, OnChange: publisher.changedRuntime,
+		ObservationLog: observationLog,
+		Diagnostics:    recorder, OnChange: publisher.changedRuntime,
 	})
 	if err != nil {
 		return err

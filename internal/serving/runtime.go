@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,7 +43,6 @@ type ObservationRecovery struct {
 }
 
 type RuntimeConfig struct {
-	QueueLimit     int
 	ObservationLog RuntimeObservation
 	Diagnostics    *Diagnostics
 	// OnChange is a nonblocking notification, called under the runtime lock.
@@ -55,6 +55,8 @@ type Receipt struct {
 	DefinitionID         string
 	RequestLifetime      time.Duration
 	ServerTiming         RequestTimings
+	Policy               AdmissionPolicy
+	Rejection            *Error
 }
 type callResult struct {
 	result BackendResult
@@ -76,6 +78,9 @@ type Call struct {
 	clientSpan                                   time.Duration
 	completionMarginMS                           float64
 	completionMarginSet                          bool
+	enqueuedAt, queueEndedAt                     time.Time
+	deferred                                     bool
+	admissionState                               string
 	backendContext                               context.Context
 	cancelBackend                                context.CancelFunc
 	transportDone, backendDone, responseRecorded bool
@@ -89,6 +94,8 @@ type runtimeInstance struct {
 	finalizing       int
 	bindings         map[string]bool
 	recoveryRecorded bool
+	admissionProfile string
+	admissionBatches []firstfloor.BatchProfile
 }
 type routeEntry struct {
 	instance *runtimeInstance
@@ -119,36 +126,38 @@ type runtimeWorkload struct {
 // The owner lock protects routing and physical ownership, never observation
 // filesystem work. An assigned call reserves capacity before FIFO admission.
 type Runtime struct {
-	mu                 DiagnosticLock
-	config             RuntimeConfig
-	ctx                context.Context
-	cancel             context.CancelFunc
-	workloads          map[string]*runtimeWorkload
-	names              map[string]string
-	instances          map[string]*runtimeInstance
-	profiles           []Profile
-	measurement        []NodeReference
-	routingControlled  bool
-	completionMarginMS float64
-	pathFeedbackMS     map[string]float64
-	routeTargets       map[string]map[string]int32
-	calls              map[string]*Call
-	definitions        map[string]*Definition
-	changed            chan struct{}
-	observationError   error
-	recovery           ObservationRecovery
-	closing            *Call
-	finalizing         int
-	shuttingDown       bool
-	executionsStopped  bool
-	executions         sync.WaitGroup
-	overloaded         atomic.Bool
+	mu                   DiagnosticLock
+	config               RuntimeConfig
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	workloads            map[string]*runtimeWorkload
+	names                map[string]string
+	instances            map[string]*runtimeInstance
+	profiles             []Profile
+	measurement          []NodeReference
+	routingControlled    bool
+	completionMarginMS   float64
+	pathFeedbackMS       map[string]float64
+	routeTargets         map[string]map[string]int32
+	calls                map[string]*Call
+	definitions          map[string]*Definition
+	changed              chan struct{}
+	observationError     error
+	recovery             ObservationRecovery
+	closing              *Call
+	finalizing           int
+	shuttingDown         bool
+	executionsStopped    bool
+	executions           sync.WaitGroup
+	overloaded           atomic.Bool
+	admissionAssignments []firstfloor.RequestState
+	dispatchWorkloads    []string
 }
 
 func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	observation := reflect.ValueOf(config.ObservationLog)
-	if config.QueueLimit <= 0 || !observation.IsValid() || observation.Kind() == reflect.Pointer && observation.IsNil() {
-		return nil, errors.New("positive queue limit and observation log are required")
+	if !observation.IsValid() || observation.Kind() == reflect.Pointer && observation.IsNil() {
+		return nil, errors.New("observation log is required")
 	}
 	backendCtx, cancel := context.WithCancel(ctx)
 	r := &Runtime{config: config, ctx: backendCtx, cancel: cancel, workloads: map[string]*runtimeWorkload{}, names: map[string]string{}, instances: map[string]*runtimeInstance{}, calls: map[string]*Call{}, definitions: map[string]*Definition{}, changed: make(chan struct{}, 1)}
@@ -279,6 +288,12 @@ func requestEvent(c *Call, kind, outcome, code string, now time.Time) RequestEve
 		e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
 	}
 	e.NativeProgress = c.progress
+	e.Policy = c.receipt.Policy
+	e.Rejection = c.receipt.Rejection
+	if !c.enqueuedAt.IsZero() && !c.queueEndedAt.IsZero() {
+		wait := c.queueEndedAt.Sub(c.enqueuedAt).Nanoseconds()
+		e.GatewayWaitNanos = &wait
+	}
 	e.ClientSpanNanos = int64(c.clientSpan)
 	e.ExecutionComplete = c.backendDone
 	e.ServerTiming = c.receipt.ServerTiming
@@ -288,6 +303,7 @@ func requestEvent(c *Call, kind, outcome, code string, now time.Time) RequestEve
 	}
 	if c.definition != nil {
 		e.SLO = &c.definition.SLO
+		e.Policy = c.definition.Admission.Policy
 	}
 	return e
 }
@@ -305,6 +321,7 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 	receipt.UID = r.names[name]
 	if workload := r.workloads[receipt.UID]; workload != nil {
 		receipt.DefinitionID = workload.definition.Identity()
+		receipt.Policy = workload.definition.Admission.Policy
 		if workload.definition.RequestLifetime != nil {
 			receipt.RequestLifetime = *workload.definition.RequestLifetime
 		}
@@ -364,7 +381,7 @@ func (r *Runtime) Accept(receipt *Receipt, input *InferenceInput) (*Call, error)
 		lifetime = receipt.Deadline.Sub(receipt.ReceivedAt).Nanoseconds()
 	}
 	validatedAt := time.Now()
-	err = r.config.ObservationLog.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: validatedAt.UTC(), ReceivedAt: receipt.ReceivedAt, ElapsedNanos: validatedAt.Sub(receipt.ReceivedAt).Nanoseconds(), SLO: &d.SLO, LifetimeNanos: lifetime, ServerTiming: receipt.ServerTiming})
+	err = r.config.ObservationLog.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: validatedAt.UTC(), ReceivedAt: receipt.ReceivedAt, ElapsedNanos: validatedAt.Sub(receipt.ReceivedAt).Nanoseconds(), SLO: &d.SLO, Policy: d.Admission.Policy, LifetimeNanos: lifetime, ServerTiming: receipt.ServerTiming})
 	receipt.ServerTiming.Mark(ServerValidatedEventDone, receipt.ReceivedAt)
 	if err != nil {
 		return nil, failure(ObservationUnavailableCode, "cannot persist validated compute demand")
@@ -395,8 +412,9 @@ func (r *Runtime) Accept(receipt *Receipt, input *InferenceInput) (*Call, error)
 	if !w.route.evidence {
 		return nil, failure("MissingEvidence", "no matching execution evidence for this input")
 	}
-	if len(w.queue) >= r.config.QueueLimit {
-		return nil, failure("QueueFull", "workload ingress queue limit reached")
+	if len(w.queue) >= int(d.Admission.MaxQueuedRequests) {
+		remaining := d.SLO.TargetLatency.Nanoseconds() - time.Since(receipt.ReceivedAt).Nanoseconds()
+		return nil, &Error{Code: CodeQueueFull, Message: "workload ingress queue limit reached", Stage: AdmissionStageGateway, Policy: d.Admission.Policy, RemainingSLONanos: &remaining}
 	}
 	if r.overloaded.Load() {
 		return nil, failure(reasonGatewayOverloaded, "gateway live heap is near its memory limit")
@@ -406,7 +424,8 @@ func (r *Runtime) Accept(receipt *Receipt, input *InferenceInput) (*Call, error)
 	if margin, ok := r.pathFeedbackMS[receipt.UID]; ok {
 		c.completionMarginMS = margin
 	}
-	if err := r.event(c, phaseAccepted, "", ""); err != nil {
+	c.enqueuedAt = time.Now()
+	if err := r.eventAt(c, phaseAccepted, "", "", c.enqueuedAt); err != nil {
 		return nil, failure(ObservationUnavailableCode, "cannot persist request acceptance")
 	}
 	w.calls[receipt.ID] = c
@@ -431,6 +450,7 @@ func (c *Call) Wait(ctx context.Context) (BackendResult, error) {
 			c.runtime.removeQueuedLocked(c)
 			c.backendDone = true
 			c.transportDone = true
+			c.runtime.dispatchLocked()
 		}
 		if c.cancelBackend != nil {
 			c.cancelBackend()
@@ -464,6 +484,9 @@ func (r *Runtime) Response(receipt Receipt, outcome, code string) (err error) {
 		return nil
 	}
 	c.receipt.ServerTiming.Merge(receipt.ServerTiming)
+	if receipt.Rejection != nil {
+		c.receipt.Rejection = receipt.Rejection
+	}
 	if err := r.eventAt(c, eventResponseFinished, outcome, code, finishedAt); err != nil {
 		return err
 	}
@@ -532,24 +555,165 @@ func (r *Runtime) removeQueuedLocked(c *Call) {
 	if w == nil {
 		return
 	}
+	if c.queueEndedAt.IsZero() {
+		c.queueEndedAt = time.Now()
+	}
 	if index := slices.Index(w.queue, c); index >= 0 {
 		w.queue = slices.Delete(w.queue, index, index+1)
 	}
 }
 
-func (r *Runtime) chooseLocked(route inputRoute) *routeEntry {
+type admissionChoice struct {
+	entry          *routeEntry
+	state          string
+	completion     time.Duration
+	outsideSupport bool
+}
+
+func (r *Runtime) estimateLocked(i *runtimeInstance, c *Call, now time.Time) AdmissionEstimate {
+	native := i.State.Native
+	if native == nil || i.Profile == nil {
+		return AdmissionEstimate{}
+	}
+	policy := native.Metadata.Policy
+	if policy.FixedBatchSize > 0 {
+		return AdmissionEstimate{FixedBatch: true}
+	}
+	if i.State.ObservedAt.IsZero() || policy.MaxBatchSize < 0 || policy.ProfileID != i.Profile.ID {
+		return AdmissionEstimate{}
+	}
+	// Native metadata carries policy identity, while the immutable catalog owns
+	// distributions. Do not hydrate or copy raw measurement samples on dispatch.
+	policy.Batches = i.admissionBatches
+	assignments := r.admissionAssignments[:0]
+	for _, call := range r.calls {
+		if call.instance != i || call.backendDone {
+			continue
+		}
+		observed := false
+		for _, q := range native.Requests {
+			if q.Context.RequestID == call.receipt.ID {
+				observed = true
+				break
+			}
+		}
+		if !observed {
+			assignments = append(assignments, admissionCallState(call, now))
+		}
+	}
+	slices.SortFunc(assignments, func(a, b firstfloor.RequestState) int {
+		if a.Context.ReceivedAt.Before(b.Context.ReceivedAt) {
+			return -1
+		}
+		if a.Context.ReceivedAt.After(b.Context.ReceivedAt) {
+			return 1
+		}
+		return strings.Compare(a.Context.RequestID, b.Context.RequestID)
+	})
+	r.admissionAssignments = assignments
+	age := max(now.Sub(i.State.ObservedAt), 0)
+	return EstimateAdmission(AdmissionInput{Policy: policy, Observed: native.Requests, Assignments: assignments, SnapshotAge: age, LastServiceEndAgeNanos: native.LastServiceEndAgeNanos, Candidate: admissionCallState(c, now)})
+}
+
+func admissionCallState(c *Call, now time.Time) firstfloor.RequestState {
+	phase := phaseQueued
+	if c.deferred {
+		phase = phaseDeferred
+	}
+	return firstfloor.RequestState{Context: firstfloor.RequestContext{
+		RequestID: c.receipt.ID, WorkloadUID: c.receipt.UID, Definition: c.identity,
+		AdmissionPolicy: string(c.definition.Admission.Policy), ReceivedAt: c.receipt.ReceivedAt,
+		SenderElapsedMS:    float64(max(now.Sub(c.receipt.ReceivedAt), 0)) / float64(time.Millisecond),
+		CompletionMarginMS: c.completionMarginMS,
+		SLO:                firstfloor.SLO{Percentile: c.definition.SLO.Percentile, TargetMS: float64(c.definition.SLO.TargetLatency) / float64(time.Millisecond)},
+	}, Phase: phase}
+}
+
+func (r *Runtime) chooseLocked(route inputRoute, c *Call, now time.Time) admissionChoice {
 	if r.mu.Recorder.Active() {
 		r.mu.Mark(DiagnosticChoose, DiagnosticBegin)
 		defer r.mu.Mark(DiagnosticChoose, DiagnosticEnd)
 	}
+	choice := admissionChoice{state: "NoCapacity"}
+	unknown, known := false, false
 	for index, entry := range route.entries {
-		route.available[index] = entry.instance.State.Ready && !entry.instance.State.Stopped && !entry.instance.State.Terminated && entry.instance.outstanding < entry.instance.Capacity
+		i := entry.instance
+		route.available[index] = false
+		if !i.State.Ready || i.State.Stopped || i.State.Terminated || i.State.RecoveryUnknown || i.outstanding >= i.Capacity {
+			continue
+		}
+		if c.deferred && r.normalUsesInstanceLocked(i) {
+			continue
+		}
+		estimate := r.estimateLocked(i, c, now)
+		if estimate.FixedBatch {
+			route.available[index] = true
+			if c.deferred && choice.entry == nil {
+				choice.entry = &route.entries[index]
+			}
+			continue
+		}
+		if !estimate.Known {
+			unknown = true
+			continue
+		}
+		if !known || !c.deferred && estimate.Completion < choice.completion {
+			choice.completion = estimate.Completion
+			choice.outsideSupport = estimate.OutsideSupport
+		}
+		known = true
+		remaining := c.definition.SLO.TargetLatency - now.Sub(c.receipt.ReceivedAt)
+		route.available[index] = c.deferred || estimate.Completion <= remaining
+		if c.deferred && route.available[index] && (choice.entry == nil || estimate.Completion < choice.completion) {
+			choice.entry, choice.completion = &route.entries[index], estimate.Completion
+			choice.outsideSupport = estimate.OutsideSupport
+		}
 	}
-	index := SmoothWeightedRoute(route.weights, route.current, route.available)
-	if index < 0 {
-		return nil
+	if c.deferred && choice.entry != nil {
+		choice.state = "Feasible"
+		return choice
 	}
-	return &route.entries[index]
+	if !c.deferred {
+		if index := SmoothWeightedRoute(route.weights, route.current, route.available); index >= 0 {
+			choice.entry, choice.state = &route.entries[index], "Feasible"
+			return choice
+		}
+	}
+	if unknown {
+		choice.state = AdmissionUnknown
+	} else if known {
+		choice.state = CodeDeadlineInfeasible
+	}
+	return choice
+}
+
+func (r *Runtime) normalUsesInstanceLocked(i *runtimeInstance) bool {
+	for _, w := range r.workloads {
+		for _, c := range w.queue {
+			if c.deferred {
+				continue
+			}
+			for _, entry := range w.route.entries {
+				if entry.instance == i {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (r *Runtime) finishQueuedLocked(c *Call, err error) {
+	r.removeQueuedLocked(c)
+	c.backendDone, c.transportDone = true, true
+	var domain *Error
+	if errors.As(err, &domain) && (domain.Code == CodeDeadlineInfeasible || domain.Code == CodeQueueFull) {
+		c.receipt.Rejection = domain
+	}
+	r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticBegin, c.receipt.ID, 0)
+	c.reply <- callResult{result: BackendResult{ServerTiming: c.receipt.ServerTiming}, err: err}
+	c.receipt.ServerTiming.Mark(ServerReplySent, c.receipt.ReceivedAt)
+	r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticEnd, c.receipt.ID, 0)
 }
 
 func (r *Runtime) dispatchLocked() {
@@ -560,48 +724,73 @@ func (r *Runtime) dispatchLocked() {
 	if r.executionsStopped || r.observationErrLocked() != nil {
 		return
 	}
-	// The ingress owner promptly distributes accepted samples to ready capacity.
-	// The firstfloor actor owns actual compatible batching and additional wait.
-	for _, w := range r.workloads {
-		for len(w.queue) > 0 {
-			c := w.queue[0]
-			if !c.receipt.Deadline.IsZero() && !time.Now().Before(c.receipt.Deadline) {
-				r.removeQueuedLocked(c)
-				c.backendDone = true
-				c.transportDone = true
-				r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticBegin, c.receipt.ID, 0)
-				c.reply <- callResult{result: BackendResult{ServerTiming: c.receipt.ServerTiming}, err: failure("RequestTimeout", "request lifetime expired in ingress queue")}
-				c.receipt.ServerTiming.Mark(ServerReplySent, c.receipt.ReceivedAt)
-				r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticEnd, c.receipt.ID, 0)
-				continue
+	// A single logical queue retains accepted routes and counts both classes.
+	// Two bounded passes prioritize every Workload's normal work before delay.
+	uids := r.dispatchWorkloads[:0]
+	for uid := range r.workloads {
+		uids = append(uids, uid)
+	}
+	slices.Sort(uids)
+	r.dispatchWorkloads = uids
+	for _, delayed := range [...]bool{false, true} {
+		for _, uid := range uids {
+			w := r.workloads[uid]
+			index := 0
+			for range len(w.queue) {
+				if index >= len(w.queue) {
+					break
+				}
+				c := w.queue[index]
+				if c.deferred != delayed {
+					index++
+					continue
+				}
+				now := time.Now()
+				if !c.receipt.Deadline.IsZero() && !now.Before(c.receipt.Deadline) {
+					r.finishQueuedLocked(c, failure("RequestTimeout", "request lifetime expired in ingress queue"))
+					continue
+				}
+				choice := r.chooseLocked(w.route, c, now)
+				c.admissionState = choice.state
+				if choice.entry == nil {
+					if choice.state == CodeDeadlineInfeasible && !c.deferred {
+						if c.definition.Admission.Policy == AdmissionPolicyDelay {
+							c.deferred = true
+						} else {
+							predicted, remaining := int64(choice.completion), int64(c.definition.SLO.TargetLatency-now.Sub(c.receipt.ReceivedAt))
+							r.finishQueuedLocked(c, &Error{Code: CodeDeadlineInfeasible, Message: "no executor can complete within SLO", Stage: AdmissionStageGateway, Policy: c.definition.Admission.Policy, PredictedCompletionNanos: &predicted, RemainingSLONanos: &remaining, OutsideSupport: choice.outsideSupport})
+							continue
+						}
+					}
+					index++
+					continue
+				}
+				r.assignLocked(c, choice.entry, now)
 			}
-			entry := r.chooseLocked(w.route)
-			if entry == nil {
-				break
-			}
-			i := entry.instance
-			assignedAt := time.Now()
-			c.receipt.ServerTiming.Record(ServerAssigned, assignedAt.Sub(c.receipt.ReceivedAt))
-			c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: assignedAt.UTC()}
-			c.assignment.ProfileBody = i.Profile
-			// Reserve physical ownership before FIFO admission; native execution
-			// starts after enqueue, not after the assignment's disk Write.
-			r.removeQueuedLocked(c)
-			c.instance = i
-			c.phase = phaseAssigned
-			i.outstanding++
-			c.backendContext, c.cancelBackend = context.WithCancel(r.ctx)
-			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Deadline: c.receipt.Deadline, CompletionMarginMS: c.completionMarginMS}
-			c.input = nil // Only this Dispatch reads the sample, and no path requeues the call.
-			assigned := requestEvent(c, phaseAssigned, "", "", assignedAt)
-			r.executions.Add(1)
-			execute := i.Execute
-			go func() {
-				defer r.executions.Done()
-				r.execute(c, execute, dispatch, assigned)
-			}()
 		}
 	}
+}
+
+func (r *Runtime) assignLocked(c *Call, entry *routeEntry, assignedAt time.Time) {
+	i := entry.instance
+	c.receipt.ServerTiming.Record(ServerAssigned, assignedAt.Sub(c.receipt.ReceivedAt))
+	c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: assignedAt.UTC(), ProfileBody: i.Profile}
+	// Reserve physical ownership before FIFO admission; native execution starts
+	// after enqueue, not after the assignment's disk Write.
+	c.queueEndedAt = assignedAt
+	r.removeQueuedLocked(c)
+	c.instance, c.phase = i, phaseAssigned
+	i.outstanding++
+	c.backendContext, c.cancelBackend = context.WithCancel(r.ctx)
+	dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Deadline: c.receipt.Deadline, CompletionMarginMS: c.completionMarginMS}
+	c.input = nil
+	assigned := requestEvent(c, phaseAssigned, "", "", assignedAt)
+	r.executions.Add(1)
+	execute := i.Execute
+	go func() {
+		defer r.executions.Done()
+		r.execute(c, execute, dispatch, assigned)
+	}()
 }
 
 func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (BackendResult, error), dispatch Dispatch, assigned RequestEvent) {
@@ -661,6 +850,10 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		c.assignment = nil
 	}
 	c.transportDone = true
+	var rejection *Error
+	if errors.As(err, &rejection) && (rejection.Code == CodeDeadlineInfeasible || rejection.Code == CodeQueueFull) {
+		c.receipt.Rejection = rejection
+	}
 	if c.cancelBackend != nil {
 		c.cancelBackend()
 		c.cancelBackend = nil
@@ -1232,6 +1425,10 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) (result erro
 			candidate.Routing = r.mergeControlledRoutingLocked(i.Routing, candidate.Routing)
 		}
 		i.ReadyInstance = candidate
+		if candidate.Profile != nil && i.admissionProfile != candidate.Profile.ID {
+			i.admissionProfile = candidate.Profile.ID
+			i.admissionBatches = candidate.Profile.NativeBundle().Batches
+		}
 		for _, c := range r.calls {
 			if c.assignment != nil && c.assignment.Instance == candidate.State.ID && c.instance == nil && !c.backendDone {
 				c.instance = i
@@ -1486,6 +1683,12 @@ func (r *Runtime) workloadStateLocked(w *runtimeWorkload) WorkloadState {
 			state.Reason = "Preparing"
 		default:
 			state.Reason = reasonReady
+			for _, c := range w.queue {
+				if c.admissionState == AdmissionUnknown {
+					state.Reason = AdmissionUnknown
+					break
+				}
+			}
 		}
 	}
 	return state

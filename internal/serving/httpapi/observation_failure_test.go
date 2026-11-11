@@ -28,7 +28,7 @@ func TestAsyncWriterFailureKeepsInferenceHTTP503(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: log})
+	runtime, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: log})
 	if err != nil {
 		t.Fatal(err)
 	}

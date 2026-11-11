@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 func TestStaticExclusiveBaselineThenSwappedTargetDrainsPhysicalBinding(t *testing.T) {
@@ -20,7 +22,7 @@ func TestStaticExclusiveBaselineThenSwappedTargetDrainsPhysicalBinding(t *testin
 		t.Fatal(err)
 	}
 	defer func() { _ = observationLog.Close(context.Background()) }()
-	runtime, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
+	runtime, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +38,8 @@ func TestStaticExclusiveBaselineThenSwappedTargetDrainsPhysicalBinding(t *testin
 	for _, instance := range snapshot.Instances {
 		physical := instance.ID
 		instances = append(instances, ReadyInstance{
-			State:   InstanceState{ID: physical, Node: instance.Node, Profile: instance.Profile.ID, Ready: true},
+			State: InstanceState{ID: physical, Node: instance.Node, Profile: instance.Profile.ID, Ready: true, ObservedAt: time.Now(),
+				Native: &firstfloor.State{Metadata: firstfloor.Metadata{Policy: firstfloor.Policy{ProfileID: instance.Profile.ID, MaxBatchSize: instance.MaxBatch}}}},
 			Profile: instance.Profile, Capacity: 1,
 			Execute: func(context.Context, Dispatch) (BackendResult, error) {
 				if physical == "i1" {

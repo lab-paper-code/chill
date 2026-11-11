@@ -57,7 +57,7 @@ func TestPlannerBacklogProjectedPhases(t *testing.T) {
 				}
 				if phase != phasePending {
 					route := inputRoute{entries: []routeEntry{{instance: owner}}, weights: []int32{1}, current: []int64{0}, available: []bool{false}}
-					if owner.outstanding != 1 || r.chooseLocked(route) != nil {
+					if owner.outstanding != 1 || r.chooseLocked(route, &Call{definition: snap.Workloads[0]}, snap.At).entry != nil {
 						t.Fatal("planner released physical capacity")
 					}
 				}

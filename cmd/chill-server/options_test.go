@@ -27,6 +27,15 @@ func TestServerHasNoSplitRouterFlags(t *testing.T) {
 	}
 }
 
+func TestServerHasNoGlobalQueueLimit(t *testing.T) {
+	var opts options
+	flags := flag.NewFlagSet("chill-server", flag.ContinueOnError)
+	opts.bindFlags(flags)
+	if flags.Lookup("queue-limit") != nil {
+		t.Fatal("Workload admission queue limit is still registered as a global flag")
+	}
+}
+
 func TestEvaluationStoreConfiguration(t *testing.T) {
 	for _, partial := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unset", true: "partial"}[partial], func(t *testing.T) {

@@ -38,7 +38,7 @@ func recoveryBootRuntime(t *testing.T, c *SchedulerController) {
 	definitions := c.runtime.SchedulerInputs(time.Now).Workloads
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 8,
+	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{
 		ObservationLog: recoveryBootObservation{RuntimeObservation: c.observationLog, started: time.Now().UTC()}})
 	if err != nil {
 		t.Fatal(err)

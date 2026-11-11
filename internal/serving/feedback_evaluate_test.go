@@ -20,7 +20,6 @@ func feedbackFixture() (SchedulerSettings, SchedulerSnapshot, SchedulerCandidate
 	settings.CompletionMarginMS = 0
 	settings.ComparisonPeriod = time.Millisecond
 	profile := snapshot.Instances[0].Profile
-	snapshot.Workloads[0].Admission.Policy = AdmissionPolicyDelay
 	profile.Batches = []BatchProfile{
 		schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 2, MemoryBytes: 100}, []float64{30e6}),
 		schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{70e6}),
@@ -262,6 +261,7 @@ func TestFeedbackConsumerPreparationDrainsFiniteCohortAndFixesPotential(t *testi
 	for _, expires := range []bool{false, true} {
 		t.Run(fmt.Sprint(expires), func(t *testing.T) {
 			settings, snapshot, candidate := feedbackFixture()
+			snapshot.Workloads[0].Admission.Policy = AdmissionPolicyDelay
 			settings.DefaultOperationCost[schedulerActionPrepare] = OperationCostValue{Seconds: .05, Joules: 1}
 			target := snapshot.Instances[0]
 			target.ID, target.MaxBatch = feedbackPreparedInstanceID, 1

@@ -73,7 +73,7 @@ func TestServeDuringColdStart(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = log.Close(context.Background()) }()
-			execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: log})
+			execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: log})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -174,7 +174,7 @@ func sequenceHarness(t *testing.T) (*admissionHarness, *writeLog, *memEvidence) 
 		return nil, errors.New("no meter in this test")
 	}
 	h.controller.state.Snapshot = serving.SchedulerSnapshot{
-		Workloads: []*serving.Definition{{Name: "w", UID: "w-uid"}},
+		Workloads: []*serving.Definition{{Name: "w", UID: "w-uid", Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}},
 		Nodes:     []serving.SchedulerNode{{Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Ready: true}},
 	}
 	spec := measuredCPUPreparationFixture()
@@ -280,7 +280,7 @@ func TestOrderMeasurementEndThenPowerChange(t *testing.T) {
 func TestManualOperationGuards(t *testing.T) {
 	h, _, _ := sequenceHarness(t)
 	h.controller.mu.Lock()
-	h.controller.state.Snapshot.Workloads = append(h.controller.state.Snapshot.Workloads, &serving.Definition{Name: "auto", UID: "auto"})
+	h.controller.state.Snapshot.Workloads = append(h.controller.state.Snapshot.Workloads, &serving.Definition{Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}, Name: "auto", UID: "auto"})
 	h.controller.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: "p/c", Node: testNode, WorkloadUID: "foreign-workload"}, {ID: "q/c", Node: testNode}}
 	h.controller.state.Snapshot.Routing = map[string]map[string]int32{"w-uid": {"q/c": 1}}
 	h.controller.config.Settings.AutonomousWorkloads = []string{"auto"}

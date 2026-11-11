@@ -79,6 +79,11 @@ func measuredAdoptionProfile() serving.Profile {
 	return profile
 }
 
+func fixtureAdmissionNative(profile *serving.Profile) *native.State {
+	return &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID,
+		Policy: native.Policy{ProfileID: profile.ID, MaxBatchSize: profile.Condition.Actor.MaxBatchSize}}}
+}
+
 func TestPositiveProfileCarriesPairedServiceToNativeConsumer(t *testing.T) {
 	profile := measuredAdoptionProfile()
 	profile.Batches[0].EnergyPerInputJoules = 0.5
@@ -401,7 +406,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
+	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +462,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	profile := measuredAdoptionProfile()
 	profile.Condition.LogicalModel = "model"
 	observer.SetProfiles([]serving.Profile{profile})
-	definition := &serving.Definition{
+	definition := &serving.Definition{Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024},
 		Name: "workload", UID: "workload-uid", Generation: 1,
 		SLO:     serving.SLO{Percentile: 99, TargetLatency: time.Second},
 		Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"},
@@ -476,7 +481,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	if err := execution.InstallInstances([]serving.ReadyInstance{{
 		State: serving.InstanceState{
 			ID: "physical", Node: serving.NodeReference{Name: "node", UID: "uid"},
-			Profile: profile.ID, Ready: true,
+			Profile: profile.ID, Ready: true, ObservedAt: time.Now(), Native: fixtureAdmissionNative(&profile),
 		},
 		Profile: &profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
 		Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
@@ -528,7 +533,7 @@ func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 	profile := measuredAdoptionProfile()
 	profile.Condition.LogicalModel = "model"
 	service.observer.SetProfiles([]serving.Profile{profile})
-	definition := &serving.Definition{
+	definition := &serving.Definition{Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024},
 		Name: "restored", UID: "original-workload-uid", Generation: 1,
 		SLO:     serving.SLO{Percentile: 99, TargetLatency: time.Second},
 		Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"},
@@ -548,7 +553,7 @@ func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 	dispatched := make(chan serving.Dispatch, 1)
 	instance := serving.ReadyInstance{
 		State: serving.InstanceState{ID: "original-pod/container",
-			Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Profile: profile.ID, Ready: true},
+			Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Profile: profile.ID, Ready: true, ObservedAt: time.Now(), Native: fixtureAdmissionNative(&profile)},
 		Profile: &profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
 		Execute: func(_ context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
 			dispatched <- dispatch
@@ -623,7 +628,7 @@ func schedulerTestService(t *testing.T, config SchedulerConfiguration) *Schedule
 			t.Error(err)
 		}
 	})
-	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
+	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}

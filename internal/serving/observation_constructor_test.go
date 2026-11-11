@@ -59,7 +59,7 @@ func (l *runtimeObservation) HasRequest(uid, id string) (bool, error) {
 
 func TestRuntimeRejectsNilConcreteObservation(t *testing.T) {
 	var log *observation.ObservationLog
-	if _, err := serving.NewRuntime(context.Background(), serving.RuntimeConfig{QueueLimit: 1, ObservationLog: log}); err == nil {
+	if _, err := serving.NewRuntime(context.Background(), serving.RuntimeConfig{ObservationLog: log}); err == nil {
 		t.Fatal("typed nil observation log was accepted")
 	}
 }

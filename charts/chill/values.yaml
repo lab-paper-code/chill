@@ -527,7 +527,6 @@ servingEntrypoint:
     size: 1Gi
     # null uses the cluster default; "" explicitly requests no StorageClass.
     storageClassName: null
-  queueLimit: 1024
   # Approved all-profile lifetime/drain maxima; 30s remains for HTTP shutdown.
   requestTimeout: 129s
   # Long operations and historical/raw evidence reads have a separate processing bound.

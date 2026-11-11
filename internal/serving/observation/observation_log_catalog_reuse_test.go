@@ -18,7 +18,7 @@ import (
 func TestRuntimeCatalogAdoptsRepublishedImmutableSource(t *testing.T) {
 	ctx := context.Background()
 	log, _ := clockedObservationLog(t, ObservationLogConfig{}, time.Now().UTC())
-	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: log})
+	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: log})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestRuntimeCatalogAdoptsRepublishedImmutableSource(t *testing.T) {
 		profiles := slices.Clone([]serving.Profile{*instance.Profile})
 		profile := &profiles[0]
 		if err := runtime.InstallInstances([]serving.ReadyInstance{{
-			State:   serving.InstanceState{ID: instance.ID, Node: instance.Node, Profile: profile.ID, Ready: true},
+			State:   serving.InstanceState{ID: instance.ID, Node: instance.Node, Profile: profile.ID, Ready: true, ObservedAt: time.Now(), Native: fixtureAdmissionNative(profile)},
 			Profile: profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
 			Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 				return serving.BackendResult{Finished: true}, nil

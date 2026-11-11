@@ -61,7 +61,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	}
 	oldTarget := serving.SchedulerCandidate{ID: "old-target", Instances: []serving.SchedulerInstance{wanted}, Routing: map[string]map[string]int32{d.UID: {wanted.ID: 1}}}
 	physical := serving.ReadyInstance{
-		State: serving.InstanceState{ID: wanted.ID, Node: node, Profile: profile.ID, Ready: true, Native: &native.State{Ready: true, Metadata: native.Metadata{
+		State: serving.InstanceState{ID: wanted.ID, Node: node, Profile: profile.ID, Ready: true, ObservedAt: time.Now(), Native: &native.State{Ready: true, Metadata: native.Metadata{
 			ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: wanted.Capacity, MaxBatchSize: wanted.MaxBatch,
 			Policy: native.Policy{ProfileID: profile.ID, MaxBatchSize: wanted.MaxBatch, DeadlinePolicy: "keep"},
 		}}},

@@ -506,6 +506,10 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	completeError := func(err error, outcome string) {
+		var rejection *serving.Error
+		if errors.As(err, &rejection) && (rejection.Code == serving.CodeQueueFull || rejection.Code == serving.CodeDeadlineInfeasible) {
+			receipt.Rejection = rejection
+		}
 		if r.Context().Err() != nil {
 			err = contextRequestError(r.Context().Err())
 			outcome = contextOutcome(r.Context().Err())

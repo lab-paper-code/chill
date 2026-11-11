@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
@@ -43,7 +44,7 @@ func timingHandler(t *testing.T, execute func(context.Context, serving.Dispatch)
 			t.Error(err)
 		}
 	})
-	runtime, err := serving.NewRuntime(context.Background(), serving.RuntimeConfig{QueueLimit: 8, ObservationLog: log})
+	runtime, err := serving.NewRuntime(context.Background(), serving.RuntimeConfig{ObservationLog: log})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,13 +53,19 @@ func timingHandler(t *testing.T, execute func(context.Context, serving.Dispatch)
 			t.Error(err)
 		}
 	})
-	definition := &serving.Definition{Name: "workload", UID: "uid", Generation: 1, Model: serving.Model{Paths: []serving.ModelPath{{}}}, Dataset: &serving.DatasetReference{Name: "data", UID: "data"}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
-	profile := &serving.Profile{ID: "profile"}
+	definition := &serving.Definition{Name: "workload", UID: "uid", Generation: 1, Model: serving.Model{Paths: []serving.ModelPath{{}}}, Dataset: &serving.DatasetReference{Name: "data", UID: "data"}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}
+	gap := int64(0)
+	samples := []firstfloor.ServiceSample{{TrialID: "timing", ServiceDurationNanos: int64(time.Millisecond)}, {TrialID: "timing", ServiceDurationNanos: int64(time.Millisecond), PrecedingIdleNanos: &gap}}
+	distribution, err := firstfloor.NewServiceDistribution(samples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := &serving.Profile{ID: "profile", Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: samples, ServiceDistribution: distribution}}}
 	runtime.SetProfiles([]serving.Profile{*profile})
 	if err := runtime.Publish(definition); err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.InstallInstances([]serving.ReadyInstance{{State: serving.InstanceState{ID: "instance", Node: serving.NodeReference{Name: "node", UID: "node"}, Ready: true}, Profile: profile, Capacity: 1, Routing: map[string]int32{"uid": 1}, Execute: execute}}); err != nil {
+	if err := runtime.InstallInstances([]serving.ReadyInstance{{State: serving.InstanceState{ID: "instance", Node: serving.NodeReference{Name: "node", UID: "node"}, Ready: true, ObservedAt: time.Now(), Native: &firstfloor.State{Metadata: firstfloor.Metadata{Policy: firstfloor.Policy{ProfileID: profile.ID, MaxBatchSize: 1}}}}, Profile: profile, Capacity: 1, Routing: map[string]int32{"uid": 1}, Execute: execute}}); err != nil {
 		t.Fatal(err)
 	}
 	kube := fake.NewSimpleClientset()

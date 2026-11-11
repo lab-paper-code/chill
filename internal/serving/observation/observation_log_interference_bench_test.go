@@ -22,7 +22,7 @@ func BenchmarkRuntimeObservationInterference(b *testing.B) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			log, _ := clockedObservationLog(b, ObservationLogConfig{}, time.Now().UTC())
-			runtime, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 2, ObservationLog: log})
+			runtime, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: log})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -33,7 +33,7 @@ func BenchmarkRuntimeObservationInterference(b *testing.B) {
 				b.Fatal(err)
 			}
 			if err := runtime.InstallInstances([]serving.ReadyInstance{{
-				State:   serving.InstanceState{ID: instance.ID, Node: instance.Node, Profile: instance.Profile.ID, Ready: true},
+				State:   serving.InstanceState{ID: instance.ID, Node: instance.Node, Profile: instance.Profile.ID, Ready: true, ObservedAt: time.Now(), Native: fixtureAdmissionNative(instance.Profile)},
 				Profile: instance.Profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
 				Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 					return serving.BackendResult{Finished: true}, nil

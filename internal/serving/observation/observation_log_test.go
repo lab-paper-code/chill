@@ -175,11 +175,11 @@ func TestObservationLogUploadAllowsRuntimeIngressAndConcurrentClose(t *testing.T
 	var release sync.Once
 	resume := func() { release.Do(func() { close(archive.resume) }) }
 	t.Cleanup(resume)
-	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
+	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
-	definition := &serving.Definition{Name: "workload", UID: "uid", Generation: 1, Model: serving.Model{UID: "model", Generation: 1}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
+	definition := &serving.Definition{Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}, Name: "workload", UID: "uid", Generation: 1, Model: serving.Model{UID: "model", Generation: 1}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
 	if err := runtime.Publish(definition); err != nil {
 		t.Fatal(err)
 	}

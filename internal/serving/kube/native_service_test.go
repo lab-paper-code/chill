@@ -881,7 +881,7 @@ func TestPreparationCreationEvidencePrecedesSourcePublication(t *testing.T) {
 			defer cancel()
 			manager, _ := newManagerHarness(t)
 			creationFailure := errors.New("cannot admit new Pod provenance")
-			rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 8,
+			rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{
 				ObservationLog: createdPodFailureObservation{RuntimeObservation: manager.observationLog, err: creationFailure}})
 			if err != nil {
 				t.Fatal(err)

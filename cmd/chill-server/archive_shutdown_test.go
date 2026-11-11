@@ -52,7 +52,7 @@ func TestServeListenerErrorCancelsArchiveBeforeJoin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { cancel(); _ = log.Close(ctx) }()
-	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: log})
+	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: log})
 	if err != nil {
 		t.Fatal(err)
 	}

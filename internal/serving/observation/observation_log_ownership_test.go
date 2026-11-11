@@ -9,8 +9,6 @@ import (
 	"time"
 
 	serving "github.com/lab-paper-code/chill/internal/serving"
-
-	native "github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 const restoredRequest = "request"
@@ -22,7 +20,7 @@ func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}}
 	observationLog, _ := clockedObservationLog(t, config, time.Now().UTC())
 	config = observationLog.config
-	d := &serving.Definition{Name: "workload", UID: "uid", Generation: 1, Model: serving.Model{UID: "model", Generation: 1}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
+	d := &serving.Definition{Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}, Name: "workload", UID: "uid", Generation: 1, Model: serving.Model{UID: "model", Generation: 1}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
 	if err := observationLog.DefinitionRecord(d); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +43,7 @@ func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: restartedLog})
+	restored, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: restartedLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +78,7 @@ func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = confirmedLog.Close(ctx) }()
-	confirmed, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: confirmedLog})
+	confirmed, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: confirmedLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,12 +119,12 @@ func TestRestoredCallTheNativeDoesNotHoldFinishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = restartedLog.Close(ctx) }()
-	restored, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: restartedLog})
+	restored, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: restartedLog})
 	if err != nil {
 		t.Fatal(err)
 	}
 	restored.SetProfiles([]serving.Profile{*p})
-	instance := serving.ReadyInstance{State: serving.InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), NativeVerified: true, Native: &native.State{Ready: true}},
+	instance := serving.ReadyInstance{State: serving.InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), NativeVerified: true, Native: fixtureAdmissionNative(p)},
 		Profile: p, Capacity: 1, Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 			return serving.BackendResult{}, nil
 		}}

@@ -16,7 +16,7 @@ import (
 func TestRuntimeDispatchDoesNotWaitForOwnObservationWrite(t *testing.T) {
 	ctx := context.Background()
 	log, _ := clockedObservationLog(t, ObservationLogConfig{}, time.Now().UTC())
-	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: log})
+	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: log})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestRuntimeDispatchDoesNotWaitForOwnObservationWrite(t *testing.T) {
 	complete := sync.OnceFunc(func() { close(finish) })
 	t.Cleanup(complete)
 	if err := runtime.InstallInstances([]serving.ReadyInstance{{
-		State:   serving.InstanceState{ID: instance.ID, Node: instance.Node, Profile: instance.Profile.ID, Ready: true},
+		State:   serving.InstanceState{ID: instance.ID, Node: instance.Node, Profile: instance.Profile.ID, Ready: true, ObservedAt: time.Now(), Native: fixtureAdmissionNative(instance.Profile)},
 		Profile: instance.Profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
 		Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 			executing <- struct{}{}

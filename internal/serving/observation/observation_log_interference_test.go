@@ -23,7 +23,7 @@ func interferenceRuntime(t testing.TB, log *ObservationLog) (*serving.Runtime, [
 			admitted.Store(event.RequestID, true)
 		}
 	}
-	runtime, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 2, ObservationLog: log})
+	runtime, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: log})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func interferenceRuntime(t testing.TB, log *ObservationLog) (*serving.Runtime, [
 		}
 		profile := &profiles[index]
 		instances = append(instances, serving.ReadyInstance{
-			State:   serving.InstanceState{ID: definition.Name, Node: snapshot.Nodes[0].Node, Profile: profile.ID, Ready: true},
+			State:   serving.InstanceState{ID: definition.Name, Node: snapshot.Nodes[0].Node, Profile: profile.ID, Ready: true, ObservedAt: time.Now(), Native: fixtureAdmissionNative(profile)},
 			Profile: profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
 			Execute: func(_ context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
 				if _, ok := admitted.Load(dispatch.RequestID); !ok {

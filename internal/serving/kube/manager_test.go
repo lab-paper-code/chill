@@ -23,11 +23,13 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving/management"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -147,7 +149,7 @@ func newManagerHarness(t *testing.T) (*managerHarness, observation.ObservationLo
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 8, ObservationLog: observationLog})
+	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +236,21 @@ func managerProfile(d *serving.Definition) serving.Profile {
 	if d.Dataset != nil {
 		profile.Condition.ActiveProtocol.Dataset = &derivation.CurveDatasetContract{Name: d.Dataset.Name, UID: d.Dataset.UID}
 	}
+	profile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []native.ServiceSample{
+		fixtures.ServiceSample("physical-trial", 0, int64(time.Millisecond)),
+		fixtures.ServiceSample("physical-trial", 1, int64(time.Millisecond)),
+	}}}
+	distribution, err := native.NewServiceDistribution(profile.Batches[0].ServiceSamples)
+	if err != nil {
+		panic(err)
+	}
+	profile.Batches[0].ServiceDistribution = distribution
 	return profile
+}
+
+func fixtureAdmissionNative(profile *serving.Profile) *native.State {
+	return &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID,
+		Policy: native.Policy{ProfileID: profile.ID, MaxBatchSize: 1}}}
 }
 
 // managerSample is a raw sample satisfying managerPreprocessorSpec.
@@ -260,7 +276,7 @@ func startManagerCalls(t *testing.T, m *managerHarness, profile serving.Profile,
 		if err != nil {
 			t.Fatal(err)
 		}
-		instances = append(instances, serving.ReadyInstance{State: serving.InstanceState{ID: "pod-" + name + "/container", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Profile: profile.ID, Ready: true}, Profile: &profile, Routing: map[string]int32{state.Applied.UID: 1}, Capacity: 2,
+		instances = append(instances, serving.ReadyInstance{State: serving.InstanceState{ID: "pod-" + name + "/container", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Profile: profile.ID, Ready: true, ObservedAt: time.Now(), Native: fixtureAdmissionNative(&profile)}, Profile: &profile, Routing: map[string]int32{state.Applied.UID: 1}, Capacity: 2,
 			Execute: func(_ context.Context, d serving.Dispatch) (serving.BackendResult, error) {
 				started <- d
 				<-finish
@@ -545,7 +561,7 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 8, ObservationLog: observationLog})
+	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -56,16 +56,28 @@ type Admission struct {
 
 // Error carries a consumer-visible failure without depending on its transport.
 type Error struct {
-	Code              string          `json:"code"`
-	Message           string          `json:"message"`
-	Field             string          `json:"field,omitempty"`
-	Stage             string          `json:"stage,omitempty"`
-	Policy            AdmissionPolicy `json:"policy,omitempty"`
-	RemainingSLONanos *int64          `json:"remainingSLONanos,omitempty"`
-	ExecutorWaitNanos *int64          `json:"executorWaitNanos,omitempty"`
+	Code                     string          `json:"code"`
+	Message                  string          `json:"message"`
+	Field                    string          `json:"field,omitempty"`
+	Stage                    string          `json:"stage,omitempty"`
+	Policy                   AdmissionPolicy `json:"policy,omitempty"`
+	RemainingSLONanos        *int64          `json:"remainingSLONanos,omitempty"`
+	PredictedCompletionNanos *int64          `json:"predictedCompletionNanos,omitempty"`
+	ExecutorWaitNanos        *int64          `json:"executorWaitNanos,omitempty"`
+	OutsideSupport           bool            `json:"outsideSupport,omitempty"`
 }
 
 func (e *Error) Error() string { return e.Message }
+
+// AdmissionRejection is the public overload decision, without transport details.
+type AdmissionRejection struct {
+	Code                     string          `json:"code"`
+	Stage                    string          `json:"stage"`
+	Policy                   AdmissionPolicy `json:"policy"`
+	PredictedCompletionNanos *int64          `json:"predictedCompletionNanos,omitempty"`
+	RemainingSLONanos        *int64          `json:"remainingSLONanos,omitempty"`
+	OutsideSupport           bool            `json:"outsideSupport,omitempty"`
+}
 
 func failure(code, format string, args ...any) error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
@@ -370,6 +382,9 @@ type RequestEvent struct {
 	SLO                *SLO             `json:"slo,omitempty"`
 	Outcome            string           `json:"outcome,omitempty"`
 	Error              string           `json:"error,omitempty"`
+	Policy             AdmissionPolicy  `json:"policy,omitempty"`
+	Rejection          *Error           `json:"rejection,omitempty"`
+	GatewayWaitNanos   *int64           `json:"gatewayWaitNanos,omitempty"`
 }
 
 type ManagementEvent struct {

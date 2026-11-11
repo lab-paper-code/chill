@@ -168,7 +168,7 @@ func schedulerFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
 	path := serving.ModelPath{Name: "cpu", Artifact: "model", Files: []string{"/model"}, Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Firstfloor: settings}
-	d := &serving.Definition{Name: "workload", UID: "w1", Generation: 1, Model: serving.Model{Name: "model", UID: "m", Generation: 1, Paths: []serving.ModelPath{path}}, Preprocessor: serving.Preprocessor{Name: "pre", Input: []serving.RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []serving.RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"}, SLO: serving.SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}
+	d := &serving.Definition{Name: "workload", UID: "w1", Generation: 1, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}, Model: serving.Model{Name: "model", UID: "m", Generation: 1, Paths: []serving.ModelPath{path}}, Preprocessor: serving.Preprocessor{Name: "pre", Input: []serving.RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []serving.RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"}, SLO: serving.SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}
 	p := &serving.Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, int64(10*time.Millisecond)), fixtures.ServiceSample("physical-trial", 1, int64(10*time.Millisecond))}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
 	distribution, err := firstfloor.NewServiceDistribution(p.Batches[0].ServiceSamples)
 	if err != nil {
@@ -182,6 +182,11 @@ func schedulerFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	p.Evidence[0].Size = 1
 	snap := serving.SchedulerSnapshot{At: at, ObservationEnd: at, Workloads: []*serving.Definition{d}, Nodes: []serving.SchedulerNode{node}, Instances: []serving.SchedulerInstance{i}, Options: []serving.SchedulerOption{{Instance: i, CompatibleUIDs: []string{d.UID}}}, Baselines: []serving.NodeBaseline{b}}
 	return s, snap
+}
+
+func fixtureAdmissionNative(profile *serving.Profile) *firstfloor.State {
+	return &firstfloor.State{Ready: true, Metadata: firstfloor.Metadata{ProfileID: profile.ID,
+		Policy: firstfloor.Policy{ProfileID: profile.ID, MaxBatchSize: 1}}}
 }
 
 func directFixture(batch int) (*serving.Profile, map[string]firstfloor.Metadata, time.Time) {

@@ -114,7 +114,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*servingops.Operations, serving.S
 		instance := serving.SchedulerInstance{ID: id, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile,
 			WorkloadUID: definition.UID, MaxBatch: 1, Capacity: 4, MaxWait: time.Millisecond}
 		target.Instances = append(target.Instances, instance)
-		ready = append(ready, serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: instance.Node, Profile: profile.ID, Ready: true, Native: &state},
+		ready = append(ready, serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: instance.Node, Profile: profile.ID, Ready: true, ObservedAt: time.Now(), Native: &state},
 			Profile: &profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 4,
 			Execute: func(ctx context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
 				return nativeClient.Execute(ctx, spec, dispatch)
@@ -432,7 +432,7 @@ func TestReassignedInstancePersistsOnlyItsDeclaredWorkload(t *testing.T) {
 			id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 			started, finish := make(chan serving.Dispatch, 2), make(chan struct{}, 2)
-			instance := serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: ref, Profile: profile.ID, Ready: true}, Profile: &profile, Routing: map[string]int32{first.Applied.UID: 1}, Capacity: 1,
+			instance := serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: ref, Profile: profile.ID, Ready: true, ObservedAt: time.Now(), Native: fixtureAdmissionNative(&profile)}, Profile: &profile, Routing: map[string]int32{first.Applied.UID: 1}, Capacity: 1,
 				Execute: func(_ context.Context, d serving.Dispatch) (serving.BackendResult, error) {
 					started <- d
 					<-finish

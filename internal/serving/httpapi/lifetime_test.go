@@ -21,7 +21,7 @@ func TestAppliedRequestLifetime(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	runtime, err := serving.NewRuntime(context.Background(), serving.RuntimeConfig{QueueLimit: 8, ObservationLog: log})
+	runtime, err := serving.NewRuntime(context.Background(), serving.RuntimeConfig{ObservationLog: log})
 	if err != nil {
 		t.Fatal(err)
 	}

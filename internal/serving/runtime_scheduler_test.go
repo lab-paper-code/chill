@@ -11,6 +11,14 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
+func runtimeTestNative(p *Profile) *native.State {
+	maxBatch := 0
+	for _, b := range p.Batches {
+		maxBatch = max(maxBatch, b.Batch)
+	}
+	return &native.State{Ready: true, Metadata: native.Metadata{Policy: native.Policy{ProfileID: p.ID, MaxBatchSize: maxBatch}}}
+}
+
 // routingRuntime installs one instance compatible with a controlled and a disabled
 // Workload; seed is the instance's routing as read from its Pod.
 func routingRuntime(t *testing.T, seed map[string]int32) (*Runtime, SchedulerInstance, map[string]map[string]int32) {
@@ -24,7 +32,7 @@ func routingRuntime(t *testing.T, seed map[string]int32) (*Runtime, SchedulerIns
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +44,7 @@ func routingRuntime(t *testing.T, seed map[string]int32) (*Runtime, SchedulerIns
 			t.Fatal(err)
 		}
 	}
-	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: i.ID, Node: i.Node, Profile: i.Profile.ID, Ready: true}, Profile: i.Profile, Routing: seed, Capacity: 1,
+	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: i.ID, Node: i.Node, Profile: i.Profile.ID, Ready: true, ObservedAt: time.Now(), Native: runtimeTestNative(i.Profile)}, Profile: i.Profile, Routing: seed, Capacity: 1,
 		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +209,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 		t.Fatal(err)
 	}
 	defer func() { _ = observationLog.Close(context.Background()) }()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,6 +224,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 		instances = append(instances, ReadyInstance{
 			State: InstanceState{
 				ID: wanted.ID, Node: wanted.Node, Profile: wanted.Profile.ID, Ready: true,
+				ObservedAt: time.Now(), Native: runtimeTestNative(wanted.Profile),
 			},
 			Profile: wanted.Profile, Routing: map[string]int32{d.UID: wanted.Weight}, Capacity: wanted.Capacity,
 			Execute: func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
@@ -325,7 +334,7 @@ func TestReturningPOSTIncludesExchangeReturnAfterEarlySDKCompletion(t *testing.T
 		t.Fatal(err)
 	}
 	defer func() { _ = observationLog.Close(context.Background()) }()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +390,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 			t.Error(err)
 		}
 	}()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +402,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	started := make(chan Dispatch, 2)
 	exchanged := make(chan struct{}, 2)
 	actualAt := time.Now().Add(-time.Second)
-	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: actualAt, NativeVerified: true, Native: &native.State{}}, Profile: p, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(ctx context.Context, dispatch Dispatch) (BackendResult, error) {
+	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: actualAt, NativeVerified: true, Native: runtimeTestNative(p)}, Profile: p, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(ctx context.Context, dispatch Dispatch) (BackendResult, error) {
 		started <- dispatch
 		<-ctx.Done()
 		exchanged <- struct{}{}
@@ -497,7 +506,7 @@ func TestErrorExchangeWithoutNativeRecordFinishesForDrain(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, ObservationLog: observationLog})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +516,7 @@ func TestErrorExchangeWithoutNativeRecordFinishesForDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	instance := func(held ...string) ReadyInstance {
-		state := &native.State{Ready: true}
+		state := runtimeTestNative(p)
 		for _, id := range held {
 			state.Requests = append(state.Requests, native.RequestState{Context: native.RequestContext{RequestID: id}, Phase: "queued"})
 		}
@@ -602,7 +611,7 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -612,7 +621,7 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.EnableSchedulerRouting()
-	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "new", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true}, Profile: p, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
+	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "new", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), Native: runtimeTestNative(p)}, Profile: p, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
 		t.Fatal(err)
 	}
 	if state, err := r.State(d.Name); err != nil || state.Reason != "Preparing" {
@@ -633,7 +642,7 @@ func TestControlledRoutingKeepsExplicitlyUnroutedWorkloadQueuedAfterInstanceRedi
 		t.Fatal(err)
 	}
 	defer func() { _ = observationLog.Close(context.Background()) }()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -645,6 +654,7 @@ func TestControlledRoutingKeepsExplicitlyUnroutedWorkloadQueuedAfterInstanceRedi
 	instance := ReadyInstance{
 		State: InstanceState{
 			ID: "excluded", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true,
+			ObservedAt: time.Now(), Native: runtimeTestNative(p),
 		},
 		Profile: p, Capacity: 1,
 		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil },
@@ -701,7 +711,7 @@ func TestControlledRoutingExecutesSeededWorkloadAbsentFromAppliedDistribution(t 
 		t.Fatal(err)
 	}
 	defer func() { _ = observationLog.Close(context.Background()) }()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 1, ObservationLog: observationLog})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -722,6 +732,7 @@ func TestControlledRoutingExecutesSeededWorkloadAbsentFromAppliedDistribution(t 
 	instance := ReadyInstance{
 		State: InstanceState{
 			ID: "seeded", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true,
+			ObservedAt: time.Now(), Native: runtimeTestNative(p),
 		},
 		Profile: p, Capacity: 1,
 		Routing: map[string]int32{measured.UID: 1},
@@ -835,7 +846,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 			t.Error(err)
 		}
 	}()
-	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 32, ObservationLog: observationLog})
+	r, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: observationLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -845,7 +856,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	for _, wanted := range candidate.Instances {
 		profiles = append(profiles, *wanted.Profile)
 		instances = append(instances, ReadyInstance{
-			State:   InstanceState{ID: "physical-" + wanted.ID, TargetID: wanted.ID, Node: wanted.Node, Profile: wanted.Profile.ID, Ready: true},
+			State:   InstanceState{ID: "physical-" + wanted.ID, TargetID: wanted.ID, Node: wanted.Node, Profile: wanted.Profile.ID, Ready: true, ObservedAt: time.Now(), Native: runtimeTestNative(wanted.Profile)},
 			Profile: wanted.Profile, Capacity: wanted.Capacity,
 			Execute: func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
 				return BackendResult{Body: []byte(dispatch.Assignment.Instance), Finished: true}, nil
