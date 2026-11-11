@@ -847,7 +847,7 @@ var capacityTestSettings = SchedulerSettings{ComparisonPeriod: time.Minute, MaxR
 // capacitySearchForTest runs the plan search without a time budget.
 func capacitySearchForTest(t testing.TB, p *capacityPlanner) capacityResult {
 	t.Helper()
-	best, err := p.search(time.Now().Add(time.Hour))
+	best, err := p.search(time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1466,8 +1466,10 @@ func TestCapacitySearchBudgetCutRetainsAcceptedSteps(t *testing.T) {
 // §9 6 search: the decision records the search scope with the capacity judgment.
 func TestCapacityDecisionRecordsSearch(t *testing.T) {
 	s, snap, _ := capacityE1Fixture()
+	planner := capacityPlannerForTest(t, s, snap)
 	before := time.Now()
-	d := capacityDecideForTest(t, s, snap)
+	best := capacitySearchForTest(t, planner)
+	d := planner.decide(SchedulerDecision{Keep: planner.keep}, best)
 	after := time.Now()
 	if d.Capacity == nil || d.Capacity.Search == nil || d.Capacity.Search.Evaluated == 0 {
 		t.Fatalf("decision search record: %+v", d.Capacity)
@@ -1982,7 +1984,10 @@ func TestCapacityTargetDAGProjectsOnlyPowerMode(t *testing.T) {
 		}
 	}
 	snapshot.Costs = append(snapshot.Costs, poolsCost(schedulerActionPower, expanded, currentMode, targetMode, ""))
-	decision := capacityDecideForTest(t, settings, snapshot)
+	// Projection needs a completed search, independent of host CPU contention.
+	planner := capacityPlannerForTest(t, settings, snapshot)
+	best := capacitySearchForTest(t, planner)
+	decision := planner.decide(SchedulerDecision{Keep: planner.keep}, best)
 	if decision.Target == nil || !poolsOn(*decision.Target, expanded) {
 		t.Fatalf("target mode expansion missing: status=%s reasons=%v", decision.Status, decision.Reasons)
 	}

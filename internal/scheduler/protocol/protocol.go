@@ -39,9 +39,10 @@ type Problem struct {
 	Workloads                               []Workload
 	Workers, Evaluations, Finalists, Active int
 	Priced, PostFilter                      bool
-	Deadline                                time.Time
-	Table                                   *Table
-	NewState                                func([]int) State
+	// A zero Deadline disables wall-clock cuts for deterministic searches.
+	Deadline time.Time
+	Table    *Table
+	NewState func([]int) State
 }
 
 type Table struct {

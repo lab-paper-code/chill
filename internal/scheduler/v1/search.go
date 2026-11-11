@@ -101,7 +101,7 @@ func sweep[R any](p protocol.Problem, exact protocol.Exact[R], choice []int, k i
 				m := moves[i]
 				c[m.n] = m.j
 				defer func() { c[m.n] = choice[m.n] }()
-				if cut.Load() || time.Now().After(p.Deadline) {
+				if cut.Load() || !p.Deadline.IsZero() && time.Now().After(p.Deadline) {
 					cut.Store(true)
 					return
 				}

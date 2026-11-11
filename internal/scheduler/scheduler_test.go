@@ -57,15 +57,18 @@ func TestPublicV1WorkerOrderAndDeadline(t *testing.T) {
 	for range 3 {
 		p.Plans = append(p.Plans, []protocol.Plan{{Eligible: true}, {Eligible: true}, {Eligible: true, Empty: true}})
 	}
-	for _, workers := range []int{1, 3} {
-		p.Workers = workers
-		exact := &nativeExact{}
-		got, err := (v1.Engine[nativeResult]{}).Search(p, exact)
-		if err != nil || !got.Found || !reflect.DeepEqual(got.Value.choice, []int{1, 1, 1}) || got.Value.payload != exact {
-			t.Fatalf("workers=%d result=%+v err=%v", workers, got, err)
-		}
-		if got.Diagnostics.Neighborhood != 3 || got.Diagnostics.Evaluated == 0 || got.Diagnostics.TerminationReason != protocol.NoImprovement {
-			t.Fatalf("search diagnostics: %+v", got.Diagnostics)
+	for _, deadline := range []time.Time{{}, p.Deadline} {
+		p.Deadline = deadline
+		for _, workers := range []int{1, 3} {
+			p.Workers = workers
+			exact := &nativeExact{}
+			got, err := (v1.Engine[nativeResult]{}).Search(p, exact)
+			if err != nil || !got.Found || !reflect.DeepEqual(got.Value.choice, []int{1, 1, 1}) || got.Value.payload != exact {
+				t.Fatalf("deadline=%s workers=%d result=%+v err=%v", deadline, workers, got, err)
+			}
+			if got.Diagnostics.Neighborhood != 3 || got.Diagnostics.Evaluated == 0 || got.Diagnostics.TerminationReason != protocol.NoImprovement {
+				t.Fatalf("search diagnostics: %+v", got.Diagnostics)
+			}
 		}
 	}
 	p.Deadline = time.Now().Add(-time.Second)
