@@ -65,17 +65,19 @@ gateway에서 실행기를 배정받지 못하고 최종 기한(2초)에 끝난 
 
 **비대칭이 핵심이다.** replay에서 snapshot의 미완료 동작은 keep 평가에만 들어간다(`scheduler_replay.go:480-506`, `scheduler_replay_actions.go:158-181`). 비-keep 후보는 그 동작이 없는 초기 상태에서 평가된다. 그래서 실패한 과거 prepare가 keep에만 불이익을 준다. keep이 평가 불가이니 매 판단이 비-keep target(route 하나, 기대 에너지 차이 중앙값 0 J)을 고른다. 두 target 사이를 오가며 IC 실행기의 `maxBatchSize`가 2→16→2로 바뀌었다.
 
-### 2.4 판단이 예측한 지연과 실제가 크게 다르다 — 확정(현상), 원인 미확정
+### 2.4 완료 지연과 executor 대기가 크게 늘었다 — 확정(현상), 원인 미확정
 
-control379에서 판단이 고른 target의 IC p95 예측과 실제 완료 지연:
+control379에서 판단이 고른 target의 IC p95 예측(offered 구간 판단 142/139개)과 실제 완료 지연:
 
 | | Reject | Delay |
 |---|---:|---:|
-| 고른 target의 IC p95 예측 p50 (ms) | 213 | 222 |
+| 고른 target의 IC p95 예측 중앙값, excess / workload (ms) | 216 / 212 | 217 / 237 |
 | 실제 완료 latency p95, excess / workload (ms) | 828 / 894 | 750 / 696 |
 | executor 대기 p95 (ms) | 738 / 824 | 664 / 610 |
 
-control378 완료 p95는 147/152ms였다. 처리 시간이 아니라 executor 대기가 크다. 실행기는 jetsonx IC CUDA이고 serving batch 1·2 처리 시간은 profile과 맞는다(b1 p50 31.5ms, b2 58.5ms, profile 최대 초과 0.2%/1.1%). 대기가 예측의 4배인 원인은 아직 확정하지 않았다. 후보: §2.3의 route 왕복으로 바뀐 `maxBatchSize=2`(b2 약 60ms면 처리량 약 33 req/s로 수요 약 31 req/s에 거의 포화), executor 거절 361건(Reject; gateway가 받아들였지만 executor가 기한 불가로 거절).
+control378 완료 p95는 147/152ms였다. 실제 완료 p95와 executor 대기가 control378보다 크게 늘었다. 위 target 예측(당시 입력의 600초 반사실 replay)과 실측(정책 전환이 포함된 900초 stage의 완료 요청)은 적용 상태·horizon·수요·요청 모집단이 일치하지 않으므로 예측 오차 배율로 해석하지 않는다.
+
+실행기는 jetsonx IC CUDA다. b1·b2의 marginal service 중앙값(31.5ms, 58.5ms)은 profile과 비슷하고 profile 최대값 초과는 0.23%/1.12%다. idle-gap·trial 가중 조건부 분포의 일치는 별도로 검증한다. §2.3의 route 왕복이 만든 `maxBatchSize=2` 구간의 공급 여유(b2 약 60ms면 약 33 req/s, 수요 약 31 req/s)와 큐 증가를 X1에서 분해한다. executor 거절 361건(Reject)은 이 분해에서 함께 설명할 결과다.
 
 ### 2.5 profile이 serving을 대표하는지 확인하지 않는다 — 대표성 검증 부재 확정, 인과 미확정
 
@@ -153,7 +155,7 @@ R2가 매 판단 route를 만들고, route가 관측 갱신을 일으켜 R1의 �
 | V1 다른 묶음 분류 | §2.2의 나머지 묶음과 PLC 묶음을 같은 방식(route 기록의 before.native, 관측 시각)으로 분류 | 묶음별 판단 불가 조건 기록. G1 범위 밖 조건이 나오면 계획 갱신 |
 | K1 후보 공통 초기 상태 | R2. §4 계약대로 | control379 판단 입력 재생에서 keep 평가 성공. 같은 실물·정책·routing의 불필요 재적용 0(수요 변화에 필요한 전환은 유지). control376 S1 회귀 유지 |
 | A1 원인·예측 오차 기록 | R5 | 합성 회귀에서 대기 이유·거절·예측 오차가 행에 남는다 |
-| X1 미설명 실패 분해 | §2.4 executor 대기 4배, §2.8 항목. A1 기록이 없는 control379는 원문 결합으로 할 수 있는 만큼 분해한다 | 항목별 원인 또는 필요한 추가 기록 확정 |
+| X1 미설명 실패 분해 | §2.4 완료 latency 상승·executor 대기 증가(route 왕복·batch 제한 변경의 영향), §2.8 항목. A1 기록이 없는 control379는 원문 결합으로 할 수 있는 만큼 분해한다 | 항목별 원인 또는 필요한 추가 기록 확정 |
 | F1 대표성 측정 | R3 측정 | control378·379 원문으로 정정된 cohort 계약을 재현 |
 | F2 대표성 정책 | 사용자 결정 뒤 | 결정에 따름 |
 | 반응 경로 | control-reaction-plan의 O2(`Admit` 1.9초), 진행·평가 분리, W1(window 재읽기) | 각 계획의 기준 |
@@ -200,6 +202,6 @@ control379와 같은 E5(Reject·Delay). 판정:
 - Tick·round 분포(10초 초과 수), evaluate 하위 단계
 - 비-on-time 요청의 원인 분포(A1), 실행기 idle 중 gateway 대기 timeout 수
 - keep 상태 분포, route 수(control378 15, control379 66/73), `maxBatchSize` 변경 수
-- 고른 target의 예측 p95와 실제 완료 p95, executor 대기 분포
+- 고른 target의 예측 p95와 실제 완료 p95, executor 대기 분포. 예측 오차로 비교할 때는 적용 상태·horizon·수요·요청 모집단이 일치하는 구간만 쓴다(§4 R5)
 - 실행기·profile·batch별 serving/profile 괴리(F1)
 - 서비스별 onTime 비율·goodput, 에너지(전체 POOL, 같은 H의 keep·선택 후보)
