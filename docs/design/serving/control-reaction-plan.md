@@ -2,7 +2,7 @@
 
 기준 소스 `c8240a55`. 근거 루트 `R=ops/pools-deploy/deployB/control-378-system-reaction-20261111/rerun-adaptive`(선택 Run `56926774`). 원문:
 - scheduler 기록: API 페이지 `R/native-scheduler-pages/*.json.gz`, 실제 저장 journal `R/native-scheduler-catalog-replay.tar.gz`
-- 요청: `R/published-originals/stages/<stage>/stage/artifacts/measured/obs/20261111T11/requests.jsonl.gz`(server final 행)
+- 요청: `R/published-originals/stages/<stage>/stage/artifacts/measured/obs/20261111T11/requests.jsonl.gz`(final 행과 native supplement)
 - CPU·heap: `R/evaluation-monitor/*-cpu.pb.gz`, `*-heap.pb.top.txt`. CPU profile은 부하 시작 약 137초 뒤 30초 채집이라 시작 직후 지연의 기여율로 쓰지 않는다.
 - 클러스터 읽기 전용 `kubectl get`(2026-11-11 후반)
 
@@ -37,7 +37,7 @@ IC server final 행, SLO 1초(E2E `elapsedNanos` ≤ 1초), lifetime 2초:
 | workload | 2.5–25 | 690 | 93 | **0** |
 | workload | 25–35 | 310 | 310 | 305 |
 
-excess 2.5–30초 jetsono 실행:
+excess 2.5–30초 jetsono 실행. batch는 instance·batchID로 중복 제거했다. 실행 시간은 nativeRunningAt→nativeFinishedAt, 지속 처리량은 첫 batch 시작→마지막 batch 종료 기준이다. 실행 전 만료는 final과 native supplement를 requestID로 결합해 확인했다(218개 중 49개는 native 행에만 종료 정보가 있다).
 - batch 39개, 모두 16개, 실행 p50 0.694초, batch 사이 공백 p50 1ms. 지속 처리량 22.5 req/s. 수요는 약 31 req/s.
 - 842개 중 624개는 batch로 실행됐고 모두 SLO를 넘겼다. 나머지 218개는 실행 전 queue에서 lifetime 만료됐다.
 - queue p50 1.6~1.8초. queue와 실행 시간의 합이 SLO 1초를 늘 넘는다.
@@ -100,7 +100,7 @@ executor는 100% 바빴지만, 실행한 요청이 모두 이미 SLO를 지킬 �
 
 ### 2.6 route 적용 경로 — 미분해
 
-route 0.6~2.5초에는 대상별 Pod List, ConfigMap GET/PATCH, Pod annotation PATCH, native ACK polling, ACK 뒤 전체 `Observer.Refresh`, routing 영속화용 Pod List, 완료 뒤 Continue 전체 capture가 들어 있다(`operations/operations_routing.go:61-99,110-285`). executor는 config를 1초 주기로 polling한다(`internal/firstfloor/config.go:174-201`). 정책 ACK가 최대 1초 늦을 수 있다.
+route action(0.6~2.5초)에는 대상별 Pod List, ConfigMap GET/PATCH, Pod annotation PATCH, native ACK polling, ACK 뒤 전체 `Observer.Refresh`, routing 영속화용 Pod List가 들어 있다(`operations/operations_routing.go:61-99,110-285`). action 완료 뒤 Continue가 별도 전체 capture를 실행하며, 그 비용은 §2.4·§2.5에 포함한다(`kube/scheduler_operations_launch.go:141-177`). executor는 config를 1초 주기로 polling한다(`internal/firstfloor/config.go:174-201`). 정책 ACK가 최대 1초 늦을 수 있다.
 
 ### 2.7 평가 계산 — 분해 확정, 개선 여지 미확정
 
@@ -151,7 +151,7 @@ workload working set 최대 4013MiB / limit 4Gi, live heap 1,607MB. 누적 경�
 | 단위 | 대상 | 내용 | 완료 기준 |
 |---|---|---|---|
 | O2 측정 CR 증분 관측 | 2.5 | `Admit`이 측정 CR 전체를 매번 List하지 않게 한다. 변경·삭제·재생성은 놓치지 않는다. Nodes·Pods·DeviceClasses는 같은 주기 관측을 공유한다. 대기 순서·terminal 판정·measurement taint 단일 writer 계약 유지 | `Admit` p50 < 0.1초, 기존 admission 회귀 통과 |
-| A1 진행과 평가 분리 | 2.4 | Tick 평가를 불변 입력 위에서 lock 밖으로 옮기고 그동안 Continue가 진행한다. 불변식: Continue 이후 과거 snapshot을 현재로 재게시하지 않는다. 승인 시 최신 설정·예약·실물 상태를 적용한다. 오래된 평가로 fence를 지우거나 admission 기준을 되돌리지 않는다. Ready-expansion 평가와 action 기록 선행 조건 유지. `refreshMu` 대기를 분리 측정 | prepare→route, route→stop→drain→remove 각 전이 대기 ≤ 0.5초. 회귀: 평가 중 진행, 설정 변경, writer-fence 보존, snapshot 시각 역행 없음, 동시 owner·Ready-subset |
+| A1 진행과 평가 분리 | 2.4 | Tick 평가를 불변 입력 위에서 lock 밖으로 옮기고 그동안 Continue가 진행한다. 불변식: Continue 이후 과거 snapshot을 현재로 재게시하지 않는다. 승인 시 최신 설정·예약·실물 상태를 적용한다. 오래된 평가로 fence를 지우거나 admission 기준을 되돌리지 않는다. Ready-expansion 평가와 action 기록 선행 조건 유지. `refreshMu` 대기를 분리 측정 | prepare→route, route→stop→drain→remove 각 전이에서 평가·Admit·불필요 capture 대기를 제거한다. 필요한 최신 관측·ACK 시간과 나머지 대기를 분리해 보고한다. 회귀: 평가 중 진행, 설정 변경, writer-fence 보존, snapshot 시각 역행 없음, 동시 owner·Ready-subset |
 | W1 요청 window 재사용 | 2.5 | 먼저 window를 barrier 대기·scan·decode·join·정렬로 분해 기록한다. 이어서 server가 쓴 요청 기록을 Tick·Continue마다 다시 읽지 않고 메모리 window를 갱신한다. gap 판정(`schedulerRequestCoverageError`)과 재시작 복원은 기존 log에서 한다. Continue는 전이에 필요한 근거만 갱신한다 | window p50 < 0.05초, Continue capture 감소, 재시작 뒤 같은 window |
 | W2 occupancy 중복 scan 제거 | 2.5 | rolling occupancy가 요청 기록을 별도로 두 번 decode하지 않게 한다. window·late supplement·선택 멤버십·분위수 의미 유지 | 같은 occupancy 결과, CPU 감소 |
 | R1 route 적용 경로 | 2.6 | 반복 inventory·refresh, ConfigMap 전달과 executor의 1초 config polling을 분해하고 줄인다. destination/container identity, 실제 policy ACK, recovery·writer-fence 계약 유지 | route 내부 구간별 기록, 반복 조회 제거, ACK 지연 감소 |
@@ -184,7 +184,9 @@ graph LR
   M2
 ```
 
-T2만 D0와 G1에 의존하고 G1만 G0에 의존한다. 나머지는 서로 독립이다. 진행 순서는 실패량 영향 순이다: G0→G1, 확정된 반응·회수 경로 비용(O2, A1, W1), 분해(R1, P1, S0, D0), 계산·기록·메모리(E1, W2, M1, M2), T2.
+T2만 D0와 G1에 의존하고 G1만 G0에 의존한다. 나머지는 서로 독립이다. G0·D0와 확정된 비용 제거(O2, A1, W1)를 먼저 독립 착수한다. G0 뒤 G1, D0·G1 뒤 T2를 진행하며, 의존성이 풀리면 T2를 계산·기록·메모리 작업 뒤로 미루지 않는다. 분해(R1, P1, S0)와 계산·기록·메모리(E1, W2, M1, M2)도 독립 진행한다.
+
+단위의 수치 완료 기준은 비교 지표다. 기준을 달성해도 남은 불필요 비용을 허용하지 않는다.
 
 ### 3.2 연구 harness 항목 (CHILL 경로와 분리)
 
