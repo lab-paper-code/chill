@@ -293,7 +293,7 @@ Gate: Go 후보는 `make lint`, `make test TEST_PYTHON=<3.10 이상>`, `make arc
 |---|---|---|
 | C5 | 대기 | |
 | C1 | 대기 | |
-| C2 | 대기 | |
+| C2 | 완료. 리뷰 2종 무결함, 대시보드 typecheck·lint·test 723(722 통과, 1 skip)·build, 브라우저에서 요청 작성 화면이 `scheduler/profiles?view=summary&summary=v2&limit=50&offset=0` 조회와 실패 표시 확인(fixture에 profiles 없음, 성공 경로는 T1 테스트) | `a2eb34c4`, `a7c26a21` |
 | C3 | 대기 | |
 | C4 | 종료(현 구조 유지) | 이 문서 |
 
