@@ -78,6 +78,13 @@ T1로 List별 시간을 확정한 뒤, 복구 baseline과 steady 관측을 분�
 - 독립 리뷰: 시스템 목적·책임 경계·과구현, 메모리·경쟁·연산 비용.
 - gate: `make lint`, `make test`, `make arch-check`, `make gopls-check`.
 
+### 로컬 결과
+
+- 18:31:36 재현 회귀(`target_scope_intent_test.go`): rebase 결과 537/463. bridge 800/200, Ready-subset, newer owner 300 fence 아래 owned 400 보존을 함께 확인.
+- 기존 동시 owner 회귀 `TestRouteWritersPreserveEveryNewerCommittedShare`는 C의 검증 target이 a를 700→600으로 바꾸므로 기대값을 비례 재정규화 630/270에서 600/300/100으로 바꿨다. 이후 older A 재적용이 newer share를 지우지 않는 단언은 그대로 통과.
+- 18:39:22 같은 입력(`I/fixed-1839-cold.jsonl`): 기준은 정밀 평가 0·v1 fallback. 통합본은 정밀 평가 16, keep 평가 유효, 선택은 전체 SLO 충족(IC 예측 실패율 0), cold Search 4.0초.
+- 독립 리뷰: 계획 2회, 코드 정확성·자원 각 1회. 정확성 리뷰의 동시 owner 합성 회귀를 반영했다. 자원 리뷰는 P3만(Continue 기록 수 증가 등).
+
 ## 5. main 실수용
 
 control376과 같은 E5를 실행하고 각각 판정한다.
