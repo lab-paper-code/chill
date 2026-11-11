@@ -48,8 +48,8 @@ func measuredAdmissionFixture(t *testing.T) admissionOverloadFixture {
 // is frozen at 1s. Initial state: one startup batch of 16 (its first measured
 // startup service), plus 16 queued requests received 500ms before the cohort.
 // Those initial requests occupy the executor but never enter the offered count.
-// The legacy arm reproduces keep by suppressing native SLO filtering, while
-// retaining the original one-second SLO for outcome classification.
+// The legacy arm preserves real SLO feasibility/fill and implements the former
+// keep fallback: if no normal batch is feasible, execute maximum throughput.
 func runAdmissionOverload(t *testing.T, fixture admissionOverloadFixture, mode string, rate int) admissionOverloadCounts {
 	t.Helper()
 	offered := rate * 30
@@ -82,12 +82,33 @@ func runAdmissionOverload(t *testing.T, fixture admissionOverloadFixture, mode s
 	if batchFinish <= 0 {
 		t.Fatal("measured initial batch missing")
 	}
+	var arrivals admissionArrival
+	refreshArrival := func() {
+		native.ArrivalAgesMS = map[string][]float64{}
+		if !arrivals.last.IsZero() {
+			ages := []float64{float64(base.Add(now).Sub(arrivals.last)) / float64(time.Millisecond)}
+			if !arrivals.previous.IsZero() {
+				ages = append(ages, float64(base.Add(now).Sub(arrivals.previous))/float64(time.Millisecond))
+			}
+			native.ArrivalAgesMS[d.UID] = ages
+		}
+		for j := range native.Requests {
+			native.Requests[j].ArrivalRate = arrivals.rate()
+		}
+	}
 	addNative := func(c *Call, running bool) {
 		q := admissionCallState(c, base.Add(now))
 		q.Context.LifetimeMS = 2000
-		q.ArrivalRate = float64(rate)
+		q.Phase = phaseQueued
+		at := base.Add(now)
+		if cohort[c.receipt.ID] == nil {
+			at = c.receipt.ReceivedAt
+			q.Context.SenderElapsedMS = 0
+			q.ElapsedMS = float64(base.Add(now).Sub(at)) / float64(time.Millisecond)
+			q.QueueMS = q.ElapsedMS
+		}
+		arrivals = arrivals.accepted(at)
 		if mode == "legacy" {
-			q.Context.SLO.TargetMS = 1e12
 			q.Context.AdmissionPolicy = "Delay"
 		}
 		if running {
@@ -98,6 +119,7 @@ func runAdmissionOverload(t *testing.T, fixture admissionOverloadFixture, mode s
 			q.ExchangeElapsedNanos = &zero
 		}
 		native.Requests = append(native.Requests, q)
+		refreshArrival()
 		c.instance = i
 		r.calls[c.receipt.ID] = c
 		i.outstanding++
@@ -179,6 +201,7 @@ func runAdmissionOverload(t *testing.T, fixture admissionOverloadFixture, mode s
 			arrival++
 		}
 		i.State.ObservedAt = base.Add(now)
+		refreshArrival()
 		if lastEnd != nil {
 			idle := int64(now - *lastEnd)
 			native.LastServiceEndAgeNanos = &idle
@@ -238,6 +261,9 @@ func runAdmissionOverload(t *testing.T, fixture admissionOverloadFixture, mode s
 		wake := time.Duration(0)
 		for range len(native.Requests) + 1 {
 			choice := firstfloor.ChooseBatch(policy, native.Requests, native.LastServiceEndAgeNanos)
+			if mode == "legacy" {
+				choice = admissionLegacyKeepChoice(policy, native.Requests, native.LastServiceEndAgeNanos)
+			}
 			if choice.Reason == firstfloor.OutcomeDeadlineDrop || choice.Reason == firstfloor.ReasonDeadlineDefer {
 				index := slices.IndexFunc(native.Requests, func(q firstfloor.RequestState) bool { return q.Context.RequestID == choice.RequestID })
 				if index < 0 {
@@ -388,8 +414,8 @@ func TestRuntimeAdmissionMeasuredOverload(t *testing.T) {
 				t.Errorf("Delay outcome partition: %+v", delay)
 			}
 			want := map[int]map[string]admissionOverloadCounts{
-				31: {"legacy": {OnTime: 727, Late: 203, Executed: 930, ExecutedPastSLO: 203}, "Reject": {OnTime: 930, Executed: 930}, "Delay": {OnTime: 930, Executed: 930}},
-				44: {"legacy": {Late: 84, Timeout: 1236, Executed: 1013, ExecutedPastSLO: 1013}, "Reject": {OnTime: 982, Rejected: 338, Executed: 982}, "Delay": {OnTime: 982, Late: 12, Timeout: 326, Executed: 995, ExecutedPastSLO: 13}},
+				31: {"legacy": {OnTime: 808, Late: 122, Executed: 930, ExecutedPastSLO: 122}, "Reject": {OnTime: 930, Executed: 930}, "Delay": {OnTime: 930, Executed: 930}},
+				44: {"legacy": {Late: 84, Timeout: 1236, Executed: 1013, ExecutedPastSLO: 1013}, "Reject": {OnTime: 982, Rejected: 338, Executed: 982}, "Delay": {OnTime: 924, Late: 13, Timeout: 383, Executed: 937, ExecutedPastSLO: 13}},
 			}
 			for mode, got := range results {
 				if got != want[rate][mode] {
@@ -397,5 +423,59 @@ func TestRuntimeAdmissionMeasuredOverload(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// This is the old keep branch from 767e470a: shared feasibility/fill remains
+// unchanged, and only the no-feasible-batch lifecycle choice is replaced.
+func admissionLegacyKeepChoice(p firstfloor.Policy, states []firstfloor.RequestState, gap *int64) firstfloor.BatchChoice {
+	choice := firstfloor.ChooseBatch(p, states, gap)
+	if choice.Reason != firstfloor.ReasonDeadlineDefer {
+		return choice
+	}
+	head := slices.IndexFunc(states, func(q firstfloor.RequestState) bool { return q.Context.RequestID == choice.RequestID })
+	if head < 0 {
+		return choice
+	}
+	r := states[head]
+	count := 0
+	for _, q := range states {
+		if q.Phase == phaseQueued && q.Context.WorkloadUID == r.Context.WorkloadUID && q.Context.Definition == r.Context.Definition {
+			count++
+		}
+	}
+	best := math.Inf(1)
+	for _, b := range p.Batches {
+		if b.Size < 1 || b.Size > count || p.MaxBatchSize > 0 && b.Size > p.MaxBatchSize {
+			continue
+		}
+		service, _, ok := b.Distribution.QuantileNanos(gap, r.Context.SLO.Percentile)
+		if !ok {
+			continue
+		}
+		cost := float64(service) / float64(b.Size)
+		if cost < best || cost == best && b.Size > choice.Size {
+			choice.Size, best = b.Size, cost
+		}
+	}
+	choice.Reason = "maximum_throughput"
+	return choice
+}
+
+func TestRuntimeAdmissionLegacyKeepPreservesRealSLO(t *testing.T) {
+	p := admissionTestPolicy()
+	p.MaxBatchWaitMS = 20
+	q := admissionTestRequest("legacy")
+	q.Context.AdmissionPolicy = "Delay"
+	q.Context.SLO.TargetMS = 20
+	q.ArrivalRate = 100
+	choice := admissionLegacyKeepChoice(p, []firstfloor.RequestState{q}, nil)
+	if choice.Size != 1 || choice.WaitMS != 0 {
+		t.Fatalf("real SLO no longer constrains legacy fill: %+v", choice)
+	}
+	q.Context.SLO.TargetMS = 1
+	choice = admissionLegacyKeepChoice(p, []firstfloor.RequestState{q}, nil)
+	if choice.Size != 1 || choice.Reason != "maximum_throughput" || q.Context.SLO.TargetMS != 1 {
+		t.Fatalf("legacy keep did not execute real-SLO-infeasible batch: %+v", choice)
 	}
 }

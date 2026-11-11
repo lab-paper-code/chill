@@ -32,29 +32,124 @@ type AdmissionEstimate struct {
 	FixedBatch     bool
 }
 
+type admissionScratch struct {
+	states    []firstfloor.RequestState
+	lifetimes []float64
+	rates     map[string]float64
+}
+
+// Executor-level failures do not depend on a candidate's percentile. Check
+// these once per dispatch, including whether any running service can survive.
+func admissionExecutorKnown(in AdmissionInput) bool {
+	p := in.Policy
+	if p.FixedBatchSize > 0 {
+		return true
+	}
+	if in.SnapshotAge < 0 || p.MaxBatchSize < 0 || p.MaxBatchWaitMS < 0 || math.IsNaN(p.MaxBatchWaitMS) || math.IsInf(p.MaxBatchWaitMS, 0) || len(p.Batches) == 0 || in.LastServiceEndAgeNanos != nil && *in.LastServiceEndAgeNanos < 0 {
+		return false
+	}
+	for _, b := range p.Batches {
+		if b.Size > 0 && (p.MaxBatchSize == 0 || b.Size <= p.MaxBatchSize) && b.Distribution == nil {
+			return false
+		}
+	}
+	var running uint64
+	for _, q := range in.Observed {
+		if q.Phase == phaseFinished || q.Phase == phaseReturning || admissionLifetimeExpired(q) {
+			continue
+		}
+		if !admissionRequestKnown(q) {
+			return false
+		}
+		if q.Phase != phaseRunning {
+			continue
+		}
+		if q.BatchID == 0 || q.BatchSize <= 0 || q.ExchangeElapsedNanos == nil || running != 0 && running != q.BatchID {
+			return false
+		}
+		if running != 0 {
+			continue
+		}
+		b := admissionBatch(p, q.BatchSize)
+		if b == nil {
+			return false
+		}
+		if _, _, ok := b.Distribution.ResidualQuantileNanos(q.PrecedingIdleNanos, *q.ExchangeElapsedNanos, 100); !ok {
+			return false
+		}
+		running = q.BatchID
+	}
+	if running == 0 {
+		supported := false
+		for _, b := range p.Batches {
+			if b.Size < 1 || p.MaxBatchSize > 0 && b.Size > p.MaxBatchSize {
+				continue
+			}
+			if _, _, ok := b.Distribution.QuantileNanos(in.LastServiceEndAgeNanos, 100); ok {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			return false
+		}
+	}
+	for _, q := range in.Assignments {
+		if !admissionLifetimeExpired(q) && !admissionRequestKnown(q) {
+			return false
+		}
+	}
+	return true
+}
+
 // EstimateAdmission advances the shared native batching policy, including EDF,
 // deferred FIFO, fill wait, and survival-conditional running batch residuals.
 // Missing state or empirical support leaves admission unknown, never unchecked.
 func EstimateAdmission(in AdmissionInput) AdmissionEstimate {
+	if !admissionExecutorKnown(in) {
+		return AdmissionEstimate{}
+	}
+	return projectAdmission(in, &admissionScratch{})
+}
+
+// projectAdmission owns reusable projection storage; immutable native snapshots
+// and their lifetime pointers are never modified. Runtime validates the common
+// executor inputs once, before projecting any candidates.
+func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEstimate {
 	if in.Policy.FixedBatchSize > 0 {
 		return AdmissionEstimate{FixedBatch: true}
 	}
 	unknown := AdmissionEstimate{}
-	if in.SnapshotAge < 0 || in.Policy.MaxBatchSize < 0 || in.Policy.MaxBatchWaitMS < 0 || math.IsNaN(in.Policy.MaxBatchWaitMS) || math.IsInf(in.Policy.MaxBatchWaitMS, 0) || !admissionRequestKnown(in.Candidate) || len(in.Policy.Batches) == 0 {
+	if !admissionRequestKnown(in.Candidate) {
 		return unknown
 	}
-	for _, b := range in.Policy.Batches {
-		if b.Size > 0 && (in.Policy.MaxBatchSize == 0 || b.Size <= in.Policy.MaxBatchSize) && b.Distribution == nil {
-			return unknown
-		}
+	size := len(in.Observed) + len(in.Assignments) + 1
+	if cap(scratch.states) < size {
+		scratch.states = make([]firstfloor.RequestState, 0, max(size, 2*cap(scratch.states)))
 	}
-	states := make([]firstfloor.RequestState, 0, len(in.Observed)+len(in.Assignments)+1)
-	for _, q := range in.Observed {
-		if !admissionRequestKnown(q) {
-			return unknown
+	if cap(scratch.lifetimes) < size {
+		scratch.lifetimes = make([]float64, max(size, 2*cap(scratch.lifetimes)))
+	}
+	scratch.lifetimes = scratch.lifetimes[:size]
+	if scratch.rates == nil {
+		scratch.rates = make(map[string]float64)
+	}
+	clear(scratch.rates)
+	defer clear(scratch.rates)
+	defer clear(scratch.states[:cap(scratch.states)])
+	states := scratch.states[:0]
+	lifetime := 0
+	appendState := func(q firstfloor.RequestState) {
+		if q.RemainingLifetimeMS != nil {
+			scratch.lifetimes[lifetime] = *q.RemainingLifetimeMS
+			q.RemainingLifetimeMS = &scratch.lifetimes[lifetime]
+			lifetime++
 		}
-		if q.Phase != phaseFinished && q.Phase != phaseReturning {
-			states = append(states, q)
+		states = append(states, q)
+	}
+	for _, q := range in.Observed {
+		if q.Phase != phaseFinished && q.Phase != phaseReturning && !admissionLifetimeExpired(q) {
+			appendState(q)
 		}
 	}
 	outsideSupport := false
@@ -100,14 +195,27 @@ func EstimateAdmission(in AdmissionInput) AdmissionEstimate {
 	for range limit {
 		if !inserted && clock >= age {
 			for _, q := range in.Assignments {
-				if !admissionRequestKnown(q) {
-					return unknown
-				}
 				q.Phase = phaseQueued
-				states = append(states, q)
+				appendState(q)
+				scratch.rates[q.Context.WorkloadUID] = q.ArrivalRate
 			}
-			states = append(states, in.Candidate)
+			appendState(in.Candidate)
+			scratch.rates[in.Candidate.Context.WorkloadUID] = in.Candidate.ArrivalRate
+			for j := range states {
+				if rate, ok := scratch.rates[states[j].Context.WorkloadUID]; ok {
+					states[j].ArrivalRate = rate
+				}
+			}
 			inserted = true
+		}
+		candidateExpired := false
+		states = slices.DeleteFunc(states, func(q firstfloor.RequestState) bool {
+			expired := admissionLifetimeExpired(q)
+			candidateExpired = candidateExpired || expired && q.Context.RequestID == candidateID
+			return expired
+		})
+		if candidateExpired {
+			return unknown
 		}
 		if activeRemaining > 0 {
 			step := activeRemaining
@@ -245,6 +353,19 @@ func admissionAdvance(states []firstfloor.RequestState, nanos int64) {
 		states[j].ElapsedMS += ms
 		if states[j].Phase != phaseRunning {
 			states[j].QueueMS += ms
+			if states[j].RemainingLifetimeMS != nil {
+				*states[j].RemainingLifetimeMS -= ms
+			}
 		}
 	}
+}
+
+func admissionLifetimeExpired(q firstfloor.RequestState) bool {
+	if q.Phase == phaseRunning {
+		return false
+	}
+	if q.RemainingLifetimeMS != nil {
+		return *q.RemainingLifetimeMS <= 0
+	}
+	return q.Context.LifetimeMS > 0 && q.Context.LifetimeMS <= q.Context.SenderElapsedMS+q.ElapsedMS
 }

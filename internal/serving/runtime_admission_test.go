@@ -3,6 +3,7 @@ package serving
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -225,5 +226,69 @@ func TestRuntimeAdmissionRetirementPreservesDelayedRoute(t *testing.T) {
 	}
 	if stopped, err := r.StopSchedulerInstance(wanted.ID); err != nil || stopped {
 		t.Fatalf("only delayed route stopped before drain: %v %v", stopped, err)
+	}
+}
+
+func TestRuntimeAdmissionIndexesAssignmentsAndAcceptedArrivalRate(t *testing.T) {
+	r, wanted, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	now := time.Now()
+	i := r.instances[wanted.ID]
+	i.State.ObservedAt = now
+	i.State.Native.ArrivalAgesMS = map[string][]float64{"w1": {10, 30}}
+	w := r.workloads["w1"]
+	c := &Call{receipt: Receipt{ID: "unobserved", UID: "w1", ReceivedAt: now.Add(-20 * time.Millisecond), Deadline: now.Add(time.Second)}, definition: w.definition, identity: w.identity, instance: i, assignment: &Assignment{DispatchedAt: now.Add(-5 * time.Millisecond)}}
+	r.calls[c.receipt.ID] = c
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.beginAdmissionLocked(now)
+	if len(i.admissionCalls) != 1 || len(i.admissionAssignments) != 1 {
+		t.Fatal("unobserved assignment index lost call")
+	}
+	if got := i.admissionArrivals["w1"].accepted(now).rate(); got != 200 {
+		t.Fatalf("candidate native accepted interval rate=%v want 200", got)
+	}
+	if got := i.admissionAssignments[0].ArrivalRate; got != 200 {
+		t.Fatalf("assignment accepted interval rate=%v want 200", got)
+	}
+	candidate := &Call{receipt: Receipt{ID: "candidate", UID: "w1", ReceivedAt: now, Deadline: now.Add(time.Second)}, definition: w.definition, identity: w.identity}
+	if got := r.estimateLocked(i, candidate, now); !got.Known {
+		t.Fatalf("indexed assignment projection unknown: %+v", got)
+	}
+	r.endAdmissionLocked()
+	for _, q := range i.admissionAssignments[:cap(i.admissionAssignments)] {
+		if q.Context.RequestID != "" {
+			t.Fatal("assignment scratch retained strings")
+		}
+	}
+	for _, c := range i.admissionCalls[:cap(i.admissionCalls)] {
+		if c != nil {
+			t.Fatal("assignment scratch retained call")
+		}
+	}
+	for _, q := range r.admissionScratch.states[:cap(r.admissionScratch.states)] {
+		if q.Context.RequestID != "" {
+			t.Fatal("projection scratch retained strings")
+		}
+	}
+	if len(i.admissionObserved) != 0 || len(i.admissionArrivals) != 0 {
+		t.Fatal("dispatch identity/rate index retained request identities")
+	}
+}
+
+func TestRuntimeAdmissionUnknownStopsWholeWorkloadPass(t *testing.T) {
+	r, wanted, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	i := r.instances[wanted.ID]
+	i.State.Native = nil
+	w := r.workloads["w1"]
+	now := time.Now()
+	for j := range 1024 {
+		c := &Call{receipt: Receipt{ID: fmt.Sprintf("queued-%d", j), UID: "w1", ReceivedAt: now, Deadline: now.Add(time.Second)}, definition: w.definition, identity: w.identity}
+		w.queue = append(w.queue, c)
+	}
+	r.mu.Lock()
+	r.dispatchLocked()
+	r.mu.Unlock()
+	if !w.admissionBlocked || w.queue[0].admissionState != AdmissionUnknown || w.queue[1].admissionState != "" || len(w.queue) != 1024 || cap(r.admissionScratch.states) != 0 {
+		t.Fatalf("executor-level Unknown repeated projection across queue: blocked=%v first=%s second=%s queue=%d scratch=%d", w.admissionBlocked, w.queue[0].admissionState, w.queue[1].admissionState, len(w.queue), cap(r.admissionScratch.states))
 	}
 }

@@ -117,3 +117,46 @@ func TestAdmissionPreservesNearestGapOutsideSupportEvidence(t *testing.T) {
 		t.Fatalf("nearest-gap support evidence lost: %+v", got)
 	}
 }
+
+func TestAdmissionProjectionExpiresLifetimeWithoutMutatingSnapshot(t *testing.T) {
+	for _, phase := range []string{phaseQueued, phaseDeferred, "assigned"} {
+		t.Run(phase, func(t *testing.T) {
+			running := admissionTestRequest("running")
+			running.Phase, running.BatchID, running.BatchSize = phaseRunning, 1, 1
+			elapsed := int64(0)
+			running.ExchangeElapsedNanos = &elapsed
+			remaining := float64(5)
+			queued := admissionTestRequest("expires")
+			queued.Context.SLO.TargetMS = 100
+			queued.RemainingLifetimeMS = &remaining
+			queued.Phase = phase
+			in := AdmissionInput{Policy: admissionTestPolicy(), Observed: []firstfloor.RequestState{running}, Candidate: admissionTestRequest("candidate")}
+			if phase == phaseDeferred {
+				in.Candidate.Phase = phaseDeferred
+			}
+			if phase == "assigned" {
+				queued.Phase = phaseQueued
+				in.Assignments = []firstfloor.RequestState{queued}
+			} else {
+				in.Observed = append(in.Observed, queued)
+			}
+			got := EstimateAdmission(in)
+			if !got.Known || got.Completion != 40*time.Millisecond || remaining != 5 {
+				t.Fatalf("expired queue retained or snapshot lifetime mutated: %+v remaining=%v", got, remaining)
+			}
+		})
+	}
+}
+
+func TestAdmissionProjectionKeepsLifetimeExpiredRunningOccupancy(t *testing.T) {
+	running := admissionTestRequest("running")
+	running.Phase, running.BatchID, running.BatchSize = phaseRunning, 1, 1
+	elapsed := int64(0)
+	remaining := float64(0)
+	running.ExchangeElapsedNanos = &elapsed
+	running.RemainingLifetimeMS = &remaining
+	got := EstimateAdmission(AdmissionInput{Policy: admissionTestPolicy(), Observed: []firstfloor.RequestState{running}, Candidate: admissionTestRequest("candidate")})
+	if !got.Known || got.Completion != 40*time.Millisecond {
+		t.Fatalf("HTTP lifetime released physical running occupancy: %+v", got)
+	}
+}
