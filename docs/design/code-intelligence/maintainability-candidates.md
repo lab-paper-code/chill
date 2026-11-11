@@ -230,6 +230,73 @@ Go 구현 변경은 관련 focused test와 저장소의 lint, test, architecture
 동작 테스트와 lint, 화면 및 live cluster 검증은 구현 작업에서 수행한다.
 외부 사례 문서의 범위와 원문은 그대로 유지한다.
 
+## 8. 실행 계획 (2026-11-11, 기준 `9c75f158`)
+
+후보 다섯 개를 HEAD에서 다시 조사했다. Before는 모두 유지되며 행 번호 차이만 있다.
+범위는 C1–C5 전체를 재검토하는 것이다. 문서의 After에 묶이지 않고 같은 의도(찾을 위치와 넣을 위치가 분명해짐)면 이름과 배치를 넓힌다.
+
+### 공통 규칙
+
+- 동작을 바꾸지 않는다. 커밋 하나는 테스트 보강, 이동, 이름 변경 중 하나만 담는다.
+- 이동 전에 보강 테스트를 넣고 **현재 코드에서** 통과시킨다. 이동 커밋은 테스트 단언을 바꾸지 않는다(연결 위치 변경만 허용).
+- 외부 계약 이름은 유지한다: API·JSON 필드, CRD, 저장 객체, 설정 키, metric·로그 키, react-query key, CLI 플래그, 공개 Go 메서드.
+- 임시 re-export, alias, shim을 두지 않는다. 소비자를 같은 커밋에서 모두 전환한다.
+- 패키지 import 방향은 바꾸지 않는다(모든 변경이 같은 패키지 또는 같은 디렉터리 안).
+- 구현 에이전트는 이 문서를 수정하지 않는다. 통합 담당이 후보별 완료 상태를 기록한다.
+
+### 재검토 판정
+
+| 후보 | 판정 | 근거 |
+|---|---|---|
+| C5 | 진행, 범위 확대 | 같은 패턴(단위 없는 시간 필드, 역할을 숨기는 이름)이 `pathFeedback`, `capacityWindowResult.latency`, `capacityPlanner.period`, replay의 `nativeAge`·`accountedAge`·`occupancy`, v2 `v2Search.second`에 있다. 모두 비공개이고 패키지 안 rename이다. |
+| C1 | 진행 | 26개 심볼 이동, 소비자 코드 변경 없음. `referenceWorkloads`의 삭제 확인 중 보호를 고정하는 테스트가 없어 먼저 추가한다. |
+| C2 | 진행 | 소비자 2개 파일과 테스트 2개. 요청 이력 query의 직접 검증이 없어 먼저 추가한다. |
+| C3 | 진행 (C2 뒤) | 운영 소비자 17개가 모두 두 모듈을 import하게 되어 import 수는 줄지 않는다. 대신 `client.tsx`가 React 세션·UI만 갖게 되어 전송 규칙(오류 분류, warming, summary 협상)의 소유 파일이 생긴다. 테스트 loader 약 25곳 전환이 비용이다. 전송 빈칸(본문 읽기 실패, 결과 미확인, token 가림, decoder 분류, warming delay 경계)을 먼저 고정한다. |
+| C4 | 현 구조 유지, 종료 | 직접 `client.Client`를 보관하면 생성 뒤 `Store` client를 교체하는 fixture 13곳(공유 harness 소비자 20개 이상)이 interceptor를 우회한다. 교체를 따라가려면 forwarding이 다시 필요하다. 인터페이스 하나 제거의 이득이 fixture 재배선 비용과 연결 분리 위험보다 작다. |
+
+### DAG
+
+```mermaid
+graph LR
+  D0[D0 문서 채택] --> A1 & A2 & A3 & B1 & T1
+  A1[A1 runtime: completionMarginMS, pathFeedbackMS] --> AP[C5 push]
+  A2[A2 scheduler: v2WithV1Fallback, secondMovePlans] --> AP
+  A3[A3 capacity·replay 단위 접미사] --> AP
+  B1[B1 test: 삭제 확인 중 catalog 참조 보호] --> B2[B2 manager_catalog.go 분리] --> BP[C1 push]
+  T1[T1 test: 요청 이력 query 고정] --> T2[T2 useRequestProfileHistory 추출] --> TP[C2 push]
+  T2 --> T3[T3 test: 전송 빈칸 고정] --> T4[T4 client-transport.ts 분리·전체 cutover] --> UP[C3 push]
+```
+
+- 레인 A(C5), B(C1), T(C2→C3)는 파일이 겹치지 않아 병렬로 진행한다. 레인마다 별도 worktree와 branch를 쓰고, 통합 담당이 완료 순서대로 rebase해 push한다.
+- T3는 T2 뒤다. C2와 C3가 `features/measurement-request.tsx`와 `hooks/use-measurement-data.ts`의 import를 함께 바꾸기 때문이다.
+- 후보 하나가 끝날 때마다 정확성 리뷰와 메모리·연산 리뷰를 따로 받고, gate를 통과하면 push한다.
+
+### 단계별 완료 조건
+
+| 단계 | 커밋 내용 | 확인 |
+|---|---|---|
+| A1 | `Runtime.completionMargin`→`completionMarginMS`, `Runtime.pathFeedback`→`pathFeedbackMS` | `go test ./internal/serving/` |
+| A2 | `second`→`v2WithV1Fallback`, `v2Search.second`→`secondMovePlans` | `go test ./internal/scheduler/...` |
+| A3 | `capacityWindowResult.latency`→`latencyMS`, `capacityPlanner.period`→`periodSeconds`, replay `nativeAge`·`accountedAge`·`occupancy`→`*Nanos` | `go test ./internal/serving/` |
+| B1 | `TestManagerPendingDeletionProtectsCatalogUntilConfirmation`: 목록에서 사라진 Workload의 확인 GET 실패 동안 Dataset·Preprocessor·Model 삭제 거부(Model은 오류에 Workload 이름 포함), reservation 유지, 404 뒤 해제 | 현재 코드에서 통과, `go test ./internal/serving/kube -run TestManager` |
+| B2 | Model·Preprocessor·Dataset CRUD와 참조 helper 26개를 `management/manager_catalog.go`로 이동. 공유 업데이트(`sharedGroup`, `startSharedUpdate`, `advanceGroup`)와 공용 참조 검증은 `manager.go`에 유지 | 같은 테스트, `go test ./internal/serving/...` |
+| T1 | 화면 query의 두 페이지 합산, offset 정체, 후속 실패, 동일 Signal, key·enabled·retry, 실제 summary 디코딩; S7 profiles 실패 시 오류 표시 | 현재 코드에서 통과 |
+| T2 | `useRequestProfileHistory()`를 `hooks/use-measurement-data.ts`에 추가하고 `readPage` 재사용. 화면의 직접 HTTP import 제거. S7 실패 주입을 새 hook 경계로 이동. S6는 실제 hook 자동 연결 유지 | T1 단언 그대로 통과, `pnpm typecheck lint test` |
+| T3 | 본문 읽기 실패의 status·헤더·RTT 보존, 결과 미확인 분기, token 가림, decoder identity 분류, warming delay clamp | 현재 코드에서 통과 |
+| T4 | `RelayResponse`, `ApiError`, `errorDetails`, `isCoverageWarming`, `warmingRetry`, `warmingDelay`, `decodeResponse`, `relay`를 `lib/client-transport.ts`로 이동. 운영 소비자 17개, 테스트 loader 전체 전환. `ApiError` 정의 하나, 같은 decoder 인스턴스 | T3·기존 단언 그대로 통과, `pnpm typecheck lint test`, 영향 화면 실제 확인 |
+
+Gate: Go 후보는 `make lint`, `make test TEST_PYTHON=<3.10 이상>`, `make arch-check`, `make gopls-check`. 대시보드 후보는 `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`와 영향 화면의 브라우저 확인.
+
+### 진행 기록
+
+| 후보 | 상태 | 커밋 |
+|---|---|---|
+| C5 | 대기 | |
+| C1 | 대기 | |
+| C2 | 대기 | |
+| C3 | 대기 | |
+| C4 | 종료(현 구조 유지) | 이 문서 |
+
 [R1]: external-maintainability-patterns.md
 [R2]: external-maintainability-patterns.md#3-volcano-실행-단계와-정책을-구분한다
 [R3]: external-maintainability-patterns.md#2-kueue-상태의-수명과-계산-입력을-구분한다
