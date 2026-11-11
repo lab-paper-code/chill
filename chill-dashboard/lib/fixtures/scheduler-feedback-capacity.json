@@ -5,6 +5,7 @@
       "input": {
         "workloadUID": "service-uid",
         "slo": {"percentile": 99, "targetLatencyNanos": 100000000},
+        "admission": {"policy": "Reject", "maxQueuedRequests": 1024},
         "node": {"name": "node-a", "uid": "node-uid"},
         "powerMode": "15W",
         "profileID": "profile-id",
@@ -28,6 +29,7 @@
       "input": {
         "workloadUID": "service-uid",
         "slo": {"percentile": 99, "targetLatencyNanos": 100000000},
+        "admission": {"policy": "Reject", "maxQueuedRequests": 1024},
         "node": {"name": "node-a", "uid": "node-uid"},
         "powerMode": "15W",
         "profileID": "profile-id",
@@ -51,6 +53,7 @@
       "input": {
         "workloadUID": "service-uid",
         "slo": {"percentile": 99, "targetLatencyNanos": 100000000},
+        "admission": {"policy": "Reject", "maxQueuedRequests": 1024},
         "node": {"name": "node-a", "uid": "node-uid"},
         "powerMode": "15W",
         "profileID": "profile-id",

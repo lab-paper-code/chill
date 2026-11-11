@@ -23,6 +23,7 @@ test("HTTP projection fixture preserves tested failure, untested zero and witnes
   assert.equal(failed.input.allocation.memoryBytes,9007199254740993n)
   assert.equal(failed.input.profileID,"profile-id")
   assert.equal(failed.input.powerMode,"15W")
+  for(const row of response.tests!)assert.deepEqual(row.input.admission,{policy:"Reject",maxQueuedRequests:1024})
   assert.deepEqual(failed.pathFeedback,{workloadUID:"service-uid",percentile:99,totalNanos:40000000,postNanos:30000000,sampleCount:1,source:"empirical"})
   assert.equal(untested.pathFeedback.totalNanos,0)
   assert.equal(untested.pathFeedback.postNanos,0)

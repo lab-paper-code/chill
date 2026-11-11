@@ -94,7 +94,7 @@ export type SchedulerProfile = {id:string;reference:unknown;evidence:unknown[]|n
 // Stored decision records carry profileID only; GET v1/scheduler/profiles serves the profile body.
 export type SchedulerInstance = {id:string;node:NodeRef;ownerWorkloadUID?:string;terminated?:boolean;profile?:SchedulerProfile|null;profileID?:string;workloadUID:string;allocation:SchedulerAllocation;ready:boolean;stopped:boolean;capacity:number;weight:number;maxBatch:number;maxWaitNanos:WireInteger;observedAt:string;idleMeter:string;idleScope:string;unroutedSince?:string;heldUntil?:string}
 export type CapacityInput = Pick<SchedulerSettings,"completionMarginMS"|"capacityWindowNanos"|"capacityWindows"|"capacityPassingWindows"|"capacityMinimumRequests"|"capacityGridSteps"|"capacityBisectionWidth"|"capacityTailSamples"> & {
-  workloadUID:string;slo:SchedulerDefinition["slo"];node:NodeRef;powerMode:string;profileID:string;allocation:SchedulerAllocation;maxBatch:WireInteger
+  workloadUID:string;slo:SchedulerDefinition["slo"];admission:{policy:"Reject"|"Delay";maxQueuedRequests:number};node:NodeRef;powerMode:string;profileID:string;allocation:SchedulerAllocation;maxBatch:WireInteger
   dispatchOccupancy?:{node:NodeRef;powerMode:string;runtimeImage:string;model:string;perRequestNanos:WireInteger;source:string}
 }
 export type FeedbackRateTest = {inputKey:string;rate:number;met:boolean;passed:number;requests:number}

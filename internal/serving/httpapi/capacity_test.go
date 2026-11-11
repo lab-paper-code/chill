@@ -26,7 +26,8 @@ func TestSchedulerCapacityProjectionMatchesDashboardFixture(t *testing.T) {
 			InstanceID: id,
 			Input: serving.CapacityInput{
 				WorkloadUID: "service-uid", SLO: serving.SLO{Percentile: 99, TargetLatency: 100 * time.Millisecond},
-				Node: serving.NodeReference{Name: "node-a", UID: "node-uid"}, PowerMode: "15W", ProfileID: "profile-id",
+				Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024},
+				Node:      serving.NodeReference{Name: "node-a", UID: "node-uid"}, PowerMode: "15W", ProfileID: "profile-id",
 				Allocation: serving.SchedulerAllocation{GPUUUID: "gpu-uuid", MemoryBytes: 9007199254740993}, MaxBatch: 4,
 				CompletionMarginMS: 2.5, Window: time.Second, Windows: 5, PassingWindows: 4, MinimumRequests: 100,
 				GridSteps: 10, BisectionWidth: .01, TailSamples: 20,
