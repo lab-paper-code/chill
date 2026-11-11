@@ -98,6 +98,17 @@ type ConditionalServiceEvidence struct {
 	MaximumDistanceNanos  int64 `json:"maximumDistanceNanos"`
 	MinimumTrialCount     int   `json:"minimumTrialCount"`
 	OutsideSupportQueries int   `json:"outsideSupportQueries"`
+
+	RunningResidualBeyondSupport []RunningResidualBeyondSupport `json:"runningResidualBeyondSupport,omitempty"`
+}
+
+// RunningResidualBeyondSupport records an explicit restart substitute, not a bound.
+type RunningResidualBeyondSupport struct {
+	InstanceID      string `json:"instanceID"`
+	BatchSize       int    `json:"batchSize"`
+	ElapsedNanos    int64  `json:"elapsedNanos"`
+	ProfileMaxNanos int64  `json:"profileMaxNanos"`
+	Model           string `json:"model"`
 }
 
 func (e *ConditionalServiceEvidence) record(gap *int64, support firstfloor.ConditionalSupport) {
@@ -129,6 +140,7 @@ func (e *ConditionalServiceEvidence) merge(other ConditionalServiceEvidence) {
 	e.StartupQueries += other.StartupQueries
 	e.MaximumDistanceNanos = max(e.MaximumDistanceNanos, other.MaximumDistanceNanos)
 	e.OutsideSupportQueries += other.OutsideSupportQueries
+	e.RunningResidualBeyondSupport = append(e.RunningResidualBeyondSupport, other.RunningResidualBeyondSupport...)
 }
 
 func (i *schedulerReplayInstance) idleNanos(now float64) *int64 {
@@ -620,12 +632,29 @@ func (s *schedulerReplayState) initializeRunning() bool {
 			}
 		}
 		sample, support, ok := b.ServiceDistribution.SampleResidual(gap, elapsed, s.rng)
+		remaining := float64(sample.ServiceDurationNanos - elapsed)
+		if !ok && elapsed >= 0 {
+			sample, support, ok = b.ServiceDistribution.Sample(gap, s.rng)
+			if ok {
+				remaining = float64(sample.ServiceDurationNanos)
+				profileMax := int64(0)
+				for _, row := range b.ServiceSamples {
+					profileMax = max(profileMax, row.ServiceDurationNanos)
+				}
+				s.out.conditional.RunningResidualBeyondSupport = append(s.out.conditional.RunningResidualBeyondSupport,
+					RunningResidualBeyondSupport{
+						InstanceID: i.config.ID, BatchSize: len(i.batch), ElapsedNanos: elapsed,
+						ProfileMaxNanos: profileMax, Model: "same-gap-service-restart",
+					})
+				s.out.assumptions = appendUnique(s.out.assumptions,
+					"RunningResidualBeyondSupport: remaining service uses same-gap-service-restart substitute; SLO and energy ranking bias is bidirectional, not a bound")
+			}
+		}
 		s.out.conditional.record(gap, support)
 		if !ok {
 			s.out.reasons = append(s.out.reasons, "RunningElapsedOutsideProfileRange:"+i.config.ID)
 			return false
 		}
-		remaining := float64(sample.ServiceDurationNanos - elapsed)
 		i.nativeFinish, i.finish = remaining, remaining
 		joules := b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(remaining, s.horizon) / (float64(elapsed) + remaining)
 		s.out.requestJoules += joules
