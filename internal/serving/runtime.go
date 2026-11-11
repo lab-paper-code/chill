@@ -1260,7 +1260,7 @@ func (r *Runtime) updateInstanceRecoveryLocked(i *runtimeInstance, candidate *Re
 	// Exact termination also closes a historical late-inference influence
 	// interval after physical CLEAR or a later clean boot.
 	if candidate.State.PodUID != "" &&
-		(terminated || candidate.State.RecoveryUnknown && (verifiedEmpty || neverStarted)) {
+		(terminated || candidate.State.RecoveryUnknown && verifiedEmpty) {
 		proof := candidate.State
 		if terminated {
 			proof.Terminated = true
@@ -1271,6 +1271,11 @@ func (r *Runtime) updateInstanceRecoveryLocked(i *runtimeInstance, candidate *Re
 		} else {
 			candidate.State.RecoveryUnknown = false
 		}
+	} else if candidate.State.PodUID != "" && candidate.State.RecoveryUnknown && neverStarted {
+		// No container identity ever existed, so no request could reach it:
+		// close only the scientific gap. The Pod may still start, so the
+		// executor fence stays until termination or a verified empty probe.
+		result = errors.Join(result, r.recordRecoveryLocked(candidate.State, true))
 	}
 	i.State.RecoveryUnknown = candidate.State.RecoveryUnknown
 	if candidate.State.RecoveryUnknown {

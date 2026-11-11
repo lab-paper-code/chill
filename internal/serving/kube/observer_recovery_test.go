@@ -207,12 +207,18 @@ func TestRecoveryLatePendingPodKeepsAllocationWithoutFencingHealthyRoute(t *test
 	}
 	pendingState := schedulerPhysicalState("", c.runtime.Instances())
 	if pendingState == nil || pendingState.PodUID != string(pending.UID) || !pendingState.NeverStarted ||
-		pendingState.RecoveryUnknown || pendingState.Terminated || pendingState.ObservedAt.IsZero() {
-		t.Fatalf("pending Pod recovery proof was not published: %+v", pendingState)
+		!pendingState.RecoveryUnknown || pendingState.Terminated || pendingState.ObservedAt.IsZero() {
+		t.Fatalf("pending Pod lost its fence or never-started proof: %+v", pendingState)
 	}
 	a := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
 	if a == nil || !a.Ready || a.RecoveryUnknown {
 		t.Fatalf("pending peer fenced healthy inference destination: %+v", a)
+	}
+	if err := c.operations.RequestPowerMode(ctx, a.Node, "", "fixed", time.Second); err == nil {
+		t.Fatal("healthy co-resident authorized node-wide power over pending unknown peer")
+	}
+	if err := c.operations.ClearNode(ctx, a.Node); err == nil {
+		t.Fatal("node cleanup discarded pending unknown peer")
 	}
 }
 

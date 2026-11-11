@@ -544,22 +544,19 @@ func hasRuntimeError(err error, code string) bool {
 	return errors.As(err, &domain) && domain.Code == code
 }
 
-func TestRecoveryNeverStartedPodRequiresFreshObservation(t *testing.T) {
+// A never-started Pod closes only the scientific gap; it may still start, so
+// the executor fence must hold until termination or a verified empty probe.
+func TestRecoveryNeverStartedPodKeepsExecutorFence(t *testing.T) {
 	r, _, _, log, _ := runtimeAsyncFixture(t, true)
-	pending := ReadyInstance{State: InstanceState{PodUID: "pending", NeverStarted: true,
-		ObservedAt: log.boot.Started.Add(-time.Second)}}
+	pending := ReadyInstance{State: InstanceState{PodUID: "pending", NeverStarted: true, ObservedAt: time.Now().UTC()}}
 	if err := r.InstallInstances([]ReadyInstance{pending}); err != nil {
 		t.Fatal(err)
 	}
 	if !r.InstanceRecoveryUnknown(pending.State.PodUID) {
-		t.Fatal("pre-recovery pending observation released recovery")
+		t.Fatal("never-started observation released the executor fence")
 	}
-	pending.State.ObservedAt = time.Now().UTC()
-	if err := r.InstallInstances([]ReadyInstance{pending}); err != nil {
+	if err := log.Err(); err != nil {
 		t.Fatal(err)
-	}
-	if r.InstanceRecoveryUnknown(pending.State.PodUID) {
-		t.Fatal("fresh never-started observation retained recovery")
 	}
 	state := r.Instances()[0]
 	if state.ID != "" || state.Terminated || state.Stopped || state.Ready {
