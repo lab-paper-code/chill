@@ -290,11 +290,13 @@ func TestSchedulerNonpreemptiveBlockingAndResidual(t *testing.T) {
 		t.Fatalf("frozen running elapsed lost %+v", got)
 	}
 	exchangeElapsed = int64(100 * time.Millisecond)
-	pending := schedulerKeepForTest(t, s, snap)
-	if pending.ExpectedJoules != nil {
-		t.Fatalf("out-of-range elapsed cannot be zero residual: %+v", pending)
+	restarted := schedulerKeepForTest(t, s, snap)
+	if restarted.ExpectedJoules == nil || len(restarted.Reasons) != 0 {
+		t.Fatalf("out-of-range elapsed must use the explicit restart substitute, not invalidate keep: %+v", restarted)
 	}
-	schedulerRequireReason(t, pending.Reasons, "RunningElapsedOutsideProfileRange")
+	if !slices.ContainsFunc(restarted.Assumptions, func(a string) bool { return strings.Contains(a, "RunningResidualBeyondSupport") }) {
+		t.Fatalf("restart substitute must be recorded: %v", restarted.Assumptions)
+	}
 }
 
 func TestSchedulerEnergyCountsPhysicalIdleAndInactiveNodesOnce(t *testing.T) {
