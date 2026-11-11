@@ -85,6 +85,12 @@ type SchedulerControlObservation struct {
 	RefreshResources     time.Duration `json:"refreshResourcesNanos"`
 	RefreshDeviceClasses time.Duration `json:"refreshDeviceClassesNanos"`
 	RefreshServices      time.Duration `json:"refreshServicesNanos"`
+
+	WindowBarrier time.Duration `json:"windowBarrierNanos"`
+	WindowScan    time.Duration `json:"windowScanNanos"`
+	WindowDecode  time.Duration `json:"windowDecodeNanos"`
+	WindowJoin    time.Duration `json:"windowJoinNanos"`
+	WindowSort    time.Duration `json:"windowSortNanos"`
 }
 
 type SchedulerObservation struct {
@@ -395,24 +401,49 @@ type LoadWindow struct {
 // LoadWindow counts each stage whose time, receipt plus stage offset, lies in
 // [from,to), independently of result cohort filters.
 func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (LoadWindow, error) {
+	return l.LoadWindowTimed(ctx, from, to, nil)
+}
+
+// LoadWindowTimed records disjoint window phases in the control observation.
+func (l *ObservationLog) LoadWindowTimed(ctx context.Context, from, to time.Time, timing *SchedulerControlObservation) (LoadWindow, error) {
 	result := LoadWindow{From: from, To: to, Duration: to.Sub(from), Population: "all ingress receipts; computable demand separately marked after authorization and input validation; stage time [from,to); one request = one input"}
 	if from.IsZero() || !from.Before(to) {
 		return result, &serving.Error{Code: "InvalidQuery", Message: "positive explicit load window is required"}
 	}
 	// Both streams share one capture. Persisted first-report eligibility keeps
 	// client reads at observation-window scale, without a retained-history scan.
+	started := time.Now()
+	var barrierBefore time.Duration
+	if timing != nil {
+		barrierBefore = timing.WindowBarrier
+	}
+	ctx = context.WithValue(ctx, windowTimingKey{}, timing)
 	read, err := l.prepare(ctx, map[string][2]time.Time{
 		observationRequestStream: {from, {}},
 		observationClientStream:  {from, to},
 	})
+	if timing != nil {
+		timing.WindowScan += time.Since(started) - (timing.WindowBarrier - barrierBefore)
+	}
 	if err != nil {
 		return result, err
 	}
 	defer read.close()
+	read.timing = timing
+	joined := time.Now()
+	defer func() {
+		if timing != nil {
+			timing.WindowJoin += time.Since(joined) - read.scanTime - read.decodeTime - read.sortTime
+			timing.WindowScan += read.scanTime
+			timing.WindowDecode += read.decodeTime
+			timing.WindowSort += read.sortTime
+		}
+	}()
 	result.Coverage = read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}, observationClientStream: {from, to}})
 	result.GapUntil = result.Coverage.GapUntil(from)
 	nativeRows := map[string]serving.RequestRow{}
-	rows, err := l.requestRowsAndNative(read, func(*requestEnvelope) bool { return true }, nativeRows, from, to)
+	l.retainWindow(from, false, read.now)
+	rows, err := l.windowRequests(read, nativeRows, from, to)
 	if err != nil {
 		return result, err
 	}
@@ -465,6 +496,7 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 		load.CompletionRate = float64(load.Completed) / seconds
 		result.Workloads = append(result.Workloads, *load)
 	}
+	sorted := time.Now()
 	sort.Slice(result.Workloads, func(a, b int) bool { return result.Workloads[a].UID < result.Workloads[b].UID })
 	sort.Slice(result.Arrivals, func(a, b int) bool {
 		if result.Arrivals[a].At.Equal(result.Arrivals[b].At) {
@@ -472,6 +504,7 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 		}
 		return result.Arrivals[a].At.Before(result.Arrivals[b].At)
 	})
+	read.sortTime += time.Since(sorted)
 	return result, nil
 }
 

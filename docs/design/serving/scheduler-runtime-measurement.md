@@ -134,9 +134,11 @@ worker init은 `/opt/chill/bin/serving-entrypoint --materialize-profile`, 기존
 
 ## Direct native-pair occupancy facts
 
-`serving.OccupancyEstimator` reduces the rows from `ScanOccupancyRows`; it does
-not add work to the request writer or change scheduler κ/d. The accepted
-scheduler `profileByID` map is the sole profile source. Each output stratum
+`serving.OccupancyEstimator` reduces the immutable decoded request window shared
+with scheduler load capture; selection and estimation do not change scheduler κ/d.
+The writer updates active cached segments after complete appends; cold/restart
+reads restore the same rows from the log. The accepted scheduler `profileByID`
+map is the sole profile source. Each output stratum
 retains Node name/UID, Workload UID, logical model, power mode, execution path,
 runtime image, batch size, profile ID, immutable reference/evidence identities,
 and the exact `Profile.MeanNanos(batch)` runner-exchange mean subtracted.

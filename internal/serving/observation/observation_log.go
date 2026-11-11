@@ -144,6 +144,10 @@ type ObservationLog struct {
 	writeFile       func(*os.File, []byte) (int, error)
 	marshal         func(any) ([]byte, error)
 	removeAll       func(string) error
+	windowMu        sync.Mutex
+	windowSegments  map[string]*windowSegment
+	windowSpan      time.Duration
+	occupancySpan   time.Duration
 }
 
 func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
@@ -673,10 +677,15 @@ func (l *ObservationLog) writeBatch(batch *observationBatch) error {
 			committed.source = nil // Only submission uses immutable source identity.
 			l.catalog[row.catalogID] = committed
 		}
+		var windowSize int64
+		if err == nil && (row.stream == observationRequestStream || row.stream == observationClientStream) {
+			windowSize = l.segments[l.segment(row.stream, row.at)].size
+		}
 		l.mu.Unlock()
 		if err != nil {
 			return err
 		}
+		l.commitWindowAppend(row, windowSize)
 		row.data = nil
 		batch.next++
 	}

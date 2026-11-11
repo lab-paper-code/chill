@@ -65,6 +65,27 @@ func (c *SchedulerController) Continue(ctx context.Context, now time.Time) (err 
 	return ctx.Err()
 }
 
+// Only a not-yet-complete route can need fresh demand for Ready expansion.
+// ACKed route cleanup consumes fresh physical evidence, not request history.
+func (c *SchedulerController) continuationNeedsWindowLocked() bool {
+	for _, parent := range c.runs {
+		if parent.action.Kind != transitionRunKind || parent.action.Status != servingstate.NativeOperationRunning ||
+			parent.result == nil || parent.result.Operation.Target == nil {
+			continue
+		}
+		for _, action := range parent.result.Operation.Target.Actions {
+			if action.Kind != servingstate.OperationRoute {
+				continue
+			}
+			run := c.runs[action.ID]
+			if run == nil || run.owner != parent.owner || run.result == nil || run.result.Status != servingstate.NativeOperationComplete {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (c *reservationState) continueTransitionsLocked(
 	settings serving.SchedulerSettings, continuation bool, dispatch func(serving.SchedulerCandidate),
 ) {

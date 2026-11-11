@@ -217,18 +217,11 @@ func (l *ObservationLog) clientWindow(read *observationRead, rows []*serving.Req
 	from = serving.LaterTime(from, retainedFrom)
 	samples := []serving.PathTimingSample{}
 	clients := []serving.ClientObservation{}
-	err := l.scanStream(read, observationClientStream, func(raw []byte) error {
-		var envelope clientObservationEnvelope
-		if err := json.Unmarshal(raw, &envelope); err != nil {
-			return err
-		}
-		if envelope.Duplicate || !serving.ObservationInInterval(envelope.ReportedAt, from, to) {
+	err := l.scanWindowRows(read, observationClientStream, func(record windowRecord) error {
+		if record.client.Duplicate || !serving.ObservationInInterval(record.client.ReportedAt, from, to) {
 			return nil
 		}
-		var client serving.ClientObservation
-		if err := json.Unmarshal(raw, &client); err != nil {
-			return err
-		}
+		client := record.client.ClientObservation
 		row := requests[client.RequestID]
 		name := ""
 		if row != nil {
@@ -238,6 +231,10 @@ func (l *ObservationLog) clientWindow(read *observationRead, rows []*serving.Req
 			(client.WorkloadUID == "" || client.WorkloadUID == row.WorkloadUID)
 		if joined && !serving.ObservationInInterval(row.ReceivedAt, from, to) {
 			return nil
+		}
+		if client.StatusCode != nil {
+			status := *client.StatusCode
+			client.StatusCode = &status
 		}
 		if !joined {
 			clients = append(clients, client)

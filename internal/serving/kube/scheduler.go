@@ -353,7 +353,13 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 
 // captureReconciled keeps Tick and completion observation effects in one order.
 func (c *SchedulerController) captureReconciled(ctx context.Context, now time.Time, config SchedulerControllerConfig, continuation bool, timing *observation.SchedulerControlObservation) (serving.SchedulerSnapshot, error) {
-	snapshot, err := c.captureTimed(ctx, now, config, timing)
+	demand := true
+	if continuation {
+		c.mu.Lock()
+		demand = c.continuationNeedsWindowLocked()
+		c.mu.Unlock()
+	}
+	snapshot, err := c.captureTimed(ctx, now, config, timing, demand)
 	if err != nil {
 		return snapshot, err
 	}

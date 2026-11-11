@@ -219,12 +219,23 @@ Tick 완료 행의 동기 제출도 포함한다. `admitError`와 Tick의 `error
 `captureNanos`, `evaluateNanos`, `publishNanos`, `recordNanos`, `launchNanos`를 제공한다.
 capture 하위 구간은 `windowNanos`(LoadWindow), `refreshListNanos`(Node·Pod·source resource·DeviceClass·Service List),
 `sourceProbeNanos`(병렬 native probe와 후속 UID 확인의 `probes.Wait`), `restNanos`(잠금 대기·관측 정리·snapshot 조립·reconcile 등 나머지)다.
+window는 `windowBarrierNanos`(기존 finite writer prefix 대기),
+`windowScanNanos`(capture·coverage source 준비와 cold/suffix 파일 scan),
+`windowDecodeNanos`(cold/suffix JSON decode), `windowJoinNanos`(요청·native·client 결합과 집계),
+`windowSortNanos`(결과 정렬)로 나눈다. 이 구간은 서로 겹치지 않으며 합은 `windowNanos` 이하이다.
+요청·client의 최근 minute segment는 committed append 경계별 불변 메모리 window로 재사용한다.
+writer가 새 행을 반영하고, cold/restart·이전 범위 조회는 기존 log에서 복원한다.
+coverage와 요청 stream gap 판정은 기존 log metadata를 그대로 사용한다.
+rolling occupancy는 같은 decoded 요청 행으로 기존 선택 pass와 집계 pass를 수행한다.
+native delivery tail, 선택 marker·상한, open row, late supplement와 분위수 모집단은 유지한다.
 namespace-only observer의 전체 POOL Pod List도 `refreshListNanos`에 포함한다.
 List 종류별 `refreshNodesNanos`, `refreshPodsNanos`, `refreshResourcesNanos`(SourceResources의 Deployment·ReplicaSet 조회),
 `refreshDeviceClassesNanos`, `refreshServicesNanos`도 기록하며 합은 `refreshListNanos` 이하이다.
 namespace-only observer의 전체 POOL Pod List 시간은 `refreshPodsNanos`에도 더한다.
 `scope:"continue"`는 같은 capture 하위 구간과 lock 대기·publish·launch 시간을 기록한다.
 Continue는 기존 owner만 진행하며 평가 처분은 기록하지 않는다.
+완료 전 route가 없는 전이는 request/client window를 읽지 않는다(`windowNanos=0`).
+route 전에는 Ready-expansion 판단에 쓸 최신 수요를 읽으며, cleanup도 최신 물리 관측·ACK 검사를 유지한다.
 하위 구간은 중복 없이 `captureNanos`로 합산하며 오류·중도 반환도 실제 실행한 구간만 기록한다.
 capture는 refresh의 Node·DeviceClass List를 재사용한다. Node의 `observedAt`은 해당 List 요청 직전의 보수적인 하한이다.
 `recordNanos`는 기존 OnDecision callback 전체이며 실패한 callback 시간도 포함한다.

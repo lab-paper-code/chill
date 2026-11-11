@@ -384,6 +384,10 @@ type observationRead struct {
 	scanningHour    time.Time
 	definitionsOnly bool
 	recoveryGaps    []serving.ObservationGap
+	timing          *SchedulerControlObservation
+	scanTime        time.Duration
+	decodeTime      time.Duration
+	sortTime        time.Duration
 }
 
 type observationOpenFile struct {
@@ -405,8 +409,16 @@ func (r *observationRead) close() {
 // captureMu excludes retention until selected paths are open; no producer lock
 // is held while waiting for storage or opening files.
 func (l *ObservationLog) capture(ctx context.Context, ranges map[string][2]time.Time) (*observationRead, error) {
+	started := time.Now()
+	timing, _ := ctx.Value(windowTimingKey{}).(*SchedulerControlObservation)
 	if _, err := l.writeBarrier(ctx, false); err != nil {
+		if timing != nil {
+			timing.WindowBarrier += time.Since(started)
+		}
 		return nil, err
+	}
+	if timing != nil {
+		timing.WindowBarrier += time.Since(started)
 	}
 	l.captureMu.RLock()
 	defer l.captureMu.RUnlock()

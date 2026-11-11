@@ -2,17 +2,15 @@ package observation
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"time"
 
 	serving "github.com/lab-paper-code/chill/internal/serving"
 )
 
 // ScanOccupancyRows reads only the requested interval and its configured native
-// delivery tail. A first streaming pass selects receipt/native-window RequestIDs;
-// a second visits their raw rows, including earlier assignments and late native
-// supplements. Selection markers are read-side state, not persisted raw rows.
+// delivery tail. Two passes over immutable decoded rows select request IDs, then
+// visit their assignments, finals and late native supplements. Nested row data
+// is read-only. Selection markers are read-side state, not persisted raw rows.
 func (l *ObservationLog) ScanOccupancyRows(ctx context.Context, uid, node string, from, to time.Time, visit func(serving.RequestRow)) (*time.Time, error) {
 	return l.ScanOccupancyRowsBounded(ctx, uid, node, from, to, 0, visit)
 }
@@ -29,6 +27,7 @@ func (l *ObservationLog) ScanOccupancyRowsBounded(ctx context.Context, uid, node
 		return nil, err
 	}
 	defer read.close()
+	l.retainWindow(from.Add(-tail), true, read.now)
 	keep := func(r *serving.RequestRow) bool {
 		return (uid == "" || r.WorkloadUID == uid) && (node == "" || r.Node == nil || r.Node.UID == node)
 	}
@@ -42,12 +41,8 @@ func (l *ObservationLog) ScanOccupancyRowsBounded(ctx context.Context, uid, node
 		}
 		return nil
 	}
-	if err := l.scanStream(read, observationRequestStream, func(raw []byte) error {
-		var row serving.RequestRow
-		if err := json.Unmarshal(raw, &row); err != nil {
-			return err
-		}
-		return selectRow(&row)
+	if err := l.scanWindowRows(read, observationRequestStream, func(record windowRecord) error {
+		return selectRow(record.request)
 	}); err != nil {
 		return nil, err
 	}
@@ -59,18 +54,10 @@ func (l *ObservationLog) ScanOccupancyRowsBounded(ctx context.Context, uid, node
 	for id := range selected {
 		visit(serving.RequestRow{Kind: serving.RequestRowOccupancySelected, RequestID: id})
 	}
-	for _, file := range read.files[observationRequestStream] {
-		if _, err := file.file.Seek(0, io.SeekStart); err != nil {
-			return nil, err
-		}
-	}
-	if err := l.scanStream(read, observationRequestStream, func(raw []byte) error {
-		var row serving.RequestRow
-		if err := json.Unmarshal(raw, &row); err != nil {
-			return err
-		}
-		if selected[row.RequestID] && keep(&row) {
-			visit(row)
+	if err := l.scanWindowRows(read, observationRequestStream, func(record windowRecord) error {
+		row := record.request
+		if selected[row.RequestID] && keep(row) {
+			visit(*row)
 		}
 		return nil
 	}); err != nil {

@@ -16,21 +16,25 @@ import (
 )
 
 func (c *SchedulerController) capture(ctx context.Context, now time.Time, config SchedulerControllerConfig) (serving.SchedulerSnapshot, error) {
-	return c.captureTimed(ctx, now, config, nil)
+	return c.captureTimed(ctx, now, config, nil, true)
 }
 
-func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, config SchedulerControllerConfig, timing *observation.SchedulerControlObservation) (serving.SchedulerSnapshot, error) {
-	windowStarted := time.Now()
-	window, err := c.observationLog.LoadWindow(ctx, now.Add(-config.Settings.ObservationWindow), now)
-	if timing != nil {
-		timing.Window = time.Since(windowStarted)
-	}
-	if err != nil {
-		return serving.SchedulerSnapshot{}, err
-	}
-	start := serving.LaterTime(window.From, c.observationLog.Started())
-	if err := schedulerRequestCoverageError(window.Coverage.Gaps, start, now); err != nil {
-		return serving.SchedulerSnapshot{}, err
+func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, config SchedulerControllerConfig, timing *observation.SchedulerControlObservation, demand bool) (serving.SchedulerSnapshot, error) {
+	var window observation.LoadWindow
+	if demand {
+		windowStarted := time.Now()
+		var err error
+		window, err = c.observationLog.LoadWindowTimed(ctx, now.Add(-config.Settings.ObservationWindow), now, timing)
+		if timing != nil {
+			timing.Window = time.Since(windowStarted)
+		}
+		if err != nil {
+			return serving.SchedulerSnapshot{}, err
+		}
+		start := serving.LaterTime(window.From, c.observationLog.Started())
+		if err := schedulerRequestCoverageError(window.Coverage.Gaps, start, now); err != nil {
+			return serving.SchedulerSnapshot{}, err
+		}
 	}
 	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: window.Arrivals, Costs: config.Costs, Baselines: config.Baselines,
 		DispatchOccupancy: config.DispatchOccupancy}
