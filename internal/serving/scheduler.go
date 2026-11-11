@@ -494,6 +494,8 @@ type SchedulerSnapshot struct {
 	Reasons           []string               `json:"reasons"`
 	References        []string               `json:"references"`
 	Reservations      []SchedulerReservation `json:"reservations,omitempty"`
+	// replayScope is immutable, decision-local prediction authority, never stored.
+	replayScope *schedulerReplayScope
 }
 
 // SchedulerReservation fixes physical ownership while an operation or its DAG

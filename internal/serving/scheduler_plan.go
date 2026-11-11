@@ -85,6 +85,9 @@ func schedulerPhysicalChangeReason(snapshot SchedulerSnapshot, node NodeReferenc
 		}) {
 		return NodeInstanceUnavailable
 	}
+	if schedulerReplayInitialScope(snapshot).nodes[node] {
+		return "ReplayExcludedNode"
+	}
 	return ""
 }
 
@@ -94,7 +97,7 @@ func schedulerCommonNodes(snapshot SchedulerSnapshot) []SchedulerNode {
 	nodes := slices.Clone(snapshot.Nodes)
 	for index, n := range nodes {
 		for _, a := range snapshot.Actions {
-			if a.Fixed && a.Node == n.Node && (a.Status == schedulerActionPlanned || a.Status == phaseRunning) {
+			if a.Fixed && a.Node == n.Node && (a.Status == schedulerActionPlanned || a.Status == phaseRunning) && !schedulerReplayInitialScope(snapshot).nodes[n.Node] {
 				nodes[index].PowerMode = a.To
 			}
 		}
@@ -311,10 +314,14 @@ func schedulerPlan(settings SchedulerSettings, snap SchedulerSnapshot, c Schedul
 	p.changeNodes(c)
 	p.prepareTargets(c)
 	// Candidate ordinals and rolling witness text are not operation identity.
-	route := p.add(schedulerActionRoute, NodeReference{}, "", "", schedulerConfigKey(c), p.prepares)
-	if action := &p.actions[len(p.actions)-1]; action.Status == schedulerActionPlanned &&
-		(len(p.reasons) != 0 || strings.HasPrefix(action.Reason, NodeInstanceUnavailable+":")) {
-		action.Reason = strings.Join(p.reasons, ";")
+	route := ""
+	current := SchedulerCandidate{Nodes: snap.Nodes, Instances: snap.Instances, Routing: snap.Routing}
+	if schedulerConfigKey(current) != schedulerConfigKey(c) || !maps.EqualFunc(snap.Routing, c.Routing, maps.Equal[map[string]int32]) {
+		route = p.add(schedulerActionRoute, NodeReference{}, "", "", schedulerConfigKey(c), p.prepares)
+		if action := &p.actions[len(p.actions)-1]; action.Status == schedulerActionPlanned &&
+			(len(p.reasons) != 0 || strings.HasPrefix(action.Reason, NodeInstanceUnavailable+":")) {
+			action.Reason = strings.Join(p.reasons, ";")
+		}
 	}
 	if len(p.reasons) == 0 {
 		p.retireOld(c, route)

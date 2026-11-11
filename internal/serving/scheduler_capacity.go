@@ -197,8 +197,9 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		return SchedulerDecision{}, err
 	}
 	settings = settings.Clone()
-	snapshot = schedulerCanonical(snapshot)
+	snapshot = schedulerReplayScopedSnapshot(schedulerCanonical(snapshot))
 	decision = SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References)}
+	decision.Reasons = appendUnique(decision.Reasons, schedulerReplayInitialScope(snapshot).evidence...)
 	fixSchedulerWorkloads(&decision, snapshot)
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
 	for uid, routing := range snapshot.Routing {
@@ -345,6 +346,7 @@ type capacityPlanner struct {
 }
 
 func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, keep SchedulerCandidate, decision SchedulerDecision) *capacityPlanner {
+	snapshot = schedulerReplayScopedSnapshot(snapshot)
 	p := &capacityPlanner{ctx: ctx, settings: settings, snapshot: snapshot, keep: keep, index: map[string]int{}}
 	for _, state := range decision.Workloads {
 		if state.State != WorkloadControlled {

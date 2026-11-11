@@ -25,6 +25,7 @@ const (
 	schedulerActionPlanned     = "planned"
 	schedulerActionComplete    = "complete"
 	schedulerActionFailed      = "failed"
+	schedulerActionPartial     = "partial"
 	schedulerActionCancel      = "cancel"
 	schedulerOutcomeTimeout    = "timeout"
 	schedulerOutcomeOnTime     = "onTime"
@@ -72,6 +73,7 @@ type schedulerReplayInstance struct {
 	loaded               bool
 	ready                bool
 	stopped              bool
+	excluded             bool // retains physical occupancy and outstanding, never executable supply
 	queue                []*schedulerReplayRequest
 	batch                []*schedulerReplayRequest
 	finish               float64
@@ -288,6 +290,7 @@ func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings
 	if err := ctx.Err(); err != nil {
 		return schedulerReplayResult{}, err
 	}
+	snap = schedulerReplayScopedSnapshot(snap)
 	s := schedulerReplayState{settings: settings, snap: snap, c: c, rng: rng, horizon: float64(settings.ComparisonPeriod), compared: compared, capacity: capacity, out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	defer func() {
 		if s.capacity == nil && err == nil {
@@ -410,7 +413,7 @@ func (s *schedulerReplayState) blockedReplayPrerequisite() bool {
 		}
 	}
 	for _, request := range s.live {
-		if !request.completed && request.dispatched {
+		if !request.completed && request.dispatched && (s.byID[request.source.Instance] == nil || !s.byID[request.source.Instance].excluded) {
 			return true
 		}
 	}
@@ -423,8 +426,11 @@ func (s *schedulerReplayState) initializeInstances() {
 	s.nodes = append([]SchedulerNode(nil), s.snap.Nodes...)
 	s.goal = s.c
 	s.applied, s.previousRoute = s.c, s.snap.Routing
+	scope := schedulerReplayInitialScope(s.snap)
+	s.out.assumptions = appendUnique(s.out.assumptions, scope.evidence...)
 	addInstance := func(i SchedulerInstance, loaded bool) {
 		x := &schedulerReplayInstance{config: i, loaded: loaded, ready: loaded && i.Ready, stopped: i.Stopped, finish: math.Inf(1), wake: 0, arrivalTimes: map[string][]float64{}}
+		x.excluded = scope.instances[i.ID] != ""
 		x.arrivalsKnown = !loaded || i.ArrivalAgesMS != nil
 		if loaded {
 			for uid, ages := range i.ArrivalAgesMS {
@@ -455,14 +461,16 @@ func (s *schedulerReplayState) initializeInstances() {
 		if actual.TargetID == "" {
 			continue
 		}
-		for _, wanted := range s.goal.Instances {
-			if schedulerSamePhysicalTarget(actual, wanted) && schedulerOwnerAllows(actual.OwnerWorkloadUID, wanted.WorkloadUID) {
-				if previous := s.byID[actual.TargetID]; previous != nil && previous != s.byID[actual.ID] {
-					s.out.reasons = appendUnique(s.out.reasons, "AmbiguousPreparedPhysicalTarget:"+actual.TargetID)
-				} else {
-					s.byID[actual.TargetID] = s.byID[actual.ID]
-				}
-			}
+		if previous := s.byID[actual.TargetID]; previous != nil && previous != s.byID[actual.ID] {
+			s.out.reasons = appendUnique(s.out.reasons, "AmbiguousPreparedPhysicalTarget:"+actual.TargetID)
+		} else {
+			s.byID[actual.TargetID] = s.byID[actual.ID]
+		}
+	}
+	for _, i := range schedulerReplayTargets(s.snap) {
+		if s.byID[i.ID] == nil {
+			addInstance(i, false)
+			s.byID[i.ID].stopped = true
 		}
 	}
 	for _, i := range s.goal.Instances {
@@ -477,29 +485,38 @@ func (s *schedulerReplayState) initializeInstances() {
 func (s *schedulerReplayState) initializeActions() {
 	s.actions = []*schedulerReplayAction{}
 	s.actionByID = map[string]*schedulerReplayAction{}
+	for _, a := range s.snap.Actions {
+		if a.Status == schedulerActionComplete || a.Status == schedulerActionCancel || s.actionByID[a.ID] != nil {
+			continue
+		}
+		if a.Kind == schedulerActionRoute {
+			a.RouteTarget = schedulerReplayActionTarget(s.snap, a)
+		}
+		x := &schedulerReplayAction{action: a, finish: math.Inf(1)}
+		s.actions = append(s.actions, x)
+		s.actionByID[a.ID] = x
+	}
 	for _, a := range s.c.Actions {
-		if a.Status == schedulerActionCancel {
+		if a.Status == schedulerActionCancel || s.actionByID[a.ID] != nil {
 			continue
 		}
 		x := &schedulerReplayAction{action: a, done: a.Status == schedulerActionComplete, finish: math.Inf(1)}
 		s.actions = append(s.actions, x)
 		s.actionByID[a.ID] = x
 	}
-	if s.c.Keep {
-		for _, a := range s.snap.Actions {
-			if a.Status == schedulerActionComplete || a.Status == schedulerActionCancel || s.actionByID[a.ID] != nil {
-				continue
-			}
-			x := &schedulerReplayAction{action: a, finish: math.Inf(1)}
-			s.actions = append(s.actions, x)
-			s.actionByID[a.ID] = x
-		}
-	}
 	for _, a := range s.snap.Actions {
 		if a.Status == schedulerActionComplete && s.actionByID[a.ID] == nil {
 			s.actionByID[a.ID] = &schedulerReplayAction{action: a, done: true}
 		}
 	}
+	scope := schedulerReplayInitialScope(s.snap)
+	for _, a := range s.actions {
+		a.blocked = scope.actions[a.action.ID] != ""
+		if a.action.Kind == schedulerActionPrepare || a.action.Kind == schedulerActionRemove || a.action.Kind == schedulerActionPower {
+			a.blocked = a.blocked || scope.nodes[a.action.Node]
+		}
+	}
+	s.blockedReplayPrerequisite()
 }
 
 func (s *schedulerReplayState) initializeOutstanding() {
@@ -668,7 +685,7 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 
 func (s *schedulerReplayState) initializeRunning() bool {
 	for _, i := range s.instances {
-		if len(i.batch) == 0 {
+		if i.excluded || len(i.batch) == 0 {
 			continue
 		}
 		head := i.batch[0]

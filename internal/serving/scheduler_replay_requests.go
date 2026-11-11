@@ -61,7 +61,7 @@ func (s *schedulerReplayState) hasRoutedAlternative(r *schedulerReplayRequest, r
 		routing = s.applied.Routing
 	}
 	for _, other := range s.instances {
-		if other == retiring || !other.loaded || !other.ready || other.stopped || !schedulerProfileMatches(r.source.Definition, other.config.Profile) {
+		if other == retiring || !replayExecutable(other) || other.stopped || !schedulerProfileMatches(r.source.Definition, other.config.Profile) {
 			continue
 		}
 		var weight int32
@@ -138,6 +138,9 @@ func (s *schedulerReplayState) expireRequests() {
 			s.out.outcomes[key] = map[string]int{}
 		}
 		s.out.outcomes[key][schedulerOutcomeTimeout]++
+		if i := s.byID[r.source.Instance]; i != nil && i.excluded && r.dispatched && !r.returning {
+			continue // client expiry is not physical completion of an unmodelable executor
+		}
 		if !r.running && !r.returning {
 			r.returning = true
 			r.completion = s.now
@@ -325,8 +328,12 @@ func (s *schedulerReplayState) finishNormalAdmission(r *schedulerReplayRequest) 
 	}
 }
 
+func replayExecutable(i *schedulerReplayInstance) bool {
+	return !i.excluded && i.loaded && i.ready
+}
+
 func replayHasCapacity(i *schedulerReplayInstance) bool {
-	return i.loaded && i.ready && !i.stopped && !i.config.Terminated && i.outstanding < i.config.Capacity
+	return replayExecutable(i) && !i.stopped && !i.config.Terminated && i.outstanding < i.config.Capacity
 }
 
 func (s *schedulerReplayState) replayRouteCredits(uid string) []int64 {
@@ -672,7 +679,7 @@ func (s *schedulerReplayState) nativeRequestState(i *schedulerReplayInstance, r 
 
 func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 	for _, i := range s.instances {
-		if !i.loaded || !i.ready || len(i.queue) == 0 {
+		if !replayExecutable(i) || len(i.queue) == 0 {
 			continue
 		}
 		if i.config.Profile == nil {

@@ -169,7 +169,7 @@ func schedulerValidateResources(settings SchedulerSettings, nodes []SchedulerNod
 			hosted = true
 			// Retained occupancy is not an executable candidate. Its missing
 			// native evidence fixes this Node, but must not reject other Nodes.
-			if i.Terminated || !i.Ready && slices.Contains(n.Reasons, NodeInstanceUnavailable) {
+			if i.Terminated || schedulerReplayInstanceReason(i) != "" || !i.Ready && slices.Contains(n.Reasons, NodeInstanceUnavailable) {
 				allocations = append(allocations, i.Allocation)
 				continue
 			}

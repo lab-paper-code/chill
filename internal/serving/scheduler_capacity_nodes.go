@@ -539,7 +539,7 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 		if owner, controlled := p.index[i.OwnerWorkloadUID]; controlled && (!ok || owner != w) {
 			plan.pendingReplicas[owner]++
 		}
-		if !ok || i.Terminated || plan.keep && (!i.Ready || i.Stopped) {
+		if !ok || i.Terminated || schedulerReplayInitialScope(p.snapshot).instances[i.ID] != "" || plan.keep && (!i.Ready || i.Stopped) {
 			plan.others++
 			if ok {
 				plan.pendingReplicas[w]++
@@ -601,8 +601,11 @@ type profileScalar struct {
 
 // profileTerms performs raw distribution queries once per option/Workload/Tick.
 func (p *capacityPlanner) profileTerms(i SchedulerInstance, d *Definition) (profileRoutingWeight, float64, float64, string) {
-	if i.Profile == nil || d == nil || i.Terminated {
+	if d == nil || i.Terminated {
 		return 0, 0, 0, "MissingProfile"
+	}
+	if reason := schedulerReplayInstanceReason(i); reason != "" {
+		return 0, 0, 0, reason
 	}
 	key := profileTermsKey{profile: i.Profile, definition: d, node: i.Node, maxBatch: i.MaxBatch}
 	var gap *int64

@@ -458,6 +458,9 @@ func potentialBatchCount(instance *schedulerReplayInstance, request *schedulerRe
 }
 
 func (s *schedulerReplayState) potentialReady(instance *schedulerReplayInstance, request *schedulerReplayRequest) (float64, bool) {
+	if instance.excluded {
+		return 0, false
+	}
 	if request.dispatched {
 		return 0, instance.loaded && instance.ready
 	}

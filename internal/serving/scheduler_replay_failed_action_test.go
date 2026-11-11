@@ -1,7 +1,13 @@
 package serving
 
 import (
+	"context"
+	"math/rand/v2"
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestReplayFailedPreparePreservesObservedStateAndBlocksDependentRoute(t *testing.T) {
@@ -84,5 +90,174 @@ func TestReplayFailedPrepareLeavesUnroutedRequestsUnfinished(t *testing.T) {
 				t.Fatalf("unrouted pending request must remain unfinished without invalidating replay: %+v", result.Workloads)
 			}
 		})
+	}
+}
+
+// control379 retained a partial IC prepare after its physical target disappeared.
+// API observations omit catalog profile bodies, so this fixture retains its
+// action/ownership shape with the paired synthetic profile used by replay tests.
+func TestReplayControl379PartialPrepareUsesCommonPhysicalState(t *testing.T) {
+	settings, snapshot, keep := feedbackFixture()
+	node := poolsAddNode(&snapshot, "failed-node", map[string]float64{"fixed": 1})
+	snapshot.Actions = []Action{{
+		ID: "partial-ic-prepare", Kind: schedulerActionPrepare, Node: node, Instance: "missing-ic-target",
+		From: "unloaded", To: "missing-profile::1000", Status: "partial", Reason: "profile: Error (exit 1)",
+	}}
+	keep.Nodes = snapshot.Nodes
+	changed := keep
+	changed.Keep = false
+	changed.Actions = []Action{{ID: "independent-route", Kind: schedulerActionRoute}}
+	first := feedbackEvaluateForTest(t, settings, snapshot, keep)
+	second := feedbackEvaluateForTest(t, settings, snapshot, changed)
+	if !reflect.DeepEqual(first.Workloads, second.Workloads) || !reflect.DeepEqual(first.SLO, second.SLO) {
+		t.Fatalf("candidate flag changed the initial physical world: keep=%+v changed=%+v", first, second)
+	}
+}
+
+func TestSchedulerControl379PartialPrepareKeepsEvaluableWithoutReapply(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	snapshot.Instances[0].Weight = schedulerRouteUnits
+	node := poolsAddNode(&snapshot, "failed-node", map[string]float64{"fixed": 1})
+	snapshot.Actions = []Action{{
+		ID: "partial-ic-prepare", Kind: schedulerActionPrepare, Node: node, Instance: "missing-ic-target",
+		From: "unloaded", To: "missing-profile::1000", Status: "partial", Reason: "profile: Error (exit 1)",
+	}}
+	before := slices.Clone(snapshot.Actions)
+	decision := capacityDecideForTest(t, settings, snapshot)
+	if decision.Keep.Status == schedulerStatusPending || decision.Target == nil || len(decision.Target.Actions) != 0 {
+		t.Fatalf("partial prepare must not force an equivalent route: keep=%+v target=%+v", decision.Keep, decision.Target)
+	}
+	if !slices.ContainsFunc(decision.Reasons, func(reason string) bool {
+		return strings.Contains(reason, "partial-ic-prepare") && strings.Contains(reason, "missing-ic-target")
+	}) {
+		t.Fatalf("decision omitted excluded target and reason: %v", decision.Reasons)
+	}
+	if !reflect.DeepEqual(snapshot.Actions, before) {
+		t.Fatal("evaluation rewrote the physical owner ledger")
+	}
+}
+
+func TestSchedulerPlanIdenticalPhysicalPolicyRoutingDoesNotReapply(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	snapshot.Routing = schedulerInstanceRouting(context.Background(), snapshot.Workloads, snapshot.Instances)
+	target := SchedulerCandidate{Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances), Routing: snapshot.Routing}
+	if actions := schedulerPlan(settings, snapshot, target); len(actions) != 0 {
+		t.Fatalf("identical target must not emit actions: %+v", actions)
+	}
+	target.Instances[0].MaxWait++
+	if actions := schedulerPlan(settings, snapshot, target); !slices.ContainsFunc(actions, func(action Action) bool {
+		return action.Kind == schedulerActionRoute
+	}) {
+		t.Fatalf("a changed batching policy still needs a route: %+v", actions)
+	}
+}
+
+func TestReplayCommonScopeRetainsPhysicalOccupancyAndOutstanding(t *testing.T) {
+	settings, snapshot, keep := feedbackFixture()
+	node := poolsAddNode(&snapshot, "unknown", map[string]float64{"fixed": 1})
+	unknown := poolsInstance(snapshot.Instances[0], "unknown-executor", node, "fixed", "")
+	unknown.Profile = nil
+	snapshot.Instances = append(snapshot.Instances, unknown)
+	uid := snapshot.Workloads[0].UID
+	snapshot.Routing = map[string]map[string]int32{uid: {snapshot.Instances[0].ID: schedulerRouteUnits}}
+	keep.Nodes, keep.Instances, keep.Routing = snapshot.Nodes, snapshot.Instances, snapshot.Routing
+	zero := 0.0
+	lifetime := time.Nanosecond
+	snapshot.Outstanding = []SchedulerRequest{{
+		ID: "unknown-queued", Definition: snapshot.Workloads[0], ReceivedAt: snapshot.At,
+		Phase: phaseQueued, Instance: unknown.ID, NativeSenderElapsedMS: &zero, NativeElapsedNanos: &zero,
+		CompletionMarginMS: &zero, RemainingLifetime: &lifetime,
+	}}
+	snapshot.Actions = []Action{
+		{ID: "unknown-power", Kind: schedulerActionPower, Node: node, From: "fixed", To: "eco", Status: schedulerActionPlanned},
+		{ID: "dependent-remove", Kind: schedulerActionRemove, Node: node, Instance: unknown.ID, DependsOn: []string{"unknown-power"}},
+	}
+	state := schedulerReplayState{settings: settings, snap: snapshot, c: keep, out: schedulerReplayResult{
+		definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{},
+	}}
+	state.initializeInstances()
+	state.initializeActions()
+	state.initializeOutstanding()
+	occupant := state.byID[unknown.ID]
+	if !occupant.loaded || !occupant.ready || !occupant.excluded || occupant.config.Allocation != unknown.Allocation ||
+		occupant.outstanding != 1 || len(occupant.queue) != 1 || replayHasCapacity(occupant) {
+		t.Fatalf("exclusion changed physical state or supplied capacity: %+v", occupant)
+	}
+	if !state.startActions() || state.actionByID["unknown-power"].started || !state.actionByID["dependent-remove"].blocked {
+		t.Fatal("unknown co-resident allowed node-wide transition or cleanup")
+	}
+	state.now = 2
+	state.expireRequests()
+	state.completeExecution()
+	if occupant.outstanding != 1 || len(occupant.queue) != 1 {
+		t.Fatal("client timeout released unknown physical work")
+	}
+	for _, candidateKeep := range []bool{true, false} {
+		candidate := keep
+		candidate.Keep = candidateKeep
+		if !candidateKeep {
+			candidate.Actions = []Action{{ID: "healthy-route", Kind: schedulerActionRoute}}
+		}
+		result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
+		if result.Workloads[0].Population != 3 || result.Workloads[0].OnTime != 2 || result.Workloads[0].Timeout != 1 {
+			t.Fatalf("exclusion lost requests or independent supply: %+v", result)
+		}
+	}
+}
+
+func TestReplayCommonUncreatedPreparationUsesOwnerTarget(t *testing.T) {
+	settings, snapshot, keep := feedbackFixture()
+	node := poolsAddNode(&snapshot, "preparing", map[string]float64{"fixed": 1})
+	future := poolsInstance(snapshot.Instances[0], "authorized-slot", node, "fixed", snapshot.Workloads[0].UID)
+	action := Action{ID: "authorized-prepare", Kind: schedulerActionPrepare, Node: node, Instance: future.ID,
+		From: "unloaded", To: schedulerState(future), Status: phaseRunning}
+	owner := SchedulerCandidate{ID: "owner", Nodes: snapshot.Nodes, Instances: []SchedulerInstance{future}, Actions: []Action{action}}
+	snapshot.Reservations = []SchedulerReservation{{Owner: owner.ID, Nodes: []NodeReference{node}, Target: &owner}}
+	snapshot.Actions = []Action{action}
+	for _, candidateKeep := range []bool{true, false} {
+		candidate := keep
+		candidate.Keep = candidateKeep
+		state := schedulerReplayState{settings: settings, snap: snapshot, c: candidate, rng: rand.New(rand.NewPCG(1, 0))}
+		state.initializeInstances()
+		state.initializeActions()
+		if state.byID[future.ID] == nil || state.byID[future.ID].loaded || !state.startActions() ||
+			!state.actionByID[action.ID].started || state.actionByID[action.ID].blocked {
+			t.Fatalf("authorized preparation vanished from candidate keep=%v: %+v", candidateKeep, state.out.reasons)
+		}
+	}
+}
+
+func TestReplaySnapshotRouteUsesFrozenOwnerInsteadOfCandidateGoal(t *testing.T) {
+	settings, snapshot, candidate := feedbackFixture()
+	owner := candidate
+	owner.ID = "frozen-owner"
+	action := Action{ID: "owner-route", Kind: schedulerActionRoute, Status: schedulerActionPlanned}
+	owner.Actions = []Action{action}
+	snapshot.Actions = []Action{action}
+	snapshot.Reservations = []SchedulerReservation{{Owner: owner.ID, Nodes: []NodeReference{snapshot.Nodes[0].Node}, Target: &owner}}
+	candidate.ID, candidate.Keep = "independent-goal", false
+	candidate.Instances = slices.Clone(candidate.Instances)
+	candidate.Instances[0].MaxWait++
+	state := schedulerReplayState{settings: settings, snap: snapshot, c: candidate, routeCredits: map[string][]int64{}}
+	state.initializeInstances()
+	state.initializeActions()
+	if !state.startActions() || state.applied.ID != owner.ID || state.instances[0].config.MaxWait != owner.Instances[0].MaxWait {
+		t.Fatalf("candidate rewrote owner route: applied=%+v reasons=%v", state.applied, state.out.reasons)
+	}
+}
+
+func TestCapacityCommonScopePreservesIndependentExpansion(t *testing.T) {
+	settings, snapshot, fast := capacityE1Fixture()
+	blocked := snapshot.Options[1].Instance.Node
+	snapshot.Actions = []Action{{ID: "partial-prepare", Kind: schedulerActionPrepare, Node: blocked,
+		Instance: "missing-target", Status: "partial", Reason: "profile: Error (exit 1)"}}
+	decision := capacityDecideForTest(t, settings, snapshot)
+	if decision.Keep.Status == schedulerStatusPending || decision.Target == nil || !poolsOn(*decision.Target, fast) {
+		t.Fatalf("local exclusion blocked independent recovery: keep=%+v target=%+v", decision.Keep, decision.Target)
+	}
+	if !slices.ContainsFunc(decision.Capacity.Plans, func(plan SchedulerNodePlan) bool {
+		return plan.Node == blocked && !plan.Eligible && plan.Reason == "ReplayExcludedNode"
+	}) {
+		t.Fatal("same-node resource/power/transition dependency was not excluded")
 	}
 }

@@ -550,6 +550,9 @@ func TestInstanceUnavailableDefersOnlyMatchingNodeAC34(t *testing.T) {
 	snapshot.Nodes[0].Reasons = nil
 	snapshot.Instances[0].Ready = true
 	snapshot.Actions = target.Actions
+	// Retained preparation actions need their frozen owner target independently
+	// of the new candidate; restored native evidence does not invent that target.
+	snapshot.Reservations = []SchedulerReservation{{Owner: target.ID, Nodes: []NodeReference{n2}, Target: &target}}
 	recovered := requireTransitionAction(t, schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target), schedulerActionRoute)
 	if recovered.Reason != "" {
 		t.Fatalf("restored observation retained a stale block: %+v", recovered)
@@ -560,14 +563,13 @@ func TestPolicyAckPendingRetainsRouteEffectAndReplicaCountAC34(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	target := SchedulerCandidate{ID: "same-effect", Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances),
 		Routing: map[string]map[string]int32{"w1": {snapshot.Instances[0].ID: 1}}}
-	snapshot.Routing = target.Routing
 	route := requireTransitionAction(t, schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target), schedulerActionRoute)
 	route.Status = schedulerActionComplete
+	snapshot.Routing = target.Routing
 	snapshot.Actions = []Action{route}
 	snapshot.Instances[0].Reasons = []string{"PolicyAckPending"}
-	reused := requireTransitionAction(t, schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target), schedulerActionRoute)
-	if reused.ID != route.ID || reused.Status != schedulerActionComplete {
-		t.Fatalf("ACK marker caused distribution effect retransmission: %+v", reused)
+	if actions := schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target); len(actions) != 0 {
+		t.Fatalf("ACK marker caused identical target retransmission: %+v", actions)
 	}
 	decision := SchedulerDecision{Workloads: schedulerWorkloadStates(settings, snapshot), Search: schedulerSearchPopulation(context.Background(), settings, snapshot)}
 	planner := newCapacityPlanner(context.Background(), settings, snapshot, target, decision)
@@ -576,9 +578,9 @@ func TestPolicyAckPendingRetainsRouteEffectAndReplicaCountAC34(t *testing.T) {
 	}
 	route.Status = phaseRunning
 	snapshot.Actions = []Action{route}
-	running := requireTransitionAction(t, schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target), schedulerActionRoute)
-	if running.ID != route.ID || running.Status != phaseRunning {
-		t.Fatalf("unacknowledged running route became completed: %+v", running)
+	if actions := schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target); len(actions) != 0 ||
+		snapshot.Actions[0].Status != phaseRunning {
+		t.Fatalf("identical target changed the running owner's obligation: %+v", actions)
 	}
 }
 
