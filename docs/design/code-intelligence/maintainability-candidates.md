@@ -294,7 +294,7 @@ Gate: Go 후보는 `make lint`, `make test TEST_PYTHON=<3.10 이상>`, `make arc
 | C5 | 완료. 리뷰 2종 무결함(식별자·정렬 외 변경 없음), `make lint`·`make arch-check`·`make gopls-check`·`make test` 통과 | `532eafa7`, `47bc9eb4`, `5e96ba99` |
 | C1 | 완료. 정확성 리뷰의 reservation 단언 누락(P2)을 반영, 자원 리뷰 무결함. B2는 26개 선언 본문이 바이트 단위 동일. `make lint`·`arch-check`·`gopls-check` 통과, `make test`는 기존 간헐 실패 `TestTerminatedPodOnlyPlannerReachesNormalRemovePrepareAndRoute` 1건(변경 전 `9c75f158`에서도 200회 중 50회 실패)으로 kube만 실패, kube·management 재실행 통과 | `e292e297`, `cc833d62` |
 | C2 | 완료. 리뷰 2종 무결함, 대시보드 typecheck·lint·test 723(722 통과, 1 skip)·build, 브라우저에서 요청 작성 화면이 `scheduler/profiles?view=summary&summary=v2&limit=50&offset=0` 조회와 실패 표시 확인(fixture에 profiles 없음, 성공 경로는 T1 테스트) | `a2eb34c4`, `a7c26a21` |
-| C3 | 대기 | |
+| C3 | 완료. 리뷰 2종 무결함(이동 선언 본문 동일, 순환 import·중복 평가 없음, 변경 테스트 27개 382건 통과). 대시보드 typecheck·lint·test 727(726 통과, 1 skip)·build 통과. 브라우저 fixture에서 변경 전 build와 화면별 오류 표시와 성공 relay 수(8건)가 같고 page error 없음 | `ac7b6145`, `e07ebb8b` |
 | C4 | 종료(현 구조 유지) | 이 문서 |
 
 [R1]: external-maintainability-patterns.md
