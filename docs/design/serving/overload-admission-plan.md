@@ -159,6 +159,16 @@ U3는 U2의 executor 거절 응답 계약을 쓰므로 U2 뒤다. U5·U7은 U3�
 
 control378과 같은 E5, IC Workload `admission.policy=Reject`. 판정: 과부하 구간 기한 내 성공률·goodput, 결과 분류(offered 합 일치), 완료 latency 분포, 정책별 거절 사유·대기 분포, 첫 60초 실패 수(control378 939). 같은 조건 `Delay` 한 번으로 늦은 완료 비중을 비교한다.
 
+## 6.1 배포 절차 (저장 계약 변경)
+
+이전 서버가 적용한 Workload의 retained Definition(observation log `definitions.jsonl`)과 `status.appliedDefinition`에는 admission이 없다. 새 서버는 이를 소급 기본값으로 해석하지 않으며(ADR 0019), admission이 유효하지 않은 Definition을 `DefinitionAdmissionInvalid`로 거부해 기동을 멈춘다. 따라서:
+
+1. campaign과 부하를 멈춘다.
+2. **이전 서버가 동작하는 동안** management DELETE로 모든 Workload를 삭제하고 drain·cleanup·finalizer 해제와 실제 삭제를 기다린다.
+3. 새 CRD와 서버를 배포한다.
+4. management POST로 Workload를 다시 만든다(`admission` 명시 권장). 새 UID를 쓰는 LoadScenario 등 작업용 객체도 다시 만든다.
+5. 과거 관측·scheduler snapshot을 새 replay·campaign 입력으로 재사용하지 않는다. 게시된 과학 원문은 그대로 둔다.
+
 ## 7. 구현 중 확인한 사실: profile과 실제 serving 처리 시간 차이
 
 완료 가능성 판단(gateway 예측·executor 재확인)과 계획기 replay는 모두 profile의 service 분포를 쓴다. control378 jetsono IC에서 둘이 크게 다르다.
