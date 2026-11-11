@@ -521,14 +521,16 @@ func (r *Runtime) schedulerOutstandingLocked(now time.Time) []SchedulerRequest {
 			request.QueueAge = 0
 			r.extendNativeOutstandingLocked(&request, call, now)
 		}
-		if call.backendDone {
+		if call.backendDone && call.assignment != nil {
+			// Physical completion begins the return leg even while the HTTP
+			// exchange is open. Its dispatch occupancy remains outstanding.
+			request.Phase = phaseReturning
 			if call.progress != nil {
 				request.NativeOutcome = call.progress.Outcome
 				elapsed := call.progress.NativeElapsedMS * float64(time.Millisecond)
 				request.NativeElapsedNanos = &elapsed
 			}
 			if !call.exchangeFinishedAt.IsZero() {
-				request.Phase = phaseReturning
 				request.ReturnElapsed = now.Sub(call.exchangeFinishedAt)
 			}
 			if sender, ok := call.receipt.ServerTiming.Elapsed(ServerSenderElapsedFrozen); ok {
@@ -569,7 +571,7 @@ func (r *Runtime) extendNativeOutstandingLocked(request *SchedulerRequest, call 
 			elapsed := native.ElapsedMS * float64(time.Millisecond)
 			request.NativeElapsedNanos = &elapsed
 			request.BatchID = strconv.FormatUint(native.BatchID, 10)
-			age := now.Sub(instance.State.ObservedAt)
+			age := now.Sub(instance.nativeAdmissionAt())
 			if age > 0 {
 				*request.NativeElapsedNanos += float64(age)
 				if request.Phase == phaseRunning {

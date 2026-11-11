@@ -354,8 +354,20 @@ func TestReturningPOSTIncludesExchangeReturnAfterEarlySDKCompletion(t *testing.T
 			t.Fatal(err)
 		}
 		pending := r.SchedulerInputs(time.Now).Outstanding
-		if len(pending) != 1 || pending[0].Phase == phaseReturning || !call.backendDone || call.progress == nil || call.progress.Phase != "finished" || !call.progress.ExecutionComplete {
-			t.Fatalf("early SDK completion must preserve native confirmation without claiming exchange completion: %+v", pending)
+		if len(pending) != 1 || pending[0].Phase != phaseReturning || pending[0].ReturnElapsed != 0 || !call.backendDone || call.progress == nil || call.progress.Phase != "finished" || !call.progress.ExecutionComplete {
+			t.Fatalf("early SDK completion must preserve physical completion and open-exchange occupancy: %+v", pending)
+		}
+		replay := replayAdmissionState(t)
+		replay.snap.Outstanding = pending
+		replay.initializeOutstanding()
+		executor := replay.instances[0]
+		executor.config.Capacity = 2
+		if len(executor.batch) != 0 || len(executor.queue) != 0 || executor.outstanding != 1 || !replay.requests[0].returning {
+			t.Fatal("replay restored completed execution as queued/running or released transport occupancy")
+		}
+		candidate := replayAdmissionPending(replay, "after-completion", d)
+		if selected, state := replay.chooseAdmission(context.Background(), candidate); selected < 0 || state != schedulerStatusFeasible {
+			t.Fatalf("replay did not admit after physical completion: %d %s", selected, state)
 		}
 		// The SDK callback can precede HTTP completion by a material return leg.
 		time.Sleep(20 * time.Millisecond)

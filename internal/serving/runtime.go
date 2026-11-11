@@ -81,6 +81,7 @@ type Call struct {
 	enqueuedAt, queueEndedAt                     time.Time
 	deferred                                     bool
 	admissionState                               string
+	admissionComplete                            bool
 	backendContext                               context.Context
 	cancelBackend                                context.CancelFunc
 	transportDone, backendDone, responseRecorded bool
@@ -103,6 +104,8 @@ type runtimeInstance struct {
 	admissionUnknown     bool
 	admissionNormal      int
 	admissionProjections admissionProjections
+	admissionAt          time.Time
+	admissionCompleted   map[admissionRequestKey]time.Time
 }
 type routeEntry struct {
 	instance *runtimeInstance
@@ -676,10 +679,10 @@ func (i *runtimeInstance) indexAdmissionSnapshot() {
 	for uid, ages := range native.ArrivalAgesMS {
 		var a admissionArrival
 		if len(ages) > 0 {
-			a.last = i.State.ObservedAt.Add(-time.Duration(ages[0] * float64(time.Millisecond)))
+			a.last = i.nativeAdmissionAt().Add(-time.Duration(ages[0] * float64(time.Millisecond)))
 		}
 		if len(ages) > 1 {
-			a.previous = i.State.ObservedAt.Add(-time.Duration(ages[1] * float64(time.Millisecond)))
+			a.previous = i.nativeAdmissionAt().Add(-time.Duration(ages[1] * float64(time.Millisecond)))
 		}
 		i.admissionArrivals[uid] = a
 	}
@@ -743,7 +746,7 @@ func (r *Runtime) estimateLocked(i *runtimeInstance, c *Call, now time.Time) Adm
 		q.ArrivalRate = i.admissionArrivals[call.receipt.UID].rate()
 		i.admissionAssignments[j] = q
 	}
-	age := max(now.Sub(i.State.ObservedAt), 0)
+	age := max(now.Sub(i.nativeAdmissionAt()), 0)
 	return i.admissionProjections.project(AdmissionInput{Policy: policy, Observed: native.Requests, Assignments: i.admissionAssignments, SnapshotAge: age, LastServiceEndAgeNanos: native.LastServiceEndAgeNanos, Candidate: candidate}, &r.admissionScratch)
 }
 
@@ -1089,6 +1092,7 @@ func (r *Runtime) releaseLocked(c *Call) {
 		defer r.mu.Mark(DiagnosticRelease, DiagnosticEnd)
 	}
 	if c.backendDone {
+		r.completeAdmissionLocked(c)
 		r.pruneInstanceBindingsLocked()
 	}
 	if !c.backendDone || !c.transportDone {
@@ -1612,6 +1616,7 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) (result erro
 			i.OwnerWorkloadUID = candidate.OwnerWorkloadUID
 			i.State.ObservedAt, i.State.Native = candidate.State.ObservedAt, candidate.State.Native
 			i.State.NativeVerified = candidate.State.NativeVerified
+			i.installAdmissionSnapshot()
 			i.State.Allocation = candidate.State.Allocation
 			i.State.ActualImageID = candidate.State.ActualImageID
 			i.State.DesiredRuntimeImage = candidate.State.DesiredRuntimeImage
@@ -1628,6 +1633,7 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) (result erro
 			candidate.Routing = r.mergeControlledRoutingLocked(i.Routing, candidate.Routing)
 		}
 		i.ReadyInstance = candidate
+		i.installAdmissionSnapshot()
 		if candidate.Profile != nil && i.admissionProfile != candidate.Profile.ID {
 			i.admissionProfile = candidate.Profile.ID
 			i.admissionBatches = candidate.Profile.NativeBundle().Batches
