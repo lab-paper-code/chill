@@ -98,6 +98,8 @@ each Workload's load length, including on-time drain completions from that arriv
 cohort. Provisional `loadLengthSeconds` is clipped at that Workload's
 `closedThrough` cutoff; neither drain time nor the cross-Workload wall window
 extends it. `completedLatencyNS` reports only onTime+late and never decides D1.
+An unstarted zero-offer Workload has zero provisional load length and unavailable
+goodput. An empty started cohort retains its measured cutoff length.
 `rejections[]` groups explicit `policy × stage × code`, with queue wait statistics
 per group. `gatewayWaitNS` and `executorWaitNS` also report cohort queue waits.
 Missing waits have no sample; actual zero waits remain samples with value zero. Missing

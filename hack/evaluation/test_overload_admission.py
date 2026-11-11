@@ -128,6 +128,15 @@ class OverloadAdmissionTest(unittest.TestCase):
             self.assertEqual(zero['loadLengthSeconds'], 0)
             self.assertEqual(sum(zero['outcomeClasses'].values()), zero['offered'])
 
+    def test_empty_started_cohort_keeps_its_cutoff_length(self):
+        self.phase['stage']['traces']['model'] = {'offsetsNS': [], 'offered': 0}
+        cutoff = '2026-11-03T00:00:02Z'
+        value = judgment.provisional_requests(self.config, self.phase, {'model': []}, {'uid': self.index},
+                                              cutoff, cutoff)['workloads']['model']
+        self.assertEqual(value['loadLengthSeconds'], 2)
+        self.assertEqual(value['goodputRequestsPerSecond'], 0)
+        self.assertIsNone(value['onTimeSuccessRate'])
+
     def test_quarantine_missing_and_duplicate_identity_stay_incomplete(self):
         rows = [self.client(0), self.client(1), self.client(2), self.client(2)]
         for i in range(3):

@@ -30,9 +30,12 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
         rows = [row for row in stream if 'scheduledOffsetNs' in row]
         duration_ns = round(stage['seconds'] * 1e9)
         if closed_through is not None:
-            horizon = evidence_io.timestamp_ns(closed_through) - evidence_io.timestamp_ns(phase['starts'][name]['at'])
-            duration_ns = max(0, min(duration_ns, horizon))
-            count = bisect_right(trace['offsetsNS'], horizon)
+            count, cohort_length_ns = 0, 0
+            if trace['offsetsNS'] or name in phase['starts']:
+                horizon = evidence_io.timestamp_ns(closed_through) - evidence_io.timestamp_ns(phase['starts'][name]['at'])
+                cohort_length_ns = max(0, min(duration_ns, horizon))
+                count = bisect_right(trace['offsetsNS'], horizon)
+            duration_ns = cohort_length_ns
             trace = {**trace, 'offsetsNS': trace['offsetsNS'][:count], 'offered': count}
             rows = [row for row in rows if type(row.get('requestIndex')) is int and 0 <= row['requestIndex'] < count]
         indexed = indexes[workload['uid']]

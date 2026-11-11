@@ -2044,6 +2044,10 @@ class EvaluationTests(unittest.TestCase):
             phase = {'stage': stage, 'startUTC': START, 'endUTC': END, 'starts': {}}
             poller.poll(phase)
             self.assertEqual(published[-1]['closedThrough'], END)
+            for workload in published[-1]['workloads'].values():
+                self.assertEqual(workload['loadLengthSeconds'], 0)
+                self.assertIsNone(workload['goodputRequestsPerSecond'])
+                self.assertEqual(sum(workload['outcomeClasses'].values()), 0)
             poller.minute = None
             cutoff[0] = '2026-11-03T00:01:00Z'
             poller.poll(phase)

@@ -101,7 +101,7 @@ def publish(context):
     index_path=context.run/'publication-evidence-index.json';input_snapshot.save(index_path,{'artifacts':artifacts})
     objects=[{'store':context.store.name,'key':prefix+name,'localPath':str(path)} for name,path in (('execution.json',execution_path),('evidence-index.json',index_path))]
     if prepare_failed:
-        aggregated={'stages':[],'results':{},'status':'NOT_EVALUATED','reason':procedures['prepare']['execution']['reason']}
+        aggregated={'schema':'e5-summary.v5','failurePolicy':'v2','stages':[],'results':{},'status':'NOT_EVALUATED','reason':procedures['prepare']['execution']['reason']}
     else:
         first_binding=next(iter(context.snapshot['bindings'].values()));input_snapshot.save(context.run/'binding.json',first_binding)
         aggregated=judgment_rules.summarize(None,context.run,evaluation={'stages':stages,'results':results})
