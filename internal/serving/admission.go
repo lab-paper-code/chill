@@ -104,7 +104,8 @@ func admissionRunningResidual(p firstfloor.Policy, states []firstfloor.RequestSt
 	var batch uint64
 	var remaining int64
 	outside := false
-	for _, q := range states {
+	for j := range states {
+		q := &states[j]
 		if q.Phase != phaseRunning {
 			continue
 		}
@@ -277,13 +278,23 @@ func (s *admissionScratch) insertCandidate(states []firstfloor.RequestState, in 
 }
 
 func admissionExpire(states []firstfloor.RequestState, candidateID string) ([]firstfloor.RequestState, bool) {
+	kept := 0
 	candidateExpired := false
-	states = slices.DeleteFunc(states, func(q firstfloor.RequestState) bool {
-		expired := admissionLifetimeExpired(q)
-		candidateExpired = candidateExpired || expired && q.Context.RequestID == candidateID
-		return expired
-	})
-	return states, candidateExpired
+	// Scan in place: a value predicate copies the large RequestState at every
+	// virtual event, even when no request has a lifetime or needs removal.
+	for j := range states {
+		q := &states[j]
+		if admissionLifetimeExpired(*q) {
+			candidateExpired = candidateExpired || q.Context.RequestID == candidateID
+			continue
+		}
+		if kept != j {
+			states[kept] = *q
+		}
+		kept++
+	}
+	clear(states[kept:])
+	return states[:kept], candidateExpired
 }
 
 func admissionRemainingLifetime(q firstfloor.RequestState) (float64, bool) {
@@ -300,11 +311,12 @@ func admissionWake(states []firstfloor.RequestState, step, clock, age int64, ins
 	if !inserted {
 		step = min(step, age-clock)
 	}
-	for _, q := range states {
+	for j := range states {
+		q := &states[j]
 		if q.Phase == phaseRunning {
 			continue
 		}
-		remaining, limited := admissionRemainingLifetime(q)
+		remaining, limited := admissionRemainingLifetime(*q)
 		if limited && remaining > 0 {
 			step = min(step, max(int64(1), int64(math.Ceil(remaining*float64(time.Millisecond)))))
 		}

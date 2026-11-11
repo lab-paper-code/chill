@@ -233,6 +233,19 @@ func TestBatchServiceReuseRetainsEachRequestDeadline(t *testing.T) {
 	}
 }
 
+func TestCompatibleChainStartsAtSelectedQueueHead(t *testing.T) {
+	requests := []RequestState{testState("a", 40, 0), testState("b", 30, 0), testState("a", 20, 0)}
+	head, _, _ := queueHeads(requests)
+	if head != 2 || nextCompatible(requests, head, -1) != head || nextCompatible(requests, head, head) != 0 {
+		t.Fatal("compatible normal chain lost the selected EDF head or its successor")
+	}
+	requests[0].Phase, requests[2].Phase = phaseDeferred, phaseDeferred
+	_, deferred, _ := queueHeads(requests)
+	if deferred != 0 || nextCompatible(requests, deferred, -1) != deferred || nextCompatible(requests, deferred, deferred) != 2 {
+		t.Fatal("compatible deferred chain lost its FIFO head or successor")
+	}
+}
+
 func BenchmarkConditionalQuantile(b *testing.B) {
 	for _, trials := range []int{8, 32, 64} {
 		b.Run(fmt.Sprintf("trials%d", trials), func(b *testing.B) {

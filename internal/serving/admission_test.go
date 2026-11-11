@@ -215,3 +215,55 @@ func TestAdmissionFillWakesAtEarliestQueuedLifetime(t *testing.T) {
 		t.Fatalf("fill skipped earlier native lifetime wake: %+v remaining=%v", got, remaining)
 	}
 }
+
+func TestAdmissionExpiryCompactsWithoutReordering(t *testing.T) {
+	for _, expiredID := range []string{"first", "candidate", "last"} {
+		t.Run(expiredID, func(t *testing.T) {
+			states := []firstfloor.RequestState{admissionTestRequest("first"), admissionTestRequest("candidate"), admissionTestRequest("last")}
+			for j := range states {
+				if states[j].Context.RequestID == expiredID {
+					states[j].RemainingLifetimeMS = new(float64)
+				}
+			}
+			kept, expired := admissionExpire(states, "candidate")
+			if len(kept) != 2 || expired != (expiredID == "candidate") {
+				t.Fatalf("expiry result: states=%+v candidateExpired=%t", kept, expired)
+			}
+			next := 0
+			for _, id := range []string{"first", "candidate", "last"} {
+				if id != expiredID {
+					if kept[next].Context.RequestID != id {
+						t.Fatalf("expiry reordered survivors: %+v", kept)
+					}
+					next++
+				}
+			}
+			if states[2].Context.RequestID != "" || states[2].RemainingLifetimeMS != nil {
+				t.Fatalf("expiry retained removed state: %+v", states[2])
+			}
+		})
+	}
+}
+
+func BenchmarkAdmissionProjectionBacklog(b *testing.B) {
+	for _, queued := range []int{0, 16, 32} {
+		b.Run(fmt.Sprint(queued), func(b *testing.B) {
+			in := AdmissionInput{Policy: admissionTestPolicy(), Candidate: admissionTestRequest("candidate")}
+			in.Policy.MaxBatchSize = 1
+			for j := range queued {
+				in.Observed = append(in.Observed, admissionTestRequest(fmt.Sprint(j)))
+			}
+			var scratch admissionScratch
+			var got AdmissionEstimate
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				got = projectAdmission(in, &scratch)
+			}
+			b.StopTimer()
+			if !got.Known || got.Infeasible || got.Completion != time.Duration(queued+1)*20*time.Millisecond {
+				b.Fatalf("backlog completion: %+v", got)
+			}
+		})
+	}
+}

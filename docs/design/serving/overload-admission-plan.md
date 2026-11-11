@@ -152,6 +152,8 @@ U3는 U2의 executor 거절 응답 계약을 쓰므로 U2 뒤다. U5·U7은 U3�
 - 기존 회귀 중 정책 결합을 고정하던 것(`scheduler_deadline_test.go`, `worker_test.go:628-685`의 live 정책 변경 거부, `client_test.go:99-143`)은 새 계약으로 갱신한다.
 - 독립 리뷰: 정확성(lock·점유·미실행 증명·replay 일치)과 메모리·연산(dispatch 경로 비용)을 따로.
 - gate: `make manifests generate`, `make lint`, `make test TEST_PYTHON=<3.10+>`, `make test-native`, `make arch-check`, `make gopls-check`, `make helm-lint helm-template`, Dashboard typecheck·lint·test·build.
+- 탐색 기록·목표 DAG 회귀는 `capacitySearchForTest`의 영값 마감으로 탐색을 끝까지 실행한다. 공개 판단의 `controlInterval/2` 벽시계 중단은 그대로 유지한다. 호스트 경합으로 탐색 이웃 평가가 0회이거나 증설 후보를 찾기 전에 중단되는 현상을 projection 실패로 해석하지 않는다.
+- admission 비용 회귀는 `BenchmarkAdmissionProjectionBacklog`로 측정한다. 매 가상 이벤트의 큰 `RequestState` 값 복사와 이미 찾은 EDF head 재탐색을 제거했다. 동일 호스트·`-cpu=1 -benchtime=300ms -count=5` 중앙값은 backlog 16에서 30.389→20.050 µs, backlog 32에서 108.648→68.606 µs이며 두 경우 모두 0 allocs/op다. 수명 제거의 생존자 순서·꼬리 초기화와 native EDF·deferred FIFO head는 별도 회귀로 고정한다.
 
 ## 6. main 실수용
 

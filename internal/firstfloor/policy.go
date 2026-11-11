@@ -103,19 +103,24 @@ func earlierEDF(requests []RequestState, i, j int) bool {
 // nextCompatible walks normal requests in stable EDF without copying or sorting
 // the caller's snapshot. Deferred work instead uses its contiguous FIFO prefix.
 func nextCompatible(requests []RequestState, head, previous int) int {
+	// queueHeads already found the first compatible EDF/FIFO member.
+	if previous < 0 {
+		return head
+	}
 	deferred := requests[head].Phase == phaseDeferred
 	best := -1
-	for i, q := range requests {
+	for i := range requests {
+		q := &requests[i]
 		if deferred {
 			if i < head || i <= previous || q.Phase != phaseDeferred {
 				continue
 			}
-			if !sameQueue(q, requests[head]) {
+			if !sameQueue(*q, requests[head]) {
 				return -1
 			}
 			return i
 		}
-		if !normalRequest(q) || !sameQueue(q, requests[head]) || previous >= 0 && !earlierEDF(requests, previous, i) {
+		if !normalRequest(*q) || !sameQueue(*q, requests[head]) || !earlierEDF(requests, previous, i) {
 			continue
 		}
 		if best < 0 || earlierEDF(requests, i, best) {
@@ -234,12 +239,13 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchCho
 }
 func queueHeads(requests []RequestState) (head, deferred int, active bool) {
 	head, deferred = -1, -1
-	for i, r := range requests {
+	for i := range requests {
+		r := &requests[i]
 		if r.Phase == phaseRunning {
 			active = true
 			continue
 		}
-		if normalRequest(r) {
+		if normalRequest(*r) {
 			if head < 0 || earlierEDF(requests, i, head) {
 				head = i
 			}
