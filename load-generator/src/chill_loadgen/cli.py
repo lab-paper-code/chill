@@ -95,6 +95,17 @@ def _infer(client: WorkloadHTTPClient, workload: str, body: bytes, row: dict,
         row.update(status=response.status_code, requestID=response.request_id,
                    workloadUID=response.workload_uid, elapsedNanos=response.elapsed_nanos,
                    outcome=outcome)
+        # Error metadata is optional and untrusted; never parse large response bodies.
+        if outcome == "http_error" and len(response.body) <= 64 * 1024:
+            try:
+                rejection = json.loads(response.body)
+            except (ValueError, UnicodeError, RecursionError):
+                rejection = None
+            if isinstance(rejection, dict):
+                for field, key in (("code", "rejectionCode"), ("stage", "rejectionStage"),
+                                   ("policy", "rejectionPolicy")):
+                    if isinstance(rejection.get(field), str):
+                        row[key] = rejection[field]
     except InferenceRequestError as error:
         row.update(error=error.error_type, elapsedNanos=error.elapsed_nanos, outcome=error.outcome)
         if error.status_code is not None:

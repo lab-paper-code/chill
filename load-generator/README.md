@@ -206,6 +206,10 @@ lower bound before a timeout/transport failure. `outcome` is `completed`,
 `http_error`, `timeout` or `transport_error`. `error` retains the original
 exception class. Any received `status`, `requestID` and `workloadUID` survive
 partial-body failures; absent headers stay unknown.
+Full non-2xx JSON responses preserve optional string `code`, `stage` and `policy`
+as `rejectionCode`, `rejectionStage` and `rejectionPolicy` in the client row.
+Parsing is limited to bodies of at most 64 KiB; malformed bodies omit metadata.
+These fields do not change `http_error` or the feedback API payload.
 Response bodies and tokens are never printed. For a heterogeneous mix, run one
 `replay` process per Workload concurrently.
 

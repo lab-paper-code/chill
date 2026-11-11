@@ -7,9 +7,9 @@ import threading
 import weakref
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from chill_loadgen.cli import arrival_offsets_ns, load_records, main, prepare_records, replay, replay_open_loop, shard_schedule
+from chill_loadgen.cli import _infer, arrival_offsets_ns, load_records, main, prepare_records, replay, replay_open_loop, shard_schedule
 from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient, encode_inputs
 
 
@@ -114,6 +114,45 @@ class FakeClient:
 
 
 class ReplayTest(unittest.TestCase):
+    def test_full_response_rejection_metadata_preserves_client_contract(self):
+        cases = [
+            (429, b'{"code":"QueueFull","stage":"gateway","policy":"Reject"}',
+             {"rejectionCode": "QueueFull", "rejectionStage": "gateway", "rejectionPolicy": "Reject"}),
+            (503, b'{"code":"DeadlineInfeasible","stage":"executor","policy":"Delay"}',
+             {"rejectionCode": "DeadlineInfeasible", "rejectionStage": "executor", "rejectionPolicy": "Delay"}),
+            (429, b'{"code":"QueueFull"}', {"rejectionCode": "QueueFull"}),
+            (503, b'{"code":', {}),
+            (503, b'\xff', {}),
+            (503, b'[]', {}),
+            (503, b'{"code":null,"stage":1,"policy":{}}', {}),
+            (503, b'[' * 2000 + b']' * 2000, {}),
+            (503, b'{"code":"QueueFull","padding":"' + b'x' * (64 * 1024) + b'"}', {}),
+            (200, b'{"code":"QueueFull","stage":"gateway","policy":"Reject"}', {}),
+        ]
+        for status, body, expected in cases:
+            with self.subTest(status=status, body=body[:80]):
+                client = Mock()
+                client.infer.return_value = InferenceResponse(
+                    status, body, request_id="r1", workload_uid="uid", elapsed_nanos=123)
+                reporter = Mock()
+                reporter.enqueue.return_value = None
+                row = {}
+                _infer(client, "vqa", b"sample", row, reporter)
+                self.assertEqual(expected, {key: value for key, value in row.items()
+                                            if key.startswith("rejection")})
+                self.assertEqual("completed" if status == 200 else "http_error", row["outcome"])
+                self.assertEqual(status, row["status"])
+                self.assertEqual("r1", row["requestID"])
+                self.assertEqual("uid", row["workloadUID"])
+                self.assertEqual(123, row["elapsedNanos"])
+                client.infer.assert_called_once_with("vqa", b"sample")
+                client.close.assert_not_called()
+                reporter.enqueue.assert_called_once_with({
+                    "observationID": row["observationID"], "elapsedNanos": 123,
+                    "outcome": row["outcome"], "requestID": "r1",
+                    "workloadUID": "uid", "statusCode": status,
+                })
+
     def test_invalid_sample_fails_before_any_arrival_or_connection(self):
         for arrivals in ("fixed", "closed-loop"):
             with self.subTest(arrivals=arrivals), \
