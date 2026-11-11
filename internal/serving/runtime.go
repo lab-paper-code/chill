@@ -360,7 +360,7 @@ func (r *Runtime) checkAcceptance(receipt *Receipt) (*Definition, error) {
 		return nil, failure(ObservationUnavailableCode, "request observation log is unavailable")
 	}
 	if !receipt.Deadline.IsZero() && !time.Now().Before(receipt.Deadline) {
-		return nil, failure("RequestTimeout", "request lifetime expired before acceptance")
+		return nil, failure(firstfloor.CodeRequestTimeout, "request lifetime expired before acceptance")
 	}
 	w := r.workloads[receipt.UID]
 	if w == nil || r.names[receipt.Name] != receipt.UID {
@@ -466,7 +466,7 @@ func (c *Call) Wait(ctx context.Context) (BackendResult, error) {
 		c.runtime.mu.Unlock()
 		c.runtime.signal()
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return BackendResult{}, failure("RequestTimeout", "explicit request timeout reached")
+			return BackendResult{}, failure(firstfloor.CodeRequestTimeout, "explicit request timeout reached")
 		}
 		return BackendResult{}, failure("RequestCanceled", "caller canceled the request")
 	}
@@ -581,6 +581,7 @@ type admissionChoice struct {
 	state          string
 	completion     time.Duration
 	outsideSupport bool
+	infeasible     bool
 	blocked        bool
 }
 
@@ -607,37 +608,7 @@ func (a admissionArrival) rate() float64 {
 func (r *Runtime) beginAdmissionLocked(now time.Time) {
 	r.admissionPrepared = true
 	for _, i := range r.instances {
-		clear(i.admissionCalls[:cap(i.admissionCalls)])
-		i.admissionCalls = i.admissionCalls[:0]
-		clear(i.admissionAssignments[:cap(i.admissionAssignments)])
-		i.admissionAssignments = i.admissionAssignments[:0]
-		clear(i.admissionObserved)
-		clear(i.admissionArrivals)
-		i.admissionNormal = 0
-		i.admissionUnknown = i.State.Native == nil || i.Profile == nil || i.outstanding >= i.Capacity || !i.State.Ready || i.State.Stopped || i.State.Terminated || i.State.RecoveryUnknown
-		if i.admissionUnknown {
-			continue
-		}
-		native := i.State.Native
-		if i.admissionObserved == nil {
-			i.admissionObserved = make(map[admissionRequestKey]struct{}, len(native.Requests))
-		}
-		for _, q := range native.Requests {
-			i.admissionObserved[admissionRequestKey{q.Context.RequestID, q.Context.WorkloadUID, q.Context.Definition}] = struct{}{}
-		}
-		if i.admissionArrivals == nil {
-			i.admissionArrivals = make(map[string]admissionArrival, len(native.ArrivalAgesMS))
-		}
-		for uid, ages := range native.ArrivalAgesMS {
-			var a admissionArrival
-			if len(ages) > 0 {
-				a.last = i.State.ObservedAt.Add(-time.Duration(ages[0] * float64(time.Millisecond)))
-			}
-			if len(ages) > 1 {
-				a.previous = i.State.ObservedAt.Add(-time.Duration(ages[1] * float64(time.Millisecond)))
-			}
-			i.admissionArrivals[uid] = a
-		}
+		i.indexAdmissionSnapshot()
 	}
 	// Index native identities once; each unobserved assignment is grouped in a
 	// single global call scan rather than one scan per candidate and executor.
@@ -651,34 +622,9 @@ func (r *Runtime) beginAdmissionLocked(now time.Time) {
 		}
 	}
 	for _, i := range r.instances {
-		if i.admissionUnknown {
-			continue
+		if !i.admissionUnknown {
+			i.prepareAdmissionAssignments(now)
 		}
-		slices.SortFunc(i.admissionCalls, func(a, b *Call) int {
-			if a.assignment != nil && b.assignment != nil {
-				if a.assignment.DispatchedAt.Before(b.assignment.DispatchedAt) {
-					return -1
-				}
-				if a.assignment.DispatchedAt.After(b.assignment.DispatchedAt) {
-					return 1
-				}
-			}
-			return strings.Compare(a.receipt.ID, b.receipt.ID)
-		})
-		for _, c := range i.admissionCalls {
-			at := now
-			if c.assignment != nil {
-				at = c.assignment.DispatchedAt
-			}
-			i.admissionArrivals[c.receipt.UID] = i.admissionArrivals[c.receipt.UID].accepted(at)
-			q := admissionCallState(c, now)
-			q.ArrivalRate = i.admissionArrivals[c.receipt.UID].rate()
-			i.admissionAssignments = append(i.admissionAssignments, q)
-		}
-		policy := i.State.Native.Metadata.Policy
-		policy.Batches = i.admissionBatches
-		i.admissionUnknown = policy.FixedBatchSize == 0 && (i.State.ObservedAt.IsZero() || policy.ProfileID != i.Profile.ID ||
-			!admissionExecutorKnown(AdmissionInput{Policy: policy, Observed: i.State.Native.Requests, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.State.Native.LastServiceEndAgeNanos}))
 	}
 	for _, w := range r.workloads {
 		w.admissionBlocked = false
@@ -692,6 +638,74 @@ func (r *Runtime) beginAdmissionLocked(now time.Time) {
 			entry.instance.admissionNormal += normal
 		}
 	}
+}
+
+func admissionInstanceAvailable(i *runtimeInstance) bool {
+	return i.State.Ready && !i.State.Stopped && !i.State.Terminated && !i.State.RecoveryUnknown && i.outstanding < i.Capacity
+}
+
+func (i *runtimeInstance) indexAdmissionSnapshot() {
+	clear(i.admissionCalls[:cap(i.admissionCalls)])
+	i.admissionCalls = i.admissionCalls[:0]
+	clear(i.admissionAssignments[:cap(i.admissionAssignments)])
+	i.admissionAssignments = i.admissionAssignments[:0]
+	clear(i.admissionObserved)
+	clear(i.admissionArrivals)
+	i.admissionNormal = 0
+	i.admissionUnknown = i.State.Native == nil || i.Profile == nil || !admissionInstanceAvailable(i)
+	if i.admissionUnknown {
+		return
+	}
+	native := i.State.Native
+	if i.admissionObserved == nil {
+		i.admissionObserved = make(map[admissionRequestKey]struct{}, len(native.Requests))
+	}
+	for _, q := range native.Requests {
+		i.admissionObserved[admissionRequestKey{q.Context.RequestID, q.Context.WorkloadUID, q.Context.Definition}] = struct{}{}
+	}
+	if i.admissionArrivals == nil {
+		i.admissionArrivals = make(map[string]admissionArrival, len(native.ArrivalAgesMS))
+	}
+	for uid, ages := range native.ArrivalAgesMS {
+		var a admissionArrival
+		if len(ages) > 0 {
+			a.last = i.State.ObservedAt.Add(-time.Duration(ages[0] * float64(time.Millisecond)))
+		}
+		if len(ages) > 1 {
+			a.previous = i.State.ObservedAt.Add(-time.Duration(ages[1] * float64(time.Millisecond)))
+		}
+		i.admissionArrivals[uid] = a
+	}
+}
+
+func compareAdmissionAssignments(a, b *Call) int {
+	if a.assignment != nil && b.assignment != nil {
+		if a.assignment.DispatchedAt.Before(b.assignment.DispatchedAt) {
+			return -1
+		}
+		if a.assignment.DispatchedAt.After(b.assignment.DispatchedAt) {
+			return 1
+		}
+	}
+	return strings.Compare(a.receipt.ID, b.receipt.ID)
+}
+
+func (i *runtimeInstance) prepareAdmissionAssignments(now time.Time) {
+	slices.SortFunc(i.admissionCalls, compareAdmissionAssignments)
+	for _, c := range i.admissionCalls {
+		at := now
+		if c.assignment != nil {
+			at = c.assignment.DispatchedAt
+		}
+		i.admissionArrivals[c.receipt.UID] = i.admissionArrivals[c.receipt.UID].accepted(at)
+		q := admissionCallState(c, now)
+		q.ArrivalRate = i.admissionArrivals[c.receipt.UID].rate()
+		i.admissionAssignments = append(i.admissionAssignments, q)
+	}
+	policy := i.State.Native.Metadata.Policy
+	policy.Batches = i.admissionBatches
+	i.admissionUnknown = policy.FixedBatchSize == 0 && (i.State.ObservedAt.IsZero() || policy.ProfileID != i.Profile.ID ||
+		!admissionExecutorKnown(AdmissionInput{Policy: policy, Observed: i.State.Native.Requests, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.State.Native.LastServiceEndAgeNanos}))
 }
 
 func (r *Runtime) endAdmissionLocked() {
@@ -751,12 +765,26 @@ func (r *Runtime) chooseLocked(route inputRoute, c *Call, now time.Time) admissi
 		r.beginAdmissionLocked(now)
 		defer r.endAdmissionLocked()
 	}
+	choice := r.admissionMaskLocked(route, c, now)
+	if c.deferred && choice.entry != nil {
+		choice.state = schedulerStatusFeasible
+		return choice
+	}
+	if !c.deferred {
+		if index := SmoothWeightedRoute(route.weights, route.current, route.available); index >= 0 {
+			choice.entry, choice.state = &route.entries[index], schedulerStatusFeasible
+		}
+	}
+	return choice
+}
+
+func (r *Runtime) admissionMaskLocked(route inputRoute, c *Call, now time.Time) admissionChoice {
 	choice := admissionChoice{state: "NoCapacity", blocked: true}
 	unknown, known := false, false
 	for index, entry := range route.entries {
 		i := entry.instance
 		route.available[index] = false
-		if !i.State.Ready || i.State.Stopped || i.State.Terminated || i.State.RecoveryUnknown || i.outstanding >= i.Capacity {
+		if !admissionInstanceAvailable(i) {
 			continue
 		}
 		if i.admissionUnknown {
@@ -780,25 +808,14 @@ func (r *Runtime) chooseLocked(route inputRoute, c *Call, now time.Time) admissi
 			continue
 		}
 		if !known || !c.deferred && estimate.Completion < choice.completion {
-			choice.completion = estimate.Completion
-			choice.outsideSupport = estimate.OutsideSupport
+			choice.completion, choice.infeasible, choice.outsideSupport = estimate.Completion, estimate.Infeasible, estimate.OutsideSupport
 		}
 		known = true
 		remaining := c.definition.SLO.TargetLatency - now.Sub(c.receipt.ReceivedAt)
-		route.available[index] = c.deferred || estimate.Completion <= remaining
+		route.available[index] = admissionCandidateAvailable(estimate, c.deferred, remaining)
 		if c.deferred && route.available[index] && (choice.entry == nil || estimate.Completion < choice.completion) {
 			choice.entry, choice.completion = &route.entries[index], estimate.Completion
-			choice.outsideSupport = estimate.OutsideSupport
-		}
-	}
-	if c.deferred && choice.entry != nil {
-		choice.state = "Feasible"
-		return choice
-	}
-	if !c.deferred {
-		if index := SmoothWeightedRoute(route.weights, route.current, route.available); index >= 0 {
-			choice.entry, choice.state = &route.entries[index], "Feasible"
-			return choice
+			choice.infeasible, choice.outsideSupport = estimate.Infeasible, estimate.OutsideSupport
 		}
 	}
 	if unknown {
@@ -807,6 +824,19 @@ func (r *Runtime) chooseLocked(route inputRoute, c *Call, now time.Time) admissi
 		choice.state = CodeDeadlineInfeasible
 	}
 	return choice
+}
+
+func admissionCandidateAvailable(estimate AdmissionEstimate, deferred bool, remaining time.Duration) bool {
+	return !estimate.Infeasible && (deferred || estimate.Completion <= remaining)
+}
+
+func admissionRejection(c *Call, choice admissionChoice, now time.Time) *Error {
+	predicted, remaining := int64(choice.completion), int64(c.definition.SLO.TargetLatency-now.Sub(c.receipt.ReceivedAt))
+	var prediction *int64
+	if !choice.infeasible || choice.completion > 0 {
+		prediction = &predicted
+	}
+	return &Error{Code: CodeDeadlineInfeasible, Message: "no executor can complete within request deadlines", Stage: AdmissionStageGateway, Policy: c.definition.Admission.Policy, PredictedCompletionNanos: prediction, RemainingSLONanos: &remaining, OutsideSupport: choice.outsideSupport}
 }
 
 func (r *Runtime) normalUsesInstanceLocked(i *runtimeInstance) bool {
@@ -863,7 +893,7 @@ func (r *Runtime) dispatchLocked() {
 		for index := 0; index < len(w.queue); {
 			c := w.queue[index]
 			if !c.receipt.Deadline.IsZero() && !now.Before(c.receipt.Deadline) {
-				r.finishQueuedLocked(c, failure("RequestTimeout", "request lifetime expired in ingress queue"))
+				r.finishQueuedLocked(c, failure(firstfloor.CodeRequestTimeout, "request lifetime expired in ingress queue"))
 			} else {
 				index++
 			}
@@ -871,11 +901,12 @@ func (r *Runtime) dispatchLocked() {
 	}
 	r.beginAdmissionLocked(now)
 	defer r.endAdmissionLocked()
-	// Q waiting calls, E executors, N native rows and A unobserved assignments:
-	// preparation is O(N+A log A+Q*(E+1)), with O(N+A) retained indexes. Each workload
-	// whose executors are all Unknown/full scans E once and makes no projections.
-	// Otherwise at most 2*Q*E projections reuse O(max(N_i+A_i)) scratch, each
-	// bounded by 8*(N_i+A_i+1)+16 shared ChooseBatch transitions; no Q*E*N allocation.
+	// C live calls, Q queued, E executors, W Workloads, R route entries, N native
+	// rows and A unobserved assignments: preparation is O(C+N+A log A+Q+R+W log W).
+	// Expired-queue removal uses Index/Delete and can cost O(Q²) shifts/scans.
+	// Each all-Unknown/full workload scans its routes once without projections.
+	// Otherwise at most 2*Q*E projections reuse O(max(N_i+A_i)) scratch, each bounded
+	// by 8*(N_i+A_i+1)+16 shared ChooseBatch transitions; no Q*E*N allocation.
 	for _, delayed := range [...]bool{false, true} {
 		for _, uid := range uids {
 			w := r.workloads[uid]
@@ -894,7 +925,7 @@ func (r *Runtime) dispatchLocked() {
 				}
 				now := time.Now()
 				if !c.receipt.Deadline.IsZero() && !now.Before(c.receipt.Deadline) {
-					r.finishQueuedLocked(c, failure("RequestTimeout", "request lifetime expired in ingress queue"))
+					r.finishQueuedLocked(c, failure(firstfloor.CodeRequestTimeout, "request lifetime expired in ingress queue"))
 					continue
 				}
 				choice := r.chooseLocked(w.route, c, now)
@@ -911,8 +942,7 @@ func (r *Runtime) dispatchLocked() {
 							}
 							c.deferred = true
 						} else {
-							predicted, remaining := int64(choice.completion), int64(c.definition.SLO.TargetLatency-now.Sub(c.receipt.ReceivedAt))
-							r.finishQueuedLocked(c, &Error{Code: CodeDeadlineInfeasible, Message: "no executor can complete within SLO", Stage: AdmissionStageGateway, Policy: c.definition.Admission.Policy, PredictedCompletionNanos: &predicted, RemainingSLONanos: &remaining, OutsideSupport: choice.outsideSupport})
+							r.finishQueuedLocked(c, admissionRejection(c, choice, now))
 							continue
 						}
 					}
@@ -971,7 +1001,7 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		err = failure("RequestCanceled", "caller canceled before native dispatch")
 	} else if !dispatch.Deadline.IsZero() && !time.Now().Before(dispatch.Deadline) {
 		result.Finished = true
-		err = failure("RequestTimeout", "request lifetime expired before native dispatch")
+		err = failure(firstfloor.CodeRequestTimeout, "request lifetime expired before native dispatch")
 	} else {
 		dispatch.Elapsed = time.Since(dispatch.ReceivedAt)
 		timing.Record(ServerSenderElapsedFrozen, dispatch.Elapsed)
@@ -989,8 +1019,8 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		outcome, code = outcomeError, domain.Code
 		switch domain.Code {
 		case CodeDeadlineInfeasible, CodeQueueFull:
-			outcome = "rejected"
-		case "RequestTimeout":
+			outcome = schedulerOutcomeRejected
+		case firstfloor.CodeRequestTimeout:
 			outcome = schedulerOutcomeTimeout
 		case preprocessFailedCode:
 			outcome = firstfloor.OutcomePreprocessFailed

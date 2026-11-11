@@ -89,8 +89,8 @@ func pathTimingJoinedReply(row RequestRow, client ClientObservation) bool {
 	case row.Outcome == outcomeCompleted && row.Error == "":
 	case row.Outcome == firstfloor.OutcomePreprocessFailed && row.Error == preprocessFailedCode:
 	case row.Outcome == outcomeError && row.Error == "BackendError":
-	case row.Outcome == "rejected" && row.Error == CodeDeadlineInfeasible && row.NativeOutcome == firstfloor.OutcomeDeadlineDrop:
-	case row.Outcome == "rejected" && row.Error == CodeQueueFull && row.NativeOutcome == "queue_full":
+	case row.Outcome == schedulerOutcomeRejected && row.Error == CodeDeadlineInfeasible && row.NativeOutcome == firstfloor.OutcomeDeadlineDrop:
+	case row.Outcome == schedulerOutcomeRejected && row.Error == CodeQueueFull && row.NativeOutcome == nativeOutcomeQueueFull:
 	default:
 		return false
 	}

@@ -92,11 +92,11 @@ func TestPathTimingSampleRequiresClosedEvidence(t *testing.T) {
 			r.ServerTiming.Record(ServerSenderElapsedFrozen, 30*time.Millisecond)
 		}},
 		{"negative reserve", func(_ *RequestRow, c *ClientObservation) { c.ElapsedNanos = 89 * int64(time.Millisecond) }},
-		{"client timeout with late native completion", func(_ *RequestRow, c *ClientObservation) { c.Outcome = "timeout" }},
+		{"client timeout with late native completion", func(_ *RequestRow, c *ClientObservation) { c.Outcome = schedulerOutcomeTimeout }},
 		{"client transport error", func(_ *RequestRow, c *ClientObservation) { c.Outcome = "transport_error" }},
 		{"client canceled", func(_ *RequestRow, c *ClientObservation) { c.Outcome = "canceled" }},
 		{"server timeout with late native completion", func(r *RequestRow, c *ClientObservation) {
-			r.Outcome, r.Error, c.Outcome = "timeout", "RequestTimeout", clientOutcomeHTTPError
+			r.Outcome, r.Error, c.Outcome = schedulerOutcomeTimeout, "RequestTimeout", clientOutcomeHTTPError
 		}},
 		{"transport failure with late native completion", func(r *RequestRow, c *ClientObservation) {
 			r.Outcome, r.Error, c.Outcome = outcomeError, "BackendUnavailable", clientOutcomeHTTPError
@@ -116,8 +116,8 @@ func TestPathTimingSampleKeepsFullNativeFailuresSeparate(t *testing.T) {
 	for _, tc := range []struct{ outcome, code, native string }{
 		{"preprocess_failed", preprocessFailedCode, "preprocess_failed"},
 		{outcomeError, "BackendError", "batch_error"},
-		{"rejected", CodeDeadlineInfeasible, "deadline_drop"},
-		{"rejected", CodeQueueFull, "queue_full"},
+		{schedulerOutcomeRejected, CodeDeadlineInfeasible, "deadline_drop"},
+		{schedulerOutcomeRejected, CodeQueueFull, nativeOutcomeQueueFull},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			row, client := pathTimingEvidence(8, 28, 30, 60, 120, 101)
@@ -149,9 +149,9 @@ func TestPathTimingExecutorRejectionRequiresNativeExchangeEvidence(t *testing.T)
 		} {
 			t.Run(code+"/"+tc.name, func(t *testing.T) {
 				row, client := pathTimingEvidence(8, 28, 30, 60, 120, 101)
-				row.Outcome, row.Error, row.NativeOutcome = "rejected", code, "deadline_drop"
+				row.Outcome, row.Error, row.NativeOutcome = schedulerOutcomeRejected, code, "deadline_drop"
 				if code == CodeQueueFull {
-					row.NativeOutcome = "queue_full"
+					row.NativeOutcome = nativeOutcomeQueueFull
 				}
 				client.Outcome = clientOutcomeHTTPError
 				tc.mutate(&row)
@@ -208,7 +208,7 @@ func TestPathFeedbackObservedMeanUsesSameCausalSamples(t *testing.T) {
 	}{
 		{8, 28, 30, 60, 120, 101, "completed"},
 		{8, 48, 50, 40, 160, 101, "completed"},
-		{8, 28, 30, 60, 999, 101, "timeout"},
+		{8, 28, 30, 60, 999, 101, schedulerOutcomeTimeout},
 	} {
 		row, client := pathTimingEvidence(evidence.accepted, evidence.assigned, evidence.sender, evidence.native, evidence.elapsed, evidence.final)
 		client.Outcome = evidence.outcome

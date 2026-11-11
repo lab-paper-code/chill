@@ -292,3 +292,44 @@ func TestRuntimeAdmissionUnknownStopsWholeWorkloadPass(t *testing.T) {
 		t.Fatalf("executor-level Unknown repeated projection across queue: blocked=%v first=%s second=%s queue=%d scratch=%d", w.admissionBlocked, w.queue[0].admissionState, w.queue[1].admissionState, len(w.queue), cap(r.admissionScratch.states))
 	}
 }
+
+func TestRuntimeAdmissionRejectsLifetimeMissBeforeSLO(t *testing.T) {
+	r, wanted, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	d := *r.workloads["w1"].definition
+	d.Generation++
+	d.SLO.TargetLatency = 2 * time.Second
+	if err := r.Publish(&d); err != nil {
+		t.Fatal(err)
+	}
+	i := r.instances[wanted.ID].ReadyInstance
+	p := *i.Profile
+	p.ID = "lifetime-profile"
+	p.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{float64(time.Second)})}
+	i.Profile = &p
+	i.State.Profile = p.ID
+	i.State.Native = runtimeTestNative(&p)
+	i.State.ObservedAt = time.Now()
+	if err := r.InstallInstances([]ReadyInstance{i}); err != nil {
+		t.Fatal(err)
+	}
+	c, receipt := admissionRuntimeCall(t, r, "w1", time.Now(), time.Now().Add(100*time.Millisecond))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := c.Wait(ctx)
+	var domain *Error
+	if !errors.As(err, &domain) || domain.Code != CodeDeadlineInfeasible || domain.Stage != AdmissionStageGateway || c.assignment != nil {
+		t.Fatalf("known lifetime-infeasible Reject waited or dispatched: %v", err)
+	}
+	if err := r.Response(receipt, schedulerOutcomeRejected, domain.Code); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeAdmissionExpiredQueueProofOmitsCompletionPrediction(t *testing.T) {
+	now := time.Now()
+	c := &Call{receipt: Receipt{ReceivedAt: now}, definition: &Definition{SLO: SLO{TargetLatency: time.Second}, Admission: Admission{Policy: AdmissionPolicyReject}}}
+	err := admissionRejection(c, admissionChoice{infeasible: true}, now)
+	if err.Code != CodeDeadlineInfeasible || err.PredictedCompletionNanos != nil || err.RemainingSLONanos == nil || *err.RemainingSLONanos != int64(time.Second) {
+		t.Fatalf("expired-queue proof fabricated a completion prediction: %+v", err)
+	}
+}

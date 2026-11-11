@@ -17,7 +17,7 @@ func TestRequestRowAdmissionAbsentAndZero(t *testing.T) {
 			t.Fatalf("absent %s fabricated: %+v", name, body)
 		}
 	}
-	if body["admissionPolicy"] != "Delay" {
+	if body["admissionPolicy"] != string(AdmissionPolicyDelay) {
 		t.Fatalf("applied policy lost: %+v", body)
 	}
 

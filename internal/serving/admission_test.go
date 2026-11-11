@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -74,7 +75,7 @@ func TestAdmissionUsesNormalEDFBeforeDeferredAndAssignment(t *testing.T) {
 	candidate.Phase = phaseDeferred
 	candidate.Context.CompletionMarginMS = 3
 	first := admissionTestRequest("normal")
-	first.Context.WorkloadUID = "other"
+	first.Context.WorkloadUID = schedulerTestOther
 	assigned := admissionTestRequest("unobserved")
 	assigned.Context.WorkloadUID = "third"
 	got := EstimateAdmission(AdmissionInput{Policy: admissionTestPolicy(), Observed: []firstfloor.RequestState{first}, Assignments: []firstfloor.RequestState{assigned}, Candidate: candidate})
@@ -158,5 +159,49 @@ func TestAdmissionProjectionKeepsLifetimeExpiredRunningOccupancy(t *testing.T) {
 	got := EstimateAdmission(AdmissionInput{Policy: admissionTestPolicy(), Observed: []firstfloor.RequestState{running}, Candidate: admissionTestRequest("candidate")})
 	if !got.Known || got.Completion != 40*time.Millisecond {
 		t.Fatalf("HTTP lifetime released physical running occupancy: %+v", got)
+	}
+}
+
+func TestAdmissionCandidateLifetimeMissIsKnownInfeasible(t *testing.T) {
+	for _, waiting := range []bool{false, true} {
+		t.Run(fmt.Sprintf("waiting=%t", waiting), func(t *testing.T) {
+			candidate := admissionTestRequest("candidate")
+			lifetime := float64(5)
+			candidate.RemainingLifetimeMS = &lifetime
+			in := AdmissionInput{Policy: admissionTestPolicy(), Candidate: candidate}
+			if waiting {
+				running := admissionTestRequest("running")
+				running.Phase, running.BatchID, running.BatchSize = phaseRunning, 1, 1
+				elapsed := int64(0)
+				running.ExchangeElapsedNanos = &elapsed
+				in.Observed = []firstfloor.RequestState{running}
+			}
+			got := EstimateAdmission(in)
+			if !got.Known || !got.Infeasible || lifetime != 5 {
+				t.Fatalf("known lifetime miss became Unknown or mutated input: %+v", got)
+			}
+			if waiting && got.Completion != 0 {
+				t.Fatalf("expired queue request acquired executable completion: %+v", got)
+			}
+			if !waiting && got.Completion != 20*time.Millisecond {
+				t.Fatalf("selected batch completion prediction lost: %+v", got)
+			}
+		})
+	}
+}
+
+func TestAdmissionFillWakesAtEarliestQueuedLifetime(t *testing.T) {
+	p := admissionTestPolicy()
+	p.MaxBatchWaitMS = 100
+	p.Batches[1].Distribution = p.Batches[0].Distribution
+	expiring := admissionTestRequest("expires")
+	expiring.Context.WorkloadUID = schedulerTestOther
+	expiring.Context.SLO.TargetMS = 50
+	expiring.ArrivalRate = 100
+	remaining := float64(5)
+	expiring.RemainingLifetimeMS = &remaining
+	got := EstimateAdmission(AdmissionInput{Policy: p, Observed: []firstfloor.RequestState{expiring}, Candidate: admissionTestRequest("candidate")})
+	if !got.Known || got.Infeasible || got.Completion != 25*time.Millisecond || remaining != 5 {
+		t.Fatalf("fill skipped earlier native lifetime wake: %+v remaining=%v", got, remaining)
 	}
 }

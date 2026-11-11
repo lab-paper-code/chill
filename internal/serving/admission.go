@@ -29,31 +29,29 @@ type AdmissionEstimate struct {
 	Completion     time.Duration
 	OutsideSupport bool
 	Known          bool
-	FixedBatch     bool
+	// Infeasible proves a final-lifetime miss with otherwise known inputs.
+	// Completion is zero when lifetime expires before any batch can be selected.
+	Infeasible bool
+	FixedBatch bool
 }
 
 type admissionScratch struct {
-	states    []firstfloor.RequestState
-	lifetimes []float64
-	rates     map[string]float64
+	states        []firstfloor.RequestState
+	lifetimes     []float64
+	rates         map[string]float64
+	usedLifetimes int
+	idle          int64
 }
 
 // Executor-level failures do not depend on a candidate's percentile. Check
 // these once per dispatch, including whether any running service can survive.
 func admissionExecutorKnown(in AdmissionInput) bool {
-	p := in.Policy
-	if p.FixedBatchSize > 0 {
+	if in.Policy.FixedBatchSize > 0 {
 		return true
 	}
-	if in.SnapshotAge < 0 || p.MaxBatchSize < 0 || p.MaxBatchWaitMS < 0 || math.IsNaN(p.MaxBatchWaitMS) || math.IsInf(p.MaxBatchWaitMS, 0) || len(p.Batches) == 0 || in.LastServiceEndAgeNanos != nil && *in.LastServiceEndAgeNanos < 0 {
+	if in.SnapshotAge < 0 || !admissionPolicyKnown(in.Policy, in.LastServiceEndAgeNanos) {
 		return false
 	}
-	for _, b := range p.Batches {
-		if b.Size > 0 && (p.MaxBatchSize == 0 || b.Size <= p.MaxBatchSize) && b.Distribution == nil {
-			return false
-		}
-	}
-	var running uint64
 	for _, q := range in.Observed {
 		if q.Phase == phaseFinished || q.Phase == phaseReturning || admissionLifetimeExpired(q) {
 			continue
@@ -61,38 +59,10 @@ func admissionExecutorKnown(in AdmissionInput) bool {
 		if !admissionRequestKnown(q) {
 			return false
 		}
-		if q.Phase != phaseRunning {
-			continue
-		}
-		if q.BatchID == 0 || q.BatchSize <= 0 || q.ExchangeElapsedNanos == nil || running != 0 && running != q.BatchID {
-			return false
-		}
-		if running != 0 {
-			continue
-		}
-		b := admissionBatch(p, q.BatchSize)
-		if b == nil {
-			return false
-		}
-		if _, _, ok := b.Distribution.ResidualQuantileNanos(q.PrecedingIdleNanos, *q.ExchangeElapsedNanos, 100); !ok {
-			return false
-		}
-		running = q.BatchID
 	}
-	if running == 0 {
-		supported := false
-		for _, b := range p.Batches {
-			if b.Size < 1 || p.MaxBatchSize > 0 && b.Size > p.MaxBatchSize {
-				continue
-			}
-			if _, _, ok := b.Distribution.QuantileNanos(in.LastServiceEndAgeNanos, 100); ok {
-				supported = true
-				break
-			}
-		}
-		if !supported {
-			return false
-		}
+	running, _, ok := admissionRunningResidual(in.Policy, in.Observed, 100)
+	if !ok || running == 0 && !admissionIdleSupported(in.Policy, in.LastServiceEndAgeNanos) {
+		return false
 	}
 	for _, q := range in.Assignments {
 		if !admissionLifetimeExpired(q) && !admissionRequestKnown(q) {
@@ -100,6 +70,61 @@ func admissionExecutorKnown(in AdmissionInput) bool {
 		}
 	}
 	return true
+}
+
+func admissionPolicyKnown(p firstfloor.Policy, idle *int64) bool {
+	if p.MaxBatchSize < 0 || p.MaxBatchWaitMS < 0 || math.IsNaN(p.MaxBatchWaitMS) || math.IsInf(p.MaxBatchWaitMS, 0) || len(p.Batches) == 0 {
+		return false
+	}
+	if idle != nil && *idle < 0 {
+		return false
+	}
+	for _, b := range p.Batches {
+		if b.Size > 0 && (p.MaxBatchSize == 0 || b.Size <= p.MaxBatchSize) && b.Distribution == nil {
+			return false
+		}
+	}
+	return true
+}
+
+func admissionIdleSupported(p firstfloor.Policy, idle *int64) bool {
+	for _, b := range p.Batches {
+		if b.Size < 1 || p.MaxBatchSize > 0 && b.Size > p.MaxBatchSize {
+			continue
+		}
+		if _, _, ok := b.Distribution.QuantileNanos(idle, 100); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// A running batch has one physical residual, regardless of its member rows.
+func admissionRunningResidual(p firstfloor.Policy, states []firstfloor.RequestState, percentile float64) (int64, bool, bool) {
+	var batch uint64
+	var remaining int64
+	outside := false
+	for _, q := range states {
+		if q.Phase != phaseRunning {
+			continue
+		}
+		if q.BatchID == 0 || q.BatchSize <= 0 || q.ExchangeElapsedNanos == nil || batch != 0 && batch != q.BatchID {
+			return 0, false, false
+		}
+		if batch != 0 {
+			continue
+		}
+		b := admissionBatch(p, q.BatchSize)
+		if b == nil {
+			return 0, false, false
+		}
+		value, support, ok := b.Distribution.ResidualQuantileNanos(q.PrecedingIdleNanos, *q.ExchangeElapsedNanos, percentile)
+		if !ok {
+			return 0, false, false
+		}
+		batch, remaining, outside = q.BatchID, value, support.OutsideSupport
+	}
+	return remaining, outside, true
 }
 
 // EstimateAdmission advances the shared native batching policy, including EDF,
@@ -123,163 +148,70 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 	if !admissionRequestKnown(in.Candidate) {
 		return unknown
 	}
-	size := len(in.Observed) + len(in.Assignments) + 1
-	if cap(scratch.states) < size {
-		scratch.states = make([]firstfloor.RequestState, 0, max(size, 2*cap(scratch.states)))
-	}
-	if cap(scratch.lifetimes) < size {
-		scratch.lifetimes = make([]float64, max(size, 2*cap(scratch.lifetimes)))
-	}
-	scratch.lifetimes = scratch.lifetimes[:size]
-	if scratch.rates == nil {
-		scratch.rates = make(map[string]float64)
-	}
-	clear(scratch.rates)
+	scratch.reset(len(in.Observed) + len(in.Assignments) + 1)
 	defer clear(scratch.rates)
 	defer clear(scratch.states[:cap(scratch.states)])
 	states := scratch.states[:0]
-	lifetime := 0
-	appendState := func(q firstfloor.RequestState) {
-		if q.RemainingLifetimeMS != nil {
-			scratch.lifetimes[lifetime] = *q.RemainingLifetimeMS
-			q.RemainingLifetimeMS = &scratch.lifetimes[lifetime]
-			lifetime++
-		}
-		states = append(states, q)
-	}
 	for _, q := range in.Observed {
 		if q.Phase != phaseFinished && q.Phase != phaseReturning && !admissionLifetimeExpired(q) {
-			appendState(q)
+			states = scratch.appendState(states, q)
 		}
 	}
-	outsideSupport := false
 	var idle *int64
 	if in.LastServiceEndAgeNanos != nil {
-		n := *in.LastServiceEndAgeNanos
-		if n < 0 {
-			return unknown
-		}
-		idle = &n
+		scratch.idle = *in.LastServiceEndAgeNanos
+		idle = &scratch.idle
 	}
-	// Running batches are one physical exchange even when each member has a row.
-	var activeBatch uint64
-	var activeRemaining int64
-	for _, q := range states {
-		if q.Phase != phaseRunning {
-			continue
-		}
-		if q.BatchID == 0 || q.BatchSize <= 0 || q.ExchangeElapsedNanos == nil || (activeBatch != 0 && activeBatch != q.BatchID) {
-			return unknown
-		}
-		if activeBatch != 0 {
-			continue
-		}
-		b := admissionBatch(in.Policy, q.BatchSize)
-		if b == nil {
-			return unknown
-		}
-		n, support, ok := b.Distribution.ResidualQuantileNanos(q.PrecedingIdleNanos, *q.ExchangeElapsedNanos, in.Candidate.Context.SLO.Percentile)
-		if !ok {
-			return unknown
-		}
-		outsideSupport = outsideSupport || support.OutsideSupport
-		activeBatch, activeRemaining = q.BatchID, n
+	activeRemaining, outsideSupport, ok := admissionRunningResidual(in.Policy, states, in.Candidate.Context.SLO.Percentile)
+	if !ok {
+		return unknown
 	}
-	age := int64(in.SnapshotAge)
-	clock := int64(0)
+	age, clock := int64(in.SnapshotAge), int64(0)
 	inserted := false
 	candidateID := in.Candidate.Context.RequestID
-	// Each request can leave normal once and leave the set once. A fill wake
-	// consumes its queue's remaining fill budget. No open-ended dispatch scan.
+	// Each request can leave normal once and leave the set once. Each fill wake
+	// consumes its queue's fill budget; expiry wakes also remove queued members.
 	limit := 8*(len(states)+len(in.Assignments)+1) + 16
 	for range limit {
 		if !inserted && clock >= age {
-			for _, q := range in.Assignments {
-				q.Phase = phaseQueued
-				appendState(q)
-				scratch.rates[q.Context.WorkloadUID] = q.ArrivalRate
-			}
-			appendState(in.Candidate)
-			scratch.rates[in.Candidate.Context.WorkloadUID] = in.Candidate.ArrivalRate
-			for j := range states {
-				if rate, ok := scratch.rates[states[j].Context.WorkloadUID]; ok {
-					states[j].ArrivalRate = rate
-				}
-			}
+			states = scratch.insertCandidate(states, in)
 			inserted = true
 		}
-		candidateExpired := false
-		states = slices.DeleteFunc(states, func(q firstfloor.RequestState) bool {
-			expired := admissionLifetimeExpired(q)
-			candidateExpired = candidateExpired || expired && q.Context.RequestID == candidateID
-			return expired
-		})
-		if candidateExpired {
-			return unknown
+		var expired bool
+		states, expired = admissionExpire(states, candidateID)
+		if expired {
+			return AdmissionEstimate{Known: true, Infeasible: true, OutsideSupport: outsideSupport}
 		}
 		if activeRemaining > 0 {
-			step := activeRemaining
-			if !inserted && clock+step > age {
-				step = age - clock
-			}
+			step := admissionWake(states, activeRemaining, clock, age, inserted)
 			admissionAdvance(states, step)
 			clock += step
 			activeRemaining -= step
 			if activeRemaining == 0 {
 				states = slices.DeleteFunc(states, func(q firstfloor.RequestState) bool { return q.Phase == phaseRunning })
-				n := int64(0)
-				idle = &n
+				scratch.idle = 0
+				idle = &scratch.idle
 			}
 			continue
 		}
 		if len(states) == 0 && !inserted {
-			step := age - clock
 			if idle != nil {
-				*idle += step
+				*idle += age - clock
 			}
 			clock = age
 			continue
 		}
-		// The actor's queue is stable EDF followed by deferred FIFO.
-		slices.SortStableFunc(states, func(a, b firstfloor.RequestState) int {
-			if (a.Phase == phaseDeferred) != (b.Phase == phaseDeferred) {
-				if a.Phase == phaseDeferred {
-					return 1
-				}
-				return -1
-			}
-			if a.Phase == phaseDeferred {
-				return 0
-			}
-			x, y := firstfloor.RemainingSLOMS(a), firstfloor.RemainingSLOMS(b)
-			if x < y {
-				return -1
-			}
-			if x > y {
-				return 1
-			}
-			return 0
-		})
+		slices.SortStableFunc(states, compareAdmissionQueue)
 		choice := firstfloor.ChooseBatch(in.Policy, states, idle)
 		if choice.Reason == firstfloor.OutcomeDeadlineDrop || choice.Reason == firstfloor.ReasonDeadlineDefer {
-			index := slices.IndexFunc(states, func(q firstfloor.RequestState) bool { return q.Context.RequestID == choice.RequestID })
-			if index < 0 {
+			states, ok = admissionTransition(states, choice, candidateID)
+			if !ok {
 				return unknown
-			}
-			if choice.RequestID == candidateID || choice.Reason == firstfloor.ReasonDeadlineDefer {
-				q := states[index]
-				q.Phase = phaseDeferred
-				states = append(slices.Delete(states, index, index+1), q)
-			} else {
-				states = slices.Delete(states, index, index+1)
 			}
 			continue
 		}
 		if choice.WaitMS > 0 {
-			step := max(int64(1), int64(choice.WaitMS*float64(time.Millisecond)))
-			if !inserted && clock+step > age {
-				step = age - clock
-			}
+			step := admissionWake(states, max(int64(1), int64(choice.WaitMS*float64(time.Millisecond))), clock, age, inserted)
 			admissionAdvance(states, step)
 			if idle != nil {
 				*idle += step
@@ -287,45 +219,155 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 			clock += step
 			continue
 		}
-		if choice.Size <= 0 {
+		service, candidate, outside, valid := admissionProjectBatch(in, states, choice, idle)
+		if !valid {
 			return unknown
 		}
-		b := admissionBatch(in.Policy, choice.Size)
-		if b == nil {
-			return unknown
-		}
-		service, support, ok := b.Distribution.QuantileNanos(idle, in.Candidate.Context.SLO.Percentile)
-		if !ok {
-			return unknown
-		}
-		outsideSupport = outsideSupport || support.OutsideSupport
-		selected := 0
-		candidate := false
-		deferred := false
-		for _, q := range states {
-			if q.Context.RequestID == choice.RequestID {
-				deferred = q.Phase == phaseDeferred
-				break
-			}
-		}
-		for j := range states {
-			q := &states[j]
-			if selected < choice.Size && q.Context.WorkloadUID == choice.WorkloadUID && q.Context.Definition == choice.Definition && (q.Phase == phaseDeferred) == deferred {
-				q.Phase = phaseRunning
-				selected++
-				candidate = candidate || q.Context.RequestID == candidateID
-			}
-		}
-		if selected != choice.Size {
-			return unknown
-		}
+		outsideSupport = outsideSupport || outside
 		if candidate {
 			completion := clock - age + service + int64(in.Candidate.Context.CompletionMarginMS*float64(time.Millisecond))
-			return AdmissionEstimate{Completion: time.Duration(completion), Known: true, OutsideSupport: outsideSupport}
+			remaining, limited := admissionRemainingLifetime(in.Candidate)
+			return AdmissionEstimate{Completion: time.Duration(completion), Known: true, OutsideSupport: outsideSupport, Infeasible: limited && float64(completion)/float64(time.Millisecond) > remaining}
 		}
 		activeRemaining = service
 	}
 	return unknown
+}
+
+func (s *admissionScratch) reset(size int) {
+	if cap(s.states) < size {
+		s.states = make([]firstfloor.RequestState, 0, max(size, 2*cap(s.states)))
+	}
+	if cap(s.lifetimes) < size {
+		s.lifetimes = make([]float64, max(size, 2*cap(s.lifetimes)))
+	}
+	s.lifetimes = s.lifetimes[:size]
+	s.usedLifetimes = 0
+	if s.rates == nil {
+		s.rates = make(map[string]float64)
+	}
+	clear(s.rates)
+}
+
+func (s *admissionScratch) appendState(states []firstfloor.RequestState, q firstfloor.RequestState) []firstfloor.RequestState {
+	if q.RemainingLifetimeMS != nil {
+		s.lifetimes[s.usedLifetimes] = *q.RemainingLifetimeMS
+		q.RemainingLifetimeMS = &s.lifetimes[s.usedLifetimes]
+		s.usedLifetimes++
+	}
+	return append(states, q)
+}
+
+func (s *admissionScratch) insertCandidate(states []firstfloor.RequestState, in AdmissionInput) []firstfloor.RequestState {
+	for _, q := range in.Assignments {
+		q.Phase = phaseQueued
+		states = s.appendState(states, q)
+		s.rates[q.Context.WorkloadUID] = q.ArrivalRate
+	}
+	states = s.appendState(states, in.Candidate)
+	s.rates[in.Candidate.Context.WorkloadUID] = in.Candidate.ArrivalRate
+	for j := range states {
+		if rate, ok := s.rates[states[j].Context.WorkloadUID]; ok {
+			states[j].ArrivalRate = rate
+		}
+	}
+	return states
+}
+
+func admissionExpire(states []firstfloor.RequestState, candidateID string) ([]firstfloor.RequestState, bool) {
+	candidateExpired := false
+	states = slices.DeleteFunc(states, func(q firstfloor.RequestState) bool {
+		expired := admissionLifetimeExpired(q)
+		candidateExpired = candidateExpired || expired && q.Context.RequestID == candidateID
+		return expired
+	})
+	return states, candidateExpired
+}
+
+func admissionRemainingLifetime(q firstfloor.RequestState) (float64, bool) {
+	if q.RemainingLifetimeMS != nil {
+		return *q.RemainingLifetimeMS, true
+	}
+	if q.Context.LifetimeMS > 0 {
+		return q.Context.LifetimeMS - q.Context.SenderElapsedMS - q.ElapsedMS, true
+	}
+	return 0, false
+}
+
+func admissionWake(states []firstfloor.RequestState, step, clock, age int64, inserted bool) int64 {
+	if !inserted {
+		step = min(step, age-clock)
+	}
+	for _, q := range states {
+		if q.Phase == phaseRunning {
+			continue
+		}
+		remaining, limited := admissionRemainingLifetime(q)
+		if limited && remaining > 0 {
+			step = min(step, max(int64(1), int64(math.Ceil(remaining*float64(time.Millisecond)))))
+		}
+	}
+	return step
+}
+
+func compareAdmissionQueue(a, b firstfloor.RequestState) int {
+	if (a.Phase == phaseDeferred) != (b.Phase == phaseDeferred) {
+		if a.Phase == phaseDeferred {
+			return 1
+		}
+		return -1
+	}
+	if a.Phase == phaseDeferred {
+		return 0
+	}
+	x, y := firstfloor.RemainingSLOMS(a), firstfloor.RemainingSLOMS(b)
+	if x < y {
+		return -1
+	}
+	if x > y {
+		return 1
+	}
+	return 0
+}
+
+func admissionTransition(states []firstfloor.RequestState, choice firstfloor.BatchChoice, candidateID string) ([]firstfloor.RequestState, bool) {
+	index := slices.IndexFunc(states, func(q firstfloor.RequestState) bool { return q.Context.RequestID == choice.RequestID })
+	if index < 0 {
+		return states, false
+	}
+	if choice.RequestID == candidateID || choice.Reason == firstfloor.ReasonDeadlineDefer {
+		q := states[index]
+		q.Phase = phaseDeferred
+		return append(slices.Delete(states, index, index+1), q), true
+	}
+	return slices.Delete(states, index, index+1), true
+}
+
+func admissionProjectBatch(in AdmissionInput, states []firstfloor.RequestState, choice firstfloor.BatchChoice, idle *int64) (int64, bool, bool, bool) {
+	b := admissionBatch(in.Policy, choice.Size)
+	if b == nil || choice.Size <= 0 {
+		return 0, false, false, false
+	}
+	service, support, ok := b.Distribution.QuantileNanos(idle, in.Candidate.Context.SLO.Percentile)
+	if !ok {
+		return 0, false, false, false
+	}
+	selected, candidate, deferred := 0, false, false
+	for _, q := range states {
+		if q.Context.RequestID == choice.RequestID {
+			deferred = q.Phase == phaseDeferred
+			break
+		}
+	}
+	for j := range states {
+		q := &states[j]
+		if selected < choice.Size && q.Context.WorkloadUID == choice.WorkloadUID && q.Context.Definition == choice.Definition && (q.Phase == phaseDeferred) == deferred {
+			q.Phase = phaseRunning
+			selected++
+			candidate = candidate || q.Context.RequestID == in.Candidate.Context.RequestID
+		}
+	}
+	return service, candidate, support.OutsideSupport, selected == choice.Size
 }
 
 func admissionRequestKnown(q firstfloor.RequestState) bool {

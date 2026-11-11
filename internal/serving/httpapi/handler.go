@@ -34,6 +34,7 @@ const (
 	timingOutcomeCompleted = "completed"
 	timingOutcomeTimeout   = "timeout"
 	timingOutcomeCanceled  = "canceled"
+	timingOutcomeRejected  = "rejected"
 	// MaximumInferenceRequestTimeout is the actual infer handler/header cap,
 	// independent of the management request timeout.
 	MaximumInferenceRequestTimeout = 129 * time.Second
@@ -539,7 +540,7 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 	}
 	timeout, err := inferenceTimeout(r.Header.Get("X-Chill-Request-Timeout"), receipt.RequestLifetime, h.config.RequestTimeout)
 	if err != nil {
-		completeError(err, "rejected")
+		completeError(err, timingOutcomeRejected)
 		return
 	}
 	w.Header().Set("X-Chill-Request-Lifetime", timeout.String())
@@ -560,14 +561,14 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 	authErr := h.authorize(r)
 	receipt.ServerTiming.Mark(serving.ServerAuthDone, received)
 	if err := authErr; err != nil {
-		completeError(err, "rejected")
+		completeError(err, timingOutcomeRejected)
 		return
 	}
 	if receipt.UID != "" {
 		w.Header().Set("X-Chill-Workload-UID", receipt.UID)
 	}
 	if receiveErr != nil {
-		completeError(receiveErr, "rejected")
+		completeError(receiveErr, timingOutcomeRejected)
 		return
 	}
 	var input serving.InferenceInput
@@ -581,7 +582,7 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 	}
 	receipt.ServerTiming.Mark(serving.ServerBodyDecodeDone, received)
 	if decodeErr != nil {
-		completeError(decodeErr, "rejected")
+		completeError(decodeErr, timingOutcomeRejected)
 		return
 	}
 	if ctx.Err() != nil {
@@ -591,24 +592,13 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 	call, err := h.runtime.Accept(&receipt, &input)
 	receipt.ServerTiming.Mark(serving.ServerAcceptDone, received)
 	if err != nil {
-		completeError(err, "rejected")
+		completeError(err, timingOutcomeRejected)
 		return
 	}
 	result, err := call.Wait(ctx)
 	receipt.ServerTiming.Merge(result.ServerTiming)
 	if err != nil {
-		outcome := "error"
-		switch errorCode(err) {
-		case requestTimeoutCode:
-			outcome = timingOutcomeTimeout
-		case serving.CodeDeadlineInfeasible, serving.CodeQueueFull:
-			outcome = "rejected"
-		case requestCanceledCode:
-			outcome = "canceled"
-		case "PreprocessFailed":
-			outcome = "preprocess_failed"
-		}
-		completeError(err, outcome)
+		completeError(err, inferenceErrorOutcome(err))
 		return
 	}
 	if ctx.Err() != nil {
@@ -634,6 +624,21 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	finish("completed", "")
+}
+
+func inferenceErrorOutcome(err error) string {
+	switch errorCode(err) {
+	case requestTimeoutCode:
+		return timingOutcomeTimeout
+	case serving.CodeDeadlineInfeasible, serving.CodeQueueFull:
+		return timingOutcomeRejected
+	case requestCanceledCode:
+		return timingOutcomeCanceled
+	case "PreprocessFailed":
+		return "preprocess_failed"
+	default:
+		return "error"
+	}
 }
 
 func inferenceTimeout(requested string, lifetime, fallback time.Duration) (time.Duration, error) {

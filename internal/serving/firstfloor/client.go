@@ -21,6 +21,7 @@ import (
 
 const maxControlBytes = 4 << 20
 const phaseFinished = "finished"
+const phaseRunning = "running"
 
 type Client struct {
 	HTTPClient  *http.Client
@@ -224,54 +225,7 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 		defer c.Diagnostics.Mark(serving.DiagnosticClientDecode, serving.DiagnosticEnd, d.RequestID, 0)
 	}
 	if status != http.StatusOK {
-		var failure native.ErrorResponse
-		if err = decode(body, &failure); err != nil {
-			return result, err
-		}
-		if status == http.StatusTooManyRequests && failure.Code != serving.CodeQueueFull ||
-			failure.NotAdmitted && failure.Code != serving.CodeQueueFull {
-			return result, errors.New("native queue rejection lacks explicit admission evidence")
-		}
-		if failure.Code == serving.CodeDeadlineInfeasible || failure.Code == serving.CodeQueueFull {
-			if !validRejection(failure, &d, spec.Profile.ID, status) {
-				return result, errors.New("native rejection lacks correlated no-execution proof")
-			}
-			result.Finished = true
-			if failure.Progress != nil {
-				converted := progress(*failure.Progress)
-				result.Progress = &converted
-			}
-			return result, &serving.Error{Code: failure.Code, Message: failure.Error, Stage: failure.Stage,
-				Policy: d.Definition.Admission.Policy, RemainingSLONanos: failure.RemainingSLONanos, ExecutorWaitNanos: failure.ExecutorWaitNanos}
-		}
-		if failure.Code == "RequestTimeout" {
-			if status != http.StatusRequestTimeout || failure.Stage != serving.AdmissionStageExecutor || failure.NotAdmitted || failure.Progress != nil {
-				return result, errors.New("invalid native request lifetime timeout")
-			}
-			result.Finished = failure.ExecutionComplete
-			return result, &serving.Error{Code: failure.Code, Message: failure.Error, Stage: failure.Stage}
-		}
-		if failure.Progress == nil {
-			result.Finished = failure.ExecutionComplete
-			return result, errors.New(failure.Error)
-		}
-		p := failure.Progress
-		var outcome error
-		switch {
-		case !failure.ExecutionComplete:
-		case failure.Code != "" || failure.NotAdmitted:
-		case status == http.StatusUnprocessableEntity && p.Outcome == native.OutcomePreprocessFailed && executed(p, &d, spec.Profile.ID):
-			outcome = &serving.Error{Code: "PreprocessFailed", Message: failure.Error}
-		case status == http.StatusInternalServerError && p.Outcome == native.OutcomeBatchError && executed(p, &d, spec.Profile.ID):
-			outcome = &serving.Error{Code: "BackendError", Message: failure.Error}
-		}
-		if outcome == nil {
-			return result, errors.New("native failure lacks correlated execution proof")
-		}
-		result.Finished = true
-		converted := progress(*p)
-		result.Progress = &converted
-		return result, outcome
+		return nativeFailure(result, spec, d)
 	}
 	var response native.Response
 	if err = decode(body, &response); err != nil {
@@ -285,6 +239,62 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	converted := progress(p)
 	result.Progress = &converted
 	return result, nil
+}
+
+func nativeFailure(result serving.BackendResult, spec Spec, d serving.Dispatch) (serving.BackendResult, error) {
+	status := result.StatusCode
+	var failure native.ErrorResponse
+	if err := decode(result.Body, &failure); err != nil {
+		return result, err
+	}
+	if status == http.StatusTooManyRequests && failure.Code != serving.CodeQueueFull ||
+		failure.NotAdmitted && failure.Code != serving.CodeQueueFull {
+		return result, errors.New("native queue rejection lacks explicit admission evidence")
+	}
+	if failure.Code == serving.CodeDeadlineInfeasible || failure.Code == serving.CodeQueueFull {
+		if !validRejection(failure, &d, spec.Profile.ID, status) {
+			return result, errors.New("native rejection lacks correlated no-execution proof")
+		}
+		result.Finished = true
+		if failure.Progress != nil {
+			converted := progress(*failure.Progress)
+			result.Progress = &converted
+		}
+		return result, &serving.Error{Code: failure.Code, Message: failure.Error, Stage: failure.Stage,
+			Policy: d.Definition.Admission.Policy, RemainingSLONanos: failure.RemainingSLONanos, ExecutorWaitNanos: failure.ExecutorWaitNanos}
+	}
+	if failure.Code == "RequestTimeout" {
+		if status != http.StatusRequestTimeout || failure.Stage != serving.AdmissionStageExecutor || failure.NotAdmitted || failure.Progress != nil {
+			return result, errors.New("invalid native request lifetime timeout")
+		}
+		result.Finished = failure.ExecutionComplete
+		return result, &serving.Error{Code: failure.Code, Message: failure.Error, Stage: failure.Stage}
+	}
+	return nativeExecutionFailure(result, spec, d, failure)
+}
+
+func nativeExecutionFailure(result serving.BackendResult, spec Spec, d serving.Dispatch, failure native.ErrorResponse) (serving.BackendResult, error) {
+	if failure.Progress == nil {
+		result.Finished = failure.ExecutionComplete
+		return result, errors.New(failure.Error)
+	}
+	p := failure.Progress
+	var outcome error
+	switch {
+	case !failure.ExecutionComplete:
+	case failure.Code != "" || failure.NotAdmitted:
+	case result.StatusCode == http.StatusUnprocessableEntity && p.Outcome == native.OutcomePreprocessFailed && executed(p, &d, spec.Profile.ID):
+		outcome = &serving.Error{Code: "PreprocessFailed", Message: failure.Error}
+	case result.StatusCode == http.StatusInternalServerError && p.Outcome == native.OutcomeBatchError && executed(p, &d, spec.Profile.ID):
+		outcome = &serving.Error{Code: "BackendError", Message: failure.Error}
+	}
+	if outcome == nil {
+		return result, errors.New("native failure lacks correlated execution proof")
+	}
+	result.Finished = true
+	converted := progress(*p)
+	result.Progress = &converted
+	return result, outcome
 }
 func validRejection(f native.ErrorResponse, d *serving.Dispatch, profileID string, status int) bool {
 	policy := d.Definition.Admission.Policy
@@ -308,9 +318,7 @@ func validRejection(f native.ErrorResponse, d *serving.Dispatch, profileID strin
 	}
 	p := f.Progress
 	if p == nil || f.Policy != string(policy) || f.RemainingSLONanos == nil ||
-		!correlated(p, d, profileID) || p.Outcome != outcome ||
-		p.BatchID != 0 || p.BatchSize != 0 || p.ServiceMS != 0 || p.BackendMS != 0 ||
-		p.PreprocessMS != 0 || p.PostprocessMS != 0 || p.FirstTokenMS != 0 || p.Units != 0 || p.ServiceSample != nil {
+		!correlated(p, d, profileID) || p.Outcome != outcome || !noExecution(p) {
 		return false
 	}
 	if f.Code == serving.CodeQueueFull {
@@ -318,6 +326,11 @@ func validRejection(f native.ErrorResponse, d *serving.Dispatch, profileID strin
 	}
 	return f.ExecutorWaitNanos != nil && p.ExecutorWaitNanos != nil &&
 		*f.ExecutorWaitNanos == *p.ExecutorWaitNanos
+}
+
+func noExecution(p *native.Progress) bool {
+	return p.BatchID == 0 && p.BatchSize == 0 && p.ServiceMS == 0 && p.BackendMS == 0 &&
+		p.PreprocessMS == 0 && p.PostprocessMS == 0 && p.FirstTokenMS == 0 && p.Units == 0 && p.ServiceSample == nil
 }
 
 // executed reports a finished record of this request inside an actual batch.
@@ -345,7 +358,7 @@ func ParseProgress(line []byte) (serving.BackendProgress, error) {
 	if err := decode(line[index+len(marker):], &p); err != nil {
 		return progress(p), err
 	}
-	if p.RequestID == "" || p.WorkloadUID == "" || p.Definition == "" || p.At.IsZero() || (p.Phase != "queued" && p.Phase != "deferred" && p.Phase != "running" && p.Phase != phaseFinished) || (p.Phase == phaseFinished && !p.ExecutionComplete) {
+	if p.RequestID == "" || p.WorkloadUID == "" || p.Definition == "" || p.At.IsZero() || (p.Phase != "queued" && p.Phase != "deferred" && p.Phase != phaseRunning && p.Phase != phaseFinished) || (p.Phase == phaseFinished && !p.ExecutionComplete) {
 		return progress(p), errors.New("invalid actual firstfloor progress")
 	}
 	if !validNativeSpans(p) {

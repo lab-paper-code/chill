@@ -110,6 +110,7 @@ func TestDeferredProgressRemainsQueuedWithoutCompletion(t *testing.T) {
 }
 
 func TestActorRejectionsRequireCorrelatedNoExecutionProof(t *testing.T) {
+	const another = "another"
 	definition := &serving.Definition{UID: "uid", Generation: 1,
 		Model: serving.Model{UID: "model", Generation: 1}, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject}}
 	for _, code := range []string{serving.CodeDeadlineInfeasible, serving.CodeQueueFull} {
@@ -118,13 +119,13 @@ func TestActorRejectionsRequireCorrelatedNoExecutionProof(t *testing.T) {
 			mutate func(*native.ErrorResponse)
 		}{
 			{"valid", func(*native.ErrorResponse) {}},
-			{"wrong request", func(f *native.ErrorResponse) { f.Progress.RequestID = "another" }},
-			{"wrong workload", func(f *native.ErrorResponse) { f.Progress.WorkloadUID = "another" }},
-			{"wrong definition", func(f *native.ErrorResponse) { f.Progress.Definition = "another" }},
-			{"wrong profile", func(f *native.ErrorResponse) { f.Progress.ProfileID = "another" }},
-			{"wrong outcome", func(f *native.ErrorResponse) { f.Progress.Outcome = "another" }},
+			{"wrong request", func(f *native.ErrorResponse) { f.Progress.RequestID = another }},
+			{"wrong workload", func(f *native.ErrorResponse) { f.Progress.WorkloadUID = another }},
+			{"wrong definition", func(f *native.ErrorResponse) { f.Progress.Definition = another }},
+			{"wrong profile", func(f *native.ErrorResponse) { f.Progress.ProfileID = another }},
+			{"wrong outcome", func(f *native.ErrorResponse) { f.Progress.Outcome = another }},
 			{"missing timestamp", func(f *native.ErrorResponse) { f.Progress.At = time.Time{} }},
-			{"not finished", func(f *native.ErrorResponse) { f.Progress.Phase = "running" }},
+			{"not finished", func(f *native.ErrorResponse) { f.Progress.Phase = phaseRunning }},
 			{"incomplete progress", func(f *native.ErrorResponse) { f.Progress.ExecutionComplete = false }},
 			{"incomplete response", func(f *native.ErrorResponse) { f.ExecutionComplete = false }},
 			{"missing progress", func(f *native.ErrorResponse) { f.Progress = nil }},
