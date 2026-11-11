@@ -1,6 +1,7 @@
 """Frozen evaluation input preparation and environment observations."""
 import copy
 import datetime as dt
+from decimal import Decimal
 import importlib.util
 import json
 import math
@@ -18,6 +19,8 @@ TOKEN='/var/run/secrets/kubernetes.io/serviceaccount/token'
 CA='/etc/chill/ca/tls.crt'
 TIMEBOXES = {'setupSeconds': 300, 'barrierSeconds': 300, 'drainSeconds': 120, 'flushSeconds': 5,
              'collectSeconds': 300, 'apiSeconds': 30, 'watchSeconds': 60, 'gateSeconds': 300}
+# HTTP infer lifetime cap (httpapi.MaximumInferenceRequestTimeout), not a setting.
+MAX_REQUEST_LIFETIME_NANOS = 129_000_000_000
 
 
 def now(): return dt.datetime.now(dt.timezone.utc).isoformat()
@@ -136,6 +139,14 @@ def stage_config(spec, scenario, execution, config, root):
                                                not math.isfinite(workload['gatewayCapSeconds']) or workload['gatewayCapSeconds'] <= 0 or
                                                lifetime is not None and lifetime > workload['gatewayCapSeconds']):
             raise ValueError('FrozenInputInvalid: configured client lifetime cap')
+        if lifetime is not None:
+            # Match the load generator's nine-decimal header encoding exactly.
+            header_lifetime = int(Decimal(f'{lifetime:.9f}') * 1_000_000_000)
+            if not 0 < header_lifetime <= MAX_REQUEST_LIFETIME_NANOS:
+                raise ValueError('FrozenInputInvalid: request lifetime exceeds HTTP header bounds')
+            # A header replaces the server fallback, but cannot extend applied lifetime.
+            workload['effectiveRequestLifetimeNanos'] = min(
+                header_lifetime, pinned['requestLifetime'] or MAX_REQUEST_LIFETIME_NANOS)
         dataset = scenario['datasets'][pinned['name']]
         workload.update(datasetRef=scenario['spec']['datasetRefs'][pinned['name']], dataset=dataset['spec'],
                         fields=scenario['fields'][pinned['name']])
@@ -174,6 +185,7 @@ def prepare(context):
     context.harness_module = module('evaluation_harness', HERE / 'conductor.py')
     save(context.root / 'source-observations.json', {'declaredSourceSHA': context.spec['harness'].get('sourceSHA'),
                                                 'imageSourceSHA': os.environ.get('CHILL_HARNESS_SOURCE_SHA')})
+    request_timeout = api(context.config, '/api/v1/scheduler/settings')['requestTimeout']
     for template in context.spec['stages']:
         pin = template['loadScenarioRef']
         identity = pin['uid']
@@ -193,7 +205,10 @@ def prepare(context):
         for workload_pin in scenario['workloads']:
             view = api(context.config, '/api/v1/workloads/' + workload_pin['name'])
             applied = view.get('appliedDefinition') or {}
-            actual = {key: applied.get(key) for key in ('name', 'uid', 'generation', 'slo', 'model', 'preprocessor', 'dataset')}
+            actual = {key: applied.get(key) for key in ('name', 'uid', 'generation', 'slo', 'model', 'preprocessor', 'dataset', 'requestLifetime')}
+            actual['admission'] = copy.deepcopy(applied['admission'])
+            actual['effectiveRequestLifetimeNanos'] = min(
+                actual['requestLifetime'] or request_timeout, MAX_REQUEST_LIFETIME_NANOS)
             if any(actual.get(key) != workload_pin[key] for key in ('name', 'uid')):
                 raise ValueError('IdentityMismatch: applied Workload ' + workload_pin['name'])
             actual['requestedGeneration'] = workload_pin.get('generation')

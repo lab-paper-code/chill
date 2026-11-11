@@ -89,7 +89,9 @@ class SettingsAPI:
 
 
 def fixture(root):
-    workload = {'name': NAME, 'uid': 'workload', 'generation': 1, 'slo': {'percentile': 95, 'targetLatencyNanos': 1000000000}}
+    workload = {'name': NAME, 'uid': 'workload', 'generation': 1, 'slo': {'percentile': 95, 'targetLatencyNanos': 1000000000},
+                'admission': {'policy': 'Reject', 'maxQueuedRequests': 1024}, 'requestLifetime': None,
+                'effectiveRequestLifetimeNanos': 30_000_000_000}
     scenario = {'spec': {'seeds': {NAME: '202'}, 'datasetRefs': {NAME: {'name': 'records', 'uid': 'dataset'}},
                          'arrivalDistribution': {NAME: 'poisson'}, 'workloads': [{k: workload[k] for k in ('name', 'uid', 'generation')}],
                          'parts': [{'id': 'explicit', 'durationSeconds': 10, 'rates': {NAME: 2.5}}]},
@@ -158,6 +160,28 @@ def live_fixture(root):
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_snapshot_effective_lifetime_uses_header_and_applied_bound(self):
+        for applied, fallback, header, expected in (
+                (None, 30, 40, 40_000_000_000), (20, 30, 40, 20_000_000_000),
+                (20, 30, 10, 10_000_000_000), (None, 30, 1.23456789, 1_234_567_890),
+                (None, 30, 130, None)):
+            with self.subTest(applied=applied, fallback=fallback, header=header), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                spec, scenario, execution, config, _ = fixture(root)
+                pinned = scenario['workloads'][0]
+                pinned['requestLifetime'] = None if applied is None else applied * 1_000_000_000
+                pinned['effectiveRequestLifetimeNanos'] = (applied or fallback) * 1_000_000_000
+                operation = json.loads(config['operational'])
+                operation['workloads'][NAME].update(lifetimeSeconds=header, socketSeconds=max(60, header + 20))
+                config['operational'] = json.dumps(operation)
+                if expected is None:
+                    with self.assertRaisesRegex(ValueError, 'HTTP header bounds'):
+                        input_snapshot.stage_config(spec, scenario, execution, config, root)
+                    continue
+                frozen = input_snapshot.stage_config(spec, scenario, execution, config, root)['workloads'][0]
+                self.assertEqual(frozen['effectiveRequestLifetimeNanos'], expected)
+                self.assertEqual(frozen['admission'], pinned['admission'])
+
     def test_raw_duplicate_metadata_does_not_hide_measurement_conflicts(self):
         changes = [
             ('metadata', {'node': {'name': 'other-node', 'uid': 'other-node-uid'},
@@ -1093,7 +1117,12 @@ class EvaluationTests(unittest.TestCase):
                     return {'metadata': {'name': args[0], 'uid': next((node['uid'] for node in spec['powerMeasurement']['nodes'] if node['name'] == args[0]), 'generator-node')},
                             'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}}
                 return copy.deepcopy(objects[kind])
-            with patch.object(input_snapshot, 'kubectl', side_effect=k), patch.object(input_snapshot, 'api', return_value={'appliedDefinition': {**scenario['workloads'][0], 'generation': 2}}), patch.dict(os.environ, CHILL_HARNESS_SOURCE_SHA='different-image-revision', HOSTNAME='harness-pod'):
+            applied = {**scenario['workloads'][0], 'generation': 2,
+                       'admission': {'policy': 'Delay', 'maxQueuedRequests': 17}, 'requestLifetime': 2_000_000_000}
+            request_timeout = 30_000_000_000
+            def serving_api(config, path):
+                return {'requestTimeout': request_timeout} if path == '/api/v1/scheduler/settings' else {'appliedDefinition': applied}
+            with patch.object(input_snapshot, 'kubectl', side_effect=k), patch.object(input_snapshot, 'api', side_effect=serving_api), patch.dict(os.environ, CHILL_HARNESS_SOURCE_SHA='different-image-revision', HOSTNAME='harness-pod'):
                 harness.prepare()
             snapshot = evidence_io.load(harness.inputs / 'snapshot.json')
             self.assertEqual(snapshot['schemaVersion'], 'evaluation-snapshot.v2alpha1')
@@ -1108,7 +1137,19 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(frozen['dataset']['source']['path'], '/records')
             self.assertEqual(frozen['fields'], ['input'])
             self.assertEqual(frozen['generation'], 2)
+            self.assertEqual(frozen['admission'], {'policy': 'Delay', 'maxQueuedRequests': 17})
+            self.assertEqual(frozen['requestLifetime'], 2_000_000_000)
+            self.assertEqual(frozen['effectiveRequestLifetimeNanos'], 2_000_000_000)
+            self.assertEqual(snapshot['scenarios']['load-uid']['workloads'][0]['admission'], frozen['admission'])
             self.assertEqual(len(uploads), 1)
+            for request_timeout, expected in ((30_000_000_000, 30_000_000_000), (200_000_000_000, 129_000_000_000)):
+                applied['requestLifetime'] = None
+                with patch.object(input_snapshot, 'kubectl', side_effect=k), patch.object(input_snapshot, 'api', side_effect=serving_api), patch.dict(os.environ, HOSTNAME='harness-pod'):
+                    harness.prepare()
+                fallback_snapshot = evidence_io.load(harness.inputs / 'snapshot.json')
+                fallback_workload = fallback_snapshot['scenarios']['load-uid']['workloads'][0]
+                self.assertIsNone(fallback_workload['requestLifetime'])
+                self.assertEqual(fallback_workload['effectiveRequestLifetimeNanos'], expected)
 
     def test_serial_release_aligns_producer_actual_starts(self):
         producer = input_snapshot.module('scheduled_release_producer', evaluation.HERE / 'producer.py')
