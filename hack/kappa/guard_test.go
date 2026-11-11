@@ -107,7 +107,7 @@ func TestReplayGuardPreservesExclusiveOwnerReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := serving.SchedulerNode{Node: serving.NodeReference{Name: "n", UID: "n-uid"}, PowerMode: "current", Ready: true, ObservedAt: at}
-	workload := &serving.Definition{UID: "w", SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
+	workload := &serving.Definition{UID: "w", SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}
 	target := &serving.SchedulerCandidate{ID: "reserved-target", Nodes: []serving.SchedulerNode{node}}
 	target.Nodes[0].PowerMode = "reserved"
 	snapshot := serving.SchedulerSnapshot{

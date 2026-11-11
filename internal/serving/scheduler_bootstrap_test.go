@@ -79,6 +79,10 @@ func loadRev76Fixture(t *testing.T) rev76Fixture {
 func TestControlledRawReplayCapacityDoesNotCrossSharedCutover(t *testing.T) {
 	fixture := loadRev76Fixture(t)
 	settings, snapshot := fixture.Settings, fixture.Cold
+	// Isolate the raw-support cutover from the separate admission contract gate.
+	for _, d := range snapshot.Workloads {
+		d.Admission = Admission{Policy: AdmissionPolicyReject, MaxQueuedRequests: 1024}
+	}
 	decision := capacityDecideForTest(t, settings, snapshot)
 	if decision.Status != CapacityRejected || decision.Target != nil {
 		t.Fatalf("historical rows bypassed missing conditional raw support: status=%s reasons=%v", decision.Status, decision.Reasons)

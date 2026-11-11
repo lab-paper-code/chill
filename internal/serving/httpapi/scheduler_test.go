@@ -308,7 +308,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			})
 			service, execution := settingsServiceForTest(t, kube, observationLog, before, tc.refreshFailure, tc.completionAppendFailure)
 			controller := service.Controller
-			if err := execution.Publish(&serving.Definition{Name: "workload", UID: "workload-uid"}); err != nil {
+			if err := execution.Publish(&serving.Definition{Name: "workload", UID: "workload-uid", Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}); err != nil {
 				t.Fatal(err)
 			}
 			if tc.observationLogFailure {

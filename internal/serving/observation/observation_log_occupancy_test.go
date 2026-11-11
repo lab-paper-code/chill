@@ -101,7 +101,7 @@ func TestNativeSupplementsPreserveRestartDrainAssignment(t *testing.T) {
 	log, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	config := log.config
 	d := &serving.Definition{Name: "restart-workload", UID: "restart-workload-uid", Generation: 1,
-		Model: serving.Model{UID: "restart-model-uid", Generation: 1}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
+		Model: serving.Model{UID: "restart-model-uid", Generation: 1}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}
 	if err := log.DefinitionRecord(d); err != nil {
 		t.Fatal(err)
 	}

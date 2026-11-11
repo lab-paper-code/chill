@@ -32,7 +32,7 @@ func TestAsyncWriterFailureKeepsInferenceHTTP503(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	definition := &serving.Definition{Name: "workload", UID: "uid", Generation: 1}
+	definition := &serving.Definition{Name: "workload", UID: "uid", Generation: 1, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}
 	if err := runtime.PublishClosed(definition, "test"); err != nil {
 		t.Fatal(err)
 	}

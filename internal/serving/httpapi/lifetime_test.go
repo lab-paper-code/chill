@@ -31,7 +31,7 @@ func TestAppliedRequestLifetime(t *testing.T) {
 		}
 	}()
 	lifetime := 120 * time.Second
-	definition := &serving.Definition{Name: "workload", UID: "uid", Generation: 1, RequestLifetime: &lifetime}
+	definition := &serving.Definition{Name: "workload", UID: "uid", Generation: 1, RequestLifetime: &lifetime, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}
 	if err := runtime.PublishClosed(definition, "test"); err != nil {
 		t.Fatal(err)
 	}
