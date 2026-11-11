@@ -63,10 +63,10 @@ func TestReplayDemandUsesDirectOutcomesWithoutRows(t *testing.T) {
 	decision := &serving.SchedulerDecision{
 		Keep: serving.SchedulerCandidate{Feedback: []serving.FeedbackWorkloadScore{
 			{UID: "other", Population: 2},
-			{UID: "w", Population: 10, DeadlineDropped: 4, FailureFraction: .4},
+			{UID: "w", Population: 10, OnTime: 6, Rejected: 4, FailureFraction: .4},
 		}},
 		Target: &serving.SchedulerCandidate{Feedback: []serving.FeedbackWorkloadScore{
-			{UID: "w", Population: 10, Completed: 10, Satisfied: true},
+			{UID: "w", Population: 10, OnTime: 10, Satisfied: true},
 		}},
 		Capacity: &serving.SchedulerCapacity{Workloads: []serving.SchedulerCapacityWorkload{{UID: "w", Rate: 50}}},
 	}

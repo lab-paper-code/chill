@@ -116,3 +116,21 @@ func TestSchedulerPolicyAcknowledgmentIgnoresMeasuredDeadlinePolicy(t *testing.T
 		})
 	}
 }
+
+func TestCaptureNativeStateFreezesBoundedArrivalHistory(t *testing.T) {
+	state := &native.State{ArrivalAgesMS: map[string][]float64{"workload": {3, 7}}}
+	instance := serving.SchedulerInstance{}
+	captureNativeState(&instance, state)
+	state.ArrivalAgesMS["workload"][0] = 99
+	state.ArrivalAgesMS["other"] = []float64{1}
+	if len(instance.ArrivalAgesMS) != 1 || len(instance.ArrivalAgesMS["workload"]) != 2 || instance.ArrivalAgesMS["workload"][0] != 3 || instance.ArrivalAgesMS["workload"][1] != 7 {
+		t.Fatalf("snapshot history aliases mutable native state: %+v", instance.ArrivalAgesMS)
+	}
+	empty := serving.SchedulerInstance{}
+	captureNativeState(&empty, &native.State{ArrivalAgesMS: map[string][]float64{}})
+	missing := serving.SchedulerInstance{}
+	captureNativeState(&missing, &native.State{})
+	if empty.ArrivalAgesMS == nil || missing.ArrivalAgesMS != nil {
+		t.Fatal("known-empty native history and missing evidence collapsed")
+	}
+}

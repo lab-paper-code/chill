@@ -20,7 +20,7 @@ func TestFeedbackConsumerAssignedQueueMembershipCountsOnce(t *testing.T) {
 	snapshot.Outstanding = []SchedulerRequest{{ID: "assigned", Definition: snapshot.Workloads[0], Phase: phaseAssigned, Instance: "i1", CompletionMarginMS: &zero, NativeSenderElapsedMS: &zero}}
 	result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 	score := result.Workloads[0]
-	if score.DeadlineDropped != 1 || score.Completed != 0 || score.PotentialExcess == nil || *score.PotentialExcess != 5 {
+	if score.Rejected != 1 || score.OnTime+score.Late != 0 || score.PotentialExcess == nil || *score.PotentialExcess != 5 {
 		t.Fatalf("one assigned request cannot assemble batch2 after native receipt: %+v", result)
 	}
 }
@@ -48,7 +48,7 @@ func TestFeedbackConsumerFailurePotentialIncludesBusyResidual(t *testing.T) {
 			}
 			result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 			score := result.Workloads[0]
-			if score.LifetimeExpired != 1 || score.Completed != 1 || score.PotentialExcess == nil || math.Abs(*score.PotentialExcess-3) > 1e-12 {
+			if score.Timeout != 1 || score.OnTime+score.Late != 1 || score.PotentialExcess == nil || math.Abs(*score.PotentialExcess-3) > 1e-12 {
 				t.Fatalf("1ms age + sampled 9ms busy residual + 30ms service must retain 40ms potential: %+v", result)
 			}
 		})
@@ -74,7 +74,7 @@ func TestFeedbackConsumerUnsampledPotentialRemainsDiagnostic(t *testing.T) {
 		t.Fatalf("missing optional potential must not erase known outcome axes: %+v %v", result, err)
 	}
 	score := result.Workloads[0]
-	if score.Population != 2 || score.LifetimeExpired != 1 || score.Completed != 1 || score.FailureFraction != .5 || score.PotentialExcess != nil || len(score.PotentialUnavailableReasons) == 0 {
+	if score.Population != 2 || score.Timeout != 1 || score.OnTime+score.Late != 1 || score.FailureFraction != .5 || score.PotentialExcess != nil || len(score.PotentialUnavailableReasons) == 0 {
 		t.Fatalf("unsampled prepare must leave potential unknown and retain known finite outcomes: %+v", result)
 	}
 }

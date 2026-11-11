@@ -42,14 +42,15 @@ func TestSchedulerReadyExpansionCancellationPreservesFrozenState(t *testing.T) {
 func TestCapacityUnknownPotentialDoesNotBeatMeasuredPotential(t *testing.T) {
 	planner := capacityDeltaTiny([]float64{10}, 1)
 	potential := .5
-	known := capacityResult{joules: 10, feedback: []FeedbackWorkloadScore{{UID: "w", FailureFraction: .5, PotentialExcess: &potential}}}
-	unknown := capacityResult{joules: 1, feedback: []FeedbackWorkloadScore{{UID: "w", FailureFraction: .5}}}
+	known := capacityResult{joules: 10, feedback: []FeedbackWorkloadScore{{UID: "w", Population: 4, OnTime: 2, FailureFraction: .5, PotentialExcess: &potential}}}
+	unknown := capacityResult{joules: 1, feedback: []FeedbackWorkloadScore{{UID: "w", Population: 4, OnTime: 2, FailureFraction: .5}}}
 	planner.rankFeedback(&known)
 	planner.rankFeedback(&unknown)
 	if !known.better(&unknown) || unknown.better(&known) {
 		t.Fatal("missing conditional potential won an outcome tie")
 	}
 	unknown.feedback[0].FailureFraction = .25
+	unknown.feedback[0].OnTime = 3
 	unknown.excesses = nil
 	planner.rankFeedback(&unknown)
 	if !unknown.better(&known) {
@@ -88,7 +89,7 @@ func TestReplayRouteRetainsUnboundPreparingOccupancy(t *testing.T) {
 	}
 }
 
-func TestReadyExpansionRejectsSlowerIntegerRoute(t *testing.T) {
+func TestReadyExpansionFiltersSlowerIntegerRoute(t *testing.T) {
 	for _, binding := range []string{"bound", "unbound"} {
 		t.Run(binding, func(t *testing.T) {
 			settings, snapshot := schedulerFixture()
@@ -106,8 +107,8 @@ func TestReadyExpansionRejectsSlowerIntegerRoute(t *testing.T) {
 			snapshot.Routing = map[string]map[string]int32{old.WorkloadUID: {old.ID: schedulerRouteUnits}}
 			capacityServiceRatesForTest(&snapshot, map[string]float64{old.Profile.ID: 1 / .03, added.Profile.ID: 1 / .07})
 			old.Profile, added.Profile = snapshot.Instances[0].Profile, snapshot.Instances[1].Profile
-			if weights, admitted := SchedulerReadyExpansion(context.Background(), settings, snapshot, old.WorkloadUID, []SchedulerInstance{old}, []SchedulerInstance{added}); admitted {
-				t.Fatalf("30ms serving route admitted a 70ms destination under a 50ms SLO: %v", weights)
+			if weights, admitted := SchedulerReadyExpansion(context.Background(), settings, snapshot, old.WorkloadUID, []SchedulerInstance{old}, []SchedulerInstance{added}); !admitted || weights[old.ID] <= 0 {
+				t.Fatalf("admission-filtered expansion must retain the feasible 30ms executor: %v", weights)
 			}
 		})
 	}

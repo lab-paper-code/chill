@@ -14,7 +14,7 @@ func TestFeedbackConsumerReturningPOSTUsesConsumedAccountingBudget(t *testing.T)
 	snapshot.PathFeedback = []PathFeedback{{WorkloadUID: snapshot.Workloads[0].UID, TotalNanos: 900e6, PostNanos: 900e6}}
 	result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 	score := result.Workloads[0]
-	if score.Completed != 1 || score.LifetimeExpired != 0 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 120e6 {
+	if score.OnTime+score.Late != 1 || score.Timeout != 0 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 120e6 {
 		t.Fatalf("S30+N60+POST30 leaves 5ms at server age115, completing before 10ms lifetime: %+v", result)
 	}
 }

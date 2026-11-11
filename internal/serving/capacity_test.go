@@ -226,7 +226,7 @@ func TestCapacityWindowDropTailAllowance(t *testing.T) {
 			t.Fatalf("drop %d must consume one percentile-tail slot: continued=%v limit=%+v", j+1, continued, limit)
 		}
 	}
-	if state.out.outcomes["workload"][schedulerOutcomeTimeout] != 11 || instance.outstanding != 0 || len(instance.queue) != 0 {
+	if state.out.outcomes["workload"][schedulerOutcomeRejected] != 11 || instance.outstanding != 0 || len(instance.queue) != 0 {
 		t.Fatalf("tail allowance changed physical drops: outcomes=%v instance=%+v", state.out.outcomes, instance)
 	}
 }

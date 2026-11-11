@@ -40,7 +40,7 @@ func TestFeedbackConsumerBusyPotentialUsesNextBatchGap(t *testing.T) {
 		if score.PotentialExcess == nil {
 			t.Fatalf("expired queued request lost conditional potential: %+v", result)
 		}
-		if score.LifetimeExpired != 1 || score.Completed != 1 || math.Abs(*score.PotentialExcess-want) > 1e-12 {
+		if score.Timeout != 1 || score.OnTime+score.Late != 1 || math.Abs(*score.PotentialExcess-want) > 1e-12 {
 			t.Fatalf("potential must use 1ms age + 9ms residual + busy successor service, not last idle gap: want=%g actual=%g result=%+v", want, *score.PotentialExcess, result)
 		}
 		potentials = append(potentials, *score.PotentialExcess)

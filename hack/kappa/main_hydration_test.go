@@ -32,7 +32,7 @@ func TestLoadSchedulerHydratesEvidenceThroughTick(t *testing.T) {
 		t.Fatalf("loaded snapshot failed direct Tick assessment: decision=%+v err=%v", decision, err)
 	}
 	score := decision.Keep.Feedback[0]
-	if score.Population != 1 || score.Completed != 1 || !score.Satisfied {
+	if score.Population != 1 || score.OnTime != 1 || !score.Satisfied {
 		t.Fatalf("decoded service evidence never reached native replay: %+v", score)
 	}
 	if err := tick(decodedSettings, loaded, 0, 1); err != nil {
@@ -91,7 +91,7 @@ func hydrationTickFixture() (serving.SchedulerSettings, serving.SchedulerSnapsho
 		Controls:             serving.SchedulerControls{Routing: true},
 	}
 	node := serving.SchedulerNode{Node: serving.NodeReference{Name: "n", UID: "n-uid"}, PowerMode: "fixed", Ready: true, MemoryBytes: 1024, ObservedAt: at}
-	definition := &serving.Definition{UID: "w", Model: serving.Model{Name: "model", UID: "model-uid", Paths: []serving.ModelPath{{Name: "cpu", Artifact: "model", Files: []string{"/model"}, RuntimeFamily: "firstfloor", Backend: "ort-cpu"}}}, SLO: serving.SLO{Percentile: 100, TargetLatency: time.Second}}
+	definition := &serving.Definition{UID: "w", Model: serving.Model{Name: "model", UID: "model-uid", Paths: []serving.ModelPath{{Name: "cpu", Artifact: "model", Files: []string{"/model"}, RuntimeFamily: "firstfloor", Backend: "ort-cpu"}}}, SLO: serving.SLO{Percentile: 100, TargetLatency: time.Second}, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}
 	profile := &serving.Profile{
 		ID: "captured-profile", NodeName: node.Node.Name,
 		Condition: profilederivation.CurvePlanSpec{
@@ -106,6 +106,6 @@ func hydrationTickFixture() (serving.SchedulerSettings, serving.SchedulerSnapsho
 			},
 		}},
 	}
-	instance := serving.SchedulerInstance{ID: "i", Node: node.Node, Profile: profile, WorkloadUID: definition.UID, Allocation: serving.SchedulerAllocation{MemoryBytes: 1}, Ready: true, Routable: map[string]bool{definition.UID: true}, Capacity: 1, Weight: 1000, MaxBatch: 1, ObservedAt: at}
+	instance := serving.SchedulerInstance{ID: "i", Node: node.Node, Profile: profile, WorkloadUID: definition.UID, Allocation: serving.SchedulerAllocation{MemoryBytes: 1}, Ready: true, Routable: map[string]bool{definition.UID: true}, Capacity: 1, Weight: 1000, MaxBatch: 1, ObservedAt: at, ArrivalAgesMS: map[string][]float64{}}
 	return settings, serving.SchedulerSnapshot{At: at, ObservationEnd: at, ObservedSince: at.Add(-time.Second), Workloads: []*serving.Definition{definition}, Nodes: []serving.SchedulerNode{node}, Instances: []serving.SchedulerInstance{instance}, Options: []serving.SchedulerOption{{Instance: instance, CompatibleUIDs: []string{definition.UID}}}, Routing: map[string]map[string]int32{definition.UID: {instance.ID: 1000}}}
 }

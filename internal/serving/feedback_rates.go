@@ -37,8 +37,7 @@ func JudgeFeedbackRates(ctx context.Context, settings SchedulerSettings, option 
 		settings: settings, at: time.Unix(0, 0), occupancy: occupancy,
 		option: option, w: definition, feedback: &feedback, gaps: map[[2]int][]float64{},
 	}
-	policy := schedulerPolicy(option.Instance)
-	key := fmt.Sprintf("%s/total=%g/post=%g/wait=%d/policy=%s", input.Key(), feedback.TotalNanos, feedback.PostNanos, option.Instance.MaxWait, policy.DeadlinePolicy)
+	key := fmt.Sprintf("%s/total=%g/post=%g/wait=%d", input.Key(), feedback.TotalNanos, feedback.PostNanos, option.Instance.MaxWait)
 	builder := capacityBuilder{settings: settings, percentile: definition.SLO.Percentile, replay: replay.window}
 	return judgeFeedbackRates(ctx, builder, key, rates)
 }

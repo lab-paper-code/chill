@@ -63,7 +63,7 @@ func TestCapacityV2CoreBudgetAndDeadline(t *testing.T) {
 func TestCapacityExactFeedbackTupleOrdering(t *testing.T) {
 	p := capacityDeltaTiny([]float64{10}, 1)
 	score := func(failure, success, potential float64) FeedbackWorkloadScore {
-		return FeedbackWorkloadScore{UID: "w", Population: 10, FailureFraction: failure, SuccessQuantileNanos: &success, SuccessExcess: max(0, success/1e9-1), PotentialExcess: &potential, Satisfied: failure == 0 && success <= 1e9}
+		return FeedbackWorkloadScore{UID: "w", Population: 10, OnTime: 10 - int(failure*10), Rejected: int(failure * 10), FailureFraction: failure, SuccessQuantileNanos: &success, SuccessExcess: max(0, success/1e9-1), PotentialExcess: &potential, Satisfied: failure == 0 && success <= 1e9}
 	}
 	for _, tc := range []struct {
 		name string
@@ -105,8 +105,8 @@ func TestCapacityExactFeedbackWorkloadPriority(t *testing.T) {
 	p.ws = append(p.ws, capacityWorkload{d: &d, rate: 1})
 	for _, strategy := range []string{SLOPriorityExcess, SLOPriorityWorkload} {
 		p.settings.SLOPriorityStrategy, p.settings.WorkloadPriority = strategy, []string{"w"}
-		a := capacityResult{feedback: []FeedbackWorkloadScore{{UID: "w", FailureFraction: .1}, {UID: schedulerTestOther, FailureFraction: .9}}}
-		b := capacityResult{feedback: []FeedbackWorkloadScore{{UID: "w", FailureFraction: .2}, {UID: schedulerTestOther, FailureFraction: .3}}}
+		a := capacityResult{feedback: []FeedbackWorkloadScore{{UID: "w", Population: 10, OnTime: 9, FailureFraction: .1}, {UID: schedulerTestOther, Population: 10, OnTime: 1, FailureFraction: .9}}}
+		b := capacityResult{feedback: []FeedbackWorkloadScore{{UID: "w", Population: 10, OnTime: 8, FailureFraction: .2}, {UID: schedulerTestOther, Population: 10, OnTime: 7, FailureFraction: .3}}}
 		p.rankFeedback(&a)
 		p.rankFeedback(&b)
 		if a.better(&b) != (strategy == SLOPriorityWorkload) {

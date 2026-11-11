@@ -443,7 +443,10 @@ func (p *capacityPlanner) rankFeedback(res *capacityResult) {
 			continue
 		}
 		score := res.feedback[at]
-		value := tuple{uid: score.UID, failure: score.FailureFraction, success: score.SuccessExcess}
+		value := tuple{uid: score.UID, success: score.SuccessExcess}
+		if score.Population > 0 {
+			value.failure = 1 - float64(score.OnTime)/float64(score.Population)
+		}
 		if score.FailureFraction > 0 {
 			value.potential = math.Inf(1)
 			if score.PotentialExcess != nil {

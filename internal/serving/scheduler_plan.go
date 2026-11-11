@@ -527,8 +527,13 @@ func schedulerSnapshotTargetMatches(actual, wanted SchedulerInstance) bool {
 	if !schedulerOwnerAllows(actual.OwnerWorkloadUID, wanted.WorkloadUID) {
 		return false
 	}
-	return actual.Capacity == wanted.Capacity && actual.MaxBatch == wanted.MaxBatch && actual.MaxWait == wanted.MaxWait &&
-		reflect.DeepEqual(actual.Profile.Condition.Firstfloor, wanted.Profile.Condition.Firstfloor)
+	var actualPolicy, wantedPolicy = actual.Profile.Condition.Firstfloor, wanted.Profile.Condition.Firstfloor
+	if actualPolicy != nil && wantedPolicy != nil {
+		a, w := *actualPolicy, *wantedPolicy
+		a.DeadlinePolicy, w.DeadlinePolicy = "", ""
+		return actual.Capacity == wanted.Capacity && actual.MaxBatch == wanted.MaxBatch && actual.MaxWait == wanted.MaxWait && reflect.DeepEqual(a, w)
+	}
+	return actual.Capacity == wanted.Capacity && actual.MaxBatch == wanted.MaxBatch && actual.MaxWait == wanted.MaxWait && reflect.DeepEqual(actualPolicy, wantedPolicy)
 }
 
 func schedulerInstanceRouted(routing map[string]map[string]int32, id string) bool {

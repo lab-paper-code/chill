@@ -21,10 +21,10 @@ func TestFeedbackConsumerUnroutedCohortPreservesSharedActorInterference(t *testi
 	}
 	for _, score := range result.Workloads {
 		if score.UID == fixed.UID {
-			if score.Population != 2 || score.Completed != 1 || score.Unfinished != 1 || score.FailureFraction != .5 || score.PotentialExcess != nil || len(score.PotentialUnavailableReasons) == 0 {
+			if score.Population != 2 || score.OnTime+score.Late != 1 || score.Unfinished != 1 || score.FailureFraction != .5 || score.PotentialExcess != nil || len(score.PotentialUnavailableReasons) == 0 {
 				t.Fatalf("fixed request population or actual running work disappeared: %+v", score)
 			}
-		} else if score.Completed != 2 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 80e6 {
+		} else if score.OnTime+score.Late != 2 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 80e6 {
 			t.Fatalf("controlled work must wait sampled10ms fixed residual before batch2 service70ms: %+v", score)
 		}
 	}

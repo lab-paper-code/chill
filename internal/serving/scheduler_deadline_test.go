@@ -60,7 +60,7 @@ func TestSchedulerReplayUsesRequestAdmissionPolicy(t *testing.T) {
 					t.Fatalf("request policy must remain evaluable: %+v", keep)
 				}
 				if policy == AdmissionPolicyReject {
-					if e.Samples != 0 || e.ExpectedNanos != nil || e.PredictedOutcomes["timeout"] != 1 || e.PredictedOutcomes["completed"] != 0 || math.Abs(*keep.ExpectedJoules-1.2) > 1e-9 {
+					if e.Samples != 0 || e.ExpectedNanos != nil || e.PredictedOutcomes["rejected"] != 1 || e.PredictedOutcomes["onTime"] != 0 || math.Abs(*keep.ExpectedJoules-1.2) > 1e-9 {
 						t.Fatalf("Reject must not execute or contribute successful latency: %+v", keep)
 					}
 				} else if e.Samples != 1 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(10*time.Millisecond) || e.PredictedOutcomes["timeout"] != 0 {
@@ -88,13 +88,17 @@ func TestSchedulerReplayDropsAtSLOBoundaryWhileBatchRuns(t *testing.T) {
 		t.Fatalf("active batch initialization failed: %+v", state.out)
 	}
 	state.admitArrivals()
-	state.now = float64(5 * time.Millisecond)
-	if !state.chooseBatches(context.Background()) || len(state.instances[0].queue) != 0 || state.instances[0].outstanding != 1 || len(state.instances[0].batch) != 1 || state.out.outcomes[queued.Identity()]["timeout"] != 1 || len(state.out.samples[queued.Identity()]) != 0 {
+	next, remaining := state.nextEvent()
+	if !remaining || next != float64(5*time.Millisecond) {
+		t.Fatalf("per-request Reject must wake at SLO boundary: %g %v", next, remaining)
+	}
+	state.now = next
+	if !state.chooseBatches(context.Background()) || len(state.instances[0].queue) != 0 || state.instances[0].outstanding != 1 || len(state.instances[0].batch) != 1 || state.out.outcomes[queued.Identity()]["rejected"] != 1 || len(state.out.samples[queued.Identity()]) != 0 {
 		t.Fatalf("deadline boundary must release only queued request: %+v %+v", state.instances[0], state.out)
 	}
 	state.now = float64(100 * time.Millisecond)
 	state.completeExecution()
-	if state.out.outcomes[d.Identity()]["completed"] != 1 || state.instances[0].outstanding != 0 {
+	if state.out.outcomes[d.Identity()]["onTime"] != 1 || state.instances[0].outstanding != 0 {
 		t.Fatalf("active execution must finish nonpreemptively: %+v", state.out)
 	}
 }
@@ -169,7 +173,7 @@ func TestSchedulerReplayObservedDropReturningNeverBecomesSuccess(t *testing.T) {
 	life := time.Millisecond
 	snap.Outstanding = []SchedulerRequest{{ID: "drop-returning", Definition: d, ReceivedAt: snap.At, Phase: phaseReturning, Instance: "i1", NativeOutcome: "deadline_drop", RemainingLifetime: &life}}
 	result := schedulerReplayForTest(s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances})
-	if len(result.reasons) > 0 || len(result.samples[d.Identity()]) != 0 || result.outcomes[d.Identity()]["timeout"] != 1 || result.outcomes[d.Identity()]["completed"] != 0 || result.outcomes[d.Identity()]["expired-returning"] != 0 {
+	if len(result.reasons) > 0 || len(result.samples[d.Identity()]) != 0 || result.outcomes[d.Identity()]["rejected"] != 1 || result.outcomes[d.Identity()]["onTime"] != 0 || result.outcomes[d.Identity()]["timeout"] != 0 {
 		t.Fatalf("observed SLO drop must preserve outcome despite return/caller lifetime: %+v", result)
 	}
 }

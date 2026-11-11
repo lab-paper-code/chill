@@ -28,6 +28,7 @@ const (
 type CapacityInput struct {
 	WorkloadUID        string              `json:"workloadUID"`
 	SLO                SLO                 `json:"slo"`
+	Admission          Admission           `json:"admission"`
 	Node               NodeReference       `json:"node"`
 	PowerMode          string              `json:"powerMode"`
 	ProfileID          string              `json:"profileID"`
@@ -99,7 +100,7 @@ func CapacityVariants(o SchedulerOption) []SchedulerOption {
 func NewCapacityInput(settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition) CapacityInput {
 	i := o.Instance
 	return CapacityInput{
-		WorkloadUID: w.UID, SLO: w.SLO, Node: i.Node, PowerMode: i.Profile.Condition.PowerMode, ProfileID: i.Profile.ID,
+		WorkloadUID: w.UID, SLO: w.SLO, Admission: w.Admission, Node: i.Node, PowerMode: i.Profile.Condition.PowerMode, ProfileID: i.Profile.ID,
 		Allocation: i.Allocation, MaxBatch: i.MaxBatch, CompletionMarginMS: settings.CompletionMarginMS,
 		Window: settings.CapacityWindow, Windows: settings.CapacityWindows, PassingWindows: settings.CapacityPassingWindows,
 		MinimumRequests: settings.CapacityMinimumRequests, DispatchOccupancy: ResolveDispatchOccupancy(settings, occupancy, o.Instance),
@@ -368,7 +369,8 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	instance := o.Instance
 	instance.ID, instance.TargetID, instance.OwnerWorkloadUID = "capacity", "", ""
 	instance.WorkloadUID, instance.Ready, instance.Stopped = w.UID, true, false
-	instance.LastServiceEndAgeNanos = nil // each synthetic window starts a new actor
+	instance.LastServiceEndAgeNanos = nil           // each synthetic window starts a new actor
+	instance.ArrivalAgesMS = map[string][]float64{} // known empty native arrival history
 	instance.Weight, instance.ObservedAt = 1, at
 	snapshot := SchedulerSnapshot{
 		At: at, ObservationEnd: at, Workloads: []*Definition{w},

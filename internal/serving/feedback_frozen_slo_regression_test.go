@@ -25,7 +25,7 @@ func TestFeedbackConsumerFrozenDefinitionSLOSurvivesCurrentRelaxation(t *testing
 		t.Fatalf("mixed frozen/current evaluation: %+v %v", result, err)
 	}
 	score := result.Workloads[0]
-	if score.Satisfied || score.Completed != 3 || score.FailureFraction != 0 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 600e6 {
+	if score.Satisfied || score.OnTime+score.Late != 3 || score.Late != 1 || score.FailureFraction != 0 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 600e6 {
 		t.Fatalf("deferred old 100ms obligation must retain 600ms violation after normal work: %+v", result)
 	}
 	for _, estimate := range result.SLO {
@@ -56,7 +56,7 @@ func TestFeedbackConsumerFrozenDefinitionPercentileSurvivesCurrentChange(t *test
 		t.Fatalf("frozen percentile evaluation: %+v %v", result, err)
 	}
 	score := result.Workloads[0]
-	if score.Satisfied || score.Completed != 2 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 60e6 {
+	if score.Satisfied || score.OnTime != 1 || score.Late != 1 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 60e6 {
 		t.Fatalf("old p100 must judge 30/60ms at 60ms despite current p1: %+v", result)
 	}
 }

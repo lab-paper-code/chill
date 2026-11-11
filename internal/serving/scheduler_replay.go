@@ -12,49 +12,56 @@ import (
 )
 
 const (
-	schedulerStatusPending  = "Pending"
-	schedulerStatusFeasible = "Feasible"
-	SchedulerStatusOverload = "Overload"
-	schedulerNodeWallScope  = "node-exclusive-wall"
-	schedulerActionPrepare  = "prepare"
-	schedulerActionRemove   = "remove"
-	schedulerActionPower    = "power"
-	schedulerActionRoute    = "route"
-	schedulerActionStop     = "stop"
-	schedulerActionDrain    = "drain"
-	schedulerActionPlanned  = "planned"
-	schedulerActionComplete = "complete"
-	schedulerActionFailed   = "failed"
-	schedulerActionCancel   = "cancel"
-	schedulerOutcomeTimeout = "timeout"
+	schedulerStatusPending     = "Pending"
+	schedulerStatusFeasible    = "Feasible"
+	SchedulerStatusOverload    = "Overload"
+	schedulerNodeWallScope     = "node-exclusive-wall"
+	schedulerActionPrepare     = "prepare"
+	schedulerActionRemove      = "remove"
+	schedulerActionPower       = "power"
+	schedulerActionRoute       = "route"
+	schedulerActionStop        = "stop"
+	schedulerActionDrain       = "drain"
+	schedulerActionPlanned     = "planned"
+	schedulerActionComplete    = "complete"
+	schedulerActionFailed      = "failed"
+	schedulerActionCancel      = "cancel"
+	schedulerOutcomeTimeout    = "timeout"
+	schedulerOutcomeOnTime     = "onTime"
+	schedulerOutcomeLate       = "late"
+	schedulerOutcomeRejected   = "rejected"
+	schedulerOutcomeFailed     = "failed"
+	schedulerOutcomeUnfinished = "unfinished"
 )
 
 type schedulerReplayRequest struct {
-	source            SchedulerRequest
-	identity          string // source.Definition.Identity(), formatted once
-	arrival           float64
-	native            float64
-	queueAt           float64
-	senderMS          float64
-	completed         bool
-	dispatched        bool
-	returning         bool
-	completion        float64
-	observed          bool
-	running           bool
-	expired           bool
-	deferred          bool
-	dropped           bool
-	failed            bool
-	expires           float64
-	capacityMiss      bool    // counted once against the capacity window's fixed population
-	preNanos          float64 // synthetic PRE, never added to accepted requests
-	marginNanos       float64 // frozen POST
-	nativeAgeNanos    float64 // captured native age; advances only after native receipt
-	accountedAgeNanos float64 // S+N for native requests, actual server age otherwise
-	potential         float64 // conditional failure excess, never a completion time
-	hasPotential      bool
-	minimumDemand     bool
+	source              SchedulerRequest
+	identity            string // source.Definition.Identity(), formatted once
+	arrival             float64
+	native              float64
+	queueAt             float64
+	senderMS            float64
+	completed           bool
+	dispatched          bool
+	returning           bool
+	completion          float64
+	observed            bool
+	running             bool
+	expired             bool
+	deferred            bool
+	gatewayDeferred     bool
+	dropped             bool
+	failed              bool
+	expires             float64
+	capacityMiss        bool    // counted once against the capacity window's fixed population
+	preNanos            float64 // synthetic PRE, never added to accepted requests
+	marginNanos         float64 // frozen POST
+	remainingLifetimeMS float64
+	nativeAgeNanos      float64 // captured native age; advances only after native receipt
+	accountedAgeNanos   float64 // S+N for native requests, actual server age otherwise
+	potential           float64 // conditional failure excess, never a completion time
+	hasPotential        bool
+	minimumDemand       bool
 }
 
 type schedulerReplayInstance struct {
@@ -73,7 +80,14 @@ type schedulerReplayInstance struct {
 	outstanding      int
 	policy           firstfloor.Policy
 	arrivalTimes     map[string][]float64
+	arrivalsKnown    bool
 	occupancyNanos   float64 // selected measured, DOM or configured extra ns/request
+	batchStarted     float64
+	batchElapsed     int64
+	batchIdle        int64
+	hasBatchIdle     bool
+	exchangeKnown    bool
+	exchangeElapsed  int64
 }
 
 type schedulerReplayResult struct {
@@ -231,16 +245,20 @@ type schedulerReplayState struct {
 	routingApplied bool
 	weights        []int32
 	available      []bool
+	queuedCounts   map[string]int
+	dispatchUIDs   []string
 	now            float64
 	// compared limits energy to these Nodes; nil counts every Node.
 	compared map[NodeReference]bool
 	// chooseBatches scratch, reused across events.
-	entries            []schedulerReplayQueued
-	states             []firstfloor.RequestState
-	capacity           *capacityWindowLimit // nil for ordinary candidate estimates
-	finalizingFeedback bool
-	potentialQueues    map[*schedulerReplayInstance]*feedbackQueueSummary // non-nil only during immutable final reduction
-	potentialProfiles  map[feedbackProfileKey]bool                        // immutable Definition/Profile compatibility, never readiness or queue state
+	entries              []schedulerReplayQueued
+	states               []firstfloor.RequestState
+	admissionAssignments []firstfloor.RequestState
+	admissionScratch     admissionScratch
+	capacity             *capacityWindowLimit // nil for ordinary candidate estimates
+	finalizingFeedback   bool
+	potentialQueues      map[*schedulerReplayInstance]*feedbackQueueSummary // non-nil only during immutable final reduction
+	potentialProfiles    map[feedbackProfileKey]bool                        // immutable Definition/Profile compatibility, never readiness or queue state
 }
 
 func (s *schedulerReplayState) counted(node NodeReference) bool {
@@ -305,6 +323,9 @@ func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings
 		}
 		// Native queue entries never move when the desired configuration changes.
 		s.routeRequests()
+		if s.capacityWindowFailed() {
+			return s.out, nil
+		}
 		s.receiveNative()
 		if !s.chooseBatches(ctx) {
 			return s.out, ctx.Err()
@@ -382,6 +403,16 @@ func (s *schedulerReplayState) initializeInstances() {
 	s.applied, s.previousRoute = s.c, s.snap.Routing
 	addInstance := func(i SchedulerInstance, loaded bool) {
 		x := &schedulerReplayInstance{config: i, loaded: loaded, ready: loaded && i.Ready, stopped: i.Stopped, finish: math.Inf(1), wake: 0, arrivalTimes: map[string][]float64{}}
+		x.arrivalsKnown = !loaded || i.ArrivalAgesMS != nil
+		if loaded {
+			for uid, ages := range i.ArrivalAgesMS {
+				history := make([]float64, 0, min(2, len(ages)))
+				for _, age := range ages[:min(2, len(ages))] {
+					history = append(history, -age*1e6-float64(max(s.snap.At.Sub(i.ObservedAt), 0)))
+				}
+				x.arrivalTimes[uid] = history
+			}
+		}
 		if loaded && i.LastServiceEndAgeNanos != nil {
 			age := *i.LastServiceEndAgeNanos + max(int64(0), int64(s.snap.At.Sub(i.ObservedAt)))
 			x.lastNativeFinish, x.hasNativeFinish = -float64(age), true
@@ -470,7 +501,7 @@ func (s *schedulerReplayState) initializeOutstanding() {
 		return a.ID < b.ID
 	})
 	for _, r := range outstanding {
-		x := &schedulerReplayRequest{source: r, identity: r.Definition.Identity(), observed: true, arrival: 0, native: math.Inf(1), expires: math.Inf(1), queueAt: -float64(r.QueueAge), running: r.Phase == phaseRunning, deferred: r.Phase == phaseDeferred}
+		x := &schedulerReplayRequest{source: r, identity: r.Definition.Identity(), observed: true, arrival: 0, native: math.Inf(1), expires: math.Inf(1), queueAt: -float64(r.QueueAge), running: r.Phase == phaseRunning, deferred: r.Phase == phaseDeferred && r.Instance != "", gatewayDeferred: r.Phase == phaseDeferred && r.Instance == ""}
 		x.marginNanos = s.settings.CompletionMarginMS * 1e6
 		x.accountedAgeNanos = float64(r.Elapsed)
 		if r.CompletionMarginMS != nil {
@@ -498,21 +529,21 @@ func (s *schedulerReplayState) initializeOutstanding() {
 		}
 		s.requests = append(s.requests, x)
 		s.out.definitions[x.identity] = r.Definition
-		if r.NativeOutcome == firstfloor.OutcomeDeadlineDrop {
+		if r.NativeOutcome == firstfloor.OutcomeDeadlineDrop || r.NativeOutcome == "queue_full" {
 			x.dropped = true
 			key := x.identity
 			if s.out.outcomes[key] == nil {
 				s.out.outcomes[key] = map[string]int{}
 			}
-			s.out.outcomes[key][schedulerOutcomeTimeout]++
+			s.out.outcomes[key][schedulerOutcomeRejected]++
 		} else if r.NativeOutcome == firstfloor.OutcomePreprocessFailed || r.NativeOutcome == firstfloor.OutcomeBatchError {
 			x.failed = true
 			if s.out.outcomes[x.identity] == nil {
 				s.out.outcomes[x.identity] = map[string]int{}
 			}
-			s.out.outcomes[x.identity][r.NativeOutcome]++
+			s.out.outcomes[x.identity][schedulerOutcomeFailed]++
 		}
-		if r.Phase == phaseAssigned || r.Phase == phaseQueued || r.Phase == phaseDeferred || r.Phase == phaseRunning || r.Phase == phaseReturning {
+		if r.Phase == phaseAssigned || r.Phase == phaseQueued || r.Phase == phaseDeferred && r.Instance != "" || r.Phase == phaseRunning || r.Phase == phaseReturning {
 			x.dispatched = true
 			i := s.byID[r.Instance]
 			if i == nil {
@@ -621,6 +652,10 @@ func (s *schedulerReplayState) initializeRunning() bool {
 		if head.source.ExchangeElapsedNanos != nil {
 			elapsed = *head.source.ExchangeElapsedNanos
 		}
+		i.batchElapsed, i.exchangeKnown = elapsed, head.source.ExchangeElapsedNanos != nil
+		if head.source.PrecedingIdleNanos != nil {
+			i.batchIdle, i.hasBatchIdle = *head.source.PrecedingIdleNanos, true
+		}
 		gap := head.source.PrecedingIdleNanos
 		if head.source.ExchangeElapsedNanos == nil {
 			// Actor-running begins before packing/IPC. No native S has elapsed;
@@ -690,12 +725,13 @@ func (s *schedulerReplayState) nextEvent() (float64, bool) {
 	}
 	for _, i := range s.instances {
 		next = math.Min(next, i.finish)
-		if i.policy.DeadlinePolicy == firstfloor.DeadlineDrop {
-			for _, r := range i.queue {
-				remaining := firstfloor.RemainingSLOMS(s.nativeRequestState(i, r))
-				if remaining > 0 {
-					next = math.Min(next, s.now+remaining*1e6)
-				}
+		for _, r := range i.queue {
+			if r.source.Definition.Admission.Policy != AdmissionPolicyReject || r.deferred || i.policy.FixedBatchSize > 0 {
+				continue
+			}
+			remaining := firstfloor.RemainingSLOMS(s.nativeRequestState(i, r))
+			if remaining > 0 {
+				next = math.Min(next, s.now+math.Max(1, math.Ceil(remaining*1e6)))
 			}
 		}
 		if len(i.queue) > 0 && len(i.batch) == 0 && i.wake > s.now {

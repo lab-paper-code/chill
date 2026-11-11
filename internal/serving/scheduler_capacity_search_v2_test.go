@@ -582,8 +582,10 @@ func TestCapacityExactKeepPreservesActualRoutesAndEnergyOffset(t *testing.T) {
 	capacityFeedbackForTest(settings, &snapshot)
 	planner := capacityPlannerForTest(t, settings, snapshot)
 	actual := planner.evaluateCurrentKeep(planner.periodSeconds)
-	selected := planner.evaluate(make([]int, len(planner.plans)), 0)
-	if actual.keep != true || selected.keep || !selected.better(&actual) || selected.keepJoules != actual.joules {
+	// Gateway admission can make keep equally good; assess the reroute itself,
+	// before evaluate's keep fallback, to retain this route/energy contract check.
+	selected := planner.evaluateAtRoute(make([]int, len(planner.plans)), 0, nil)
+	if actual.keep != true || selected.keep || reflect.DeepEqual(actual.weights, selected.weights) || selected.keepJoules != actual.joules {
 		t.Fatalf("actual keep/reroute distinction lost: actual=%+v selected=%+v", actual, selected)
 	}
 	evaluator := newCapacityExact(planner)

@@ -18,9 +18,10 @@ type FeedbackWorkloadScore struct {
 	ObservedArrivals            int      `json:"observedArrivals"`
 	ReplayedArrivals            int      `json:"replayedArrivals"`
 	MinimumDemandArrivals       int      `json:"minimumDemandArrivals"`
-	Completed                   int      `json:"completed"`
-	DeadlineDropped             int      `json:"deadlineDropped"`
-	LifetimeExpired             int      `json:"lifetimeExpired"`
+	OnTime                      int      `json:"onTime"`
+	Late                        int      `json:"late"`
+	Rejected                    int      `json:"rejected"`
+	Timeout                     int      `json:"timeout"`
 	Failed                      int      `json:"failed"`
 	Unfinished                  int      `json:"unfinished"`
 	FailureFraction             float64  `json:"failureFraction"`
@@ -183,7 +184,7 @@ func (s *schedulerReplayState) finishFeedback() {
 	for _, score := range workloads {
 		score.ObservedArrivals = s.out.observedArrivals[score.UID]
 		if score.Population > 0 {
-			score.FailureFraction = float64(score.DeadlineDropped+score.Failed+score.LifetimeExpired+score.Unfinished) / float64(score.Population)
+			score.FailureFraction = float64(score.Rejected+score.Failed+score.Timeout+score.Unfinished) / float64(score.Population)
 		}
 		s.out.feedback = append(s.out.feedback, score)
 	}
@@ -199,13 +200,17 @@ func (s *schedulerReplayState) countFeedbackRequest(population *feedbackPopulati
 	}
 	switch {
 	case request.dropped:
-		population.score.DeadlineDropped++
+		population.score.Rejected++
 	case request.failed:
 		population.score.Failed++
 	case request.expired:
-		population.score.LifetimeExpired++
+		population.score.Timeout++
 	case request.completed:
-		population.score.Completed++
+		if request.accountedAgeNanos+request.completion-request.arrival <= float64(request.source.Definition.SLO.TargetLatency) {
+			population.score.OnTime++
+		} else {
+			population.score.Late++
+		}
 		return
 	default:
 		population.score.Unfinished++
@@ -273,9 +278,10 @@ func mergeFeedbackScore(previous, score FeedbackWorkloadScore) FeedbackWorkloadS
 	previous.Population += score.Population
 	previous.ReplayedArrivals += score.ReplayedArrivals
 	previous.MinimumDemandArrivals += score.MinimumDemandArrivals
-	previous.Completed += score.Completed
-	previous.DeadlineDropped += score.DeadlineDropped
-	previous.LifetimeExpired += score.LifetimeExpired
+	previous.OnTime += score.OnTime
+	previous.Late += score.Late
+	previous.Rejected += score.Rejected
+	previous.Timeout += score.Timeout
 	previous.Failed += score.Failed
 	previous.Unfinished += score.Unfinished
 	previous.PotentialUnavailableReasons = appendUnique(previous.PotentialUnavailableReasons, score.PotentialUnavailableReasons...)

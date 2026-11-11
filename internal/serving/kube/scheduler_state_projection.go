@@ -157,6 +157,12 @@ func captureNativeState(instance *serving.SchedulerInstance, state *native.State
 		age := *state.LastServiceEndAgeNanos
 		instance.LastServiceEndAgeNanos = &age
 	}
+	if state.ArrivalAgesMS != nil {
+		instance.ArrivalAgesMS = make(map[string][]float64, len(state.ArrivalAgesMS))
+		for uid, ages := range state.ArrivalAgesMS {
+			instance.ArrivalAgesMS[uid] = slices.Clone(ages[:min(2, len(ages))])
+		}
+	}
 	instance.Allocation.GPUUUID = m.Runtime.GPUUUID
 	instance.Ready = instance.Ready && state.Ready
 	instance.Capacity, instance.MaxBatch, instance.FixedBatchSize = m.MaxQueueRequests, m.MaxBatchSize, m.Policy.FixedBatchSize

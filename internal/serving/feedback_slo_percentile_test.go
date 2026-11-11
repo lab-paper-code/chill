@@ -71,17 +71,17 @@ func TestFeedbackConsumerFullPopulationPercentile(t *testing.T) {
 			settings, snapshot, candidate := feedbackPercentileFixture(tc.n, tc.misses, tc.late, tc.percentile, tc.outcome)
 			result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 			score, estimate := result.Workloads[0], result.SLO[0]
-			if score.Satisfied != tc.met || score.Population != tc.n || score.Completed != tc.n-tc.misses || score.DeadlineDropped+score.Failed+score.LifetimeExpired+score.Unfinished != tc.misses {
+			if score.Satisfied != tc.met || score.Population != tc.n || score.OnTime+score.Late != tc.n-tc.misses || score.Late != tc.late || score.Rejected+score.Failed+score.Timeout+score.Unfinished != tc.misses {
 				t.Fatalf("full request population verdict: want met=%v, got %+v", tc.met, result)
 			}
 			wantFraction := 0.0
 			if tc.n > 0 {
 				wantFraction = float64(tc.misses) / float64(tc.n)
 			}
-			if score.FailureFraction != wantFraction || estimate.Samples != score.Completed {
+			if score.FailureFraction != wantFraction || estimate.Samples != score.OnTime+score.Late {
 				t.Fatalf("failure count or success-only diagnostic changed: %+v", result)
 			}
-			if score.Completed == 0 {
+			if score.OnTime+score.Late == 0 {
 				if score.SuccessQuantileNanos != nil || estimate.ExpectedNanos != nil {
 					t.Fatalf("absent completions acquired fake latency: %+v", result)
 				}
@@ -130,7 +130,7 @@ func TestFeedbackConsumerAllowedTailReachesBothPlannerSearches(t *testing.T) {
 			if err != nil || !keep.feasible || !chosen.feasible || chosen.exclusion != "" || chosen.joules > keep.joules {
 				t.Fatalf("allowed tail lost feasibility or energy order: keep=%+v chosen=%+v err=%v", keep, chosen, err)
 			}
-			if len(chosen.feedback) != 1 || chosen.feedback[0].Failed != 10 || chosen.feedback[0].Completed != 990 {
+			if len(chosen.feedback) != 1 || chosen.feedback[0].Failed != 10 || chosen.feedback[0].OnTime != 990 {
 				t.Fatalf("search discarded failures to become feasible: %+v", chosen)
 			}
 		})

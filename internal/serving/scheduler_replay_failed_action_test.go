@@ -36,7 +36,7 @@ func TestReplayFailedPreparePreservesObservedStateAndBlocksDependentRoute(t *tes
 	}
 
 	result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
-	if result.Workloads[0].Population != 2 || result.Workloads[0].Completed != 2 {
+	if result.Workloads[0].Population != 2 || result.Workloads[0].OnTime+result.Workloads[0].Late != 2 {
 		t.Fatalf("failed prepare or its dependent route interrupted healthy observed supply: %+v", result.Workloads)
 	}
 }
@@ -80,7 +80,7 @@ func TestReplayFailedPrepareLeavesUnroutedRequestsUnfinished(t *testing.T) {
 				}
 			}
 			result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
-			if result.Workloads[0].Population != 1 || result.Workloads[0].Unfinished != 1 || result.Workloads[0].Completed != 0 {
+			if result.Workloads[0].Population != 1 || result.Workloads[0].Unfinished != 1 || result.Workloads[0].OnTime+result.Workloads[0].Late != 0 {
 				t.Fatalf("unrouted pending request must remain unfinished without invalidating replay: %+v", result.Workloads)
 			}
 		})

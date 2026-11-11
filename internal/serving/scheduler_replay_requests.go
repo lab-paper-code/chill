@@ -4,6 +4,8 @@ import (
 	"context"
 	"math"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
@@ -34,7 +36,7 @@ func compareReplayQueued(left, right schedulerReplayQueued) int {
 
 func (s *schedulerReplayState) targetHandles(r *schedulerReplayRequest) bool {
 	for _, i := range s.goal.Instances {
-		if i.WorkloadUID == r.source.Definition.UID && schedulerProfileMatches(r.source.Definition, i.Profile) {
+		if (i.WorkloadUID == r.source.Definition.UID || s.goal.Routing[r.source.Definition.UID][i.ID] > 0) && schedulerProfileMatches(r.source.Definition, i.Profile) {
 			return true
 		}
 	}
@@ -46,7 +48,7 @@ func (s *schedulerReplayState) retainedIngress(i *schedulerReplayInstance) bool 
 		return false
 	}
 	for _, r := range s.live {
-		if r.observed && !r.expired && !r.dispatched && !r.completed && i.config.WorkloadUID == r.source.Definition.UID && schedulerProfileMatches(r.source.Definition, i.config.Profile) && !s.hasRoutedAlternative(r, i) {
+		if r.observed && !r.expired && !r.dispatched && !r.completed && (i.config.WorkloadUID == r.source.Definition.UID || s.snap.Routing[r.source.Definition.UID][i.config.ID] > 0) && schedulerProfileMatches(r.source.Definition, i.config.Profile) && !s.hasRoutedAlternative(r, i) {
 			return true
 		}
 	}
@@ -59,10 +61,13 @@ func (s *schedulerReplayState) hasRoutedAlternative(r *schedulerReplayRequest, r
 		routing = s.applied.Routing
 	}
 	for _, other := range s.instances {
-		if other == retiring || !other.loaded || !other.ready || other.stopped || other.config.WorkloadUID != r.source.Definition.UID || !schedulerProfileMatches(r.source.Definition, other.config.Profile) {
+		if other == retiring || !other.loaded || !other.ready || other.stopped || !schedulerProfileMatches(r.source.Definition, other.config.Profile) {
 			continue
 		}
-		weight := other.config.Weight
+		var weight int32
+		if other.config.WorkloadUID == r.source.Definition.UID {
+			weight = other.config.Weight
+		}
 		if weights, explicit := routing[r.source.Definition.UID]; explicit {
 			weight = weights[other.config.ID]
 		}
@@ -77,16 +82,34 @@ func (s *schedulerReplayState) hasRoutedAlternative(r *schedulerReplayRequest, r
 // the in-flight population rather than the whole window.
 func (s *schedulerReplayState) admitArrivals() {
 	live := s.live[:0]
+	if s.queuedCounts == nil {
+		s.queuedCounts = make(map[string]int)
+	}
+	queued := s.queuedCounts
+	clear(queued)
 	for _, r := range s.live {
 		if !r.completed {
 			live = append(live, r)
+			if !r.dispatched && !r.expired {
+				queued[r.source.Definition.UID]++
+			}
 		}
 	}
 	clear(s.live[len(live):])
 	for ; s.arrived < len(s.requests) && s.requests[s.arrived].arrival <= s.now; s.arrived++ {
-		if r := s.requests[s.arrived]; !r.completed {
-			live = append(live, r)
+		r := s.requests[s.arrived]
+		if r.completed {
+			continue
 		}
+		if !r.observed && !r.dispatched {
+			uid := r.source.Definition.UID
+			if queued[uid] >= int(r.source.Definition.Admission.MaxQueuedRequests) {
+				s.rejectGateway(r)
+				continue
+			}
+			queued[uid]++
+		}
+		live = append(live, r)
 	}
 	s.live = live
 }
@@ -98,20 +121,13 @@ func (s *schedulerReplayState) expireRequests() {
 		}
 		s.capturePotential(r, s.byID[r.source.Instance])
 		r.expired = true
-		kind := "expired-pending"
-		if r.dispatched {
-			kind = "expired-queued"
-		}
-		if r.running {
-			kind = "expired-running"
-		} else if r.returning {
-			kind = "expired-returning"
-		}
+		// A final lifetime timeout is one terminal outcome even while physical
+		// execution or response return continues to hold the executor.
 		key := r.identity
 		if s.out.outcomes[key] == nil {
 			s.out.outcomes[key] = map[string]int{}
 		}
-		s.out.outcomes[key][kind]++
+		s.out.outcomes[key][schedulerOutcomeTimeout]++
 		if !r.running && !r.returning {
 			r.returning = true
 			r.completion = s.now
@@ -162,7 +178,11 @@ func (s *schedulerReplayState) completeExecution() {
 				if s.out.outcomes[key] == nil {
 					s.out.outcomes[key] = map[string]int{}
 				}
-				s.out.outcomes[key]["completed"]++
+				outcome := schedulerOutcomeOnTime
+				if latency > float64(r.source.Definition.SLO.TargetLatency) {
+					outcome = schedulerOutcomeLate
+				}
+				s.out.outcomes[key][outcome]++
 			}
 		}
 	}
@@ -185,48 +205,216 @@ func (s *schedulerReplayState) retainedRouteCredit(uid string, i SchedulerInstan
 }
 
 func (s *schedulerReplayState) routeRequests() {
+	// Match runtime's UID order and two bounded passes across all Workloads.
+	uids := s.dispatchUIDs[:0]
 	for _, r := range s.live {
-		if r.completed || r.expired || r.dispatched || r.arrival > s.now {
-			continue
+		if !r.completed && !r.expired && !r.dispatched {
+			uids = append(uids, r.source.Definition.UID)
 		}
-		uid := r.source.Definition.UID
-		credits := s.routeCredits[uid]
-		if len(credits) != len(s.instances) {
-			credits = make([]int64, len(s.instances))
-			for j, i := range s.instances {
-				credits[j] = s.snap.RoutingCredits[uid][i.config.ID]
-				if s.creditInvalid[uid][i.config.ID] {
-					credits[j] = 0
-				} else if s.routingApplied {
-					credits[j] = s.retainedRouteCredit(uid, i.config, credits[j])
+	}
+	slices.Sort(uids)
+	uids = slices.Compact(uids)
+	s.dispatchUIDs = uids
+	for _, delayed := range [...]bool{false, true} {
+		for _, uid := range uids {
+			for _, r := range s.live {
+				if r.completed || r.expired || r.dispatched || r.arrival > s.now || r.source.Definition.UID != uid || r.gatewayDeferred != delayed {
+					continue
 				}
+				selected, state := s.chooseAdmission(r)
+				if selected < 0 {
+					if state == CodeDeadlineInfeasible && !r.gatewayDeferred {
+						if r.source.Definition.Admission.Policy == AdmissionPolicyDelay {
+							r.gatewayDeferred = true
+						} else {
+							s.rejectGateway(r)
+						}
+					}
+					continue
+				}
+				i := s.instances[selected]
+				r.dispatched = true
+				r.deferred = false // native admission starts normal and rechecks its frozen policy
+				r.source.Instance = i.config.ID
+				r.senderMS = math.Max(0, float64(r.source.Elapsed)+r.preNanos+s.now-r.arrival) / 1e6
+				r.native = s.now
+				i.outstanding++
 			}
-			s.routeCredits[uid] = credits
 		}
+	}
+}
+
+func (s *schedulerReplayState) routeWeight(r *schedulerReplayRequest, i *schedulerReplayInstance) int32 {
+	routes := s.snap.Routing
+	if s.routingApplied {
+		routes = s.applied.Routing
+	}
+	if r.observed && !s.targetHandles(r) {
+		if weight := s.snap.Routing[r.source.Definition.UID][i.config.ID]; weight > 0 {
+			return weight
+		}
+		if i.config.WorkloadUID == r.source.Definition.UID {
+			return i.config.Weight
+		}
+		return 0
+	}
+	if route, ok := routes[r.source.Definition.UID]; ok {
+		return route[i.config.ID]
+	}
+	if i.config.WorkloadUID == r.source.Definition.UID {
+		return i.config.Weight
+	}
+	return 0
+}
+
+func (s *schedulerReplayState) normalUsesInstance(i *schedulerReplayInstance) bool {
+	for _, r := range s.live {
+		if !r.completed && !r.expired && !r.dispatched && !r.gatewayDeferred && s.routeWeight(r, i) > 0 && schedulerProfileMatches(r.source.Definition, i.config.Profile) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *schedulerReplayState) chooseAdmission(r *schedulerReplayRequest) (int, string) {
+	uid := r.source.Definition.UID
+	credits := s.routeCredits[uid]
+	if len(credits) != len(s.instances) {
+		credits = make([]int64, len(s.instances))
 		for j, i := range s.instances {
-			s.weights[j] = i.config.Weight
-			routes := s.snap.Routing
-			if s.routingApplied {
-				routes = s.applied.Routing
+			credits[j] = s.snap.RoutingCredits[uid][i.config.ID]
+			if s.creditInvalid[uid][i.config.ID] {
+				credits[j] = 0
+			} else if s.routingApplied {
+				credits[j] = s.retainedRouteCredit(uid, i.config, credits[j])
 			}
-			if route, ok := routes[r.source.Definition.UID]; ok {
-				s.weights[j] = route[i.config.ID]
-			}
-			if r.observed && !s.targetHandles(r) {
-				s.weights[j] = i.config.Weight
-			}
-			s.available[j] = i.loaded && i.ready && !i.stopped && i.outstanding < i.config.Capacity && i.config.WorkloadUID == uid && schedulerProfileMatches(r.source.Definition, i.config.Profile)
 		}
-		selected := SmoothWeightedRoute(s.weights, credits, s.available)
-		if selected < 0 {
+		s.routeCredits[uid] = credits
+	}
+	known, unknown := false, false
+	selected := -1
+	var earliest time.Duration
+	for j, i := range s.instances {
+		s.weights[j], s.available[j] = s.routeWeight(r, i), false
+		if s.weights[j] <= 0 || !i.loaded || !i.ready || i.stopped || i.config.Terminated || i.outstanding >= i.config.Capacity {
 			continue
 		}
-		i := s.instances[selected]
-		r.dispatched = true
-		r.source.Instance = i.config.ID
-		r.senderMS = math.Max(0, float64(r.source.Elapsed)+r.preNanos+s.now-r.arrival) / 1e6
-		r.native = s.now
-		i.outstanding++
+		if i.config.Profile == nil {
+			unknown = true
+			continue
+		}
+		if !schedulerProfileMatches(r.source.Definition, i.config.Profile) {
+			continue
+		}
+		if r.gatewayDeferred && s.normalUsesInstance(i) {
+			continue
+		}
+		estimate := s.estimateAdmission(i, r)
+		if estimate.FixedBatch {
+			s.available[j] = true
+			if r.gatewayDeferred && selected < 0 {
+				selected = j
+			}
+			continue
+		}
+		if !estimate.Known {
+			unknown = true
+			continue
+		}
+		known = true
+		remaining := float64(r.source.Definition.SLO.TargetLatency) - r.accountedAgeNanos - s.now + r.arrival
+		s.available[j] = r.gatewayDeferred || float64(estimate.Completion) <= remaining
+		if r.gatewayDeferred && (selected < 0 || estimate.Completion < earliest) {
+			selected, earliest = j, estimate.Completion
+		}
+	}
+	if !r.gatewayDeferred {
+		selected = SmoothWeightedRoute(s.weights, credits, s.available)
+	}
+	if selected >= 0 {
+		return selected, "Feasible"
+	}
+	if unknown {
+		return -1, AdmissionUnknown
+	}
+	if known {
+		return -1, CodeDeadlineInfeasible
+	}
+	return -1, "NoCapacity"
+}
+
+func (s *schedulerReplayState) estimateAdmission(i *schedulerReplayInstance, r *schedulerReplayRequest) AdmissionEstimate {
+	if !i.arrivalsKnown && i.policy.FixedBatchSize == 0 {
+		return AdmissionEstimate{}
+	}
+	observed := s.states[:0]
+	for _, q := range i.queue {
+		observed = append(observed, s.nativeRequestState(i, q))
+	}
+	for _, q := range i.batch {
+		observed = append(observed, s.nativeRequestState(i, q))
+	}
+	s.states = observed
+	assignments := s.admissionAssignments[:0]
+	for _, q := range s.live {
+		if q.dispatched && !q.completed && !q.returning && q.source.Instance == i.config.ID && !math.IsInf(q.native, 1) {
+			assignments = append(assignments, s.gatewayRequestState(i, q))
+		}
+	}
+	// Replay's zero-transit assignments share this dispatch timestamp. Runtime
+	// breaks equal dispatch times by request ID, independently of receipt age.
+	slices.SortStableFunc(assignments, func(a, b firstfloor.RequestState) int {
+		return strings.Compare(a.Context.RequestID, b.Context.RequestID)
+	})
+	s.admissionAssignments = assignments
+	in := AdmissionInput{Policy: i.policy, Observed: observed, Assignments: assignments, LastServiceEndAgeNanos: i.idleNanos(s.now), Candidate: s.gatewayRequestState(i, r)}
+	if !admissionExecutorKnown(in) {
+		return AdmissionEstimate{}
+	}
+	return projectAdmission(in, &s.admissionScratch)
+}
+
+func (s *schedulerReplayState) gatewayRequestState(i *schedulerReplayInstance, r *schedulerReplayRequest) firstfloor.RequestState {
+	d := r.source.Definition
+	phase := phaseQueued
+	if r.gatewayDeferred {
+		phase = phaseDeferred
+	}
+	state := firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, AdmissionPolicy: string(d.Admission.Policy), ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: math.Max(0, r.accountedAgeNanos+s.now-r.arrival) / 1e6, CompletionMarginMS: r.marginNanos / 1e6, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase}
+	last, known := 0.0, false
+	if history := i.arrivalTimes[d.UID]; len(history) > 0 {
+		last, known = history[0], true
+	}
+	for _, q := range s.live {
+		if q != r && q.dispatched && !q.completed && !q.returning && q.source.Instance == i.config.ID && q.source.Definition.UID == d.UID && !math.IsInf(q.native, 1) {
+			last, known = max(last, q.native), true
+		}
+	}
+	if known && s.now > last {
+		state.ArrivalRate = 1e9 / (s.now - last)
+	}
+	return s.requestLifetimeState(r, state)
+}
+
+func (s *schedulerReplayState) requestLifetimeState(r *schedulerReplayRequest, state firstfloor.RequestState) firstfloor.RequestState {
+	if !math.IsInf(r.expires, 1) {
+		r.remainingLifetimeMS = max(0, r.expires-s.now) / 1e6
+		state.RemainingLifetimeMS = &r.remainingLifetimeMS
+		state.Context.LifetimeMS = state.Context.SenderElapsedMS + state.ElapsedMS + r.remainingLifetimeMS
+	}
+	return state
+}
+
+func (s *schedulerReplayState) rejectGateway(r *schedulerReplayRequest) {
+	s.capturePotential(r, nil)
+	r.dropped, r.completed, r.completion = true, true, s.now
+	if s.out.outcomes[r.identity] == nil {
+		s.out.outcomes[r.identity] = map[string]int{}
+	}
+	s.out.outcomes[r.identity][schedulerOutcomeRejected]++
+	if s.capacity != nil && !r.capacityMiss {
+		r.capacityMiss = true
+		s.capacity.missed++
 	}
 }
 
@@ -289,7 +477,18 @@ func (s *schedulerReplayState) nativeRequestState(i *schedulerReplayInstance, r 
 	} else if r.deferred {
 		phase = phaseDeferred
 	}
-	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, AdmissionPolicy: string(d.Admission.Policy), ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: r.marginNanos / 1e6, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now + r.nativeAgeNanos) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
+	state := firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, AdmissionPolicy: string(d.Admission.Policy), ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: r.marginNanos / 1e6, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now + r.nativeAgeNanos) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
+	if r.running {
+		state.BatchID, state.BatchSize = 1, len(i.batch)
+		if i.exchangeKnown {
+			i.exchangeElapsed = i.batchElapsed + int64(s.now-i.batchStarted)
+			state.ExchangeElapsedNanos = &i.exchangeElapsed
+			if i.hasBatchIdle {
+				state.PrecedingIdleNanos = &i.batchIdle
+			}
+		}
+	}
+	return s.requestLifetimeState(r, state)
 }
 
 func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
@@ -340,7 +539,7 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 				break
 			}
 			if choice.WaitMS > 0 {
-				i.wake = s.now + choice.WaitMS*1e6
+				i.wake = s.now + math.Max(1, math.Ceil(choice.WaitMS*1e6))
 				break
 			}
 			if choice.Size <= 0 {
@@ -366,6 +565,11 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 				return false
 			}
 			gap := i.idleNanos(s.now)
+			i.batchStarted, i.batchElapsed, i.exchangeKnown = s.now, 0, true
+			i.hasBatchIdle = gap != nil
+			if gap != nil {
+				i.batchIdle = *gap
+			}
 			sample, support, ok := b.ServiceDistribution.Sample(gap, s.rng)
 			s.out.conditional.record(gap, support)
 			if !ok {
@@ -407,12 +611,12 @@ func (s *schedulerReplayState) transitionQueuedChoice(i *schedulerReplayInstance
 		r.deferred = true
 		i.queue = append(i.queue, r)
 	} else {
-		r.dropped, r.completed = true, true
+		r.dropped, r.completed, r.completion = true, true, s.now
 		i.outstanding--
 		if s.out.outcomes[r.identity] == nil {
 			s.out.outcomes[r.identity] = map[string]int{}
 		}
-		s.out.outcomes[r.identity][schedulerOutcomeTimeout]++
+		s.out.outcomes[r.identity][schedulerOutcomeRejected]++
 		if s.capacityWindowFailed() {
 			return false
 		}

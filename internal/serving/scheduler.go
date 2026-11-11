@@ -335,8 +335,11 @@ type SchedulerInstance struct {
 	// LastServiceEndAgeNanos is worker-clock idle age at ObservedAt, not HTTP return age.
 	// Nil means this physical actor has no known completed native exchange.
 	LastServiceEndAgeNanos *int64 `json:"lastServiceEndAgeNanos,omitempty"`
-	IdleMeter              string `json:"idleMeter"`
-	IdleScope              string `json:"idleScope"`
+	// ArrivalAgesMS freezes the native actor's bounded, most-recent-first
+	// accepted arrival history at ObservedAt, including already finished work.
+	ArrivalAgesMS map[string][]float64 `json:"arrivalAgesMS"`
+	IdleMeter     string               `json:"idleMeter"`
+	IdleScope     string               `json:"idleScope"`
 	// UnroutedSince is when the instance last lost every positive route weight
 	// (nil while routed); after one observation window unrouted it is removed.
 	UnroutedSince *time.Time `json:"unroutedSince,omitempty"`

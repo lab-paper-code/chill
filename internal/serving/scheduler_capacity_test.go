@@ -186,8 +186,8 @@ func TestCapacityRejectAtP95PrefersCheaperFeasibleExpansion(t *testing.T) {
 		rejected int
 	}{{slow, 88}, {fast, 34}} {
 		if !tc.result.feasible || len(tc.result.feedback) != 1 || !tc.result.feedback[0].Satisfied ||
-			tc.result.feedback[0].Population != 2400 || tc.result.feedback[0].DeadlineDropped != tc.rejected ||
-			tc.result.feedback[0].Completed != 2400-tc.rejected {
+			tc.result.feedback[0].Population != 2400 || tc.result.feedback[0].Rejected != tc.rejected ||
+			tc.result.feedback[0].OnTime+tc.result.feedback[0].Late != 2400-tc.rejected {
 			t.Fatalf("p95 Reject outcome changed: %+v", tc.result)
 		}
 	}
@@ -233,7 +233,7 @@ func TestCapacityMinimumDemandPreservesCapacityAtNoLoad(t *testing.T) {
 	if w.MinimumDemand != 40 || w.Rate != 40 || w.RoutingRate < w.Rate {
 		t.Fatalf("effective demand and selected capacity must cover the floor: %+v", w)
 	}
-	if len(floored.Target.Feedback) != 1 || floored.Target.Feedback[0].MinimumDemandArrivals != 2400 || floored.Target.Feedback[0].Completed != 2400 || !floored.Target.Feedback[0].Satisfied {
+	if len(floored.Target.Feedback) != 1 || floored.Target.Feedback[0].MinimumDemandArrivals != 2400 || floored.Target.Feedback[0].OnTime != 2400 || !floored.Target.Feedback[0].Satisfied {
 		t.Fatalf("the 40 req/s floor must be consumed as a successful finite replay population: %+v", floored.Target.Feedback)
 	}
 }
@@ -552,8 +552,8 @@ func TestCapacityExactOutcomeTupleIgnoresFinalFlag(t *testing.T) {
 	s, snap, _ := capacityE1Fixture()
 	p := capacityPlannerForTest(t, s, snap)
 	quantile, potential := float64(2*time.Second), .25
-	worse := capacityResult{final: true, joules: 1, feedback: []FeedbackWorkloadScore{{UID: "w1", Population: 10, Completed: 5, DeadlineDropped: 5, FailureFraction: .5, SuccessQuantileNanos: &quantile, SuccessExcess: 1, PotentialExcess: &potential}}}
-	better := capacityResult{joules: 100, feedback: []FeedbackWorkloadScore{{UID: "w1", Population: 10, Completed: 8, DeadlineDropped: 2, FailureFraction: .2, SuccessQuantileNanos: &quantile, SuccessExcess: 1, PotentialExcess: &potential}}}
+	worse := capacityResult{final: true, joules: 1, feedback: []FeedbackWorkloadScore{{UID: "w1", Population: 10, OnTime: 5, Rejected: 5, FailureFraction: .5, SuccessQuantileNanos: &quantile, SuccessExcess: 1, PotentialExcess: &potential}}}
+	better := capacityResult{joules: 100, feedback: []FeedbackWorkloadScore{{UID: "w1", Population: 10, OnTime: 8, Rejected: 2, FailureFraction: .2, SuccessQuantileNanos: &quantile, SuccessExcess: 1, PotentialExcess: &potential}}}
 	p.rankFeedback(&worse)
 	p.rankFeedback(&better)
 	worse.final = true
@@ -561,7 +561,7 @@ func TestCapacityExactOutcomeTupleIgnoresFinalFlag(t *testing.T) {
 		t.Fatalf("Final flag overrode failure tuple: better=%+v worse=%+v", better, worse)
 	}
 	worse.feedback[0].FailureFraction = .2
-	worse.feedback[0].Completed, worse.feedback[0].DeadlineDropped = 8, 2
+	worse.feedback[0].OnTime, worse.feedback[0].Rejected = 8, 2
 	lowerQuantile := float64(1500 * time.Millisecond)
 	better.feedback[0].SuccessQuantileNanos = &lowerQuantile
 	better.feedback[0].SuccessExcess = .5

@@ -411,6 +411,7 @@ func assertNativeCatalogCapacity(t *testing.T, ctx context.Context, profile *ser
 	c := profile.Condition
 	workload := &serving.Definition{Name: frozen.ActiveProtocol.WorkloadName,
 		UID: frozen.ActiveProtocol.WorkloadUID, Generation: 1,
+		Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024},
 		Model: serving.Model{Name: c.LogicalModel, Paths: []serving.ModelPath{{
 			Name: c.Artifact.ExecutionPath, Artifact: c.Artifact.Name, Files: c.Artifact.Files, Image: c.Artifact.Image,
 			RuntimeFamily: c.RuntimeFamily, Backend: c.Backend, Firstfloor: c.Firstfloor,

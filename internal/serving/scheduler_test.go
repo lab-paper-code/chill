@@ -40,7 +40,7 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, Preprocessor: Preprocessor{Name: "pre", Input: []RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &DatasetReference{Name: "data", UID: "data-uid"}, SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}, Admission: Admission{Policy: AdmissionPolicyReject, MaxQueuedRequests: 1024}}
 	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{float64(10 * time.Millisecond)})}}
 	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelFiles: []string{"/model/model"}, Inputs: []string{"x"}, Outputs: []string{"y"}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
-	i := SchedulerInstance{ID: "i1", Node: node.Node, Profile: p, WorkloadUID: d.UID, Allocation: SchedulerAllocation{MemoryBytes: 1000}, Ready: true, Routable: map[string]bool{d.UID: true}, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
+	i := SchedulerInstance{ID: "i1", Node: node.Node, Profile: p, WorkloadUID: d.UID, Allocation: SchedulerAllocation{MemoryBytes: 1000}, Ready: true, Routable: map[string]bool{d.UID: true}, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, ArrivalAgesMS: map[string][]float64{}, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
 	b := NodeBaseline{ID: "unloaded-n1", Node: node.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-n1", Scope: schedulerNodeWallScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle"}}
 	b.Reference.Size = 1
 	p.Evidence[0].Size = 1
@@ -196,6 +196,7 @@ func TestSchedulerWindowPopulationAndZeroSample(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.AutonomousWorkloads = nil
 	d := snap.Workloads[0]
+	d.Admission.Policy = AdmissionPolicyDelay // this regression measures retained late timing
 	start := snap.ObservationEnd.Add(-s.ObservationWindow)
 	snap.Arrivals = []SchedulerArrival{{At: start.Add(-time.Nanosecond), Definition: d, Accepted: true}, {At: start, Definition: d, Accepted: true}, {At: start.Add(time.Millisecond), Outcome: "malformed"}, {At: snap.ObservationEnd, Definition: d, Accepted: true}}
 	snap.At = snap.At.Add(20 * time.Millisecond)
@@ -634,13 +635,13 @@ func TestSchedulerExpiredLifetimesDoNotBecomeCheapSuccessfulSamples(t *testing.T
 	}
 	keep := schedulerKeepForTest(t, s, snap)
 	e := schedulerRequireEstimate(t, keep, d.UID)
-	if keep.Status != SchedulerStatusOverload || e.ExpectedNanos != nil || e.Samples != 0 || e.PredictedOutcomes["expired-running"] != 1 || e.PredictedOutcomes["expired-queued"] != 1 || math.Abs(*keep.ExpectedJoules-2.2) > 1e-9 {
+	if keep.Status != SchedulerStatusOverload || e.ExpectedNanos != nil || e.Samples != 0 || e.PredictedOutcomes["timeout"] != 2 || math.Abs(*keep.ExpectedJoules-2.2) > 1e-9 {
 		t.Fatalf("expired running work stays physical; queued expires; no successful fake zero percentile: %+v", keep)
 	}
 	snap.Outstanding = nil
 	snap.Arrivals = []SchedulerArrival{{ID: "trace", At: snap.At.Add(-s.ObservationWindow), Definition: d, Compute: true, Lifetime: life}}
 	pe := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), d.UID)
-	if pe.PredictedOutcomes["expired-running"] != 1 {
+	if pe.PredictedOutcomes["timeout"] != 1 {
 		t.Fatalf("arrival lifetime must freeze into repeated demand: %+v", pe)
 	}
 	snap.Arrivals[0].Lifetime = 0
@@ -648,7 +649,7 @@ func TestSchedulerExpiredLifetimesDoNotBecomeCheapSuccessfulSamples(t *testing.T
 	d.Admission.Policy = AdmissionPolicyDelay
 	unlimited := schedulerKeepForTest(t, s, snap)
 	ue := schedulerRequireEstimate(t, unlimited, d.UID)
-	if unlimited.Status != SchedulerStatusOverload || ue.ExpectedNanos == nil || ue.Samples != 1 || ue.PredictedOutcomes["expired-running"] != 0 {
+	if unlimited.Status != SchedulerStatusOverload || ue.ExpectedNanos == nil || ue.Samples != 1 || ue.PredictedOutcomes["timeout"] != 0 {
 		t.Fatalf("SLO is never a request lifetime: %+v", unlimited)
 	}
 }

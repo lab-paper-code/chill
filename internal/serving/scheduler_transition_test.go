@@ -171,7 +171,7 @@ func TestConsumedPolicyAndActualTargetChangesStillReplanRoute(t *testing.T) {
 				target.Routing = map[string]map[string]int32{"w1": {snapshot.Instances[0].ID: 1}}
 			}
 			target.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target)
-			if updated := requireTransitionAction(t, target.Actions, schedulerActionRoute); updated.ID == completed.ID || updated.Status != schedulerActionPlanned {
+			if updated := requireTransitionAction(t, target.Actions, schedulerActionRoute); change == "deadline" && (updated.ID != completed.ID || updated.Status != schedulerActionComplete) || change != "deadline" && (updated.ID == completed.ID || updated.Status != schedulerActionPlanned) {
 				t.Fatalf("real consumed quantity/target change reused an old completed route: %+v", updated)
 			}
 		})
@@ -387,7 +387,7 @@ func TestOverlappingResourceChangeDrainsAcceptedIngressBeforeMeasuredBreak(t *te
 	d := snapshot.Workloads[0]
 	snapshot.Outstanding = []SchedulerRequest{{ID: "accepted", Definition: d, ReceivedAt: snapshot.At, Phase: "pending"}}
 	result := schedulerReplayForTest(settings, snapshot, target)
-	if len(result.reasons) != 0 || len(result.samples[d.Identity()]) != 1 || result.outcomes[d.Identity()]["completed"] != 1 {
+	if len(result.reasons) != 0 || len(result.samples[d.Identity()]) != 1 || result.outcomes[d.Identity()]["onTime"]+result.outcomes[d.Identity()]["late"] != 1 {
 		t.Fatalf("accepted request did not complete exactly once: %+v", result)
 	}
 	for _, cost := range snapshot.Costs {
@@ -457,6 +457,7 @@ func TestLegalOverlappingResourceDAGStillReportsMeasuredOutageOverload(t *testin
 	snapshot.Costs[0].Trials[0] = OperationTrial{Duration: 28 * time.Second, Joules: 560}
 	snapshot.Costs[1].Trials[0] = OperationTrial{Duration: 9 * time.Second, Joules: 180}
 	d := snapshot.Workloads[0]
+	d.Admission.Policy = AdmissionPolicyDelay // expose the outage's late completion, not gateway rejection
 	snapshot.Arrivals = []SchedulerArrival{{ID: "arrival", Definition: d, Compute: true, At: snapshot.At.Add(-settings.ObservationWindow + time.Millisecond)}}
 	evaluated, err := schedulerReplayEstimate(context.Background(), settings, snapshot, target, schedulerTestSeed, nil, nil)
 	if err != nil {

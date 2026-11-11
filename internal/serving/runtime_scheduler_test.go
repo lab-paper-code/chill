@@ -3,6 +3,8 @@ package serving
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"reflect"
 	"slices"
 	"testing"
@@ -165,6 +167,7 @@ func TestSchedulerOutstandingUsesCurrentReadTimeAfterCaptureIO(t *testing.T) {
 	settings.AutonomousWorkloads = nil
 	d := snapshot.Workloads[0]
 	d.SLO.TargetLatency = time.Second
+	d.Admission.Policy = AdmissionPolicyDelay // preserve the captured, already-late obligation
 	cutoff := snapshot.At
 	readAt := cutoff.Add(3 * time.Second)
 	clock := func() time.Time { return readAt }
@@ -298,7 +301,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 	}
 	state.initializeInstances()
 	state.initializeOutstanding()
-	next := &schedulerReplayRequest{source: SchedulerRequest{ID: "next", Definition: d}, identity: d.Identity()}
+	next := &schedulerReplayRequest{source: SchedulerRequest{ID: "next", Definition: d, ReceivedAt: snapshot.At}, identity: d.Identity(), native: math.Inf(1), expires: math.Inf(1)}
 	state.requests = append(state.requests, next)
 	state.admitArrivals()
 	state.routeRequests()
@@ -833,7 +836,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	}
 	for range 8 {
 		for _, d := range snapshot.Workloads {
-			replay.requests = append(replay.requests, &schedulerReplayRequest{source: SchedulerRequest{Definition: d}, identity: d.Identity()})
+			replay.requests = append(replay.requests, &schedulerReplayRequest{source: SchedulerRequest{ID: fmt.Sprintf("request-%d", len(replay.requests)), Definition: d, ReceivedAt: snapshot.At}, identity: d.Identity(), native: math.Inf(1), expires: math.Inf(1)})
 		}
 	}
 

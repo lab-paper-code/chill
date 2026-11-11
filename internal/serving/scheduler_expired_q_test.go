@@ -123,7 +123,7 @@ func TestPlannerRunningAndExpiredOwnershipDoNotTriggerExpansion(t *testing.T) {
 			}
 			if tc.expired {
 				score := got.Keep.Feedback[0]
-				if score.LifetimeExpired != tc.count || score.Satisfied || score.Population < tc.count {
+				if score.Timeout != tc.count || score.Satisfied || score.Population < tc.count {
 					t.Fatalf("expired ownership lost its finite failure outcomes: %+v", score)
 				}
 			}
