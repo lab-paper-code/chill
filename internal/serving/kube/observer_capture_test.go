@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"net/url"
 	"runtime"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -267,19 +269,63 @@ func TestObserverCaptureIndependentRefreshAndWatchRestart(t *testing.T) {
 	c := schedulerCaptureClockController(t, nil)
 	api := newCapturePodAPI(t, c)
 	pod, _, _, _ := observerSourceFixture()
+	foreign := captureForeignPod("13")
+	terminal := foreign.DeepCopy()
+	terminal.Name, terminal.UID, terminal.Status.Phase = "finished-control", "finished-control", core.PodSucceeded
+	var rows []observation.ClusterObservation
+	var rowsMu sync.Mutex
+	c.observer.config.SelectClusterPod = func(*core.Pod) bool { return true }
+	c.observer.config.OnCluster = func(row observation.ClusterObservation) error {
+		rowsMu.Lock()
+		defer rowsMu.Unlock()
+		rows = append(rows, row)
+		return nil
+	}
+	assertSelector := func(want string) {
+		t.Helper()
+		queries := api.inventoryQueries()
+		if len(queries) != 1 {
+			t.Fatalf("expected one inventory List: %v", queries)
+		}
+		query, err := url.Parse(queries[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if query.Path != "/api/v1/pods" || query.Query().Get("fieldSelector") != want {
+			t.Fatalf("inventory selector: got %q, want %q", queries[0], want)
+		}
+	}
+	assertRow := func(uid, event, phase string) {
+		t.Helper()
+		rowsMu.Lock()
+		defer rowsMu.Unlock()
+		for _, row := range rows {
+			if row.Pod != nil && row.Pod.UID == uid && row.Event == event && row.Pod.Phase == phase {
+				return
+			}
+		}
+		t.Fatalf("missing %s %s %s observation: %+v", uid, event, phase, rows)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	api.setPods(pod)
+	api.setPods(pod, foreign, terminal)
 	if err := c.observer.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	api.setPods(pod)
+	assertSelector("")
+	assertRow(string(terminal.UID), "observed", string(core.PodSucceeded))
+	api.setPods(pod, foreign, terminal)
 	if err := c.observer.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if queries := api.inventoryQueries(); len(queries) != 1 || !strings.Contains(queries[0], "fieldSelector=") {
-		t.Fatalf("independent refresh lost existing filtered-list semantics: %v", queries)
-	}
+	assertSelector(nonTerminalPodSelector)
+	foreign.Status.Phase = core.PodFailed
+	w := watch.NewRaceFreeFake()
+	w.Modify(foreign)
+	w.Stop()
+	c.observer.wg.Add(1)
+	c.observer.watchPods(w)
+	assertRow(string(foreign.UID), clusterEventChanged, string(core.PodFailed))
 	c.observer.mu.Lock()
 	c.observer.podWatch.Stop()
 	c.observer.mu.Unlock()
@@ -295,11 +341,9 @@ func TestObserverCaptureIndependentRefreshAndWatchRestart(t *testing.T) {
 		}
 		runtime.Gosched()
 	}
-	api.setPods(pod)
+	api.setPods(pod, foreign, terminal)
 	if err := c.observer.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if queries := api.inventoryQueries(); len(queries) != 1 || strings.Contains(queries[0], "fieldSelector=") {
-		t.Fatalf("watch restart failed to restore full terminal baseline: %v", queries)
-	}
+	assertSelector("")
 }

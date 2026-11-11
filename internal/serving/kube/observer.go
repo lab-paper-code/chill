@@ -263,9 +263,9 @@ func (o *Observer) refreshLocked(ctx context.Context) (result observerRefresh, e
 		return result, o.refreshFailure(err)
 	}
 	podOptions := metav1.ListOptions{}
-	if o.podWatch != nil && o.config.OnCluster == nil {
-		// Restore every old executor on startup/watch restart. Afterwards the
-		// retained-source GET below still proves exact terminal containers.
+	if o.podWatch != nil {
+		// Restore the full baseline on startup/watch restart. Afterwards the
+		// watch records terminal transitions and retained-source GET proves containers.
 		podOptions.FieldSelector = nonTerminalPodSelector
 	}
 	listStarted = time.Now()
