@@ -26,7 +26,7 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 		var err error
 		window, err = c.observationLog.LoadWindowTimed(ctx, now.Add(-config.Settings.ObservationWindow), now, timing)
 		if timing != nil {
-			timing.Window = time.Since(windowStarted)
+			timing.Window += time.Since(windowStarted)
 		}
 		if err != nil {
 			return serving.SchedulerSnapshot{}, err
@@ -48,13 +48,13 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 	// Historical reads must finish before refreshing authoritative live sources.
 	refreshed, err := c.observer.refresh(ctx)
 	if timing != nil {
-		timing.RefreshList = refreshed.listNanos
-		timing.RefreshNodes = refreshed.nodesNanos
-		timing.RefreshPods = refreshed.podsNanos
-		timing.RefreshResources = refreshed.resourcesNanos
-		timing.RefreshDeviceClasses = refreshed.classesNanos
-		timing.RefreshServices = refreshed.servicesNanos
-		timing.SourceProbe = refreshed.sourceProbeNanos
+		timing.RefreshList += refreshed.listNanos
+		timing.RefreshNodes += refreshed.nodesNanos
+		timing.RefreshPods += refreshed.podsNanos
+		timing.RefreshResources += refreshed.resourcesNanos
+		timing.RefreshDeviceClasses += refreshed.classesNanos
+		timing.RefreshServices += refreshed.servicesNanos
+		timing.SourceProbe += refreshed.sourceProbeNanos
 	}
 	if err != nil {
 		return s, err
@@ -141,6 +141,54 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 	}
 	c.releaseObservedScopes(nodes.Items, pods.Items, physicalStates, now)
 	return s, nil
+}
+
+// Function ports do not carry admission policy. All accepted values do.
+func schedulerApprovalConfiguration(config SchedulerControllerConfig) SchedulerControllerConfig {
+	config.OnDecision, config.OnAction = nil, nil
+	config.DispatchOccupancySnapshot, config.MeterSource = nil, nil
+	return config
+}
+
+// schedulerApprovalInputs retains admission authority, not advancing observation
+// clocks or historical replay demand. A changed input discards the evaluation;
+// approval never silently rebases a target onto a different physical plan.
+func schedulerApprovalInputs(s serving.SchedulerSnapshot) serving.SchedulerSnapshot {
+	s = serving.SchedulerSnapshot{
+		Nodes: slices.Clone(s.Nodes), Instances: slices.Clone(s.Instances),
+		Options: slices.Clone(s.Options), Workloads: s.Workloads, Routing: s.Routing,
+		Costs: s.Costs, Baselines: s.Baselines,
+		DispatchOccupancy: s.DispatchOccupancy,
+		Actions:           slices.Clone(s.Actions), Reservations: slices.Clone(s.Reservations),
+	}
+	slices.SortFunc(s.Nodes, func(a, b serving.SchedulerNode) int { return strings.Compare(a.Node.UID, b.Node.UID) })
+	for i := range s.Nodes {
+		s.Nodes[i].ObservedAt = time.Time{}
+	}
+	withoutClock := func(instance serving.SchedulerInstance) serving.SchedulerInstance {
+		instance.ObservedAt = time.Time{}
+		instance.LastServiceEndAgeNanos, instance.ArrivalAgesMS = nil, nil
+		return instance
+	}
+	for i := range s.Instances {
+		s.Instances[i] = withoutClock(s.Instances[i])
+	}
+	for i := range s.Options {
+		s.Options[i].Instance = withoutClock(s.Options[i].Instance)
+	}
+	for i := range s.Actions {
+		s.Actions[i].Elapsed = 0
+	}
+	for i := range s.Reservations {
+		r := &s.Reservations[i]
+		r.Nodes = slices.Clone(r.Nodes)
+		slices.SortFunc(r.Nodes, func(a, b serving.NodeReference) int { return strings.Compare(a.UID, b.UID) })
+		r.WorkloadUIDs, r.PodUIDs, r.Instances = slices.Clone(r.WorkloadUIDs), slices.Clone(r.PodUIDs), slices.Clone(r.Instances)
+		slices.Sort(r.WorkloadUIDs)
+		slices.Sort(r.PodUIDs)
+		slices.Sort(r.Instances)
+	}
+	return s
 }
 
 func capturePreparationOptions(s *serving.SchedulerSnapshot, profiles []serving.Profile, profileByID map[string]*serving.Profile, preparations map[string]servingstate.PrepareSpec, now time.Time) {

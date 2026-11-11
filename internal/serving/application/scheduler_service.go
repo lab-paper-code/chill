@@ -390,24 +390,25 @@ func (o *SchedulerService) restartPower(config SchedulerConfiguration) {
 	}
 }
 
-// controlRound measures the periodic call, including admission and both sides
-// of the application lock. Completion-event submission follows the boundary.
+// controlRound measures periodic admission and evaluation. The application lock
+// protects controller lookup, never the long-running control call.
 func (o *SchedulerService) controlRound(ctx context.Context) time.Time {
 	started := time.Now()
 	event := observation.SchedulerControlObservation{Scope: "round", StartedAt: started.UTC(), Phase: "complete"}
 	o.Lock.Lock()
+	controller := o.Controller
+	o.Lock.Unlock()
 	admitStarted := time.Now()
 	event.LockWait = admitStarted.Sub(started)
-	if err := o.Controller.Admit(ctx); err != nil {
+	if err := controller.Admit(ctx); err != nil {
 		event.AdmitError = err.Error()
 		ctrl.Log.Error(err, "admit measurements")
 	}
 	tickStarted := time.Now()
 	event.Admit = tickStarted.Sub(admitStarted)
 	event.TickAt = tickStarted.UTC()
-	_, err := o.Controller.Tick(ctx, event.TickAt)
+	_, err := controller.Tick(ctx, event.TickAt)
 	event.Tick = time.Since(tickStarted)
-	o.Lock.Unlock()
 	finished := time.Now()
 	event.FinishedAt, event.Elapsed = finished.UTC(), finished.Sub(started)
 	if err != nil {
@@ -438,30 +439,27 @@ func (o *SchedulerService) Start() {
 			started := o.controlRound(callCtx)
 			cancel()
 			timer := time.NewTimer(max(time.Until(started.Add(o.Controller.Settings().ControlInterval)), 0))
-			waiting := true
-			for waiting {
-				// Give the periodic deadline priority over a burst of completions.
-				select {
-				case <-timer.C:
-					waiting = false
-					continue
-				default:
-				}
-				select {
-				case <-o.ctx.Done():
-					timer.Stop()
-					return
-				case <-timer.C:
-					waiting = false
-				case <-o.Controller.Completions():
-					callCtx, cancel := context.WithTimeout(o.ctx, o.opts.RequestTimeout)
-					o.Lock.Lock()
-					err := o.Controller.Continue(callCtx, time.Now().UTC())
-					o.Lock.Unlock()
-					cancel()
-					if err != nil {
-						ctrl.Log.Error(err, "continue authorized scheduler transition")
-					}
+			select {
+			case <-o.ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}()
+	o.wg.Add(1)
+	go func() {
+		defer o.wg.Done()
+		for {
+			select {
+			case <-o.ctx.Done():
+				return
+			case <-o.Controller.Completions():
+				callCtx, cancel := context.WithTimeout(o.ctx, o.opts.RequestTimeout)
+				err := o.Controller.Continue(callCtx, time.Now().UTC())
+				cancel()
+				if err != nil {
+					ctrl.Log.Error(err, "continue authorized scheduler transition")
 				}
 			}
 		}

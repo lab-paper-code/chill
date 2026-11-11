@@ -224,6 +224,9 @@ func (c *reservationState) snapshotLocked() serving.SchedulerSnapshot {
 }
 
 func (c *reservationState) publishSnapshotLocked(snapshot *serving.SchedulerSnapshot) {
+	if snapshot.At.Before(c.state.Snapshot.At) {
+		return
+	}
 	c.state.Snapshot = *snapshot
 	for uid, writers := range c.routeWriters {
 		if !slices.ContainsFunc(snapshot.Workloads, func(workload *serving.Definition) bool { return workload != nil && workload.UID == uid }) {
@@ -239,6 +242,9 @@ func (c *reservationState) publishSnapshotLocked(snapshot *serving.SchedulerSnap
 }
 
 func (c *reservationState) publishDecisionLocked(snapshot *serving.SchedulerSnapshot, decision *serving.SchedulerDecision) {
+	if snapshot.At.Before(c.state.Snapshot.At) {
+		return
+	}
 	c.publishSnapshotLocked(snapshot)
 	c.state.Decision = *decision
 	c.markOverloadPrepares(*decision)

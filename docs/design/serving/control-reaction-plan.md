@@ -86,6 +86,31 @@ executor는 100% 바빴지만, 실행한 요청이 모두 이미 SLO를 지킬 �
 
 이 직렬화는 정합성에도 쓰인다. Tick은 계산 뒤 `publishDecisionLocked`로 snapshot을 게시하고, `publishSnapshotLocked`는 그 snapshot에 없는 instance의 route-writer fence를 지운다. `startTransition`은 게시된 snapshot의 routing을 admission `Before`로 고정한다. 설정 변경도 `tickMu` 직렬화에 기댄다. Ready-subset 진행은 `SchedulerReadyExpansion`으로 현재 조건을 다시 평가한다. lock을 푸는 것만으로는 분리되지 않는다. background observer·prepare·route·Tick·Continue가 공유하는 `refreshMu` 대기는 아직 측정하지 않았다.
 
+2026-11-12 A1 진행·평가 분리 구현:
+
+- 주기 admission/Tick과 completion/Continue를 별도 goroutine으로 실행한다.
+  application lock은 controller 조회에만 쓰고, `tickMu`는 capture와 승인·기록·launch를
+  직렬화한다. `EvaluateScheduler`는 불변 capture를 받아 두 lock 밖에서 실행한다.
+- 승인은 최신 설정·예약 설정·preparation과 게시 snapshot 시각을 확인하고, 물리
+  동작을 승인하거나 기존 owner를 진행할 때 실물·예약을 다시 capture한다. 순수
+  관측/Keep round는 전체 List를 반복하지 않는다. 물리 admission 입력이 달라졌으면
+  평가를 버리고 다음 Tick에서 다시 판단한다. 새 target은 최신 native idle·arrival
+  이력까지 포함한 `SchedulerTargetAdmission`으로 재검증한다. 이 exact replay도
+  lock 밖에서 실행하며, 다시 lock을 잡은 뒤 최신 설정·진행·실물을 확인한다.
+  target을 새 실물 상태로 조용히 바꾸지 않는다. executor 완료에 따른 ledger
+  변경도 게시 직전 mutex 아래에서 다시 확인한다.
+- decision 기록에는 원래 평가 입력을 남긴다. 현재 state에는 승인 시점의 새 snapshot을
+  게시한다. Continue가 그사이 진행했으면 평가를 게시하거나 launch하지 않으므로
+  과거 snapshot이 writer fence나 admission `Before`를 되돌리지 않는다.
+  snapshot 게시 함수도 시각 역행을 거부한다.
+- Continue의 Ready-expansion은 기존 `SchedulerReadyExpansion`과 최신 window·실물
+  검증을 유지한다. decision/action 기록 선행 조건도 유지한다. 두 capture의 timing
+  span은 누적한다. 승인용 실물 재조회, 기록, Ready-expansion과 `refreshMu` 경합은
+  여전히 직렬 구간이며, 실제 대기 기여도와 p50/p95는 다음 실측에서 확인한다.
+
+회귀는 평가 진입을 context 경계에서 정지시킨 채 prepare 완료→실제 route ACK,
+설정 수용, 예약·실물 변경, 새 writer fence 보존과 snapshot 시각 단조성을 검사한다.
+
 ### 2.5 매 주기·매 stage 반복되는 전체 재조회 — 확정
 
 | 항목 | 비용 | 원인 |

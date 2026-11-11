@@ -171,3 +171,20 @@ func TestSchedulerControlRoundRecordedDecisionCancellation(t *testing.T) {
 		t.Fatalf("canceled round inferred disposition or launched work: round=%+v tick=%+v", round, tick)
 	}
 }
+
+func TestSchedulerControlRoundDoesNotHoldApplicationLockDuringEvaluation(t *testing.T) {
+	service := schedulerTimingService(t)
+	config := servingkube.SchedulerControllerConfig{Settings: service.Controller.Settings(),
+		OnDecision: func(serving.SchedulerDecision, serving.SchedulerSnapshot) error {
+			if !service.Lock.TryLock() {
+				t.Error("control round held application lock through evaluation and recording")
+			} else {
+				service.Lock.Unlock()
+			}
+			return nil
+		}}
+	if err := service.Controller.SetConfiguration(config); err != nil {
+		t.Fatal(err)
+	}
+	service.controlRound(context.Background())
+}

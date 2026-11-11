@@ -15,8 +15,8 @@ import (
 // Completions coalesces action outcomes; receiving is not proof of success.
 func (c *SchedulerController) Completions() <-chan struct{} { return c.completions }
 
-// Continue advances only already admitted owners. It shares Tick's serialization
-// with configuration changes, but never evaluates or admits another candidate.
+// Continue advances only already admitted owners. It serializes capture and
+// approval with configuration changes, without waiting for Tick's evaluation.
 func (c *SchedulerController) Continue(ctx context.Context, now time.Time) (err error) {
 	started := time.Now()
 	event := observation.SchedulerControlObservation{Scope: "continue", TickAt: now, StartedAt: started.UTC(), Phase: "lock"}
