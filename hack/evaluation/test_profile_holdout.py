@@ -57,14 +57,14 @@ def raw_fixture(trial, service_ms=10):
                           'measurement': {'batch': batch, 'sloPercentile': 97, 'sloTargetLatencyNanos': 1_000_000_000,
                                           'operatingPoints': {'requestLifetimeSeconds': 60,
                                                               'deliveryMarginMilliseconds': 0}}},
-            'runtime': {'schemaVersion': 'chill.dacs.io/batch-characterization.v1alpha13',
+            'runtime': {'schemaVersion': 'chill.dacs.io/batch-characterization.v1alpha13', 'runtimeVersion': 'ortcpu-v1',
                         'measurementStartedAt': stamp(0), 'measurementEndedAt': stamp(40), 'phases': phases},
             'metrics': {'samples': [{'observedAt': stamp(i), 'watts': 14} for i in range(41)]}}
 
 
 def idle_fixture(trial='idle'):
     return {'schemaVersion': 'chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha8', 'podUID': trial,
-            'runtime': {'measurementStartedAt': stamp(0), 'measurementEndedAt': stamp(10),
+            'runtime': {'runtimeVersion': 'ortcpu-v1', 'measurementStartedAt': stamp(0), 'measurementEndedAt': stamp(10),
                         'inferenceCountAfterModelLoad': 0, 'modelResidentAtEnd': True},
             'metrics': {'samples': [{'observedAt': stamp(i), 'watts': 10} for i in range(11)]}}
 
@@ -152,6 +152,21 @@ class HoldoutTests(unittest.TestCase):
         idle['runConfig'] = {'images': {'runtime': 'runtime-image', 'artifact': 'artifact-b'}}
         bridge = mock.Mock()
         with self.assertRaisesRegex(ValueError, 'artifact'):
+            analysis.analyze([active], [idle], bridge, 3, 1, .95, 0, 2, 2, {})
+        bridge.call.assert_not_called()
+
+    def test_observed_runtime_versions_cannot_share_active_or_idle_evidence(self):
+        active, other = raw_fixture('a'), raw_fixture('b')
+        for raw in (active, other):
+            raw['runConfig']['images'] = {'runtime': 'runtime:tag', 'artifact': 'artifact:tag'}
+        other['runtime']['runtimeVersion'] = 'ortcpu-v2'
+        with self.assertRaisesRegex(ValueError, 'runtimeVersion'):
+            analysis.validate_runs([active, other])
+        idle = idle_fixture()
+        idle['runConfig'] = copy.deepcopy(active['runConfig'])
+        idle['runtime']['runtimeVersion'] = 'ortcpu-v2'
+        bridge = mock.Mock()
+        with self.assertRaisesRegex(ValueError, 'runtimeVersion'):
             analysis.analyze([active], [idle], bridge, 3, 1, .95, 0, 2, 2, {})
         bridge.call.assert_not_called()
 

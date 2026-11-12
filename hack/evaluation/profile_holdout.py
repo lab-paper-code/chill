@@ -79,10 +79,11 @@ def validate_runs(runs):
                 len(phases) < 3 or any(p['kind'] != 'utilization' for p in phases[2:])):
             raise ValueError('sparse, saturation and utilization phases required')
         condition = (config.get('state'), config.get('targetNode', {}).get('uid'),
-                     config.get('images', {}).get('runtime'), config.get('images', {}).get('artifact'), measurement,
+                     config.get('images', {}).get('runtime'), config.get('images', {}).get('artifact'),
+                     runtime['runtimeVersion'], measurement,
                      [(p['id'], p['kind'], p.get('utilization')) for p in phases])
         if reference is not None and condition != reference:
-            raise ValueError('raw trials must share execution, node, runtime/artifact images, measurement and phase conditions')
+            raise ValueError('raw trials must share execution, node, runtime/artifact images, runtimeVersion, measurement and phase conditions')
         reference = condition
         batch_ids, request_ids, phase_ids = set(), set(), set()
         samples(raw)
@@ -322,6 +323,8 @@ def analyze(runs, idle, bridge, repetitions, seed, confidence, uncertainty, roll
     for raw in idle:
         config = raw.get('runConfig', {})
         active = runs[0]['runConfig']
+        if raw['runtime']['runtimeVersion'] != runs[0]['runtime']['runtimeVersion']:
+            raise ValueError('idle evidence must share active runtimeVersion')
         for key in ('state', 'targetNode', 'images'):
             if key == 'targetNode':
                 matches = config.get(key, {}).get('uid') == active.get(key, {}).get('uid')

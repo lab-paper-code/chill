@@ -146,6 +146,7 @@ flowchart LR
 - 포화 단계 `cycle = S + B×d`. 포화 단계는 Poisson rate가 없어 전력률 예측에서 제외한다.
 - 부하 중단 뒤 노드 전력이 안정되는 시간(유휴 정착 시간 입력의 근거).
 - C1(a)는 요청 지연·service 분포 재생을 하지 않는다. 기존 export에 전체 재생 모집단이 없으며 제품 경계를 늘리지 않는다.
+- 같은 image 태그라도 관측 `runtime.runtimeVersion`이 다른 active trial·idle evidence는 합치지 않는다.
 
 **serving(E5 수용 실측)**
 - 같은 조건 대조(C1)의 serving/profile 실행시간 비를 보고한다. genesis2 IC CUDA 배치 1·2, jetson-nano PLC, jetsono PLC를 포함한다.
