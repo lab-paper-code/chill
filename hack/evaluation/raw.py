@@ -4,6 +4,7 @@
 RequestRow follows internal/serving/observation_log*.go.
 HTTP finals are returned verbatim; late native records never amend them. All refs
 are one-based uncompressed JSONL line numbers in the immutable collected files.
+Native diagnostic progress distinguishes rows; exact repeated facts remain deduped.
 """
 import argparse
 from collections import Counter, defaultdict
@@ -17,6 +18,7 @@ import re
 import sys
 
 import evidence_io
+import request_analysis
 
 _PRIVATE = 'PRIVATE_OPERATIONAL_ONLY'
 _REQUEST_CACHE = None
@@ -185,7 +187,7 @@ def _digest(row):
     # Only facts consumed by request indexing/judgment distinguish duplicate rows.
     fields = ('workloadUID', 'requestID', 'kind')
     if row.get('kind') == 'native':
-        fields += ('nativeOutcome',)
+        fields += (*request_analysis.DIAGNOSTIC_FIELDS, 'nativeExecutionComplete', 'nativeFinishedAt')
     else:
         fields += ('receivedAt', 'definitionID')
         if row.get('kind') == 'final':

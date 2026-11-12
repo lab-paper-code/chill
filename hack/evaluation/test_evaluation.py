@@ -226,6 +226,64 @@ class EvaluationTests(unittest.TestCase):
                 self.assertEqual(result['quarantinedRequestIDs'], ['r0'] if conflict else [])
                 self.assertEqual(indexed['summary']['duplicateRows'], 1 if conflict else 2)
 
+    def test_raw_native_diagnostic_progress_survives_dedup_without_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            final = {'workloadUID': 'workload', 'requestID': 'r0', 'kind': 'final',
+                     'definitionID': 'definition', 'receivedAt': '2026-11-03T00:00:01Z',
+                     'outcome': 'timeout', 'executionComplete': False, 'elapsedNanos': 100}
+            queued = {'workloadUID': 'workload', 'requestID': 'r0', 'kind': 'native'}
+            deferred = {**queued, 'nativeDeferredAt': '2026-11-03T00:00:02Z'}
+            progressing = {**deferred, 'nativeHTTP': {'enqueueNanos': 10}}
+            elapsed = {**progressing, 'nativeElapsedMS': 0.000020}
+            waiting = {**elapsed, 'executorWaitNanos': 15}
+            native_rows = [queued, deferred, progressing, elapsed, waiting]
+            orphan_rows = [{**row, 'requestID': 'orphan'} for row in (queued, deferred)]
+            marker_rows = [
+                {**queued, 'requestID': 'marker-only', 'nativeExecutionComplete': False},
+                {**queued, 'requestID': 'marker-only', 'nativeExecutionComplete': True},
+                {**queued, 'requestID': 'marker-only', 'nativeExecutionComplete': True,
+                 'nativeFinishedAt': '2026-11-03T00:00:02Z'}]
+            source = root / 'obs/20261103T00/requests.jsonl.gz'
+            source.parent.mkdir(parents=True)
+            with gzip.open(source, 'wt') as stream:
+                for row in [final, final, *native_rows, waiting, *orphan_rows, *marker_rows]:
+                    stream.write(json.dumps(row) + '\n')
+            evidence_io.save(root / 'raw-source-index.json', {
+                'complete': True, 'requestedHours': ['20261103T00'], 'supportingHours': [],
+                'requestPopulation': {'startUTC': START, 'endUTC': END, 'drainedUTC': END},
+                'sources': [{'path': str(source), 'hour': '20261103T00', 'stream': 'requests',
+                             'bytes': source.stat().st_size}]})
+            raw.release_request_cache()
+            self.addCleanup(raw.release_request_cache)
+            indexed = raw.index_requests(root, 'workload', START, END, approved_root=root)
+            self.assertEqual([record['row'] for record in indexed['nativeRecords']['r0']], native_rows)
+            self.assertEqual([record['row'] for record in indexed['nativeRecords']['orphan']], orphan_rows)
+            self.assertEqual([record['row'] for record in indexed['nativeRecords']['marker-only']], marker_rows)
+            facts = request_analysis.request_diagnostics(indexed['finals']['r0'], indexed['nativeRecords']['r0'])
+            self.assertEqual(facts['nativeDeferredAt'], deferred['nativeDeferredAt'])
+            self.assertEqual(facts['fieldSources']['nativeDeferredAt'], 'nativeSupplement')
+            self.assertEqual(facts['nativeHTTP'], {'enqueueNanos': 10})
+            self.assertEqual(facts['nativeSupplements'][-1]['nativeElapsedMS'], waiting['nativeElapsedMS'])
+            self.assertEqual(facts['nativeSupplements'][-1]['executorWaitNanos'], 15)
+            self.assertIsNone(facts['nativeOutcome'])
+            self.assertNotIn('finishedNanos', facts['nativeHTTP'])
+            self.assertEqual(indexed['finals'], {'r0': final})
+            self.assertEqual(indexed['summary']['duplicateRows'], 2)
+            self.assertEqual(indexed['summary']['uniqueRequests'], 1)
+            self.assertEqual(indexed['summary']['finalConflicts'], [])
+            self.assertEqual(indexed['summary']['nativeOutcomes'], {})
+            self.assertEqual(indexed['summary']['unresolvedNativeOnly'][0]['requestID'], 'orphan')
+            client = {'requestID': 'r0', 'issued': True, 'outcome': 'timeout', 'status': 0, 'elapsedNanos': 100}
+            baseline = request_analysis.request_metrics([client], indexed['finals'], 100, 1, 100, 0)
+            result = request_analysis.request_metrics(
+                [client], indexed['finals'], 100, 1, 100, 0, indexed['nativeRecords'])
+            self.assertEqual(result['outcomeClasses'], baseline['outcomeClasses'])
+            self.assertEqual(result['timeoutCauses'], baseline['timeoutCauses'])
+            self.assertEqual(result['outcomeClasses']['timeout'], 1)
+            self.assertEqual(result['timeoutCauses']['serverFinalDeadline'], 1)
+            self.assertEqual([row['requestID'] for row in result['requestAnalysis']], ['r0'])
+
     def test_snapshot_adoption_uses_execution_scope_without_child_recomparison(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
