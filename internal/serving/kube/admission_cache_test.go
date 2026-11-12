@@ -138,7 +138,7 @@ func TestAdmitObservesNewWaitingUpdatedDeletedAndRecreatedRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	replacement := baselineRoot(waiting.Name, time.Now())
-	replacement.UID = "replacement-uid"
+	replacement.UID = "recreated-root-uid"
 	if err := api.Create(ctx, replacement); err != nil {
 		t.Fatal(err)
 	}
