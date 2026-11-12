@@ -106,7 +106,7 @@ class EnergyBoundaryTests(unittest.TestCase):
         self.assertIsNotNone(result, text)
         self.assertTrue(all(row['joules'] == 0 and row['averageWatts'] == 0 and row['status'] == 'MEASURED'
                             for row in result['rows']))
-        self.assertNotIn('UNKNOWN', text)
+        self.assertNotIn('UNKNOWN', text.split('Prediction consistency (v1alpha7):')[0])
 
     def test_recreated_node_is_missing_by_uid(self):
         other = {**NODES[0], 'uid': 'new-worker'}
@@ -181,7 +181,7 @@ class EnergyBoundaryTests(unittest.TestCase):
                     return window
                 self.assertTrue(path.startswith('/api/v1/observations/scheduler?'), path)
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
-                self.assertEqual(query['filter'], ['decision'])
+                self.assertEqual(query['filter'], ['decision-action'])
                 self.assertEqual(query['from'], [START])
                 self.assertEqual(query['to'], [END])
                 index = 1 if query.get('cursor') else 0

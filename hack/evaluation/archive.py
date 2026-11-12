@@ -213,10 +213,10 @@ def collect(folder, phase, collection, io, timeout_seconds):
                       'complete': False, 'observedJoules': None, 'wholePoolJoules': None, 'nodes': [], 'reasons': [str(error)]}
         _save(folder / (name + '.json'), result)
         manifest['energy'][name] = result['energyStatus']
-    # Decisions are independent of meter coverage; retain only the energy boundary
-    # projection rather than copying profiles and complete scheduler snapshots.
+    # One full record per response: compact omits capacity.plans. Persist only
+    # the selected v1alpha7 terms, never snapshots, profiles or plan inventory.
     decisions = {'from': phase['startUTC'], 'to': phase['endUTC'], 'events': [], 'pages': [], 'complete': False, 'errors': []}
-    query = {'from': decisions['from'], 'to': decisions['to'], 'filter': 'decision', 'view': 'compact', 'limit': 500}
+    query = {'from': decisions['from'], 'to': phase['drainedUTC'], 'filter': 'decision-action', 'limit': 1}
     try:
         while True:
             page = io.api('GET', '/api/v1/observations/scheduler?' + urllib.parse.urlencode(query), timeout=min(timeout_seconds, maximum))
@@ -225,11 +225,26 @@ def collect(folder, phase, collection, io, timeout_seconds):
             if not isinstance(coverage, dict) or coverage.get('gaps') != []:
                 decisions['errors'].append('scheduler decision coverage unavailable or contains gaps')
             for event in page['events']:
+                from prediction_analysis import selected_plans
+                projected = {'at': event['at'], 'offset': event.get('offset')}
                 decision = event.get('decision')
                 if decision is not None:
-                    search = decision.get('search') or {}
-                    decisions['events'].append({'at': event['at'], 'offset': event.get('offset'),
-                        'decision': {'at': decision['at'], 'search': {key: search[key] for key in ('comparedNodes',) if key in search}}})
+                    projected['decision'] = {
+                        'at': decision['at'], 'search': {'comparedNodes': decision.get('search', {}).get('comparedNodes', [])},
+                        'keep': {'expectedJoules': decision.get('keep', {}).get('expectedJoules')},
+                        'target': None if not decision.get('target') else {
+                            key: decision['target'][key] for key in ('id', 'keep', 'expectedJoules') if key in decision['target']},
+                        'capacity': {'plans': [{key: plan[key] for key in ('node', 'key', 'idleCosts', 'actionCosts') if key in plan}
+                                               for plan in selected_plans(decision).values()]}}
+                    if projected['decision']['target'] is not None:
+                        projected['decision']['target']['actions'] = [
+                            {key: action[key] for key in ('id', 'kind', 'node', 'from', 'dependsOn', 'expectedSeconds', 'expectedSource') if key in action}
+                            for action in decision['target'].get('actions', [])]
+                if event.get('action'):
+                    projected['action'] = {key: event['action'][key] for key in (
+                        'id', 'kind', 'node', 'phase', 'startedAt', 'completedAt', 'error') if key in event['action']}
+                if 'decision' in projected or 'action' in projected:
+                    decisions['events'].append(projected)
             if not page.get('nextCursor'):
                 break
             query['cursor'] = page['nextCursor']
@@ -238,6 +253,23 @@ def collect(folder, phase, collection, io, timeout_seconds):
         decisions['errors'].append(str(error))
     _save(folder / 'scheduler-decisions.json', decisions)
     manifest['schedulerDecisions'] = 'CAPTURED' if decisions['complete'] else 'UNAVAILABLE'
+    from prediction_analysis import windows, action_windows
+    powers = {}
+    for name in ('power', 'power-drain-inclusive'):
+        archived = json.loads((folder / (name + '.json')).read_text())
+        powers[(evidence_io.timestamp_ns(archived['from']), evidence_io.timestamp_ns(archived['to']))] = archived
+    for interval in windows(phase['startUTC'], phase['endUTC'], decisions) + action_windows(decisions):
+        start, stop = interval['from'], interval['to']
+        key = (evidence_io.timestamp_ns(start), evidence_io.timestamp_ns(stop))
+        if key in powers:
+            continue
+        try:
+            query = urllib.parse.urlencode({'from': start, 'to': stop})
+            source = io.api('GET', '/api/v1/observations/power?' + query, timeout=min(timeout_seconds, maximum))
+            powers[key] = meter_energy(source, measurement, policy, start, stop)
+        except Exception as error:
+            powers[key] = {'from': start, 'to': stop, 'nodes': [], 'complete': False, 'reasons': [str(error)]}
+    _save(folder / 'prediction-power.json', list(powers.values()))
     _save(folder / 'raw-source-index.json', index)
     manifest.update(raw=index['sources'], sourceIndex=_ref(folder / 'raw-source-index.json'))
     manifest['failurePolicy'] = 'v2'

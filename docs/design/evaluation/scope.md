@@ -70,6 +70,8 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 저장 계약 변경과 작업용 객체 정리는 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md), 과거 과학 기록 보존은 [ADR 0032 Consequences](../../adr/0032-experiment-execution-boundary.md#consequences), 게시 정정은 [실험 SRS EXP-14](../../spec/experiments/SRS.md#3-요구사항)를 따른다.
 additive optional 필드(예: stage `progress`·`lastProgressAt`·`loadJobs`, `collectionLoss`)는 버전을 올리지 않는다.
 
+`tables.py`의 Prediction consistency 절은 `predictionAnalysis`의 노드·동작·수용 기준 행을 출력한다. 기존 scheduler capture는 응답당 기록 하나에서 keep/선택 plan의 v1alpha7 항과 action 시작·완료만 보존한다. `prediction-power.json`은 stage로 자른 판단 유효 구간과 실제 action 경계의 meter-only power API 결과이며, 같은 구간의 기존 결과를 재사용한다. keep은 before, 전환은 실제 최종 route 전 mid·후 after, 노드 작업 전 before를 쓴다. 작업 실행 중에는 exact 동작 J/예측 초를 operation W로 표시하고 유휴·요청 항을 중복 합산하지 않는다. 동작 실측 J는 같은 노드의 전체 meter 에너지다. 누락·불완전 meter·불명 phase는 UNKNOWN으로 남긴다. 노드별 구간 J 오차의 절댓값 합은 전환·ΔJ>0에서만 ΔJ와 비교하며 keep 오차는 따로 보고한다.
+
 D44 recovery gaps from each raw-hour inventory are retained verbatim in
 `raw-source-index.json.gaps[]`, with API endpoint/hour provenance. Collection
 `complete` means the inventory and downloads were captured, not gap-free observation.
