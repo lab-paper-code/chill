@@ -143,6 +143,60 @@ profile n=4,819·p50=13.965722ms다. 원 prototype은 첫 요청 사본에 runni
 표본이 없어 `profileIdleBinSupported=false`다.
 보고에는 pass/fail·자동 profile 배제·보정 계수가 없다.
 
+C1(a) profiling holdout도 오프라인 진단이다. `profile_holdout.py`는 현재
+active raw v1alpha11 한 개 또는 같은 고정 배치·실행 조건의 독립 trial 여러 개를
+읽는다. 각 이용률 phase ID를 모든 trial에서 동시에 제외하는 leave-one-phase-out과,
+각 physical Pod trial 전체를 제외하는 leave-one-trial-out을 별도로 실행한다.
+후자는 trial이 둘 이상일 때만 존재한다. 이용률 단계가 하나뿐이면 그 단계를 제외한
+fold는 EPI 학습 자료가 없어 profile=null과 사유를 보고한다. active raw에는 독립 유휴 기준선이 없으므로
+같은 조건의 model-loaded idle raw v1alpha8을 `--idle-raw`로 함께 제공한다.
+
+```sh
+systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 env GOTOOLCHAIN=go1.26.4 GOFLAGS=-p=1 \
+  go build -o /tmp/chill-profile-holdout ./hack/evaluation/profile-holdout
+python3 hack/evaluation/profile_holdout.py \
+  --raw /archive/trial-1/raw.json --raw /archive/trial-2/raw.json --raw /archive/trial-3/raw.json \
+  --idle-raw /archive/idle-1/raw.json --idle-raw /archive/idle-2/raw.json \
+  --go-cli /tmp/chill-profile-holdout \
+  --post-load-power /archive/post-load-power.json \
+  --meter-uncertainty-watts 0.5 --rolling-window-seconds 10 --final-idle-seconds 30 \
+  --bootstrap-replicates 1000 --confidence 0.95 --seed 1 \
+  --out /tmp/profile-holdout-report.json
+```
+
+위 uncertainty·시간창 수치는 실행 예시이며 기기 허용치가 아니다. 전력계의 선언된
+절대 불확도와 분석 시간창을 명시한다. post-load 파일은 active `podUID`를 key로 한
+`{"<podUID>":{"loadStoppedAt":"<RFC3339Nano>","samples":[{"observedAt":"<RFC3339Nano>","watts":10}]}}`
+형태다. 같은 측정 노드 전력계의 시계만 사용한다. 파일을 생략하면 raw metric의
+runtime 종료 이후 표본을 사용하며, 관측이 부족하면 정착 시간은 null과 사유로 남긴다.
+모델이 계속 상주한 무부하 구간을 충분히 기록해야 최종 loaded-idle을 해석할 수 있다.
+
+Python은 raw field 투영·trial bootstrap·표시만 담당한다. Go bridge가
+`derivation.MeasureIdle`, `IncrementalWorkTrial`, `MeasurePhasePower`,
+`SaturationDispatchOccupancy`, `firstfloor.NewServiceDistribution`과
+`serving.ReplayFeedbackTrace`의 실제 native batch/admission 재생을 사용한다.
+phase 제외 후에도 남은 native ServiceSamples의 실제 service/preceding-idle 쌍을 보존한다.
+EPI와 유휴 W는 trial별 추정치의 산술평균이다. d는 적격 포화 배치 쌍의 signed
+residual 평균이며 재생에 전달할 operational d만 0 이상으로 clamp한다.
+재생은 실제 `arrivalAt` 배열을 한 번 공급하고 고정 B로 drain한다. 지연 출발점도
+`arrivalAt`으로 맞추기 위해 raw monotonic `latencyMs`에 같은 load-node의
+`sentAt-arrivalAt`을 더한다. 서로 다른 호스트 시각을 빼지 않는다. 초기 native 유휴는
+첫 held-out sample의 preceding-idle과 native enqueue/run 시각으로 복원하며, 큐는
+비어 있는 시작을 가정한다. configured delivery margin 외 경로 보정은 하지 않는다.
+
+보고서에는 요청 지연·batch service의 p50(median), p95/p99/SLO 분위수(nearest-rank),
+완료/거절/만료/미완료 population, conditional sampler support, phase 전력,
+포화 cycle 대조, 원시 post-load 표본과 rolling mean이 남는다. 신뢰구간은 독립 trial
+전체를 복원추출한다. training·held-out·idle trial을 각각 뽑고 요청이나 batch를
+독립 표본처럼 재추출하지 않는다. training trial 하나의 예측 CI와 held-out trial
+하나의 실측 CI는 null이다. CI 포함 여부만 표시하며 pass/fail·배제·보정 임계값은 없다.
+전력 정착은 마지막 지정 시간창의 시간가중 평균을 최종 유휴로 잡고,
+rolling 시간가중 평균이 전력계 불확도 이내에 남는 가장 이른 관측 시각을 보고한다.
+관측 끝까지 적어도 rolling 시간창 하나의 지속 근거를 요구하며 이후의 안정은 주장하지 않는다.
+
+Synthetic raw 회귀: 위 Go bridge를 빌드한 뒤
+`C1_PROFILE_CLI=/tmp/chill-profile-holdout python3 -m unittest discover -s hack/evaluation -p test_profile_holdout.py`.
+
 D44 recovery gaps from each raw-hour inventory are retained verbatim in
 `raw-source-index.json.gaps[]`, with API endpoint/hour provenance. Collection
 `complete` means the inventory and downloads were captured, not gap-free observation.

@@ -260,6 +260,7 @@ type schedulerReplayState struct {
 	c                 SchedulerCandidate
 	rng               *rand.Rand
 	out               schedulerReplayResult
+	batchServiceTrace *[]int64 // optional offline diagnostic; ordinary replay allocates nothing
 	horizon           float64
 	instances         []*schedulerReplayInstance
 	byID              map[string]*schedulerReplayInstance
@@ -308,11 +309,16 @@ func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap Sched
 }
 
 func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool, capacity *capacityWindowLimit, cohort *feedbackArrivalCohort) (result schedulerReplayResult, err error) {
+	return schedulerReplayWithTrace(ctx, settings, snap, c, rng, compared, capacity, cohort, nil)
+}
+
+func schedulerReplayWithTrace(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool, capacity *capacityWindowLimit, cohort *feedbackArrivalCohort, batchServices *[]int64) (result schedulerReplayResult, err error) {
 	if err := ctx.Err(); err != nil {
 		return schedulerReplayResult{}, err
 	}
 	snap = schedulerReplayScopedSnapshot(snap)
 	s := schedulerReplayState{settings: settings, snap: snap, c: c, rng: rng, horizon: float64(settings.ComparisonPeriod), compared: compared, capacity: capacity, out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
+	s.batchServiceTrace = batchServices
 	defer func() {
 		if s.capacity == nil && err == nil {
 			s.finishFeedback()

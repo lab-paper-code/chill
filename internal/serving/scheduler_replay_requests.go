@@ -742,6 +742,9 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 				i.wake = s.now + math.Max(1, math.Ceil(choice.WaitMS*1e6))
 				break
 			}
+			if choice.Reason == "fixed_batch_filling" {
+				break // Native fixed-B waits for an arrival/lifetime event, without a timer.
+			}
 			if choice.Size <= 0 {
 				s.out.reasons = append(s.out.reasons, "BatchPolicyNoExecutableChoice:"+i.config.ID)
 				return false
@@ -796,6 +799,9 @@ func (s *schedulerReplayState) startChosenBatch(i *schedulerReplayInstance, choi
 	if !ok {
 		s.out.reasons = append(s.out.reasons, "MissingConditionalServiceSupport:"+i.config.ID)
 		return false
+	}
+	if s.batchServiceTrace != nil {
+		*s.batchServiceTrace = append(*s.batchServiceTrace, durationNanos)
 	}
 	duration := float64(durationNanos)
 	// Trace gap selects S; arrivals/queue already supplied the gap.
