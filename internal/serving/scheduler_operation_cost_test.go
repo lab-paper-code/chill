@@ -123,6 +123,39 @@ func TestOperationCostPowerAndIdleHistoricalLoadedState(t *testing.T) {
 	}
 }
 
+func TestOperationAndIdleExactMatchKeepMeasuredRuntimeIdentity(t *testing.T) {
+	for _, field := range []string{"image", "version"} {
+		t.Run(field, func(t *testing.T) {
+			settings, snapshot := schedulerFixture()
+			instance := snapshot.Instances[0]
+			identities := map[string]string{"historical": MeasurementProfileIdentity(instance.Profile)}
+			cost := poolsCost(schedulerActionPrepare, instance.Node, "unloaded", "historical", instance.Profile.Condition.PowerMode)
+			cost.StateIdentities = identities
+			snapshot.Costs = []OperationCost{cost}
+			profile := *instance.Profile
+			if field == "image" {
+				profile.Condition.RuntimeImage += "-different"
+			} else {
+				profile.Condition.RuntimeVersion += "-different"
+			}
+			instance.Profile = &profile
+			snapshot.Instances[0] = instance
+			snapshot.Options[0].Instance = instance
+			got := EstimateAction(settings, snapshot, Action{Kind: schedulerActionPrepare, Node: instance.Node,
+				From: "unloaded", To: schedulerState(instance), Status: schedulerActionPlanned})
+			if got.CostProvenance.Source == operationSourceExact {
+				t.Fatalf("different runtime reused exact operation cost: %+v", got)
+			}
+			baseline := snapshot.Baselines[0]
+			baseline.ID, baseline.State, baseline.StateIdentities = "historical-idle", []string{"historical"}, identities
+			_, _, provenance, _ := schedulerBaseline(settings, []NodeBaseline{baseline}, snapshot.Nodes[0], []SchedulerInstance{instance}, snapshot.Options)
+			if provenance.Source == operationSourceExact && slices.Contains(provenance.References, baseline.ID) {
+				t.Fatalf("different runtime reused exact loaded idle: %+v", provenance)
+			}
+		})
+	}
+}
+
 func TestOperationCostIdleAtModeUsesLatestStableCell(t *testing.T) {
 	_, snap := schedulerFixture()
 	old := snap.Instances[0]
@@ -130,15 +163,19 @@ func TestOperationCostIdleAtModeUsesLatestStableCell(t *testing.T) {
 	profile := *old.Profile
 	profile.ID = operationCostTestProfile
 	profile.Condition.PowerMode = "eco"
-	profile.Condition.RuntimeImage = "rotated-runtime-image"
 	profile.Condition.Artifact.Image = "new-artifact-version"
 	profile.MeasuredAt = old.Profile.MeasuredAt.Add(time.Second)
 	target.Profile = &profile
 	target.Allocation.MemoryBytes += 500
 	got, ok := schedulerIdleAtMode(old, "eco", []SchedulerOption{{Instance: target}})
 	if !ok || got.Profile.ID != operationCostTestProfile {
-		t.Fatalf("idle evidence stranded by version/memory: %+v %v", got, ok)
+		t.Fatalf("same-runtime idle evidence stranded by profile/memory: %+v %v", got, ok)
 	}
+	profile.Condition.RuntimeImage = "different-runtime-image"
+	if _, ok := schedulerIdleAtMode(old, "eco", []SchedulerOption{{Instance: target}}); ok {
+		t.Fatal("idle evidence borrowed a different runtime image")
+	}
+	profile.Condition.RuntimeImage = old.Profile.Condition.RuntimeImage
 	profile.Condition.LogicalModel = "different-model"
 	if _, ok := schedulerIdleAtMode(old, "eco", []SchedulerOption{{Instance: target}}); ok {
 		t.Fatal("idle evidence matched a different model")

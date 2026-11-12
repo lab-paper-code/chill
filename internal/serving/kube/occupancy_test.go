@@ -197,13 +197,13 @@ func TestCostEvidenceReadsLatestAcceptedOccupancy(t *testing.T) {
 	}
 }
 
-func TestCostEvidenceReusesOccupancyAcrossProfileChanges(t *testing.T) {
+func TestCostEvidenceOccupancyKeepsExactProfileImageAndBatch(t *testing.T) {
 	at := time.Unix(2000, 0).UTC()
 	objects := &costTestObjects{objects: map[string][]byte{}, opens: map[string]int{}}
-	put := func(name, profileID string, d int64, measuredAt time.Time) string {
+	put := func(name, profileID, image string, batch int, d int64, measuredAt time.Time) string {
 		t.Helper()
-		record := DispatchOccupancyRecord{SchemaVersion: DispatchOccupancySchema, Node: testNode, PowerMode: "max", RuntimeImage: "image", Model: "m",
-			ProfileID: profileID, PerRequestNanos: d, Verdict: servingstate.MeasurementAccepted, MeasuredAt: measuredAt}
+		record := DispatchOccupancyRecord{SchemaVersion: DispatchOccupancySchema, Node: testNode, PowerMode: "max", RuntimeImage: image, Model: "m",
+			ExecutionPath: "native", ProfileID: profileID, Batch: batch, PerRequestNanos: d, Verdict: servingstate.MeasurementAccepted, MeasuredAt: measuredAt}
 		raw, err := json.Marshal(record)
 		if err != nil {
 			t.Fatal(err)
@@ -212,14 +212,15 @@ func TestCostEvidenceReusesOccupancyAcrossProfileChanges(t *testing.T) {
 		objects.objects[key] = raw
 		return key
 	}
-	// Profile IDs and runtime images do not invalidate a measured node cell.
 	profile := serving.Profile{ID: "shared-profile"}
-	profile.Condition.PowerMode = "max"
-	profile.Condition.RuntimeImage = "new-image"
-	profile.Condition.LogicalModel = "m"
-	option := serving.SchedulerOption{Instance: serving.SchedulerInstance{Node: testNode, Profile: &profile}}
+	profile.Condition.PowerMode, profile.Condition.RuntimeImage, profile.Condition.LogicalModel = "max", "measured-image", "m"
+	profile.Condition.Artifact.ExecutionPath = "native"
+	option := serving.SchedulerOption{Instance: serving.SchedulerInstance{Node: testNode, Profile: &profile, MaxBatch: 1}}
 	workload := &serving.Definition{UID: "workload"}
-	legacy := put("controlled", "controlled-profile", 9_410_000, at.Add(time.Hour))
+	put("different-profile", "other-profile", "measured-image", 1, 9_410_000, at.Add(time.Hour))
+	put("different-image", profile.ID, "other-image", 1, 9_410_000, at.Add(time.Hour))
+	put("different-batch", profile.ID, "measured-image", 2, 9_410_000, at.Add(time.Hour))
+	expected := put("exact", profile.ID, "measured-image", 1, 2_000_000, at)
 	evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().Build()}, objects, 1<<20)
 	if err != nil {
 		t.Fatal(err)
@@ -228,23 +229,10 @@ func TestCostEvidenceReusesOccupancyAcrossProfileChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := serving.SchedulerSettings{DefaultDispatchOccupancyNanos: int64(time.Millisecond)}
-	input := serving.NewCapacityInput(settings, view.DispatchOccupancy, option, workload)
-	if len(view.DispatchOccupancy) != 1 || input.DispatchOccupancy == nil ||
-		input.DispatchOccupancy.Provenance.Source != "dom" || input.DispatchOccupancy.Source != legacy ||
-		input.DispatchOccupancy.PerRequest != 9_410_000*time.Nanosecond {
-		t.Fatalf("historical occupancy was stranded by profile/image: %+v", input.DispatchOccupancy)
-	}
-	// Adding an older current-profile measurement must not hide the latest cell.
-	put("shared", profile.ID, 2_000_000, at)
-	view, err = evidence.Refresh(context.Background(), nil, []serving.Profile{profile})
-	if err != nil {
-		t.Fatal(err)
-	}
-	input = serving.NewCapacityInput(serving.SchedulerSettings{}, view.DispatchOccupancy, option, workload)
-	if len(view.DispatchOccupancy) != 1 || input.DispatchOccupancy == nil ||
-		input.DispatchOccupancy.Source != legacy || input.DispatchOccupancy.PerRequest != 9_410_000*time.Nanosecond {
-		t.Fatalf("latest stable occupancy cell was not preserved: %+v", input.DispatchOccupancy)
+	input := serving.NewCapacityInput(serving.SchedulerSettings{}, view.DispatchOccupancy, option, workload)
+	if len(view.DispatchOccupancy) != 4 || input.DispatchOccupancy == nil ||
+		input.DispatchOccupancy.Source != expected || input.DispatchOccupancy.PerRequest != 2_000_000*time.Nanosecond {
+		t.Fatalf("different condition hid exact measured occupancy: %+v rows=%+v", input.DispatchOccupancy, view.DispatchOccupancy)
 	}
 }
 

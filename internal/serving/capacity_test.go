@@ -18,7 +18,8 @@ func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
 	s.CapacityWindow, s.CapacityWindows, s.CapacityPassingWindows, s.CapacityMinimumRequests = time.Second, 3, 2, 200
 	s.CompletionMarginMS = 0
 	c := snap.Instances[0].Profile.Condition
-	snap.DispatchOccupancy = []DispatchOccupancy{{Node: snap.Nodes[0].Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel, Source: "fixture"}}
+	snap.DispatchOccupancy = []DispatchOccupancy{{Node: snap.Nodes[0].Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel,
+		ProfileID: snap.Instances[0].Profile.ID, ExecutionPath: c.Artifact.ExecutionPath, Batch: snap.Instances[0].MaxBatch, Source: "fixture"}}
 	p := *snap.Instances[0].Profile
 	p.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 0.01, MemoryBytes: 100}, []float64{8e5, 1e6, 1.2e6})}
 	snap.Instances[0].Profile = &p
@@ -277,7 +278,8 @@ func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
 	s.DefaultDispatchOccupancyNanos = int64(2 * time.Millisecond)
 	i := snap.Options[0].Instance
 	dom := snap.DispatchOccupancy[0]
-	dom.RuntimeImage, dom.PerRequest = "historical-image", time.Millisecond
+	dom.RuntimeImage, dom.PerRequest = i.Profile.Condition.RuntimeImage, time.Millisecond
+	dom.ProfileID, dom.ExecutionPath, dom.Batch = i.Profile.ID, i.Profile.Condition.Artifact.ExecutionPath, i.MaxBatch
 	measured := dom
 	measured.ProfileID, measured.ExecutionPath, measured.Batch = i.Profile.ID, i.Profile.Condition.Artifact.ExecutionPath, i.MaxBatch
 	measured.PerRequest = 500 * time.Microsecond
@@ -306,14 +308,26 @@ func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
 			}
 		})
 	}
-	// DOM retains wildcard batch/profile matching and ignores image history.
+	// DOM never borrows a profile, runtime image, path or batch.
 	other := i
 	profile := *i.Profile
 	profile.ID, profile.Condition.Artifact.ExecutionPath = "another-profile", "another-path"
 	other.Profile, other.MaxBatch = &profile, 8
 	got := ResolveDispatchOccupancy(s, []DispatchOccupancy{dom}, other)
-	if got.PerRequest != time.Millisecond || got.Provenance.Source != "dom" || got.ProfileID != profile.ID || got.Batch != 8 {
-		t.Fatalf("legacy DOM wildcard changed: %+v", got)
+	if got.PerRequest != 2*time.Millisecond || got.Provenance.Source != "default" {
+		t.Fatalf("legacy DOM borrowed a different profile/batch: %+v", got)
+	}
+	for _, change := range []func(*DispatchOccupancy){
+		func(d *DispatchOccupancy) { d.RuntimeImage = "different-image" },
+		func(d *DispatchOccupancy) { d.ProfileID = "" },
+		func(d *DispatchOccupancy) { d.Batch = 0 },
+	} {
+		mismatch := dom
+		change(&mismatch)
+		got := ResolveDispatchOccupancy(s, []DispatchOccupancy{mismatch}, i)
+		if got.Provenance.Source != "default" {
+			t.Fatalf("inexact DOM remained applicable: %+v", got)
+		}
 	}
 	// A recorded resolved default retains its source/value on readback, even
 	// when a caller supplies unrelated current settings.

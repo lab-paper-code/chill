@@ -155,10 +155,9 @@ const (
 // ResolveDispatchOccupancy selects cache-qualified measured B, then legacy DOM,
 // then the configured default. The cache admits B using configured minimumPairs;
 // core never promotes raw Observed burst records into accepted evidence.
-// Measured B must match every cell identity. Raw legacy DOM retains its previous
-// node/mode/model match; already resolved DOM entries retain exact identities.
+// Both measured B and DOM must match the immutable profile and batch condition.
 //
-//nolint:gocyclo // Keep source priority and exact/wildcard cell matching together.
+//nolint:gocyclo // Keep source priority and exact cell matching together.
 func ResolveDispatchOccupancy(settings SchedulerSettings, occupancy []DispatchOccupancy, i SchedulerInstance) *DispatchOccupancy {
 	if i.Profile == nil {
 		return nil
@@ -176,9 +175,8 @@ func ResolveDispatchOccupancy(settings SchedulerSettings, occupancy []DispatchOc
 				break
 			}
 		} else if (o.Provenance == nil || o.Provenance.Source == occupancySourceDOM) &&
-			(o.ProfileID == "" || o.ProfileID == i.Profile.ID) &&
-			(o.ExecutionPath == "" || o.ExecutionPath == c.Artifact.ExecutionPath) &&
-			(o.Batch == 0 || o.Batch == i.MaxBatch) && dom == nil {
+			o.RuntimeImage == c.RuntimeImage && o.ProfileID == i.Profile.ID &&
+			o.ExecutionPath == c.Artifact.ExecutionPath && o.Batch == i.MaxBatch && dom == nil {
 			dom = o
 		} else if o.Provenance != nil && o.Provenance.Source == occupancySourceDefault &&
 			o.ProfileID == i.Profile.ID && o.ExecutionPath == c.Artifact.ExecutionPath && o.Batch == i.MaxBatch && fallback == nil {

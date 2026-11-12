@@ -9,6 +9,7 @@ import (
 	"path"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -249,11 +250,13 @@ func (e *CostEvidence) refreshOccupancy(ctx context.Context, view *CostView) err
 	}
 	maps.DeleteFunc(e.occupancy, func(identity evidencestore.ObjectIdentity, _ *DispatchOccupancyRecord) bool { return !listed[identity] })
 	latest := latestBy(accepted, func(m measured) string {
-		return strings.Join([]string{m.record.Node.UID, m.record.PowerMode, m.record.Model}, "\x00")
+		r := m.record
+		return strings.Join([]string{r.Node.UID, r.PowerMode, r.Model, r.RuntimeImage, r.ProfileID, r.ExecutionPath, strconv.Itoa(r.Batch)}, "\x00")
 	}, func(m measured) (string, int64) { return m.key, m.record.MeasuredAt.UnixNano() })
 	for _, m := range latest {
 		view.DispatchOccupancy = append(view.DispatchOccupancy, serving.DispatchOccupancy{Node: m.record.Node, PowerMode: m.record.PowerMode,
-			RuntimeImage: m.record.RuntimeImage, Model: m.record.Model, PerRequest: time.Duration(max(m.record.PerRequestNanos, 0)), Source: m.key})
+			RuntimeImage: m.record.RuntimeImage, Model: m.record.Model, ProfileID: m.record.ProfileID,
+			ExecutionPath: m.record.ExecutionPath, Batch: m.record.Batch, PerRequest: time.Duration(max(m.record.PerRequestNanos, 0)), Source: m.key})
 	}
 	return nil
 }

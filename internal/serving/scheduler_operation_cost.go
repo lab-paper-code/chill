@@ -122,7 +122,7 @@ type SchedulerActionCost struct {
 	Provenance *OperationCostProvenance `json:"provenance,omitempty"`
 }
 
-// MeasurementProfileIdentity excludes image, profile version and CPU allocation.
+// MeasurementProfileIdentity retains the measured runtime image and version.
 // Each scheduler instance is one runtime/model instance; repeated loaded states
 // retain the physical replica count in the multiset.
 func MeasurementProfileIdentity(p *Profile) string {
@@ -130,7 +130,7 @@ func MeasurementProfileIdentity(p *Profile) string {
 		return ""
 	}
 	c := p.Condition
-	raw, _ := json.Marshal([]string{c.LogicalModel, c.Artifact.ExecutionPath, c.RuntimeFamily, c.Backend})
+	raw, _ := json.Marshal([]string{c.LogicalModel, c.Artifact.ExecutionPath, c.RuntimeFamily, c.Backend, c.RuntimeImage, c.RuntimeVersion})
 	return string(raw)
 }
 
