@@ -28,3 +28,22 @@ func TestSaturationWorkersUsesQueueBytesAndExplicitServiceBound(t *testing.T) {
 		t.Fatalf("configured occupancy supply must remain feasible: %v", err)
 	}
 }
+
+func TestValidateClosedLoopSupplyRetainsAdmissionUntilResponse(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		workers int
+		queue   int
+		wantErr bool
+	}{
+		{"outstanding exceeds admission", 4, 3, true},
+		{"exact admission boundary", 4, 4, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateClosedLoopSupply(2, test.workers, test.queue, 64<<20, 1024, 100, 100, .1)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("workers=%d queue=%d err=%v, want error=%v", test.workers, test.queue, err, test.wantErr)
+			}
+		})
+	}
+}

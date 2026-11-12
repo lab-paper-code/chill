@@ -6,7 +6,7 @@ import (
 )
 
 // SaturationWorkers applies the named closed-loop sizing formula, then rejects
-// supplies that cannot fit a full batch and the native waiting queue.
+// supplies that cannot fit a full batch and the HTTP admission capacity.
 func SaturationWorkers(batch, maxQueueRequests int, maxQueueBytes, requestBytes int64, lifetimeSeconds, marginMilliseconds, maxBatchServiceSeconds float64) (int, string, error) {
 	if err := ValidateClosedLoopSupply(batch, batch, maxQueueRequests, maxQueueBytes, requestBytes, lifetimeSeconds, marginMilliseconds, maxBatchServiceSeconds); err != nil {
 		return 0, "", err
@@ -42,7 +42,8 @@ func ValidateClosedLoopSupply(batch, workers, maxQueueRequests int, maxQueueByte
 	bytesCap := min(maxQueueBytes, int64(64<<20))
 	batches := (workers + batch - 1) / batch
 	waiting := int64(batch) * int64(batches-1)
-	if int64(workers) > bytesCap/requestBytes || waiting > int64(maxQueueRequests) ||
+	// HTTP admission slots remain held until responses complete.
+	if workers > maxQueueRequests || int64(workers) > bytesCap/requestBytes ||
 		waiting > bytesCap/requestBytes || float64(batches)*maxBatchServiceSeconds+marginMilliseconds/1000 > lifetimeSeconds {
 		return errors.New("configured native supply exceeds queue, byte or lifetime bounds")
 	}
