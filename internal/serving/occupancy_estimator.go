@@ -8,6 +8,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/firstfloor"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -290,7 +291,7 @@ func (e *OccupancyEstimator) results(poolWorkloads bool) []OccupancyEstimate {
 		prev, next := sequence[i-1], sequence[i]
 		if e.backloggedPair(prev, next) {
 			cycle := next.member.running.Sub(prev.member.running).Nanoseconds()
-			if d, ok := DispatchOccupancyNanos(cycle, prev.serviceNanos, prev.member.size); ok && !prev.serviceInvalid {
+			if d, ok := profilederivation.DispatchOccupancyNanos(cycle, prev.serviceNanos, prev.member.size); ok && !prev.serviceInvalid {
 				values[prev.cell] = append(values[prev.cell], d)
 			}
 		}
@@ -316,15 +317,6 @@ func (e *OccupancyEstimator) results(poolWorkloads bool) []OccupancyEstimate {
 	return out
 }
 
-// DispatchOccupancyNanos returns signed dispatch occupancy per input from a
-// backlogged batch pair. Callers establish pair eligibility before calling.
-// Missing actual runner service is not a sample; profile means are never used.
-func DispatchOccupancyNanos(cycleNanos, serviceDurationNanos int64, batchSize int) (float64, bool) {
-	if cycleNanos <= 0 || serviceDurationNanos <= 0 || batchSize <= 0 {
-		return 0, false
-	}
-	return (float64(cycleNanos) - float64(serviceDurationNanos)) / float64(batchSize), true
-}
 
 func (e *OccupancyEstimator) cell(r *occupancyRequest, cells map[directCellKey]*OccupancyEstimate, poolWorkloads bool) *OccupancyEstimate {
 	p := e.profiles[r.profile]

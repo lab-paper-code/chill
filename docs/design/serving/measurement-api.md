@@ -352,13 +352,13 @@ HTTP row; unrelated earlier requests cannot establish the warmup origin.
 Configured warmup advances that start into an exact half-open D-second worker-native
 window. It streams selected rows through `ScanOccupancyRows` into `Add`;
 `Results` supplies the exact cell's `estimate`.
-The accepted profile pointer supplies the **mean full Go runner-exchange service**
-at previous batch size—not BackendMS, stage sums or serving ServiceMS.
+The preceding batch's actual `ServiceSample.ServiceDurationNanos` supplies the
+full Go runner-exchange service. Pairs missing that observation are excluded.
 
 For adjacent batches i,j on one unchanged physical instance:
 
 ```
-signed d_i = (nativeRunningAt_j - nativeRunningAt_i - Profile.MeanNanos(B_i))/B_i
+signed d_i = (nativeRunningAt_j - nativeRunningAt_i - ServiceDurationNanos_i)/B_i
 ```
 
 Both starts must be inside the window. Full unique membership, direct

@@ -181,8 +181,9 @@ so `maximumRequests` stops decoding immediately and never retains a refused scan
 The accepted scheduler `profileByID` map is the sole profile source. Each output stratum
 retains Node name/UID, Workload UID, logical model, power mode, execution path,
 runtime image, batch size, profile ID, immutable reference/evidence identities,
-and the exact `Profile.MeanNanos(batch)` runner-exchange mean subtracted.
-Backend-only or per-request loaded service is not a replacement baseline.
+and the selected profile's runner-exchange mean as provenance. The residual
+subtracts the preceding batch's actual `ServiceDurationNanos`; missing actual
+service excludes the pair.
 
 The reducer first joins assigned/final/late-native rows by RequestID. Conflicting
 nonempty identities/timestamps and duplicate finals invalidate execution rather
@@ -203,7 +204,7 @@ configuration changes cannot be bridged. The signed residual is exactly:
 
 ```
 d_i = (next.NativeRunningAt - previous.NativeRunningAt
-       - acceptedProfile.MeanNanos(previous.BatchSize)) / previous.BatchSize
+       - previous.ServiceSample.ServiceDurationNanos) / previous.BatchSize
 ```
 
 Per-cell `statistics` reports signed mean, median, p25/p75, IQR, p10/p90 and
