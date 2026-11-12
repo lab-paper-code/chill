@@ -22,7 +22,7 @@ def request(rid, instance, batch, start, finish, receive, idle=0, service=10):
 
 
 def profile_trial(trial='physical'):
-    """Two batches sharing an idle bin and scheduled arrivals, with opposite dispatch ingress."""
+    """Two batches sharing an idle bin and scheduled arrivals, with opposite native ingress."""
     samples, requests = [], []
     for batch, start, finish, dispatches in [
             (1, 10_000_000, 12_000_000, [1_000_000, 10_000_000]),
@@ -37,8 +37,8 @@ def profile_trial(trial='physical'):
                              'latencyMs': finish / 1e6,
                              'response': {'progress': {'batchID': batch, 'at': stamp(finish),
                                           'nativeElapsedMS': finish / 1e6,
-                                          'nativeHTTP': {'handlerEnteredAt': stamp(dispatch + 1_000),
-                                                         'receivedNanos': -(dispatch + 1_000)}}}})
+                                          'nativeHTTP': {'handlerEnteredAt': stamp(dispatch - 1_000),
+                                                         'receivedNanos': 1_000}}}})
     return {'schemaVersion': 'chill.dacs.io/profiling-raw-measurement.v1alpha14',
             'podUID': trial, 'runtime': {'phases': [{'nativeSamples': samples, 'requests': requests}]}}
 
@@ -192,15 +192,15 @@ class ProfileComparisonTests(unittest.TestCase):
         self.assertEqual(cell['profile']['n'], 0)
         self.assertEqual(report['marginalByIngress'][0]['profile']['n'], 1)
 
-    def test_profile_raw_conditions_same_idle_bin_on_dispatch_ingress(self):
+    def test_profile_raw_conditions_same_idle_bin_on_native_ingress(self):
         raw = profile_trial()
         first = request('serving-first', 'one', 1, 10_000_000, 20_000_000, 0)
         arrival = request('arrival', 'one', 2, 70_000_000, 80_000_000, 15_000_000,
                           service=40)
-        # Another physical trial's dispatch at 40ms must not affect this trial.
+        # Another physical trial's native receive at 40ms must not affect this trial.
         elsewhere = profile_trial('elsewhere')
         for member in elsewhere['runtime']['phases'][0]['requests']:
-            member['dispatchedAt'] = stamp(40_000_000)
+            member['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(39_999_000)
         report = self.run_report([first, arrival], catalog_samples(raw), profile_raws=[raw, elsewhere])
         self.assertEqual(report['profileIngressConditioning'], 'conditioned on ingress')
         self.assertEqual(report['profileConditioning'], ['profileID', 'batchSize', 'idleBin', 'otherArrived'])
@@ -213,7 +213,7 @@ class ProfileComparisonTests(unittest.TestCase):
         self.assertTrue(all(cell['profileIngressSupported'] for cell in cells.values()))
         self.assertEqual(report['counts']['profileSamplesWithIngress'], 2)
         self.assertEqual(len(report['sources']['profileRaw']), 2)
-        self.assertIn('dispatchedAt directly', report['profileReceiveDefinition'])
+        self.assertIn('nativeHTTP.handlerEnteredAt + receivedNanos', report['profileReceiveDefinition'])
         marginal = {cell['otherArrived']: cell for cell in report['marginalByIngress']}
         self.assertEqual(marginal[True]['profile']['p50'], 2)
         self.assertEqual(marginal[False]['profile']['p50'], 20)
@@ -223,22 +223,31 @@ class ProfileComparisonTests(unittest.TestCase):
         raw = profile_trial()
         phase = raw['runtime']['phases'][0]
         # Own member at start is excluded. Other batch at finish is excluded.
-        phase['requests'][3]['dispatchedAt'] = stamp(12_000_000)
+        phase['requests'][3]['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(11_999_000)
         serving = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
         no_arrival = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
         self.assertEqual(no_arrival['cells'][0]['profile']['n'], 2)
         # Other batch at exact start belongs to the ingress cell.
-        phase['requests'][3]['dispatchedAt'] = stamp(10_000_000)
+        phase['requests'][3]['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(9_999_000)
         at_start = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
         self.assertEqual(at_start['cells'][0]['profile']['p50'], 20)
         self.assertEqual(at_start['cells'][0]['profile']['n'], 1)
 
-    def test_profile_raw_missing_dispatch_or_run_stays_unconditioned(self):
-        for missing in ('dispatchedAt', 'startedAt', 'finishedAt'):
+    def test_profile_raw_missing_native_receive_or_run_stays_unconditioned(self):
+        for missing in ('response', 'progress', 'nativeHTTP', 'handlerEnteredAt',
+                        'receivedNanos', 'startedAt', 'finishedAt'):
             with self.subTest(missing=missing):
                 raw = profile_trial()
                 phase = raw['runtime']['phases'][0]
-                for record in phase['requests' if missing == 'dispatchedAt' else 'nativeSamples']:
+                if missing in ('startedAt', 'finishedAt'):
+                    records = phase['nativeSamples']
+                else:
+                    records = phase['requests']
+                    for parent in ('response', 'progress', 'nativeHTTP'):
+                        if parent == missing:
+                            break
+                        records = [record[parent] for record in records]
+                for record in records:
                     record.pop(missing)
                 report = self.run_report([request('a', 'one', 1, 10_000_000, 20_000_000, 0)],
                                          catalog_samples(raw), profile_raws=[raw])
@@ -247,26 +256,59 @@ class ProfileComparisonTests(unittest.TestCase):
                 self.assertEqual(report['cells'][0]['profile']['n'], 2)
                 self.assertEqual(report['counts']['profileSamplesWithoutIngress'], 2)
 
-    def test_delayed_dispatch_changes_ingress_with_same_scheduled_arrivals(self):
+    def test_delayed_native_receive_changes_ingress_with_same_load_timing(self):
         raw = profile_trial()
         requests = raw['runtime']['phases'][0]['requests']
-        arrivals = [member['scheduledAt'] for member in requests]
+        arrivals = [(member['scheduledAt'], member['dispatchedAt']) for member in requests]
         serving = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
         before = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
         self.assertEqual(before['cells'][0]['profile'], {'n': 1, 'p50': 20, 'p95': 20})
-        requests[3]['dispatchedAt'] = stamp(12_000_000)
+        requests[3]['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(11_999_000)
         after = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
         self.assertEqual(after['cells'][0]['profile'], {'n': 2, 'p50': 11, 'p95': 20})
-        self.assertEqual([member['scheduledAt'] for member in requests], arrivals)
+        self.assertEqual([(member['scheduledAt'], member['dispatchedAt']) for member in requests], arrivals)
 
-    def test_profile_dispatch_does_not_require_native_http_receipts(self):
+    def test_profile_ingress_ignores_shifted_load_node_clock(self):
+        raw = profile_trial()
+        serving = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
+        before = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
+        for member in raw['runtime']['phases'][0]['requests']:
+            for key in ('scheduledAt', 'dispatchedAt', 'completedAt'):
+                # Shift only the load-node clock; native receipt and batches stay fixed.
+                value = int(member[key].split('.')[1][:-1])
+                member[key] = stamp(value + 100_000_000)
+        after = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
+        self.assertEqual(before['cells'], after['cells'])
+        self.assertEqual(before['counts'], after['counts'])
+        self.assertEqual(after['cells'][0]['profile'], {'n': 1, 'p50': 20, 'p95': 20})
+
+    def test_profile_ingress_does_not_require_load_node_dispatch(self):
         raw = profile_trial()
         for member in raw['runtime']['phases'][0]['requests']:
-            member.pop('response')
+            member.pop('dispatchedAt')
         report = self.run_report([request('a', 'one', 1, 10_000_000, 20_000_000, 0)],
                                  catalog_samples(raw), profile_raws=[raw])
         self.assertEqual(report['profileIngressConditioning'], 'conditioned on ingress')
         self.assertEqual(report['cells'][0]['profile'], {'n': 1, 'p50': 20, 'p95': 20})
+
+    def test_partial_native_receipts_prove_arrival_but_not_absence(self):
+        raw = profile_trial()
+        raw['runtime']['phases'][0]['requests'][0]['response']['progress'].pop('nativeHTTP')
+        report = self.run_report([request('a', 'one', 1, 10_000_000, 20_000_000, 0)],
+                                 catalog_samples(raw), profile_raws=[raw])
+        self.assertIn('partially conditioned', report['profileIngressConditioning'])
+        self.assertEqual(report['counts']['profileSamplesWithIngress'], 1)
+        self.assertEqual(report['counts']['profileSamplesWithoutIngress'], 1)
+        self.assertEqual(report['cells'][0]['profile']['n'], 0)
+        self.assertEqual(report['cells'][0]['profileUnconditioned'], {'n': 1, 'p50': 20, 'p95': 20})
+
+    def test_profile_native_receive_rejects_invalid_local_offset(self):
+        for offset in (-1, 1.5, True):
+            with self.subTest(offset=offset):
+                raw = profile_trial()
+                raw['runtime']['phases'][0]['requests'][0]['response']['progress']['nativeHTTP']['receivedNanos'] = offset
+                self.run_report([], catalog_samples(raw), profile_raws=[raw],
+                                error='invalid nativeHTTP receivedNanos')
 
     def test_catalog_without_raw_timestamps_stays_unconditioned(self):
         report = self.run_report([request('a', 'one', 1, 10_000_000, 20_000_000, 0)],
@@ -294,7 +336,7 @@ class ProfileComparisonTests(unittest.TestCase):
     def test_missing_ingress_cell_does_not_fall_back_to_other_population(self):
         raw = profile_trial()
         for member in raw['runtime']['phases'][0]['requests'][2:]:
-            member['dispatchedAt'] = stamp(12_000_000)
+            member['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(11_999_000)
         serving = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
         arrival = request('b', 'one', 2, 30_000_000, 40_000_000, 15_000_000)
         report = self.run_report([serving, arrival], catalog_samples(raw), profile_raws=[raw])

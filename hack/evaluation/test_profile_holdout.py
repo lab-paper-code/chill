@@ -36,7 +36,9 @@ def raw_fixture(trial, service_ms=10, batch=2):
                 arrival = at - .002 + member * .001
                 requests.append({'requestID': record, 'recordID': record, 'scheduledAt': stamp(arrival),
                                  'dispatchedAt': stamp(arrival), 'completedAt': stamp(at + service),
-                                 'latencyMs': service_ms + 2 - member, 'response': {}})
+                                 'latencyMs': service_ms + 2 - member,
+                                 'response': {'progress': {'nativeHTTP': {
+                                     'handlerEnteredAt': stamp(arrival), 'receivedNanos': 0}}}})
         phases.append({'id': f'p{index}', 'kind': kind, 'utilization': .3 * (index - 1) if index > 1 else 0,
                        'arrivalRatePerSecond': .8, 'measurementStartedAt': stamp(start),
                        'measurementEndedAt': stamp(start + 10),
@@ -57,11 +59,12 @@ def raw_fixture(trial, service_ms=10, batch=2):
             phases[-1]['workers'] = 4
     return {'schemaVersion': 'chill.dacs.io/profiling-raw-measurement.v1alpha14', 'podUID': trial,
             'runConfig': {'schemaVersion': 'chill.dacs.io/profiling-run-config.v1alpha22',
+                          'actor': {'maxQueueRequests': 4},
                           'measurement': {'batch': batch, 'sloPercentile': 97, 'sloTargetLatencyNanos': 1_000_000_000,
                                           'operatingPoints': {'requestLifetimeSeconds': 60,
                                                               'deliveryMarginMilliseconds': 0}}},
             'runtime': {'schemaVersion': 'chill.dacs.io/batch-characterization.v1alpha14', 'runtimeVersion': 'ortcpu-v1',
-                        'measurementStartedAt': stamp(0), 'measurementEndedAt': stamp(40), 'phases': phases,
+                        'measurementStartedAt': stamp(0), 'measurementEndedAt': stamp(51), 'phases': phases,
                         'postLoad': {'startedAt': stamp(41), 'endedAt': stamp(51), 'durationSecondsMonotonic': 10,
                                      'actorPID': 42, 'modelResidentAtEnd': True,
                                      'countersBefore': {'inferences': 32}, 'countersAfter': {'inferences': 32}}},
@@ -179,19 +182,25 @@ class HoldoutTests(unittest.TestCase):
         self.assertEqual(analysis.time_mean(points, 0, 10), 20)
 
     @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
-    def test_bridge_power_uses_explicit_offering_timestamps(self):
+    def test_bridge_power_uses_native_clock_not_load_offering_utc(self):
         raw = raw_fixture('a')
-        raw['runtime']['phases'][0]['offeringEndedAt'] = stamp(4)
+        phase = raw['runtime']['phases'][0]
+        phase.update(offeringStartedAt=stamp(1000), offeringEndedAt=stamp(1004),
+                     issueElapsedSecondsMonotonic=4)
+        phase['requests'][0]['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(0)
         for i, point in enumerate(raw['metrics']['samples']):
             if i <= 40:
                 point['watts'] = 10 + i
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
             result = bridge.call({'trials': analysis.training_trials([raw], {'kind': 'all'}, [0]),
-                                  'idle': analysis.idle_observations(analysis.postload_idle([raw], [0]))})
+                                  'idle': analysis.idle_observations([idle_fixture()])})
         power = result['trials'][0]['phasePower'][0]
-        self.assertEqual(power['windowStart'], raw['runtime']['phases'][0]['offeringStartedAt'])
+        self.assertEqual(analysis.evidence_io.timestamp_ns(power['windowStart']),
+                         analysis.evidence_io.timestamp_ns(analysis.measurement_offering(raw['runtime']['phases'][0])[0]))
+        self.assertEqual(analysis.evidence_io.timestamp_ns(power['windowEnd']),
+                         analysis.evidence_io.timestamp_ns(analysis.measurement_offering(raw['runtime']['phases'][0])[1]))
         self.assertAlmostEqual(power['meanWallWatts'], 12)
-        self.assertAlmostEqual(power['scheduledRatePerSecond'], 8 / 3.999)
+        self.assertAlmostEqual(power['scheduledRatePerSecond'], 2)
 
     def test_scheduler_input_uses_scheduled_arrivals_before_native_dispatch(self):
         runs = [raw_fixture('a'), raw_fixture('b')]
@@ -258,8 +267,8 @@ class HoldoutTests(unittest.TestCase):
                     self.assertEqual(training, heldout)
                 else:
                     self.assertTrue(set(training).isdisjoint(heldout))
-        # Post-load idle stays paired with each training physical trial.
-        self.assertEqual(bootstrap.call_count, 2 + 3 * 2)
+        # Independent loaded-idle evidence remains separate from active trial draws.
+        self.assertEqual(bootstrap.call_count, 2 + 3 * 2 + len(analysis.folds(runs)))
 
     @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
     def test_synthetic_raw_real_derivation_and_scheduler(self):
@@ -275,14 +284,18 @@ class HoldoutTests(unittest.TestCase):
         self.assertEqual(len(first['profile']['serviceSamples']), 36)
         self.assertEqual(report['schema'], 'profile-holdout-report.v3')
         self.assertTrue(report['replayExecuted'])
-        self.assertEqual(len(report['retainedMetrics']), 4)
-        self.assertEqual(len(report['removedMetrics']), 1)
+        self.assertEqual(len(report['retainedMetrics']), 5)
+        self.assertNotIn('removedMetrics', report)
         self.assertNotIn('traces', first)
         self.assertIsNone(first['phases'][0]['latency']['predictedNanos'])
         self.assertTrue(first['phases'][0]['latency']['unavailableReasons'])
         self.assertEqual(first['phases'][0]['latency']['measuredNanos'], 12_000_000)
+        service = first['phases'][0]['batchServiceDistribution']
+        self.assertEqual(service['twoSampleTest']['statistic'], 0)
+        self.assertEqual(service['twoSampleTest']['statisticCI'], [0, 0])
+        self.assertEqual([row['percentile'] for row in service['quantiles']], [50, 95, 99])
         self.assertNotIn('serviceMS', first['phases'][0])
-        self.assertEqual(first['phases'][0]['power']['measuredWatts'], 14)
+        self.assertAlmostEqual(first['phases'][0]['power']['measuredWatts'], 14)
         expected = 10 + 5 * 8 / 3.999
         self.assertAlmostEqual(first['phases'][0]['power']['scheduledRatePerSecond'], 8 / 3.999)
         self.assertAlmostEqual(first['phases'][0]['power']['predictedWatts'], expected)
@@ -321,30 +334,79 @@ class HoldoutTests(unittest.TestCase):
         runs = [raw_fixture('one-a', batch=1), raw_fixture('one-b', batch=1),
                 raw_fixture('two-a'), raw_fixture('two-b')]
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
-            report = analysis.analyze(runs, [], bridge, 3, 17, .95, 0, 2, 2)
+            report = analysis.analyze(runs, [idle_fixture()], bridge, 3, 17, .95, 0, 2, 2)
         self.assertEqual([r['batch'] for r in report['batches']], [1, 2])
         phase = report['batches'][1]['folds'][0]['phases'][0]
         self.assertGreater(phase['latency']['predictedNanos'], 0)
         self.assertFalse(phase['latency']['unavailableReasons'])
 
     @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
-    def test_postload_idle_is_fold_paired_and_never_pools_separate_protocol(self):
+    def test_catalog_idle_is_independent_and_postload_is_diagnostic(self):
         runs = [raw_fixture('a'), raw_fixture('b')]
         separate = idle_fixture()
         for sample in separate['metrics']['samples']:
-            sample['watts'] = 99
+            sample['watts'] = 9
         for sample in runs[0]['metrics']['samples']:
             if sample['observedAt'] >= stamp(41):
                 sample['watts'] = 11
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
             report = analysis.analyze(runs, [separate], bridge, 2, 17, .95, 0, 2, 2)
-        self.assertEqual(report['separateIdleEstimateWatts'], 99)
+        self.assertEqual(report['separateIdleEstimateWatts'], 9)
         heldout_a = next(f for f in report['folds'] if f['kind'] == 'trial' and f['id'] == 'a')
-        self.assertEqual(heldout_a['profile']['idleWatts'], 10)
+        self.assertEqual(heldout_a['profile']['idleWatts'], 9)
         invalid = raw_fixture('invalid')
         invalid['runtime']['postLoad']['countersAfter']['inferences'] += 1
         with self.assertRaisesRegex(ValueError, 'zero inference'):
             analysis.validate_runs([invalid])
+
+    def test_latency_window_comparison_matches_replay_aggregation(self):
+        phase = {'requests': [{'scheduledAt': stamp(at), 'completedAt': stamp(at + latency)}
+                              for at, latency in ((0, .001), (.1, .1), (1, .01), (1.1, .01), (1.2, .01))]}
+        estimate = {'windows': [{'windowStart': stamp(0), 'windowEnd': stamp(1)},
+                                {'windowStart': stamp(1), 'windowEnd': stamp(2)}]}
+        self.assertEqual(analysis.measured_replay_quantile(phase, estimate, 50), 6_400_000)
+        self.assertEqual(analysis.measured_replay_quantile(phase, {}, 50), 10_000_000)
+
+    def test_postload_uses_native_last_phase_and_total_end(self):
+        raw = raw_fixture('a')
+        analysis.validate_runs([raw])
+        raw['runtime']['postLoad']['startedAt'] = stamp(39)
+        with self.assertRaisesRegex(ValueError, 'last phase'):
+            analysis.validate_runs([raw])
+        raw = raw_fixture('a')
+        raw['runtime']['measurementEndedAt'] = stamp(50)
+        with self.assertRaisesRegex(ValueError, 'measurementEndedAt'):
+            analysis.validate_runs([raw])
+
+    def test_campaign_ignores_provenance_resource_versions(self):
+        first, second = raw_fixture('a'), raw_fixture('b')
+        first['runConfig']['targetNode'] = {'uid': 'node', 'resourceVersion': '1'}
+        second['runConfig']['targetNode'] = {'uid': 'node', 'resourceVersion': '2'}
+        self.assertEqual(analysis.execution_condition(first, True), analysis.execution_condition(second, True))
+        with mock.patch.object(analysis, 'analyze_batch', return_value={}) as analyze_batch:
+            analysis.analyze([first, second], [idle_fixture()], mock.Mock(), 2, 1, .95, 0, 2, 2)
+            analyze_batch.assert_called_once()
+        second['runConfig']['actor']['maxQueueRequests'] = 5
+        self.assertNotEqual(analysis.execution_condition(first, True), analysis.execution_condition(second, True))
+
+    def test_power_projection_stays_on_measurement_clock(self):
+        raw = raw_fixture('a')
+        phase = raw['runtime']['phases'][2]
+        before = analysis.measurement_offering(phase)
+        for request in phase['requests']:
+            for key in ('scheduledAt', 'dispatchedAt', 'completedAt'):
+                request[key] = stamp((analysis.evidence_io.timestamp_ns(request[key]) -
+                                      analysis.evidence_io.timestamp_ns(stamp(0))) / 1e9 + 3600)
+        self.assertEqual(analysis.measurement_offering(phase), before)
+
+    def test_service_distribution_detects_heldout_shift(self):
+        runs = [raw_fixture('a', 10), raw_fixture('b', 30)]
+        evaluated = {'profile': {'serviceSamples': runs[0]['runtime']['phases'][0]['nativeSamples']}}
+        same = analysis.service_distribution(runs, evaluated, [0], 'p2')
+        shifted = analysis.service_distribution(runs, evaluated, [1], 'p2')
+        self.assertEqual(same['twoSampleTest']['statistic'], 0)
+        self.assertEqual(shifted['twoSampleTest']['statistic'], 1)
+        self.assertEqual(shifted['quantiles'][0]['errorNanos'], -20_000_000)
 
     @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
     def test_single_trial_and_missing_holdout_epi_are_reported(self):

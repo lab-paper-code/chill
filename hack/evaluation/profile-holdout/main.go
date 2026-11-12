@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
 	"sort"
 	"time"
 
@@ -27,7 +28,8 @@ type request struct {
 	SupportIdle       []derivation.IdleObservation `json:"supportIdle"`
 }
 
-// Diagnostic power and scheduled-input rate share the explicit offering window.
+// Diagnostic power uses offering bounds already projected by Python into the
+// measurement node's clock domain. OfferingSeconds retains client monotonic exposure.
 type phase struct {
 	derivation.OperatingPointPhase
 	ScheduledInputs   int       `json:"scheduledInputs"`
@@ -41,18 +43,41 @@ type heldoutPhase struct {
 	TrialID                    string        `json:"trialID"`
 	PhaseID                    string        `json:"phaseID"`
 	Arrivals                   []time.Time   `json:"arrivals"`
+	NativeSlots                int           `json:"nativeSlots"`
 	SLOPercentile              float64       `json:"sloPercentile"`
 	SLOTargetLatency           time.Duration `json:"sloTargetLatencyNanos"`
 	RequestLifetimeSeconds     float64       `json:"requestLifetimeSeconds"`
 	DeliveryMarginMilliseconds float64       `json:"deliveryMarginMilliseconds"`
 }
 
-type latencyPrediction struct {
-	TrialID       string                         `json:"trialID"`
-	PhaseID       string                         `json:"phaseID"`
+type latencyQuantile struct {
+	Percentile    float64                        `json:"percentile"`
 	ExpectedNanos *float64                       `json:"expectedNanos"`
 	FeedbackScore *serving.FeedbackWorkloadScore `json:"feedbackScore,omitempty"`
 	Reasons       []string                       `json:"reasons,omitempty"`
+}
+
+type latencyWindow struct {
+	WindowStart time.Time         `json:"windowStart"`
+	WindowEnd   time.Time         `json:"windowEnd"`
+	Arrivals    int               `json:"arrivals"`
+	Quantiles   []latencyQuantile `json:"quantiles"`
+}
+
+type latencyPrediction struct {
+	TrialID           string                         `json:"trialID"`
+	PhaseID           string                         `json:"phaseID"`
+	ExpectedNanos     *float64                       `json:"expectedNanos"`
+	FeedbackScore     *serving.FeedbackWorkloadScore `json:"feedbackScore,omitempty"`
+	Reasons           []string                       `json:"reasons,omitempty"`
+	Quantiles         []latencyQuantile              `json:"quantiles"`
+	Windows           []latencyWindow                `json:"windows"`
+	FixedBatchSize    int                            `json:"fixedBatchSize"`
+	NativeSlots       int                            `json:"nativeSlots"`
+	ObservationWindow time.Duration                  `json:"observationWindowNanos"`
+	ComparisonPeriod  time.Duration                  `json:"comparisonPeriodNanos"`
+	Aggregation       string                         `json:"aggregation"`
+	Limitations       []string                       `json:"limitations"`
 }
 
 type trial struct {
@@ -254,6 +279,9 @@ func predictLatency(training profile, batches []serving.BatchProfile, heldout he
 		math.IsInf(heldout.DeliveryMarginMilliseconds, 0) || len(heldout.Arrivals) > math.MaxInt32 {
 		return out, fmt.Errorf("heldout SLO, positive request lifetime and nonnegative delivery margin required")
 	}
+	if heldout.NativeSlots <= 0 {
+		return out, fmt.Errorf("heldout positive recorded nativeSlots required")
+	}
 	start, last := heldout.Arrivals[0], heldout.Arrivals[0]
 	for _, scheduledAt := range heldout.Arrivals {
 		if scheduledAt.IsZero() {
@@ -269,13 +297,93 @@ func predictLatency(training profile, batches []serving.BatchProfile, heldout he
 	if err := settings.Validate(); err != nil {
 		return out, fmt.Errorf("frozen schedulerSettings: %w", err)
 	}
-	// Anchor the unchanged scheduler observation window after the final scheduledAt.
-	// Reject a short window instead of silently discarding heldout arrivals.
-	at := last.Add(time.Nanosecond)
-	if at.Sub(start) > settings.ObservationWindow {
-		return out, fmt.Errorf("schedulerSettings observationWindowNanos must cover all heldout scheduledAt arrivals")
+	out.FixedBatchSize, out.NativeSlots = training.Batch, heldout.NativeSlots
+	out.ObservationWindow, out.ComparisonPeriod = settings.ObservationWindow, settings.ComparisonPeriod
+	out.Aggregation = "scheduled-arrival-weighted arithmetic mean of window percentile estimates"
+	out.Limitations = []string{
+		"Each window starts empty and drains independently; native and queued work do not carry across windows.",
+		"The final window retains its full frozen duration, including any suffix after the final recorded arrival.",
+		"Window percentile means are not pooled phase latency quantiles; exported scheduler results contain no request latency population.",
+		"Additional percentiles are separate SLO evaluations and may change percentile-dependent native policy.",
 	}
-	start = at.Add(-settings.ObservationWindow)
+	if settings.ComparisonPeriod != settings.ObservationWindow {
+		out.Limitations = append(out.Limitations,
+			"The frozen comparison period repeats or truncates each observation-window arrival pattern; estimates are not a once-only phase replay.")
+	}
+	// Snapshot validation accepts every finite percentile in (0,100], with no
+	// settings-dependent percentile restriction. Never enlarge frozen numerics.
+	percentiles := []float64{50, 90, 95, 99}
+	if !slices.Contains(percentiles, heldout.SLOPercentile) {
+		percentiles = append(percentiles, heldout.SLOPercentile)
+	}
+	sort.Float64s(percentiles)
+	arrivals := slices.Clone(heldout.Arrivals)
+	sort.SliceStable(arrivals, func(i, j int) bool { return arrivals[i].Before(arrivals[j]) })
+	next := 0
+	for windowStart := start; !windowStart.After(last); windowStart = windowStart.Add(settings.ObservationWindow) {
+		window := latencyWindow{WindowStart: windowStart, WindowEnd: windowStart.Add(settings.ObservationWindow)}
+		first := next
+		for next < len(arrivals) && arrivals[next].Before(window.WindowEnd) {
+			next++
+		}
+		window.Arrivals = next - first
+		for _, percentile := range percentiles {
+			quantile := latencyQuantile{Percentile: percentile}
+			if window.Arrivals > 0 {
+				cohort := heldout
+				cohort.Arrivals, cohort.SLOPercentile = arrivals[first:next], percentile
+				var err error
+				quantile, err = replayLatencyWindow(training, batches, cohort, settings.Clone(), windowStart)
+				if err != nil {
+					quantile.Reasons = append(quantile.Reasons, err.Error())
+					limitation := "Frozen scheduler replay can reject a percentile's synthetic rate diagnostic; affected window and aggregate estimates remain null with the exact evaluator reason."
+					if !slices.Contains(out.Limitations, limitation) {
+						out.Limitations = append(out.Limitations, limitation)
+					}
+				}
+			} else {
+				quantile.Reasons = []string{"no scheduled arrivals in window"}
+			}
+			window.Quantiles = append(window.Quantiles, quantile)
+		}
+		out.Windows = append(out.Windows, window)
+	}
+	for j, percentile := range percentiles {
+		quantile := latencyQuantile{Percentile: percentile}
+		sum, available := 0.0, true
+		for _, window := range out.Windows {
+			if window.Arrivals == 0 {
+				continue
+			}
+			estimate := window.Quantiles[j]
+			if estimate.ExpectedNanos == nil {
+				available = false
+			} else {
+				sum += *estimate.ExpectedNanos * float64(window.Arrivals) / float64(len(arrivals))
+			}
+			for _, reason := range estimate.Reasons {
+				if !slices.Contains(quantile.Reasons, reason) {
+					quantile.Reasons = append(quantile.Reasons, reason)
+				}
+			}
+		}
+		if available {
+			quantile.ExpectedNanos = &sum
+		}
+		if len(out.Windows) == 1 {
+			quantile.FeedbackScore = out.Windows[0].Quantiles[j].FeedbackScore
+		}
+		out.Quantiles = append(out.Quantiles, quantile)
+		if percentile == heldout.SLOPercentile {
+			out.ExpectedNanos, out.FeedbackScore, out.Reasons = quantile.ExpectedNanos, quantile.FeedbackScore, quantile.Reasons
+		}
+	}
+	return out, nil
+}
+
+func replayLatencyWindow(training profile, batches []serving.BatchProfile, heldout heldoutPhase, settings serving.SchedulerSettings, start time.Time) (latencyQuantile, error) {
+	out := latencyQuantile{Percentile: heldout.SLOPercentile}
+	at := start.Add(settings.ObservationWindow)
 	lifetime := time.Duration(heldout.RequestLifetimeSeconds * float64(time.Second))
 	definition := &serving.Definition{
 		UID: "heldout", Model: serving.Model{Name: "model", UID: "model",
@@ -302,8 +410,9 @@ func predictLatency(training profile, batches []serving.BatchProfile, heldout he
 	instance := serving.SchedulerInstance{
 		ID: "fixed", Node: node.Node, Profile: measured, WorkloadUID: definition.UID,
 		Allocation: serving.SchedulerAllocation{MemoryBytes: math.MaxUint64}, Ready: true,
-		Routable: map[string]bool{definition.UID: true}, Capacity: len(heldout.Arrivals),
-		Weight: 1, MaxBatch: training.Batch, ObservedAt: at, ArrivalAgesMS: map[string][]float64{},
+		Routable: map[string]bool{definition.UID: true}, Capacity: heldout.NativeSlots,
+		Weight: 1, MaxBatch: training.Batch, FixedBatchSize: training.Batch,
+		ObservedAt: at, ArrivalAgesMS: map[string][]float64{},
 	}
 	// Keep frozen planner numerics and comparison/observation periods. Bind the
 	// offline workload, measured dispatch occupancy and recorded delivery margin.

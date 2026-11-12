@@ -106,8 +106,8 @@ profile 원시 trial의 단계별 시간(전처리·추론·후처리·IPC 잔�
 | L1 측정 부하 | R1 | gateway 노드의 Job에서 `chill-server` 부명령이 gateway의 native client로 `/infer`를 호출한다. Job CPU limit은 없다. 드문 Poisson 도착의 무적체 최대 service로 기존 K 식을 계산하고, K 포화 처리량 μ_B에 설정 이용률을 곱해 Poisson 단계를 보낸다. `scheduledAt`이 client 도착 기준이며 FIFO admission 대기 뒤 `dispatchedAt`에 native로 보낸다. 지연은 `completedAt − scheduledAt`이다. offering 창과 응답 drain 종료를 별도 기록하며 trial/phase별 seed, scheduled count, issue lag, driverGC를 남긴다 | native admission 지연도 지연에 포함한다. lag·GC·낮은 실현 도착률은 진단이다. 측정 노드에는 부하 프로세스가 없다 |
 | E1 유휴·증분 에너지 | R3 | 마지막 부하 drain 뒤 같은 actor와 observer를 양의 정수 입력 `operatingPoints.postLoadDurationSeconds` 동안 유지한다. 입력은 API→불변 Run→load plan에 그대로 동결한다. `runtime.postLoad`의 전후 요청·추론 카운터와 actor 신원·모델 상주 확인, 같은 구간의 원시 `metrics.samples`로 무추론과 전력 안정화 시계열을 남긴다. 이 시계열로 유휴 정착 시간 입력의 근거를 정한다. 증분 에너지는 이용률 단계만으로 `(활성 J − 유휴 W × 시간) / 처리 입력 수`를 계산한다. 실행·attempt 예산은 sparse 표본 하한(최초 unknown-gap 배치 포함), 모든 단계·drain·후행 관측을 포함하며 기존 여유 설정을 재사용한다 | 동일 actor 유지·무추론·후행 전력 raw 회귀. p99·B8 sparse 2,400초가 동결 deadline 안에 든다. 단계별 전력과 후행 안정화 원시 시계열이 evidence에 남는다 |
 | O1 `d` 기준 | R5 | `d`를 포화 배치 쌍의 시작 간격에서 **앞 배치의 실제 실행시간**을 뺀 값으로 계산한다. 새 측정의 포화 단계도 같은 계산으로 `d`를 남긴다 | 회귀: 실제 실행시간이 profile 평균과 다른 배치 쌍에서 `cycle = S + B×d`가 성립한다 |
-| C1 대조 분석 | R4 | CHILL 시스템 밖 `hack/evaluation` 도구로 가져온 evidence를 오프라인 분석한다. 제품 export를 추가하지 않는다. (a) campaign 다중 배치 학습 profile·held-out `scheduledAt` 도착·동일 측정 설정으로 기존 `EvaluateScheduler`의 keep SLO 지연 추정과 `completedAt − scheduledAt` 실측 같은 분위수를 검증한다. 전력 대 `idle + EPI × scheduled rate`, 포화 `cycle` 대 `S + B×d`, 부하 중단 뒤 전력 안정화도 보고한다. 전력과 rate는 동일 offering 창을 공유하며 포화도 rate를 계산한다. 공개 API에 없는 전체 지연·service 예측분포는 보고하지 않는다. (b) 새 raw의 native 도달 `dispatchedAt`·배치 실행 시각으로 profile도 실행 중 유입별로 나눠 serving/profile의 같은 조건별 service 분포와 판단별 예측·실측 전력을 대조한다. 시각 없는 과거 profile은 미조건부로 명시한다 | 합성 회귀와 Go bridge 통합. 지연·전력의 trial bootstrap 신뢰구간. (b)로 §2.1을 재현한다. 보고만 하며 자동 profile 배제는 없다 |
-| T1 파일럿 | 전체 | 운영(main). 배포 뒤 대표 사례 5개를 새 방식으로 측정한다: genesis2 IC CUDA(배치 1·2), jetson-nano PLC CUDA, jetsono PLC, lattepanda IC CPU(대조군). 부하 중단 뒤 노드 전력을 충분히 길게 기록한다. C1(a) 결과를 advisor가 판정한다 | C1(a) 보고. 재현되지 않으면 원인과 고칠 단위를 계획에 추가하고 X1·P1을 미룬다 |
+| C1 대조 분석 | R4 | CHILL 밖 `hack/evaluation`의 오프라인 분석이며 제품 export를 추가하지 않는다. (a) `(batch, phase condition)`별 held-out batch service와 training profile service samples를 분위수·양측 KS 검정·physical trial bootstrap CI로 대조한다. request latency는 동결 설정이 허용하는 여러 분위수에서 기존 `EvaluateScheduler` keep 예측과 `completedAt − scheduledAt`을 대조하며, 제한되면 SLO 분위수와 사유를 보고한다. 고정 batch와 기록된 native slot 수를 재생하고 긴 phase는 동결 observation window의 연속 창으로 나눈다. 유휴 W/EPI는 제품 catalog와 같은 독립 loaded-idle trial을 쓴다. post-load는 정착 진단만 보고한다. 전력창은 측정 노드의 첫 native receive에 monotonic offering exposure를 적용하며 부하 노드 UTC와 meter를 빼지 않는다. (b) nativeHTTP handler entry와 로컬 receive offset으로 실행 중 유입을 분류해 serving/profile service를 대조한다 | 합성 회귀·`C1_PROFILE_CLI` 통합. 지연·전력·service의 trial bootstrap CI와 KS statistic CI. KS p-value는 종속 batch의 기술 통계이며 자동 배제 기준이 아니다. 재생 창별 결과·경계 상태 한계를 표시한다 |
+| T1 파일럿 | 전체 | 운영(main). 배포 뒤 genesis2 IC CUDA(배치 1·2), jetson-nano PLC CUDA, jetsono PLC, lattepanda IC CPU를 새 방식으로 측정한다. 독립 loaded-idle trial과 긴 post-load 진단을 별도로 보존한다. C1(a)에서 batch·phase별 service 분포, 가능한 request latency 분위수, 전력과 정착을 advisor가 판정한다 | C1(a) 보고와 trial bootstrap CI, quantile 제한·창 경계 한계 명시. 재현되지 않으면 원인과 고칠 단위를 추가하고 X1·P1을 미룬다 |
 | X1 기존 profile 삭제 | R1·R2 | 운영(main). 파일럿 통과 뒤. serving 정지 → 기존 profile 원시 evidence 보관 → 공식 측정 DELETE API로 campaign·evidence 삭제. DELETE는 해당 profile을 참조하는 serving Pod가 있으면 거절하므로 serving을 먼저 멈춘다 | 카탈로그의 현재 profile 0개, 보관 위치 기록 |
 | P1 재측정 | 전체 | 운영(main). E5 후보 범위(IC·PLC·Smol × 노드 × 선언 전력모드 × 배치)를 새 방식으로 측정한다. dispatch occupancy와 전환 비용 측정은 profile이 있어야 시작하므로 그 뒤에 한다 | 후보 범위의 profile이 모두 공개되거나, 실패가 사유와 함께 기록된다 |
 
@@ -142,10 +142,10 @@ flowchart LR
 - 각 단위의 회귀 통과, 전체 게이트.
 
 **파일럿(T1)**
-- 떼어 둔 이용률 단계의 실측 노드 전력과 `idle + EPI × scheduledInputs / offering window`를 trial bootstrap 신뢰구간과 함께 보고한다. 전력과 rate 모두 offering 창을 쓰며 drain을 제외한다.
-- 포화 단계 `cycle = S + B×d`. 포화 closed-loop도 같은 offering 창의 scheduled rate로 전력을 예측한다.
-- 부하 중단 뒤 노드 전력이 안정되는 시간(유휴 정착 시간 입력의 근거).
-- C1(a)는 기존 `EvaluateScheduler`의 keep SLO 지연 추정과 held-out 같은 분위수를 trial bootstrap CI로 대조한다. 전체 지연·service 예측분포는 공개 API가 제공하지 않으며 제품 export를 늘리지 않는다.
+- 떼어 둔 이용률 단계의 전력과 `idle + EPI × scheduledInputs / offering exposure`를 trial bootstrap CI로 대조한다. idle/EPI는 catalog와 같은 독립 loaded-idle baseline을 사용한다.
+- 전력창은 측정 노드의 첫 native receive부터 monotonic offering exposure까지다. native 수신 기준 창과 load offering 사이 전달 지연 차이를 한계로 명시한다. 포화 단계도 같은 기준이며 `cycle = S + B×d`를 보고한다.
+- post-load는 같은 actor의 무추론·모델 상주와 마지막 phase 뒤 정착 시간 진단이다. idle/EPI 학습에 합치지 않는다.
+- C1(a)는 `(batch, phase condition)`별 service quantiles·양측 KS·trial bootstrap CI를 보고한다. request latency는 동결 설정이 허용하는 여러 분위수로 기존 `EvaluateScheduler`를 재생한다. 허용하지 않으면 SLO 분위수만 보고하고 사유를 남긴다. 긴 phase는 동결 창의 연속 재생 결과와 경계 상태 한계를 남긴다. 제품 export를 늘리지 않는다.
 - 같은 image 태그라도 관측 `runtime.runtimeVersion`이 다른 active trial·idle evidence는 합치지 않는다.
 
 **serving(E5 수용 실측)**

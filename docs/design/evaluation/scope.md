@@ -152,10 +152,11 @@ active raw v1alpha14를 같은 실행 조건의 campaign Run 집합으로 읽는
 leave-one-trial-out을 실행한다. 다른 배치의 training 근거도 catalog처럼 하나의 profile에 조립한다.
 후자는 trial이 둘 이상일 때만 존재한다. 이용률 단계가 하나뿐이면 그 단계를 제외한
 fold는 EPI 학습 자료가 없어 profile=null과 사유를 보고한다.
-유휴 W는 training trial의 `runtime.postLoad`만 사용한다. 같은 actor의 모델 상주와
-`countersBefore == countersAfter` 무추론 증거를 요구한다.
-`--idle-raw`의 별도 loaded-idle v1alpha8은 다른 정착 protocol이므로 합치지 않고
-`separateIdleEstimateWatts`로 나란히 보고한다.
+유휴 W와 EPI 기준은 제품 catalog가 게시하는 독립 loaded-idle v1alpha8 trial이다.
+`--idle-raw`는 필수이며 active trial과 같은 실행·노드·runtime/artifact image·runtimeVersion을 요구한다.
+post-load는 같은 actor의 모델 상주와 `countersBefore == countersAfter`를 확인하는 정착 진단만 쓴다.
+Node `resourceVersion` 같은 출처 메타데이터는 실행 조건 비교에서 제외한다.
+Python 환경에는 기존 측정 도구와 같은 SciPy가 필요하다. `scipy.stats.ks_2samp`를 사용하며 자체 검정 근사를 만들지 않는다.
 
 ```sh
 systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 env GOTOOLCHAIN=go1.26.4 GOFLAGS=-p=1 \
@@ -174,6 +175,12 @@ python3 hack/evaluation/profile_holdout.py \
 절대 불확도와 분석 시간창을 명시한다. 안정화는 `runtime.postLoad.startedAt`부터
 `endedAt`까지 같은 측정 노드의 `metrics.samples`만 사용한다.
 모델 상주·무추론 증거가 없는 raw는 거절하며, 관측이 부족하면 정착 시간은 null과 사유로 남긴다.
+전력창은 측정 노드의 첫 native receive(`handlerEnteredAt + receivedNanos`)부터
+monotonic offering exposure까지로 투영한다. 부하 노드 UTC와 meter UTC를 직접 비교하지 않는다.
+이 수신 기준 창은 load offering과 전달 지연만큼 다를 수 있다.
+batch·phase별 held-out service quantiles와 training profile samples의 양측 KS를 보고하고,
+physical trial bootstrap으로 quantile 오차와 KS statistic CI를 낸다. batch 종속성 때문에
+sample-level KS p-value는 기술 통계이며 자동 배제 기준이 아니다.
 
 evaluation은 CHILL 시스템 밖의 작업이다. `hack/evaluation/profile_holdout.py`와
 Go bridge는 보존한 raw만 읽으며 제품에 evaluation 전용 export나 trace 수집 경로를
@@ -187,23 +194,22 @@ signed residual 평균이며 operational d만 0 이상으로 clamp한다.
 분석기가 검색·용량·동작 비용 설정을 임의로 만들지 않는다.
 
 `profile-holdout-report.v3`는 다음 비교를 보고한다.
-- held-out phase의 client 도착 `scheduledAt`과 같은 측정 설정으로 만든 단일 인스턴스 `SchedulerSnapshot`의 keep 후보 SLO `expectedNanos`와 실측 `completedAt − scheduledAt`의 같은 분위수
+- held-out client 도착 `scheduledAt`, 고정 batch, native slot 수를 반영한 scheduler keep 지연 분위수와 실측 `completedAt − scheduledAt`의 같은 분위수. 긴 phase는 동결 observation window의 연속 창으로 재생하며 창별 결과와 경계 한계를 남긴다.
 - phase별 실측 노드 W와 `유휴 W + EPI × scheduled rate`
 - 포화 배치 쌍의 실측 cycle과 `앞 배치의 실제 S + B × d`
 - 부하 중단 뒤 원시 전력 표본·rolling mean과 안정화 시간
+- batch·phase condition별 held-out service와 training profile service samples의 quantiles·KS statistic·trial bootstrap CI
 
-전력 적분은 명시된 `offeringStartedAt`~`offeringEndedAt`, rate는
-`scheduledInputs / issueElapsedSecondsMonotonic`를 쓴다. 포화도 같은 필드를 가지며 drain을 모두 제외한다.
-offering UTC를 monotonic 시간으로 재구성하지 않는다. native admission FIFO 대기는
-`scheduledAt`~`dispatchedAt`이며 client 지연에 포함한다.
-전체 요청 지연분포나 batch service 재생분포는 기존 export가 반환하지 않는다.
-보고하는 지연 예측은 scheduler가 공개하는 SLO 분위수 추정치로 한정하며,
-batch service 예측분포는 `removedMetrics`와 사유로 명시한다.
+전력 적분은 측정 노드 수신 기준 투영창을 쓰고, rate는
+`scheduledInputs / issueElapsedSecondsMonotonic`를 쓴다. 부하 노드 offering UTC를 meter와 혼합하지 않는다.
+native admission FIFO 대기는 `scheduledAt`~`dispatchedAt`이며 client 지연에 포함한다.
+request latency는 동결 scheduler 설정이 지원하는 여러 분위수에서 `EvaluateScheduler`로 계산한다.
+설정이 제한하면 SLO 분위수만 보고하고 사유를 남긴다. 전체 replay 표본을 공개하는 새 export는 없다.
 현재 scheduler 검증은 batch 1 service 근거를 요구한다. campaign의 실제 batch 1을 포함해 입력한다.
 batch 1이 정말 없는 입력은 이를 합성하지 않으며 지연 예측을 null·`MissingSingleBatchEvidence` 사유로 보고한다.
 신뢰구간은 독립 trial
 전체를 복원추출한다. phase holdout은 같은 physical trial의 training·held-out 단계를
-같은 trial draw로 함께 뽑으며 해당 training trial의 post-load 유휴 근거도 함께 뽑는다.
+같은 trial draw로 함께 뽑는다. 독립 loaded-idle trial은 별도 복원추출하며 post-load를 섞지 않는다.
 trial holdout의 training·held-out은 독립적으로 뽑는다. 요청이나 batch를 독립 표본처럼 재추출하지 않는다.
 training trial 하나의 예측 CI와 held-out trial
 하나의 실측 CI는 null이다. CI 포함 여부만 표시하며 pass/fail·배제·보정 임계값은 없다.

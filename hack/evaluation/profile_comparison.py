@@ -7,8 +7,8 @@ This diagnostic never changes profiles or evaluation judgments.
 Optional --profile-raw files are archived profiling-raw-measurement JSON objects.
 Their podUID and native sample batchSize join catalog serviceSamples by trialID
 and batch size. The complete trial's service/idle multiset must match the catalog.
-Request dispatchedAt and batch startedAt/finishedAt condition that trial on
-other-request ingress after FIFO admission; scheduledAt records client arrival.
+Request nativeHTTP.handlerEnteredAt plus receivedNanos and batch
+startedAt/finishedAt condition that trial on measurement-node ingress.
 Catalog-only samples remain explicitly not conditioned on ingress.
 """
 import argparse
@@ -111,8 +111,20 @@ def comparison(key, serving, profile, edges=None, conditioned=False, uncondition
     return result
 
 
+def native_receive_ns(request):
+    """Return the measurement-node native elapsed origin, or None without evidence."""
+    timing = request.get('response', {}).get('progress', {}).get('nativeHTTP') or {}
+    entered = timing.get('handlerEnteredAt')
+    offset = timing.get('receivedNanos')
+    if not entered or offset is None:
+        return None
+    if type(offset) is not int or offset < 0:
+        raise ValueError('invalid nativeHTTP receivedNanos')
+    return evidence_io.timestamp_ns(entered) + offset
+
+
 def profile_ingress(raws):
-    """Classify reaching-native ingress from dispatchedAt, after FIFO admission."""
+    """Classify native receives against batch execution on the measurement-node clock."""
     trials = {}
     for raw in raws:
         trial = raw['podUID']
@@ -129,8 +141,7 @@ def profile_ingress(raws):
                 rid = request['requestID']
                 if not rid or rid in requests:
                     raise ValueError('missing or duplicate profile raw request ID')
-                requests[rid] = (evidence_io.timestamp_ns(request['dispatchedAt'])
-                                 if request.get('dispatchedAt') else None)
+                requests[rid] = native_receive_ns(request)
         receives = sorted(value for value in requests.values() if value is not None)
         batches = defaultdict(list)
         seen = set()
@@ -304,14 +315,14 @@ def analyze(paths, profiles, edges, cohort=None, profile_raws=()):
         'profileSupportMeaning': 'profileIdleBinSupported tests idle-bin support; profileIngressSupported tests the matched ingress cell',
         'sameConditionsMeaning': 'sameConditionsComparison matches profileID, batchSize, measured idle bin and observed ingress only; runtime image equivalence is not established',
         'receiveDefinition': 'nativeFinishedAt - nativeElapsedMS; same instance; running interval [nativeRunningAt,nativeFinishedAt); exclude own batch requests',
-        'profileReceiveDefinition': 'dispatchedAt directly after FIFO admission; same physical trial; interval [startedAt,finishedAt); exclude own batch requests',
+        'profileReceiveDefinition': 'response.progress.nativeHTTP.handlerEnteredAt + receivedNanos; measurement-node clock; same physical trial; interval [startedAt,finishedAt); exclude own batch requests',
         'limitations': [
             'Only requests with observed native finish and elapsed contribute derived receives; absence is not proof of no ingress.',
             'Longer executions are more likely to overlap arrivals (length bias); ingress association does not establish causality.',
             'Profile ID joins do not verify actual serving runtime image or other instance conditions.',
             'Unknown idle is not zero and cannot establish profile idle-bin support.',
-            'Profile samples without dispatch/run timestamps remain not conditioned; profileUnconditioned reports them separately.',
-            'Profile ingress uses dispatchedAt directly; scheduledAt and nativeHTTP receive timestamps record client arrival, not dispatch.'],
+            'Profile samples without native receive/run timestamps remain not conditioned; profileUnconditioned reports them separately.',
+            'Profile ingress uses measurement-node nativeHTTP timing; load-node scheduledAt, dispatchedAt and completedAt are not compared with native batch timestamps.'],
         'counts': dict(counts),
         'cells': [compare(key, serving_cells[key]) for key in ordered(serving_cells)],
         # Reproduce the plan table separately; these rows deliberately marginalize idle.
