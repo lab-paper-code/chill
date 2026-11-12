@@ -188,7 +188,10 @@ func TestNativeFailureRetainsTimingWithoutCompletionProof(t *testing.T) {
 	result, err := nativeFailure(serving.BackendResult{Body: body, StatusCode: http.StatusServiceUnavailable},
 		Spec{Profile: &serving.Profile{ID: "profile"}},
 		serving.Dispatch{RequestID: "request", Definition: &serving.Definition{UID: "uid", Admission: serving.Admission{Policy: serving.AdmissionPolicyReject}}})
-	if err == nil || result.Finished || result.Progress == nil || result.Progress.ExecutionComplete || result.Progress.NativeHTTP == nil || *result.Progress.NativeHTTP.ResponseWriteStartNanos != write {
+	if result.Progress != nil {
+		t.Fatalf("timing-only failure occupied physical progress: %+v", result.Progress)
+	}
+	if err == nil || result.Finished || result.NativeHTTP == nil || *result.NativeHTTP.ResponseWriteStartNanos != write {
 		t.Fatalf("failure timing changed proof or disappeared: %+v, %v", result, err)
 	}
 }

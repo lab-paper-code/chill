@@ -197,7 +197,7 @@ func TestAdmissionRecordNativeTimingSurvivesLateProgress(t *testing.T) {
 	if row.NativeHTTP.ResponseWriteStartNanos == nil || *row.NativeHTTP.ResponseWriteStartNanos != write {
 		t.Fatal("late progress erased response boundary")
 	}
-	row.FoldNative(&BackendProgress{NativeHTTP: &firstfloor.HTTPRequestTiming{HandlerEnteredAt: at}})
+	row.Fold(&RequestEvent{NativeHTTP: &firstfloor.HTTPRequestTiming{HandlerEnteredAt: at}})
 	if row.NativeElapsedMS == nil || *row.NativeElapsedMS != 1 {
 		t.Fatal("timing-only failure invented native execution metrics")
 	}
@@ -254,5 +254,41 @@ func TestAdmissionRecordTransportAndNativeDeferredOnFinalRow(t *testing.T) {
 	}
 	if sum != row["clientSpanNanos"] {
 		t.Fatalf("exclusive transport segments %g do not sum to exchange %v", sum, row["clientSpanNanos"])
+	}
+}
+
+func TestAdmissionTimingOnlyFailureAllowsVerifiedAbsentDrain(t *testing.T) {
+	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	i := r.instances[instance.ID]
+	write := int64(17)
+	i.Execute = func(_ context.Context, d Dispatch) (BackendResult, error) {
+		return BackendResult{NativeHTTP: &firstfloor.HTTPRequestTiming{
+				HandlerEnteredAt: d.ReceivedAt.UTC(), ResponseWriteStartNanos: &write}},
+			errors.New("unproved native error")
+	}
+	c, receipt := admissionRuntimeCall(t, r, "w1", time.Now(), time.Now().Add(time.Second))
+	if _, err := c.Wait(context.Background()); err == nil {
+		t.Fatal("native error disappeared")
+	}
+	if err := r.Response(receipt, "error", "BackendUnavailable"); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	if c.progress != nil || c.backendDone || i.outstanding != 1 {
+		r.mu.Unlock()
+		t.Fatal("timing diagnostics became physical progress or completion proof")
+	}
+	i.State.Native.Requests = nil
+	i.State.NativeVerified, i.State.ObservedAt = true, time.Now()
+	r.finishAbsentLocked(i.State)
+	if err := r.unlock(); err != nil {
+		t.Fatal(err)
+	}
+	if !c.backendDone || i.outstanding != 0 || r.calls[receipt.ID] != nil {
+		t.Fatal("verified absence did not release outstanding occupancy")
+	}
+	row := admissionFinalJSON(t, r, receipt.ID)
+	if row["nativeHTTP"] == nil || row["nativeElapsedMS"] != nil {
+		t.Fatalf("diagnostic-only final lost timing or invented native execution: %+v", row)
 	}
 }

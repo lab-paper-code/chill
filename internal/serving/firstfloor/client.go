@@ -258,10 +258,7 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	}
 	p := response.Progress
 	if response.ID != d.RequestID || response.ModelName != spec.ModelName || !response.ExecutionComplete || len(response.Outputs) == 0 || !executed(&p, &d, spec.Profile.ID) {
-		if p.NativeHTTP != nil {
-			// Preserve transport observations even when completion proof is rejected.
-			result.Progress = &serving.BackendProgress{RequestID: d.RequestID, WorkloadUID: d.Definition.UID, Definition: d.Definition.Identity(), NativeHTTP: p.NativeHTTP}
-		}
+		result.NativeHTTP = p.NativeHTTP
 		return result, errors.New("native response lacks correlated actual completion proof")
 	}
 	result.Finished = true
@@ -280,13 +277,9 @@ func nativeFailure(result serving.BackendResult, spec Spec, d serving.Dispatch) 
 	if timing == nil && failure.Progress != nil {
 		timing = failure.Progress.NativeHTTP
 	}
-	// Decorate only after proof handling, without replacing actual progress or
-	// allocating an extra timing-only record for a correlated native failure.
+	// Transport diagnostics never stand in for physical progress or proof.
 	defer func() {
-		if recorded.Progress == nil && timing != nil {
-			// Timing alone is not admission or execution completion proof.
-			recorded.Progress = &serving.BackendProgress{RequestID: d.RequestID, WorkloadUID: d.Definition.UID, Definition: d.Definition.Identity(), NativeHTTP: timing}
-		}
+		recorded.NativeHTTP = timing
 	}()
 	if status == http.StatusTooManyRequests && failure.Code != serving.CodeQueueFull ||
 		failure.NotAdmitted && failure.Code != serving.CodeQueueFull {

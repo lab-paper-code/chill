@@ -142,6 +142,7 @@ func copyNanos(value *int64) *int64 {
 
 func (r *RequestRow) foldTiming(e *RequestEvent) {
 	r.ServerTiming.Merge(e.ServerTiming)
+	r.foldNativeHTTP(e.NativeHTTP)
 	if !e.ReceivedAt.IsZero() {
 		r.ReceivedAt = e.ReceivedAt
 	} else if r.ReceivedAt.IsZero() && e.Kind == phaseReceived {
@@ -196,21 +197,23 @@ func (r *RequestRow) foldTiming(e *RequestEvent) {
 	}
 }
 
-func (r *RequestRow) FoldNative(p *BackendProgress) {
-	if p.NativeHTTP != nil {
-		timing := *p.NativeHTTP
-		if r.NativeHTTP != nil {
-			timing = *r.NativeHTTP
-			timing.Merge(*p.NativeHTTP)
-		}
-		r.NativeHTTP = &timing
+func (r *RequestRow) foldNativeHTTP(observed *firstfloor.HTTPRequestTiming) {
+	if observed == nil {
+		return
 	}
+	timing := *observed
+	if r.NativeHTTP != nil {
+		timing = *r.NativeHTTP
+		timing.Merge(*observed)
+	}
+	r.NativeHTTP = &timing
+}
+
+func (r *RequestRow) FoldNative(p *BackendProgress) {
+	r.foldNativeHTTP(p.NativeHTTP)
 	if p.NativeDeferredAt != nil {
 		at := *p.NativeDeferredAt
 		r.NativeDeferredAt = &at
-	}
-	if p.Phase == "" && p.NativeHTTP != nil {
-		return // Transport diagnostics alone are not native execution progress.
 	}
 	if p.ExecutorWaitNanos != nil {
 		r.ExecutorWaitNanos = copyNanos(p.ExecutorWaitNanos)

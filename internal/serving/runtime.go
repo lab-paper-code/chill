@@ -75,6 +75,7 @@ type Call struct {
 	instance                                     *runtimeInstance
 	phase                                        string
 	progress                                     *BackendProgress
+	nativeHTTP                                   *firstfloor.HTTPRequestTiming
 	exchangeFinishedAt                           time.Time
 	clientSpan                                   time.Duration
 	completionMarginMS                           float64
@@ -318,6 +319,7 @@ func requestEvent(c *Call, kind, outcome, code string, now time.Time) RequestEve
 		e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
 	}
 	e.NativeProgress = c.progress
+	e.NativeHTTP = c.nativeHTTP
 	e.Policy = c.receipt.Policy
 	e.Rejection = c.receipt.Rejection
 	if !c.enqueuedAt.IsZero() && !c.queueEndedAt.IsZero() {
@@ -1123,6 +1125,7 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 	}
 	c.clientSpan = result.ClientSpan
 	c.exchangeFinishedAt = finishedAt
+	c.nativeHTTP = result.NativeHTTP
 	if result.Progress != nil {
 		c.progress = result.Progress
 	}

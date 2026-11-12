@@ -379,31 +379,32 @@ type WorkloadState struct {
 // RequestEvent records facts, including responses that failed to reach their
 // caller. An absent assignment or completion is never synthesized.
 type RequestEvent struct {
-	RequestID           string               `json:"requestID"`
-	WorkloadName        string               `json:"workloadName"`
-	WorkloadUID         string               `json:"workloadUID,omitempty"`
-	Definition          string               `json:"definition,omitempty"`
-	Kind                string               `json:"kind"`
-	At                  time.Time            `json:"at"`
-	ReceivedAt          time.Time            `json:"receivedAt"`
-	ElapsedNanos        int64                `json:"elapsedNanos"`
-	ServerTiming        RequestTimings       `json:"serverTiming,omitempty"`
-	Assignment          *Assignment          `json:"assignment,omitempty"`
-	NativeInstance      string               `json:"nativeInstance,omitempty"`
-	NativeProgress      *BackendProgress     `json:"nativeProgress,omitempty"`
-	ClientSpanNanos     int64                `json:"clientSpanNanos,omitempty"`
-	ExecutionComplete   bool                 `json:"executionComplete"`
-	LifetimeNanos       int64                `json:"lifetimeNanos,omitempty"`
-	CompletionMarginMS  *float64             `json:"completionMarginMS,omitempty"`
-	SLO                 *SLO                 `json:"slo,omitempty"`
-	Outcome             string               `json:"outcome,omitempty"`
-	Error               string               `json:"error,omitempty"`
-	Policy              AdmissionPolicy      `json:"policy,omitempty"`
-	Rejection           *Error               `json:"rejection,omitempty"`
-	GatewayWaitNanos    *int64               `json:"gatewayWaitNanos,omitempty"`
-	AdmissionPrediction *AdmissionPrediction `json:"admissionPrediction,omitempty"`
-	AdmissionWaits      []AdmissionWait      `json:"admissionWaits,omitempty"`
-	DeferredNanos       *int64               `json:"deferredNanos,omitempty"`
+	RequestID           string                        `json:"requestID"`
+	WorkloadName        string                        `json:"workloadName"`
+	WorkloadUID         string                        `json:"workloadUID,omitempty"`
+	Definition          string                        `json:"definition,omitempty"`
+	Kind                string                        `json:"kind"`
+	At                  time.Time                     `json:"at"`
+	ReceivedAt          time.Time                     `json:"receivedAt"`
+	ElapsedNanos        int64                         `json:"elapsedNanos"`
+	ServerTiming        RequestTimings                `json:"serverTiming,omitempty"`
+	Assignment          *Assignment                   `json:"assignment,omitempty"`
+	NativeInstance      string                        `json:"nativeInstance,omitempty"`
+	NativeProgress      *BackendProgress              `json:"nativeProgress,omitempty"`
+	NativeHTTP          *firstfloor.HTTPRequestTiming `json:"nativeHTTP,omitempty"`
+	ClientSpanNanos     int64                         `json:"clientSpanNanos,omitempty"`
+	ExecutionComplete   bool                          `json:"executionComplete"`
+	LifetimeNanos       int64                         `json:"lifetimeNanos,omitempty"`
+	CompletionMarginMS  *float64                      `json:"completionMarginMS,omitempty"`
+	SLO                 *SLO                          `json:"slo,omitempty"`
+	Outcome             string                        `json:"outcome,omitempty"`
+	Error               string                        `json:"error,omitempty"`
+	Policy              AdmissionPolicy               `json:"policy,omitempty"`
+	Rejection           *Error                        `json:"rejection,omitempty"`
+	GatewayWaitNanos    *int64                        `json:"gatewayWaitNanos,omitempty"`
+	AdmissionPrediction *AdmissionPrediction          `json:"admissionPrediction,omitempty"`
+	AdmissionWaits      []AdmissionWait               `json:"admissionWaits,omitempty"`
+	DeferredNanos       *int64                        `json:"deferredNanos,omitempty"`
 }
 
 type ManagementEvent struct {
@@ -441,8 +442,10 @@ type BackendResult struct {
 	StatusCode  int
 	// Finished proves either no submission or a completed synchronous response.
 	// A transport failure cannot prove that execution stopped.
-	Finished     bool
-	Progress     *BackendProgress
+	Finished bool
+	Progress *BackendProgress
+	// NativeHTTP carries transport diagnostics without implying physical progress.
+	NativeHTTP   *firstfloor.HTTPRequestTiming
 	ClientSpan   time.Duration
 	ServerTiming RequestTimings
 }
