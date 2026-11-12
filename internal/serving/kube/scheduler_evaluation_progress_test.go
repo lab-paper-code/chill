@@ -28,7 +28,7 @@ func (c *heldEvaluationContext) Err() error {
 	pc, _, _, _ := runtime.Caller(1)
 	function := c.function
 	if function == "" {
-		function = ".EvaluateScheduler"
+		function = ".evaluateScheduler"
 	}
 	if fn := runtime.FuncForPC(pc); fn != nil && strings.HasSuffix(fn.Name(), function) {
 		c.once.Do(func() {
