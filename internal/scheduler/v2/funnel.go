@@ -30,7 +30,7 @@ func funnelEvaluate[R any](exact protocol.Exact[R], choice []int, stats *FunnelS
 }
 
 // Funnel selects on native exact results and optional CHILL postfilters.
-func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []protocol.Candidate, stats *FunnelStats) *R {
+func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []protocol.Candidate, stats *FunnelStats, seed *R) *R {
 	// Replays borrow only immutable problem state. Reduce in candidate order so
 	// completion order cannot change ties, postfilters or observer diagnostics.
 	results := make([]struct {
@@ -67,18 +67,11 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 	var rawGap, filteredGap float64
 	var rawStart, filteredStart string
 	anySurvivor := false
-	for i, candidate := range candidates {
-		if p.Context != nil && p.Context.Err() != nil {
-			return nil
-		}
-		if !results[i].evaluated {
-			continue
-		}
-		res := &results[i].value
+	reduce := func(res *R, candidate protocol.Candidate, slot int) {
 		stats.Exact++
-		exact.Observe(*res, i%workers)
+		exact.Observe(*res, slot)
 		if !exact.Admits(*res) {
-			continue
+			return
 		}
 		filtered := *res
 		if p.PostFilter {
@@ -100,6 +93,19 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 				point := exact.Point(*res)
 				stats.RawKey, stats.RawJoules = point.Key, point.Joules
 			}
+		}
+	}
+	if seed != nil {
+		// Keep participates first with the same admission and postfilter rules.
+		// Reuse its exact seed result rather than replaying it for selection.
+		reduce(seed, protocol.Candidate{Joules: exact.Point(*seed).Joules, Start: "keep"}, 0)
+	}
+	for i, candidate := range candidates {
+		if p.Context != nil && p.Context.Err() != nil {
+			return nil
+		}
+		if results[i].evaluated {
+			reduce(&results[i].value, candidate, i%workers)
 		}
 	}
 	if p.Context != nil && p.Context.Err() != nil {

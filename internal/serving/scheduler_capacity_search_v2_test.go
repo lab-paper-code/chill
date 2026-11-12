@@ -150,7 +150,7 @@ func TestCapacityFunnelExactAndFallback(t *testing.T) {
 	problem := p.searchProblem(time.Time{})
 	evaluator := newCapacityExact(p)
 	stats := v2.FunnelStats{}
-	got := v2.Funnel(problem, evaluator, []protocol.Candidate{{Choice: keep, Joules: exact.joules + 3}}, &stats)
+	got := v2.Funnel(problem, evaluator, []protocol.Candidate{{Choice: keep, Joules: exact.joules + 3}}, &stats, nil)
 	if got == nil || got.key != exact.key || stats.Exact != 1 || stats.Gap != 3 || stats.RawKey != exact.key || stats.RawJoules != exact.joules {
 		t.Fatalf("funnel: %+v %+v", got, stats)
 	}
@@ -162,7 +162,7 @@ func TestCapacityFunnelExactAndFallback(t *testing.T) {
 	p.settings.PlanPostFilterFinalists = true
 	problem = p.searchProblem(time.Time{})
 	stats = v2.FunnelStats{}
-	filtered := v2.Funnel(problem, evaluator, []protocol.Candidate{{Choice: best.choice, Joules: best.joules}}, &stats)
+	filtered := v2.Funnel(problem, evaluator, []protocol.Candidate{{Choice: best.choice, Joules: best.joules}}, &stats, nil)
 	want := p.minimumGain(p.payback(*best))
 	if filtered == nil || filtered.key != want.key || filtered.joules != want.joules || stats.RawKey != best.key || stats.RawJoules != best.joules {
 		t.Fatalf("postfilter: %+v want %+v", filtered, want)
@@ -185,7 +185,7 @@ func TestCapacityFunnelPostFilterReverts(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		p.settings.PlanPostFilterFinalists = enabled
 		stats := v2.FunnelStats{}
-		got := v2.Funnel(p.searchProblem(time.Time{}), newCapacityExact(p), candidates, &stats)
+		got := v2.Funnel(p.searchProblem(time.Time{}), newCapacityExact(p), candidates, &stats, nil)
 		want := a
 		wantReverts := 0
 		if enabled {
@@ -552,7 +552,7 @@ func TestCapacityV2DeltaDoesNotConsumeExactReplay(t *testing.T) {
 	}
 	choice := capacityChoiceForTest(t, planner, map[string]string{"genesis3": "profile@genesis3-fixed/b1/w1"})
 	stats := v2.FunnelStats{}
-	finalist := v2.Funnel(planner.searchProblem(time.Time{}), evaluator, []protocol.Candidate{{Choice: choice}}, &stats)
+	finalist := v2.Funnel(planner.searchProblem(time.Time{}), evaluator, []protocol.Candidate{{Choice: choice}}, &stats, nil)
 	if finalist == nil || stats.Exact != 1 || cached() != 2 || len(finalist.feedback) == 0 {
 		t.Fatalf("finalist replay boundary missing: result=%+v stats=%+v cached=%d", finalist, stats, cached())
 	}

@@ -68,7 +68,7 @@ func TestFunnelUsesExactOutcomesForEveryHeuristicFinalist(t *testing.T) {
 			{Choice: []int{2}, Feasible: false, Joules: 2, Start: "priced"},
 		}
 		stats := FunnelStats{}
-		got := Funnel(protocol.Problem{PostFilter: postfilter}, exact, candidates, &stats)
+		got := Funnel(protocol.Problem{PostFilter: postfilter}, exact, candidates, &stats, nil)
 		if got == nil || got.choice[0] != 1 || exact.evaluated != 3 || stats.Exact != 3 {
 			t.Fatalf("postfilter=%v result=%+v evaluated=%d stats=%+v", postfilter, got, exact.evaluated, stats)
 		}

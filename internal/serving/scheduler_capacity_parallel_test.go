@@ -38,7 +38,7 @@ func TestCapacityFunnelParallelDiagnostics(t *testing.T) {
 					tied.Joules, tied.Start = -100, "later-tie"
 					candidates = append(candidates, tied)
 					stats := v2.FunnelStats{}
-					got := v2.Funnel(p.searchProblem(time.Time{}), exact, candidates, &stats)
+					got := v2.Funnel(p.searchProblem(time.Time{}), exact, candidates, &stats, nil)
 					if got == nil || stats.Exact != len(candidates) {
 						t.Fatalf("workers=%d result=%+v stats=%+v candidates=%d", workers, got, stats, len(candidates))
 					}

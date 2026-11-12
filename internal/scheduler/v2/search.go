@@ -28,7 +28,7 @@ func (Engine[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (out protoc
 	}
 	stats := FunnelStats{}
 	exactStarted := time.Now()
-	best := Funnel(p, exact, candidates, &stats)
+	best := Funnel(p, exact, candidates, &stats, &keep)
 	if err := p.Context.Err(); err != nil {
 		return protocol.Outcome[R]{}, err
 	}

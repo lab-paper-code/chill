@@ -106,11 +106,11 @@ func TestFunnelParallelPreservesCandidateOrder(t *testing.T) {
 				stats := FunnelStats{}
 				var got *finiteExactResult
 				if workers == 1 {
-					got = Funnel(problem, exact, orderedFunnelCandidates(), &stats)
+					got = Funnel(problem, exact, orderedFunnelCandidates(), &stats, nil)
 				} else {
 					exact.started, exact.release, exact.thirdDone = make(chan int, 6), make(chan struct{}), make(chan struct{})
 					done := make(chan *finiteExactResult, 1)
-					go func() { done <- Funnel(problem, exact, orderedFunnelCandidates(), &stats) }()
+					go func() { done <- Funnel(problem, exact, orderedFunnelCandidates(), &stats, nil) }()
 					awaitFunnelWorkers(t, exact)
 					close(exact.release)
 					select {
@@ -159,7 +159,7 @@ func TestFunnelParallelCancellation(t *testing.T) {
 		stats := FunnelStats{}
 		done := make(chan *finiteExactResult, 1)
 		go func() {
-			done <- Funnel(protocol.Problem{Context: ctx, Workers: 3, PostFilter: postfilter}, exact, orderedFunnelCandidates(), &stats)
+			done <- Funnel(protocol.Problem{Context: ctx, Workers: 3, PostFilter: postfilter}, exact, orderedFunnelCandidates(), &stats, nil)
 		}()
 		awaitFunnelWorkers(t, exact)
 		cancel()
@@ -207,7 +207,7 @@ func TestFunnelCancelledBeforeReplay(t *testing.T) {
 		for _, postfilter := range []bool{false, true} {
 			exact := newOrderedFunnelExact()
 			stats := FunnelStats{}
-			got := Funnel(protocol.Problem{Context: ctx, Workers: workers, PostFilter: postfilter}, exact, orderedFunnelCandidates(), &stats)
+			got := Funnel(protocol.Problem{Context: ctx, Workers: workers, PostFilter: postfilter}, exact, orderedFunnelCandidates(), &stats, nil)
 			if got != nil || stats != (FunnelStats{}) || exact.calls.Load() != 0 || len(exact.observed) != 0 || len(exact.filterOrder) != 0 {
 				t.Fatalf("workers=%d postfilter=%v result=%+v stats=%+v calls=%d", workers, postfilter, got, stats, exact.calls.Load())
 			}
