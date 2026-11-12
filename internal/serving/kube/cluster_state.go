@@ -63,6 +63,7 @@ type actionRun struct {
 	// Reset retains exact associations and bounds on unresolved identities.
 	returnPodNodes      map[string][]serving.NodeReference
 	returnInstanceNodes map[string][]serving.NodeReference
+	returnCreations     []*servingstate.OperationResult
 	routeReceipts       map[string]*actionRun
 	mayTouch            map[string]bool
 	proofParent         *actionRun

@@ -92,6 +92,14 @@ func (c *reservationState) reserveRun(id string, run *actionRun, operation servi
 			scope.Instances = append(scope.Instances, other.scope.Instances...)
 			run.returnPodNodes = c.inheritReturnNodes(other, other.scope.Pods, true, run.returnPodNodes)
 			run.returnInstanceNodes = c.inheritReturnNodes(other, other.scope.Instances, false, run.returnInstanceNodes)
+			for _, creation := range other.returnCreations {
+				if creationReturnPending(creation, creation.Operation.Node) {
+					run.returnCreations = append(run.returnCreations, creation)
+				}
+			}
+			if other.result != nil && creationReturnPending(other.result, other.result.Operation.Node) {
+				run.returnCreations = append(run.returnCreations, other.result)
+			}
 			other.reserved = false
 		}
 	}
@@ -434,13 +442,9 @@ func (c *reservationState) ownerNodeReturned(run *actionRun, ref serving.NodeRef
 		if member.result == nil {
 			return false
 		}
-		// Scope Pods include preexisting occupants. Only this prepare's own
-		// admitted Pod identity or API creation evidence closes a lost Create.
-		operation := member.result.Operation
-		creation := member.result.Preparation
-		creationKnown := operation.PodUID != "" || creation != nil && creation.PodUID != "" && creation.NodeUID == ref.UID
-		if (operation.Kind == servingstate.OperationPrepare || operation.Kind == servingstate.OperationResize) &&
-			operation.Node == ref && !creationKnown && !member.result.EffectsNotStarted {
+		if creationReturnPending(member.result, ref) || slices.ContainsFunc(member.returnCreations, func(result *servingstate.OperationResult) bool {
+			return creationReturnPending(result, ref)
+		}) {
 			return false
 		}
 		for _, pod := range pods {
@@ -452,6 +456,15 @@ func (c *reservationState) ownerNodeReturned(run *actionRun, ref serving.NodeRef
 		}
 	}
 	return true
+}
+
+// Only this prepare's admitted identity or API creation receipt closes a lost
+// Create. A reset inherits the same obligation, independently of old occupants.
+func creationReturnPending(result *servingstate.OperationResult, node serving.NodeReference) bool {
+	operation, creation := result.Operation, result.Preparation
+	known := operation.PodUID != "" || creation != nil && creation.PodUID != "" && creation.NodeUID == node.UID
+	return (operation.Kind == servingstate.OperationPrepare || operation.Kind == servingstate.OperationResize) &&
+		operation.Node == node && !known && !result.EffectsNotStarted
 }
 
 // Resolve only exact admitted/current identities. Missing inventory is not a

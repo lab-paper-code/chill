@@ -269,6 +269,12 @@ power 요청을 시작하지 않은 Node에도 같은 proof를 쓴다. pending p
 인계한 미확인 Node 범위는 exact 관측과 구별하며, 새 exact identity가 확인되면
 그 연결로 기존 반환 proof를 다시 판단한다.
 
+실패한 prepare/resize가 Create를 시작했으나 Pod UID나 API 생성 receipt를
+얻지 못했다면 reset도 그 미확정 생성 의무를 인계한다. 이전 owner의 receipt가
+장부에서 정리되거나 reset 자체가 `complete`여도 해당 Node를 바로 반환하지 않는다.
+인가 Pod 신원 또는 API 생성 근거가 생긴 뒤 기존 fresh 반환 proof로 판단하며,
+다른 Node의 정리 완료는 이 의무를 해소하지 않는다.
+
 ## serving-operation CLI
 
 JSON 파일을 보내 응답 stdout, `--execute-config FILE`, `--chill-server URL`(HTTPS origin1개), `--chill-ca-file`, `--chill-token-file`, `--timeout`(기본30분)을 쓴다. 명시 CA/token만·redirect 금지·전송 전 strict decode·응답 error면 nonzero다. 서버 `--operation-timeout` 기본30분까지 기다린다.

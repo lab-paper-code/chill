@@ -116,7 +116,7 @@ func (c *reservationState) completeAdmittedRun(run *actionRun, result *servingst
 	run.result = result
 	run.action.Status, run.action.Reason = result.Status, result.Error
 	c.recordPreparationFailureLocked(run, result, c.state.Snapshot)
-	if err == nil && result.Status == servingstate.NativeOperationComplete || result.EffectsNotStarted && !run.inheritedReservation {
+	if err == nil && result.Status == servingstate.NativeOperationComplete && len(run.returnCreations) == 0 || result.EffectsNotStarted && !run.inheritedReservation {
 		run.reserved = false
 		if kind != runnerKind {
 			c.releaseOwnerLocked(run.owner)

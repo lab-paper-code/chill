@@ -81,4 +81,39 @@ func TestDefectELostCreateRetainsOwnUnknownResponsibility(t *testing.T) {
 	if slices.Contains(parent.scope.Nodes, independent.Node) || c.authorize(servingstate.Operation{Kind: servingstate.OperationPrepare, Node: independent.Node}) != nil {
 		t.Fatal("unknown own creation prevented a proved independent node from returning")
 	}
+	// The native Create failure above must survive a change of reservation
+	// owner even if the original receipts leave the action-view ledger.
+	var resetNodes []serving.NodeReference
+	for _, node := range observed.Nodes {
+		resetNodes = append(resetNodes, node.Node)
+	}
+	for _, status := range []string{servingstate.NativeOperationPartial, servingstate.NativeOperationComplete} {
+		operation := servingstate.Operation{ID: "lost-create-reset-" + status, Kind: servingstate.OperationReset,
+			WorkloadUIDs: []string{uid}, Nodes: resetNodes}
+		done, result := c.startNodeRun(operation, c.config, func(_ context.Context, result *servingstate.OperationResult) error {
+			if status == servingstate.NativeOperationPartial {
+				result.Status = status
+				return errors.New("lower-power did not complete")
+			}
+			return nil
+		})
+		<-done
+		if result.Status != status {
+			t.Fatalf("reset receipt = %s, want %s: %s", result.Status, status, result.Error)
+		}
+		c.mu.Lock()
+		for id, run := range c.runs {
+			if run.owner != operation.ID {
+				delete(c.runs, id)
+			}
+		}
+		c.mu.Unlock()
+		handoffSnapshot(t, c)
+		if c.authorize(servingstate.Operation{Node: old.Node}) == nil {
+			t.Errorf("%s reset returned a Node with an unresolved native Create", status)
+		}
+		if err := c.authorize(servingstate.Operation{Node: independent.Node}); err != nil {
+			t.Errorf("%s reset retained an independently settled Node: %v", status, err)
+		}
+	}
 }
