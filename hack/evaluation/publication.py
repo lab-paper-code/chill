@@ -82,6 +82,7 @@ def publish(context):
             kpis={'failurePolicy':'v2','status':judgment['status'],'components':judgment['components'],'requests':requests,
                   'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,
                   'power':power,'powerDrainInclusive':judgment.get('powerDrainInclusive'),'limitations':bound['limitations']}
+            kpis['energyBoundary'] = judgment.get('energyBoundary')
             kpis.update(judgment_rules.publication_measurements(bound,power))
             stages.append({'id':sid,'from':phase['startUTC'],'to':phase['endUTC'],'kpis':kpis})
     generated=input_snapshot.now();start=min((stage['from'] for stage in stages),default=generated if prepare_failed else context.snapshot['preparedAt']);end=max((stage['to'] for stage in stages),default=generated)

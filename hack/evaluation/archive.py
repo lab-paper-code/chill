@@ -213,6 +213,31 @@ def collect(folder, phase, collection, io, timeout_seconds):
                       'complete': False, 'observedJoules': None, 'wholePoolJoules': None, 'nodes': [], 'reasons': [str(error)]}
         _save(folder / (name + '.json'), result)
         manifest['energy'][name] = result['energyStatus']
+    # Decisions are independent of meter coverage; retain only the energy boundary
+    # projection rather than copying profiles and complete scheduler snapshots.
+    decisions = {'from': phase['startUTC'], 'to': phase['endUTC'], 'events': [], 'pages': [], 'complete': False, 'errors': []}
+    query = {'from': decisions['from'], 'to': decisions['to'], 'filter': 'decision', 'view': 'compact', 'limit': 500}
+    try:
+        while True:
+            page = io.api('GET', '/api/v1/observations/scheduler?' + urllib.parse.urlencode(query), timeout=_remaining(deadline))
+            coverage = page.get('coverage')
+            decisions['pages'].append({'cursor': query.get('cursor'), 'nextCursor': page.get('nextCursor'), 'coverage': coverage})
+            if not isinstance(coverage, dict) or coverage.get('gaps') != []:
+                decisions['errors'].append('scheduler decision coverage unavailable or contains gaps')
+            for event in page['events']:
+                decision = event.get('decision')
+                if decision is not None:
+                    search = decision.get('search') or {}
+                    decisions['events'].append({'at': event['at'], 'offset': event.get('offset'),
+                        'decision': {'at': decision['at'], 'search': {key: search[key] for key in ('comparedNodes',) if key in search}}})
+            if not page.get('nextCursor'):
+                break
+            query['cursor'] = page['nextCursor']
+        decisions['complete'] = not decisions['errors']
+    except Exception as error:
+        decisions['errors'].append(str(error))
+    _save(folder / 'scheduler-decisions.json', decisions)
+    manifest['schedulerDecisions'] = 'CAPTURED' if decisions['complete'] else 'UNAVAILABLE'
     _save(folder / 'raw-source-index.json', index)
     manifest.update(raw=index['sources'], sourceIndex=_ref(folder / 'raw-source-index.json'))
     manifest['failurePolicy'] = 'v2'

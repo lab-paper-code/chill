@@ -164,6 +164,75 @@ def provisional_requests(config, phase, clients, indexes, as_of, closed_through)
             'generatorQuality': {name: row['issuanceFidelity'] for name, row in results.items()}}
 
 
+def energy_boundary(power, observations, declared_nodes):
+    """Project archived meter results onto the decisions' exact name/UID sets."""
+    reasons, variants = list(observations.get('errors', [])), {}
+    seconds = None
+    try:
+        start, end = (evidence_io.timestamp_ns(power[key]) for key in ('from', 'to'))
+        if end <= start:
+            raise ValueError('nonpositive measured interval')
+        seconds = (end - start) / 1e9
+        if (observations.get('from'), observations.get('to')) != (power['from'], power['to']):
+            if any(evidence_io.timestamp_ns(observations[key]) != stamp for key, stamp in (('from', start), ('to', end))):
+                reasons.append('scheduler observations interval differs from measured interval')
+        for event in observations.get('events', []):
+            decision = event.get('decision')
+            if decision is None or not start <= evidence_io.timestamp_ns(event['at']) < end:
+                continue
+            nodes = decision.get('search', {}).get('comparedNodes')
+            if not isinstance(nodes, list) or any(not isinstance(node, dict) or not node.get('name') or not node.get('uid') for node in nodes):
+                reasons.append('decision ' + event['at'] + ': comparedNodes unavailable')
+                continue
+            key = tuple(sorted({(node['name'], node['uid']) for node in nodes}))
+            variants.setdefault(key, []).append(decision.get('at', event['at']))
+    except (KeyError, TypeError, ValueError) as error:
+        reasons.append('interval/decision unavailable: ' + str(error))
+    if observations.get('complete') is not True:
+        reasons.append('scheduler decisions incomplete/unavailable')
+    if not variants:
+        reasons.append('no stage decisions with comparedNodes')
+    known = not reasons
+    compared = set().union(*variants) if variants else set()
+    measured = {(row['node']['name'], row['node']['uid']): row for row in power.get('nodes', [])}
+    declared = {(node['name'], node['uid']) for node in declared_nodes}
+    def row(scope, members, unavailable=()):
+        problems, observed = list(unavailable), []
+        for member in sorted(members):
+            source = measured.get(member)
+            label = '@'.join(member)
+            if source is None:
+                problems.append('member missing: ' + label)
+                continue
+            joules = source.get('joules')
+            if type(joules) not in (int, float) or not math.isfinite(joules) or joules < 0:
+                problems.append('UNAVAILABLE: ' + label + ' joules')
+            else:
+                observed.append(joules)
+            for field in ('meterComplete', 'policyMet'):
+                if source.get(field) is not True:
+                    problems.append('PARTIAL: ' + label + ' ' + field + ' not true')
+        if seconds is None:
+            problems.append('measured interval unavailable')
+        joules = sum(observed) if not problems else None
+        return {'scope': scope, 'nodes': [{'name': name, 'uid': uid} for name, uid in sorted(members)],
+                'joules': joules, 'averageWatts': joules / seconds if joules is not None else None,
+                'status': 'MEASURED' if not problems else 'PARTIAL' if observed else 'UNAVAILABLE', 'reasons': problems}
+    rows = [row('compared', compared, reasons)]
+    rows.extend(row('non-compared' if known else 'unclassified', {member}) for member in sorted(declared - compared if known else declared))
+    whole = row('whole-pool', declared)
+    if power.get('complete') is not True or power.get('wholePoolJoules') is None:
+        whole.update(joules=None, averageWatts=None, status=power.get('energyStatus', 'UNAVAILABLE'))
+        whole['reasons'].extend(power.get('reasons') or ['whole POOL incomplete/unavailable'])
+    elif whole['joules'] is not None:
+        whole.update(joules=power['wholePoolJoules'], averageWatts=power['wholePoolJoules'] / seconds)
+    rows.append(whole)
+    return {'from': power.get('from'), 'to': power.get('to'), 'durationSeconds': seconds,
+            'comparedSetStatus': 'UNAVAILABLE' if not known else 'VARYING' if len(variants) > 1 else 'CONSTANT',
+            'comparedSets': [{'nodes': [{'name': name, 'uid': uid} for name, uid in members], 'decisionAts': ats}
+                             for members, ats in variants.items()], 'rows': rows}
+
+
 def judge(binding, folder):
     bound = evidence_io.load_binding(binding)
     config = bound['config']
@@ -209,6 +278,10 @@ def judge(binding, folder):
                                  else 'NOT_REALIZED', 'evidence': failures}},
               'ignoredKeys': config.get('ignoredKeys', []), 'failureScenarioEvidence': failures,
               'limitations': bound['limitations'], 'judgmentCriteria': ['independent SLO, load fidelity, energy, injection and drain facts']}
+    decisions_path = folder / 'scheduler-decisions.json'
+    observations = evidence_io.load(decisions_path) if decisions_path.exists() else {}
+    declared_nodes = config['collection']['powerMeasurement']['nodes']
+    result['energyBoundary'] = energy_boundary(power, observations, declared_nodes)
     resources = folder / 'producer-resources.json'
     result['cgroups'] = evidence_io.load(resources) if resources.exists() else {'rows': [], 'meaning': 'No generator offered in this window'}
     # Keep per-request diagnostic evidence out of the compact verdict artifact.

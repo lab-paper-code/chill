@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 
+from judgment import energy_boundary
+
 
 def sections(path):
     if not Path(path).exists():
@@ -48,5 +50,20 @@ def render(root, repository=None, *, evaluation=None):
                                                            result['D1'], 'UNKNOWN' if energy is None else energy)))
             for gap in result.get('observationGaps', []):
                 lines.append('Observation gap: ' + json.dumps(gap, sort_keys=True))
+    lines.append('stage | energy scope | nodes (name@UID) | J | average W | status | reasons')
+    for stage in evaluation.get('stages', []):
+        boundary = stage['kpis'].get('energyBoundary')
+        if not boundary:
+            power = stage['kpis'].get('power') or {}
+            boundary = energy_boundary(power, {}, [row['node'] for row in power.get('nodes', [])])
+        lines.append('Energy interval: ' + stage['id'] + ' [' + str(boundary['from']) + ', ' + str(boundary['to']) + ')')
+        lines.append('Compared set: ' + stage['id'] + ' ' + boundary['comparedSetStatus'])
+        for variant in boundary['comparedSets']:
+            lines.append('Compared set decisions: ' + json.dumps(variant, sort_keys=True))
+        for row in boundary['rows']:
+            lines.append(' | '.join(str(value) for value in (
+                stage['id'], row['scope'], ','.join(node['name'] + '@' + node['uid'] for node in row['nodes']),
+                'UNKNOWN' if row['joules'] is None else row['joules'],
+                'UNKNOWN' if row['averageWatts'] is None else row['averageWatts'], row['status'], '; '.join(row['reasons']))))
     lines.append('SLO denominator: the complete frozen planned population, not successful responses. Meter energy includes every declared node, whether serving or idle.')
     return '\n'.join(lines) + '\n'

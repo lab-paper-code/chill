@@ -69,7 +69,7 @@ rules:
     resources: [workloads, preprocessors, datasets]
     verbs: [get]
   # Same public operator routes whether ChillServer is local or externally provisioned.
-  - nonResourceURLs: ["/chill/api/v1/workloads", "/chill/api/v1/workloads/*", "/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/observations/power", "/chill/api/v1/observations/clients", "/chill/api/v1/observations/raw", "/chill/api/v1/observations/raw/*"]
+  - nonResourceURLs: ["/chill/api/v1/workloads", "/chill/api/v1/workloads/*", "/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/observations/power", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/clients", "/chill/api/v1/observations/raw", "/chill/api/v1/observations/raw/*"]
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/scheduler/settings"]
     verbs: [put]

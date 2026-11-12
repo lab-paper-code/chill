@@ -241,7 +241,7 @@ class RequestAnalysisTest(unittest.TestCase):
             folder = Path(directory)
             for name, value in (('phase', phase), ('power', {}), ('power-drain-inclusive', {})):
                 (folder / (name + '.json')).write_text(json.dumps(value))
-            bound = {'config': {'workloads': [], 'evaluation': {}}, 'limitations': []}
+            bound = {'config': {'workloads': [], 'evaluation': {}, 'collection': {'powerMeasurement': {'nodes': []}}}, 'limitations': []}
             with patch.object(judgment.evidence_io, 'load_binding', return_value=bound), \
                  patch.object(judgment.evidence_io, 'module', return_value=raw), \
                  patch.object(raw, 'iter_request_indexes', return_value={}), \

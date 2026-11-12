@@ -732,7 +732,7 @@ class EvaluationTests(unittest.TestCase):
                 return window
             with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(env)), patch.object(archive.time, 'time_ns', return_value=evidence_io.timestamp_ns(tail_end)+180000000000), patch.object(archive, '_raw_get', side_effect=RuntimeError('raw index unavailable')):
                 archive.collect(folder, phase, config['collection'], SimpleNamespace(api=api), 5)
-            self.assertEqual(len(calls), 2)
+            self.assertEqual(sum(path.startswith('/api/v1/observations/power?') for path in calls), 2)
             self.assertEqual(evidence_io.load(folder / 'power.json')['energyStatus'], 'UNAVAILABLE')
             self.assertEqual(evidence_io.load(folder / 'power-drain-inclusive.json')['energyStatus'], 'MEASURED')
 

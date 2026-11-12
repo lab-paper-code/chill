@@ -6,6 +6,8 @@
 - **금지:** 강제 삭제, finalizer 제거, 자동 재시도, 암묵적인 reset/rollback 금지. 실패 후에는 부분 상태와 증거를 검토하고 새 recipe/새 증거 디렉터리로 명시적인 roll-forward만 수행한다.
 - **측정 progress 캡처:** CR 생성 직후 `python3 hack/measure/capture-progress.py --node NODE --measurement CR_NAME --output-dir /tmp/NEW --wait-for-pod 300 --capture-load`를 실행한다(또는 백그라운드 선실행 후 CR 생성). CR의 Workload 소유 Pod를 2초 간격으로 최대 300초 기다리고 첫 행부터 timestamped follow를 시작한 뒤 `READY`를 출력한다.
 
+캠페인 동안 genesis1에서는 제품 구성요소(chill-server, 부하 생성기, 클러스터 서비스)만 실행한다. 개발 빌드·테스트·에이전트 작업은 캠페인 밖에서 수행한다. genesis1의 제품 제어 비용은 전체 POOL 에너지에 포함되므로 비제품 작업을 섞지 않는다([에너지 목적 달성 계획 §2.8](../design/serving/energy-objective-plan.md#28-평가-에너지의-경계)).
+
 ## Recipe 기반 roll-forward 배포
 
 기존 `hack/fast-deploy.sh` 구현을 `hack/deploy/main.py`의 얇은 실행기로

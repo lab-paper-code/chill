@@ -127,7 +127,7 @@ if config:
     assert resources == expected, ("evaluation action resource permissions differ", resources ^ expected)
     expected_urls = {("get", "/chill/api/v1/" + path) for path in (
         "workloads", "workloads/*", "scheduler", "scheduler/settings", "observations/power",
-        "observations/clients", "observations/raw", "observations/raw/*"
+        "observations/scheduler", "observations/clients", "observations/raw", "observations/raw/*"
     )} | {("put", "/chill/api/v1/scheduler/settings")}
     assert urls == expected_urls, ("evaluation action public URLs differ", urls ^ expected_urls)
     assert effective(config["data"]["publishServiceAccount"]) == (set(), set()), "publisher acquired API rights"
