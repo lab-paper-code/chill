@@ -10,17 +10,22 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	kubefake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 const (
-	approvalReadyField      = "Ready"
-	approvalAllocationField = "Allocation"
-	approvalRoutableField   = "Routable"
+	approvalReadyField       = "Ready"
+	approvalAllocationField  = "Allocation"
+	approvalRoutableField    = "Routable"
+	approvalIdleUnknownField = "AdmissionIdleUnknown"
 )
 
 func TestSchedulerApprovalInstanceFields(t *testing.T) {
-	volatile := map[string]bool{"ObservedAt": true, "NativeSpanAt": true, "LastServiceEndAgeUpperNanos": true, "LastServiceEndAgeNanos": true, "ArrivalAgesMS": true, "AdmissionIdleUnknown": true}
+	volatile := map[string]bool{"ObservedAt": true, "NativeSpanAt": true, "LastServiceEndAgeUpperNanos": true, "LastServiceEndAgeNanos": true, "ArrivalAgesMS": true}
 	compared := map[string]bool{}
+	compared[approvalIdleUnknownField] = true
 	for _, name := range []string{"ID", "PodUID", "PodName", "TargetID", "OwnerWorkloadUID", "Node", "Profile", "ProfileID", "RuntimeImage", "RunnerCommand", "ActualImageID", "DesiredRuntimeImage", "ReplacementReason", "WorkloadUID", "Allocation", "Ready", "Stopped", "Terminated", "StartupFailure", "Routable", "Reasons", "Capacity", "Weight", "MaxBatch", "FixedBatchSize", "MaxWait", "IdleMeter", "IdleScope", "UnroutedSince", "HeldUntil"} {
 		compared[name] = true
 	}
@@ -79,7 +84,7 @@ func TestSchedulerApprovalIgnoresTrafficInstanceFields(t *testing.T) {
 					b.Instances = []serving.SchedulerInstance{after}
 				}
 				equal := reflect.DeepEqual(schedulerApprovalInputs(serving.SchedulerSettings{}, a), schedulerApprovalInputs(serving.SchedulerSettings{}, b))
-				realChange := field == approvalReadyField || field == approvalAllocationField || field == approvalRoutableField
+				realChange := field == approvalReadyField || field == approvalAllocationField || field == approvalRoutableField || field == approvalIdleUnknownField
 				if equal == realChange {
 					t.Fatalf("approval equality=%t for %s; real change=%t", equal, field, realChange)
 				}
@@ -89,7 +94,7 @@ func TestSchedulerApprovalIgnoresTrafficInstanceFields(t *testing.T) {
 }
 
 func TestSchedulerApprovalTrafficCaptureLaunchesTarget(t *testing.T) {
-	for _, change := range []string{"traffic", approvalReadyField, approvalAllocationField, approvalRoutableField} {
+	for _, change := range []string{"traffic", approvalReadyField, approvalAllocationField, approvalRoutableField, approvalIdleUnknownField, "idle-recovery"} {
 		t.Run(change, func(t *testing.T) {
 			c, _ := tickReadySubsetController(t, nil)
 			c.config.Settings.AutonomousWorkloads = nil
@@ -129,7 +134,6 @@ func TestSchedulerApprovalTrafficCaptureLaunchesTarget(t *testing.T) {
 			stale.Instances[0].NativeSpanAt = stale.Instances[0].ObservedAt
 			stale.Instances[0].LastServiceEndAgeNanos = &lower
 			stale.Instances[0].LastServiceEndAgeUpperNanos = &upper
-			stale.Instances[0].AdmissionIdleUnknown = true
 			switch change {
 			case approvalReadyField:
 				stale.Instances[0].Ready = !stale.Instances[0].Ready
@@ -137,8 +141,32 @@ func TestSchedulerApprovalTrafficCaptureLaunchesTarget(t *testing.T) {
 				stale.Instances[0].Allocation.MemoryBytes++
 			case approvalRoutableField:
 				stale.Instances[0].Routable = map[string]bool{uid: false}
+			case "idle-recovery":
+				stale.Instances[0].AdmissionIdleUnknown = true
 			}
 			c.state.Snapshot = snapshot
+			if change == approvalIdleUnknownField {
+				// The final capture observes lost idle authority after replay.
+				c.kube.(*kubefake.Clientset).PrependReactor("list", "pods", func(action k8stesting.Action) (bool, k8sruntime.Object, error) {
+					if action.GetNamespace() != "" {
+						return false, nil, nil
+					}
+					c.observer.mu.Lock()
+					var instances []serving.ReadyInstance
+					for _, source := range c.observer.sources {
+						instance := source.instance
+						if instance.State.ID == snapshot.Instances[0].ID {
+							instance.State.AdmissionIdleUnknown = true
+						}
+						instances = append(instances, instance)
+					}
+					c.observer.mu.Unlock()
+					if err := c.runtime.InstallInstances(instances); err != nil {
+						t.Error(err)
+					}
+					return false, nil, nil
+				})
+			}
 			c.tickMu.Lock()
 			approved, config, err := c.recheckEvaluationTarget(ctx, c.config, stale, target, &observation.SchedulerControlObservation{}, func(string, *time.Duration) {})
 			c.tickMu.Unlock()

@@ -360,7 +360,6 @@ func (instance SchedulerInstance) ApprovalInputs() SchedulerInstance {
 	instance.ObservedAt, instance.NativeSpanAt = time.Time{}, time.Time{}
 	instance.LastServiceEndAgeNanos, instance.LastServiceEndAgeUpperNanos = nil, nil
 	instance.ArrivalAgesMS = nil
-	instance.AdmissionIdleUnknown = false
 	return instance
 }
 

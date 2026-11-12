@@ -104,10 +104,12 @@ executor는 100% 바빴지만, 실행한 요청이 모두 이미 SLO를 지킬 �
   요청 모집단은 계속 변하는 입력이며 최종 target replay가 최신 capture를 사용하므로
   요청 모집단과 routing credit의 변화는 승인 무효화 비교에서 제외한다.
   Instance의 `ObservedAt`, `NativeSpanAt`, `LastServiceEndAgeNanos`,
-  `LastServiceEndAgeUpperNanos`, `ArrivalAgesMS`, `AdmissionIdleUnknown`도
+  `LastServiceEndAgeUpperNanos`, `ArrivalAgesMS`도
   clock·traffic 파생값이므로 비교에서 제외한다. 이 분류는 `SchedulerInstance.ApprovalInputs`가
   Instances와 Options에 공통 적용하며, 새 필드는 reflect 회귀에서 명시적 분류를 요구한다.
-  `Ready`, `Allocation`, `Routable` 등 실물 admission 입력 변화는 계속 평가를 무효화한다.
+  `AdmissionIdleUnknown`은 executor admission 권한이므로 비교에 남긴다. false→true와
+  true→false 모두 다음 평가를 요구한다. `Ready`, `Allocation`, `Routable` 등
+  실물 admission 입력 변화도 계속 평가를 무효화한다.
 - decision 기록에는 원래 평가 입력을 남긴다. 현재 state에는 승인 시점의 새 snapshot을
   게시한다. Continue가 그사이 진행했으면 평가를 게시하거나 launch하지 않으므로
   과거 snapshot이 writer fence나 admission `Before`를 되돌리지 않는다.
