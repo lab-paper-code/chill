@@ -56,7 +56,8 @@ class RequestAnalysisTest(unittest.TestCase):
                   'responseWriteStartNanos': 40}
         supplement = {'row': {'nativeHTTP': native, 'nativeDeferredAt': native['handlerEnteredAt'],
                               'nativeOutcome': 'completed'}, 'ref': {'line': 2}}
-        result = self.metrics(self.final(serverTiming=timing, nativeElapsedMS=.000034), native_records={'r': [supplement]})
+        result = self.metrics(self.final(serverTiming=timing, nativeElapsedMS=.000034,
+                                         nativeOutcome='completed'), native_records={'r': [supplement]})
         facts = result['requestAnalysis'][0]['facts']
         self.assertEqual(facts['nativeHTTP'], native)
         self.assertEqual(facts['nativeDeferredAt'], native['handlerEnteredAt'])
@@ -80,6 +81,86 @@ class RequestAnalysisTest(unittest.TestCase):
         invalid = analysis.request_diagnostics(self.final(serverTiming=[timing[0],
             {'stage': 'workerHTTPGetConn', 'elapsedNanos': 101}, timing[5]]), [])
         self.assertEqual(invalid['transportAccounting']['gatewayUnmeasuredNanos'], 100)
+
+    def test_timeout_final_uses_only_finished_native_supplement_diagnostics(self):
+        stages = ('workerHTTPStart', 'workerHTTPGetConn', 'workerHTTPGotConn',
+                  'workerHTTPWroteRequest', 'workerHTTPFirstResponseByte', 'workerHTTPDone')
+        timing = [{'stage': stage, 'elapsedNanos': value}
+                  for stage, value in zip(stages, (0, 5, 15, 30, 80, 100))]
+        final = {'outcome': 'timeout', 'executionComplete': False, 'elapsedNanos': 100,
+                 'nativeElapsedMS': .000010, 'serverTiming': timing,
+                 'nativeHTTP': {'handlerEnteredAt': 'same', 'responseWriteStartNanos': 40}}
+        queued = {'row': {'nativeQueuedAt': '2026-11-12T00:00:00Z', 'nativeExecutionComplete': False,
+                          'nativeElapsedMS': .000004,
+                          'nativeHTTP': {'handlerEnteredAt': 'same', 'receivedNanos': 0,
+                                         'enqueueNanos': 4}}, 'ref': {'line': 1}}
+        deferred = {'row': {'nativeDeferredAt': '2026-11-12T00:00:00Z',
+                            'nativeElapsedMS': .000010}, 'ref': {'line': 2}}
+        finished = {'row': {'nativeOutcome': 'completed', 'nativeExecutionComplete': True,
+                            'nativeFinishedAt': '2026-11-12T00:00:00.000000034Z',
+                            'nativeElapsedMS': .000034, 'executorWaitNanos': 7,
+                            'nativeHTTP': {'handlerEnteredAt': 'same', 'finishedNanos': 34}},
+                    'ref': {'line': 3}}
+        before = copy.deepcopy((final, queued, deferred, finished))
+        for records in ([queued, deferred, finished], [finished, deferred, queued]):
+            with self.subTest(order=[record['ref']['line'] for record in records]):
+                result = self.metrics(final, self.client(outcome='timeout', status=0),
+                                      native_records={'r': records})
+                request = result['requestAnalysis'][0]
+                facts = request['facts']
+                self.assertEqual(facts['nativeOutcome'], 'completed')
+                self.assertEqual(facts['nativeElapsedMS'], .000034)
+                self.assertEqual(facts['executorWaitNanos'], 7)
+                for field in ('nativeOutcome', 'nativeElapsedMS', 'executorWaitNanos'):
+                    self.assertEqual(facts['fieldSources'][field], 'nativeSupplement')
+                self.assertEqual(facts['fieldSources']['nativeHTTP'], 'final+nativeSupplement')
+                self.assertEqual(facts['nativeHTTP']['responseWriteStartNanos'], 40)
+                self.assertEqual(facts['nativeSupplements'][records.index(finished)]['nativeFinishedAt'],
+                                 finished['row']['nativeFinishedAt'])
+                self.assertEqual(facts['transportAccounting']['exchangeOutsideNativeNanos'], 66)
+                self.assertEqual(facts['transportAccounting']['outsideNativeUnmeasuredNanos'], 60)
+                self.assertEqual(request['outcomeClass'], 'timeout')
+                self.assertEqual(request['timeoutCause'], 'serverFinalDeadline')
+                self.assertIsNone(request['timing']['sloLatencyNS'])
+                self.assertEqual(result['outcomeClasses']['onTime'], 0)
+                breakdown = result['nonOnTimeBreakdown']['directFacts']
+                self.assertEqual(breakdown['nativeOutcomes'], {'completed': 1})
+                self.assertEqual(breakdown['timingNS']['executorWaitNanos']['p50'], 7)
+                self.assertEqual(breakdown['timingNS']['exchangeOutsideNativeNanos']['p50'], 66)
+                for field in ('nativeOutcome', 'nativeElapsedMS', 'executorWaitNanos'):
+                    self.assertEqual(breakdown['fieldSources'][field], {'nativeSupplement': 1})
+        self.assertEqual((final, queued, deferred, finished), before)
+        partial = analysis.request_diagnostics(final, [queued, deferred])
+        self.assertIsNone(partial['nativeElapsedMS'])
+        self.assertEqual(partial['fieldSources']['nativeElapsedMS'], 'partialNativeProgress')
+        self.assertIsNone(partial['transportAccounting']['exchangeOutsideNativeNanos'])
+        self.assertIsNone(partial['executorWaitNanos'])
+        direct_wait = analysis.request_diagnostics({**final, 'executorWaitNanos': 9}, [finished])
+        self.assertIsNone(direct_wait['executorWaitNanos'])
+        self.assertEqual(direct_wait['fieldSources']['executorWaitNanos'], 'conflictingNativeSupplements')
+        for marker in ('nativeOutcome', 'nativeExecutionComplete', 'nativeFinishedAt'):
+            row = {key: value for key, value in finished['row'].items()
+                   if key not in ('nativeOutcome', 'nativeExecutionComplete', 'nativeFinishedAt') or key == marker}
+            with self.subTest(marker=marker):
+                facts = analysis.request_diagnostics(final, [queued, {'row': row, 'ref': {'line': 3}}])
+                self.assertEqual(facts['nativeElapsedMS'], .000034)
+                self.assertEqual(facts['executorWaitNanos'], 7)
+        direct = {**final, **{key: finished['row'][key] for key in
+                  ('nativeOutcome', 'nativeExecutionComplete', 'nativeFinishedAt',
+                   'nativeElapsedMS', 'executorWaitNanos')}}
+        agreed = analysis.request_diagnostics(direct, [queued, finished])
+        for field in ('nativeOutcome', 'nativeElapsedMS', 'executorWaitNanos'):
+            self.assertEqual(agreed['fieldSources'][field], 'final')
+            value = 'batch_error' if field == 'nativeOutcome' else 99
+            conflict = analysis.request_diagnostics({**direct, field: value}, [queued, finished])
+            self.assertIsNone(conflict[field])
+            self.assertEqual(conflict['fieldSources'][field], 'conflictingNativeSupplements')
+        self.assertIsNone(analysis.request_diagnostics(
+            {**direct, 'nativeElapsedMS': 99}, [finished])['transportAccounting']['exchangeOutsideNativeNanos'])
+        other = {'row': {**finished['row'], 'nativeElapsedMS': 99}, 'ref': {'line': 4}}
+        conflict = analysis.request_diagnostics(final, [finished, other])
+        self.assertIsNone(conflict['nativeElapsedMS'])
+        self.assertEqual(conflict['fieldSources']['nativeElapsedMS'], 'conflictingNativeSupplements')
 
     def test_missing_and_conflicting_facts_remain_unknown(self):
         result = analysis.request_metrics([self.client()], {}, 100, 2, 1000, 0)

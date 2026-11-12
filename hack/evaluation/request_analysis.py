@@ -198,7 +198,12 @@ def transport_accounting(facts):
 
 
 def request_diagnostics(final, native_records):
-    """Retain source facts; supplements never replace HTTP outcome or completion."""
+    """Retain diagnostics without changing HTTP outcome or completion.
+
+    Finished native rows supply outcome, elapsed and executor wait. Partial
+    elapsed is not a completed span; direct final waits remain authoritative.
+    Disagreement between completion facts stays explicit and unknown.
+    """
     final = final or {}
     facts = {key: final.get(key) for key in DIAGNOSTIC_FIELDS}
     sources = {key: 'final' if facts[key] is not None else 'missing' for key in facts}
@@ -228,10 +233,28 @@ def request_diagnostics(final, native_records):
                 sources[key] = 'nativeSupplement'
             continue
         facts[key], sources[key] = None, 'conflictingNativeSupplements'
+    def finished(row):
+        return (bool(row.get('nativeOutcome')) or row.get('nativeExecutionComplete') is True or
+                row.get('nativeFinishedAt') is not None)
+    completed = [record['row'] for record in native_records if finished(record['row'])]
+    for key in ('nativeOutcome', 'nativeElapsedMS', 'executorWaitNanos'):
+        direct = facts[key] is not None and (key == 'executorWaitNanos' or finished(final))
+        values = ([facts[key]] if direct else []) + [
+            row[key] for row in completed if row.get(key) is not None]
+        if not values:
+            if key == 'nativeElapsedMS' and facts[key] is not None:
+                facts[key], sources[key] = None, 'partialNativeProgress'
+            continue
+        if all(value == values[0] for value in values):
+            facts[key] = values[0]
+            sources[key] = 'final' if direct else 'nativeSupplement'
+        else:
+            facts[key], sources[key] = None, 'conflictingNativeSupplements'
     facts['fieldSources'] = sources
     facts['nativeSupplements'] = [
         {'ref': record['ref'], **{key: record['row'].get(key) for key in DIAGNOSTIC_FIELDS},
-         'nativeOutcome': record['row'].get('nativeOutcome')} for record in native_records]
+         'nativeExecutionComplete': record['row'].get('nativeExecutionComplete'),
+         'nativeFinishedAt': record['row'].get('nativeFinishedAt')} for record in native_records]
     facts['transportAccounting'] = transport_accounting(facts)
     return facts
 
