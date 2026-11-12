@@ -80,6 +80,7 @@ actuation은 chart `nodeAgent.actuation.enabled`로 켜며 ChillSystem `spec.nod
 - 10초 read-back에서 actuator annotation이나 bootID가 달라지면 read-back·bootID·generation +1을 한 patch로 쓴다. 수동 모드 변경, 재부팅, 적용 중 멈춤을 센다. 메모리가 아니라 Node annotation과 비교하므로 agent 재시작은 세지 않는다. 10초 안에 바뀌었다 돌아온 모드는 보지 못한다.
 - host read 실패 시 read-back은 유지하고 bootID만 비교한다. bootID가 바뀌었으면 한 번 세고 낡은 read-back을 지운다. 단, 아래 재부팅 요청의 `pending`은 먼저 목표 판독을 기다린다.
 - `Host.Apply`가 오류를 반환하면 별도의 read-back timeout으로 적용 뒤 host를 다시 읽는다. 실제 관측값과 generation을 갱신해 `failed` transition과 같은 patch에 게시한다. 읽기도 실패하면 낡은 actuator annotation을 지우고 unknown 전환의 generation 및 두 오류를 함께 기록한다. 이후 독립 read가 실제 모드를 복구할 수 있으나 원래 실패를 success로 바꾸거나 Apply를 자동 재시도하지 않는다.
+- NVIDIA는 Apply가 성공했어도 독립 검증의 mismatch/read 오류 전에 같은 post-Apply 관측 helper로 실제 모드 또는 unknown과 generation을 먼저 게시한다. 실패 transition은 그 generation을 사용하며, 요청 모드 도달이나 settling 완료를 합성하지 않는다.
 - NVIDIA는 요청 label이 없으면 `fixed`다. 이때 동적 graphics/SM MHz 변화는 read-back만 갱신하고 generation을 올리지 않는다. 요청한 잠금 모드의 read-back 변경과 bootID 변경은 센다.
 - agent는 손으로 바뀐 모드를 원하는 모드로 되돌리지 않는다(Q1). generation과 실제 read-back만 갱신한다. 되돌려도 측정 무효 판정은 같고 변경만 두 번 생긴다.
 - writer는 같은 모드라도 `failed`이거나 `success` 기록의 generation이 현재와 다르면 새 요청 시각을 쓴다. agent는 새 요청으로 처리해 적용하거나 이미 목표면 현재 generation으로 `success`를 쓴다. BEO·MLIB는 host가 떠난 `success`를 재요청하고 `failed`는 전환 실패로 닫는다.

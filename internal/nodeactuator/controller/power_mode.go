@@ -284,36 +284,44 @@ func (r *PowerModeReconciler) drive(
 	if applyErr := r.Host.Apply(ctx, request, request.Target); applyErr != nil {
 		// Apply can change the host before failing. Publish an independent
 		// post-write observation, never the read taken before that write.
-		request.Deadline = r.Now().Add(r.Timeout)
-		observed, readErr := r.Host.Observe(ctx, request)
-		var postGeneration int64
-		var publishErr error
-		if readErr != nil {
-			postGeneration, publishErr = publishActuatorReadBack(node, request.Target.Kind, nil, annotations)
-		} else {
-			postGeneration, publishErr = publishReadBack(node, observed, nil, annotations)
-		}
+		_, generation, readErr, publishErr := r.observeAfterApply(ctx, node, request, annotations)
 		if publishErr != nil {
 			return ctrl.Result{}, publishErr
 		}
-		transition.Generation = postGeneration
+		transition.Generation = generation
 		r.fail(labels, annotations, transition, errors.Join(applyErr, readErr).Error())
 		return ctrl.Result{}, nil
 	}
 	if clockTarget {
-		observed, err := r.Host.Observe(ctx, request)
-		if err != nil || !equality.Semantic.DeepEqual(projectAPITarget(observed.Target), projectAPITarget(request.Target)) {
-			r.fail(labels, annotations, transition, fmt.Sprintf("NVIDIA post-apply read-back mismatch: %v", err))
-			return ctrl.Result{}, nil
+		observed, generation, readErr, publishErr := r.observeAfterApply(ctx, node, request, annotations)
+		if publishErr != nil {
+			return ctrl.Result{}, publishErr
 		}
-		generation, err := publishReadBack(node, observed, nil, annotations)
-		if err != nil {
-			return ctrl.Result{}, err
+		transition.Generation = generation
+		if readErr != nil || !equality.Semantic.DeepEqual(projectAPITarget(observed.Target), projectAPITarget(request.Target)) {
+			r.fail(labels, annotations, transition, fmt.Sprintf("NVIDIA post-apply read-back mismatch: %v", readErr))
+			return ctrl.Result{}, nil
 		}
 		return r.settle(transition, generation, observed,
 			time.Duration(policy.SettlingDurationSeconds)*time.Second, r.Now().UTC(), labels, annotations), nil
 	}
 	return ctrl.Result{RequeueAfter: time.Millisecond}, nil
+}
+
+// observeAfterApply publishes a fresh observation or unknown read-back before
+// either caller decides the request's outcome. Host and publication errors are
+// separate: a host read failure is terminal evidence, not a publication failure.
+func (r *PowerModeReconciler) observeAfterApply(
+	ctx context.Context, node *corev1.Node, request nodeactuator.Request, annotations map[string]*string,
+) (observation nodeactuator.Observation, generation int64, readErr, publishErr error) {
+	request.Deadline = r.Now().Add(r.Timeout)
+	observation, readErr = r.Host.Observe(ctx, request)
+	if readErr != nil {
+		generation, publishErr = publishActuatorReadBack(node, request.Target.Kind, nil, annotations)
+	} else {
+		generation, publishErr = publishReadBack(node, observation, nil, annotations)
+	}
+	return observation, generation, readErr, publishErr
 }
 
 // settle finishes a pending transition whose target the host reads back.

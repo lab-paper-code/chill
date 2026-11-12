@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -22,11 +24,16 @@ type gpuClockHost struct {
 	mhz     int32
 	applies int
 	now     time.Time
+	readErr error
+	onApply func()
 }
 
 func (h *gpuClockHost) Observe(_ context.Context, r nodeactuator.Request) (nodeactuator.Observation, error) {
 	if r.Target.Kind != nodeactuator.ActuatorKindNvidiaLockedGPUClock {
 		h.t.Fatalf("NVIDIA Node queried through %s", r.Target.Kind)
+	}
+	if h.readErr != nil {
+		return nodeactuator.Observation{}, h.readErr
 	}
 	return nodeactuator.Observation{Target: nodeactuator.Target{
 		Kind:                 nodeactuator.ActuatorKindNvidiaLockedGPUClock,
@@ -37,6 +44,9 @@ func (h *gpuClockHost) Observe(_ context.Context, r nodeactuator.Request) (nodea
 func (h *gpuClockHost) Apply(_ context.Context, _ nodeactuator.Request, target nodeactuator.Target) error {
 	h.applies++
 	h.mhz = target.NvidiaLockedGPUClock.MinMHz
+	if h.onApply != nil {
+		h.onApply()
+	}
 	return nil
 }
 
@@ -179,6 +189,100 @@ func TestNvidiaUnrequestedClocksDoNotAdvanceGeneration(t *testing.T) {
 			if step.name == "default boost" && (annotations[metadata.PowerActuator] == nil ||
 				*annotations[metadata.PowerActuator] != node.Annotations[metadata.PowerActuator]) {
 				t.Fatal("default MHz change was not staged for publication")
+			}
+		})
+	}
+}
+
+func TestNvidiaVerificationFailurePublishesPostApplyMode(t *testing.T) {
+	for _, unreadable := range []bool{false, true} {
+		name := "mismatch"
+		if unreadable {
+			name = "unreadable"
+		}
+		t.Run(name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := corev1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			const className = "test-nvidia"
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "genesis2", Labels: map[string]string{
+				metadata.DeviceClass: className,
+			}}, Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"}}}
+			mode := func(name string, mhz int32) edgev1alpha1.PowerMode {
+				return edgev1alpha1.PowerMode{Name: name, Actuator: edgev1alpha1.PowerModeActuator{
+					Kind:                 edgev1alpha1.PowerModeActuatorNvidiaLockedGPUClock,
+					NvidiaLockedGPUClock: &edgev1alpha1.NvidiaLockedGPUClockTarget{MinMHz: mhz, MaxMHz: mhz},
+				}}
+			}
+			class := &edgev1alpha1.DeviceClass{ObjectMeta: metav1.ObjectMeta{Name: className}, Spec: edgev1alpha1.DeviceClassSpec{
+				PowerModes: []edgev1alpha1.PowerMode{mode("GPU_300", 300), mode("GPU_600", 600), mode("GPU_900", 900),
+					{Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed}}},
+			}}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node, class).Build()
+			host := &gpuClockHost{t: t, mhz: 300, now: time.Unix(1000, 0).UTC()}
+			if err := metadata.RequestPowerMode(context.Background(), c, node, "GPU_900", host.now); err != nil {
+				t.Fatal(err)
+			}
+			r := &PowerModeReconciler{Client: c, Reader: c, Host: host, Node: node.Name, Interval: time.Second,
+				Timeout: time.Second, Now: func() time.Time { return host.now }, Policies: []nodeactuator.ActuationPolicySpec{{
+					Name: "gpu-900", DeviceClass: className, PowerMode: "GPU_900", ActuatorKind: nodeactuator.ActuatorKindNvidiaLockedGPUClock,
+					SettlingDurationSeconds: 10, MaxActuationDurationSeconds: 60,
+				}}}
+			reconcile := func() *corev1.Node {
+				t.Helper()
+				if _, err := r.Reconcile(context.Background(), ctrl.Request{}); err != nil {
+					t.Fatal(err)
+				}
+				current := &corev1.Node{}
+				if err := c.Get(context.Background(), client.ObjectKeyFromObject(node), current); err != nil {
+					t.Fatal(err)
+				}
+				return current
+			}
+			current := reconcile()
+			if current.Labels[metadata.PowerModeState] != metadata.PowerModePending || host.applies != 0 {
+				t.Fatal("NVIDIA request did not fence before Apply")
+			}
+			// Apply reports success, but independent verification sees a
+			// different actual clock or cannot read the changed host at all.
+			host.onApply = func() {
+				host.mhz = 600
+				if unreadable {
+					host.readErr = errors.New("NVIDIA post-apply host unreadable")
+				}
+			}
+			current = reconcile()
+			generation, found, err := metadata.NodePowerModeGeneration(current)
+			if err != nil || !found || generation != 1 || current.Labels[metadata.PowerModeState] != metadata.PowerModeFailed {
+				t.Errorf("verification failure published stale host generation: labels=%v annotations=%v err=%v", current.Labels, current.Annotations, err)
+			}
+			transition, _, err := metadata.NodePowerModeTransition(current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if transition.Generation != generation || !strings.Contains(transition.Failure, "NVIDIA post-apply read-back mismatch") ||
+				transition.VerifiedAt != nil || transition.ReadyAt != nil {
+				t.Errorf("verification failure has stale generation or fabricated success: %+v", transition)
+			}
+			wantMode := "GPU_600"
+			if unreadable {
+				wantMode = ""
+				if _, exists := current.Annotations[metadata.PowerActuator]; exists || !strings.Contains(transition.Failure, host.readErr.Error()) {
+					t.Errorf("unreadable verification kept a stale actuator or hid its error: %v", current.Annotations)
+				}
+			}
+			if got := servingstate.ReadBackMode(current, class); got != wantMode {
+				t.Errorf("measurement consumer sees mode %q, want %q after verification failure", got, wantMode)
+			}
+			host.readErr = nil
+			current = reconcile()
+			if got := servingstate.ReadBackMode(current, class); got != "GPU_600" ||
+				current.Labels[metadata.PowerModeState] != metadata.PowerModeFailed || host.applies != 1 {
+				t.Errorf("independent recovery retried Apply or changed its result: mode=%q state=%s applies=%d", got, current.Labels[metadata.PowerModeState], host.applies)
 			}
 		})
 	}
