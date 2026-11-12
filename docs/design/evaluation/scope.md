@@ -90,7 +90,7 @@ Scheduler gap의 원래 `[from,to)` 범위는 보존하고 각 판단·동작 �
 
 C1(b) serving–profile 대조도 judge Job 밖의 진단 보고다.
 `hack/evaluation/profile_comparison.py`는 이미 fetch한 raw request segment와
-저장한 profile catalog JSON(`profiles[]`, batch별 `serviceSamples[]`)만 읽는다.
+저장한 profile catalog JSON(`profiles[]`, batch별 `serviceSamples[]`)과 선택적 `--profile-raw` 측정 raw를 읽는다.
 profile 값은 이 보고의 참고분포에만 쓰며, D1·에너지 판정·profile 선택을 바꾸지 않는다.
 노드 전력 대조는 위 V1 경로를 그대로 쓴다.
 
@@ -127,9 +127,12 @@ serving n/p50/p95와 profile 참고분포 n/p50/p95, p50/p95 비율을 보존한
 유휴 누락은 `unknown`·index null로 남기고 0으로 넣지 않는다.
 `profileIdleBinSupported`는 해당 profile·배치·유휴 구간의 표본 존재만 뜻한다.
 unknown 유휴는 측정된 유휴 구간의 support를 세우지 않는다.
-published ServiceSamples에는 유입 조건이 없으므로 profile 참고분포는
-**유입 여부로 조건화되지 않는다**(`profileIngressConditioning`).
-비율도 이 미조건부 참고분포와의 서술적 비교다.
+`--profile-raw`가 있으면 catalog trialID·배치의 실제 service/idle 쌍을 보존하며,
+nativeHTTP `handlerEnteredAt + receivedNanos` 수신과 `[startedAt,finishedAt)` 실행 시각으로
+profile도 다른 배치 유입 여부별로 나눈다. 실제 `sentAt` 근거와 같은 physical trial만 사용한다.
+시각 없는 과거 표본은 `profileUnconditioned`에 남고 **미조건화**로 명시한다.
+`profileIngressConditioned`와 `profileIngressSupported`가 조건 일치·표본 존재를 구분하며,
+`sameConditionsComparison`은 profile·배치·측정 유휴·유입 셀의 일치만 뜻한다.
 해당 유휴 구간 표본이 없으면 profile n=0, 분위수·비율은 null이다.
 실제 serving 이미지 등 나머지 조건의 동등성은 이 profile ID 결합으로 증명하지 않는다.
 
@@ -144,12 +147,15 @@ profile n=4,819·p50=13.965722ms다. 원 prototype은 첫 요청 사본에 runni
 보고에는 pass/fail·자동 profile 배제·보정 계수가 없다.
 
 C1(a) profiling holdout도 오프라인 진단이다. `profile_holdout.py`는 현재
-active raw v1alpha11 한 개 또는 같은 고정 배치·실행 조건의 독립 trial 여러 개를
-읽는다. 각 이용률 phase ID를 모든 trial에서 동시에 제외하는 leave-one-phase-out과,
-각 physical Pod trial 전체를 제외하는 leave-one-trial-out을 별도로 실행한다.
+active raw v1alpha14를 같은 실행 조건의 campaign Run 집합으로 읽는다.
+배치별로 묶어 각 `(batch, phase)`의 leave-one-phase-out과 physical Pod trial 전체의
+leave-one-trial-out을 실행한다. 다른 배치의 training 근거도 catalog처럼 하나의 profile에 조립한다.
 후자는 trial이 둘 이상일 때만 존재한다. 이용률 단계가 하나뿐이면 그 단계를 제외한
-fold는 EPI 학습 자료가 없어 profile=null과 사유를 보고한다. active raw에는 독립 유휴 기준선이 없으므로
-같은 조건의 model-loaded idle raw v1alpha8을 `--idle-raw`로 함께 제공한다.
+fold는 EPI 학습 자료가 없어 profile=null과 사유를 보고한다.
+유휴 W는 training trial의 `runtime.postLoad`만 사용한다. 같은 actor의 모델 상주와
+`countersBefore == countersAfter` 무추론 증거를 요구한다.
+`--idle-raw`의 별도 loaded-idle v1alpha8은 다른 정착 protocol이므로 합치지 않고
+`separateIdleEstimateWatts`로 나란히 보고한다.
 
 ```sh
 systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 env GOTOOLCHAIN=go1.26.4 GOFLAGS=-p=1 \
@@ -158,40 +164,45 @@ python3 hack/evaluation/profile_holdout.py \
   --raw /archive/trial-1/raw.json --raw /archive/trial-2/raw.json --raw /archive/trial-3/raw.json \
   --idle-raw /archive/idle-1/raw.json --idle-raw /archive/idle-2/raw.json \
   --go-cli /tmp/chill-profile-holdout \
-  --post-load-power /archive/post-load-power.json \
+  --scheduler-settings /archive/scheduler-settings.json \
   --meter-uncertainty-watts 0.5 --rolling-window-seconds 10 --final-idle-seconds 30 \
   --bootstrap-replicates 1000 --confidence 0.95 --seed 1 \
   --out /tmp/profile-holdout-report.json
 ```
 
 위 uncertainty·시간창 수치는 실행 예시이며 기기 허용치가 아니다. 전력계의 선언된
-절대 불확도와 분석 시간창을 명시한다. post-load 파일은 active `podUID`를 key로 한
-`{"<podUID>":{"loadStoppedAt":"<RFC3339Nano>","samples":[{"observedAt":"<RFC3339Nano>","watts":10}]}}`
-형태다. 같은 측정 노드 전력계의 시계만 사용한다. 파일을 생략하면 raw metric의
-runtime 종료 이후 표본을 사용하며, 관측이 부족하면 정착 시간은 null과 사유로 남긴다.
-모델이 계속 상주한 무부하 구간을 충분히 기록해야 최종 loaded-idle을 해석할 수 있다.
+절대 불확도와 분석 시간창을 명시한다. 안정화는 `runtime.postLoad.startedAt`부터
+`endedAt`까지 같은 측정 노드의 `metrics.samples`만 사용한다.
+모델 상주·무추론 증거가 없는 raw는 거절하며, 관측이 부족하면 정착 시간은 null과 사유로 남긴다.
 
 evaluation은 CHILL 시스템 밖의 작업이다. `hack/evaluation/profile_holdout.py`와
 Go bridge는 보존한 raw만 읽으며 제품에 evaluation 전용 export나 trace 수집 경로를
 추가하지 않는다. Python은 raw field 투영·trial bootstrap·표시를 맡는다.
 Go bridge는 기존 공개 derivation API인 `MeasureIdle`, `IncrementalWorkTrial`,
-`MeasurePhasePower`, `SaturationDispatchOccupancy`를 재사용한다.
+`MeasurePhasePower`, `SaturationDispatchOccupancy`와 기존 `serving.EvaluateScheduler`를 재사용한다.
 phase 제외 후에도 남은 native ServiceSamples의 실제 service/preceding-idle 쌍을
 보존한다. EPI와 유휴 W는 trial별 추정치의 산술평균이다. d는 적격 포화 배치 쌍의
 signed residual 평균이며 operational d만 0 이상으로 clamp한다.
+`--scheduler-settings`는 같은 실행의 동결된 공개 `SchedulerSettings` JSON이다.
+분석기가 검색·용량·동작 비용 설정을 임의로 만들지 않는다.
 
-`profile-holdout-report.v2`는 다음 세 비교만 보고한다.
-- phase별 실측 노드 W와 `유휴 W + EPI × completed input rate`
+`profile-holdout-report.v3`는 다음 비교를 보고한다.
+- held-out phase의 실제 `sentAt` 도착과 같은 측정 설정으로 만든 단일 인스턴스 `SchedulerSnapshot`의 keep 후보 SLO `expectedNanos`와 실측 요청 지연의 같은 분위수
+- phase별 실측 노드 W와 `유휴 W + EPI × sent rate`
 - 포화 배치 쌍의 실측 cycle과 `앞 배치의 실제 S + B × d`
 - 부하 중단 뒤 원시 전력 표본·rolling mean과 안정화 시간
 
-기존 serving 공개 API는 전체 요청 지연·batch service 재생 표본을 반환하지 않는다.
-요청 지연·batch service의 예측분포, p50/p95/p99/SLO 분위수 대조와 관련 CI는
-도구에서 제거했다. `removedMetrics`와 사유를 보고하며 스케줄러 재생은 실행하지 않는다.
+전력 적분과 rate는 모두 drain을 포함한 전체 측정 창을 쓴다.
+rate는 포화 closed-loop 단계도 포함해 `completedInputs / measurementElapsedSecondsMonotonic`다.
+전체 요청 지연분포나 batch service 재생분포는 기존 export가 반환하지 않는다.
+보고하는 지연 예측은 scheduler가 공개하는 SLO 분위수 추정치로 한정하며,
+batch service 예측분포는 `removedMetrics`와 사유로 명시한다.
+현재 scheduler 검증은 batch 1 service 근거를 요구한다. campaign의 실제 batch 1을 포함해 입력한다.
+batch 1이 정말 없는 입력은 이를 합성하지 않으며 지연 예측을 null·`MissingSingleBatchEvidence` 사유로 보고한다.
 신뢰구간은 독립 trial
 전체를 복원추출한다. phase holdout은 같은 physical trial의 training·held-out 단계를
-같은 trial draw로 함께 뽑는다. trial holdout의 training·held-out과 idle trial은
-각각 독립적으로 뽑는다. 요청이나 batch를 독립 표본처럼 재추출하지 않는다.
+같은 trial draw로 함께 뽑으며 해당 training trial의 post-load 유휴 근거도 함께 뽑는다.
+trial holdout의 training·held-out은 독립적으로 뽑는다. 요청이나 batch를 독립 표본처럼 재추출하지 않는다.
 training trial 하나의 예측 CI와 held-out trial
 하나의 실측 CI는 null이다. CI 포함 여부만 표시하며 pass/fail·배제·보정 임계값은 없다.
 전력 정착은 마지막 지정 시간창의 시간가중 평균을 최종 유휴로 잡고,

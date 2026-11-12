@@ -21,8 +21,36 @@ def request(rid, instance, batch, start, finish, receive, idle=0, service=10):
             'receivedAt': stamp(999_000_000)}
 
 
+def profile_trial(trial='physical'):
+    """Two batches sharing an idle bin, with opposite observed ingress."""
+    samples, requests = [], []
+    for batch, start, finish, receives in [
+            (1, 10_000_000, 12_000_000, [1_000_000, 10_000_000]),
+            (2, 30_000_000, 50_000_000, [12_000_000, 11_000_000])]:
+        members = [trial + '-%s-%s' % (batch, member) for member in range(2)]
+        samples.append({'trialID': trial, 'batchID': batch, 'batchSize': 2,
+                        'requestIDs': members, 'serviceDurationNanos': finish - start,
+                        'precedingIdleNanos': 0, 'startedAt': stamp(start), 'finishedAt': stamp(finish)})
+        for rid, receive in zip(members, receives):
+            requests.append({'requestID': rid, 'arrivalAt': stamp(0),
+                             'sentAt': stamp(receive - 5_000), 'completedAt': stamp(finish),
+                             'latencyMs': (finish - receive + 5_000) / 1e6,
+                             'response': {'progress': {'batchID': batch, 'at': stamp(finish),
+                                          'nativeElapsedMS': (finish - receive) / 1e6,
+                                          'nativeHTTP': {'handlerEnteredAt': stamp(receive - 1_000),
+                                                         'receivedNanos': 1_000}}}})
+    return {'schemaVersion': 'chill.dacs.io/profiling-raw-measurement.v1alpha13',
+            'podUID': trial, 'runtime': {'phases': [{'nativeSamples': samples, 'requests': requests}]}}
+
+
+def catalog_samples(raw):
+    return [{key: sample[key] for key in ('trialID', 'serviceDurationNanos', 'precedingIdleNanos')}
+            for phase in raw['runtime']['phases'] for sample in phase['nativeSamples']]
+
+
 class ProfileComparisonTests(unittest.TestCase):
-    def run_report(self, rows, samples, edges='0,1,5', cohort=None, client_directory=False):
+    def run_report(self, rows, samples, edges='0,1,5', cohort=None, client_directory=False,
+                   profile_raws=(), error=None):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             raw = root / 'obs' / '20261112T00'
@@ -40,10 +68,19 @@ class ProfileComparisonTests(unittest.TestCase):
                 clients = root / 'cohort-client.jsonl'
                 clients.write_text(''.join(json.dumps({'requestID': rid}) + '\n' for rid in cohort))
                 client_args = ['--clients', str(root if client_directory else clients)]
+            profile_args = []
+            for index, evidence in enumerate(profile_raws):
+                path = root / ('profile-raw-%s.json' % index)
+                path.write_text(json.dumps(evidence))
+                profile_args.extend(['--profile-raw', str(path)])
             result = subprocess.run([sys.executable, str(Path(__file__).with_name('profile_comparison.py')),
                                      '--raw', str(root / 'obs'), '--profiles', str(profiles),
-                                     '--idle-bin-edges-ms', edges, '--out', str(out), *client_args],
+                                     '--idle-bin-edges-ms', edges, '--out', str(out), *client_args, *profile_args],
                                     capture_output=True, text=True)
+            if error is not None:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
+                return None
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(out.read_text())
 
@@ -86,6 +123,10 @@ class ProfileComparisonTests(unittest.TestCase):
         self.assertIsNone(unsupported['p50Ratio'])
         self.assertEqual(sum(row['serving']['n'] for row in report['cells']), 3)
         self.assertFalse(any(key in report for key in ('pass', 'fail', 'verdict')))
+        self.assertFalse(first_cell['profileIngressConditioned'])
+        self.assertFalse(first_cell['profileIngressSupported'])
+        self.assertFalse(first_cell['sameConditionsComparison'])
+        self.assertEqual(first_cell['profileUnconditioned'], first_cell['profile'])
 
     def test_batch_member_supplies_missing_running_time(self):
         first = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
@@ -150,6 +191,99 @@ class ProfileComparisonTests(unittest.TestCase):
         self.assertFalse(cell['profileIdleBinSupported'])
         self.assertEqual(cell['profile']['n'], 0)
         self.assertEqual(report['marginalByIngress'][0]['profile']['n'], 1)
+
+    def test_profile_raw_conditions_same_idle_bin_on_native_ingress(self):
+        raw = profile_trial()
+        first = request('serving-first', 'one', 1, 10_000_000, 20_000_000, 0)
+        arrival = request('arrival', 'one', 2, 70_000_000, 80_000_000, 15_000_000,
+                          service=40)
+        # Another physical trial's receive at 40ms must not affect this trial.
+        elsewhere = profile_trial('elsewhere')
+        for member in elsewhere['runtime']['phases'][0]['requests']:
+            member['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(40_000_000)
+        report = self.run_report([first, arrival], catalog_samples(raw), profile_raws=[raw, elsewhere])
+        self.assertEqual(report['profileIngressConditioning'], 'conditioned on ingress')
+        self.assertEqual(report['profileConditioning'], ['profileID', 'batchSize', 'idleBin', 'otherArrived'])
+        cells = {cell['otherArrived']: cell for cell in report['cells']}
+        self.assertEqual(cells[True]['profile'], {'n': 1, 'p50': 2, 'p95': 2})
+        self.assertEqual(cells[False]['profile'], {'n': 1, 'p50': 20, 'p95': 20})
+        self.assertEqual(cells[True]['p50Ratio'], 5)
+        self.assertEqual(cells[False]['p50Ratio'], 2)
+        self.assertTrue(all(cell['sameConditionsComparison'] for cell in cells.values()))
+        self.assertTrue(all(cell['profileIngressSupported'] for cell in cells.values()))
+        self.assertEqual(report['counts']['profileSamplesWithIngress'], 2)
+        self.assertEqual(len(report['sources']['profileRaw']), 2)
+        marginal = {cell['otherArrived']: cell for cell in report['marginalByIngress']}
+        self.assertEqual(marginal[True]['profile']['p50'], 2)
+        self.assertEqual(marginal[False]['profile']['p50'], 20)
+        self.assertFalse(marginal[True]['sameConditionsComparison'])
+
+    def test_profile_ingress_half_open_boundaries_and_own_members(self):
+        raw = profile_trial()
+        phase = raw['runtime']['phases'][0]
+        # Own member at start is excluded. Other batch at finish is excluded.
+        phase['requests'][3]['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(12_000_000 - 1_000)
+        serving = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
+        no_arrival = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
+        self.assertEqual(no_arrival['cells'][0]['profile']['n'], 2)
+        # Other batch at exact start belongs to the ingress cell.
+        phase['requests'][3]['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(10_000_000 - 1_000)
+        at_start = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
+        self.assertEqual(at_start['cells'][0]['profile']['p50'], 20)
+        self.assertEqual(at_start['cells'][0]['profile']['n'], 1)
+
+    def test_profile_raw_missing_receive_or_run_stays_unconditioned(self):
+        for missing in ('sentAt', 'nativeHTTP', 'startedAt'):
+            with self.subTest(missing=missing):
+                raw = profile_trial()
+                phase = raw['runtime']['phases'][0]
+                if missing == 'startedAt':
+                    for sample in phase['nativeSamples']:
+                        sample.pop(missing)
+                else:
+                    for member in phase['requests']:
+                        target = member if missing == 'sentAt' else member['response']['progress']
+                        target.pop(missing)
+                report = self.run_report([request('a', 'one', 1, 10_000_000, 20_000_000, 0)],
+                                         catalog_samples(raw), profile_raws=[raw])
+                self.assertEqual(report['profileIngressConditioning'], 'not conditioned on ingress')
+                self.assertFalse(report['cells'][0]['profileIngressConditioned'])
+                self.assertEqual(report['cells'][0]['profile']['n'], 2)
+                self.assertEqual(report['counts']['profileSamplesWithoutIngress'], 2)
+
+    def test_mixed_profile_evidence_never_pools_unknown_ingress(self):
+        raw = profile_trial()
+        samples = catalog_samples(raw) + [{'trialID': 'legacy', 'serviceDurationNanos': 100_000_000,
+                                           'precedingIdleNanos': 0}]
+        report = self.run_report([request('a', 'one', 1, 10_000_000, 20_000_000, 0)],
+                                 samples, profile_raws=[raw])
+        cell = report['cells'][0]
+        self.assertEqual(cell['profile']['p50'], 20)
+        self.assertEqual(cell['profile']['n'], 1)
+        self.assertEqual(cell['profileUnconditioned'], {'n': 1, 'p50': 100, 'p95': 100})
+        self.assertIn('partially conditioned', report['profileIngressConditioning'])
+        self.assertEqual(report['counts']['profileSamplesWithoutIngress'], 1)
+
+    def test_missing_ingress_cell_does_not_fall_back_to_other_population(self):
+        raw = profile_trial()
+        for member in raw['runtime']['phases'][0]['requests'][2:]:
+            member['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(12_000_000 - 1_000)
+        serving = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
+        arrival = request('b', 'one', 2, 30_000_000, 40_000_000, 15_000_000)
+        report = self.run_report([serving, arrival], catalog_samples(raw), profile_raws=[raw])
+        cell = next(cell for cell in report['cells'] if cell['otherArrived'])
+        self.assertTrue(cell['profileIdleBinSupported'])
+        self.assertFalse(cell['profileIngressSupported'])
+        self.assertFalse(cell['sameConditionsComparison'])
+        self.assertEqual(cell['profile']['n'], 0)
+        self.assertIsNone(cell['p50Ratio'])
+
+    def test_profile_raw_rejects_wrong_catalog_trial_samples(self):
+        raw = profile_trial()
+        samples = catalog_samples(raw)
+        samples[0]['serviceDurationNanos'] += 1
+        self.run_report([], samples, profile_raws=[raw],
+                        error='profile raw samples do not match catalog trial')
 
 
 if __name__ == '__main__':

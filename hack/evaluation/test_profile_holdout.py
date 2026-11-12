@@ -13,8 +13,7 @@ def stamp(seconds):
             dt.timedelta(seconds=seconds)).isoformat().replace('+00:00', 'Z')
 
 
-def raw_fixture(trial, service_ms=10):
-    batch = 2
+def raw_fixture(trial, service_ms=10, batch=2):
     phases = []
     batch_id = 0
     for index, kind in enumerate(('sparse', 'saturation', 'utilization', 'utilization')):
@@ -27,7 +26,7 @@ def raw_fixture(trial, service_ms=10):
             service = service_ms / 1000
             gap = None if batch_id == 1 else (2_000_000 if kind == 'saturation' else 990_000_000)
             native.append({'batchID': batch_id, 'batchSize': batch, 'recordIDs': records, 'requestIDs': records,
-                           'units': [1, 1], 'trialID': trial, 'serviceDurationNanos': service_ms * 1_000_000,
+                           'units': [1] * batch, 'trialID': trial, 'serviceDurationNanos': service_ms * 1_000_000,
                            'precedingIdleNanos': gap, 'runnerServiceMs': service_ms,
                            'backendCallMs': service_ms, 'nativeRequestMs': service_ms + 1,
                            'preprocessMs': 0, 'postprocessMs': 0,
@@ -41,25 +40,28 @@ def raw_fixture(trial, service_ms=10):
         phases.append({'id': f'p{index}', 'kind': kind, 'utilization': .3 * (index - 1) if index > 1 else 0,
                        'arrivalRatePerSecond': .8, 'measurementStartedAt': stamp(start),
                        'measurementEndedAt': stamp(start + 10),
-                       'measurementElapsedSecondsMonotonic': 10, 'completedInputs': 8,
+                       'measurementElapsedSecondsMonotonic': 10, 'completedInputs': 4 * batch,
                        'driverGC': {'cycles': 0, 'pauseTotalMilliseconds': 0, 'maxPauseMilliseconds': 0},
                        'latencyMs': [service_ms + 2] * 4, 'nativeSamples': native, 'requests': requests})
         if kind != 'saturation':
             exposure = 3.999
-            phases[-1].update(scheduledInputs=8, sentInputs=8, arrivalSeed=f'{trial}/p{index}',
-                              issueElapsedSecondsMonotonic=exposure, achievedArrivalRatePerSecond=8 / exposure,
-                              issueLagMs=dict(count=8, min=0, mean=0, p50=0, p95=0, p99=0, max=0))
+            phases[-1].update(scheduledInputs=4 * batch, sentInputs=4 * batch, arrivalSeed=f'{trial}/p{index}',
+                              issueElapsedSecondsMonotonic=exposure, achievedArrivalRatePerSecond=4 * batch / exposure,
+                              issueLagMs=dict(count=4 * batch, min=0, mean=0, p50=0, p95=0, p99=0, max=0))
         else:
             phases[-1].pop('arrivalRatePerSecond')
             phases[-1]['workers'] = 4
-    return {'schemaVersion': 'chill.dacs.io/profiling-raw-measurement.v1alpha13', 'podUID': trial,
-            'runConfig': {'schemaVersion': 'chill.dacs.io/profiling-run-config.v1alpha21',
+    return {'schemaVersion': 'chill.dacs.io/profiling-raw-measurement.v1alpha14', 'podUID': trial,
+            'runConfig': {'schemaVersion': 'chill.dacs.io/profiling-run-config.v1alpha22',
                           'measurement': {'batch': batch, 'sloPercentile': 97, 'sloTargetLatencyNanos': 1_000_000_000,
                                           'operatingPoints': {'requestLifetimeSeconds': 60,
                                                               'deliveryMarginMilliseconds': 0}}},
-            'runtime': {'schemaVersion': 'chill.dacs.io/batch-characterization.v1alpha13', 'runtimeVersion': 'ortcpu-v1',
-                        'measurementStartedAt': stamp(0), 'measurementEndedAt': stamp(40), 'phases': phases},
-            'metrics': {'samples': [{'observedAt': stamp(i), 'watts': 14} for i in range(41)]}}
+            'runtime': {'schemaVersion': 'chill.dacs.io/batch-characterization.v1alpha14', 'runtimeVersion': 'ortcpu-v1',
+                        'measurementStartedAt': stamp(0), 'measurementEndedAt': stamp(40), 'phases': phases,
+                        'postLoad': {'startedAt': stamp(41), 'endedAt': stamp(51), 'durationSecondsMonotonic': 10,
+                                     'actorPID': 42, 'modelResidentAtEnd': True,
+                                     'countersBefore': {'inferences': 32}, 'countersAfter': {'inferences': 32}}},
+            'metrics': {'samples': [{'observedAt': stamp(i), 'watts': 14 if i <= 40 else 10} for i in range(52)]}}
 
 
 def idle_fixture(trial='idle'):
@@ -70,6 +72,23 @@ def idle_fixture(trial='idle'):
 
 
 class HoldoutTests(unittest.TestCase):
+    def setUp(self):
+        settings = {
+            'observationWindowNanos': 10_000_000_000, 'comparisonPeriodNanos': 10_000_000_000,
+            'controlIntervalNanos': 60_000_000_000, 'maxReplicas': 1, 'maxInstances': 1,
+            'capacityWindowNanos': 10_000_000_000, 'capacityWindows': 1,
+            'capacityPassingWindows': 1, 'capacityMinimumRequests': 1, 'capacityGridSteps': 1,
+            'capacityBisectionWidth': .1, 'capacityTailSamples': 1, 'planSearchWorkers': 1,
+            'planSearchStrategy': 'v2', 'planSearchEvaluations': 1, 'planExactFinalists': 1,
+            'defaultOperationCost': {kind: {'seconds': 1} for kind in ('prepare', 'remove', 'power')},
+            'defaultIdlePower': {'nodeWatts': 10},
+        }
+        original = analysis.GoBridge.__init__
+        patcher = mock.patch.object(analysis.GoBridge, '__init__',
+                                    lambda bridge, executable: original(bridge, executable, settings))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_raw_projection_and_phase_folds_do_not_leak(self):
         runs = [raw_fixture('a'), raw_fixture('b')]
         folds = analysis.folds(runs)
@@ -105,7 +124,7 @@ class HoldoutTests(unittest.TestCase):
             analysis.validate_runs([bad])
         bad = raw_fixture('a')
         bad['schemaVersion'] = 'old'
-        with self.assertRaisesRegex(ValueError, 'v1alpha13'):
+        with self.assertRaisesRegex(ValueError, 'v1alpha14'):
             analysis.validate_runs([bad])
         with self.assertRaisesRegex(ValueError, 'duplicate'):
             analysis.validate_runs([raw_fixture('a'), raw_fixture('a')])
@@ -138,7 +157,30 @@ class HoldoutTests(unittest.TestCase):
         analysis.validate_runs([raw])
         metrics = analysis.phase_metrics([raw], {'profile': {'idleWatts': 10, 'energyPerInputJoules': 5}},
                                          [0], {('a', 'p2'): 14}, {'kind': 'phase', 'id': 'p2'})
-        self.assertAlmostEqual(metrics['p2']['power']['sentRatePerSecond'], 8 / 3.999)
+        self.assertAlmostEqual(metrics['p2']['power']['sentRatePerSecond'], 8 / 100)
+
+    def test_power_and_rate_include_same_drain_window(self):
+        raw = raw_fixture('a')
+        phase = raw['runtime']['phases'][2]
+        phase.update(completedInputs=100, sentInputs=100,
+                     issueElapsedSecondsMonotonic=10, measurementElapsedSecondsMonotonic=20)
+        metrics = analysis.phase_metrics([raw], {'profile': {'idleWatts': 10, 'energyPerInputJoules': 1}},
+                                         [0], {('a', 'p2'): 15}, {'kind': 'phase', 'id': 'p2'})
+        self.assertEqual(metrics['p2']['power']['sentRatePerSecond'], 5)
+        self.assertEqual(metrics['p2']['power']['predictedWatts'], 15)
+
+    def test_scheduler_input_uses_actual_heldout_sends(self):
+        runs = [raw_fixture('a'), raw_fixture('b')]
+        phase = runs[0]['runtime']['phases'][2]
+        phase['requests'][0]['sentAt'] = stamp(21)
+        bridge = mock.Mock(support_runs=[], support_indices=[])
+        fold = analysis.folds(runs)[0]
+        analysis.evaluate_fold(runs, [idle_fixture()], bridge, fold, [1])
+        request = bridge.call.call_args[0][0]
+        heldout = request['heldout'][0]
+        self.assertEqual(heldout['arrivals'][0], stamp(21))
+        self.assertEqual(heldout['sloPercentile'], 97)
+        self.assertTrue(all(p['id'] != phase['id'] for t in request['trials'] for p in t['phases']))
 
     def test_artifact_image_changes_cannot_share_active_or_idle_evidence(self):
         active = raw_fixture('a')
@@ -152,7 +194,7 @@ class HoldoutTests(unittest.TestCase):
         idle['runConfig'] = {'images': {'runtime': 'runtime-image', 'artifact': 'artifact-b'}}
         bridge = mock.Mock()
         with self.assertRaisesRegex(ValueError, 'artifact'):
-            analysis.analyze([active], [idle], bridge, 3, 1, .95, 0, 2, 2, {})
+            analysis.analyze([active], [idle], bridge, 3, 1, .95, 0, 2, 2)
         bridge.call.assert_not_called()
 
     def test_observed_runtime_versions_cannot_share_active_or_idle_evidence(self):
@@ -167,7 +209,7 @@ class HoldoutTests(unittest.TestCase):
         idle['runtime']['runtimeVersion'] = 'ortcpu-v2'
         bridge = mock.Mock()
         with self.assertRaisesRegex(ValueError, 'runtimeVersion'):
-            analysis.analyze([active], [idle], bridge, 3, 1, .95, 0, 2, 2, {})
+            analysis.analyze([active], [idle], bridge, 3, 1, .95, 0, 2, 2)
         bridge.call.assert_not_called()
 
     @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
@@ -178,7 +220,7 @@ class HoldoutTests(unittest.TestCase):
                 mock.patch.object(analysis, 'evaluate_fold', wraps=analysis.evaluate_fold) as evaluate, \
                 mock.patch.object(analysis, 'phase_metrics', wraps=analysis.phase_metrics) as metrics, \
                 mock.patch.object(analysis, 'bootstrap_indices', wraps=analysis.bootstrap_indices) as bootstrap:
-            analysis.analyze(runs, [idle_fixture()], bridge, repetitions, 17, .95, 0, 2, 2, {})
+            analysis.analyze(runs, [idle_fixture()], bridge, repetitions, 17, .95, 0, 2, 2)
         for fold_index, fold in enumerate(analysis.folds(runs)):
             for replicate in range(1, repetitions + 1):
                 call_index = fold_index * (repetitions + 1) + replicate
@@ -188,15 +230,14 @@ class HoldoutTests(unittest.TestCase):
                     self.assertEqual(training, heldout)
                 else:
                     self.assertTrue(set(training).isdisjoint(heldout))
-        # Phase folds draw active trials once plus idle independently; trial
-        # folds draw their disjoint training/held-out populations independently.
-        self.assertEqual(bootstrap.call_count, 2 * 2 + 3 * 3)
+        # Post-load idle stays paired with each training physical trial.
+        self.assertEqual(bootstrap.call_count, 2 + 3 * 2)
 
     @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
-    def test_synthetic_raw_real_derivation_without_product_replay(self):
+    def test_synthetic_raw_real_derivation_and_scheduler(self):
         runs = [raw_fixture('a'), raw_fixture('b'), raw_fixture('c')]
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
-            report = analysis.analyze(runs, [idle_fixture()], bridge, 12, 17, .95, 0, 2, 2, {})
+            report = analysis.analyze(runs, [idle_fixture()], bridge, 12, 17, .95, 0, 2, 2)
         self.assertEqual(len(report['folds']), 5)
         first = report['folds'][0]
         self.assertEqual(first['profile']['batch'], 2)
@@ -205,26 +246,28 @@ class HoldoutTests(unittest.TestCase):
         self.assertAlmostEqual(first['profile']['dispatchOccupancyNanosPerInput'], 1_000_000)
         self.assertEqual(len(first['profile']['serviceSamples']), 36)
         self.assertEqual(report['schema'], 'profile-holdout-report.v3')
-        self.assertFalse(report['replayExecuted'])
-        self.assertEqual(len(report['retainedMetrics']), 3)
-        self.assertEqual(len(report['removedMetrics']), 2)
+        self.assertTrue(report['replayExecuted'])
+        self.assertEqual(len(report['retainedMetrics']), 4)
+        self.assertEqual(len(report['removedMetrics']), 1)
         self.assertNotIn('traces', first)
-        self.assertNotIn('latencyMS', first['phases'][0])
+        self.assertIsNone(first['phases'][0]['latency']['predictedNanos'])
+        self.assertTrue(first['phases'][0]['latency']['unavailableReasons'])
+        self.assertEqual(first['phases'][0]['latency']['measuredNanos'], 12_000_000)
         self.assertNotIn('serviceMS', first['phases'][0])
         self.assertEqual(first['phases'][0]['power']['measuredWatts'], 14)
-        expected = 10 + 5 * 8 / 3.999
-        self.assertAlmostEqual(first['phases'][0]['power']['sentRatePerSecond'], 8 / 3.999)
+        expected = 14
+        self.assertAlmostEqual(first['phases'][0]['power']['sentRatePerSecond'], .8)
         self.assertAlmostEqual(first['phases'][0]['power']['predictedWatts'], expected)
         for bound in first['phases'][0]['power']['predictedCIWatts']:
             self.assertAlmostEqual(bound, expected)
-        self.assertAlmostEqual(first['phasePower'][0]['sentRatePerSecond'], 8 / 3.999)
-        self.assertIsNone(first['phasePower'][1]['sentRatePerSecond'])
-        self.assertIsNone(first['phasePower'][1]['predictedWatts'])
+        self.assertAlmostEqual(first['phasePower'][0]['sentRatePerSecond'], .8)
+        self.assertAlmostEqual(first['phasePower'][1]['sentRatePerSecond'], .8)
+        self.assertEqual(first['phasePower'][1]['predictedWatts'], 14)
         self.assertEqual(len(first['phasePower']), 12)
         self.assertIsNone(report['folds'][2]['phases'][0]['power']['measuredCIWatts'])
         self.assertAlmostEqual(first['saturation'][0]['measuredCycleMS'], 12)
         self.assertAlmostEqual(first['saturation'][0]['predictedCycleMS'], 12)
-        self.assertEqual(report['postLoadPower'][0]['reason'], 'no post-load samples')
+        self.assertEqual(report['postLoadPower'][0]['stabilizationSeconds'], 2)
         changed = copy.deepcopy(runs)
         for phase in changed[0]['runtime']['phases']:
             if phase['kind'] == 'utilization':
@@ -236,15 +279,55 @@ class HoldoutTests(unittest.TestCase):
         self.assertEqual(one['profile']['serviceSamples'][0]['serviceDurationNanos'], 10_000_000)
 
     @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
+    def test_scheduler_slo_estimate_uses_exported_api(self):
+        runs = [raw_fixture('a', batch=1), raw_fixture('b', batch=1)]
+        with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
+            report = analysis.analyze(runs, [idle_fixture()], bridge, 3, 17, .95, 0, 2, 2)
+        latency = report['folds'][0]['phases'][0]['latency']
+        self.assertGreater(latency['predictedNanos'], 0)
+        self.assertEqual(latency['measuredNanos'], 12_000_000)
+        self.assertIsNotNone(latency['predictedCINanos'])
+
+    @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
+    def test_campaign_profile_supplies_measured_single_batch_support(self):
+        runs = [raw_fixture('one-a', batch=1), raw_fixture('one-b', batch=1),
+                raw_fixture('two-a'), raw_fixture('two-b')]
+        with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
+            report = analysis.analyze(runs, [], bridge, 3, 17, .95, 0, 2, 2)
+        self.assertEqual([r['batch'] for r in report['batches']], [1, 2])
+        phase = report['batches'][1]['folds'][0]['phases'][0]
+        self.assertGreater(phase['latency']['predictedNanos'], 0)
+        self.assertFalse(phase['latency']['unavailableReasons'])
+
+    @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
+    def test_postload_idle_is_fold_paired_and_never_pools_separate_protocol(self):
+        runs = [raw_fixture('a'), raw_fixture('b')]
+        separate = idle_fixture()
+        for sample in separate['metrics']['samples']:
+            sample['watts'] = 99
+        for sample in runs[0]['metrics']['samples']:
+            if sample['observedAt'] >= stamp(41):
+                sample['watts'] = 11
+        with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
+            report = analysis.analyze(runs, [separate], bridge, 2, 17, .95, 0, 2, 2)
+        self.assertEqual(report['separateIdleEstimateWatts'], 99)
+        heldout_a = next(f for f in report['folds'] if f['kind'] == 'trial' and f['id'] == 'a')
+        self.assertEqual(heldout_a['profile']['idleWatts'], 10)
+        invalid = raw_fixture('invalid')
+        invalid['runtime']['postLoad']['countersAfter']['inferences'] += 1
+        with self.assertRaisesRegex(ValueError, 'zero inference'):
+            analysis.validate_runs([invalid])
+
+    @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
     def test_single_trial_and_missing_holdout_epi_are_reported(self):
         raw = raw_fixture('only')
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
-            report = analysis.analyze([raw], [idle_fixture()], bridge, 3, 1, .95, 0, 2, 2, {})
+            report = analysis.analyze([raw], [idle_fixture()], bridge, 3, 1, .95, 0, 2, 2)
         self.assertEqual(len(report['folds']), 2)
         self.assertIsNone(report['folds'][0]['phases'][0]['power']['predictedCIWatts'])
         raw['runtime']['phases'].pop()
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
-            report = analysis.analyze([raw], [idle_fixture()], bridge, 3, 1, .95, 0, 2, 2, {})
+            report = analysis.analyze([raw], [idle_fixture()], bridge, 3, 1, .95, 0, 2, 2)
         self.assertIsNone(report['folds'][0]['profile'])
         self.assertIn('no EPI training population', report['folds'][0]['unavailableReason'])
 
@@ -255,7 +338,7 @@ class HoldoutTests(unittest.TestCase):
             for sample in raw['metrics']['samples']:
                 sample['watts'] += index
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
-            report = analysis.analyze(runs, [idle_fixture()], bridge, 30, 13, .95, 0, 2, 2, {})
+            report = analysis.analyze(runs, [idle_fixture()], bridge, 30, 13, .95, 0, 2, 2)
             fold = analysis.folds(runs)[0]
             before = analysis.evaluate_fold(runs, [idle_fixture()], bridge, fold, [0, 1, 2])
             for raw in runs:
