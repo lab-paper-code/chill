@@ -138,3 +138,34 @@ class PredictionReviewTests(unittest.TestCase):
             observations = analysis.load_observations(path.parent)
         result = analysis.analyze('stage', stamp(2), stamp(6), observations, [power(stamp(2), stamp(6))])
         self.assertEqual(result['nodes'][0]['status'], 'UNKNOWN')
+
+    def test_scheduler_gaps_only_affect_overlapping_stage_and_action_windows(self):
+        first = fixture(True)
+        second = copy.deepcopy(first)
+        decision = second['events'][0]['decision']
+        second['events'][0]['at'] = decision['at'] = stamp(11)
+        decision['target']['actions'][0]['id'] = 'route-b'
+        receipt = second['events'][1]
+        receipt['at'] = stamp(13)
+        receipt['action'].update(id='route-b', startedAt=stamp(11), completedAt=stamp(13))
+        stages = [{'id': 'A', 'from': stamp(2), 'to': stamp(6)},
+                  {'id': 'B', 'from': stamp(12), 'to': stamp(16)}]
+        for gap, affected in [
+                ({'from': stamp(12), 'to': stamp(13), 'stream': 'scheduler', 'reason': 'missing B'}, True),
+                ({'from': stamp(6), 'to': stamp(11), 'stream': 'scheduler', 'reason': 'between stages'}, False)]:
+            with self.subTest(gap=gap), tempfile.TemporaryDirectory() as directory:
+                folder = Path(directory)
+                with gzip.open(folder / '0000.json.gz', 'wt') as output:
+                    json.dump({'events': first['events'] + second['events'], 'coverage': {'gaps': [gap]}}, output)
+                observations = analysis.load_observations(folder)
+                powers = [power(row['from'], row['to'], watts=30)
+                          for row in analysis.requested_windows(stages, observations)]
+                reports = analysis.offline_report(stages, observations, powers)['stages']
+            a, b = [stage['predictionAnalysis'] for stage in reports]
+            self.assertEqual([row['status'] for row in a['nodes']], ['MEASURED', 'MEASURED'])
+            self.assertEqual(a['acceptance'][0]['verdict'], 'PASS')
+            self.assertEqual(a['actions'][0]['coverageStatus'], 'COMPLETE')
+            self.assertEqual([row['status'] for row in b['nodes']], ['UNKNOWN' if affected else 'MEASURED', 'MEASURED'])
+            self.assertEqual(b['acceptance'][0]['verdict'], 'UNKNOWN' if affected else 'PASS')
+            self.assertEqual(b['actions'][0]['coverageStatus'], 'UNKNOWN' if affected else 'COMPLETE')
+            self.assertEqual(observations['gaps'], [gap])

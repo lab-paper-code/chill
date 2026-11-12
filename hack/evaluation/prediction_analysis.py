@@ -90,6 +90,16 @@ def measured(powers, start, end, node):
     return row['joules'], None
 
 
+def coverage_reasons(observations, start, end):
+    """Only half-open scheduler gaps overlapping this evidence interval apply."""
+    reasons = [] if observations.get('complete') is True else ['scheduler observation coverage incomplete']
+    first, last = ns(start), ns(end)
+    for gap in observations.get('gaps', []):
+        if first < ns(gap['to']) and ns(gap['from']) < last:
+            reasons.append('scheduler gap [' + gap['from'] + ', ' + gap['to'] + '): ' + gap['reason'])
+    return reasons
+
+
 def phase(decision, plan, at, actual):
     target = decision.get('target') or {}
     if target.get('keep') or not target:
@@ -177,8 +187,7 @@ def analyze(stage, start, end, observations, powers):
             seconds = (ns(window['to']) - ns(window['from'])) / 1e9
             watts = joules / seconds if joules is not None else None
             reasons = [value for value in (reason, meter_reason) if value]
-            if observations.get('complete') is not True:
-                reasons.append('scheduler observation coverage incomplete')
+            reasons.extend(coverage_reasons(observations, window['from'], window['to']))
             nodes.append({'stage': stage, **window, 'node': node, 'compared': key in compared, 'phase': used,
                           'idle': idle or None, 'requestWatts': idle.get('requestWatts'), 'requestReferences': idle.get('requestReferences'),
                           'operation': operation,
@@ -203,12 +212,15 @@ def analyze(stage, start, end, observations, powers):
             joules, reason = measured(powers, receipt['startedAt'], receipt['completedAt'], action['node']) if seconds and seconds > 0 else (None, 'action measurement unavailable')
             predicted_seconds = cost.get('seconds') if (cost.get('provenance') or {}).get('source') == 'exact' else None
             predicted_joules = cost.get('joules') if (cost.get('provenance') or {}).get('source') == 'exact' else None
+            coverage = (coverage_reasons(observations, receipt['startedAt'], receipt['completedAt'])
+                        if receipt.get('startedAt') and receipt.get('completedAt') else ['action observation interval unavailable'])
             actions.append({'stage': stage, 'decisionAt': decision['at'], 'id': action['id'], 'kind': action['kind'], 'node': action['node'],
                             'predictedSeconds': predicted_seconds, 'predictedJoules': predicted_joules,
                             'source': cost.get('provenance') or action.get('expectedSource'), 'startedAt': receipt.get('startedAt'),
                             'completedAt': receipt.get('completedAt'), 'actualSeconds': seconds, 'actualJoules': joules,
-                            'errorSeconds': predicted_seconds - seconds if number(predicted_seconds) and seconds is not None else None,
-                            'errorJoules': predicted_joules - joules if predicted_joules is not None and joules is not None else None,
+                            'coverageStatus': 'UNKNOWN' if coverage else 'COMPLETE', 'coverageReasons': coverage,
+                            'errorSeconds': predicted_seconds - seconds if number(predicted_seconds) and seconds is not None and not coverage else None,
+                            'errorJoules': predicted_joules - joules if predicted_joules is not None and joules is not None and not coverage else None,
                             'energyScope': 'node-wall meter over action interval', 'reason': reason, 'actionError': receipt.get('error')})
         compared_rows = [row for row in nodes if row['decisionAt'] == decision['at'] and row['compared']]
         grouped = {}
@@ -238,12 +250,23 @@ def analyze(stage, start, end, observations, powers):
 def load_observations(folder):
     """Read already-hydrated campaign pages, retaining only V1 analysis inputs."""
     paths = sorted(Path(folder).glob('*.json.gz'))
-    result = {'events': [], 'complete': bool(paths), 'errors': []}
+    result = {'events': [], 'complete': bool(paths), 'errors': [], 'gaps': []}
     for path in paths:
         with gzip.open(path, 'rt') as source:
             page = json.load(source)
-        if not isinstance(page.get('coverage'), dict) or page['coverage'].get('gaps') != []:
-            result['errors'].append(str(path) + ': scheduler coverage unavailable or contains gaps')
+        coverage = page.get('coverage')
+        if not isinstance(coverage, dict) or not isinstance(coverage.get('gaps'), list):
+            result['errors'].append(str(path) + ': scheduler coverage unavailable')
+        else:
+            for gap in coverage['gaps']:
+                try:
+                    valid = ns(gap['from']) < ns(gap['to']) and isinstance(gap['reason'], str)
+                except (KeyError, TypeError, ValueError):
+                    valid = False
+                if not valid:
+                    result['errors'].append(str(path) + ': scheduler gap interval unavailable/invalid')
+                elif gap not in result['gaps']:
+                    result['gaps'].append(gap)
         for event in page['events']:
             row = {'at': event['at']}
             decision = event.get('decision')
