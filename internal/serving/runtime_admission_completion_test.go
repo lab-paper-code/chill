@@ -86,7 +86,8 @@ func testRuntimeAdmissionPreIPCCompletion(t *testing.T, node string, maxBatch in
 }
 
 func TestRuntimeAdmissionCompletionRequiresPhysicalIdentityAndProof(t *testing.T) {
-	for _, name := range []string{"timeout", "transport failure", "wrong executor", "wrong node", "physical completion", "no execution"} {
+	const noExecution = "no execution"
+	for _, name := range []string{"timeout", "transport failure", "wrong executor", "wrong node", "physical completion", noExecution} {
 		t.Run(name, func(t *testing.T) {
 			r, wanted, _ := routingRuntime(t, map[string]int32{"w1": 1})
 			r.mu.Lock()
@@ -95,7 +96,7 @@ func TestRuntimeAdmissionCompletionRequiresPhysicalIdentityAndProof(t *testing.T
 			q := admissionTestRequest("physical")
 			q.Context.WorkloadUID, q.Context.Definition = "w1", r.workloads["w1"].identity
 			q.Phase, q.BatchID, q.BatchSize = phaseRunning, 12742, 1
-			if name == "no execution" {
+			if name == noExecution {
 				q.Phase, q.BatchID, q.BatchSize = phaseQueued, 0, 0
 			}
 			i.State.Native.Requests = []firstfloor.RequestState{q}
@@ -116,14 +117,14 @@ func TestRuntimeAdmissionCompletionRequiresPhysicalIdentityAndProof(t *testing.T
 			}
 			i.outstanding = 1
 			r.releaseLocked(c)
-			wantRemoved := name == "physical completion" || name == "no execution"
+			wantRemoved := name == "physical completion" || name == noExecution
 			if (len(i.State.Native.Requests) == 0) != wantRemoved {
 				t.Fatalf("completion removal=%v, want %v", len(i.State.Native.Requests) == 0, wantRemoved)
 			}
 			if !c.transportDone && i.outstanding != 1 {
 				t.Fatal("native proof released open HTTP transport occupancy")
 			}
-			if name == "no execution" && i.State.Native.LastServiceEndAgeNanos != nil {
+			if name == noExecution && i.State.Native.LastServiceEndAgeNanos != nil {
 				t.Fatal("no-execution proof invented a service completion")
 			}
 		})

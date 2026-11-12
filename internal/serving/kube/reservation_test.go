@@ -29,6 +29,7 @@ const (
 	cancelSiblingEvidence    = "cancel-sibling"
 	unknownPodUID            = "unknown"
 	unreadyReason            = "unready"
+	nodeUIDEvidence          = "node-uid"
 )
 
 func TestCommonReservationConflictAndReleaseAC38(t *testing.T) {
@@ -353,7 +354,7 @@ func TestPartialOwnerKeepsUnconfirmedWorkloadAndPendingPowerAC38(t *testing.T) {
 // Cycle 2 C1: two complete preparations and one partial preparation retain the
 // same three-Node workload footprint, but each receipt knows only its own Pod.
 func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
-	for _, evidence := range []string{"all-known", unknownPodEvidence, staleEvidence, "parent-stale", "self-stale", restartedEvidence, "node-uid", "slot", "profile", policyEvidence, pendingPowerEvidence, activeSiblingEvidence, cancelSiblingEvidence, "other-parent", "same-owner-unfrozen", "different-action"} {
+	for _, evidence := range []string{"all-known", unknownPodEvidence, staleEvidence, "parent-stale", "self-stale", restartedEvidence, nodeUIDEvidence, "slot", "profile", policyEvidence, pendingPowerEvidence, activeSiblingEvidence, cancelSiblingEvidence, "other-parent", "same-owner-unfrozen", "different-action"} {
 		t.Run(evidence, func(t *testing.T) {
 			ended := time.Now().UTC()
 			observed := ended.Add(3 * time.Second)
@@ -445,7 +446,7 @@ func mutateTerminalPreparationEvidence(evidence string, nodes []core.Node, pods 
 		children[2].result.EndedAt = physical[0].ObservedAt
 	case restartedEvidence:
 		pods[1].Status.ContainerStatuses[0].ContainerID += restartedContainerSuffix
-	case "node-uid":
+	case nodeUIDEvidence:
 		physical[1].Node.UID = testReplacementUID
 	case "slot":
 		physical[1].TargetID = "unknown-slot"

@@ -38,6 +38,19 @@ func (r *Runtime) completeAdmissionLocked(c *Call) {
 		i.admissionSourceIdleUnknown = i.State.AdmissionIdleUnknown
 	}
 	now := time.Now()
+	fact := admissionCompletionForCall(c, now, previous, found)
+	if found && fact == previous {
+		return
+	}
+	c.admissionComplete = true
+	if i.admissionCompleted == nil {
+		i.admissionCompleted = make(map[admissionRequestKey]admissionCompletion)
+	}
+	i.admissionCompleted[key] = fact
+	i.applyAdmissionCompletions(now)
+}
+
+func admissionCompletionForCall(c *Call, now time.Time, previous admissionCompletion, found bool) admissionCompletion {
 	received := now
 	if found {
 		received = previous.receivedAt
@@ -64,15 +77,7 @@ func (r *Runtime) completeAdmissionLocked(c *Call) {
 	if found && (!validStart || previous.notBefore.After(start)) {
 		fact.notBefore = previous.notBefore
 	}
-	if found && fact == previous {
-		return
-	}
-	c.admissionComplete = true
-	if i.admissionCompleted == nil {
-		i.admissionCompleted = make(map[admissionRequestKey]admissionCompletion)
-	}
-	i.admissionCompleted[key] = fact
-	i.applyAdmissionCompletions(now)
+	return fact
 }
 
 // A probe can have started before completion and arrive afterwards. Keep exact
@@ -107,8 +112,7 @@ func (i *runtimeInstance) applyAdmissionCompletions(now time.Time) {
 		fact, done := i.admissionCompleted[key]
 		if done {
 			removed++
-			if !fact.executed && q.Phase == phaseRunning && q.BatchID > 0 && q.BatchSize > 0 && q.ExchangeElapsedNanos != nil &&
-				!fact.notBefore.IsZero() && !fact.notBefore.After(fact.receivedAt) {
+			if admissionObservationProvesExecution(q, &fact) {
 				fact.executed, fact.unknown = true, false
 				i.admissionCompleted[key] = fact
 			}
@@ -149,22 +153,7 @@ func (i *runtimeInstance) applyAdmissionCompletions(now time.Time) {
 		if _, done := i.admissionCompleted[admissionRequestKey{observed.Context.RequestID, observed.Context.WorkloadUID, observed.Context.Definition}]; done {
 			continue
 		}
-		q := *observed
-		q.ElapsedMS += float64(age) / float64(time.Millisecond)
-		if q.Phase == phaseQueued || q.Phase == phaseDeferred {
-			q.QueueMS += float64(age) / float64(time.Millisecond)
-		}
-		if q.Phase == phaseRunning {
-			q.ServiceElapsedMS += float64(age) / float64(time.Millisecond)
-			if q.ExchangeElapsedNanos != nil {
-				elapsed := *q.ExchangeElapsedNanos + int64(age)
-				q.ExchangeElapsedNanos = &elapsed
-			}
-		}
-		if q.RemainingLifetimeMS != nil {
-			remaining := *q.RemainingLifetimeMS - float64(age)/float64(time.Millisecond)
-			q.RemainingLifetimeMS = &remaining
-		}
+		q := advanceAdmissionRequest(*observed, age)
 		updated.Requests = append(updated.Requests, q)
 	}
 	updated.ArrivalAgesMS = maps.Clone(native.ArrivalAgesMS)
@@ -184,4 +173,28 @@ func (i *runtimeInstance) applyAdmissionCompletions(now time.Time) {
 		}
 	}
 	i.State.Native, i.State.NativeSpanAt, i.State.AdmissionIdleUnknown = &updated, now, unknown
+}
+
+func admissionObservationProvesExecution(q *firstfloor.RequestState, fact *admissionCompletion) bool {
+	return !fact.executed && q.Phase == phaseRunning && q.BatchID > 0 && q.BatchSize > 0 && q.ExchangeElapsedNanos != nil &&
+		!fact.notBefore.IsZero() && !fact.notBefore.After(fact.receivedAt)
+}
+
+func advanceAdmissionRequest(q firstfloor.RequestState, age time.Duration) firstfloor.RequestState {
+	q.ElapsedMS += float64(age) / float64(time.Millisecond)
+	if q.Phase == phaseQueued || q.Phase == phaseDeferred {
+		q.QueueMS += float64(age) / float64(time.Millisecond)
+	}
+	if q.Phase == phaseRunning {
+		q.ServiceElapsedMS += float64(age) / float64(time.Millisecond)
+		if q.ExchangeElapsedNanos != nil {
+			elapsed := *q.ExchangeElapsedNanos + int64(age)
+			q.ExchangeElapsedNanos = &elapsed
+		}
+	}
+	if q.RemainingLifetimeMS != nil {
+		remaining := *q.RemainingLifetimeMS - float64(age)/float64(time.Millisecond)
+		q.RemainingLifetimeMS = &remaining
+	}
+	return q
 }

@@ -221,20 +221,7 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision, gapUpper *int64
 	r := requests[head]
 	choice := BatchChoice{RequestID: r.Context.RequestID, WorkloadUID: r.Context.WorkloadUID, Definition: r.Context.Definition}
 	count := compatibleCount(requests, head)
-	var available, throughput BatchProfile
-	perItemCost := math.Inf(1)
-	for _, b := range p.Batches {
-		if b.Size < 1 || b.Size > count || !allowedBatch(p, b.Size) {
-			continue
-		}
-		cost := costs.cost(b, r.Context.SLO.Percentile, gapDecision) / float64(b.Size)
-		if throughput.Size == 0 || cost < perItemCost || cost == perItemCost && b.Size > throughput.Size {
-			throughput, perItemCost = b, cost
-		}
-		if r.Phase != phaseDeferred && (math.IsInf(cost, 1) || batchFeasible(requests, head, b, gapDecision, &costs)) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
-			available = b
-		}
-	}
+	available, throughput := chooseBatchProfiles(&p, requests, head, count, gapDecision, &costs)
 	if available.Size == 0 {
 		if r.Phase != phaseDeferred {
 			choice.Reason = OutcomeDeadlineDrop
@@ -252,6 +239,24 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision, gapUpper *int64
 		return choice
 	}
 	return energyGainWait(p, requests, head, count, available, choice, gapDecision, &costs)
+}
+
+func chooseBatchProfiles(p *Policy, requests []RequestState, head, count int, gapDecision *int64, costs *serviceCosts) (available, throughput BatchProfile) {
+	r := &requests[head]
+	perItemCost := math.Inf(1)
+	for _, b := range p.Batches {
+		if b.Size < 1 || b.Size > count || !allowedBatch(*p, b.Size) {
+			continue
+		}
+		cost := costs.cost(b, r.Context.SLO.Percentile, gapDecision) / float64(b.Size)
+		if throughput.Size == 0 || cost < perItemCost || cost == perItemCost && b.Size > throughput.Size {
+			throughput, perItemCost = b, cost
+		}
+		if r.Phase != phaseDeferred && (math.IsInf(cost, 1) || batchFeasible(requests, head, b, gapDecision, costs)) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
+			available = b
+		}
+	}
+	return available, throughput
 }
 func queueHeads(requests []RequestState) (head, deferred int, active bool) {
 	head, deferred = -1, -1

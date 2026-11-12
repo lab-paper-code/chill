@@ -72,7 +72,7 @@ func TestDecisionFidelity(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := input.Decision.Settings
-	var results []serving.SchedulerDecision
+	results := make([]serving.SchedulerDecision, 0, 3)
 	for range 3 {
 		started := time.Now()
 		decision, err := serving.EvaluateScheduler(context.Background(), settings, snapshot)

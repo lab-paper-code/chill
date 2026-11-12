@@ -16,12 +16,13 @@ import (
 )
 
 const replacementSuffix = "-replacement"
+const replacementTestNode = "node"
 
 func TestReplacementSelectionPreservesOriginalsAndReportsSpecDifferences(t *testing.T) {
 	for _, name := range []string{"jetsono-012-smolvlm-fp32-q4-maxn", "orangepi-017-plc-cpu-q4"} {
 		t.Run(name, func(t *testing.T) {
 			original := edge.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "chill-system"}, Spec: edge.BatchEnergyOptimizationSpec{TrialsPerBatch: 3, RetryLimit: 3}}
-			original.Spec.State.TargetNode = "node"
+			original.Spec.State.TargetNode = replacementTestNode
 			before := original.DeepCopy()
 			replacement := *original.DeepCopy()
 			replacement.Name += replacementSuffix

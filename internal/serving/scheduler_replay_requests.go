@@ -746,56 +746,63 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 				s.out.reasons = append(s.out.reasons, "BatchPolicyNoExecutableChoice:"+i.config.ID)
 				return false
 			}
-			deferred := i.queue[0].deferred
-			rest := i.queue[:0]
-			for _, r := range i.queue {
-				if len(i.batch) < choice.Size && r.deferred == deferred && r.source.Definition.UID == choice.WorkloadUID && r.identity == choice.Definition {
-					i.batch = append(i.batch, r)
-				} else {
-					rest = append(rest, r)
-				}
-			}
-			i.queue = rest
-			for _, r := range i.batch {
-				r.running = true
-			}
-			b := schedulerBatch(i.config.Profile, len(i.batch))
-			if b == nil {
-				s.out.reasons = append(s.out.reasons, "BatchPolicyOutsideProfile:"+i.config.ID)
+			if !s.startChosenBatch(i, choice) {
 				return false
 			}
-			gap := i.idleNanos(s.now)
-			i.batchStarted, i.batchElapsed, i.exchangeKnown = s.now, 0, true
-			i.hasBatchIdle = gap != nil
-			if gap != nil {
-				i.batchIdle = *gap
-			}
-			var durationNanos int64
-			var support firstfloor.ConditionalSupport
-			var ok bool
-			if upper := i.idleUpperNanos(s.now); upper != nil && gap != nil {
-				i.hasBatchIdleBounds, i.batchIdleUpper = true, *upper
-				durationNanos, _, support, ok = b.ServiceDistribution.MaximumQuantileNanos(*gap, *upper, s.rng.Float64()*100)
-				s.out.assumptions = appendUnique(s.out.assumptions, "gateway-completion gap interval uses the exact maximum conditional inverse-CDF envelope until the next simulated service completion")
-			} else {
-				var sample firstfloor.ServiceSample
-				sample, support, ok = b.ServiceDistribution.Sample(gap, s.rng)
-				durationNanos = sample.ServiceDurationNanos
-			}
-			s.out.conditional.record(gap, support)
-			if !ok {
-				s.out.reasons = append(s.out.reasons, "MissingConditionalServiceSupport:"+i.config.ID)
-				return false
-			}
-			duration := float64(durationNanos)
-			// Trace gap selects S; arrivals/queue already supplied the gap.
-			// Retain the current occupancy model without treating it as native S.
-			i.nativeFinish = s.now + duration
-			i.finish = i.nativeFinish + i.occupancyNanos*float64(len(i.batch))
-			s.addBatchEnergy(i, b, duration)
 			break
 		}
 	}
+	return true
+}
+
+func (s *schedulerReplayState) startChosenBatch(i *schedulerReplayInstance, choice firstfloor.BatchChoice) bool {
+	deferred := i.queue[0].deferred
+	rest := i.queue[:0]
+	for _, r := range i.queue {
+		if len(i.batch) < choice.Size && r.deferred == deferred && r.source.Definition.UID == choice.WorkloadUID && r.identity == choice.Definition {
+			i.batch = append(i.batch, r)
+		} else {
+			rest = append(rest, r)
+		}
+	}
+	i.queue = rest
+	for _, r := range i.batch {
+		r.running = true
+	}
+	b := schedulerBatch(i.config.Profile, len(i.batch))
+	if b == nil {
+		s.out.reasons = append(s.out.reasons, "BatchPolicyOutsideProfile:"+i.config.ID)
+		return false
+	}
+	gap := i.idleNanos(s.now)
+	i.batchStarted, i.batchElapsed, i.exchangeKnown = s.now, 0, true
+	i.hasBatchIdle = gap != nil
+	if gap != nil {
+		i.batchIdle = *gap
+	}
+	var durationNanos int64
+	var support firstfloor.ConditionalSupport
+	var ok bool
+	if upper := i.idleUpperNanos(s.now); upper != nil && gap != nil {
+		i.hasBatchIdleBounds, i.batchIdleUpper = true, *upper
+		durationNanos, _, support, ok = b.ServiceDistribution.MaximumQuantileNanos(*gap, *upper, s.rng.Float64()*100)
+		s.out.assumptions = appendUnique(s.out.assumptions, "gateway-completion gap interval uses the exact maximum conditional inverse-CDF envelope until the next simulated service completion")
+	} else {
+		var sample firstfloor.ServiceSample
+		sample, support, ok = b.ServiceDistribution.Sample(gap, s.rng)
+		durationNanos = sample.ServiceDurationNanos
+	}
+	s.out.conditional.record(gap, support)
+	if !ok {
+		s.out.reasons = append(s.out.reasons, "MissingConditionalServiceSupport:"+i.config.ID)
+		return false
+	}
+	duration := float64(durationNanos)
+	// Trace gap selects S; arrivals/queue already supplied the gap.
+	// Retain the current occupancy model without treating it as native S.
+	i.nativeFinish = s.now + duration
+	i.finish = i.nativeFinish + i.occupancyNanos*float64(len(i.batch))
+	s.addBatchEnergy(i, b, duration)
 	return true
 }
 

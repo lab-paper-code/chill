@@ -3,15 +3,16 @@ package firstfloor
 import "testing"
 
 func TestMaximumConditionalQuantileMatchesEveryIntegerGap(t *testing.T) {
-	var samples []ServiceSample
-	for _, row := range []struct {
+	rows := []struct {
 		trial        string
 		gap, service int64
 	}{
 		{"a", 0, 10}, {"a", 20, 50}, {"a", 40, 10},
 		{"b", 0, 60}, {"b", 10, 20}, {"b", 40, 80},
 		{"dead", 10, 5},
-	} {
+	}
+	samples := make([]ServiceSample, 0, len(rows))
+	for _, row := range rows {
 		gap := row.gap
 		samples = append(samples, ServiceSample{TrialID: row.trial, PrecedingIdleNanos: &gap, ServiceDurationNanos: row.service})
 	}
