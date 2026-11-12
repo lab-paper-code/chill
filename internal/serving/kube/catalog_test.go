@@ -130,7 +130,7 @@ func TestCatalogLatestSuccessUsesFrozenConditionAndSourceCompletion(t *testing.T
 	otherRuntime.ID = "other-runtime/uid"
 	otherRuntime.Condition.RuntimeImage = "new-runtime"
 	result, err := serving.SelectConditionProfiles([]serving.Profile{newer, old, otherNode, otherMeter, otherRuntime}, nil)
-	if err != nil || len(result) != 2 || result[0].ID != newer.ID || result[1].ID != otherNode.ID || result[0].Condition.RuntimeImage != "current-runtime" {
+	if err != nil || len(result) != 4 || result[0].ID != newer.ID || result[1].ID != old.ID || result[2].ID != otherNode.ID || result[3].ID != otherRuntime.ID || result[0].Condition.RuntimeImage != "current-runtime" {
 		t.Fatalf("latest semantic condition/source completion changed selection: %+v %v", result, err)
 	}
 }
