@@ -194,11 +194,4 @@ flowchart LR
 ## 7. 범위 밖
 
 - profile 지연 대표성(decision-fidelity F1/F2): 사용자 보류.
-- 판단 계산 비용 최적화: §2.9를 수용 실측에서 다시 측정한 뒤 정한다. 제어 주기 준수는 §6에서 판정한다.
-
-## 8. 동작 보존 lint 정리
-
-- v2 Funnel은 후보 병렬 평가와 순서 고정 축약을 분리한다. 평가 순서, observer 호출, 동률 선택과 postfilter 규칙은 유지한다.
-- capacity 판단은 에너지 비교 기록과 노드 계획 투영을 helper로 분리한다. 누락 셀 참조 순서와 기록 내용은 유지한다.
-- 에너지 시간식은 operation별 시간식, 요청 전력 차이, 유휴 항 누적을 나눈다. `before`·`mid`·`after` 상수를 공유하며 식과 상쇄 규칙은 유지한다.
-- 기존 prefix 선택 oracle과 전력·관측 테스트는 계산 및 assertion 경계로 나누며 검사 범위는 유지한다.
+- D1 밖의 판단 계산 비용(tested-rate 진단 1.4초, 남은 native replay 비용): 수용 실측의 제어 주기 초과 Tick으로 판정한 뒤 정한다.
