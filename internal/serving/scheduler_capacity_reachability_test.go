@@ -41,6 +41,9 @@ func TestCapacityV2HeuristicAdmitsExactFeasible(t *testing.T) {
 	checked := 0
 	for trial := range 300 {
 		p := capacityV2RandomPlanner(trial)
+		if trial == 0 {
+			p = capacityDelayedArrivalPlanner(t)
+		}
 		tab := p.planTable()
 		choice, flat := make([]int, len(p.plans)), make([]int, len(p.plans))
 		for {
@@ -49,15 +52,28 @@ func TestCapacityV2HeuristicAdmitsExactFeasible(t *testing.T) {
 			}
 			s := newSearchState(p, tab, flat)
 			key := s.delta(0, flat[0])
-			exact := p.evaluateAtRoute(slices.Clone(choice), key.route, nil)
+			exact := p.evaluate(slices.Clone(choice), key.route)
 			if exact.exclusion == "" && exact.feasible {
 				checked++
 				if !key.feasible {
 					for w, ws := range p.ws {
-						t.Logf("w=%s target=%s percentile=%g rate=%g queue=%d mu=%g retained=%g service=%g exactQuantile=%g", ws.d.UID, ws.d.SLO.TargetLatency, ws.d.SLO.Percentile, ws.rate, ws.queued, s.sums[w].routingRate, s.sums[w].retainedRoutingRate, s.sums[w].serviceNanos, *exact.feedback[w].SuccessQuantileNanos)
+						sum := s.sums[w]
+						excess, eligible := capacityHeuristic(ws, tab.arrivals[w], sum.routingRate, sum.retainedRoutingRate, sum.serviceNanos, sum.retainedServiceNanos, key.route, p.periodSeconds)
+						if excess == 0 && eligible {
+							continue
+						}
+						var quantile *float64
+						for _, score := range exact.feedback {
+							if score.UID == ws.d.UID {
+								quantile = score.SuccessQuantileNanos
+							}
+						}
+						if quantile == nil {
+							t.Errorf("trial=%d choice=%v w=%s exact quantile missing, fluid excess=%g eligible=%t", trial, choice, ws.d.UID, excess, eligible)
+						} else {
+							t.Errorf("trial=%d choice=%v route=%g w=%s target=%s exactQuantile=%g exactSlackNanos=%g fluidExcess=%g mu=%g retained=%g", trial, choice, key.route, ws.d.UID, ws.d.SLO.TargetLatency, *quantile, float64(ws.d.SLO.TargetLatency)-*quantile, excess, sum.routingRate, sum.retainedRoutingRate)
+						}
 					}
-					t.Errorf("trial=%d choice=%v route=%g fluid excess=%v exact feedback=%+v workload=%+v sums=%+v", trial, choice, key.route, key.excesses, exact.feedback, p.ws, s.sums)
-					return
 				}
 			}
 			n := 0

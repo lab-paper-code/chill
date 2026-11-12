@@ -22,6 +22,7 @@ type planTable struct {
 	pruned                                                    map[string]int
 	// Search-only columns are initialized once with the reusable search state.
 	searchable    []bool
+	arrivals      [][]float64 // exact cohort's sorted arrival offsets, nanoseconds
 	excessIndex   []int
 	priorityCount int
 	keyParts      []string

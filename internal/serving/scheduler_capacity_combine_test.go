@@ -61,6 +61,10 @@ func capacityScalarProductFixture() *capacityPlanner {
 		p.plans[n] = append(p.plans[n], &plan)
 	}
 	p.keepWatts = 30
+	p.settings.ObservationWindow = time.Second
+	p.index = map[string]int{p.ws[0].d.UID: 0}
+	p.snapshot.Workloads = []*Definition{p.ws[0].d}
+	capacityLoad(p.settings, &p.snapshot, p.ws[0].d, p.ws[0].rate)
 	return p
 }
 

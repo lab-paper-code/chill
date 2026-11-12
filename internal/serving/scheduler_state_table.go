@@ -6,6 +6,17 @@ func (t *planTable) initSearch(p *capacityPlanner) {
 		return
 	}
 	t.searchable = make([]bool, len(t.index))
+	p.feedbackCohort.once.Do(func() {
+		p.feedbackCohort.cohort, p.feedbackCohort.err = newFeedbackArrivalCohort(p.ctx, p.settings, p.snapshot)
+	})
+	t.arrivals = make([][]float64, len(p.ws))
+	if cohort := p.feedbackCohort.cohort; cohort != nil {
+		for _, request := range cohort.requests {
+			if w, ok := p.index[request.source.Definition.UID]; ok {
+				t.arrivals[w] = append(t.arrivals[w], request.arrival)
+			}
+		}
+	}
 	t.keyParts = make([]string, len(t.index))
 	t.excessIndex = make([]int, len(p.ws))
 	assigned := make([]bool, len(p.ws))

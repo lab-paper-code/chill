@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"math"
 	"slices"
+	"sort"
 )
 
 type orderKey struct {
@@ -120,7 +121,7 @@ func (s *searchState) delta(n, q int) orderKey {
 		count := sum.count + sum.pending
 		key.bounded = key.bounded && count <= p.settings.MaxReplicas && (p.settings.Controls.Replicas || count == ws.current)
 		key.countExcess += max(0, count-p.settings.MaxReplicas)
-		excess, eligible := capacityHeuristic(ws, sum.routingRate, sum.retainedRoutingRate, sum.serviceNanos, sum.retainedServiceNanos, key.route, p.periodSeconds)
+		excess, eligible := capacityHeuristic(ws, t.arrivals[w], sum.routingRate, sum.retainedRoutingRate, sum.serviceNanos, sum.retainedServiceNanos, key.route, p.periodSeconds)
 		key.excesses[t.excessIndex[w]], key.satisfied[w] = excess, excess == 0 && eligible
 		key.demand[w], key.supply[w] = ws.rate, sum.routingRate
 		key.feasible = key.feasible && key.satisfied[w]
@@ -149,27 +150,40 @@ func (s *searchState) delta(n, q int) orderKey {
 	return key
 }
 
-// capacityHeuristic scores the configured quantile of an optimistic two-phase
-// fluid cohort, not predicted E2E. Retained executors serve preparation arrivals;
-// target executors serve arrivals after the route. Only arrivals inside H count.
-// With no retained supply, preparation arrivals wait for the route and target.
-func capacityHeuristic(w capacityWorkload, mu, retained, service, retainedService, route, period float64) (float64, bool) {
-	if w.rate == 0 && w.queued == 0 {
+// capacityHeuristic uses the exact finite cohort for phase populations and
+// fluid work at each phase's last arrival. The tail request's own service is
+// excluded from queued work before adding its service scalar. This point score
+// is not an E2E bound: a drained queue can lose earlier waiting time and thus
+// underestimate replay delay. No retained supply adds route wait.
+func capacityHeuristic(w capacityWorkload, arrivals []float64, mu, retained, service, retainedService, route, period float64) (float64, bool) {
+	if len(arrivals) == 0 && w.queued == 0 {
 		return 0, true
 	}
 	if mu <= 0 {
 		return math.Inf(1), false
 	}
-	pre, post := min(route, period), max(period-route, 0)
-	backlog := max(0, float64(w.queued)+(w.rate-retained)*pre)
-	hPost := w.totalNanos + 1e9*(backlog+max(w.rate-mu, 0)*post)/mu + service/mu
-	preMass, postMass := float64(w.queued)+w.rate*pre, w.rate*post
+	pre := min(route, period)
+	preCount := sort.Search(len(arrivals), func(i int) bool { return arrivals[i] >= pre*1e9 })
+	preMass, postMass := float64(w.queued+preCount), float64(len(arrivals)-preCount)
+	preLast, postLast := 0.0, pre
+	if preCount > 0 {
+		preLast = min(pre, arrivals[preCount-1]/1e9)
+	}
+	if len(arrivals) > preCount {
+		postLast = arrivals[len(arrivals)-1] / 1e9
+	} else if route == 0 {
+		postLast = 0
+	}
+	backlog := max(0, preMass-retained*preLast)
+	atRoute := max(0, preMass-retained*pre)
+	postBacklog := max(0, atRoute+postMass-mu*max(0, postLast-pre))
+	hPost := w.totalNanos + 1e9*max(0, postBacklog-1)/mu + service/mu
 	if route == 0 {
 		preMass, postMass = 0, preMass+postMass
 	}
-	hPre := w.totalNanos + 1e9*route + 1e9*backlog/mu + service/mu
+	hPre := w.totalNanos + 1e9*route + 1e9*max(0, backlog-1)/mu + service/mu
 	if retained > 0 {
-		hPre = w.totalNanos + 1e9*backlog/retained + retainedService/retained
+		hPre = w.totalNanos + 1e9*max(0, backlog-1)/retained + retainedService/retained
 	}
 	h := hPost
 	if preMass > 0 {

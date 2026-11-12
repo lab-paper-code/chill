@@ -62,8 +62,8 @@ func TestCapacityDeltaRetainedServiceOrdersPreparationQueue(t *testing.T) {
 	problem := p.scalarProblem(tab, time.Time{})
 	a := capacityDeltaSaved(capacityRank(s.delta(0, tab.byPlan[0][1]), problem.Table))
 	b := capacityDeltaSaved(capacityRank(s.delta(0, tab.byPlan[0][2]), problem.Table))
-	if math.Abs(a.Excesses[0]-1.4) > 1e-14 || math.Abs(b.Excesses[0]-1.6) > 1e-14 || !a.Better(&b) || b.Better(&a) {
-		t.Fatalf("retained 240ms/260ms ordering: A=%+v B=%+v", a, b)
+	if math.Abs(a.Excesses[0]-.4) > 1e-14 || math.Abs(b.Excesses[0]-.6) > 1e-14 || !a.Better(&b) || b.Better(&a) {
+		t.Fatalf("retained 140ms/160ms ordering: A=%+v B=%+v", a, b)
 	}
 	s.apply(0, tab.byPlan[0][2])
 	if !slices.Equal(s.choice, []int{tab.byPlan[0][2]}) || s.sums[0].routingRate != 25 || s.sums[0].serviceNanos != 25*40e6 {
@@ -74,6 +74,15 @@ func TestCapacityDeltaRetainedServiceOrdersPreparationQueue(t *testing.T) {
 func TestCapacityDeltaPreparationUsesConfiguredQuantile(t *testing.T) {
 	p := capacityDeltaTiny([]float64{50}, 10)
 	p.periodSeconds = 1
+	p.settings.ComparisonPeriod, p.settings.ObservationWindow = time.Second, time.Second
+	p.ws[0].rate = 20
+	p.index = map[string]int{"w": 0}
+	p.snapshot.Workloads = []*Definition{p.ws[0].d}
+	for j := range 20 {
+		p.snapshot.Arrivals = append(p.snapshot.Arrivals, SchedulerArrival{
+			Definition: p.ws[0].d, At: p.snapshot.ObservationEnd.Add(-time.Second + time.Duration(j)*50*time.Millisecond), Compute: true,
+		})
+	}
 	p.ws[0].d.SLO.TargetLatency = 100 * time.Millisecond
 	base := p.plans[0][0]
 	next := *base
@@ -105,6 +114,13 @@ func TestCapacityDeltaFrozenWorkloadPriority(t *testing.T) {
 		a.UID = "a"
 		p.ws = append(p.ws, capacityWorkload{d: &a, rate: 1})
 		p.index = map[string]int{"b": 0, "a": 1}
+		p.settings.ObservationWindow = time.Second
+		p.snapshot.Workloads = []*Definition{p.ws[0].d, p.ws[1].d}
+		for _, ws := range p.ws {
+			p.snapshot.Arrivals = append(p.snapshot.Arrivals, SchedulerArrival{
+				ID: ws.d.UID, Definition: ws.d, At: p.snapshot.ObservationEnd.Add(-time.Second), Compute: true,
+			})
+		}
 		p.settings.SLOPriorityStrategy, p.settings.WorkloadPriority = strategy, []string{"a"}
 		makePlan := func(bService, aService float64, key string) *capacityPlan {
 			return &capacityPlan{items: [][]capacityItem{

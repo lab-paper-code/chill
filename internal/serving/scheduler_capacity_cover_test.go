@@ -15,11 +15,12 @@ func TestCapacityCoverSatisfiedAndOverload(t *testing.T) {
 		feasible bool
 	}{
 		{"recover", 45, true},
-		{"overload", 1000000, false},
+		{"overload", 100, false}, // Maximum fixture supply is 50 requests/s.
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			p := capacityScalarProductFixture()
 			p.ws[0].rate = test.rate
+			capacityLoad(p.settings, &p.snapshot, p.ws[0].d, test.rate)
 			p.plans[0][1].items[0][0].routingWeight = 60
 			problem := p.scalarProblem(p.planTable(), time.Time{})
 			candidates, stats := v2.Candidates(problem, problem.Table, 500000, 16, 4, time.Time{})

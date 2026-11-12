@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"math"
 	"reflect"
 	"slices"
@@ -16,7 +17,7 @@ func TestCapacityTableZeroRoutingDoesNotPruneProfile(t *testing.T) {
 		items[w] = []capacityItem{{id: "zero", prepare: true}}
 		return &capacityPlan{keep: keep, option: string(rune('a' + w)), items: items, record: SchedulerNodePlan{Eligible: eligible}}
 	}
-	p := &capacityPlanner{ws: []capacityWorkload{{d: &Definition{UID: "a", SLO: SLO{TargetLatency: time.Second}}, rate: 2}, {d: &Definition{UID: "b", SLO: SLO{TargetLatency: time.Second}}}}, plans: [][]*capacityPlan{{
+	p := &capacityPlanner{ctx: context.Background(), ws: []capacityWorkload{{d: &Definition{UID: "a", SLO: SLO{TargetLatency: time.Second}}, rate: 2}, {d: &Definition{UID: "b", SLO: SLO{TargetLatency: time.Second}}}}, plans: [][]*capacityPlan{{
 		makePlan(true, true, 0), makePlan(false, true, 0), makePlan(false, true, 1), makePlan(false, false, 0),
 	}}}
 	p.snapshot.Nodes = []SchedulerNode{{}}
