@@ -174,16 +174,11 @@ func schedulerApprovalInputs(settings serving.SchedulerSettings, s serving.Sched
 	for i := range s.Nodes {
 		s.Nodes[i].ObservedAt = time.Time{}
 	}
-	withoutClock := func(instance serving.SchedulerInstance) serving.SchedulerInstance {
-		instance.ObservedAt = time.Time{}
-		instance.LastServiceEndAgeNanos, instance.ArrivalAgesMS = nil, nil
-		return instance
-	}
 	for i := range s.Instances {
-		s.Instances[i] = withoutClock(s.Instances[i])
+		s.Instances[i] = s.Instances[i].ApprovalInputs()
 	}
 	for i := range s.Options {
-		s.Options[i].Instance = withoutClock(s.Options[i].Instance)
+		s.Options[i].Instance = s.Options[i].Instance.ApprovalInputs()
 	}
 	for i := range s.Actions {
 		s.Actions[i].Elapsed = 0

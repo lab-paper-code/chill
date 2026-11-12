@@ -353,6 +353,17 @@ type SchedulerInstance struct {
 	HeldUntil *time.Time `json:"heldUntil,omitempty"`
 }
 
+// ApprovalInputs retains physical admission authority while removing advancing
+// clocks and request-population observations. Exact admission replay still uses
+// the original instance, including these volatile fields.
+func (instance SchedulerInstance) ApprovalInputs() SchedulerInstance {
+	instance.ObservedAt, instance.NativeSpanAt = time.Time{}, time.Time{}
+	instance.LastServiceEndAgeNanos, instance.LastServiceEndAgeUpperNanos = nil, nil
+	instance.ArrivalAgesMS = nil
+	instance.AdmissionIdleUnknown = false
+	return instance
+}
+
 // Options are evidence-bound placements supplied by the catalog, not invented
 // allocations. CompatibleUIDs lists the immutable definitions whose model,
 // runtime and full input contract the catalog checked against the profile.
