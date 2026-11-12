@@ -451,6 +451,177 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 	}
 }
 
+func (h *resetHarness) failedStart(t *testing.T) {
+	t.Helper()
+	h.owned.Status.Phase = core.PodFailed
+	h.owned.Status.ContainerStatuses = nil
+	if err := h.api.Status().Update(context.Background(), h.owned); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).UpdateStatus(context.Background(), h.owned, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManualRemovePodUIDOnlyFailedStart(t *testing.T) {
+	h := newResetHarness(t)
+	h.failedStart(t)
+	h.controller.config.Settings.AutonomousWorkloads = nil
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := h.controller.ExecuteManual(ctx, servingstate.ManualOperation{
+		Kind: servingstate.OperationRemove, WorkloadUID: h.selectedUID, Node: testNode,
+		Instance: string(h.owned.UID), Reason: "remove failed start",
+	})
+	if err != nil || result.Status != servingstate.NativeOperationComplete || result.Error != "" {
+		t.Fatalf("PodUID-only manual remove failed: status=%s error=%s err=%v", result.Status, result.Error, err)
+	}
+	if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).Get(ctx, h.owned.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("failed-start Pod remains: %v", err)
+	}
+}
+
+//nolint:gocyclo // Exercise five-node reset, inherited identity evidence, pending power and real measurement admission together.
+func TestPartialResetReturnsSettledNodesForMeasurement(t *testing.T) {
+	for _, blocked := range []string{"none", "pending", "unknown"} {
+		t.Run(blocked, func(t *testing.T) {
+			pending, unknown := blocked == "pending", blocked == "unknown"
+			h := newResetHarness(t)
+			h.failedStart(t)
+			h.powerReturnCandidate(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			node, err := h.kube.CoreV1().Nodes().Get(ctx, testNode.Name, meta.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			refs := []serving.NodeReference{testNode}
+			for index := 1; index < 5; index++ {
+				otherNode := node.DeepCopy()
+				otherNode.Name, otherNode.UID = fmt.Sprintf("reset-node-%d", index), types.UID(fmt.Sprintf("reset-node-uid-%d", index))
+				if _, err := h.kube.CoreV1().Nodes().Create(ctx, otherNode, meta.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+				refs = append(refs, serving.NodeReference{Name: otherNode.Name, UID: string(otherNode.UID)})
+				pod := h.owned.DeepCopy()
+				pod.Name, pod.UID, pod.ResourceVersion = fmt.Sprintf("reset-pod-%d", index), types.UID(fmt.Sprintf("reset-pod-uid-%d", index)), ""
+				pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
+				pod.Spec.NodeName = otherNode.Name
+				if err := h.api.Client.(*nodeAPI).Client.(*managerAPI).Client.Create(ctx, pod); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := h.kube.CoreV1().Pods(pod.Namespace).Create(ctx, pod.DeepCopy(), meta.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			snapshot, err := h.controller.capture(ctx, time.Now(), h.controller.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.controller.state.Snapshot = snapshot
+			// The old terminal owner alone knows this removed executor's Node.
+			// Its ledger entry can be collected after reset takes responsibility.
+			oldID := "manual-route:failed-start"
+			old := &actionRun{owner: oldID, reserved: true,
+				action: serving.Action{Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationFailed},
+				scope: resourceScope{Nodes: []serving.NodeReference{testNode}, Workloads: []string{h.selectedUID},
+					Pods: []string{"retired-pod"}, Instances: []string{"retired-pod/container"}},
+				result: &servingstate.OperationResult{
+					Operation: servingstate.Operation{Kind: servingstate.OperationRoute, WorkloadUID: h.selectedUID},
+					Before:    servingstate.OperationState{Instances: []serving.InstanceState{{ID: "retired-pod/container", PodUID: "retired-pod", Node: testNode}}},
+					EndedAt:   time.Now().Add(-time.Second), Status: servingstate.NativeOperationFailed,
+				}}
+			if unknown {
+				old.scope.Nodes = refs[:2]
+				old.scope.Instances = append(old.scope.Instances, "unassociated-executor")
+			}
+			h.controller.runs[oldID] = old
+			h.controller.config.Baselines = nil
+			h.controller.config.MeasurementNamespaces = []string{h.owned.Namespace}
+			h.controller.config.OnAction = func(result servingstate.OperationResult) error {
+				if result.Status == servingstate.NativeOperationRunning && len(result.Steps) == 0 {
+					h.controller.mu.Lock()
+					delete(h.controller.runs, oldID)
+					h.controller.mu.Unlock()
+				}
+				return nil
+			}
+			result, err := h.controller.ExecuteManual(ctx, h.request())
+			if err != nil || result.Status != servingstate.NativeOperationPartial || !strings.Contains(result.Error, "lacks the measured lowest power mode") {
+				t.Fatalf("reset did not preserve lower-power failure: status=%s error=%s err=%v", result.Status, result.Error, err)
+			}
+			assertResetSteps(t, result, "disable-autonomy", "unroute", "drain", "remove", "release", "lower-power")
+			if len(result.Operation.Nodes) != 5 {
+				t.Fatalf("reset admitted %d Nodes, want 5", len(result.Operation.Nodes))
+			}
+			if pending {
+				node.Labels[chillmeta.PowerModeState] = chillmeta.PowerModePending
+				if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			snapshot, err = h.controller.capture(ctx, time.Now(), h.controller.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, _ = h.controller.reconcileSnapshot(snapshot, time.Now(), h.controller.config.Settings.ObservationWindow, h.controller.runtime)
+			h.controller.state.Snapshot = snapshot
+			for _, reservation := range snapshot.Reservations {
+				if reservation.Owner != result.Operation.ID {
+					continue
+				}
+				if slices.ContainsFunc(reservation.Nodes, func(ref serving.NodeReference) bool {
+					return !(pending && ref == refs[0] || unknown && slices.Contains(refs[:2], ref))
+				}) {
+					t.Errorf("fresh observation retained settled reset Nodes: %+v", reservation)
+				}
+			}
+			for index, ref := range refs {
+				root := baselineRoot(fmt.Sprintf("after-reset-%d", index), time.Now())
+				root.Spec.State.TargetNode = ref.Name
+				if err := h.api.Create(ctx, root); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := h.controller.Admit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			for index, ref := range refs {
+				root := &edge.ModelLoadedIdleBaseline{}
+				if err := h.api.Get(ctx, client.ObjectKey{Namespace: h.owned.Namespace, Name: fmt.Sprintf("after-reset-%d", index)}, root); err != nil {
+					t.Fatal(err)
+				}
+				granted, _, _ := profilingrun.Admission(root.Annotations)
+				want := (!pending || index != 0) && (!unknown || index > 1)
+				if granted != want {
+					t.Errorf("Node %s measurement granted=%t, want %t; reset reservations=%+v", ref.Name, granted, want, h.controller.reservationsLocked())
+				}
+			}
+			if pending {
+				node.Labels[chillmeta.PowerModeState] = chillmeta.PowerModeSuccess
+				if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+				if err := h.controller.Admit(ctx); err != nil {
+					t.Fatal(err)
+				}
+				root := &edge.ModelLoadedIdleBaseline{}
+				if err := h.api.Get(ctx, client.ObjectKey{Namespace: h.owned.Namespace, Name: "after-reset-0"}, root); err != nil {
+					t.Fatal(err)
+				}
+				if granted, _, _ := profilingrun.Admission(root.Annotations); !granted {
+					t.Fatal("settled formerly pending Node still blocks measurement")
+				}
+			}
+			state := h.controller.State()
+			index := slices.IndexFunc(state.Results, func(receipt servingstate.OperationResult) bool { return receipt.Operation.ID == result.Operation.ID })
+			if index < 0 || state.Results[index].Status != servingstate.NativeOperationPartial || state.Results[index].Error != result.Error {
+				t.Fatal("fresh return rewrote reset failure receipt")
+			}
+		})
+	}
+}
+
 func (h *resetHarness) assertAlreadyClean(t *testing.T, ctx context.Context, cm *core.ConfigMap) {
 	t.Helper()
 	updates, podWrites := h.updates, h.api.podWrites.Load()

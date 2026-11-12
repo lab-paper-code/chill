@@ -60,10 +60,13 @@ type actionRun struct {
 	returnObserved       bool
 	prepareIdentity      string
 	inheritedReservation bool
-	routeReceipts        map[string]*actionRun
-	mayTouch             map[string]bool
-	proofParent          *actionRun
-	admittedControls     serving.SchedulerControls
+	// Reset retains exact associations and bounds on unresolved identities.
+	returnPodNodes      map[string][]serving.NodeReference
+	returnInstanceNodes map[string][]serving.NodeReference
+	routeReceipts       map[string]*actionRun
+	mayTouch            map[string]bool
+	proofParent         *actionRun
+	admittedControls    serving.SchedulerControls
 }
 
 func (s *ClusterState) MarkRemoving(id string) {

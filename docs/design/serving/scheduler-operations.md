@@ -112,6 +112,10 @@ Operations의 fresh Node/Pod UID·종료 검증과 finalizer/Service/config·실
 증명은 그대로 유지하며 후속 prepare/route는 remove 완료를 기다린다. container
 신원이 있는 executor와 종료 미확정 재고에는 이 단축 경로를 적용하지 않는다.
 
+수동 remove도 같은 `bindTerminatedPodRemoval`을 사용한다. executor가 없는
+`ID=PodUID` 표시 alias는 예약의 executor `Instances` 책임으로 기록하지 않고,
+실제 Pod UID와 Node 책임만 유지한다.
+
 
 ## Why concealment forces routing
 
@@ -252,7 +256,18 @@ SCH-41의 단일 작업 `steps[]`는 `{name,startedAt,endedAt,status,before,actu
 동일 slot 모든 owned exact Pod UID/container를 열거하고 remove 직전 재열거한다(AC-36). runtime/scheduler/native policy는 exact physical 우선→없을 때 유일 TargetID alias다. A→S,B→A에서 A는 A, B도 별도 정리하고 진짜 다중 alias는 오류다. 타 owner/binding/measurement/Node UID 보호는 유지한다.
 실패/timeout/read 실패는 단계+actual partial을 기록하고 즉시 중단한다. client cancel도 이후 단계를 중단하나 시작한 physical 효과 예약은 cancel만으로 풀지 않는다(SCH-51, AC-38). 자동 retry/rollback/후속 실행 없고 실패 선언을 refresh가 자동 적용하지 않는다.
 재호출은 현재 충족 단계를 무변경 완료한다. Pod 제거 뒤 release/lower-power가 실패해도 현재 UID compatible preparation의 동일 Node UID를 재확인하고 같은 mode 선택 규칙으로 빈 Node를 처리한다. 제외/measurement/다른 serving Pod Node는 제외한다. actual 최저 mode/Ready 전에는 partial이며, 완료 뒤 reset은 새 Pod/선언/power 요청 없이 성공한다(SCH-AC-33).
-설정 변경 전 관련 running/cancel 작업 충돌을 거절한다. terminal owner 예약은 그 **전체** Workload와 동일 UID Node가 실제 reset admission `operation.Nodes` 안에 있을 때만 원자 인계한다(SCH-51/SCH-AC-38). 과거 snapshot이 충돌 범위를 넓혀도 cleanup/admission Node 추가는 아니다. active 단계/measurement owner/범위 밖 UID·Node는 인계하지 않는다. 인계 책임은 단계 사이 계속 소유하며 reset effect 전 거절도 미확인 책임 반환이 아니다. actual reset 완료 proof 뒤 해제하고 단계별 action start/end/failure를 기록한다.
+설정 변경 전 관련 running/cancel 작업 충돌을 거절한다. terminal owner 예약은 그 **전체** Workload와 동일 UID Node가 실제 reset admission `operation.Nodes` 안에 있을 때만 원자 인계한다(SCH-51/SCH-AC-38). 과거 snapshot이 충돌 범위를 넓혀도 cleanup/admission Node 추가는 아니다. active 단계/measurement owner/범위 밖 UID·Node는 인계하지 않는다. 인계 책임은 단계 사이 계속 소유하며 reset effect 전 거절도 미확인 책임 반환이 아니다. 각 Node의 actual 반환 proof 뒤 해당 책임을 해제하고 단계별 action start/end/failure를 기록한다.
+
+reset 인계는 Pod UID/executor ID의 exact Node 연결 근거와 미확인 책임의 Node 범위도 새 owner로 옮긴다.
+이전 receipt가 장부에서 정리되어도 그 연결은 책임 반환까지 유지한다.
+최저 전력모드 측정 부재로 lower-power가 실패하면 결과는 계속 `partial`이다.
+관련 writer 종료 뒤의 fresh 관측에서 Pod 부재와 power non-pending이 확인된
+Node는 기존 반환 proof로 개별 반환하므로 측정 admission을 다시 허용한다.
+power 요청을 시작하지 않은 Node에도 같은 proof를 쓴다. pending power,
+남은 Pod, 미종료 writer 또는 identity 연결이 불명인 Node의 예약은 유지한다.
+한 identity의 연결 실패는 그 identity가 책임지는 Node 범위만 막는다.
+인계한 미확인 Node 범위는 exact 관측과 구별하며, 새 exact identity가 확인되면
+그 연결로 기존 반환 proof를 다시 판단한다.
 
 ## serving-operation CLI
 

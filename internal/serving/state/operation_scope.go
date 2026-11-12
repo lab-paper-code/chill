@@ -19,6 +19,15 @@ func (scope *OperationResources) includeOwner(uid string) {
 	}
 }
 
+func (scope *OperationResources) includeInstanceIdentity(instance serving.SchedulerInstance) {
+	if instance.ID != "" && instance.ID != instance.PodUID {
+		scope.Instances = append(scope.Instances, instance.ID)
+	}
+	if instance.PodUID != "" {
+		scope.Pods = append(scope.Pods, instance.PodUID)
+	}
+}
+
 // ResourcesForOperation computes policy from explicit operation/observation
 // values. It neither reads a ledger nor acquires a lock.
 func ResourcesForOperation(operation Operation, snapshot serving.SchedulerSnapshot) OperationResources {
@@ -42,7 +51,7 @@ func ResourcesForOperation(operation Operation, snapshot serving.SchedulerSnapsh
 	if operation.PodUID != "" {
 		scope.Pods = append(scope.Pods, operation.PodUID)
 	}
-	if operation.Instance != "" {
+	if operation.Instance != "" && operation.Instance != operation.PodUID {
 		scope.Instances = append(scope.Instances, operation.Instance)
 	}
 	scope.addPlannedEffects(operation)
@@ -60,17 +69,14 @@ func ResourcesForOperation(operation Operation, snapshot serving.SchedulerSnapsh
 			scope.includeOwner(instance.WorkloadUID)
 			scope.includeOwner(instance.OwnerWorkloadUID)
 			scope.Nodes = append(scope.Nodes, instance.Node)
-			scope.Instances = append(scope.Instances, instance.ID)
-			if instance.PodUID != "" {
-				scope.Pods = append(scope.Pods, instance.PodUID)
-			}
+			scope.includeInstanceIdentity(instance)
 		}
 	}
 	if operation.Target != nil {
 		for _, instance := range operation.Target.Instances {
 			if slices.Contains(scope.Workloads, instance.WorkloadUID) {
 				scope.Nodes = append(scope.Nodes, instance.Node)
-				scope.Instances = append(scope.Instances, instance.ID)
+				scope.includeInstanceIdentity(instance)
 			}
 			if slices.Contains(scope.Nodes, instance.Node) {
 				scope.includeOwner(instance.WorkloadUID)
@@ -115,7 +121,7 @@ func (scope *OperationResources) addPlannedEffects(operation Operation) {
 	for _, wanted := range operation.Target.Instances {
 		if operation.ControlsWorkload(wanted.WorkloadUID) && (operation.PolicyInstances == nil || slices.Contains(operation.PolicyInstances, wanted.ID)) {
 			scope.Nodes = append(scope.Nodes, wanted.Node)
-			scope.Instances = append(scope.Instances, wanted.ID)
+			scope.includeInstanceIdentity(wanted)
 		}
 	}
 }

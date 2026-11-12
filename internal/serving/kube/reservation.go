@@ -90,6 +90,8 @@ func (c *reservationState) reserveRun(id string, run *actionRun, operation servi
 		if other.reserved && slices.Contains(inherited, other.owner) {
 			scope.Pods = append(scope.Pods, other.scope.Pods...)
 			scope.Instances = append(scope.Instances, other.scope.Instances...)
+			run.returnPodNodes = c.inheritReturnNodes(other, other.scope.Pods, true, run.returnPodNodes)
+			run.returnInstanceNodes = c.inheritReturnNodes(other, other.scope.Instances, false, run.returnInstanceNodes)
 			other.reserved = false
 		}
 	}
@@ -107,6 +109,24 @@ func (c *reservationState) reserveRun(id string, run *actionRun, operation servi
 	}
 	c.registerMayTouchLocked(run, operation, scope)
 	return true
+}
+
+func (c *reservationState) inheritReturnNodes(other *actionRun, ids []string, pod bool, evidence map[string][]serving.NodeReference) map[string][]serving.NodeReference {
+	for _, id := range ids {
+		if evidence == nil {
+			evidence = map[string][]serving.NodeReference{}
+		}
+		node, known, conflicts := c.returnResourceNode(other.owner, id, pod, nil, nil)
+		switch {
+		case known:
+			evidence[id] = append(evidence[id], node)
+		case len(conflicts) > 0:
+			evidence[id] = append(evidence[id], conflicts...)
+		default:
+			evidence[id] = append(evidence[id], other.scope.Nodes...)
+		}
+	}
+	return evidence
 }
 
 // recordPreparationLocked precedes all terminal publication paths. The result
@@ -279,46 +299,44 @@ func (c *reservationState) releaseObservedOwnerScopes(run *actionRun, nodes []co
 	if !fresh {
 		return
 	}
-	podNodes, instanceNodes := map[string]serving.NodeReference{}, map[string]serving.NodeReference{}
-	associated := true
 	for _, member := range c.runs {
-		if member.owner != run.owner {
-			continue
-		}
-		if !member.reserved {
-			continue
-		}
-		if member.result == nil || member.action.Status == servingstate.NativeOperationRunning || member.action.Status == servingstate.NativeOperationCancel {
-			continue
-		}
-		for _, node := range member.scope.Nodes {
-			if !slices.Contains(held, node) {
-				held = append(held, node)
+		if member.owner == run.owner && member.reserved {
+			for _, node := range member.scope.Nodes {
+				if !slices.Contains(held, node) {
+					held = append(held, node)
+				}
 			}
 		}
-		for _, uid := range member.scope.Pods {
-			if _, found := podNodes[uid]; found {
+	}
+	podNodes, instanceNodes := map[string]serving.NodeReference{}, map[string]serving.NodeReference{}
+	var unknown []serving.NodeReference
+	associate := func(ids []string, pod bool, resolved map[string]serving.NodeReference) {
+		for _, id := range ids {
+			if _, found := resolved[id]; found {
 				continue
 			}
-			ref, known := c.returnResourceNode(run.owner, uid, true, pods, physical)
-			podNodes[uid], associated = ref, associated && known
-		}
-		for _, id := range member.scope.Instances {
-			if _, found := instanceNodes[id]; found {
+			ref, known, conflicts := c.returnResourceNode(run.owner, id, pod, pods, physical)
+			if known && slices.Contains(held, ref) {
+				resolved[id] = ref
 				continue
 			}
-			ref, known := c.returnResourceNode(run.owner, id, false, pods, physical)
-			instanceNodes[id], associated = ref, associated && known
+			resolved[id] = serving.NodeReference{}
+			// Bound ambiguous identities to their possible Nodes. An identity
+			// with no Node evidence still prevents return of the whole owner.
+			if len(conflicts) > 0 {
+				unknown = append(unknown, conflicts...)
+			} else {
+				unknown = append(unknown, held...)
+			}
 		}
 	}
-	for _, node := range podNodes {
-		associated = associated && slices.Contains(held, node)
-	}
-	for _, node := range instanceNodes {
-		associated = associated && slices.Contains(held, node)
-	}
-	if !associated {
-		return
+	for _, member := range c.runs {
+		if member.owner != run.owner || !member.reserved || member.result == nil ||
+			member.action.Status == servingstate.NativeOperationRunning || member.action.Status == servingstate.NativeOperationCancel {
+			continue
+		}
+		associate(member.scope.Pods, true, podNodes)
+		associate(member.scope.Instances, false, instanceNodes)
 	}
 	if parent != nil {
 		run = parent
@@ -326,7 +344,7 @@ func (c *reservationState) releaseObservedOwnerScopes(run *actionRun, nodes []co
 	cleanup := c.pendingOwnerCleanup(parent)
 	var returned []serving.NodeReference
 	for _, node := range held {
-		if c.ownerNodeReturned(run, node, cleanup, nodes, pods, physical) {
+		if !slices.Contains(unknown, node) && c.ownerNodeReturned(run, node, cleanup, nodes, pods, physical) {
 			returned = append(returned, node)
 		}
 	}
@@ -438,15 +456,22 @@ func (c *reservationState) ownerNodeReturned(run *actionRun, ref serving.NodeRef
 
 // Resolve only exact admitted/current identities. Missing inventory is not a
 // mapping, and conflicting identities cannot authorize dropping an entry.
-func (c *reservationState) returnResourceNode(owner, id string, pod bool, pods []core.Pod, physical []serving.InstanceState) (serving.NodeReference, bool) {
+func (c *reservationState) returnResourceNode(owner, id string, pod bool, pods []core.Pod, physical []serving.InstanceState) (serving.NodeReference, bool, []serving.NodeReference) {
 	var ref serving.NodeReference
 	ambiguous := false
+	var conflicts []serving.NodeReference
 	include := func(node serving.NodeReference) {
 		if node.UID == "" || node.Name == "" {
 			return
 		}
 		if ref.UID != "" && ref != node {
 			ambiguous = true
+			if len(conflicts) == 0 {
+				conflicts = append(conflicts, ref)
+			}
+			if !slices.Contains(conflicts, node) {
+				conflicts = append(conflicts, node)
+			}
 		}
 		ref = node
 	}
@@ -486,7 +511,34 @@ func (c *reservationState) returnResourceNode(owner, id string, pod bool, pods [
 			}
 		}
 	}
-	return ref, ref.UID != "" && !ambiguous
+	if ref.UID == "" {
+		// Inherited multi-node bounds are uncertainty, not competing exact
+		// observations. Fresh identity evidence above can resolve them.
+		for _, member := range c.runs {
+			if member.owner != owner || member.result == nil {
+				continue
+			}
+			inherited := member.returnInstanceNodes
+			if pod {
+				inherited = member.returnPodNodes
+			}
+			for _, node := range inherited[id] {
+				include(node)
+			}
+		}
+	}
+	if ref.UID == "" {
+		// A multi-node footprint bounds uncertainty without choosing a Node.
+		for _, member := range c.runs {
+			if member.owner == owner && member.result != nil &&
+				(pod && slices.Contains(member.scope.Pods, id) || !pod && slices.Contains(member.scope.Instances, id)) {
+				for _, node := range member.scope.Nodes {
+					include(node)
+				}
+			}
+		}
+	}
+	return ref, ref.UID != "" && !ambiguous, conflicts
 }
 
 func includeScopedReturnNode(scope resourceScope, id string, pod bool, include func(serving.NodeReference)) {
@@ -506,6 +558,13 @@ func returnIdentityMatches(id string, pod bool, instance, uid string) bool {
 
 func includeAdmittedReturnNodes(member *actionRun, id string, pod bool, include func(serving.NodeReference)) {
 	result, operation := member.result, member.result.Operation
+	inherited := member.returnInstanceNodes
+	if pod {
+		inherited = member.returnPodNodes
+	}
+	if nodes := inherited[id]; len(nodes) == 1 {
+		include(nodes[0])
+	}
 	if returnIdentityMatches(id, pod, operation.Instance, operation.PodUID) || !pod && member.prepareIdentity == id {
 		include(operation.Node)
 	}

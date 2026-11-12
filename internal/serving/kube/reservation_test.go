@@ -649,3 +649,101 @@ func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
 		})
 	}
 }
+
+func TestReservationReturnsIndependentNodesDespiteUnknownAssociation(t *testing.T) {
+	for _, conflicting := range []bool{false, true} {
+		t.Run(map[bool]string{false: "missing", true: "conflicting"}[conflicting], func(t *testing.T) {
+			refs := []serving.NodeReference{{Name: "one", UID: "one"}, {Name: "two", UID: "two"}, {Name: "three", UID: "three"}}
+			ended := time.Now()
+			unknown := &actionRun{owner: "owner", reserved: true,
+				action: serving.Action{Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationPartial},
+				scope:  resourceScope{Nodes: refs[:2], Instances: []string{"unknown-executor"}},
+				result: &servingstate.OperationResult{EndedAt: ended, Status: servingstate.NativeOperationPartial}}
+			settled := &actionRun{owner: unknown.owner, reserved: true,
+				action: serving.Action{Kind: servingstate.OperationRemove, Status: servingstate.NativeOperationPartial},
+				scope:  resourceScope{Nodes: refs[2:]},
+				result: &servingstate.OperationResult{EndedAt: ended, Status: servingstate.NativeOperationPartial}}
+			if conflicting {
+				unknown.scope.Nodes, settled.scope.Nodes = refs[:1], refs[1:]
+				unknown.result.Before.Instances = []serving.InstanceState{{ID: "unknown-executor", Node: refs[0]}}
+				unknown.result.Actual.Instances = []serving.InstanceState{{ID: "unknown-executor", Node: refs[1]}}
+			}
+			c := &reservationState{runs: map[string]*actionRun{"unknown": unknown, "settled": settled}}
+			nodes := []core.Node{}
+			for _, ref := range refs {
+				nodes = append(nodes, core.Node{ObjectMeta: meta.ObjectMeta{Name: ref.Name, UID: types.UID(ref.UID)}})
+			}
+			c.releaseObservedScopes(nodes, nil, nil, ended.Add(time.Second))
+			for index, ref := range refs {
+				allowed := c.authorize(servingstate.Operation{Node: ref}) == nil
+				if allowed != (index == 2) {
+					t.Errorf("Node %s available=%t, want %t", ref.Name, allowed, index == 2)
+				}
+			}
+		})
+	}
+}
+
+func TestReservationReturnsPodOnlyTargetAfterAbsence(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := &SchedulerController{ctx: ctx, reservationState: &reservationState{runs: map[string]*actionRun{}}}
+	node := serving.NodeReference{Name: "one", UID: "one"}
+	target := &serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{
+		{ID: "failed-pod", PodUID: "failed-pod", Node: node, WorkloadUID: "workload", Stopped: true, Terminated: true},
+	}}
+	done, result := c.startNodeRun(servingstate.Operation{ID: "unroute", Kind: servingstate.OperationUnroute, WorkloadUID: "workload", Target: target},
+		SchedulerControllerConfig{}, func(_ context.Context, result *servingstate.OperationResult) error {
+			result.Before.Instances = []serving.InstanceState{{PodUID: "failed-pod", Node: node}}
+			return context.DeadlineExceeded
+		})
+	<-done
+	defer c.wg.Wait()
+	c.mu.Lock()
+	reservations := c.reservationsLocked()
+	c.mu.Unlock()
+	for _, reservation := range reservations {
+		if len(reservation.Instances) != 0 || len(reservation.PodUIDs) == 0 || reservation.PodUIDs[0] != "failed-pod" {
+			t.Errorf("Pod-only target has wrong public responsibility: %+v", reservation)
+		}
+	}
+	observed := result.EndedAt.Add(time.Second)
+	actual := core.Node{ObjectMeta: meta.ObjectMeta{Name: node.Name, UID: types.UID(node.UID)}}
+	pod := core.Pod{ObjectMeta: meta.ObjectMeta{UID: "failed-pod", OwnerReferences: []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}},
+		Spec: core.PodSpec{NodeName: node.Name}}
+	c.releaseObservedScopes([]core.Node{actual}, []core.Pod{pod}, nil, observed)
+	if c.authorize(servingstate.Operation{Node: node}) == nil {
+		t.Fatal("Pod-only responsibility returned before Pod absence")
+	}
+	c.releaseObservedScopes([]core.Node{actual}, nil, nil, observed)
+	if err := c.authorize(servingstate.Operation{Node: node}); err != nil {
+		t.Fatalf("Pod display alias retained executor responsibility after Pod absence: %v", err)
+	}
+}
+
+func TestResetInheritedUncertaintyAcceptsFreshExactIdentity(t *testing.T) {
+	refs := []serving.NodeReference{{Name: "one", UID: "one"}, {Name: "two", UID: "two"}, {Name: "three", UID: "three"}}
+	ended := time.Now()
+	old := &actionRun{owner: "old", reserved: true,
+		action: serving.Action{Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationPartial},
+		scope:  resourceScope{Nodes: refs[:2], Workloads: []string{"workload"}, Instances: []string{"pod/container"}},
+		result: &servingstate.OperationResult{EndedAt: ended, Status: servingstate.NativeOperationPartial}}
+	c := &reservationState{runs: map[string]*actionRun{"old": old}}
+	operation := servingstate.Operation{ID: "reset", Kind: servingstate.OperationReset, WorkloadUIDs: []string{"workload"}, Nodes: refs}
+	reset := &actionRun{owner: operation.ID, action: serving.Action{Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationPartial},
+		result: &servingstate.OperationResult{Operation: operation, EndedAt: ended, Status: servingstate.NativeOperationPartial}}
+	if !c.reserveRun(operation.ID, reset, operation) {
+		t.Fatal("terminal responsibility did not transfer to reset")
+	}
+	delete(c.runs, "old")
+	nodes := []core.Node{}
+	for _, ref := range refs {
+		nodes = append(nodes, core.Node{ObjectMeta: meta.ObjectMeta{Name: ref.Name, UID: types.UID(ref.UID)}})
+	}
+	c.releaseObservedScopes(nodes, nil, []serving.InstanceState{{ID: "pod/container", PodUID: "pod", Node: refs[0], Terminated: true}}, ended.Add(time.Second))
+	for _, ref := range refs {
+		if err := c.authorize(servingstate.Operation{Node: ref}); err != nil {
+			t.Errorf("fresh exact identity did not resolve inherited Node uncertainty for %s: %v", ref.Name, err)
+		}
+	}
+}
