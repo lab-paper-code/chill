@@ -111,17 +111,20 @@ request JSONL(.gz)이며 여러 번 지정할 수 있다. `--clients`는 선택 
 관측 요청으로 센다. provisional-inputs를 입력에 섞지 않는다.
 
 final과 늦은 native supplement를 요청별로 합친 뒤 `(instance,batchID)`로
-배치를 중복 제거한다. 같은 배치의 다른 요청이 가진 실행 시각도 합친다.
+배치를 중복 제거한다. service 표본이 없는 부분 기록도 같은 배치의 신원·실행 시각 복구에 쓴다.
 receive는 `nativeFinishedAt − nativeElapsedMS`이며, 같은 instance의
 `[nativeRunningAt,nativeFinishedAt)` 안에 들어온 다른 배치 요청을 센다.
 자기 배치 요청은 제외한다. 완료·elapsed가 없는 요청의 receive는 복원하지 않는다.
 따라서 유입 없음은 관측된 완료 근거에 한정되고 인과를 뜻하지 않는다.
+실행이 길수록 도착과 겹칠 확률도 높다(length bias). 유입별 분포 차이는 이 선택 효과를 포함한다.
 
 출력 `cells[]`는 profile ID·배치 크기·직전 유휴 구간·실행 중 관측 유입 여부별
 serving n/p50/p95와 profile 참고분포 n/p50/p95, p50/p95 비율을 보존한다.
 단위는 ms, p50은 median, p95는 nearest-rank다. 구간은 `[하한,상한)`,
-마지막 상한은 무한대다. 입력 edges는 `idleBinEdgesMS`에 기록되는 분석 매개변수이며
-스케줄러 설정이 아니다. 유휴 누락은 `unknown`으로 남기고 0으로 넣지 않는다.
+마지막 상한은 무한대다. 입력 edges는 `idleBinEdgesNanos`의 정수 ns로 정확히 기록한다.
+`idleBinEdgesMS`는 ms 표시값이며, 셀은 반올림 없는 구간 문자열과 정수 `idleBinIndex`를 가진다.
+구간 key는 정수 index다. edges는 분석 매개변수이며 스케줄러 설정이 아니다.
+유휴 누락은 `unknown`·index null로 남기고 0으로 넣지 않는다.
 `profileIdleBinSupported`는 해당 profile·배치·유휴 구간의 표본 존재만 뜻한다.
 unknown 유휴는 측정된 유휴 구간의 support를 세우지 않는다.
 published ServiceSamples에는 유입 조건이 없으므로 profile 참고분포는

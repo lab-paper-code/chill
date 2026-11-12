@@ -35,12 +35,21 @@ def number(value, name, positive=False):
 
 def idle_bin(value, edges):
     if value is None:
-        return 'unknown'
+        return -1
     number(value, 'precedingIdleNanos')
-    index = bisect_right(edges, value) - 1
-    low = edges[index] / 1e6
-    high = format(edges[index + 1] / 1e6, 'g') if index + 1 < len(edges) else 'inf'
-    return '[%s,%s)' % (format(low, 'g'), high)
+    return bisect_right(edges, value) - 1
+
+
+def milliseconds_text(nanos):
+    whole, fraction = divmod(nanos, 1_000_000)
+    return str(whole) + (('.%06d' % fraction).rstrip('0') if fraction else '')
+
+
+def bin_label(index, edges):
+    if index < 0:
+        return 'unknown'
+    high = milliseconds_text(edges[index + 1]) if index + 1 < len(edges) else 'inf'
+    return '[%s,%s)' % (milliseconds_text(edges[index]), high)
 
 
 def json_rows(paths):
@@ -77,15 +86,16 @@ def fold_requests(paths):
     return folded
 
 
-def comparison(key, serving, profile, conditioned_idle):
+def comparison(key, serving, profile, edges=None):
     pid, batch, gap, other = key
     observed, reference = stats(serving), stats(profile)
     result = {'profileID': pid, 'batchSize': batch, 'otherArrived': other,
               'serving': observed, 'profile': reference,
               'p50Ratio': observed['p50'] / reference['p50'] if serving and profile else None,
               'p95Ratio': observed['p95'] / reference['p95'] if serving and profile else None}
-    if conditioned_idle:
-        result.update(idleBin=gap, profileIdleBinSupported=bool(profile))
+    if edges is not None:
+        result.update(idleBin=bin_label(gap, edges), idleBinIndex=gap if gap >= 0 else None,
+                      profileIdleBinSupported=bool(profile))
     return result
 
 
@@ -128,7 +138,7 @@ def analyze(paths, profiles, edges, cohort=None):
                 gap = idle_bin(sample.get('precedingIdleNanos'), edges)
                 profile_all[(pid, size)].append(duration)
                 # Unknown/startup idle cannot establish measured support for an idle cell.
-                if gap != 'unknown':
+                if gap >= 0:
                     profile_cells[(pid, size, gap)].append(duration)
 
     serving_cells = defaultdict(list)
@@ -144,7 +154,8 @@ def analyze(paths, profiles, edges, cohort=None):
         row = complete[0]
         for key in ('profileID', 'batchSize', 'serviceDurationNanos', 'precedingIdleNanos',
                     'nativeRunningAt', 'nativeFinishedAt'):
-            values = [member[key] for member in complete if member.get(key) is not None]
+            candidates = complete if key == 'serviceDurationNanos' else members.values()
+            values = [member[key] for member in candidates if member.get(key) is not None]
             if any(value != values[0] for value in values):
                 raise ValueError('conflicting batch ' + key)
             if values:
@@ -176,6 +187,7 @@ def analyze(paths, profiles, edges, cohort=None):
 
     return {
         'units': 'ms', 'quantiles': {'p50': 'median', 'p95': 'nearest-rank'},
+        'idleBinEdgesNanos': edges,
         'idleBinEdgesMS': [edge / 1e6 for edge in edges], 'idleBins': '[lower,upper); last upper=inf; missing=unknown',
         'servingConditioning': ['profileID', 'batchSize', 'idleBin', 'otherArrived'],
         'profileConditioning': ['profileID', 'batchSize', 'idleBin'],
@@ -185,14 +197,14 @@ def analyze(paths, profiles, edges, cohort=None):
         'receiveDefinition': 'nativeFinishedAt - nativeElapsedMS; same instance; running interval [nativeRunningAt,nativeFinishedAt); exclude own batch requests',
         'limitations': [
             'Only requests with observed native finish and elapsed contribute derived receives; absence is not proof of no ingress.',
-            'Ingress association does not establish causality.',
+            'Longer executions are more likely to overlap arrivals (length bias); ingress association does not establish causality.',
             'Profile ID joins do not verify actual serving runtime image or other instance conditions.',
             'Unknown idle is not zero and cannot establish profile idle-bin support.'],
         'counts': dict(counts),
-        'cells': [comparison(key, serving_cells[key], profile_cells[key[:3]], True)
+        'cells': [comparison(key, serving_cells[key], profile_cells[key[:3]], edges)
                   for key in ordered(serving_cells)],
         # Reproduce the plan table separately; these rows deliberately marginalize idle.
-        'marginalByIngress': [comparison(key, serving_all[key], profile_all[key[:2]], False)
+        'marginalByIngress': [comparison(key, serving_all[key], profile_all[key[:2]])
                               for key in ordered(serving_all)],
     }
 

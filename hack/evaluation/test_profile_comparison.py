@@ -22,7 +22,7 @@ def request(rid, instance, batch, start, finish, receive, idle=0, service=10):
 
 
 class ProfileComparisonTests(unittest.TestCase):
-    def run_report(self, rows, samples, edges='0,1,5'):
+    def run_report(self, rows, samples, edges='0,1,5', cohort=None, client_directory=False):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             raw = root / 'obs' / '20261112T00'
@@ -35,9 +35,14 @@ class ProfileComparisonTests(unittest.TestCase):
             profiles.write_text(json.dumps({'profiles': [{'id': 'profile', 'batches': [
                 {'batch': 2, 'serviceSamples': samples}]}]}))
             out = root / 'comparison.json'
+            client_args = []
+            if cohort is not None:
+                clients = root / 'cohort-client.jsonl'
+                clients.write_text(''.join(json.dumps({'requestID': rid}) + '\n' for rid in cohort))
+                client_args = ['--clients', str(root if client_directory else clients)]
             result = subprocess.run([sys.executable, str(Path(__file__).with_name('profile_comparison.py')),
                                      '--raw', str(root / 'obs'), '--profiles', str(profiles),
-                                     '--idle-bin-edges-ms', edges, '--out', str(out)],
+                                     '--idle-bin-edges-ms', edges, '--out', str(out), *client_args],
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(out.read_text())
@@ -91,6 +96,48 @@ class ProfileComparisonTests(unittest.TestCase):
         self.assertEqual(len(report['cells']), 1)
         self.assertEqual(report['cells'][0]['serving']['n'], 1)
         self.assertIs(report['cells'][0]['otherArrived'], False)
+
+    def test_adjacent_nanosecond_bins_stay_distinct(self):
+        gaps = [1_000_000, 1_000_001, 1_000_002]
+        rows = [request(str(index), 'one', index + 1, 10_000_000 * (index + 1),
+                        10_000_000 * (index + 1) + 1_000_000, 0, idle=gap)
+                for index, gap in enumerate(gaps)]
+        samples = [{'serviceDurationNanos': (index + 1) * 1_000_000,
+                    'precedingIdleNanos': gap} for index, gap in enumerate(gaps)]
+        report = self.run_report(rows, samples, edges='0,1,1.000001,1.000002,2')
+        self.assertEqual(len(report['cells']), 3)
+        self.assertEqual(report['idleBinEdgesNanos'], [0, 1_000_000, 1_000_001, 1_000_002, 2_000_000])
+        self.assertEqual([cell['idleBinIndex'] for cell in report['cells']], [1, 2, 3])
+        self.assertEqual([cell['idleBin'] for cell in report['cells']],
+                         ['[1,1.000001)', '[1.000001,1.000002)', '[1.000002,2)'])
+        self.assertEqual([cell['profile']['n'] for cell in report['cells']], [1, 1, 1])
+
+    def test_partial_batch_member_supplies_timing_and_identity(self):
+        complete = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
+        for key in ('nativeRunningAt', 'nativeFinishedAt', 'profileID', 'batchSize'):
+            complete.pop(key)
+        partial = request('a2', 'one', 1, 10_000_000, 20_000_000, 0)
+        partial.pop('serviceDurationNanos')
+        arrival = request('b', 'one', 2, 30_000_000, 40_000_000, 15_000_000)
+        report = self.run_report([complete, partial, arrival], [
+            {'serviceDurationNanos': 1_000_000, 'precedingIdleNanos': 0}])
+        self.assertEqual(report['counts']['comparedBatches'], 2)
+        cell = next(cell for cell in report['cells'] if cell['otherArrived'] is True)
+        self.assertEqual(cell['serving']['n'], 1)
+
+    def test_client_cohort_limits_batches_not_observed_arrivals(self):
+        selected = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
+        sibling = {**selected, 'requestID': 'a2'}
+        outside = request('b', 'one', 2, 30_000_000, 40_000_000, 15_000_000)
+        for directory in (False, True):
+            with self.subTest(directory=directory):
+                report = self.run_report([selected, sibling, outside], [
+                    {'serviceDurationNanos': 1_000_000, 'precedingIdleNanos': 0}],
+                    cohort=['a2'], client_directory=directory)
+                self.assertEqual(report['counts']['comparedBatches'], 1)
+                self.assertEqual(report['cells'][0]['serving']['n'], 1)
+                self.assertIs(report['cells'][0]['otherArrived'], True)
+                self.assertTrue(any('Longer executions' in caveat for caveat in report['limitations']))
 
     def test_unknown_idle_and_ingress_are_not_zero_or_no_arrival(self):
         row = request('a', 'one', 1, 10_000_000, 20_000_000, 0, idle=None)
