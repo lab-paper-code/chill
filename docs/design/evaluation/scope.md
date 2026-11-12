@@ -187,8 +187,10 @@ residual 평균이며 재생에 전달할 operational d만 0 이상으로 clamp�
 보고서에는 요청 지연·batch service의 p50(median), p95/p99/SLO 분위수(nearest-rank),
 완료/거절/만료/미완료 population, conditional sampler support, phase 전력,
 포화 cycle 대조, 원시 post-load 표본과 rolling mean이 남는다. 신뢰구간은 독립 trial
-전체를 복원추출한다. training·held-out·idle trial을 각각 뽑고 요청이나 batch를
-독립 표본처럼 재추출하지 않는다. training trial 하나의 예측 CI와 held-out trial
+전체를 복원추출한다. phase holdout은 같은 physical trial의 training·held-out 단계를
+같은 trial draw로 함께 뽑는다. trial holdout의 training·held-out과 idle trial은
+각각 독립적으로 뽑는다. 요청이나 batch를 독립 표본처럼 재추출하지 않는다.
+training trial 하나의 예측 CI와 held-out trial
 하나의 실측 CI는 null이다. CI 포함 여부만 표시하며 pass/fail·배제·보정 임계값은 없다.
 전력 정착은 마지막 지정 시간창의 시간가중 평균을 최종 유휴로 잡고,
 rolling 시간가중 평균이 전력계 불확도 이내에 남는 가장 이른 관측 시각을 보고한다.

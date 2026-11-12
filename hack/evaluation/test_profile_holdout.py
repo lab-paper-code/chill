@@ -3,6 +3,7 @@ import copy
 import datetime as dt
 import os
 import unittest
+from unittest import mock
 
 import profile_holdout as analysis
 
@@ -99,6 +100,43 @@ class HoldoutTests(unittest.TestCase):
             analysis.validate_runs([bad])
         with self.assertRaisesRegex(ValueError, 'duplicate'):
             analysis.validate_runs([raw_fixture('a'), raw_fixture('a')])
+
+    def test_artifact_image_changes_cannot_share_active_or_idle_evidence(self):
+        active = raw_fixture('a')
+        active['runConfig']['images'] = {'runtime': 'runtime-image', 'artifact': 'artifact-a'}
+        other = copy.deepcopy(active)
+        other['podUID'] = 'b'
+        other['runConfig']['images']['artifact'] = 'artifact-b'
+        with self.assertRaisesRegex(ValueError, 'artifact'):
+            analysis.validate_runs([active, other])
+        idle = idle_fixture()
+        idle['runConfig'] = {'images': {'runtime': 'runtime-image', 'artifact': 'artifact-b'}}
+        bridge = mock.Mock()
+        with self.assertRaisesRegex(ValueError, 'artifact'):
+            analysis.analyze([active], [idle], bridge, 3, 1, .95, 0, 2, 2, {})
+        bridge.call.assert_not_called()
+
+    @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
+    def test_phase_bootstrap_pairs_training_and_heldout_physical_trial_draws(self):
+        runs = [raw_fixture('a'), raw_fixture('b'), raw_fixture('c')]
+        repetitions = 4
+        with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge, \
+                mock.patch.object(analysis, 'evaluate_fold', wraps=analysis.evaluate_fold) as evaluate, \
+                mock.patch.object(analysis, 'phase_metrics', wraps=analysis.phase_metrics) as metrics, \
+                mock.patch.object(analysis, 'bootstrap_indices', wraps=analysis.bootstrap_indices) as bootstrap:
+            analysis.analyze(runs, [idle_fixture()], bridge, repetitions, 17, .95, 0, 2, 2, {})
+        for fold_index, fold in enumerate(analysis.folds(runs)):
+            for replicate in range(1, repetitions + 1):
+                call_index = fold_index * (repetitions + 1) + replicate
+                training = evaluate.call_args_list[call_index][0][4]
+                heldout = metrics.call_args_list[call_index][0][2]
+                if fold['kind'] == 'phase':
+                    self.assertEqual(training, heldout)
+                else:
+                    self.assertTrue(set(training).isdisjoint(heldout))
+        # Phase folds draw active trials once plus idle independently; trial
+        # folds draw their disjoint training/held-out populations independently.
+        self.assertEqual(bootstrap.call_count, 2 * 2 + 3 * 3)
 
     @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
     def test_synthetic_raw_real_derivation_and_scheduler(self):

@@ -85,10 +85,10 @@ def validate_runs(runs):
                 len(phases) < 3 or any(p['kind'] != 'utilization' for p in phases[2:])):
             raise ValueError('sparse, saturation and utilization phases required')
         condition = (config.get('state'), config.get('targetNode', {}).get('uid'),
-                     config.get('images', {}).get('runtime'), measurement,
+                     config.get('images', {}).get('runtime'), config.get('images', {}).get('artifact'), measurement,
                      [(p['id'], p['kind'], p.get('utilization')) for p in phases])
         if reference is not None and condition != reference:
-            raise ValueError('raw trials must share execution, node, runtime, measurement and phase conditions')
+            raise ValueError('raw trials must share execution, node, runtime/artifact images, measurement and phase conditions')
         reference = condition
         batch_ids, request_ids, phase_ids = set(), set(), set()
         samples(raw)
@@ -338,11 +338,12 @@ def analyze(runs, idle, bridge, repetitions, seed, confidence, uncertainty, roll
             if key == 'targetNode':
                 matches = config.get(key, {}).get('uid') == active.get(key, {}).get('uid')
             elif key == 'images':
-                matches = config.get(key, {}).get('runtime') == active.get(key, {}).get('runtime')
+                matches = all(config.get(key, {}).get(image) == active.get(key, {}).get(image)
+                              for image in ('runtime', 'artifact'))
             else:
                 matches = config.get(key) == active.get(key)
             if not matches:
-                raise ValueError('idle evidence must share active execution, node and runtime condition')
+                raise ValueError('idle evidence must share active execution, node and runtime/artifact image conditions')
     all_fold = {'kind': 'all', 'id': None}
     full = bridge.call({'trials': training_trials(runs, all_fold, list(range(len(runs)))),
                         'idle': idle_observations(idle), 'tests': [], 'seed': seed})
@@ -378,7 +379,8 @@ def analyze(runs, idle, bridge, repetitions, seed, confidence, uncertainty, roll
         boot = {phase_id: [] for phase_id in center}
         bootstrap_profiles = []
         train_draws = bootstrap_indices(fold['trainTrials'], repetitions, seed + fold_index * 3)
-        test_draws = bootstrap_indices(fold['testTrials'], repetitions, seed + fold_index * 3 + 1)
+        test_draws = train_draws if fold['kind'] == 'phase' else bootstrap_indices(
+            fold['testTrials'], repetitions, seed + fold_index * 3 + 1)
         idle_draws = bootstrap_indices(list(range(len(idle))), repetitions, seed + fold_index * 3 + 2)
         for draw, (train, test, idle_indices) in enumerate(zip(train_draws, test_draws, idle_draws)):
             # Idle draws also represent whole independent idle trials.
