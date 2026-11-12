@@ -230,13 +230,12 @@ control379와 같은 E5(Reject·Delay). 판정:
 
 | 단위 | 상태 | 커밋 |
 |---|---|---|
-| E2 | 진행 | |
-| V1·X1 | 완료(보고서) | |
-| G1 | 대기(E2 뒤) | |
-| K1 | 진행 | |
-| O2 | 진행 | |
-| W1 | 진행 | |
-| 진행·평가 분리 | 대기(W1 뒤) | |
-| A1 | 기록 구현·합성 회귀 추가, main 실측 수용 별도 | 이 단위 커밋 |
-| V1·X1 | 진행 | |
+| V1·X1 | 완료(`v1-x1-report.md`) | `c92157ed`(문서) |
+| O2 | 완료. 매 round metadata List 경계 + UID·RV payload 재사용, watch 없음. 6,500 CR 기준 300.96→15.25ms/op | `731903ee` |
+| W1·W2 | 완료. committed window 재사용, 연속 offset 검사, 고정 cache 상한 초과 시 정확한 log 경로. 3,000행 26.6→3.65ms | `4f2f8653`, `1ec4a5f7` |
+| 진행·평가 분리 | 완료. 평가·최종 replay를 lock 밖에서 실행, 승인 시 최신 입력 재확인(적용 occupancy 값 기준) | `621037d0`, `a229fef8` |
+| K1 | 완료. 공통 초기 상태, 모델 불가 범위 공통 제외(재시도 identity·drain 포함), writer가 owner route만 기록 | `56b3aa11`, `a1a47264` |
+| E2 | 완료. control379 입력 evaluate 4.75→3.24s, exact 2.37→1.35s, admission CPU 비중 60→49%. 결정 bit 동일(기존 energy uncertainty 1 ULP 비결정성 제외) | `99b98acb`, `9e880682` |
+| G1 | 완료. 완료·미실행 증거로 상태 갱신, span anchor 분리, idle gap은 증명된 구간의 최대 조건부 분위수. IC 19:57:50·PLC 20:04:35 회귀 | `7d70ef87`, `e3bb518a` |
+| A1 | 완료. 허용 예측·하위 이유·deferred 전환·transport 구간 기록, observation `v1alpha6`. main 실측 수용 별도 | `5fbb0c8b` |
 | F1·F2 | 보류(사용자 결정) | |
