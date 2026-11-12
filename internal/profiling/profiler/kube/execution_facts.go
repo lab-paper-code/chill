@@ -13,7 +13,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/lab-paper-code/chill/internal/modelcompat"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -341,7 +341,7 @@ func decodeRuntimeDeclaration(source runtimeDeclarationSource) (runtimeDeclarati
 			return runtimeDeclaration{}, fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
 	}
-	if err := modelcompat.ValidateRuntimeImage(declaration.Image); err != nil {
+	if err := firstfloor.ValidateRuntimeImage(declaration.Image); err != nil {
 		return runtimeDeclaration{}, err
 	}
 	if declaration.Verification != trustedRuntimeInspection {

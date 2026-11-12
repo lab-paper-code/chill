@@ -16,7 +16,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -63,7 +62,7 @@ func (o *SchedulerService) preparations(
 func (o *SchedulerService) preparation(
 	ctx context.Context, config SchedulerConfiguration, profile serving.Profile,
 ) (servingstate.PrepareSpec, error) {
-	if err := modelcompat.ValidateRuntimeImage(profile.Condition.RuntimeImage); err != nil {
+	if err := native.ValidateRuntimeImage(profile.Condition.RuntimeImage); err != nil {
 		return servingstate.PrepareSpec{}, err
 	}
 	if profile.RuntimeMetadata == nil {

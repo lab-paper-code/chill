@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/prometheus/common/model"
 )
@@ -65,7 +66,7 @@ func (i RunConfig) Validate() error {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
 	}
-	if err := modelcompat.ValidateRuntimeImage(i.Images.Runtime); err != nil {
+	if err := firstfloor.ValidateRuntimeImage(i.Images.Runtime); err != nil {
 		return err
 	}
 	if value := i.Images.WorkloadObserver; strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
