@@ -1,8 +1,10 @@
 package v2
 
 import (
+	"cmp"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
@@ -37,9 +39,31 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 		value     R
 		evaluated bool
 	}, len(candidates))
+	// Long transitions dominate replay cost. Dispatch them first, retaining
+	// candidate rank for all result storage, observations and reduction.
+	type job struct {
+		rank int
+		pre  float64
+	}
+	jobs := make([]job, len(candidates))
+	for i, candidate := range candidates {
+		jobs[i].rank = i
+		if p.Table != nil {
+			for n, j := range candidate.Choice {
+				jobs[i].pre = max(jobs[i].pre, p.Table.TPre[p.Table.ByPlan[n][j]])
+			}
+		}
+	}
+	slices.SortStableFunc(jobs, func(a, b job) int { return cmp.Compare(b.pre, a.pre) })
 	workers := min(max(p.Workers, 1), len(candidates))
-	evaluate := func(w int) {
-		for i := w; i < len(candidates); i += workers {
+	var next atomic.Int64
+	evaluate := func() {
+		for {
+			index := int(next.Add(1)) - 1
+			if index >= len(jobs) {
+				return
+			}
+			i := jobs[index].rank
 			if p.Context != nil && p.Context.Err() != nil {
 				return
 			}
@@ -50,14 +74,14 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 		}
 	}
 	if workers == 1 {
-		evaluate(0)
+		evaluate()
 	} else {
 		var wg sync.WaitGroup
-		for w := range workers {
+		for range workers {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				evaluate(w)
+				evaluate()
 			}()
 		}
 		wg.Wait()

@@ -228,7 +228,8 @@ func TestBatchServiceReuseRetainsEachRequestDeadline(t *testing.T) {
 	}
 	var costs serviceCosts
 	costs.cost(p.Batches[1], 50, nil) // throughput and feasibility share this query
-	if !batchFeasible(requests, 0, p.Batches[1], nil, &costs) || costs.count != 1 {
+	var prefix []int
+	if feasible, _ := batchFeasible(requests, 0, p.Batches[1], nil, &costs, prefix); !feasible || costs.count != 1 {
 		t.Fatalf("compatible requests repeated identical quantile: queries=%d", costs.count)
 	}
 }

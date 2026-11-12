@@ -218,6 +218,28 @@ func (p *capacityPlanner) bridgeRequestTimingCoefficients(res capacityResult) (m
 	return changes, route
 }
 
+// nodePlans builds keep without operation cells. Any non-exact candidate
+// operation therefore leaves an uncancelled whole-wall joules unknown before
+// routing or native request replay. Idle/duration-only differences still replay.
+func (p *capacityPlanner) hasUnsharedMissingOperation(choice []int) bool {
+	for n := range choice {
+		if p.compared[n] && len(p.plans[n][0].record.ActionCosts) != 0 {
+			return false
+		}
+	}
+	for n, j := range choice {
+		if !p.compared[n] {
+			continue
+		}
+		for _, action := range p.plans[n][j].record.ActionCosts {
+			if action.Provenance == nil || action.Provenance.Source != operationSourceExact {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // missingEnergyCells uses the same signed exposure rule as gainBound. A missing
 // target cell is an independent unknown even when its estimate was borrowed from
 // the same measured row as a different target cell.

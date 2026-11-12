@@ -205,9 +205,10 @@ type SchedulerEnergyComparison struct {
 }
 
 type SchedulerUndecidableCandidate struct {
-	Key          string                       `json:"key"`
-	MissingCells []SchedulerMissingEnergyCell `json:"missingCells"`
-	Excluded     bool                         `json:"excluded"`
+	Key           string                       `json:"key"`
+	MissingCells  []SchedulerMissingEnergyCell `json:"missingCells"`
+	Excluded      bool                         `json:"excluded"`
+	ReplaySkipped bool                         `json:"replaySkipped,omitempty"`
 }
 
 // SchedulerUndecidableCandidateRecord references the decision's shared cell table.
@@ -215,6 +216,7 @@ type SchedulerUndecidableCandidateRecord struct {
 	Key             string `json:"key"`
 	MissingCellRefs []int  `json:"missingCellRefs"`
 	Excluded        bool   `json:"excluded"`
+	ReplaySkipped   bool   `json:"replaySkipped,omitempty"`
 }
 
 // EvaluateScheduler uses cheap profile heuristics and exact finite-demand finalists.

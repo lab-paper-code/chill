@@ -133,6 +133,12 @@ v2는 adapter가 만든 노드·option·모드별 계획표를 Tick마다 전처
 
 탐색 중 상위 K개(`planExactFinalists`, 기본 16)와 각 출발점의 끝점을 중복 없이 모아 정확 깔때기로 보낸다. 끝점은 K 밖에서도 보존하므로 최종 후보 수는 K를 넘을 수 있다. **v2 선택은 공통 adapter의 직접 `evaluate`와 물리 `admits`를 통과한다.** 최종 순서는 3장의 직접 demand replay 결과가 결정하며 heuristic `Final`이나 κ̂로 앞서 거절하지 않는다. 이미 정확 평가한 keep seed도 깔때기의 첫 후보로 admission·후처리·비교를 거치며 재평가하지 않는다. `exactEvaluated`는 이 seed를 포함한다. keep seed를 포함한 모든 정확 후보가 거절된 경우에만 가지치기 전 keep과 적격 cap 전체의 정확 k = 1 탐색(`fallback: exactK1`), 그것도 선택하지 못하면 selector가 연결한 같은 마감의 v1 탐색(`fallback: v1`)으로 이어진다. v2는 v1 package를 직접 호출하지 않는다. `planPostFilterFinalists` 기본값 false에서는 정확 평가 1등을 고른 뒤 교체 회수·최소 이득을 적용한다. true에서는 후보별 adapter의 `payback` → `minimumGain` 뒤 결과를 비교하고 호출부에서 다시 적용하지 않는다. false에서도 후처리 진단은 계산하며, 원래 1등은 keep으로 되돌아가지만 살아남는 대안이 있으면 `postFilterReverts`를 기록한다.
 
+현재 keep의 정확 SLO가 충족되면, keep에 없는 비-exact operation 셀이 있는 finalist는 요청 replay 전에 `EnergyUndecidable`로 제외한다. whole-wall 동작 J의 미지 계수가 남으므로 replay 결과·교체 회수·최소 이득으로 선택될 수 없다. 후보별 누락 셀과 공유 참조를 그대로 남기고 `undecidableCandidates[].replaySkipped: true`로 replay 생략을 구분한다. idle 또는 duration 항만 다른 후보와 SLO 복구 후보는 기존 replay를 유지한다. `exactEvaluated`는 keep seed와 이 사전 판정을 포함한 정확 후보 판정 수이며 native replay 횟수가 아니다.
+
+정확 worker는 노드별 `TPre` 최댓값 내림차순의 공유 큐에서 다음 후보를 가져간다. 같은 값은 원래 finalist 순서를 따른다. 결과 저장·관측·후처리·최종 비교는 keep seed 다음의 원래 후보 순서로 수행하므로 worker 완료 순서가 선택을 바꾸지 않는다.
+
+native `ChooseBatch`는 normal 요청의 동일한 stable EDF compatible prefix를 한 호출에서 지연 생성해 batch profile 사이에 재사용한다. 각 profile의 요청별 percentile·completion margin·남은 마감 검사는 그대로 수행한다. deferred FIFO와 fixed-batch 선택은 바꾸지 않는다.
+
 v2의 `planSearchEvaluations` 기본값은 증분 평가 500,000회이며 `delta` 직전에 검사한다. 벽시계 마감은 v1과 같이 판단 시작 + `controlIntervalNanos/2`이고 계획 생성 시간도 포함한다. v2는 출발점 시작, 피복·연마의 반복/노드/이동 묶음 경계와 결합 탐색 재귀 진입에서 마감을 검사한다. 평가 수에 닿으면 `terminationReason: evaluationBudget`을 남기고, 벽시계 마감에 닿으면 `terminationReason: deadline`과 `budgetCut`을 남긴다. 두 경우 모두 그때까지의 후보·끝점을 정확 평가한다. 계획표 전처리·가격 반복·정확 깔때기·정확 k = 1 fallback은 이 증분 평가 수에 포함하지 않으며 그 안에서 마감을 검사하지 않는다. 따라서 벽시계 마감은 탐색 중단 기준이며 판단 반환의 엄격한 시간 상한은 아니다. v2는 단일 goroutine으로 UID·논리 key 순으로 순회하고, 고정 평가 예산과 같은 입력에서는 결정적이다. 벽시계로 잘리는 위치는 실행 환경에 따라 달라질 수 있다.
 
 내부 `protocol.Problem.Deadline`의 영값은 v1·v2 모두 벽시계 중단을 끈다. `capacityDecideForTest`는 실제 `ControlInterval`을 유지한 채 공통 평가 경로에 영값 마감을 전달하고, `capacitySearchForTest`는 같은 방식으로 탐색을 실행한다. 계획 선택·projection·탐색 기록 회귀는 이 경로에서 탐색을 끝까지 실행하므로 호스트 CPU 경합에 의존하지 않는다. 공개 `EvaluateScheduler`는 기존의 판단 시작 + 제어 주기 절반 마감을 그대로 적용한다. 마감 회귀는 공개 평가 또는 명시적 마감의 search를 사용한다.

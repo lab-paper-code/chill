@@ -220,6 +220,7 @@ type capacityResult struct {
 	reserves                          []SchedulerTransitionReserve
 	bridge                            *schedulerBridgeSchedule
 	missingCells                      []SchedulerMissingEnergyCell
+	replaySkipped                     bool
 }
 
 type capacityFeedbackMemo struct {
@@ -239,12 +240,27 @@ type capacityReplayKey struct {
 }
 
 func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
+	return p.evaluateChoice(choice, r, false)
+}
+
+func (p *capacityPlanner) evaluateChoice(choice []int, r float64, skipUndecidable bool) capacityResult {
 	bridge, reason := p.bridgeSchedule(choice)
 	if bridge != nil {
 		r = bridge.route
 	}
 	if reason != "" {
 		return capacityResult{choice: choice, route: r, bridge: bridge, exclusion: reason, worst: math.Inf(1)}
+	}
+	if skipUndecidable && p.hasUnsharedMissingOperation(choice) {
+		// Missing operation joules have a nonzero coefficient independent of
+		// replay. Keep has no such action cell, so the exact comparison cannot
+		// cancel it. Admits rejects this before either postfilter can run.
+		res := p.evaluateEnergyAtWindow(choice, r, bridge, p.periodSeconds)
+		res.keepJoules = p.keepWatts * p.periodSeconds
+		res.missingCells = p.missingEnergyCells(p.currentKeep(), res)
+		res.replaySkipped = res.exclusion == ""
+		res.exclusion = cmp.Or(res.exclusion, "EnergyUndecidable")
+		return res
 	}
 	res := p.evaluateAtRoute(choice, r, bridge)
 	if slices.IndexFunc(choice, func(j int) bool { return j != 0 }) < 0 {

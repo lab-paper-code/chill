@@ -58,7 +58,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	record.EnergyComparison.MissingCellRefs = cellRefs(best.missingCells)
 	for _, candidate := range p.undecidable {
 		record.UndecidableCandidates = append(record.UndecidableCandidates, SchedulerUndecidableCandidateRecord{
-			Key: candidate.Key, MissingCellRefs: cellRefs(candidate.MissingCells), Excluded: candidate.Excluded,
+			Key: candidate.Key, MissingCellRefs: cellRefs(candidate.MissingCells), Excluded: candidate.Excluded, ReplaySkipped: candidate.ReplaySkipped,
 		})
 	}
 	if len(best.missingCells) > 0 {

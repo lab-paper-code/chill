@@ -12,10 +12,11 @@ import (
 // capacityExact keeps lifecycle admission, reserve evidence and native results in CHILL.
 // Observer slots are private to each exact worker in both engines.
 type capacityExact struct {
-	p           *capacityPlanner
-	excluded    []map[string]int
-	reserves    []map[string]SchedulerTransitionReserve
-	undecidable []map[string]SchedulerUndecidableCandidate
+	p            *capacityPlanner
+	excluded     []map[string]int
+	reserves     []map[string]SchedulerTransitionReserve
+	undecidable  []map[string]SchedulerUndecidableCandidate
+	keepFeasible bool
 }
 
 func newCapacityExact(p *capacityPlanner) *capacityExact {
@@ -33,7 +34,7 @@ func (e *capacityExact) ResetObservations() {
 	}
 }
 func (e *capacityExact) Evaluate(choice []int) capacityResult {
-	return e.p.evaluate(choice, e.p.routeOf(choice))
+	return e.p.evaluateChoice(choice, e.p.routeOf(choice), e.keepFeasible)
 }
 func (e *capacityExact) Bounded(choice []int) bool                       { return e.p.bounded(choice) }
 func (e *capacityExact) Admits(r capacityResult) bool                    { return e.p.admits(&r) }
@@ -45,6 +46,7 @@ func (e *capacityExact) Point(r capacityResult) protocol.Point {
 func (e *capacityExact) SeedKeep(r capacityResult) {
 	actual := e.p.evaluateCurrentKeep(r.period)
 	e.p.keepWatts = actual.joules / r.period
+	e.keepFeasible = e.p.settings.PlanSearchStrategy == protocol.V2 && actual.feasible
 }
 func (e *capacityExact) PostFilter(r capacityResult) capacityResult {
 	return e.p.minimumGain(e.p.payback(r))
@@ -53,7 +55,7 @@ func (e *capacityExact) FilterKept(r capacityResult) bool { return capacityFilte
 func (e *capacityExact) Observe(r capacityResult, w int) {
 	e.reserves[w] = reserveRejections(e.reserves[w], r.reserves, r.key)
 	if len(r.missingCells) > 0 {
-		e.undecidable[w][r.key] = SchedulerUndecidableCandidate{Key: r.key, MissingCells: r.missingCells, Excluded: r.exclusion == "EnergyUndecidable"}
+		e.undecidable[w][r.key] = SchedulerUndecidableCandidate{Key: r.key, MissingCells: r.missingCells, Excluded: r.exclusion == "EnergyUndecidable", ReplaySkipped: r.replaySkipped}
 	}
 	if r.exclusion != "" {
 		e.excluded[w][r.exclusion]++

@@ -203,7 +203,8 @@ Query owns public progress and per-cell coverage projection.
 선택안 `tests`·유지안 `keepTests`와 노드 계획·제외 사유다. 두 검사 배열의 항목은 위 capacity endpoint와 같은
 `SchedulerFeedbackRate`다. 라우팅 값은 SLO 처리 용량 보장이 아니며 κ̂로 실행을 거절하지 않는다.
 현재 capacity endpoint는 현재 결정의 선택안 검사만 평탄화하므로 과거 결정 상세의 대체 자료로 쓰지 않는다.
-탐색이 실행된 decision의 `capacity.search.startedAt`/`finishedAt`은 실제 탐색 진입/결과 반환에서 직접 캡처한 UTC 시각이며 `durationNanos`는 같은 구간의 monotonic 경과다. `search.examined`(만든 node-plan 수)와 `capacity.search.evaluated`(초기 keep/empty 원점을 제외한 sweep의 plan-set 후보 평가 수)는 서로 다른 값이다. 관측 이력 full/compact와 replay decoder는 이 구간을 그대로 전달한다. 탐색하지 않은 decision에 구간을 합성하지 않으며 summary는 기존대로 search를 생략한다. 기존 v3 저장 계약·관측 prefix/version은 유지하고, 과거 원시 기록을 수정하거나 시각을 소급 생성하지 않는다.
+`capacity.undecidableCandidates[]`는 공유 `missingCellRefs`로 필요한 측정을 가리킨다. 현재 keep의 SLO가 충족되고 keep에 없는 비-exact operation 셀이 있으면 요청 replay 없이 에너지 판단 불가로 제외하며, 해당 행에 `replaySkipped: true`를 남긴다. 재생한 후보에서는 이 필드를 생략한다.
+탐색이 실행된 decision의 `capacity.search.startedAt`/`finishedAt`은 실제 탐색 진입/결과 반환에서 직접 캡처한 UTC 시각이며 `durationNanos`는 같은 구간의 monotonic 경과다. `search.examined`는 만든 node-plan 수다. `capacity.search.evaluated`는 v1에서 초기 keep/empty 원점을 제외한 sweep의 plan-set 후보 평가 수이며, v2에서는 keep seed·finalist·fallback의 정확 판정 수다. v2의 `exactEvaluated`도 이 seed와 replay 생략 판정을 포함하므로 native replay 횟수와 구분한다. 관측 이력 full/compact와 replay decoder는 이 구간을 그대로 전달한다. 탐색하지 않은 decision에 구간을 합성하지 않으며 summary는 기존대로 search를 생략한다. 기존 v3 저장 계약·관측 prefix/version은 유지하고, 과거 원시 기록을 수정하거나 시각을 소급 생성하지 않는다.
 `GET /api/v1/scheduler/state?view=summary`와 `/api/v1/observations/scheduler?view=summary`의 decision도 원본 순서의 `workloads[]`(`uid`, `state`, 선택적 `reason`)를 그대로 제공한다.
 이력 summary는 catalog를 복원하지 않고 저장된 decision의 `workloads[]`를 직접 읽으므로 과거 상태·사유와 순서를 유지한다.
 

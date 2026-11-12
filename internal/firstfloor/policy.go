@@ -155,22 +155,25 @@ func compatibleCount(requests []RequestState, head int) int {
 	}
 	return count
 }
-func batchFeasible(requests []RequestState, head int, b BatchProfile, gap *int64, costs *serviceCosts) bool {
+func batchFeasible(requests []RequestState, head int, b BatchProfile, gap *int64, costs *serviceCosts, prefix []int) (bool, []int) {
 	previous := -1
-	for range b.Size {
-		previous = nextCompatible(requests, head, previous)
+	for i := range b.Size {
+		if i == len(prefix) {
+			prefix = append(prefix, nextCompatible(requests, head, previous))
+		}
+		previous = prefix[i]
 		if previous < 0 || requestSlack(requests[previous], b, gap, costs) < 0 {
-			return false
+			return false, prefix
 		}
 	}
-	return true
+	return true, prefix
 }
 
 // ChooseBatch is shared by the actor and replay. Normal work uses stable EDF;
 // deferred work uses FIFO only after normal work is empty. A lifecycle choice
 // has Size=0 and identifies the single rejected/demoted RequestID. Running work
 // is never preempted; only expired queued drops can be selected while active.
-// ponytail: bounded O(requests*profiles*b) scan; index only if measured CPU warrants it.
+// ponytail: bounded O(requests*b + profiles*b) scan; index only if measured CPU warrants it.
 func ChooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchChoice {
 	return ChooseBatchWithQuantiles(p, requests, gapDecision, nil, nil)
 }
@@ -244,6 +247,11 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision, gapUpper *int64
 func chooseBatchProfiles(p *Policy, requests []RequestState, head, count int, gapDecision *int64, costs *serviceCosts) (available, throughput BatchProfile) {
 	r := &requests[head]
 	perItemCost := math.Inf(1)
+	// Each profile checks its own slack, but all share the same EDF prefix.
+	// Extend lazily so an early deadline failure does not scan unused members.
+	// ponytail: measured batches through 32 use stack storage; larger batches grow the slice.
+	var local [32]int
+	prefix := local[:0]
 	for _, b := range p.Batches {
 		if b.Size < 1 || b.Size > count || !allowedBatch(*p, b.Size) {
 			continue
@@ -252,7 +260,11 @@ func chooseBatchProfiles(p *Policy, requests []RequestState, head, count int, ga
 		if throughput.Size == 0 || cost < perItemCost || cost == perItemCost && b.Size > throughput.Size {
 			throughput, perItemCost = b, cost
 		}
-		if r.Phase != phaseDeferred && (math.IsInf(cost, 1) || batchFeasible(requests, head, b, gapDecision, costs)) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
+		feasible := r.Phase != phaseDeferred
+		if feasible && !math.IsInf(cost, 1) {
+			feasible, prefix = batchFeasible(requests, head, b, gapDecision, costs, prefix)
+		}
+		if feasible && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
 			available = b
 		}
 	}

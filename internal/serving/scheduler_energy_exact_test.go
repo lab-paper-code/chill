@@ -2,11 +2,16 @@ package serving
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
+	"github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 func TestIdleSingleInstanceUsesItsProfileBase(t *testing.T) {
@@ -175,4 +180,116 @@ func TestCapacityBridgeRecordsPhaseRequestPower(t *testing.T) {
 		return
 	}
 	t.Fatal("selected bridge node omitted phase request power")
+}
+
+// fullReplayCapacityExact retains the old replay-first behavior as an oracle.
+type fullReplayCapacityExact struct{ *capacityExact }
+
+func (e fullReplayCapacityExact) Evaluate(choice []int) capacityResult {
+	return e.p.evaluate(choice, e.p.routeOf(choice))
+}
+
+func TestCapacityEnergyUndecidableSkipsReplayWithoutChangingSelection(t *testing.T) {
+	for _, recovery := range []bool{false, true} {
+		for _, postfilter := range []bool{false, true} {
+			t.Run(fmt.Sprintf("recovery=%t/postfilter=%t", recovery, postfilter), func(t *testing.T) {
+				var decisions []SchedulerDecision
+				var counts []int
+				for _, skip := range []bool{false, true} {
+					s, snap := schedulerFixture()
+					s.PlanSearchStrategy, s.PlanPostFilterFinalists = protocol.V2, postfilter
+					s.ComparisonPeriod = 600 * time.Second
+					snap.Instances[0].Profile.IdleBaselineWatts = 1000
+					node := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 1})
+					wanted := poolsInstance(snap.Instances[0], "new", node, "fixed", "w1")
+					wanted.Profile.IdleBaselineWatts = 1
+					snap.Options = append(snap.Options, poolsOption(wanted))
+					snap.Costs = append(snap.Costs,
+						poolsCost("prepare", node, "unloaded", "different-profile", "fixed"),
+						poolsCost("remove", snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", "fixed"))
+					rate := 10.0
+					if recovery {
+						rate = 150
+					}
+					capacityLoad(s, &snap, snap.Workloads[0], rate)
+					p := capacityPlannerForTest(t, s, snap)
+					choice := make([]int, len(p.plans))
+					for n, plans := range p.plans {
+						for j, plan := range plans {
+							if !plan.record.Eligible || plan.keep {
+								continue
+							}
+							if p.snapshot.Nodes[n].Node == node && slices.ContainsFunc(plan.instances, func(i SchedulerInstance) bool { return i.Profile.ID == wanted.Profile.ID }) ||
+								p.snapshot.Nodes[n].Node != node && len(plan.instances) == 0 {
+								choice[n] = j
+								break
+							}
+						}
+					}
+					if !p.hasUnsharedMissingOperation(choice) {
+						t.Fatalf("fixture lacks an unshared missing operation: %v", choice)
+					}
+					e := newCapacityExact(p)
+					var exact protocol.Exact[capacityResult] = fullReplayCapacityExact{e}
+					if skip {
+						exact = e
+					}
+					keepChoice := make([]int, len(p.plans))
+					seed := exact.Evaluate(keepChoice)
+					exact.SeedKeep(seed)
+					if p.currentKeep().feasible == recovery {
+						t.Fatal("fixture keep feasibility does not match recovery case")
+					}
+					stats := v2.FunnelStats{}
+					best := v2.Funnel(p.searchProblem(time.Time{}), exact, []protocol.Candidate{{Choice: keepChoice}, {Choice: choice}}, &stats, nil)
+					if best == nil {
+						t.Fatal("fixture lost keep and recovery candidates")
+					}
+					if !postfilter {
+						filtered := p.minimumGain(p.payback(*best))
+						best = &filtered
+					}
+					e.record(protocol.Diagnostics{Strategy: protocol.V2, ExactEvaluated: stats.Exact, Evaluated: stats.Exact})
+					if err := p.testDecisionRates(*best); err != nil {
+						t.Fatal(err)
+					}
+					decisions = append(decisions, p.decide(SchedulerDecision{Keep: p.keep, Settings: s}, *best))
+					count := 0
+					p.feedbackCache.Range(func(_, _ any) bool { count++; return true })
+					counts = append(counts, count)
+				}
+				before, after := decisions[0], decisions[1]
+				if before.Status != after.Status || !reflect.DeepEqual(before.Keep, after.Keep) || !reflect.DeepEqual(before.Target, after.Target) || !reflect.DeepEqual(before.Reasons, after.Reasons) {
+					t.Fatalf("preflight changed selection: before=%+v after=%+v", before, after)
+				}
+				if !reflect.DeepEqual(before.Capacity.MissingCells, after.Capacity.MissingCells) || !reflect.DeepEqual(before.Capacity.EnergyComparison, after.Capacity.EnergyComparison) {
+					t.Fatal("preflight changed missing-cell projection")
+				}
+				marked := 0
+				for i := range after.Capacity.UndecidableCandidates {
+					candidate := &after.Capacity.UndecidableCandidates[i]
+					if candidate.ReplaySkipped {
+						if !candidate.Excluded {
+							t.Fatal("skipped candidate was not marked EnergyUndecidable")
+						}
+						marked++
+						candidate.ReplaySkipped = false
+					}
+				}
+				if marked != 1 && !recovery || marked != 0 && recovery {
+					t.Fatalf("recovery=%t skipped markers=%d", recovery, marked)
+				}
+				if !reflect.DeepEqual(before.Capacity, after.Capacity) {
+					t.Fatal("preflight changed capacity record beyond replaySkipped marker")
+				}
+				want := counts[0] - 1
+				if recovery {
+					want = counts[0]
+				}
+				if counts[1] != want {
+					t.Fatalf("recovery=%t replays before=%d after=%d want=%d", recovery, counts[0], counts[1], want)
+				}
+			})
+		}
+	}
 }

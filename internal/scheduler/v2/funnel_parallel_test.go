@@ -151,6 +151,57 @@ func TestFunnelParallelPreservesCandidateOrder(t *testing.T) {
 	}
 }
 
+func TestFunnelDispatchLongestTransitionFirst(t *testing.T) {
+	exact := newOrderedFunnelExact()
+	problem := protocol.Problem{
+		Context: context.Background(), Workers: 1,
+		Table: &protocol.Table{ByPlan: [][]int{{0, 1, 2, 3, 4, 5, 6}}, TPre: []float64{0, 1, 4, 4, 0, 0, 0}},
+	}
+	stats := FunnelStats{}
+	got := Funnel(problem, exact, orderedFunnelCandidates(), &stats, nil)
+	if !slices.Equal(exact.completed, []int{2, 3, 1, 4, 6}) {
+		t.Fatalf("dispatch order=%v, want descending TPre with rank ties", exact.completed)
+	}
+	if got == nil || got.choice[0] != 1 || !slices.Equal(exact.observed, []int{1, 2, 3, 4, 6}) {
+		t.Fatalf("dispatch changed rank reduction: result=%+v observed=%v", got, exact.observed)
+	}
+}
+
+type queuedFunnelExact struct {
+	*orderedFunnelExact
+	release chan struct{}
+	third   chan struct{}
+}
+
+func (e *queuedFunnelExact) Evaluate(choice []int) finiteExactResult {
+	if choice[0] == 1 {
+		<-e.release
+	}
+	if choice[0] == 3 {
+		close(e.third)
+	}
+	return e.orderedFunnelExact.Evaluate(choice)
+}
+
+func TestFunnelDispatchSharesPendingWork(t *testing.T) {
+	exact := &queuedFunnelExact{newOrderedFunnelExact(), make(chan struct{}), make(chan struct{})}
+	done := make(chan *finiteExactResult, 1)
+	go func() {
+		done <- Funnel(protocol.Problem{Context: context.Background(), Workers: 2}, exact, orderedFunnelCandidates()[:4], &FunnelStats{}, nil)
+	}()
+	select {
+	case <-exact.third:
+	case <-time.After(5 * time.Second):
+		close(exact.release)
+		<-done
+		t.Fatal("idle worker did not take pending candidate from busy worker")
+	}
+	close(exact.release)
+	if got := <-done; got == nil || got.choice[0] != 1 {
+		t.Fatalf("shared queue changed result: %+v", got)
+	}
+}
+
 func TestFunnelParallelCancellation(t *testing.T) {
 	for _, postfilter := range []bool{false, true} {
 		ctx, cancel := context.WithCancel(context.Background())
