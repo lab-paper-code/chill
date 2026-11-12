@@ -226,10 +226,11 @@ window는 `windowBarrierNanos`(기존 finite writer prefix 대기),
 이 구간은 서로 겹치지 않으며 합은 `windowNanos` 이하이다.
 요청·client의 최근 minute segment는 committed append 경계별 불변 메모리 window로 재사용한다.
 writer가 새 행을 반영하고, cold/restart·이전 범위 조회는 기존 log에서 복원한다.
-캐시는 요청·client 합계 32,768행과 rolling window 길이(+minute 정렬) 이내로 보유한다.
+캐시는 rolling window 길이(+minute 정렬) 이내의 요청·client 행을 보유하며 고정 행 수 상한은 없다.
 오래된 조회는 rolling 보유 기간을 늘리지 않으며, 범위 밖 segment는 캐시에 넣지 않는다.
-상한 초과 segment는 정확한 log scan으로 처리하고 `windowBudgetFallbacks`에 횟수를 남긴다.
-이때 scan·decode 시간은 각각 `windowScanNanos`·`windowDecodeNanos`에 나타난다.
+범위 안의 큰 window도 decoded 행을 재사용한다. Cold/suffix scan·decode 시간은
+각각 `windowScanNanos`·`windowDecodeNanos`에 나타난다.
+저장된 observations.v1alpha6 계약의 `windowBudgetFallbacks` 필드는 항상 0으로 유지한다.
 Cold read·JSON decode·callback은 cache lock 밖에서 수행한다. 완성된 연속 prefix만 게시하며,
 writer append 시작 offset과 cache 끝 offset이 다르면 다음 log read가 빠진 suffix를 복원한다.
 coverage와 요청 stream gap 판정은 기존 log metadata를 그대로 사용한다.

@@ -196,12 +196,13 @@ func TestColdCapturedPrefixDoesNotSkipConcurrentAppend(t *testing.T) {
 	}
 }
 
-func TestWindowBudgetFallsBackToIdenticalLogRows(t *testing.T) {
+func TestWindowCacheRetainsLargeWindowAndPrunesBySpan(t *testing.T) {
 	for _, writer := range []bool{false, true} {
 		t.Run(fmt.Sprint(writer), func(t *testing.T) {
-			log, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+			log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 			ctx := context.Background()
 			from, to := observationTestHour.Add(-time.Minute), observationTestHour.Add(time.Second)
+			const rows = 32*1024 + 1
 			if writer {
 				if _, err := log.LoadWindow(ctx, from, to); err != nil {
 					t.Fatal(err)
@@ -209,7 +210,7 @@ func TestWindowBudgetFallsBackToIdenticalLogRows(t *testing.T) {
 			}
 			var data bytes.Buffer
 			encoder := json.NewEncoder(&data)
-			for id := range windowCacheMaxRecords + 1 {
+			for id := range rows {
 				row := serving.RequestRow{Kind: serving.RequestRowFinal, RequestID: fmt.Sprint(id), WorkloadUID: "uid", ReceivedAt: observationTestHour}
 				if writer {
 					if err := log.submitRecord(observationRequestStream, row, nil, observationTestHour); err != nil {
@@ -236,8 +237,8 @@ func TestWindowBudgetFallsBackToIdenticalLogRows(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if timing.WindowBudgetFallbacks == 0 || timing.WindowScan <= 0 || timing.WindowDecode <= 0 {
-				t.Fatalf("budget fallback absent from timing: %+v", timing)
+			if timing.WindowBudgetFallbacks != 0 {
+				t.Fatalf("unexpected budget fallback: %+v", timing)
 			}
 			disk, err := log.Query(ctx, "uid", from, to, nil, nil, 0, "")
 			if err != nil {
@@ -248,8 +249,8 @@ func TestWindowBudgetFallsBackToIdenticalLogRows(t *testing.T) {
 				want = append(want, requestArrival(&row, nil))
 			}
 			slices.SortFunc(want, func(a, b serving.SchedulerArrival) int { return strings.Compare(a.ID, b.ID) })
-			if !reflect.DeepEqual(got.Arrivals, want) || len(want) != windowCacheMaxRecords+1 {
-				t.Fatalf("budget changed exact arrivals: got=%d want=%d", len(got.Arrivals), len(want))
+			if !reflect.DeepEqual(got.Arrivals, want) || len(want) != rows {
+				t.Fatalf("cache changed exact arrivals: got=%d want=%d", len(got.Arrivals), len(want))
 			}
 			log.windowMu.Lock()
 			retained := log.windowRecords
@@ -258,8 +259,25 @@ func TestWindowBudgetFallsBackToIdenticalLogRows(t *testing.T) {
 				actual += len(segment.records)
 			}
 			log.windowMu.Unlock()
-			if retained > windowCacheMaxRecords || retained != actual {
-				t.Fatalf("cache record bound/accounting: retained=%d actual=%d", retained, actual)
+			if retained != rows || retained != actual {
+				t.Fatalf("cache record accounting: retained=%d actual=%d", retained, actual)
+			}
+			warmTiming := &SchedulerControlObservation{}
+			warm, err := log.LoadWindowTimed(ctx, from, to, warmTiming)
+			if err != nil || !reflect.DeepEqual(warm, got) {
+				t.Fatalf("warm cache differs from cold/disk window: %v", err)
+			}
+			if warmTiming.WindowDecode != 0 || warmTiming.WindowBudgetFallbacks != 0 {
+				t.Fatalf("large warm window decoded disk rows: %+v", warmTiming)
+			}
+			clock.set(observationTestHour.Add(3 * time.Minute))
+			if _, err := log.LoadWindow(ctx, clock.now().Add(-time.Minute), clock.now()); err != nil {
+				t.Fatal(err)
+			}
+			log.windowMu.Lock()
+			defer log.windowMu.Unlock()
+			if log.windowRecords != 0 || len(log.windowSegments) != 0 {
+				t.Fatalf("rows older than rolling span retained: rows=%d segments=%d", log.windowRecords, len(log.windowSegments))
 			}
 		})
 	}

@@ -10,10 +10,6 @@ import (
 
 type windowTimingKey struct{}
 
-// Ceiling: 32,768 decoded rows across request/client segments. Larger windows
-// use the exact log reader; this bounds cache retention without limiting demand.
-const windowCacheMaxRecords = 32 * 1024
-
 func (r *observationRead) decodeWindow(raw []byte, value any) error {
 	if r.timing == nil {
 		return json.Unmarshal(raw, value)
@@ -38,7 +34,6 @@ type windowSegment struct {
 	at      time.Time
 	size    int64
 	records []windowRecord
-	bypass  bool
 }
 
 func (r *observationRead) decodeWindowRecord(stream string, raw []byte) windowRecord {
@@ -80,16 +75,11 @@ func (l *ObservationLog) commitWindowAppend(row *observationAppend, size int64) 
 		return
 	}
 	segment := l.windowSegments[name]
-	if segment != nil && (segment.bypass || size <= segment.size) {
+	if segment != nil && size <= segment.size {
 		l.windowMu.Unlock()
 		return
 	}
 	if segment == nil && size != int64(len(row.data)) {
-		l.windowMu.Unlock()
-		return
-	}
-	if l.windowRecords >= windowCacheMaxRecords {
-		l.bypassWindowLocked(name, row.at, size)
 		l.windowMu.Unlock()
 		return
 	}
@@ -104,7 +94,7 @@ func (l *ObservationLog) commitWindowAppend(row *observationAppend, size int64) 
 		return
 	}
 	segment = l.windowSegments[name]
-	if segment != nil && (segment.bypass || size <= segment.size) {
+	if segment != nil && size <= segment.size {
 		return
 	}
 	previous := int64(0)
@@ -113,10 +103,6 @@ func (l *ObservationLog) commitWindowAppend(row *observationAppend, size int64) 
 	}
 	if previous != size-int64(len(row.data)) {
 		return // Keep the contiguous prefix; the next read restores the missing suffix.
-	}
-	if l.windowRecords >= windowCacheMaxRecords {
-		l.bypassWindowLocked(name, row.at, size)
-		return
 	}
 	if segment == nil {
 		segment = &windowSegment{at: row.at.Truncate(time.Minute)}
@@ -163,38 +149,22 @@ func (l *ObservationLog) pruneWindowLocked() {
 	}
 }
 
-func (l *ObservationLog) bypassWindowLocked(name string, at time.Time, size int64) {
-	if segment := l.windowSegments[name]; segment != nil {
-		l.windowRecords -= len(segment.records)
-		size = max(size, segment.size)
-	}
-	l.windowSegments[name] = &windowSegment{at: at.Truncate(time.Minute), size: size, bypass: true}
-}
-
-func (l *ObservationLog) publishWindowFile(file observationOpenFile, records []windowRecord, budget bool) bool {
+func (l *ObservationLog) publishWindowFile(file observationOpenFile, records []windowRecord) {
 	l.windowMu.Lock()
 	defer l.windowMu.Unlock()
 	if !l.windowCacheEligibleLocked(file.at) {
-		return budget
+		return
 	}
 	current := l.windowSegments[file.file.Name()]
-	if current != nil && current.bypass {
-		return true
-	}
 	if current != nil && current.size >= file.size {
-		return budget // A concurrent writer/reader already published this prefix.
+		return // A concurrent writer/reader already published this prefix.
 	}
 	previous := 0
 	if current != nil {
 		previous = len(current.records)
 	}
-	if budget || l.windowRecords-previous+len(records) > windowCacheMaxRecords {
-		l.bypassWindowLocked(file.file.Name(), file.at, file.size)
-		return true
-	}
 	l.windowRecords += len(records) - previous
 	l.windowSegments[file.file.Name()] = &windowSegment{at: file.at, size: file.size, records: records}
-	return false
 }
 
 func (l *ObservationLog) windowFile(read *observationRead, stream string, file observationOpenFile, visit func(windowRecord) error) error {
@@ -203,15 +173,8 @@ func (l *ObservationLog) windowFile(read *observationRead, stream string, file o
 	if segment := l.windowSegments[file.file.Name()]; segment != nil {
 		snapshot = *segment
 	}
-	retain := read.cacheWindow && l.windowCacheEligibleLocked(file.at) && !snapshot.bypass
-	available := windowCacheMaxRecords - l.windowRecords + len(snapshot.records)
+	retain := read.cacheWindow && l.windowCacheEligibleLocked(file.at)
 	l.windowMu.Unlock()
-	budget := snapshot.bypass
-	defer func() {
-		if budget && read.timing != nil {
-			read.timing.WindowBudgetFallbacks++
-		}
-	}()
 	records := snapshot.records
 	for len(records) > 0 && records[len(records)-1].end > file.size {
 		records = records[:len(records)-1]
@@ -274,11 +237,7 @@ func (l *ObservationLog) windowFile(read *observationRead, stream string, file o
 			return err
 		}
 		if retain {
-			if len(candidate) >= available {
-				budget, retain, candidate = true, false, nil
-			} else {
-				candidate = append(candidate, record)
-			}
+			candidate = append(candidate, record)
 		}
 		return nil
 	})
@@ -288,8 +247,8 @@ func (l *ObservationLog) windowFile(read *observationRead, stream string, file o
 	if err != nil {
 		return err
 	}
-	if read.cacheWindow && (retain || budget) {
-		budget = l.publishWindowFile(file, candidate, budget)
+	if retain {
+		l.publishWindowFile(file, candidate)
 	}
 	return nil
 }

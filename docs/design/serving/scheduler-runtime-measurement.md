@@ -60,6 +60,14 @@ offline `hack/evaluation/{raw,request_analysis,judgment}.py`는 client cohort와
 
 이 단위는 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)에 따라 observation 저장 버전만 `v1alpha5→v1alpha6`으로 한 번 전환한다. 로컬 `<directory>/v1alpha6/`와 archive `serving/observations.v1alpha6/`의 writer·reader·raw API·fetch 소비자를 함께 바꾼다. old reader/변환은 추가하지 않으며 과학 원시 archive·기존 publication은 수정/삭제/재게시하지 않는다. 이 기록 추가는 F1/F2 대표성 판정이나 live 수용 완료를 뜻하지 않는다.
 
+Window decoded cache는 `retainWindow`가 정한 요청률·occupancy rolling span 중 최댓값
+(설정된 log retention 이내, minute 정렬)으로 보유한다. 고정 32,768행 상한과 초과 시
+반복 log decode 경로는 제거했다. writer 회전과 window 조회가 오래된 segment를 prune하며
+historical 조회는 보유 span을 늘리지 않는다. cold scan은 cache lock 밖에서 실행하고,
+occupancy `maximumRequests` 초과로 중단된 scan은 cache에 게시하지 않는다.
+`windowBudgetFallbacks`는 observations.v1alpha6 저장 계약을 유지하기 위해 항상 0으로
+기록한다. 이 변경에서 저장 버전을 올리거나 평가 정책·SLO·profile·탐색 예산을 바꾸지 않는다.
+
 
 ## 같은 firstfloor fixed-batch 경로
 
