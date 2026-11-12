@@ -152,9 +152,13 @@ func (s *searchState) delta(n, q int) orderKey {
 
 // capacityHeuristic uses the exact finite cohort for phase populations and
 // fluid work at each phase's last arrival. The tail request's own service is
-// excluded from queued work before adding its service scalar. This point score
-// is not an E2E bound: a drained queue can lose earlier waiting time and thus
-// underestimate replay delay. No retained supply adds route wait.
+// excluded from queued work before adding its service scalar. Each phase assigns
+// that last request's delay to the whole phase, so simultaneous arrival bursts
+// can score worse than exact's configured quantile. This can lower shortlist
+// rank; keep and every start's endpoint still receive exact evaluation.
+// Captured queued requests' already-accrued wait is not added, and a drained
+// queue can lose earlier waiting time, so this point score can also be optimistic.
+// It is not an E2E bound. No retained supply adds route wait.
 func capacityHeuristic(w capacityWorkload, arrivals []float64, mu, retained, service, retainedService, route, period float64) (float64, bool) {
 	if len(arrivals) == 0 && w.queued == 0 {
 		return 0, true

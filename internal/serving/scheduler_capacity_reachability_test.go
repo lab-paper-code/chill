@@ -37,6 +37,11 @@ func capacityV2RandomPlanner(trial int) *capacityPlanner {
 	}
 	return p
 }
+
+// TestCapacityV2HeuristicAdmitsExactFeasible asserts the property for uniformly
+// spaced (or empty) p100 arrival streams with captured initial queues, plus a
+// spaced p95 stream with an initial idle gap. These fixtures exclude simultaneous
+// future-arrival bursts; the point score does not generally bound their quantile.
 func TestCapacityV2HeuristicAdmitsExactFeasible(t *testing.T) {
 	checked := 0
 	for trial := range 300 {
