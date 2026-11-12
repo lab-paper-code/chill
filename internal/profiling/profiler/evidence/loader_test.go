@@ -131,8 +131,8 @@ func TestLoaderLoadsFinalAndRawObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := legacy["runtime"].(map[string]any)
-	for _, repetition := range runtime["repetitionResults"].([]any) {
-		for _, row := range repetition.(map[string]any)["nativeSamples"].([]any) {
+	for _, phase := range runtime["phases"].([]any) {
+		for _, row := range phase.(map[string]any)["nativeSamples"].([]any) {
 			sample := row.(map[string]any)
 			for _, key := range []string{"serviceDurationNanos", "precedingIdleNanos", "trialID"} {
 				delete(sample, key)

@@ -2,19 +2,19 @@
 """Measure the production firstfloor actor and its production IPC runner."""
 from __future__ import annotations
 
-import base64
 import http.client
+import http.server
 import json
 import math
 import os
 from pathlib import Path
 import platform
-import random
-import socket
 import subprocess
 import sys
 import tempfile
 import time
+import threading
+from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -24,8 +24,6 @@ from ortcpu import runner as common
 REQUEST_SCHEMA = "chill.dacs.io/firstfloor-runtime-request.v1alpha2"
 FRAME_BYTES = 64 << 20
 PROVIDERS = {"ort-cpu": "CPUExecutionProvider", "ort-cuda": "CUDAExecutionProvider", "rknnlite": ""}
-# Dataset sampling is independent of observed native exchange gaps.
-SAMPLE_SEED = 0
 TERMINATION_SCHEMA = "chill.dacs.io/measurement-worker-termination.v1alpha1"
 
 
@@ -127,51 +125,313 @@ def milliseconds(value: Any, name: str, positive: bool = True) -> float:
     return float(value)
 
 
-def native_sample(response: dict[str, Any], batch: int, record_ids: list[str], generative: bool) -> dict[str, Any]:
-    common.require_integer(response.get("batchSize"), "actual batchSize", 1)
-    if response.get("batchSize") != batch or response.get("executionComplete") is not True:
-        raise common.ContractError("actor did not complete exactly one requested fixed-K execution")
-    keys = ["batchIDs", "serviceSamples", "preprocessSamplesMS", "backendSamplesMS",
-            "postprocessSamplesMS", "nativeSamplesMS"]
-    if generative:
-        keys.append("firstTokenSamplesMS")
-    elif "firstTokenSamplesMS" in response:
-        raise common.ContractError("non-generative execution reported a first-token span")
-    arrays = [response.get(key) for key in keys]
-    if any(not isinstance(values, list) or len(values) != 1 for values in arrays):
-        raise common.ContractError("native timing samples and batch IDs must be present and aligned")
-    batch_id = common.require_integer(arrays[0][0], "native batch ID", 1)
-    if batch_id > (1 << 64) - 1:
-        raise common.ContractError("native batch ID exceeds uint64")
-    pair = common.require_object(arrays[1][0], "native service pair")
-    common.require_fields(pair, {"serviceDurationNanos", "precedingIdleNanos", "trialID"}, "native service pair")
-    service_nanos = common.require_integer(pair["serviceDurationNanos"], "native serviceDurationNanos", 1)
-    if service_nanos > (1 << 63) - 1:
-        raise common.ContractError("native serviceDurationNanos exceeds int64")
-    common.require_string(pair["trialID"], "native trialID")
-    if pair["precedingIdleNanos"] is not None:
-        value = common.require_integer(pair["precedingIdleNanos"], "native precedingIdleNanos")
-        if value > (1 << 63) - 1:
-            raise common.ContractError("native idle exceeds int64")
-    service = service_nanos / 1_000_000.0
-    preprocess = milliseconds(arrays[2][0], "native preprocess sample", positive=False)
-    backend = milliseconds(arrays[3][0], "native backend sample")
-    postprocess = milliseconds(arrays[4][0], "native postprocess sample", positive=False)
-    native = milliseconds(arrays[5][0], "native request sample")
-    total = milliseconds(response.get("nativeElapsedMS"), "native elapsed")
-    units = response.get("units")
-    if not isinstance(units, list) or len(units) != batch or len(record_ids) != batch:
-        raise common.ContractError("native units and sampled record IDs must align with the fixed batch")
-    for value in units:
-        common.require_integer(value, "native units item", 1)
-    if preprocess + backend + postprocess > service or service > native or native > total:
-        raise common.ContractError("native timing spans are not nested")
-    sample = dict(pair, batchID=batch_id, batchSize=batch, recordIDs=list(record_ids), units=units,
-                  runnerServiceMs=service, preprocessMs=preprocess, backendCallMs=backend,
-                  postprocessMs=postprocess, nativeRequestMs=native)
-    if generative:
-        sample["firstTokenMs"] = milliseconds(arrays[6][0], "native first-token sample")
-    return sample
+def load_plan(request: dict[str, Any]) -> dict[str, Any]:
+    run = request["runConfig"]
+    measurement, state = run["measurement"], run["state"]
+    # The controller injects the same Pod IP it gives the off-node load Job.
+    host = common.require_string(os.environ.get("POD_IP"), "measurement POD_IP")
+    authority = f"[{host}]" if ":" in host else host
+    return {"nativeEndpoint": f"http://{authority}:8080",
+            "inferPath": "/v2/models/" + quote(state["model"], safe="") + "/infer",
+            "model": state["model"], "fields": state["preprocessor"]["inputs"],
+            "batch": measurement["batch"], "podUID": request["podUID"],
+            "sloPercentile": measurement["sloPercentile"],
+            "sloTargetLatencyNanos": measurement["sloTargetLatencyNanos"],
+            "workloadResourceVersion": measurement.get("workloadResourceVersion", request["podUID"]),
+            "operatingPoints": measurement["operatingPoints"],
+            "maxQueueRequests": run["actor"]["maxQueueRequests"],
+            "maxQueueBytes": min(request["maxInputBytes"], FRAME_BYTES),
+            "minServiceSamples": measurement["minServiceSamples"],
+            "maxLatencySamples": request["maxLatencySamples"], "maxResultBytes": request["maxResultBytes"]}
+
+
+class LoadControl:
+    """Hold the external producer until observer handoff, then accept one result."""
+    def __init__(self, request: dict[str, Any], address: tuple[str, int] = ("0.0.0.0", 8081)):
+        self.plan = load_plan(request)
+        self.ready = threading.Event()
+        self.finished = threading.Event()
+        self.result: dict[str, Any] | None = None
+        self.error: Exception | None = None
+        self.lock = threading.Lock()
+        self.phase_windows: list[dict[str, str]] = []
+        self.supply_sizing: dict[str, Any] | None = None
+        self.phase_ids = ["sparse", "saturation"] + [f"utilization-{index}" for index in range(len(self.plan["operatingPoints"]["utilizations"]))]
+        control = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def reply(self, status: int, value: dict[str, Any]) -> None:
+                body = json.dumps(value, allow_nan=False, separators=(",", ":")).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self) -> None:
+                if self.path != "/measurement/load":
+                    self.reply(404, {"error": "unknown measurement control path"})
+                    return
+                control.ready.wait()
+                if control.error is not None:
+                    self.reply(503, {"error": str(control.error)})
+                else:
+                    self.reply(200, control.plan)
+
+            def do_POST(self) -> None:
+                if self.path not in ("/measurement/load-result", "/measurement/phase", "/measurement/supply"):
+                    self.reply(404, {"error": "unknown measurement control path"})
+                    return
+                with control.lock:
+                    if not control.ready.is_set() or control.finished.is_set():
+                        self.reply(409, {"error": "measurement load result is not expected"})
+                        return
+                    try:
+                        length = int(self.headers.get("Content-Length", "0"))
+                        if not 0 < length <= request["maxResultBytes"]:
+                            raise common.ContractError("measurement load result exceeds frozen result budget")
+                        payload = self.rfile.read(length)
+                        if len(payload) != length:
+                            raise common.ContractError("measurement load result is truncated")
+                        value = common.require_object(json.loads(payload, object_pairs_hook=common.no_duplicate_object), "load result")
+                        if self.path == "/measurement/supply":
+                            common.require_fields(value, {"nativeSamples"}, "sparse supply evidence")
+                            if (control.supply_sizing is not None or len(control.phase_windows) != 1 or
+                                    "measurementEndedAt" not in control.phase_windows[0]):
+                                raise common.ContractError("supply sizing requires exactly one completed sparse phase")
+                            control.supply_sizing = size_supply(control.plan, value["nativeSamples"])
+                            self.reply(200, control.supply_sizing)
+                            return
+                        if self.path == "/measurement/phase":
+                            common.require_fields(value, {"id", "action"}, "phase boundary")
+                            if value["action"] == "start":
+                                index = len(control.phase_windows)
+                                if (index >= len(control.phase_ids) or value["id"] != control.phase_ids[index] or
+                                        index and "measurementEndedAt" not in control.phase_windows[-1]):
+                                    raise common.ContractError("phase start differs from frozen order")
+                                if value["id"] != "sparse" and control.supply_sizing is None:
+                                    raise common.ContractError("saturation sizing must complete before later phases")
+                                at = common.now()
+                                control.phase_windows.append({"id": value["id"], "measurementStartedAt": at})
+                            elif value["action"] == "end":
+                                if not control.phase_windows or control.phase_windows[-1]["id"] != value["id"] or "measurementEndedAt" in control.phase_windows[-1]:
+                                    raise common.ContractError("phase end has no matching active phase")
+                                at = common.now()
+                                control.phase_windows[-1]["measurementEndedAt"] = at
+                            else:
+                                raise common.ContractError("phase action must be start or end")
+                            self.reply(200, {"at": at})
+                            return
+                        if value.get("status") == "Failed":
+                            common.require_fields(value, {"status", "error"} |
+                                                  ({"failureReason"} if "failureReason" in value else set()), "failed load result")
+                            reason = value.get("failureReason", "ExecutionFailed")
+                            if reason not in ("ExecutionFailed", "MemoryAllocationFailed"):
+                                raise common.ContractError("unsupported native load failure reason")
+                            control.error = ExecutionError(common.require_string(value["error"], "load failure"), reason)
+                        else:
+                            common.require_fields(value, {"status", "phases", "supplySizing"}, "load result")
+                            if value["status"] != "Succeeded":
+                                raise common.ContractError("unsupported measurement load result status")
+                            if control.supply_sizing is None or value["supplySizing"] != control.supply_sizing:
+                                raise common.ContractError("uploaded supply sizing differs from native sizing result")
+                            validate_phases(value["phases"], control.plan, control.supply_sizing)
+                            if sparse_max_seconds(value["phases"][0]["nativeSamples"], control.plan) != control.supply_sizing["maxBatchServiceSeconds"]:
+                                raise common.ContractError("uploaded sparse samples differ from native sizing source")
+                            if len(control.phase_windows) != len(value["phases"]):
+                                raise common.ContractError("load result lacks measurement-node phase windows")
+                            for phase, window in zip(value["phases"], control.phase_windows):
+                                if any(phase.get(field) != window.get(field) for field in ("id", "measurementStartedAt", "measurementEndedAt")):
+                                    raise common.ContractError("phase power windows must use measurement-node boundaries")
+                            control.result = value
+                    except (ValueError, TypeError, KeyError, common.ContractError, OSError, subprocess.SubprocessError) as error:
+                        control.error = common.ContractError(f"invalid external load result: {error}")
+                        control.finished.set()
+                        self.reply(400, {"error": str(control.error)})
+                        return
+                    control.finished.set()
+                    self.reply(200, {"status": "Accepted"})
+
+            def log_message(self, *args: Any) -> None:
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(address, Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def wait_result(self, process: subprocess.Popen) -> dict[str, Any]:
+        while not self.finished.wait(common.SIGNAL_POLL_SECONDS):
+            if process.poll() is not None:
+                raise ExecutionError("native actor exited while waiting for external load result")
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    def close(self) -> None:
+        self.error = self.error or ExecutionError("measurement control stopped")
+        self.ready.set()
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+
+def utc_timestamp(value: Any, name: str) -> tuple[datetime, int]:
+    text = common.require_string(value, name)
+    fraction = text.split(".", 1)[1].split("Z", 1)[0].split("+", 1)[0] if "." in text else ""
+    if len(fraction) > 9 or fraction and not fraction.isdigit():
+        raise common.ContractError(name + " must be RFC3339Nano")
+    if fraction:
+        # Python 3.8 accepts microsecond ISO text; retain the remaining nanos below.
+        prefix, suffix = text.split(".", 1)
+        text = prefix + "." + fraction.ljust(6, "0")[:6] + suffix[len(fraction):]
+    try:
+        result = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise common.ContractError(name + " must be RFC3339Nano") from error
+    if result.tzinfo is None or result.utcoffset().total_seconds() != 0:
+        raise common.ContractError(name + " must be UTC")
+    return result, int(fraction.ljust(9, "0") or "0") % 1000
+
+
+def sparse_max_seconds(samples: Any, plan: dict[str, Any]) -> float:
+    if not isinstance(samples, list) or not samples:
+        raise common.ContractError("sparse sizing requires observed native batches")
+    maximum, previous_end, previous_id = 0, None, 0
+    for sample in samples:
+        sample = common.require_object(sample, "sparse native sample")
+        batch_id = common.require_integer(sample.get("batchID"), "sparse batch ID", 1)
+        if batch_id <= previous_id or sample.get("batchSize") != plan["batch"] or sample.get("trialID") != plan["podUID"]:
+            raise common.ContractError("sparse native batches must match this fixed-batch physical trial in execution order")
+        duration = common.require_integer(sample.get("serviceDurationNanos"), "sparse service duration", 1)
+        earliest = utc_timestamp(sample.get("earliestEnqueuedAt"), "sparse earliest enqueue")
+        started = utc_timestamp(sample.get("startedAt"), "sparse exchange start")
+        finished = utc_timestamp(sample.get("finishedAt"), "sparse exchange end")
+        if not earliest <= started < finished:
+            raise common.ContractError("sparse native exchange/enqueue timestamps are unordered")
+        if previous_end is None or earliest >= previous_end:
+            maximum = max(maximum, duration)
+        previous_end, previous_id = finished, batch_id
+    if maximum == 0:
+        raise common.ContractError("sparse sizing has no observed no-backlog native batch")
+    return maximum / 1_000_000_000
+
+
+def size_supply(plan: dict[str, Any], samples: Any) -> dict[str, Any]:
+    points = plan["operatingPoints"]
+    payload = {"batch": plan["batch"], "maxQueueRequests": plan["maxQueueRequests"],
+               "maxQueueBytes": plan["maxQueueBytes"],
+               "framedDecodedRequestUpperBytes": points["framedDecodedRequestUpperBytes"],
+               "requestLifetimeSeconds": points["requestLifetimeSeconds"],
+               "deliveryMarginMilliseconds": points["deliveryMarginMilliseconds"],
+               "maxBatchServiceSeconds": sparse_max_seconds(samples, plan)}
+    completed = subprocess.run(["/opt/chill/bin/serving-worker", "--size-saturation"],
+                               input=json.dumps(payload, allow_nan=False), capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        raise common.ContractError("native saturation sizing failed: " + completed.stderr.strip())
+    result = common.require_object(json.loads(completed.stdout, object_pairs_hook=common.no_duplicate_object), "native supply sizing")
+    workers = common.require_integer(result.get("workers"), "native saturation workers", plan["batch"])
+    if workers > 64 or result.get("maxBatchServiceSeconds") != payload["maxBatchServiceSeconds"]:
+        raise common.ContractError("native saturation sizing returned invalid workers/service evidence")
+    return result
+
+
+def validate_phases(phases: Any, plan: dict[str, Any], supply_sizing: dict[str, Any]) -> None:
+    points = plan["operatingPoints"]
+    expected = [("sparse", "sparse", None), ("saturation", "saturation", None)] + [
+        (f"utilization-{index}", "utilization", value) for index, value in enumerate(points["utilizations"])
+    ]
+    if not isinstance(phases, list) or len(phases) != len(expected):
+        raise common.ContractError("load phases do not cover every frozen operating point")
+    batch_ids, request_ids = set(), set()
+    previous_end = None
+    throughput = 0.0
+    for phase, (phase_id, kind, utilization) in zip(phases, expected):
+        phase = common.require_object(phase, "load phase")
+        required = {"id", "kind", "measurementStartedAt", "measurementEndedAt",
+                    "measurementElapsedSecondsMonotonic", "completedInputs", "requests", "nativeSamples", "latencyMs"}
+        common.require_fields(phase, required | ({"workers"} if kind == "saturation" else {"arrivalRatePerSecond"}) |
+                              ({"utilization"} if kind == "utilization" else set()), "load phase")
+        if phase["id"] != phase_id or phase["kind"] != kind:
+            raise common.ContractError("load phases differ from frozen order")
+        start = utc_timestamp(phase["measurementStartedAt"], "phase start")
+        end = utc_timestamp(phase["measurementEndedAt"], "phase end")
+        elapsed = milliseconds(phase["measurementElapsedSecondsMonotonic"], "phase elapsed seconds")
+        if end <= start or previous_end is not None and start < previous_end or elapsed < points["phaseDurationSeconds"]:
+            raise common.ContractError("load phase window does not satisfy frozen duration/order")
+        previous_end = end
+        if kind == "saturation":
+            if phase["workers"] != supply_sizing["workers"]:
+                raise common.ContractError("saturation workers differ from frozen native sizing")
+        else:
+            rate = points["utilizations"][int(phase_id.rsplit("-", 1)[1])] * throughput if kind == "utilization" else 1000 / points["sparseMeanGapMilliseconds"]
+            if phase["arrivalRatePerSecond"] != rate or kind == "utilization" and phase["utilization"] != utilization:
+                raise common.ContractError("Poisson phase rate differs from measured saturation/frozen operating point")
+        requests, samples, latencies = phase["requests"], phase["nativeSamples"], phase["latencyMs"]
+        if not isinstance(requests, list) or not isinstance(samples, list) or not isinstance(latencies, list) or not samples:
+            raise common.ContractError("load phase must retain requests and native samples")
+        if len(samples) > plan["maxLatencySamples"] or len(latencies) != len(samples):
+            raise common.ContractError("load phase native/client samples exceed budget or disagree")
+        completed = common.require_integer(phase["completedInputs"], "phase completed inputs", 1)
+        if completed != len(requests) or completed != len(samples) * plan["batch"]:
+            raise common.ContractError("load phase completed inputs do not match fixed-batch membership")
+        rows, groups = {}, {}
+        for row in requests:
+            row = common.require_object(row, "load request")
+            common.require_fields(row, {"requestID", "recordID", "arrivalAt", "sentAt", "completedAt", "latencyMs", "response"}, "load request")
+            request_id = common.require_string(row["requestID"], "load request ID")
+            common.require_string(row["recordID"], "load record ID")
+            if request_id in request_ids:
+                raise common.ContractError("load request IDs must be unique across phases")
+            request_ids.add(request_id)
+            rows[request_id] = row
+            arrival = utc_timestamp(row["arrivalAt"], "request arrival")
+            sent = utc_timestamp(row["sentAt"], "request send")
+            completed_at = utc_timestamp(row["completedAt"], "request completion")
+            if not arrival <= sent < completed_at:
+                raise common.ContractError("load-node request timestamps are unordered")
+            milliseconds(row["latencyMs"], "request latency")
+            response = common.require_object(row["response"], "native response")
+            progress = common.require_object(response.get("progress"), "native response progress")
+            if response.get("id") != request_id or response.get("executionComplete") is not True or progress.get("requestID") != request_id:
+                raise common.ContractError("native response identity/completion disagrees with load request")
+            actual_batch_id = common.require_integer(progress.get("batchID"), "native response batch ID", 1)
+            common.require_integer(progress.get("units"), "native request units", 1)
+            groups.setdefault(actual_batch_id, []).append(row)
+        known = 0
+        covered = set()
+        for sample, latency in zip(samples, latencies):
+            sample = common.require_object(sample, "native sample")
+            batch_id = common.require_integer(sample["batchID"], "load batch ID", 1)
+            if batch_id in batch_ids or sample["batchSize"] != plan["batch"] or sample["trialID"] != plan["podUID"]:
+                raise common.ContractError("load batch identity/size/provenance mismatch")
+            batch_ids.add(batch_id)
+            if sample["precedingIdleNanos"] is not None:
+                common.require_integer(sample["precedingIdleNanos"], "load preceding idle")
+                known += 1
+            common.require_integer(sample["serviceDurationNanos"], "load service duration", 1)
+            matching = groups.get(batch_id, [])
+            if len(matching) != plan["batch"]:
+                raise common.ContractError("load native sample membership is incomplete")
+            ids = common.require_names(matching[0]["response"]["progress"].get("batchRequestIDs"), "native batch request IDs")
+            if len(ids) != plan["batch"] or len(set(ids)) != plan["batch"] or any(item not in rows for item in ids):
+                raise common.ContractError("load native batch membership is invalid")
+            if covered.intersection(ids):
+                raise common.ContractError("load requests belong to multiple native samples")
+            covered.update(ids)
+            if sample["recordIDs"] != [rows[item]["recordID"] for item in ids] or sample["units"] != [rows[item]["response"]["progress"]["units"] for item in ids]:
+                raise common.ContractError("load native record/units evidence differs from request membership")
+            service = sample["serviceDurationNanos"] / 1_000_000
+            stages = (milliseconds(sample["preprocessMs"], "native preprocess", False) +
+                      milliseconds(sample["backendCallMs"], "native backend") +
+                      milliseconds(sample["postprocessMs"], "native postprocess", False))
+            if stages > service or service > milliseconds(sample["nativeRequestMs"], "native request span"):
+                raise common.ContractError("native timing spans are not nested")
+            if sample["nativeRequestMs"] > milliseconds(latency, "batch client latency") or latency != max(rows[item]["latencyMs"] for item in ids):
+                raise common.ContractError("load native span exceeds correlated maximum client latency")
+        if len(covered) != len(requests) or known < plan["minServiceSamples"]:
+            raise common.ContractError("load phase lacks complete membership or minimum known-gap batches")
+        if kind == "saturation":
+            throughput = completed / elapsed
 
 
 def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max: str,
@@ -185,6 +445,7 @@ def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max
             metadata.get("maxQueueRequests") != state["firstfloor"]["maxQueueSize"] or
             metadata.get("maxBatchSize") != state["firstfloor"]["maxBatchSize"] or
             policy.get("deadlinePolicy") != deadline_policy(state["firstfloor"]) or
+            policy.get("fixedBatchSize") != run["measurement"]["batch"] or
             metadata.get("modelInstanceCount") != 1 or
             metadata.get("maxQueueBytes") != min(request["maxInputBytes"], FRAME_BYTES) or
             metadata.get("maxRequestBytes") != FRAME_BYTES or
@@ -225,23 +486,12 @@ def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max
 
 
 class FirstfloorSession:
-    """One real profile call per common measurement call, with correlated spans."""
+    """Inspect one native actor without generating traffic on the measured node."""
     def __init__(self, port: int, request: dict[str, Any]):
         self.request = request
         self.connection = http.client.HTTPConnection("127.0.0.1", port, timeout=None)
         self.path = "/v2/models/" + quote(request["runConfig"]["state"]["model"], safe="")
-        self.samples: list[dict[str, Any]] = []
-        self.payload: bytes | None = None
-        self.record_ids: list[str] = []
         self.baseline: dict[str, int] = {}
-        self.rng = random.Random(SAMPLE_SEED)
-        self.records: list[str] = []
-        if "datasetPath" in request:
-            with os.scandir(request["datasetPath"]) as entries:
-                self.records = sorted(entry.name for entry in entries if entry.is_dir())
-            if len(self.records) < request["runConfig"]["measurement"]["batch"]:
-                raise common.ContractError("dataset has fewer profiling records than the fixed batch")
-
     def json_call(self, method: str, path: str, payload: bytes | None = None) -> dict[str, Any]:
         try:
             self.connection.request(method, path, payload, {"Content-Type": "application/json"})
@@ -274,42 +524,10 @@ class FirstfloorSession:
         return {key: common.require_integer(state.get(key), "actual actor " + key)
                 for key in ("acceptedRequests", "completedRequests", "executions")}
 
-    def begin_measurement(self) -> None:
-        self.samples.clear()
-        self.baseline = self.counts()
 
     def get_providers(self) -> list[str]:
         return self.metadata()["runtime"]["providers"]
 
-    def prepare_next(self) -> None:
-        """Draw the next execution's records and build its body outside the timed call."""
-        run = self.request["runConfig"]
-        batch, root = run["measurement"]["batch"], Path(self.request["datasetPath"])
-        self.record_ids = self.rng.sample(self.records, batch)
-        inputs = [{"name": name, "data": [base64.b64encode((root / record / name).read_bytes()).decode("ascii")
-                                          for record in self.record_ids]}
-                  for name in run["state"]["preprocessor"]["inputs"]]
-        body = {"batchSize": batch, "inputs": inputs, "trialID": self.request["podUID"]}
-        self.payload = json.dumps(body, separators=(",", ":")).encode()
-        if len(self.payload) > FRAME_BYTES:
-            raise common.ContractError("native JSON input exceeds worker request capacity")
-
-    def run(self) -> dict[str, Any]:
-        if self.payload is None:
-            raise common.ContractError("native input has not been prepared")
-        payload, self.payload = self.payload, None
-        response = self.json_call("POST", self.path + "/profile", payload)
-        run = self.request["runConfig"]
-        sample = native_sample(response, run["measurement"]["batch"], self.record_ids,
-                               run["state"]["preprocessor"].get("maxNewTokens", 0) > 0)
-        if sample["trialID"] != self.request["podUID"]:
-            raise common.ContractError("native sample trial differs from the physical request pod")
-        if self.samples and sample["precedingIdleNanos"] is None:
-            raise common.ContractError("native post-start exchange is missing its actual gap")
-        if self.samples and sample["batchID"] <= self.samples[-1]["batchID"]:
-            raise common.ContractError("native batch IDs must increase monotonically")
-        self.samples.append(sample)
-        return sample
 
 
 def wait_ready(process: subprocess.Popen, session: FirstfloorSession, timeout: float) -> None:
@@ -338,7 +556,8 @@ def worker_config(request: dict[str, Any]) -> dict[str, Any]:
                   runnerTimeoutMS=request["observerReadyTimeoutMilliseconds"],
                   maxQueueBytes=min(request["maxInputBytes"], FRAME_BYTES),
                   maxRequestBytes=FRAME_BYTES)
-    config["policy"] = {"deadlinePolicy": deadline_policy(request["runConfig"]["state"]["firstfloor"])}
+    config["policy"] = {"deadlinePolicy": deadline_policy(request["runConfig"]["state"]["firstfloor"]),
+                        "fixedBatchSize": request["runConfig"]["measurement"]["batch"]}
     return config
 
 
@@ -357,6 +576,58 @@ def execute(request: dict[str, Any], workspace: Path) -> dict[str, Any]:
             sampler.close()
 
 
+def execute_active(request: dict[str, Any], process: subprocess.Popen, session: FirstfloorSession,
+                   control: LoadControl, actual: dict[str, Any], architecture: str, cpu_max: str,
+                   affinity: list[int], cpuset: str, sampler: common.MemorySampler | None) -> dict[str, Any]:
+    run = request["runConfig"]
+    state, measurement = run["state"], run["measurement"]
+    record_stage("Observer")
+    timeout = request["observerReadyTimeoutMilliseconds"] / 1000
+    for ready_path in request["observerReadyPaths"]:
+        common.wait_for_signal(Path(ready_path), timeout)
+    warmup_completed = common.now()
+    common.publish_immutable(Path(request["workloadWindowStartPath"]), b"signal\n")
+    common.wait_for_signal(Path(request["workloadWindowReadyPath"]), timeout)
+    session.baseline = session.counts()
+    session.connection.close()
+    common.publish_immutable(Path(request["measurementStartPath"]), b"signal\n")
+    stat_before = common.cpu_stat()
+    process_before = time.process_time()
+    started_at, started = common.now(), time.monotonic()
+    if sampler is not None:
+        sampler.start()
+    record_stage("Execution")
+    control.ready.set()
+    uploaded = control.wait_result(process)
+    phases = uploaded["phases"]
+    elapsed = time.monotonic() - started
+    record_stage("ResultValidation")
+    memory = sampler.stop() if sampler is not None else {}
+    ended_at = common.now()
+    common.publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
+    process_cpu = time.process_time() - process_before
+    stat_after = common.cpu_stat()
+    latencies = [latency for phase in phases for latency in phase["latencyMs"]]
+    completed_inputs = sum(phase["completedInputs"] for phase in phases)
+    return {"schemaVersion": common.RESULT_SCHEMA, "status": "Succeeded", "experimentId": request["podUID"],
+            "nodeName": request["scheduledNodeName"], "model": state["model"], "architecture": architecture,
+            "runtime": state["runtimeFamily"], "runtimeVersion": actual.get("runtimeVersion", ""),
+            "backend": state["backend"], "provider": PROVIDERS[state["backend"]],
+            "availableProviders": actual.get("availableProviders", []), "batchSize": measurement["batch"],
+            "warmupIterations": measurement["warmupIterations"], "warmupCompletedAt": warmup_completed,
+            "inferenceCount": len(latencies), "measurementMode": "duration",
+            "measurementStartedAt": started_at, "measurementEndedAt": ended_at,
+            "measurementElapsedSecondsMonotonic": elapsed,
+            "cpuContract": common.runtime_cpu_evidence(cpu_max, affinity, cpuset, process_cpu, stat_before, stat_after),
+            "derivedExecutionContract": common.derived_contract(run), "phases": phases, "supplySizing": uploaded["supplySizing"],
+            "completionIndex": 0, "inputs": state["preprocessor"]["inputs"], "measurementIterations": 0,
+            "targetDurationSecondsPerRepetition": float(measurement["durationSeconds"]),
+            "latencyMs": {"mean": sum(latencies) / len(latencies),
+                          "p50": common.percentile(latencies, .5), "p95": common.percentile(latencies, .95),
+                          "p99": common.percentile(latencies, .99)},
+            "throughputItemsPerSecond": completed_inputs / elapsed, "power": None, "energyPerRequest": None, **memory}
+
+
 def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any],
                     architecture: str, cpu_max: Any, affinity: Any, cpuset: Any,
                     sampler: common.MemorySampler | None) -> dict[str, Any]:
@@ -369,16 +640,20 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
             config["runnerCommand"] = [str(delivery_path) if arg == "/config/delivery.json" else arg
                                        for arg in config["runnerCommand"]]
         config_path.write_text(json.dumps(config, allow_nan=False), encoding="utf-8")
-        with socket.socket() as address:
-            address.bind(("127.0.0.1", 0))
-            port = address.getsockname()[1]
-        session = FirstfloorSession(port, request)
+        session = FirstfloorSession(8080, request)
+        control = LoadControl(request) if run["measurement"]["workloadMode"] != common.IDLE_WORKLOAD else None
         child_environment = None
         if run["state"]["backend"] == "ort-cuda":
             child_environment = dict(os.environ, CUDA_VISIBLE_DEVICES=run["delivery"]["runtimeAccess"]["gpuUUID"])
-        process = subprocess.Popen(["/opt/chill/bin/serving-worker", "--config", str(config_path),
-                                    "--bind-address", f"127.0.0.1:{port}", "--node-name", request["scheduledNodeName"]],
-                                   stdout=sys.stderr, stderr=sys.stderr, start_new_session=True, env=child_environment)
+        try:
+            process = subprocess.Popen(["/opt/chill/bin/serving-worker", "--config", str(config_path),
+                                        "--bind-address", "0.0.0.0:8080", "--node-name", request["scheduledNodeName"]],
+                                       stdout=sys.stderr, stderr=sys.stderr, start_new_session=True, env=child_environment)
+        except Exception:
+            if control is not None:
+                control.close()
+            session.connection.close()
+            raise
         try:
             wait_ready(process, session, request["observerReadyTimeoutMilliseconds"] / 1000.0)
             loaded_at = common.now()
@@ -395,20 +670,14 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
                                              memory_sampler=sampler, phase=record_stage)
                 executions = 0
             else:
-                result = common.execute_loaded(request, session, actual.get("runtimeVersion", ""), actual.get("availableProviders", []),
-                                               architecture, cpu_max, affinity, cpuset,
-                                               session.begin_measurement, PROVIDERS[run["state"]["backend"]],
-                                               memory_sampler=sampler, phase=record_stage)
+                result = execute_active(request, process, session, control, actual, architecture,
+                                        cpu_max, affinity, cpuset, sampler)
                 executions = result["inferenceCount"]
-                if len(session.samples) != executions or len(result["repetitionResults"][0]["latencyMs"]) != executions:
-                    raise common.ContractError("native/client timing samples are not aligned")
-                result["repetitionResults"][0]["nativeSamples"] = session.samples
-                for native, client in zip(session.samples, result["repetitionResults"][0]["latencyMs"]):
-                    if native["nativeRequestMs"] > client:
-                        raise common.ContractError("native request span exceeds correlated client-call duration")
             observed = session.counts()
-            if any(observed[key] - session.baseline[key] != executions for key in observed):
-                raise common.ContractError("actual actor execution/request counters disagree with completed fixed-K samples")
+            expected = {"acceptedRequests": executions * measurement["batch"],
+                        "completedRequests": executions * measurement["batch"], "executions": executions}
+            if any(observed[key] - session.baseline[key] != expected[key] for key in observed):
+                raise common.ContractError("actual actor counters changed across idle or disagree with uploaded input/batch samples")
             if process.poll() is not None:
                 raise common.ContractError("native actor exited during measurement")
             result["firstfloor"] = {"runtime": actual, "mode": "profiling", "modelInstanceCount": 1,
@@ -425,7 +694,7 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
             if run["state"]["backend"] == "rknnlite":
                 facts = actual["rknn"]
                 # Active K comes from actual completed actor samples; idle K was actually queried during initialization.
-                selected = session.samples[0]["batchSize"] if executions else measurement["batch"]
+                selected = result["phases"][0]["nativeSamples"][0]["batchSize"] if executions else measurement["batch"]
                 result["rknn"] = dict(facts, selectedBatch=selected)
             return result
         except Exception as error:
@@ -435,6 +704,8 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
             raise
         finally:
             session.connection.close()
+            if control is not None:
+                control.close()
             # The worker owns runner shutdown; kill the group only after its grace period.
             try:
                 process.terminate()

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -30,7 +32,7 @@ import (
 
 const (
 	nativeIdentityModel   = "tiny-identity-fixture"
-	nativeCatalogMaxBytes = 64 << 20
+	nativeCatalogMaxBytes = 256 << 20
 )
 
 func TestRealFirstfloorWorkerHelper(t *testing.T) {
@@ -41,15 +43,16 @@ func TestRealFirstfloorWorkerHelper(t *testing.T) {
 // Python 3 with numpy, onnx and onnxruntime, and readable cgroup CPU/memory
 // accounting are required. The shared helper generates a genuine tiny Identity
 // model, not the MobileNet artifact whose basename the old fixture uses.
-// Three independent native active trials retain the real 30 s AND 59-known-gap
-// stop rule; three independent native idle trials retain 60 s settling + 30 s.
+// Three native active trials retain sparse, saturation and utilization phases,
+// each with its own 30 s AND 59-known-gap stop rule; idle retains 60 s settling + 30 s.
 // Only meter readings, workload isolation and Kubernetes terminal/ownership facts
 // are controlled fixtures. No cluster, measured hardware watts or deployment
 // image verification is claimed. There are no donor, Eval or history objects.
 func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	command := fixtures.RealFirstfloorCommand(t)
+	t.Setenv("POD_IP", "127.0.0.1")
 	catalog, source, objects, planIdentity := catalogEvidenceFixtureConfigPolicy(t, 4096,
 		[6]float64{6, 6, 6, 4, 4, 4}, 3, "", func(config *profilingrun.RunConfig) {
 			// Explicitly label the generated model and its frozen recipe as test
@@ -59,6 +62,8 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 			config.State.Preprocessor.Name = nativeIdentityModel
 			config.Measurement.Dataset.Name = nativeIdentityModel
 			config.Measurement.WorkloadName = nativeIdentityModel
+			config.Measurement.OperatingPoints.QueueBytesCap = 1 << 20
+			config.Measurement.OperatingPoints.FramedDecodedRequestUpperBytes = (1 << 20) / 32
 			memoryRequest, memoryLimit := config.Actor.MemoryRequestBytes, config.Actor.MemoryLimitBytes
 			config.Actor = config.ActorConfig()
 			config.Actor.MemoryRequestBytes, config.Actor.MemoryLimitBytes = memoryRequest, memoryLimit
@@ -79,7 +84,7 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	frozen := retained.Plan.Shared()
-	if frozen.ActiveProtocol.DurationSeconds != 30 || frozen.ActiveProtocol.MinServiceSamples != 59 ||
+	if frozen.ActiveProtocol.DurationSeconds != 90 || frozen.ActiveProtocol.MinServiceSamples != 59 ||
 		frozen.ActiveProtocol.SLOPercentile != 95 || campaign.Spec.TrialsPerBatch != 3 {
 		t.Fatalf("native acceptance recipe changed: %+v", frozen.ActiveProtocol)
 	}
@@ -134,11 +139,20 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 			if firstMetadata == nil {
 				firstMetadata = &runtime.Firstfloor.Runtime
 			}
-			windowStart, windowEnd, err := runtime.MeasurementWindow()
-			if err != nil {
-				t.Fatal(err)
+			for _, phase := range runtime.Phases {
+				if phase.Kind != "utilization" {
+					continue
+				}
+				start, parseErr := time.Parse(time.RFC3339Nano, phase.MeasurementStartedAt)
+				if parseErr != nil {
+					t.Fatal(parseErr)
+				}
+				end, parseErr := time.Parse(time.RFC3339Nano, phase.MeasurementEndedAt)
+				if parseErr != nil {
+					t.Fatal(parseErr)
+				}
+				energy += 2 * end.Sub(start).Seconds() / float64(phase.CompletedInputs)
 			}
-			energy += 2 * windowEnd.Sub(windowStart).Seconds() / float64(runtime.InferenceCount)
 			memory = max(memory, runtime.MemoryBytes)
 			activeTrials++
 		}
@@ -292,7 +306,15 @@ func commitNativeCatalogTrial(
 			return metricobserver.VerifiedResult{}, err
 		}
 		observer.Metrics.StartedAt, observer.Metrics.EndedAt = start, end.Add(time.Second)
-		observer.Metrics.Samples[0].ObservedAt, observer.Metrics.Samples[1].ObservedAt = start, end
+		watts := float64(6)
+		if config.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
+			watts = 4
+		}
+		count := int(math.Ceil(end.Sub(start).Seconds()))
+		observer.Metrics.Samples = make([]metricobserver.Sample, count+1)
+		for index := range observer.Metrics.Samples {
+			observer.Metrics.Samples[index] = metricobserver.Sample{ObservedAt: start.Add(time.Duration(index) * end.Sub(start) / time.Duration(count)), Watts: watts}
+		}
 		observer.Metrics.Summary = metricobserver.Summarize(observer.Metrics)
 		observer.Workload.CoverageStartedAt, observer.Workload.CoverageEndedAt = start.Add(-time.Second), end.Add(time.Second)
 		return metricobserver.VerifyResult(observer.Metrics)
@@ -305,9 +327,42 @@ func commitNativeCatalogTrial(
 		t.Fatal(err)
 	}
 	started := time.Now().UTC()
+	loadCtx, stopLoad := context.WithCancel(ctx)
+	defer stopLoad()
+	loadDone := make(chan error, 1)
+	var loadDiagnostics bytes.Buffer
+	active := config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode
+	if active {
+		go func() {
+			for {
+				connection, dialErr := net.DialTimeout("tcp", "127.0.0.1:8081", 100*time.Millisecond)
+				if dialErr == nil {
+					_ = connection.Close()
+					break
+				}
+				select {
+				case <-loadCtx.Done():
+					loadDone <- loadCtx.Err()
+					return
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			producer := exec.CommandContext(loadCtx, "python3", "-c",
+				"import sys; from chill_loadgen.native_profile import main; sys.exit(main(sys.argv[1], sys.argv[2]))",
+				"http://127.0.0.1:8081", filepath.Join(command[3], "dataset"))
+			producer.Env = append(os.Environ(), "PYTHONPATH="+filepath.Join(command[2], "load-generator", "src"))
+			producer.Stdout, producer.Stderr = &loadDiagnostics, &loadDiagnostics
+			loadDone <- producer.Run()
+		}()
+	}
 	receipt, err := coordinator.Execute(ctx, request)
 	if err != nil {
 		t.Fatalf("real native %s: %v\n%s", request.RawLocation.Key, err, &diagnostics)
+	}
+	if active {
+		if loadErr := <-loadDone; loadErr != nil {
+			t.Fatalf("off-node load process: %v\n%s", loadErr, &loadDiagnostics)
+		}
 	}
 	committed := writer.objects[receipt.Object.Location()]
 	if _, err := writer.PutImmutable(ctx, receipt.Object, bytes.NewReader(committed)); !errors.Is(err, evidencestore.ErrPrecondition) {
@@ -334,27 +389,35 @@ func assertNativeActiveTrial(
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(raw.Runtime, runtime) || !reflect.DeepEqual(raw.RunConfig, wireConfig) ||
-		runtime.Firstfloor == nil || runtime.Firstfloor.Runtime.Synthetic || runtime.MeasurementElapsedSeconds < 30 {
+		runtime.Firstfloor == nil || runtime.Firstfloor.Runtime.Synthetic ||
+		runtime.MeasurementElapsedSeconds < float64(wireConfig.Measurement.DurationSeconds) {
 		t.Fatalf("active raw/native runtime equal=%t serialized config equal=%t elapsed=%g metadata=%+v",
 			reflect.DeepEqual(raw.Runtime, runtime), reflect.DeepEqual(raw.RunConfig, wireConfig),
 			runtime.MeasurementElapsedSeconds, runtime.Firstfloor)
 	}
-	nativeSamples := runtime.RepetitionResults[0].NativeSamples
-	if len(nativeSamples) == 0 || nativeSamples[0].PrecedingIdleNanos != nil {
-		t.Fatal("physical actor startup must remain an unknown preceding gap")
+	if len(runtime.Phases) != len(wireConfig.Measurement.OperatingPoints.Utilizations)+2 {
+		t.Fatalf("native runtime lost operating-point phases: %+v", runtime.Phases)
 	}
-	known := 0
-	for _, sample := range nativeSamples {
-		if sample.TrialID != podUID || sample.ServiceDurationNanos <= 0 {
-			t.Fatal("native sample lost its physical trial or measured service")
+	for phaseIndex, phase := range runtime.Phases {
+		known := 0
+		if phase.MeasurementElapsedSeconds < float64(wireConfig.Measurement.OperatingPoints.PhaseDurationSeconds) {
+			t.Fatalf("phase %s stopped before its duration floor", phase.ID)
 		}
-		if sample.PrecedingIdleNanos != nil {
-			known++
+		for index, sample := range phase.NativeSamples {
+			if phaseIndex == 0 && index == 0 && sample.PrecedingIdleNanos != nil {
+				t.Fatal("physical startup invented a preceding gap")
+			}
+			if sample.TrialID != podUID || sample.ServiceDurationNanos <= 0 {
+				t.Fatal("native sample lost its physical trial or measured service")
+			}
+			if sample.PrecedingIdleNanos != nil {
+				known++
+			}
+			samples = append(samples, sample.ServiceSample.Clone())
 		}
-		samples = append(samples, sample.ServiceSample.Clone())
-	}
-	if known < 59 {
-		t.Fatalf("30 seconds alone supplied only %d known native gaps", known)
+		if known < wireConfig.Measurement.MinServiceSamples {
+			t.Fatalf("phase %s supplied only %d known native gaps", phase.ID, known)
+		}
 	}
 	return raw, samples
 }

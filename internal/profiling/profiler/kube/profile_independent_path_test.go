@@ -32,8 +32,8 @@ import (
 )
 
 // These are the existing static compatibility/installation fixtures, not a
-// serving profile or a reconstructed Evaluation authority. The public intent
-// deliberately supplies neither a UID nor any pacing/frozen measurement body.
+// serving profile or a reconstructed Evaluation authority. Public intent
+// supplies no UID, historical profile, or frozen Workload identity.
 func firstProfileInputs(t *testing.T) ([]client.Object, *api.BatchEnergyOptimization) {
 	t.Helper()
 	objects := validCandidateObjects()
@@ -55,6 +55,13 @@ func firstProfileInputs(t *testing.T) ([]client.Object, *api.BatchEnergyOptimiza
 		},
 	}
 	objects = append(objects, node, workload)
+	objects = append(objects,
+		&api.ChillSystem{ObjectMeta: meta.ObjectMeta{Name: "first-profile-system", Labels: map[string]string{"app.kubernetes.io/instance": "first-profile-installation"}}},
+		&core.Pod{ObjectMeta: meta.ObjectMeta{Name: "first-profile-gateway", Namespace: testSystemNamespace, UID: "first-profile-gateway-uid",
+			Labels: map[string]string{"app.kubernetes.io/instance": "first-profile-installation", "app.kubernetes.io/component": "serving-entrypoint"}},
+			Spec: core.PodSpec{NodeName: "gateway-node"}, Status: core.PodStatus{Phase: core.PodRunning,
+				Conditions: []core.PodCondition{{Type: core.PodReady, Status: core.ConditionTrue}}}},
+	)
 	observation := api.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31}
 	intent := &api.BatchEnergyOptimization{
 		TypeMeta:   meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimization"},
@@ -66,7 +73,9 @@ func firstProfileInputs(t *testing.T) ([]client.Object, *api.BatchEnergyOptimiza
 					ExecutionPath: "ort-cpu", PowerMode: "fixed"}, TargetNode: node.Name,
 			},
 			ActiveProtocol: api.ActiveProtocolSpec{Workload: workload.Name, Dataset: workload.Spec.DatasetRef.Name,
-				WarmupIterations: 1, DurationSeconds: 30, MetricObservation: observation},
+				WarmupIterations: 1, DurationSeconds: 30, MetricObservation: observation,
+				OperatingPoints: api.MeasurementOperatingPointsSpec{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
+					PhaseDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024}},
 			IdleProtocol:   api.IdleProtocolSpec{SettlingDurationSeconds: 1, DurationSeconds: 30, MetricObservation: observation},
 			TrialsPerBatch: 3,
 		},
@@ -115,6 +124,9 @@ func TestPublicFirstProfileResolvesWithNoServingOrEvaluationHistory(t *testing.T
 	preparer, err := profiler.NewPreparer(candidates, nodes, metrics, workloads, actuation, execution)
 	if err != nil {
 		t.Fatal(err)
+	}
+	preparer.ResolveLoadOrigin = func(ctx context.Context, targetNode string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
+		return ResolveGatewayLoadOrigin(ctx, reader, testSystemNamespace, "first-profile-system", targetNode)
 	}
 	projector, err := campaigncontroller.NewCurvePlanProjector(reader, candidates, preparer)
 	if err != nil {

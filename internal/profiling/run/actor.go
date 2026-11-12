@@ -25,6 +25,9 @@ func (c RunConfig) ActorConfig() firstfloor.Config {
 		WarmupBatchSizes:  slices.Clone(c.Measurement.WarmupBatchSizes),
 		WarmupIterations:  c.Measurement.StartupWarmupIterations,
 	}
+	if points := c.Measurement.OperatingPoints; points != nil {
+		actor.MaxQueueBytes = int(points.QueueBytesCap)
+	}
 	if len(c.Delivery.RuntimePackages) != 0 {
 		actor.RuntimePackages = make(map[string]string, len(c.Delivery.RuntimePackages))
 		for _, pkg := range c.Delivery.RuntimePackages {

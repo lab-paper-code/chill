@@ -165,7 +165,7 @@ func TestCurvePlanSourceFreezesWithoutArchiveAndRecoversWorkloadBeforeChildren(t
 					Preprocessor: config.State.Preprocessor.Name,
 				},
 			}
-			parent.Spec.ActiveProtocol.DurationSeconds = 30
+			parent.Spec.ActiveProtocol.DurationSeconds = 90
 			parent.Spec.ActiveProtocol.Dataset = config.Measurement.Dataset.Name
 			metric := edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: int32(config.Metrics.IntervalMilliseconds),
@@ -200,6 +200,7 @@ func TestCurvePlanSourceFreezesWithoutArchiveAndRecoversWorkloadBeforeChildren(t
 			if err != nil {
 				t.Fatal(err)
 			}
+			preparer.ResolveLoadOrigin = ports.ResolveLoadOrigin
 			recording := &recordingCurvePlanPreparer{preparer: preparer}
 			store := newFakeCurvePlanStore()
 			options := CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20}
@@ -672,6 +673,9 @@ func (p *fakeCurvePlanPreparer) Prepare(
 	if p.err != nil {
 		return profiler.PreparedRun{}, p.err
 	}
+	if err := request.FreezePhaseDuration(); err != nil {
+		return profiler.PreparedRun{}, err
+	}
 	if p.calls != nil {
 		*p.calls = append(*p.calls, "prepare:"+request.Measurement.WorkloadMode)
 	}
@@ -721,6 +725,11 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		Workload: profilingrun.CurrentWorkloadContract(),
 	}
 	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		config.LoadOriginNode = "gateway-node"
+		config.LoadOriginGatewayPod = &profilingrun.LoadOriginGatewayPodContract{Namespace: "chill-system", Name: "serving-gateway", UID: "gateway-pod-uid"}
+		points := *config.Measurement.OperatingPoints
+		points.QueueBytesCap = 64 << 20
+		config.Measurement.OperatingPoints = &points
 		config.Measurement.SLOPercentile = 95
 		config.Measurement.MinServiceSamples = 59
 		config.Measurement.SLOTargetLatencyNanos = 1_000_000_000

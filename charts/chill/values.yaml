@@ -586,7 +586,7 @@ servingEntrypoint:
       drop:
         - ALL
 
-# Image of the load Job a DispatchOccupancyMeasurement runs.
+# Image shared by off-node profiling and dispatch-occupancy load Jobs.
 loadGenerator:
   image:
     repository: daclab/chill-load-generator

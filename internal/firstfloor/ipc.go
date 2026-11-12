@@ -191,6 +191,7 @@ type runnerOutput struct {
 	serviceMS, backendMS                 float64
 	preprocessMS, postprocessMS, firstMS float64
 	sample                               ServiceSample
+	startedAt, finishedAt                time.Time
 }
 
 // Only the actor's active batch calls infer. Caller cancellation never reaches
@@ -218,6 +219,7 @@ func (r *Runner) infer(ctx context.Context, id uint64, tensors []wireTensor, dat
 		ended := time.Now()
 		o.serviceMS = milliseconds(ended.Sub(started))
 		o.sample = ServiceSample{ServiceDurationNanos: ended.Sub(started).Nanoseconds(), PrecedingIdleNanos: gap, TrialID: trialID}
+		o.startedAt, o.finishedAt = started.UTC(), ended.UTC()
 		r.clockMu.Lock()
 		r.lastEnd, r.exchangeAt, r.exchangeGap = ended, time.Time{}, nil
 		r.clockMu.Unlock()

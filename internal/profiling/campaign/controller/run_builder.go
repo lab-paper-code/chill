@@ -59,6 +59,8 @@ func BuildRun(
 	switch measurement.WorkloadMode {
 	case batchenergyoptimization.WorkloadModeActive:
 		protocol := parent.Spec.ActiveProtocol
+		points := protocol.OperatingPoints
+		points.Utilizations = append([]float64(nil), points.Utilizations...)
 		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
 			Batch:                    int32(measurement.Batch),
 			WarmupIterations:         0,
@@ -69,6 +71,7 @@ func BuildRun(
 			Dataset:                  protocol.Dataset,
 			Workload:                 protocol.Workload,
 			WarmupBatchSizes:         []int32{1},
+			OperatingPoints:          &points,
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	case batchenergyoptimization.WorkloadModeIdle:
@@ -123,6 +126,15 @@ func applyFrozenRunProtocol(run *edgev1alpha1.ProfilingRun, plan profilederivati
 	tolerance := protocol.DurationToleranceSeconds
 	measurement.DurationToleranceSeconds = &tolerance
 	measurement.Workload = protocol.WorkloadName
+	measurement.OperatingPoints = nil
+	if p := protocol.OperatingPoints; p != nil {
+		measurement.OperatingPoints = &edgev1alpha1.MeasurementOperatingPointsSpec{
+			Utilizations: append([]float64(nil), p.Utilizations...), SparseMeanGapMilliseconds: p.SparseMeanGapMilliseconds,
+			PhaseDurationSeconds: int32(p.PhaseDurationSeconds), RequestLifetimeSeconds: int32(p.RequestLifetimeSeconds),
+			DeliveryMarginMilliseconds:     int32(p.DeliveryMarginMilliseconds),
+			FramedDecodedRequestUpperBytes: p.FramedDecodedRequestUpperBytes,
+		}
+	}
 	if protocol.Dataset != nil {
 		measurement.Dataset = protocol.Dataset.Name
 	}

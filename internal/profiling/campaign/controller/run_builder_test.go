@@ -137,11 +137,15 @@ func testParent() *edgev1alpha1.BatchEnergyOptimization {
 				TargetNode: "jetsono",
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
-				WarmupIterations: 20, DurationSeconds: 75,
+				WarmupIterations: 20, DurationSeconds: 90,
 				Workload: "mobilenet",
 				Dataset:  "vqav2-val-subset",
+				OperatingPoints: edgev1alpha1.MeasurementOperatingPointsSpec{
+					Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000, PhaseDurationSeconds: 30,
+					RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 2 << 20,
+				},
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
-					IntervalMilliseconds: 2500, TimeoutMilliseconds: 2400, DurationSeconds: 78,
+					IntervalMilliseconds: 2500, TimeoutMilliseconds: 2400, DurationSeconds: 91,
 				},
 			},
 			IdleProtocol: edgev1alpha1.IdleProtocolSpec{

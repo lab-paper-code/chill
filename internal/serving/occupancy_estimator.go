@@ -317,7 +317,6 @@ func (e *OccupancyEstimator) results(poolWorkloads bool) []OccupancyEstimate {
 	return out
 }
 
-
 func (e *OccupancyEstimator) cell(r *occupancyRequest, cells map[directCellKey]*OccupancyEstimate, poolWorkloads bool) *OccupancyEstimate {
 	p := e.profiles[r.profile]
 	if p == nil || r.node.UID != p.Condition.NodeUID || r.node.Name != p.NodeName {

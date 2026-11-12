@@ -346,12 +346,17 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
 	if idle {
+		config.LoadOriginNode, config.LoadOriginGatewayPod = "", nil
 		config.Measurement = profilingrun.MeasurementContract{
 			Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 		}
 	}
 	observation := validObservation()
-	start := observation.Job.Status.CompletionTime.Time.Add(-30 * time.Second)
+	windowSeconds := 30
+	if points := config.Measurement.OperatingPoints; points != nil {
+		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+	}
+	start := observation.Job.Status.CompletionTime.Time.Add(-time.Duration(windowSeconds+2) * time.Second)
 	podUID := string(observation.Pod.UID)
 	cpu := profilingrun.RuntimeCPU{
 		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 0,
@@ -373,16 +378,16 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 				Latched: config.Metrics.ThermalMetrics.Latched, MaximumTemperatureCelsius: config.Metrics.ThermalMetrics.MaximumTemperatureCelsius,
 			},
 		},
-		StartedAt: start, EndedAt: start.Add(31 * time.Second),
+		StartedAt: start, EndedAt: start.Add(time.Duration(windowSeconds+1) * time.Second),
 		Samples: []metricobserver.Sample{{ObservedAt: start.Add(time.Second), Watts: 5}},
-		Summary: metricobserver.Summary{Attempts: 1, SuccessfulSamples: 1, ObservationDurationSeconds: 31, SourceTimestampAbsent: true},
+		Summary: metricobserver.Summary{Attempts: 1, SuccessfulSamples: 1, ObservationDurationSeconds: float64(windowSeconds + 1), SourceTimestampAbsent: true},
 	}
 	pod := workloadobserver.Pod{Namespace: observation.Pod.Namespace, Name: observation.Pod.Name, UID: podUID, Phase: "Running", Images: []string{config.Images.Runtime}}
 	workload := &workloadobserver.Result{
 		SchemaVersion:     workloadobserver.ResultSchemaVersion,
 		Target:            workloadobserver.TargetIdentity{NodeName: config.TargetNode.Name, NodeUID: config.TargetNode.UID},
 		Run:               workloadobserver.RunIdentity{Namespace: pod.Namespace, JobUID: string(observation.Job.UID), PodName: pod.Name, PodUID: podUID},
-		CoverageStartedAt: start.Add(-time.Second), CoverageEndedAt: start.Add(31 * time.Second),
+		CoverageStartedAt: start.Add(-time.Second), CoverageEndedAt: start.Add(time.Duration(windowSeconds+1) * time.Second),
 		InitialResourceVersion: "10", LastResourceVersion: "11", EventLimit: 10,
 		InitialActivePods: []workloadobserver.Pod{pod}, FinalActivePods: []workloadobserver.Pod{pod}, Continuous: true,
 	}
@@ -417,26 +422,27 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 				WarmupCompletedAt: start.Add(-time.Second).Format(time.RFC3339Nano), InferenceCount: 60, MeasurementMode: "duration",
 				MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: start.Add(30 * time.Second).Format(time.RFC3339Nano),
 				MeasurementElapsedSeconds: 30, TargetDurationSeconds: &duration, CPUContract: cpu, DerivedContract: derived,
-				RepetitionResults: []profilingrun.Repetition{{Repetition: 1, MeasurementStartedAt: start.Format(time.RFC3339Nano),
-					MeasurementEndedAt: start.Add(30 * time.Second).Format(time.RFC3339Nano), LatencyMilliseconds: make([]float64, 60)}},
 				Latency:     map[string]float64{"p95": 2, "mean": 2},
 				MemoryBytes: 123456, MemorySource: "cgroup-v2-memory.peak:runtime-container-lifetime",
 				Firstfloor: retainedFirstfloorEvidence(config, cpu, 60, provider, version),
 			},
 		}
-		recordIDs, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
-		for i := range recordIDs {
-			recordIDs[i], units[i] = "record-"+strconv.Itoa(i), 1
+		points := config.Measurement.OperatingPoints
+		workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap,
+			points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds))
+		fixtures.ApplyActivePhases(&raw.Runtime, fixtures.PhaseOptions{
+			StartedAt: start, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
+			Batch: config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers,
+			Utilizations: points.Utilizations, SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds,
+			PodUID: podUID, Latencies: []float64{2},
+			SupplySizing: sizing,
+		})
+		raw.Runtime.Firstfloor = retainedFirstfloorEvidence(config, cpu, uint64(raw.Runtime.InferenceCount), provider, version)
+		raw.Metrics.Samples = make([]metricobserver.Sample, windowSeconds)
+		for index := range raw.Metrics.Samples {
+			raw.Metrics.Samples[index] = metricobserver.Sample{ObservedAt: start.Add(time.Duration(index)*time.Second + 500*time.Millisecond), Watts: 5}
 		}
-		for i := range raw.Runtime.RepetitionResults[0].LatencyMilliseconds {
-			raw.Runtime.RepetitionResults[0].LatencyMilliseconds[i] = 2
-			raw.Runtime.RepetitionResults[0].NativeSamples = append(raw.Runtime.RepetitionResults[0].NativeSamples, profilingrun.NativeServiceSample{
-				BatchID: uint64(i + 1), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
-				ServiceSample:             fixtures.ServiceSample(podUID, uint64(i), 700000),
-				RunnerServiceMilliseconds: 0.7, PreprocessMilliseconds: 0.1, PostprocessMilliseconds: 0.1,
-				BackendCallMilliseconds: 0.4, NativeRequestMilliseconds: 0.9,
-			})
-		}
+		raw.Metrics.Summary = metricobserver.Summarize(raw.Metrics)
 		rawBytes, err = raw.CanonicalJSON()
 	}
 	if err != nil {
@@ -457,6 +463,7 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 		images["dataset"] = config.Measurement.Dataset.Image
 	}
 	template := terminal.Containers[0]
+	template.StartedAt = start.Add(-time.Minute)
 	terminal.Containers = nil
 	for name, image := range images {
 		container := template

@@ -60,6 +60,8 @@ func TestPreparerAdmitsMetricScheduleWithinSelectedExecutionPolicy(t *testing.T)
 			config.Metrics.DurationSeconds = test.duration
 			if test.idle {
 				config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+				config.LoadOriginNode, config.LoadOriginGatewayPod = "", nil
+				config.Measurement.OperatingPoints = nil
 				config.Measurement.WorkloadName = ""
 				config.Measurement.WarmupIterations = 0
 				config.Measurement.MinServiceSamples = 0
@@ -74,6 +76,12 @@ func TestPreparerAdmitsMetricScheduleWithinSelectedExecutionPolicy(t *testing.T)
 			policy.ObserverReadyTimeoutSeconds = 1160
 			policy.ObserverStartOverheadSeconds = 1160
 			resolvers.executionPolicy = &policy
+			wantDuration := test.duration
+			if !test.idle {
+				points := config.Measurement.OperatingPoints
+				phaseFloor := points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+				wantDuration = max(test.duration, phaseFloor+max(0, test.duration-config.Measurement.DurationSeconds))
+			}
 			prepared, err := newFixturePreparer(t, resolvers).Prepare(context.Background(), fixtureRequest(config))
 			if test.rejected {
 				if reason, terminal := TerminalResolutionReason(err); !terminal || reason != ResolutionReasonExecutionPolicyInvalid {
@@ -88,9 +96,9 @@ func TestPreparerAdmitsMetricScheduleWithinSelectedExecutionPolicy(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if prepared.RunConfig.Metrics.DurationSeconds != test.duration ||
+			if prepared.RunConfig.Metrics.DurationSeconds != wantDuration ||
 				prepared.RunConfig.Measurement.WorkloadMode != config.Measurement.WorkloadMode {
-				t.Fatal("admission changed the selected observation schedule")
+				t.Fatal("admission lost the named phase floor or selected observation margin")
 			}
 		})
 	}
@@ -491,6 +499,9 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	preparer.ResolveLoadOrigin = func(context.Context, string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
+		return "gateway-node", profilingrun.LoadOriginGatewayPodContract{Namespace: "chill-system", Name: "serving-gateway", UID: "gateway-pod-uid"}, nil
 	}
 	return preparer
 }

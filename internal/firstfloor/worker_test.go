@@ -163,6 +163,7 @@ func startTestActor(t *testing.T, mode string, delay string, adjust func(*Config
 	cfg := &Config{Model: "synthetic", Mode: mode, Inputs: []string{"input"}, Outputs: []string{"output"}, RunnerCommand: []string{"python3", "../../runtime/firstfloor/runner.py", "--echo", "--preprocessor", "../../runtime/firstfloor/testdata/echo", "--delay-ms", delay, "--warmup-iterations", "1"}, RunnerTimeoutMS: 3000, MaxQueueRequests: 8, MaxQueueBytes: 1 << 20, MaxRequestBytes: 1 << 20, MaxBatchSize: 2, BatchSizes: []int{1, 2}, Policy: testPolicy()}
 	if mode == "profiling" {
 		cfg.BatchSizes = []int{2}
+		cfg.Policy = Policy{FixedBatchSize: 2}
 	}
 	if adjust != nil {
 		adjust(cfg)
@@ -292,50 +293,19 @@ func TestLocalActorCancellationSnapshotsAndTypedOutputs(t *testing.T) {
 		t.Fatalf("cancelled queued request cannot count as physical execution: %+v", state)
 	}
 }
-func TestFixedProfileUsesSameSerialActor(t *testing.T) {
-	s, cfg := startTestActor(t, "profiling", "4", withDeadline(DeadlineDrop))
-	d, n, e := prepareInputs(cfg.Inputs, rawInputs("a", "b+c"), 2)
-	if e != nil {
-		t.Fatal(e)
-	}
-	r := &request{received: time.Now(), context: RequestContext{RequestID: "profile", WorkloadUID: "profiling", Definition: "fixed"}, data: d, bytes: n, profile: &ProfileRequest{BatchSize: 2, TrialID: "profile-trial"}}
-	reply := s.submit(context.Background(), r)
-	p := reply.profile
-	if reply.err != nil || !p.ExecutionComplete || p.BatchSize != 2 || len(p.BatchIDs) != 1 || len(p.ServiceSamples) != 1 || len(p.BackendSamplesMS) != 1 || len(p.NativeSamplesMS) != 1 || len(p.PreprocessSamplesMS) != 1 || len(p.PostprocessSamplesMS) != 1 || p.FirstTokenSamplesMS != nil || !reflect.DeepEqual(p.Units, []int{1, 2}) {
-		t.Fatalf("one profile call must return one aligned execution with per-request units: %+v", reply)
-	}
-	serviceMS := float64(p.ServiceSamples[0].ServiceDurationNanos) / float64(time.Millisecond)
-	if p.PreprocessSamplesMS[0]+p.BackendSamplesMS[0]+p.PostprocessSamplesMS[0] > serviceMS || p.NativeSamplesMS[0] < serviceMS {
-		t.Fatalf("physical execution samples must be nested: %+v", p)
-	}
+func TestGenerativeProfilingInferReportsFirstToken(t *testing.T) {
+	s, _ := startTestActor(t, modeProfiling, "0", func(c *Config) { c.MaxNewTokens = 4 })
 	h := NewHandler(s)
-	for _, test := range []struct {
-		values []string
-		status int
-	}{{[]string{"a", "fail:bad jpeg"}, http.StatusUnprocessableEntity}, {[]string{"raise", "a"}, http.StatusInternalServerError}, {[]string{"a", "b"}, http.StatusOK}} {
-		reply := postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs(test.values...), TrialID: "profile-trial"})
-		if reply.Code != test.status {
-			t.Fatalf("profile %v: status %d %s", test.values, reply.Code, reply.Body.String())
+	for _, reply := range postFixedInference(h, "a", "b") {
+		var response Response
+		if reply.Code != http.StatusOK || json.Unmarshal(reply.Body.Bytes(), &response) != nil || response.Progress.FirstTokenMS > response.Progress.BackendMS {
+			t.Fatalf("generative inference must report its first-token span: %d %s", reply.Code, reply.Body.String())
 		}
 	}
-	state := awaitActorState(t, s, func(state State) bool { return state.CompletedRequests == 4 })
-	if state.Executions != 4 {
-		t.Fatalf("native idle counters must expose every profile execution: %+v", state)
-	}
-}
-func TestGenerativeProfileReportsFirstToken(t *testing.T) {
-	s, cfg := startTestActor(t, "profiling", "0", func(c *Config) { c.MaxNewTokens = 4 })
-	d, n, e := prepareInputs(cfg.Inputs, rawInputs("a", "b"), 2)
-	if e != nil {
-		t.Fatal(e)
-	}
-	reply := s.submit(context.Background(), &request{received: time.Now(), context: RequestContext{RequestID: "profile", WorkloadUID: "profiling", Definition: "fixed"}, data: d, bytes: n, profile: &ProfileRequest{BatchSize: 2, TrialID: "profile-trial"}})
-	if p := reply.profile; reply.err != nil || len(p.FirstTokenSamplesMS) != 1 || p.FirstTokenSamplesMS[0] > p.BackendSamplesMS[0] {
-		t.Fatalf("generative profile must report its first-token span: %+v", reply)
-	}
-	h := NewHandler(s)
-	if reply := postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs("a", "two-first-tokens"), TrialID: "profile-trial"}); reply.Code != http.StatusInternalServerError {
-		t.Fatalf("second first-token callback must end the batch: %d %s", reply.Code, reply.Body.String())
+	for _, reply := range postFixedInference(h, "a", "two-first-tokens") {
+		if reply.Code != http.StatusInternalServerError {
+			t.Fatalf("second first-token callback must end the batch: %d %s", reply.Code, reply.Body.String())
+		}
 	}
 }
 func TestItemFailureAndBatchErrorHTTP(t *testing.T) {
@@ -367,13 +337,14 @@ func TestItemFailureAndBatchErrorHTTP(t *testing.T) {
 func TestNativeAllocationFailureHTTPPreservesCategoryAndServing(t *testing.T) {
 	for _, mode := range []string{modeServing, modeProfiling} {
 		t.Run(mode, func(t *testing.T) {
-			s, _ := startTestActor(t, mode, "0", nil)
+			s, _ := startTestActor(t, mode, "0", func(c *Config) {
+				if mode == modeProfiling {
+					c.BatchSizes = []int{1}
+					c.Policy.FixedBatchSize = 1
+				}
+			})
 			h := NewHandler(s)
 			send := func(value string) *httptest.ResponseRecorder {
-				if mode == modeProfiling {
-					return postJSON(h, "/v2/models/synthetic/profile", map[string]any{
-						"batchSize": 2, "trialID": "allocation-trial", "inputs": rawInputs(value, value)})
-				}
 				return postJSON(h, "/v2/models/synthetic/infer", Request{
 					ID: value, Context: RequestContext{RequestID: value, WorkloadUID: "uid", Definition: "uid/1", AdmissionPolicy: AdmissionDelay,
 						ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 1000}}, Inputs: rawInputs(value)})
@@ -387,8 +358,8 @@ func TestNativeAllocationFailureHTTPPreservesCategoryAndServing(t *testing.T) {
 					failure.FailureReason != tc.reason || !failure.ExecutionComplete || failure.Error == "" {
 					t.Fatalf("native category lost: %d %s", reply.Code, reply.Body.String())
 				}
-				if mode == modeServing && (failure.Progress == nil || failure.Progress.Outcome != OutcomeBatchError) {
-					t.Fatalf("serving completion lost: %+v", failure)
+				if failure.Progress == nil || failure.Progress.Outcome != OutcomeBatchError {
+					t.Fatalf("inference completion lost: %+v", failure)
 				}
 			}
 			if reply := send("ok"); reply.Code != http.StatusOK {
@@ -451,9 +422,6 @@ func TestWorkerBodyFailureStatus(t *testing.T) {
 			s, cfg := startTestActor(t, mode, "0", nil)
 			h := NewHandler(s)
 			path := "/v2/models/synthetic/infer"
-			if mode == modeProfiling {
-				path = "/v2/models/synthetic/profile"
-			}
 			oversized := bytes.Repeat([]byte{' '}, cfg.MaxRequestBytes+1)
 			oversized[0] = '{'
 			trailingOversized := bytes.Repeat([]byte{' '}, cfg.MaxRequestBytes+1)
@@ -725,7 +693,7 @@ func TestDeferredQueueSharesBoundsCancellationAndState(t *testing.T) {
 }
 
 func TestDeadlinePolicyValidationIncludesProfiling(t *testing.T) {
-	cfg := &Config{Model: "profile", Mode: modeProfiling, Inputs: []string{"x"}, Outputs: []string{"y"}, RunnerCommand: []string{"runner"}, RunnerTimeoutMS: 1000, MaxQueueRequests: 2, MaxQueueBytes: 32, MaxRequestBytes: 32, MaxBatchSize: 2, BatchSizes: []int{2}}
+	cfg := &Config{Model: "profile", Mode: modeProfiling, Inputs: []string{"x"}, Outputs: []string{"y"}, RunnerCommand: []string{"runner"}, RunnerTimeoutMS: 1000, MaxQueueRequests: 2, MaxQueueBytes: 32, MaxRequestBytes: 32, MaxBatchSize: 2, BatchSizes: []int{2}, Policy: Policy{FixedBatchSize: 2}}
 	if err := ValidateConfig(cfg); err != nil || cfg.Policy.DeadlinePolicy != DeadlineKeep {
 		t.Fatalf("omitted mode must normalize to keep even in profiling: %v %+v", err, cfg)
 	}
@@ -825,11 +793,11 @@ func TestFixedBatchValidationAndReload(t *testing.T) {
 		return &Config{Model: "synthetic", Mode: modeServing, Inputs: []string{"input"}, Outputs: []string{"output"}, RunnerCommand: []string{"runner"}, RunnerTimeoutMS: 1000, MaxQueueRequests: 4, MaxQueueBytes: 32, MaxRequestBytes: 32, MaxBatchSize: 3, BatchSizes: []int{1, 2, 3}, Policy: testPolicy()}
 	}
 	for name, adjust := range map[string]func(*Config){
-		"negative":      func(c *Config) { c.Policy.FixedBatchSize = -1 },
-		"unmeasured":    func(c *Config) { c.Policy.FixedBatchSize = 3 },
-		"capped":        func(c *Config) { c.Policy.FixedBatchSize, c.Policy.MaxBatchSize = 2, 1 },
-		"profiling":     func(c *Config) { c.Mode, c.Policy.FixedBatchSize = modeProfiling, 2 },
-		"uninitialized": func(c *Config) { c.BatchSizes, c.MaxBatchSize, c.Policy.FixedBatchSize = []int{1, 3}, 3, 2 },
+		"negative":                func(c *Config) { c.Policy.FixedBatchSize = -1 },
+		"unmeasured":              func(c *Config) { c.Policy.FixedBatchSize = 3 },
+		"capped":                  func(c *Config) { c.Policy.FixedBatchSize, c.Policy.MaxBatchSize = 2, 1 },
+		"profiling-uninitialized": func(c *Config) { c.Mode, c.Policy.FixedBatchSize = modeProfiling, 4 },
+		"uninitialized":           func(c *Config) { c.BatchSizes, c.MaxBatchSize, c.Policy.FixedBatchSize = []int{1, 3}, 3, 2 },
 	} {
 		cfg := base()
 		adjust(cfg)
@@ -856,44 +824,36 @@ func TestFixedBatchValidationAndReload(t *testing.T) {
 	}
 }
 
-func TestProfileAddsNoWaitAndPreservesActualExchangePairsAndNaturalIdle(t *testing.T) {
+func TestProfilingInferPreservesExchangePairsAndNaturalIdle(t *testing.T) {
 	s, _ := startTestActor(t, modeProfiling, "100", nil)
 	h := NewHandler(s)
-	decode := func(reply *httptest.ResponseRecorder) ProfileResponse {
+	infer := func() ServiceSample {
 		t.Helper()
-		var response ProfileResponse
-		if reply.Code != http.StatusOK || json.Unmarshal(reply.Body.Bytes(), &response) != nil || !response.ExecutionComplete || !reflect.DeepEqual(response.Units, []int{1, 2}) || len(response.ServiceSamples) != 1 {
-			t.Fatalf("profile execution must return real results: %d %s", reply.Code, reply.Body.String())
+		replies := postFixedInference(h, "a", "b+c")
+		var response Response
+		if reply := replies[0]; reply.Code != http.StatusOK || json.Unmarshal(reply.Body.Bytes(), &response) != nil || !response.ExecutionComplete || response.Progress.ServiceSample == nil {
+			t.Fatalf("profiling inference must return actual exchange: %d %s", reply.Code, reply.Body.String())
 		}
-		return response
+		return *response.Progress.ServiceSample
 	}
-	profile := func() ProfileResponse {
-		return decode(postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs("a", "b+c"), TrialID: "physical-trial"}))
-	}
-	first := profile().ServiceSamples[0]
+	first := infer()
 	if first.PrecedingIdleNanos != nil {
 		t.Fatalf("Python startup warmup cannot invent a Go exchange anchor: %+v", first)
 	}
 	start := time.Now()
-	second := profile().ServiceSamples[0]
+	second := infer()
 	if second.PrecedingIdleNanos == nil || second.ServiceDurationNanos <= 0 || time.Since(start) >= 400*time.Millisecond {
-		t.Fatalf("profile must execute without adding idle: %+v", second)
+		t.Fatalf("profiling must execute without adding idle: %+v", second)
 	}
 	time.Sleep(600 * time.Millisecond)
 	start = time.Now()
-	third := profile().ServiceSamples[0]
+	third := infer()
 	if third.PrecedingIdleNanos == nil || *third.PrecedingIdleNanos < int64(600*time.Millisecond) || time.Since(start) >= 400*time.Millisecond || third.ServiceDurationNanos >= int64(400*time.Millisecond) {
 		t.Fatalf("natural idle must remain in G, not S or an added wait: %+v", third)
 	}
 	for _, sample := range []ServiceSample{first, second, third} {
 		if sample.TrialID != "physical-trial" {
 			t.Fatalf("physical trial identity lost: %+v", sample)
-		}
-	}
-	for _, field := range []string{"cadenceDraw", "targetIdleNanos", "traceDrawRef"} {
-		request := map[string]any{"batchSize": 2, "inputs": rawInputs("a", "b+c"), "trialID": "physical-trial", field: nil}
-		if reply := postJSON(h, "/v2/models/synthetic/profile", request); reply.Code != http.StatusBadRequest {
-			t.Fatalf("obsolete donor field %s accepted: %d %s", field, reply.Code, reply.Body.String())
 		}
 	}
 }

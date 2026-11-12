@@ -104,7 +104,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	timed := &httpTimingWriter{ResponseWriter: w, entered: entered, timing: HTTPRequestTiming{HandlerEnteredAt: entered.UTC()}}
 	w = timed
-	if req.URL.Path != base+"/infer" && req.URL.Path != base+"/profile" {
+	if req.URL.Path != base+"/infer" {
 		writeError(w, http.StatusNotFound, errors.New("unknown path or model"))
 		return
 	}
@@ -137,11 +137,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	decoder.DisallowUnknownFields()
 	r := &request{received: received, handlerEntered: entered, httpTiming: &timed.timing}
-	if req.URL.Path == base+"/profile" {
-		if !prepareProfile(w, req.Context(), decoder, cfg, r) {
-			return
-		}
-	} else if !prepareInference(w, req.Context(), decoder, cfg, r) {
+	if !prepareInference(w, req.Context(), decoder, cfg, r) {
 		return
 	}
 	if r.bytes > cfg.MaxQueueBytes {
@@ -196,41 +192,7 @@ func decodeRequest(w http.ResponseWriter, decoder *json.Decoder, v any) error {
 	}
 	return nil
 }
-func prepareProfile(w http.ResponseWriter, ctx context.Context, decoder *json.Decoder, cfg *Config, r *request) bool {
-	if cfg.Mode != modeProfiling {
-		writeError(w, http.StatusConflict, errors.New("fixed K endpoint requires profiling mode"))
-		return false
-	}
-	var p ProfileRequest
-	if e := decodeRequest(w, decoder, &p); e != nil {
-		bodyError(w, ctx, e)
-		return false
-	}
-	if !identity(p.TrialID) {
-		writeError(w, http.StatusBadRequest, errors.New("physical trial ID required"))
-		return false
-	}
-	if !initialized(cfg.BatchSizes, p.BatchSize) {
-		writeError(w, http.StatusBadRequest, errors.New("initialized fixed batch required"))
-		return false
-	}
-	d, n, e := prepareInputs(cfg.Inputs, p.Inputs, p.BatchSize)
-	if e != nil {
-		writeError(w, http.StatusBadRequest, e)
-		return false
-	}
-	p.Inputs = nil
-	r.data = d
-	r.bytes = n
-	r.profile = &p
-	r.context = RequestContext{RequestID: "profile-" + r.received.UTC().Format("150405.000000000"), WorkloadUID: modeProfiling, Definition: "fixed-k"}
-	return true
-}
 func prepareInference(w http.ResponseWriter, ctx context.Context, decoder *json.Decoder, cfg *Config, r *request) bool {
-	if cfg.Mode != modeServing {
-		writeError(w, http.StatusConflict, errors.New("inference endpoint requires serving mode"))
-		return false
-	}
 	var inference Request
 	if e := decodeRequest(w, decoder, &inference); e != nil {
 		bodyError(w, ctx, e)
@@ -288,10 +250,10 @@ func (h *handler) submitRequest(w http.ResponseWriter, req *http.Request, r *req
 		case errors.Is(v.err, context.DeadlineExceeded) || errors.Is(v.err, context.Canceled):
 			status = http.StatusRequestTimeout
 		}
-		if r.profile == nil && (failedItem != nil || failedBatch != nil || errors.Is(v.err, ErrDeadlineInfeasible) || errors.Is(v.err, ErrQueueFull)) {
+		if failedItem != nil || failedBatch != nil || errors.Is(v.err, ErrDeadlineInfeasible) || errors.Is(v.err, ErrQueueFull) {
 			progress = &v.response.Progress
 		}
-		if r.profile == nil && (errors.Is(v.err, ErrDeadlineInfeasible) || errors.Is(v.err, ErrQueueFull)) {
+		if errors.Is(v.err, ErrDeadlineInfeasible) || errors.Is(v.err, ErrQueueFull) {
 			code := CodeDeadlineInfeasible
 			if errors.Is(v.err, ErrQueueFull) {
 				code = CodeQueueFull
@@ -303,11 +265,7 @@ func (h *handler) submitRequest(w http.ResponseWriter, req *http.Request, r *req
 		}
 		return
 	}
-	if r.profile != nil {
-		writeJSON(w, v.profile)
-	} else {
-		writeJSON(w, v.response)
-	}
+	writeJSON(w, v.response)
 }
 func bodyError(w http.ResponseWriter, ctx context.Context, e error) {
 	status := http.StatusBadRequest

@@ -94,7 +94,16 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 		t.Fatalf("pod tolerations = %#v, want measurement toleration", pod.Tolerations)
 	}
 	runtimeContainer := findContainer(t, pod.Containers, "runtime")
-	for _, path := range []string{"/model", "/preprocessor", "/dataset"} {
+	if runtimeContainer.ReadinessProbe == nil || runtimeContainer.ReadinessProbe.TCPSocket == nil ||
+		runtimeContainer.ReadinessProbe.TCPSocket.Port.IntVal != 8081 {
+		t.Fatal("active worker readiness must wait for its off-node load control socket")
+	}
+	if !slices.ContainsFunc(runtimeContainer.Env, func(env corev1.EnvVar) bool {
+		return env.Name == "POD_IP" && env.ValueFrom != nil && env.ValueFrom.FieldRef != nil && env.ValueFrom.FieldRef.FieldPath == "status.podIP"
+	}) {
+		t.Fatal("native URL must use the measurement Pod IP")
+	}
+	for _, path := range []string{"/model", "/preprocessor"} {
 		if mount := findMountPath(t, runtimeContainer.VolumeMounts, path); !mount.ReadOnly {
 			t.Fatalf("runtime %s mount is writable", path)
 		}
@@ -267,7 +276,7 @@ func TestServingPodAndMeasurementJobProjectTheSameFrozenConfig(t *testing.T) {
 func assertDeliveryTopology(t *testing.T, pod corev1.PodSpec, config profilingrun.RunConfig) {
 	t.Helper()
 	if pod.NodeSelector[corev1.LabelHostname] != config.TargetNode.Name ||
-		len(pod.InitContainers) != 3 || len(pod.Containers) != 3 || len(pod.Volumes) != 6 {
+		len(pod.InitContainers) != 2 || len(pod.Containers) != 3 || len(pod.Volumes) != 5 {
 		t.Fatalf("unexpected measurement topology: %#v", pod)
 	}
 	for index, want := range []struct {
@@ -278,8 +287,6 @@ func assertDeliveryTopology(t *testing.T, pod corev1.PodSpec, config profilingru
 			append([]string{`cp "$@" /chill-artifact/`, "artifact-copy"}, config.Actor.ArtifactFiles...)},
 		{"preprocessor", config.Actor.PreprocessorImage, "/chill-preprocessor",
 			[]string{`cp -R "$1"/. /chill-preprocessor/`, "--", config.Actor.PreprocessorPath}},
-		{"dataset", config.Measurement.Dataset.Image, "/chill-dataset",
-			[]string{`cp -R "$1"/profiling/. /chill-dataset/`, "--", config.Measurement.Dataset.Path}},
 	} {
 		got := pod.InitContainers[index]
 		if got.Name != want.name || got.Image != want.image || !reflect.DeepEqual(got.Command, []string{"sh", "-ec"}) ||
@@ -309,8 +316,8 @@ func TestBuildExecutionJobProjectsExactRKNNLiteHostAccess(t *testing.T) {
 	if !reflect.DeepEqual(pod.SecurityContext.SupplementalGroups, []int64{44, 110}) {
 		t.Fatalf("RKNNLite supplemental groups drifted: %#v", pod.SecurityContext)
 	}
-	if len(pod.Volumes) != 13 || len(pod.InitContainers) != 3 {
-		t.Fatalf("RKNNLite host volumes = %d, want 13: %#v", len(pod.Volumes), pod.Volumes)
+	if len(pod.Volumes) != 12 || len(pod.InitContainers) != 2 {
+		t.Fatalf("RKNNLite host volumes = %d, want 12: %#v", len(pod.Volumes), pod.Volumes)
 	}
 	artifact := pod.InitContainers[0]
 	if len(artifact.Args) != 3 || artifact.Args[2] != prepared.RunConfig.State.ArtifactFiles[0] {
@@ -414,7 +421,10 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	run.Spec.Measurement.Dataset = ""
 	run.Spec.Measurement.Workload = ""
+	run.Spec.Measurement.OperatingPoints = nil
 	prepared := currentPreparedRun(t)
+	prepared.RunConfig.LoadOriginNode, prepared.RunConfig.LoadOriginGatewayPod = "", nil
+	prepared.RunConfig.Metrics.DurationSeconds = int(run.Spec.MetricObservation.DurationSeconds)
 	prepared.RunConfig.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, WarmupIterations: 0, SettlingDurationSeconds: 60, WarmupBatchSizes: []int{1},
 		DurationSeconds:          30,

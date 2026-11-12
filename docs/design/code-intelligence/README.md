@@ -176,6 +176,12 @@ metadata and plain metric observations, not Serving or its Kubernetes adapter.
 Composition roots assemble these owners. No architecture-gate pass is implied
 by this boundary description.
 
+Profiling saturation and dispatch-occupancy construction share
+`firstfloor.SaturationWorkers`, the native queue/bytes/lifetime supply calculation.
+The reviewed `serving-measurement → firstfloor` edge carries that pure calculation;
+it does not import Serving into profiling derivation. Signed dispatch residuals
+are owned by `profiling/derivation.DispatchOccupancyNanos`, reused by Serving.
+
 The named-input projection also imports `modelcompat`:
 `go list -f '{{.ImportPath}} {{join .Imports " "}}' ./internal/profiling/profiler/projection`
 captures that actual edge. `profiler-projection → model-compat` is reviewed in

@@ -382,6 +382,7 @@ deps:
     mayDependOn:
       - api
       - evidence-core
+      - firstfloor
       - batch-energy-optimization-core
       - profiler-app
       - profiler-controller

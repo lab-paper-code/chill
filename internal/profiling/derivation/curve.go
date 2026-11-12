@@ -206,6 +206,8 @@ func cloneEnergyTrials(trials []EnergyTrial) []EnergyTrial {
 	for index := range cloned {
 		cloned[index].ClientLatencyMilliseconds = append([]float64(nil), trials[index].ClientLatencyMilliseconds...)
 		cloned[index].NativeSamples = cloneNativeSamples(trials[index].NativeSamples)
+		cloned[index].PhasePower = append([]PhasePower(nil), trials[index].PhasePower...)
+		cloned[index].DispatchOccupancyNanosPerInput = append([]float64(nil), trials[index].DispatchOccupancyNanosPerInput...)
 	}
 	return cloned
 }

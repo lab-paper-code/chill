@@ -94,10 +94,7 @@ func ValidateConfig(c *Config) error {
 	if c.Mode == modeServing {
 		return validatePolicy(c.Policy, c.BatchSizes)
 	}
-	if c.Policy.FixedBatchSize != 0 {
-		return errors.New("fixedBatchSize applies to serving only")
-	}
-	return nil
+	return validateProfilingPolicy(c.Policy, c.BatchSizes)
 }
 func uniqueNames(names []string) bool {
 	seen := make(map[string]bool, len(names))
@@ -120,6 +117,13 @@ func validateInitializedBatches(c *Config) error {
 			return errors.New("batch exceeds initialized capacity")
 		}
 		prev = k
+	}
+	return nil
+}
+func validateProfilingPolicy(p Policy, sizes []int) error {
+	if !durationOK(p.MaxBatchWaitMS) || p.MaxBatchSize < 0 || p.MaxBatchSize != 0 && !initialized(sizes, p.MaxBatchSize) ||
+		p.FixedBatchSize <= 0 || !initialized(sizes, p.FixedBatchSize) || !allowedBatch(p, p.FixedBatchSize) {
+		return errors.New("profiling requires an initialized fixed batch within the policy cap")
 	}
 	return nil
 }

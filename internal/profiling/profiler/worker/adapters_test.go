@@ -405,7 +405,6 @@ func TestFirstfloorHelperProcess(t *testing.T) {
 	}
 	if request.SchemaVersion != firstfloorRequestSchemaVersion || request.ModelDirectory != modelDirectory ||
 		request.PreprocessorPath != preprocessorPath ||
-		(request.DatasetPath == datasetPath) != (request.RunConfig.Measurement.Dataset != nil) ||
 		len(request.ObserverReadyPaths) == 0 || request.MeasurementStartPath == "" || request.MeasurementEndPath == "" ||
 		request.ObserverReadyTimeoutMilliseconds < 1 || request.MaxLatencySamples < 1 ||
 		request.MaxInputBytes < 1 || request.MaxResultBytes < 1 {
@@ -445,6 +444,7 @@ func TestFirstfloorHelperProcess(t *testing.T) {
 func newTestFirstfloorRuntime(t *testing.T, resultPath string) *CPURuntime {
 	t.Helper()
 	directory := filepath.Dir(resultPath)
+	config := testRunConfig(t)
 	runtime, err := NewFirstfloorRuntime(CPURuntimeConfig{
 		Command:                 []string{os.Args[0], "-test.run=TestFirstfloorHelperProcess", "--"},
 		ObserverReadyPaths:      []string{directory + "/./observer-ready"},
@@ -452,9 +452,9 @@ func newTestFirstfloorRuntime(t *testing.T, resultPath string) *CPURuntime {
 		MeasurementStartPath:    directory + "/./measurement-start",
 		WorkloadWindowReadyPath: directory + "/./workload-window-ready",
 		MeasurementEndPath:      directory + "/./measurement-end", ResultPath: resultPath,
-		ObserverReadyTimeout: time.Second, MaxLatencySamples: 100, MaxInputBytes: 1 << 20,
+		ObserverReadyTimeout: time.Second, MaxLatencySamples: 1 << 20, MaxInputBytes: config.Measurement.OperatingPoints.QueueBytesCap,
 		MaxResultBytes: 1 << 20, Stdout: io.Discard, Stderr: io.Discard,
-	}, runtimeRequest(testRunConfig(t)).RunConfig)
+	}, runtimeRequest(config).RunConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

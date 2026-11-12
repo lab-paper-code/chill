@@ -116,39 +116,55 @@ func validateIdleBaselineSummary(baseline IdleBaseline) error {
 // has bound active and idle execution conditions. Provenance labels are not
 // compared here, and differing external environments remain observations.
 func IncrementalWorkTrial(trial Trial, baseline IdleBaseline) (EnergyTrial, error) {
-	joules, err := measureTrial(trial)
-	if err != nil {
+	if err := validateTrial(trial); err != nil {
 		return EnergyTrial{}, err
 	}
+	var joules float64
+	var err error
 	windowSeconds := trial.WindowEnd.Sub(trial.WindowStart).Seconds()
+	completedItems := float64(trial.CompletedItems)
+	var phasePower []PhasePower
+	var dispatchOccupancy []float64
+	if len(trial.Phases) > 0 {
+		joules, windowSeconds, completedItems, phasePower, dispatchOccupancy, err = measureOperatingPoints(trial)
+		if err != nil {
+			return EnergyTrial{}, err
+		}
+	} else {
+		joules, err = measurePower(trial.WindowStart, trial.WindowEnd, trial.Samples)
+		if err != nil {
+			return EnergyTrial{}, err
+		}
+	}
 	incrementalWorkWallJoules := joules -
 		baseline.ModelLoadedIdleMeanWallWatts*windowSeconds
 	if math.IsNaN(incrementalWorkWallJoules) ||
 		math.IsInf(incrementalWorkWallJoules, 0) {
 		return EnergyTrial{}, errors.New("incremental energy is invalid")
 	}
-	completedItems := float64(trial.CompletedItems)
 	activeWindowWallJoulesPerItem := joules / completedItems
 	idleBaselineSecondsPerItem := windowSeconds / completedItems
 	estimatorIdentity := "state=" + baseline.StateIdentity +
 		"|activeProtocol=" + trial.MeasurementProtocolIdentity +
 		"|idleProtocol=" + baseline.MeasurementProtocolIdentity + "|idlePoint=" + baseline.PolicyVersion
 	return EnergyTrial{
-		StateIdentity:                 trial.StateIdentity,
-		EnvironmentIdentity:           trial.EnvironmentIdentity,
-		MeasurementProtocolIdentity:   trial.MeasurementProtocolIdentity,
-		TrialID:                       trial.TrialID,
-		EstimatorIdentity:             estimatorIdentity,
-		BaselineMeanWallWattsVariance: baseline.MeanWallWattsVariance,
-		BaselineDegreesOfFreedom:      baseline.DegreesOfFreedom,
-		BaselineConfidenceLevel:       baseline.ConfidenceLevel,
-		ActiveWindowWallJoulesPerItem: activeWindowWallJoulesPerItem,
-		IdleBaselineSecondsPerItem:    idleBaselineSecondsPerItem,
-		Batch:                         trial.Batch,
-		IncrementalWorkJoulesPerItem:  incrementalWorkWallJoules / completedItems,
-		LatencyP99Milliseconds:        percentile(trial.LatencyMilliseconds, 0.99),
-		ClientLatencyMilliseconds:     append([]float64(nil), trial.LatencyMilliseconds...),
-		NativeSamples:                 cloneNativeSamples(trial.NativeSamples),
+		StateIdentity:                  trial.StateIdentity,
+		EnvironmentIdentity:            trial.EnvironmentIdentity,
+		MeasurementProtocolIdentity:    trial.MeasurementProtocolIdentity,
+		TrialID:                        trial.TrialID,
+		EstimatorIdentity:              estimatorIdentity,
+		BaselineMeanWallWattsVariance:  baseline.MeanWallWattsVariance,
+		BaselineDegreesOfFreedom:       baseline.DegreesOfFreedom,
+		BaselineConfidenceLevel:        baseline.ConfidenceLevel,
+		ActiveWindowWallJoulesPerItem:  activeWindowWallJoulesPerItem,
+		IdleBaselineSecondsPerItem:     idleBaselineSecondsPerItem,
+		Batch:                          trial.Batch,
+		IncrementalWorkJoulesPerItem:   incrementalWorkWallJoules / completedItems,
+		LatencyP99Milliseconds:         percentile(trial.LatencyMilliseconds, 0.99),
+		ClientLatencyMilliseconds:      append([]float64(nil), trial.LatencyMilliseconds...),
+		NativeSamples:                  cloneNativeSamples(trial.NativeSamples),
+		PhasePower:                     phasePower,
+		DispatchOccupancyNanosPerInput: dispatchOccupancy,
 	}, nil
 }
 

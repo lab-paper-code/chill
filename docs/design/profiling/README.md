@@ -54,9 +54,9 @@ Retired Plan 5 experiments remain conclusions, not current APIs: 12 retained idl
 | [WorkloadObserver](components/workload-observer.md) | Bounded Pod-membership/environment/concurrent-measurement observations — active |
 | [Runtime execution](foundations/runtime-execution/README.md) | Consolidated compatibility/execution/provenance conclusions — active |
 
-Profiling uses firstfloor with dataset `profiling` raw records and preprocessor artifacts, not a serving-entrypoint measurement command; [input contract](../serving/heterogeneous-workloads.md). Frozen RunConfig v1alpha20 binds actual model/preprocessor/dataset, batches/provider, with no CPU allocation or thread overrides; native request v1alpha2, active result v1alpha10, loaded-idle v1alpha7. Runtime-default session thread settings and actual cgroup quota/cpuset/affinity/usage/throttling remain observed evidence. Curve-plan v1alpha12 excludes CPU allocation matching. RKNN declares tensor name/FP32 datatype/batch-free NHWC shape, queries `librknnrt` metadata before measurement, and fails unsupported/unavailable metadata even for idle. Sampling uses fixed-seed `random.Random` outside timing; warmup uses module `WARMUP_SAMPLE`, measured preprocessing failure fails the trial.
+Profiling uses firstfloor's serving `/infer` path with dataset `profiling` raw records and preprocessor artifacts; [input contract](../serving/heterogeneous-workloads.md). Frozen RunConfig v1alpha21 binds actual model/preprocessor/dataset, batches/provider and operating-point inputs, with no CPU allocation or thread overrides. Native request v1alpha2 remains; active runtime and raw are v1alpha11, loaded-idle runtime v1alpha7. An off-node load Job executes sparse, measured-K saturation and Poisson utilization phases. [Measurement Worker](components/measurement-worker.md#active-raw-v1alpha11-field-contract) owns the exact phase/request/batch/power schema. Runtime-default session thread settings and actual cgroup quota/cpuset/affinity/usage/throttling remain observed evidence. RKNN retains its tensor/host metadata checks and fixed artifact batch.
 
-Evidence v1alpha17 binds actual execution/transition facts; active raw v1alpha10 and idle raw v1alpha8 retain runtime observations rather than CPU allocation requirements. This is one stored-contract cutover after dependent campaigns finish; old controlled records/publications are not rewritten or automatically reused. Permanent contradiction is `EvidenceInvalid`. Verified reference completes a Run independently of Job existence. Successful Jobs receive Background deletion only after final evidence/reference + frozen non-secret store binding + `jobCleanup: Pending` are recorded; deletion records `Done`. Failed Jobs receive post-outcome diagnostic TTL via `profiler.failedJobRetentionSeconds` / `--failed-job-retention-seconds` (default **86400**, inclusive **1..604800**). Transition attempts follow immutable-finalization eligibility; restart retries cleanup, but markerless old terminal objects are never swept or given a new TTL. Evidence itself is not automatically garbage-collected; old Runs without binding recover from their recorded owned Job.
+Evidence v1alpha17 binds actual execution/transition facts; active raw v1alpha11 and idle raw v1alpha8 retain runtime observations rather than CPU allocation requirements. This is one stored-contract cutover: old active evidence/profile objects are archived and deleted operationally, with no old-shape reader. Permanent contradiction is `EvidenceInvalid`. Verified references complete Runs independently of Job existence. Successful measurement and off-node load Jobs use their recorded Run ownership and cleanup lifecycle; failed Jobs retain the configured diagnostic TTL. Evidence is not automatically garbage-collected.
 
 Parent controllers share the `ProfilingRunStatus` terminal-failure interpreter for
 execution/evidence interpretation. Verified evidence takes precedence; pending
@@ -125,20 +125,20 @@ STOP; malformed observations, wrong targets and uncovered runtime windows still 
 Before a CurvePlan or RunConfig is recorded, the shared preparer freezes runtime memory at `min(executionPolicyDefaults.runtimeMemoryLimitBytes, floor(Node.status.allocatable.memory × profiler.measurementMemoryFraction))` in `Actor.MemoryLimitBytes`, with the selected runtime request in `Actor.MemoryRequestBytes`. The Node UID must match the resolved Run. The chart defaults remain fraction **0.8**, **16 GiB** upper limit and **128 MiB** request. Query preflight receives the same execution-policy key and memory fraction. Actual serving Pods and measurement Jobs both call `firstfloor.RuntimeContainer` with that frozen Config for image, CPU/memory/accelerator resources, performance environment and artifact/preprocessor mounts; launching does not reselect memory or image. Copy-init containers share its memory envelope; metric/workload observers retain their separate configured limits. File-copy page cache belongs to the init cgroup, not the metric observer. Serving therefore uses the measured pressure envelope rather than substituting peak-observed bytes plus overhead. Near-limit reclaim is not claimed to be measurement-neutral; an OOM fails the existing Job rather than publishing a measurement.
 
 First measurement is profile-independent: valid public BEO and standalone inputs
-need no retained profile, EvaluationRun, EvaluationStage or LoadScenario. The
-existing `empirical-cadence-fixed-batch` mode adds no wait; actual monotonic
-preceding-idle/service pairs and physical TrialID are retained, with null startup
-idle. No timing field, donor draw, synthetic gap or client cadence is introduced.
-The pinned Workload and its SLO still determine the known-gap sample minimum;
-elapsed time and sample count must both complete, across all K and three trials.
-Public ProfilingRun specs carry no frozen Workload UID/SLO/N body.
-An owner reference is only a lookup hint, never authorization. The executable
-resolver reads that root from the API, checks actual admission and the existing
-Node grant, and loads its strict immutable CurvePlan. Only a canonical child
-whose logical K belongs to that plan derives the plan's frozen measurement body.
-Standalone admission uses that same resolver boundary; a fake owner, absent or
-unadmitted root, missing plan or unplanned K cannot create a Job. The existing
-idle-baseline root is authenticated through its actual immutable idle protocol.
+need no retained profile, EvaluationRun, EvaluationStage or LoadScenario.
+Profiling native uses fixed-batch `/infer` without service distributions.
+Sparse no-backlog samples determine saturation K in the same Run; saturation
+determines utilization arrival rates. Every phase keeps actual native service/
+preceding-idle pairs and reaches both its duration and known-gap sample floor.
+Only utilization phases enter incremental energy; all phases enter service
+distributions. Per-phase whole-node power and saturation dispatch residuals remain
+evidence. Loaded-idle retains the existing settle, empty-queue, zero-inference
+and resident-state protocol. See the worker contract for the immutable inputs.
+
+Public ProfilingRun specs carry no frozen Workload UID/SLO/N body. Owner
+references remain lookup hints; the executable resolver authenticates the root,
+Node grant and immutable CurvePlan. No fake owner, unadmitted root or unplanned
+batch may create a Job. The idle-baseline root retains its own protocol.
 
 An already-owned Job is the authenticated immutable executable-record recovery
 boundary. Restart recovery trusts that recorded RunConfig/Job identity; it is

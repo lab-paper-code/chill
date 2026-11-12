@@ -15,12 +15,19 @@ spec:
   activeProtocol:
     workload: mobilenet
     warmupIterations: 20
-    durationSeconds: 30
+    durationSeconds: 150
     dataset: vqav2-val-subset
+    operatingPoints:
+      utilizations: [0.25, 0.5, 0.75]
+      sparseMeanGapMilliseconds: 1000
+      phaseDurationSeconds: 30
+      requestLifetimeSeconds: 30
+      deliveryMarginMilliseconds: 100
+      framedDecodedRequestUpperBytes: 2097152
     metricObservation:
       intervalMilliseconds: 1000
       timeoutMilliseconds: 500
-      durationSeconds: 31
+      durationSeconds: 151
   idleProtocol:
     settlingDurationSeconds: 60
     durationSeconds: 30

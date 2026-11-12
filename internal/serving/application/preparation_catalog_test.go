@@ -439,6 +439,8 @@ func preparationCatalogEvidence(t *testing.T, identity ...string) (map[string]an
 	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32, DeadlinePolicy: "keep"}
 	active.Measurement.DurationToleranceSeconds = .5
 	idle := active
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
+	idle.Metrics.DurationSeconds = 31
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, DurationToleranceSeconds: .5,
 		StartupWarmupIterations: active.Measurement.StartupWarmupIterations, WarmupBatchSizes: active.Measurement.WarmupBatchSizes,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode}
@@ -470,8 +472,9 @@ func preparationCatalogEvidence(t *testing.T, identity ...string) (map[string]an
 		Spec: edge.BatchEnergyOptimizationSpec{
 			State: edge.MeasurementStateSpec{Candidate: edge.ProfilingRunCandidateSpec{ModelSpec: active.Candidate.Inputs.ModelSpec.Name,
 				Preprocessor: active.State.Preprocessor.Name, DeviceClass: active.State.DeviceClass, ExecutionPath: active.Candidate.ExecutionPath, PowerMode: active.State.PowerMode}, TargetNode: active.TargetNode.Name},
-			ActiveProtocol: edge.ActiveProtocolSpec{WarmupIterations: int32(active.Measurement.WarmupIterations), DurationSeconds: 30, Dataset: active.Measurement.Dataset.Name,
-				MetricObservation: edge.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31}},
+			ActiveProtocol: edge.ActiveProtocolSpec{WarmupIterations: int32(active.Measurement.WarmupIterations), DurationSeconds: int32(active.Measurement.DurationSeconds), Dataset: active.Measurement.Dataset.Name,
+				OperatingPoints:   fixtures.OperatingPoints[edge.MeasurementOperatingPointsSpec](active.Measurement.OperatingPoints),
+				MetricObservation: edge.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: int32(active.Metrics.DurationSeconds)}},
 			IdleProtocol: edge.IdleProtocolSpec{SettlingDurationSeconds: 60, DurationSeconds: 30,
 				MetricObservation: edge.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31}},
 			TrialsPerBatch: 2,
@@ -495,21 +498,29 @@ func preparationCatalogEvidence(t *testing.T, identity ...string) (map[string]an
 		}
 		name := fmt.Sprintf("trial-%d%s", index, suffix)
 		raw, idleRaw, execution := preparationTrialRecords(config, name+"-pod", watts)
-		var rawRef campaign.StoredObjectReference
+		var rawBytes []byte
+		rawSchema := profilerevidence.RawMeasurementSchemaVersion
 		if mode == campaign.WorkloadModeIdle {
-			rawRef = put(name+"-raw", profilerevidence.IdleRawMeasurementSchemaVersion, idleRaw)
+			rawBytes, err = idleRaw.CanonicalJSON()
+			rawSchema = profilerevidence.IdleRawMeasurementSchemaVersion
 		} else {
-			rawRef = put(name+"-raw", profilerevidence.RawMeasurementSchemaVersion, raw)
+			rawBytes, err = raw.CanonicalJSON()
 		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		rawRef := put(name+"-raw", rawSchema, json.RawMessage(rawBytes))
 		execution.RawMeasurement = evidencestore.ObjectIdentity{Store: rawRef.Store, Key: rawRef.Key, Size: rawRef.Size}
 		executionRef := put(name+"-execution", profilerevidence.ExecutionEvidenceSchemaVersion, execution)
-		runMeasurement := edge.ProfilingRunMeasurementSpec{Batch: 1, WarmupIterations: int32(config.Measurement.WarmupIterations), DurationSeconds: 30,
+		runMeasurement := edge.ProfilingRunMeasurementSpec{Batch: 1, WarmupIterations: int32(config.Measurement.WarmupIterations), DurationSeconds: int32(config.Measurement.DurationSeconds),
 			WorkloadMode: config.Measurement.WorkloadMode, StartupWarmupIterations: int32(config.Measurement.StartupWarmupIterations), Workload: config.Measurement.WorkloadName}
 		for _, batch := range config.Measurement.WarmupBatchSizes {
 			runMeasurement.WarmupBatchSizes = append(runMeasurement.WarmupBatchSizes, int32(batch))
 		}
 		if config.Measurement.Dataset != nil {
 			runMeasurement.Dataset = config.Measurement.Dataset.Name
+			points := fixtures.OperatingPoints[edge.MeasurementOperatingPointsSpec](config.Measurement.OperatingPoints)
+			runMeasurement.OperatingPoints = &points
 		}
 		if mode == campaign.WorkloadModeIdle {
 			settling := int32(config.Measurement.SettlingDurationSeconds)
@@ -526,6 +537,9 @@ func preparationCatalogEvidence(t *testing.T, identity ...string) (map[string]an
 				ObservedExecution: &edge.ProfilingRunObservedExecutionStatus{Pod: edge.ProfilingRunObjectReference{Name: execution.Terminal.Pod.Name, UID: execution.Terminal.Pod.UID},
 					Node: edge.ProfilingRunObjectReference{Name: config.TargetNode.Name, UID: config.TargetNode.UID}},
 				Evidence: &edge.ProfilingRunEvidenceReference{Store: executionRef.Store, Key: executionRef.Key, Size: executionRef.Size, SchemaVersion: executionRef.SchemaVersion}},
+		}
+		if mode == campaign.WorkloadModeIdle {
+			run.Spec.MetricObservation = measurement.Spec.IdleProtocol.MetricObservation
 		}
 		resources[base+"/namespaces/serving/profilingruns/"+name] = run
 		completed = append(completed, campaign.CompletedTrialReference{Run: campaign.RunReference{Namespace: run.Namespace, Name: run.Name, UID: string(run.UID)},
@@ -551,7 +565,12 @@ func preparationCatalogEvidence(t *testing.T, identity ...string) (map[string]an
 
 func preparationTrialRecords(config profilingrun.RunConfig, podUID string, watts float64) (profilerevidence.RawMeasurement, profilerevidence.IdleRawMeasurement, profilerevidence.ExecutionEvidence) {
 	start := time.Date(2026, 8, 11, 1, 2, 3, 0, time.UTC)
-	end, completed := start.Add(30*time.Second), start.Add(time.Minute)
+	windowSeconds := 30
+	if points := config.Measurement.OperatingPoints; points != nil {
+		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+	}
+	end := start.Add(time.Duration(windowSeconds) * time.Second)
+	completed := end.Add(30 * time.Second)
 	targetDuration := float64(config.Measurement.DurationSeconds)
 	cpu := profilingrun.RuntimeCPU{CgroupCPUMax: "200000 100000", ORTIntraOpThreads: 2, ORTInterOpThreads: 1, AffinityCPUCount: 2, AffinityCPUs: []int{0, 1}, CPUSetEffective: "0-3"}
 	provider := "CPUExecutionProvider"
@@ -564,7 +583,11 @@ func preparationTrialRecords(config profilingrun.RunConfig, podUID string, watts
 			CPUCoreThrottleEvents: thermal.CPUCoreThrottleEvents, CPUPackageThrottleEvents: thermal.CPUPackageThrottleEvents, Latched: thermal.Latched,
 			MaximumTemperatureCelsius: thermal.MaximumTemperatureCelsius}},
 		StartedAt: start, EndedAt: end.Add(time.Second), Samples: []metricobserver.Sample{{ObservedAt: start, Watts: watts}, {ObservedAt: end, Watts: watts}},
-		Failures: []metricobserver.Failure{}, Summary: metricobserver.Summary{Attempts: 2, SuccessfulSamples: 2, ObservationDurationSeconds: 31, MaximumSampleGapSeconds: 30, SourceTimestampAbsent: true}}
+		Failures: []metricobserver.Failure{}, Summary: metricobserver.Summary{Attempts: windowSeconds, SuccessfulSamples: windowSeconds, ObservationDurationSeconds: float64(windowSeconds + 1), MaximumSampleGapSeconds: 1, SourceTimestampAbsent: true}}
+	metrics.Samples = make([]metricobserver.Sample, windowSeconds)
+	for index := range metrics.Samples {
+		metrics.Samples[index] = metricobserver.Sample{ObservedAt: start.Add(time.Duration(index)*time.Second + 500*time.Millisecond), Watts: watts}
+	}
 	workload := &workloadobserver.Result{SchemaVersion: workloadobserver.ResultSchemaVersion,
 		Target:            workloadobserver.TargetIdentity{NodeName: config.TargetNode.Name, NodeUID: config.TargetNode.UID},
 		Run:               workloadobserver.RunIdentity{Namespace: pod.Namespace, JobUID: "job-" + podUID, PodName: pod.Name, PodUID: podUID},
@@ -576,8 +599,7 @@ func preparationTrialRecords(config profilingrun.RunConfig, podUID string, watts
 			Backend: config.State.Backend, Provider: provider, AvailableProviders: []string{provider}, Inputs: config.State.Preprocessor.Inputs,
 			BatchSize: 1, WarmupIterations: config.Measurement.WarmupIterations, WarmupCompletedAt: start.Add(-time.Second).Format(time.RFC3339Nano), InferenceCount: 60,
 			MeasurementMode: "duration", MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: end.Format(time.RFC3339Nano), MeasurementElapsedSeconds: 30,
-			TargetDurationSeconds: &targetDuration, MemoryBytes: 4096, CPUContract: cpu, DerivedContract: derived,
-			RepetitionResults: []profilingrun.Repetition{{Repetition: 1, MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: end.Format(time.RFC3339Nano), LatencyMilliseconds: make([]float64, 60)}}}}
+			TargetDurationSeconds: &targetDuration, MemoryBytes: 4096, CPUContract: cpu, DerivedContract: derived}}
 	modelFiles := []string{"/model/" + filepath.Base(config.State.ArtifactFiles[0])}
 	metadata := profilingrun.FirstfloorRuntimeEvidence{Mode: "profiling", DeadlinePolicy: native.DeadlineKeep, ModelInstanceCount: 1, MaxBatchSize: 1, MaxQueueSize: 32,
 		Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.16.0", ModelFiles: modelFiles, Inputs: config.State.Preprocessor.Inputs, Outputs: config.State.Preprocessor.Outputs,
@@ -585,16 +607,15 @@ func preparationTrialRecords(config profilingrun.RunConfig, podUID string, watts
 			CgroupCPUMax: "200000 100000", CPUSet: "0-3", WarmupIterations: config.Actor.WarmupIterations}}
 	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
 		active := metadata
-		active.ExecutionCount, active.InferenceCount, active.BatchExecutionCounts = 60, 60, map[string]uint64{"1": 60}
+		points := config.Measurement.OperatingPoints
+		workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap, points.FramedDecodedRequestUpperBytes,
+			float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds), .0005)
+		fixtures.ApplyActivePhases(&raw.Runtime, fixtures.PhaseOptions{StartedAt: start, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
+			Batch: config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers, Utilizations: points.Utilizations,
+			SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds, PodUID: podUID, Latencies: []float64{1}, ServiceNanos: []int64{500000}, SupplySizing: sizing})
+		count := uint64(raw.Runtime.InferenceCount)
+		active.ExecutionCount, active.InferenceCount, active.BatchExecutionCounts = count, count*uint64(config.Measurement.Batch), map[string]uint64{"1": count}
 		raw.Runtime.Firstfloor, raw.Runtime.MemorySource = &active, "cgroup-v2-memory.peak:runtime-container-lifetime"
-		repetition := &raw.Runtime.RepetitionResults[0]
-		for index := range 60 {
-			repetition.LatencyMilliseconds[index] = 1
-			repetition.NativeSamples = append(repetition.NativeSamples, profilingrun.NativeServiceSample{
-				BatchID: uint64(index + 1), BatchSize: 1, RecordIDs: []string{fmt.Sprintf("r%d", index+1)}, Units: []int{1},
-				RunnerServiceMilliseconds: .5, BackendCallMilliseconds: .25, NativeRequestMilliseconds: .75,
-				ServiceSample: fixtures.ServiceSample(podUID, uint64(index), 500000)})
-		}
 	}
 	idle := profilerevidence.IdleRawMeasurement{SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion, RunConfig: config, PodUID: podUID, Metrics: metrics, Workload: workload,
 		Runtime: profilingrun.IdleRuntimeResult{SchemaVersion: profilingrun.IdleRuntimeResultSchemaVersion, Status: "Succeeded", PodUID: podUID, NodeName: config.TargetNode.Name,

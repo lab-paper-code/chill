@@ -18,8 +18,8 @@ for r in runs:
     n = r['metadata']['name']
     if not n.startswith(beo + '-active-b1-') or not (r.get('status') or {}).get('evidence'): continue
     raw = s3(s3(r['status']['evidence']['key'])['rawMeasurement']['key'])
-    for rep in raw['runtime']['repetitionResults']:
-        lat += rep['latencyMs']
+    for phase in raw['runtime']['phases']:
+        lat += phase['latencyMs']
 if not lat: print(f'  {beo} b1: no verified samples'); sys.exit()
 lat.sort(); q = lambda p: lat[min(len(lat) - 1, int(p * len(lat)))]
 print(f'  {beo} b1 generation s: n={len(lat)} mean={st.mean(lat)/1e3:.2f} p95={q(.95)/1e3:.2f} p99={q(.99)/1e3:.2f} max={lat[-1]/1e3:.2f}')

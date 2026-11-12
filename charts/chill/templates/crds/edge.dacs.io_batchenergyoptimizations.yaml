@@ -99,6 +99,47 @@ spec:
                     x-kubernetes-validations:
                     - message: timeoutMilliseconds must be less than intervalMilliseconds
                       rule: self.timeoutMilliseconds < self.intervalMilliseconds
+                  operatingPoints:
+                    description: MeasurementOperatingPointsSpec selects reproducible
+                      off-node native load.
+                    properties:
+                      deliveryMarginMilliseconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      framedDecodedRequestUpperBytes:
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      phaseDurationSeconds:
+                        format: int32
+                        minimum: 30
+                        type: integer
+                      requestLifetimeSeconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      sparseMeanGapMilliseconds:
+                        exclusiveMinimum: true
+                        minimum: 0
+                        type: number
+                      utilizations:
+                        items:
+                          exclusiveMaximum: true
+                          exclusiveMinimum: true
+                          maximum: 1
+                          minimum: 0
+                          type: number
+                        minItems: 1
+                        type: array
+                    required:
+                    - deliveryMarginMilliseconds
+                    - framedDecodedRequestUpperBytes
+                    - phaseDurationSeconds
+                    - requestLifetimeSeconds
+                    - sparseMeanGapMilliseconds
+                    - utilizations
+                    type: object
                   warmupIterations:
                     format: int32
                     minimum: 0
@@ -112,6 +153,7 @@ spec:
                 - dataset
                 - durationSeconds
                 - metricObservation
+                - operatingPoints
                 - warmupIterations
                 - workload
                 type: object

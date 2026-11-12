@@ -21,18 +21,10 @@ def validate(request: dict[str, object]) -> None:
 class FakeSession:
     def __init__(self) -> None:
         self.calls: list[str] = []
-        self.executions = 0
 
     def get_providers(self) -> list[str]:
         return ["CPUExecutionProvider"]
 
-    def prepare_next(self) -> None:
-        self.calls.append("prepare")
-
-    def run(self) -> dict[str, object]:
-        self.calls.append("run")
-        self.executions += 1
-        return {"precedingIdleNanos": None if self.executions == 1 else 0}
 
 
 def valid_request(model_path: Path) -> dict[str, object]:
@@ -42,7 +34,6 @@ def valid_request(model_path: Path) -> dict[str, object]:
         "scheduledNodeName": "lattepanda",
         "modelDirectory": "/model",
         "preprocessorPath": "/preprocessor",
-        "datasetPath": "/dataset",
         "observerReadyPaths": [
             str(model_path.parent / "observer-ready"),
             str(model_path.parent / "workload-observer-ready"),
@@ -57,6 +48,8 @@ def valid_request(model_path: Path) -> dict[str, object]:
         "maxResultBytes": 8 << 20,
         "runConfig": {
             "schemaVersion": runner.RUN_CONFIG_SCHEMA,
+            "loadOriginNode": "gateway-node",
+            "loadOriginGatewayPod": {"namespace": "chill-system", "name": "gateway", "uid": "gateway-uid"},
             "candidate": {},
             "state": {
                 "deviceClass": "lattepanda-3-delta-8g",
@@ -100,7 +93,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "batch": 1,
                 "warmupIterations": 2,
                 "startupWarmupIterations": 2,
-                "durationSeconds": 30,
+                "durationSeconds": 90,
                 "sloPercentile": 95,
                 "minServiceSamples": 59,
                 "sloTargetLatencyNanos": 1_000_000_000,
@@ -109,6 +102,10 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "workloadResourceVersion": "1",
                 "durationToleranceSeconds": 0.5,
                 "workloadMode": runner.SUPPORTED_WORKLOAD,
+                "operatingPoints": {"utilizations": [.5], "sparseMeanGapMilliseconds": 1000,
+                                    "phaseDurationSeconds": 30, "requestLifetimeSeconds": 60,
+                                    "deliveryMarginMilliseconds": 10, "framedDecodedRequestUpperBytes": 1024,
+                                    "queueBytesCap": 1 << 20},
                 "dataset": {
                     "name": "vqav2",
                     "uid": "dataset-uid",
@@ -124,7 +121,8 @@ def valid_request(model_path: Path) -> dict[str, object]:
 
 def valid_idle_request(model_path: Path) -> dict[str, object]:
     request = valid_request(model_path)
-    del request["datasetPath"]
+    request["runConfig"].pop("loadOriginNode")
+    request["runConfig"].pop("loadOriginGatewayPod")
     request["runConfig"]["measurement"] = {
         "batch": 1,
         "warmupIterations": 0,
@@ -140,7 +138,7 @@ class RunnerTest(unittest.TestCase):
     def test_equivalent_absolute_paths_reach_coordination_io(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             request = valid_request(Path(directory) / "model.onnx")
-            for field in ("modelDirectory", "preprocessorPath", "datasetPath",
+            for field in ("modelDirectory", "preprocessorPath",
                           "workloadWindowStartPath", "measurementStartPath",
                           "workloadWindowReadyPath", "measurementEndPath"):
                 request[field] = "/." + request[field]
@@ -178,34 +176,15 @@ class RunnerTest(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(runner.ContractError):
                 validate(bad)
 
-    def test_real_loop_requires_time_and_samples_in_every_restarted_trial(self) -> None:
-        for seconds_per_call, expected_calls in ((0.25, 120), (2.0, 60)):
-            for batch in (1, 2, 4):
-                for trial in range(3):
-                    clock = [0.0]
-                    session = FakeSession()
-                    request = valid_request(Path("/model"))
-                    request["runConfig"]["measurement"]["batch"] = batch
-                    def complete_call():
-                        session.calls.append("run")
-                        clock[0] += seconds_per_call
-                        session.executions += 1
-                        return {"precedingIdleNanos": None if session.executions == 1 else 0}
-                    session.run = complete_call
-                    with ExitStack() as stack:
-                        stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
-                        stack.enter_context(mock.patch.object(runner, "publish_immutable"))
-                        stack.enter_context(mock.patch.object(runner, "cpu_stat", return_value={}))
-                        stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=lambda: clock[0]))
-                        stack.enter_context(mock.patch.object(runner.time, "perf_counter_ns", side_effect=lambda: int(clock[0] * 1e9)))
-                        result = runner.execute_loaded(
-                            request, session, "test-ort", ["CPUExecutionProvider"], "x86_64",
-                            "max 100000", [0], "0", lambda: None, "CPUExecutionProvider")
-                    with self.subTest(seconds_per_call=seconds_per_call, batch=batch, trial=trial):
-                        self.assertEqual(result["inferenceCount"], expected_calls)
-                        self.assertGreaterEqual(result["inferenceCount"] - 1, 59)
-                        self.assertGreaterEqual(result["measurementElapsedSecondsMonotonic"], 30)
-                        self.assertEqual(len(result["repetitionResults"][0]["latencyMs"]), expected_calls)
+
+    def test_operating_points_are_frozen_and_never_accept_a_guessed_service_bound(self) -> None:
+        for changes in ({"utilizations": []}, {"utilizations": [0]}, {"utilizations": [1]},
+                        {"sparseMeanGapMilliseconds": 0}, {"phaseDurationSeconds": 29},
+                        {"requestLifetimeSeconds": True}, {"maxBatchServiceSeconds": 1}):
+            request = valid_request(Path("/model"))
+            request["runConfig"]["measurement"]["operatingPoints"].update(changes)
+            with self.subTest(changes=changes), self.assertRaises(runner.ContractError):
+                validate(request)
 
     def test_active_reader_accepts_no_pacing_and_rejects_old_schema_and_donor_fields(self) -> None:
         valid = valid_request(Path("/model"))
@@ -223,7 +202,7 @@ class RunnerTest(unittest.TestCase):
     def test_raw_sample_contract_fields_are_required_by_mode(self) -> None:
         validate(valid_idle_request(Path("/model")))
         for mutate, message in [
-            (lambda r: r.pop("datasetPath"), "missing=\\['datasetPath'\\]"),
+            (lambda r: r.update(datasetPath="/dataset"), "unknown=\\['datasetPath'\\]"),
             (lambda r: r.update(modelPath="/model/model.onnx"), "unknown=\\['modelPath'\\]"),
             (lambda r: r["runConfig"]["measurement"].pop("dataset"), "missing=\\['dataset'\\]"),
             (lambda r: r["runConfig"]["measurement"].update(inputGenerator="none"), "inputGenerator"),
@@ -389,10 +368,7 @@ class RunnerTest(unittest.TestCase):
             ):
                 validate(idle)
 
-    def test_producer_budgets_fail_before_growth(self) -> None:
-        with self.assertRaisesRegex(runner.ContractError, "latency sample budget"):
-            runner.measurement_complete(0.5, 1, 10, 10, 10, 9)
-        self.assertTrue(runner.measurement_complete(1.0, 1, 10, 10, 10, 10))
+    def test_result_budget_fails_before_publication(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "runtime result exceeds"):
             runner.encode_result({"samples": [1, 2, 3]}, 1)
 
@@ -466,65 +442,6 @@ class RunnerTest(unittest.TestCase):
                 runner.publish_immutable(result, b"second")
             self.assertEqual(result.read_bytes(), b"first")
 
-    def test_execute_loaded_produces_bound_runtime_result(self) -> None:
-        request = valid_request(Path("/model/model.onnx"))
-        session = FakeSession()
-        before = mock.Mock()
-        with ExitStack() as stack:
-            wait = stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
-            publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
-            stack.enter_context(
-                mock.patch.object(runner, "cpu_stat", side_effect=[{"usage_usec": 10}, {"usage_usec": 30}])
-            )
-            stack.enter_context(
-                mock.patch.object(
-                    runner,
-                    "now",
-                    side_effect=[
-                        "2026-07-16T00:00:00.100000Z",
-                        "2026-07-16T00:00:01.200000Z",
-                        "2026-07-16T00:00:01.300000Z",
-                        "2026-07-16T00:00:01.400000Z",
-                    ],
-                )
-            )
-            stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0] + [30.1] * 61))
-            ticks = iter(value for index in range(60) for value in (index * 10_000_000, index * 10_000_000 + 5_000_000))
-            stack.enter_context(mock.patch.object(
-                runner.time, "perf_counter_ns", side_effect=lambda: session.calls.append("timer") or next(ticks)
-            ))
-            stack.enter_context(mock.patch.object(runner.time, "process_time", side_effect=[2.0, 2.8]))
-            result = runner.execute_loaded(
-                request, session, "test-ort", ["CPUExecutionProvider"], "x86_64",
-                "400000 100000", [0, 1, 2, 3], "0-3", before, "CPUExecutionProvider",
-            )
-
-        before.assert_called_once_with()
-        self.assertEqual(
-            publish.call_args_list,
-            [
-                mock.call(Path(request["workloadWindowStartPath"]), b"signal\n"),
-                mock.call(Path(request["measurementStartPath"]), b"signal\n"),
-                mock.call(Path(request["measurementEndPath"]), b"signal\n"),
-            ],
-        )
-        self.assertEqual(
-            wait.call_args_list,
-            [mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]]
-            + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)],
-        )
-        self.assertEqual(session.calls, ["prepare", "timer", "run", "timer"] * 60)
-        self.assertEqual(result["schemaVersion"], runner.RESULT_SCHEMA)
-        self.assertEqual(result["inputs"], ["image"])
-        self.assertNotIn("outputValidation", result)
-        self.assertEqual(result["status"], "Succeeded")
-        self.assertEqual(result["experimentId"], "pod-uid")
-        self.assertEqual(result["nodeName"], request["scheduledNodeName"])
-        self.assertEqual(result["provider"], "CPUExecutionProvider")
-        self.assertEqual(result["inferenceCount"], 60)
-        self.assertEqual(result["latencyMs"]["mean"], 5.0)
-        self.assertEqual(result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 20})
-        self.assertEqual(result["derivedExecutionContract"]["nodeSnapshot"]["uid"], "node-uid")
 
     def test_execute_idle_issues_no_inference(self) -> None:
         request = valid_idle_request(Path("/model/model.onnx"))

@@ -19,6 +19,7 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -551,13 +552,19 @@ func preflightPlan(t *testing.T) profilederivation.CurvePlan {
 }
 
 func preflightProtocol(mode string) profilederivation.CurveProtocolContract {
-	return profilederivation.CurveProtocolContract{
+	protocol := profilederivation.CurveProtocolContract{
 		WorkloadMode:    mode,
 		DurationSeconds: 30, MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900,
 		MetricDurationSeconds: 31, MetricObserverImage: "registry.example/chill/metric-observer:v1",
 		WorkloadObserverImage: "registry.example/chill/workload-observer:v1",
 		WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
 	}
+	if mode == "empirical-cadence-fixed-batch" {
+		protocol.DurationSeconds, protocol.MetricDurationSeconds = 90, 91
+		protocol.OperatingPoints = &profilederivation.OperatingPointsContract{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
+			PhaseDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768}
+	}
+	return protocol
 }
 
 func passportSnapshot() queryapi.EvidencePassportSnapshot {
@@ -588,7 +595,7 @@ func passportSnapshot() queryapi.EvidencePassportSnapshot {
 	execution.RawMeasurement.Store = "chill-evidence"
 	execution.RawMeasurement.Key = "raw.json"
 	execution.RawMeasurement.Size = 512
-	return queryapi.EvidencePassportSnapshot{
+	snapshot := queryapi.EvidencePassportSnapshot{
 		ReadAt: started.Add(2 * time.Minute), Run: run, Execution: execution,
 		Measurement: profilerevidence.RawMeasurement{
 			Runtime: profilingrun.RuntimeResult{
@@ -598,7 +605,6 @@ func passportSnapshot() queryapi.EvidencePassportSnapshot {
 				MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 				MeasurementElapsedSeconds: 30, InferenceCount: 2,
 				ThroughputItemsPerSecond: 100,
-				RepetitionResults:        []profilingrun.Repetition{{LatencyMilliseconds: []float64{1, 2}}},
 			},
 			Metrics: metricobserver.Result{
 				Source: metricobserver.SourceIdentity{
@@ -611,6 +617,11 @@ func passportSnapshot() queryapi.EvidencePassportSnapshot {
 			},
 		},
 	}
+	workers, sizing := fixtures.PhaseSupply(1, 32, 32768, 1024, 30, 100)
+	fixtures.ApplyActivePhases(&snapshot.Measurement.Runtime, fixtures.PhaseOptions{StartedAt: started, Duration: 30 * time.Second,
+		Batch: 1, Samples: 2, Workers: workers, Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
+		PodUID: "pod-uid", Latencies: []float64{1, 2}, SupplySizing: sizing})
+	return snapshot
 }
 
 func campaignResultSnapshot(t *testing.T) queryapi.BatchEnergyOptimizationResultSnapshot {
@@ -623,7 +634,7 @@ func campaignResultSnapshot(t *testing.T) queryapi.BatchEnergyOptimizationResult
 		},
 		CurvePlan: batchenergyoptimization.StoredObjectReference{
 			Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha7", Size: 2459,
+			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha13", Size: 2459,
 		},
 		CompletedTrials: []batchenergyoptimization.CompletedTrialReference{{
 			Run: batchenergyoptimization.RunReference{
@@ -634,7 +645,7 @@ func campaignResultSnapshot(t *testing.T) queryapi.BatchEnergyOptimizationResult
 			},
 			Evidence: batchenergyoptimization.StoredObjectReference{
 				Store: "chill-evidence-store", Key: "profiling-runs/run-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha14", Size: 23188,
+				SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, Size: 23188,
 			},
 		}},
 		Detail: json.RawMessage(`{"selectedBatch":1}`),

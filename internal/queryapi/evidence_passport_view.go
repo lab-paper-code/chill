@@ -165,7 +165,7 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 	}
 	latencies := make([]float64, 0, runtime.InferenceCount)
 	var samples []profilingrun.NativeServiceSample
-	for _, repetition := range runtime.RepetitionResults {
+	for _, repetition := range runtime.Phases {
 		latencies = append(latencies, repetition.LatencyMilliseconds...)
 		samples = append(samples, repetition.NativeSamples...)
 	}

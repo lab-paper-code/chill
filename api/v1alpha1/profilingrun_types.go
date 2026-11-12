@@ -86,6 +86,7 @@ type ProfilingRunCandidateSpec struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"
 // +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && !has(self.dataset) && !has(self.workload) : !has(self.settlingDurationSeconds) && has(self.dataset) && has(self.workload)",message="measurement fields must match the selected workloadMode"
 // +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' || self.durationSeconds >= 30",message="active measurement requires at least thirty seconds"
+// +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? !has(self.operatingPoints) : has(self.operatingPoints)",message="operatingPoints is required only for active measurement"
 type ProfilingRunMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	Batch int32 `json:"batch"`
@@ -133,6 +134,31 @@ type ProfilingRunMeasurementSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	StartupWarmupIterations int32 `json:"startupWarmupIterations,omitempty"`
+
+	// OperatingPoints is required for active measurement and absent for idle.
+	// +optional
+	OperatingPoints *MeasurementOperatingPointsSpec `json:"operatingPoints,omitempty"`
+}
+
+// MeasurementOperatingPointsSpec selects reproducible off-node native load.
+type MeasurementOperatingPointsSpec struct {
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:ExclusiveMinimum=true
+	// +kubebuilder:validation:items:Minimum=0
+	// +kubebuilder:validation:items:ExclusiveMaximum=true
+	// +kubebuilder:validation:items:Maximum=1
+	Utilizations []float64 `json:"utilizations"`
+	// +kubebuilder:validation:ExclusiveMinimum=true
+	// +kubebuilder:validation:Minimum=0
+	SparseMeanGapMilliseconds float64 `json:"sparseMeanGapMilliseconds"`
+	// +kubebuilder:validation:Minimum=30
+	PhaseDurationSeconds int32 `json:"phaseDurationSeconds"`
+	// +kubebuilder:validation:Minimum=1
+	RequestLifetimeSeconds int32 `json:"requestLifetimeSeconds"`
+	// +kubebuilder:validation:Minimum=1
+	DeliveryMarginMilliseconds int32 `json:"deliveryMarginMilliseconds"`
+	// +kubebuilder:validation:Minimum=1
+	FramedDecodedRequestUpperBytes int64 `json:"framedDecodedRequestUpperBytes"`
 }
 
 // ProfilingRunMetricObservationSpec contains policy only, never an endpoint.

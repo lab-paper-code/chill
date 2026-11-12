@@ -140,6 +140,47 @@ spec:
                       undershoot.
                     minimum: 0
                     type: number
+                  operatingPoints:
+                    description: OperatingPoints is required for active measurement
+                      and absent for idle.
+                    properties:
+                      deliveryMarginMilliseconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      framedDecodedRequestUpperBytes:
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      phaseDurationSeconds:
+                        format: int32
+                        minimum: 30
+                        type: integer
+                      requestLifetimeSeconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      sparseMeanGapMilliseconds:
+                        exclusiveMinimum: true
+                        minimum: 0
+                        type: number
+                      utilizations:
+                        items:
+                          exclusiveMaximum: true
+                          exclusiveMinimum: true
+                          maximum: 1
+                          minimum: 0
+                          type: number
+                        minItems: 1
+                        type: array
+                    required:
+                    - deliveryMarginMilliseconds
+                    - framedDecodedRequestUpperBytes
+                    - phaseDurationSeconds
+                    - requestLifetimeSeconds
+                    - sparseMeanGapMilliseconds
+                    - utilizations
+                    type: object
                   settlingDurationSeconds:
                     description: |-
                       SettlingDurationSeconds is required only for model-loaded idle. The
@@ -194,6 +235,9 @@ spec:
                 - message: active measurement requires at least thirty seconds
                   rule: self.workloadMode == 'idle-model-loaded' || self.durationSeconds
                     >= 30
+                - message: operatingPoints is required only for active measurement
+                  rule: 'self.workloadMode == ''idle-model-loaded'' ? !has(self.operatingPoints)
+                    : has(self.operatingPoints)'
               metricObservation:
                 description: MetricObservation fixes polling behavior. The source
                   is resolved from TargetNode.

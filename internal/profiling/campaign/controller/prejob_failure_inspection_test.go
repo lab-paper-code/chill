@@ -51,6 +51,8 @@ func (p *prejobPorts) Resolve(ctx context.Context, config profilingrun.RunConfig
 		return profiler.FrozenExecutionPolicy{}, p.err
 	}
 	policy, err := p.frozenWorkloadPreparationPorts.Resolve(ctx, config)
+	// This fixture's recorded plan and reselected policy describe the same queue.
+	policy.Policy.MaxInputBytes = p.config.Measurement.OperatingPoints.QueueBytesCap
 	policy.Policy.AttemptTimeoutOverheadSeconds = 1235
 	policy.Policy.ActiveDeadlineOverheadSeconds = 1265
 	policy.Policy.ObserverReadyTimeoutSeconds = 1160
@@ -98,6 +100,7 @@ func TestInspectPrejobFailureUsesActualFrozenChildPreparation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				preparer.ResolveLoadOrigin = ports.ResolveLoadOrigin
 				plans, err := NewCurvePlanSource(reader, ports, preparer, store, CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 64 << 20})
 				if err != nil {
 					t.Fatal(err)
@@ -117,11 +120,21 @@ func TestInspectPrejobFailureUsesActualFrozenChildPreparation(t *testing.T) {
 				for k, v := range store.objects {
 					storedBefore[k] = append([]byte(nil), v...)
 				}
+				expectEligible := defect == "" || defect == prejobActiveMissingKey || defect == prejobResultMissingKey
+				if expectEligible {
+					_, resolutionErr := resolver.Resolve(ctx, active)
+					var capacity *profiler.MetricCapacityError
+					reason, terminal := profiler.TerminalResolutionReason(resolutionErr)
+					if !terminal || reason != profiler.ResolutionReasonExecutionPolicyInvalid || !errors.As(resolutionErr, &capacity) {
+						t.Fatalf("active child did not reach metric capacity admission: reason=%s terminal=%t error=%T: %v",
+							reason, terminal, resolutionErr, resolutionErr)
+					}
+				}
 				proof, err := InspectPrejobFailure(ctx, reader, store, plans, resolver, func(ctx context.Context, run *edge.ProfilingRun, identity evidencestore.ObjectIdentity) (profilerevidence.VerifiedIdleEvidence, error) {
 					verified, err := retained.LoadIdle(ctx, run, identity)
 					return verified.ForDerivation(), err
 				}, "evidence", client.ObjectKeyFromObject(parent), parent.UID)
-				if defect == "" || defect == prejobActiveMissingKey || defect == prejobResultMissingKey {
+				if expectEligible {
 					if err != nil || !proof.Eligible || proof.Reason != profiler.ResolutionReasonExecutionPolicyInvalid || len(proof.IdleRuns) != 3 || proof.Child.UID != active.UID {
 						t.Fatalf("actual eligibility: %+v, %v", proof, err)
 					}
@@ -150,6 +163,7 @@ func newPrejobFixture(t *testing.T, duration int, defect string) (*edge.BatchEne
 	config.State.PowerMode = profilingrun.FixedPowerMode
 	config.Metrics.DurationSeconds = duration
 	idle := config
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode, StartupWarmupIterations: config.Measurement.StartupWarmupIterations, WarmupBatchSizes: config.Measurement.WarmupBatchSizes}
 	idle.Metrics.DurationSeconds = 31

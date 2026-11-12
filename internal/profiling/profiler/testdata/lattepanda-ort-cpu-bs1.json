@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha20",
+  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha21",
   "candidate": {
     "inputs": {
       "modelSpec": {
@@ -59,11 +59,13 @@
     "architecture": "amd64",
     "allocatableCPU": "4"
   },
+  "loadOriginNode": "gateway-node",
+  "loadOriginGatewayPod": {"namespace": "chill-system", "name": "serving-gateway", "uid": "gateway-pod-uid"},
   "measurement": {
     "batch": 1,
     "warmupIterations": 20,
     "startupWarmupIterations": 20,
-    "durationSeconds": 30,
+    "durationSeconds": 90,
     "sloPercentile": 95,
     "minServiceSamples": 59,
     "sloTargetLatencyNanos": 1000000000,
@@ -72,6 +74,7 @@
     "workloadResourceVersion": "1",
     "warmupBatchSizes": [1],
     "workloadMode": "empirical-cadence-fixed-batch",
+    "operatingPoints": {"utilizations": [0.5], "sparseMeanGapMilliseconds": 1000, "phaseDurationSeconds": 30, "requestLifetimeSeconds": 30, "deliveryMarginMilliseconds": 100, "framedDecodedRequestUpperBytes": 1024, "queueBytesCap": 67108864},
     "dataset": {
       "name": "vqav2-val-subset",
       "uid": "dataset-uid",
@@ -99,7 +102,7 @@
     },
     "intervalMilliseconds": 1000,
     "timeoutMilliseconds": 500,
-    "durationSeconds": 31
+    "durationSeconds": 91
   },
   "actor": {
     "runtimeImage": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -112,7 +115,7 @@
     "warmupBatchSizes": [1], "warmupIterations": 20,
     "model": "mobilenet-v2-050", "inputs": ["image"], "outputs": ["label"],
     "runnerCommand": ["python3", "/opt/chill/runtime/firstfloor/runner.py", "--runtime", "ort-cpu", "--model-dir", "/model", "--preprocessor", "/preprocessor", "--warmup-iterations", "20", "--warmup-batch", "1"],
-    "runnerTimeoutMS": 0, "maxQueueRequests": 32, "maxQueueBytes": 0, "maxRequestBytes": 0,
+    "runnerTimeoutMS": 0, "maxQueueRequests": 32, "maxQueueBytes": 67108864, "maxRequestBytes": 0,
     "mode": "", "batchSizes": [1,2,3,4], "maxBatchSize": 4,
     "policy": {"decisionID": "", "profileID": "", "maxBatchWaitMS": 0, "deadlinePolicy": "keep"}
   },

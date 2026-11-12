@@ -241,7 +241,7 @@ func TestRunReconcilerFinalizesActuatedEvidenceAfterReadyTarget(t *testing.T) {
 			Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: completedAt,
 		}},
 	})
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job, completedMeasurementLoad(run, job)).Build()
 	finalized := FinalizedRunEvidence{
 		Binding:       testFinalizedStoreBinding(),
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
@@ -287,7 +287,7 @@ func TestRunReconcilerDoesNotRefinalizePermanentTargetMismatch(t *testing.T) {
 			Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: completedAt,
 		}},
 	})
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job, completedMeasurementLoad(run, job)).Build()
 	finalizeErr := fmt.Errorf(
 		"%w: actuation target observation does not match RunConfig",
 		profilerevidence.ErrPermanentValidation,
@@ -336,7 +336,7 @@ func TestRunReconcilerRetriesTransientEvidenceFinalizationFailure(t *testing.T) 
 		Succeeded:  1,
 		Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
 	})
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job, completedMeasurementLoad(run, job)).Build()
 	want := errors.New("evidence store temporarily unavailable")
 	finalizer := &recordingRunEvidenceFinalizer{err: want}
 	reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)}).Resolve, (&recordingExecutionJobs{}).Find, (&recordingExecutionJobs{}).Ensure, finalizer.Finalize, finalizer.RuntimeTermination)
@@ -407,7 +407,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 		Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},
 		Node: edgev1alpha1.ProfilingRunObjectReference{Name: "lattepanda", UID: "node-uid"},
 	}
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job, completedMeasurementLoad(run, job)).Build()
 	finalizer := &recordingRunEvidenceFinalizer{result: finalized}
 	reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)}).Resolve, (&recordingExecutionJobs{}).Find, (&recordingExecutionJobs{}).Ensure, finalizer.Finalize, finalizer.RuntimeTermination)
 	if err != nil {

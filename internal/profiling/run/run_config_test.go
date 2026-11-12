@@ -173,6 +173,7 @@ func TestMeasurementWorkloadRequiresCHILLRoleAndJobOwner(t *testing.T) {
 
 func TestCurrentRunConfigValidatesModelLoadedIdleProtocol(t *testing.T) {
 	idle := validRunConfig()
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 	idle.Measurement = MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: IdleModelLoadedWorkloadMode,
@@ -196,6 +197,7 @@ func TestCurrentRunConfigValidatesModelLoadedIdleProtocol(t *testing.T) {
 
 func TestCurrentRKNNLiteRunConfigAllowsArtifactBatchForIdle(t *testing.T) {
 	idle := firstfloorFrozenConfig(FirstfloorRKNNLiteBackend)
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 	idle.Measurement = MeasurementContract{
 		Batch: 2, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: IdleModelLoadedWorkloadMode,
@@ -437,7 +439,9 @@ func validRunConfig() RunConfig {
 	d := "sha256:" + strings.Repeat("a", 64)
 	image := "registry.local/chill/image@" + d
 	return RunConfig{
-		SchemaVersion: RunConfigSchemaVersion,
+		SchemaVersion:        RunConfigSchemaVersion,
+		LoadOriginNode:       "gateway-node",
+		LoadOriginGatewayPod: &LoadOriginGatewayPodContract{Namespace: "chill-system", Name: "gateway", UID: "gateway-uid"},
 		Candidate: CandidateIdentity{
 			Inputs: CandidateReportInputs{
 				ModelSpec: CandidateReportObjectInput{
@@ -482,11 +486,14 @@ func validRunConfig() RunConfig {
 			Batch:                   1,
 			WarmupIterations:        20,
 			StartupWarmupIterations: 20,
-			DurationSeconds:         30,
+			DurationSeconds:         90,
 			SLOPercentile:           95, MinServiceSamples: 59, SLOTargetLatencyNanos: 1000000000,
 			WorkloadName: "mobilenet", WorkloadUID: "workload-uid", WorkloadResourceVersion: "1",
 			WarmupBatchSizes: []int{1},
 			WorkloadMode:     "empirical-cadence-fixed-batch",
+			OperatingPoints: &OperatingPointsContract{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
+				PhaseDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100,
+				FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768},
 			Dataset: &DatasetContract{
 				Name: "vqav2-val-subset", UID: "dataset-uid", Image: image, Path: "/artifact/vqav2-val-subset",
 			},
@@ -501,7 +508,7 @@ func validRunConfig() RunConfig {
 			ThermalMetrics:       testThermalMetricContract(),
 			IntervalMilliseconds: 1000,
 			TimeoutMilliseconds:  500,
-			DurationSeconds:      31,
+			DurationSeconds:      91,
 		},
 		Workload: CurrentWorkloadContract(),
 	}

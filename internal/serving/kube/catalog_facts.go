@@ -35,6 +35,8 @@ func cloneMeasurementFacts(facts serving.MeasurementFacts) serving.MeasurementFa
 			}
 		}
 		row.Sources = slices.Clone(row.Sources)
+		row.PhasePower = slices.Clone(row.PhasePower)
+		row.DispatchOccupancyNanosPerInput = slices.Clone(row.DispatchOccupancyNanosPerInput)
 		row.MissingReasons = slices.Clone(row.MissingReasons)
 	}
 	return facts

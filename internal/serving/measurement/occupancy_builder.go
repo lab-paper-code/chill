@@ -13,6 +13,7 @@ import (
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -139,21 +140,15 @@ func deriveOccupancy(namespace string, intent OccupancyIntent, policy DispatchOc
 	if intent.Batch < 1 || math.IsInf(mean, 0) {
 		return nil, occupancyInfeasible("invalid batch population")
 	}
-	// Retain the native outstanding-supply caps; policy chooses workers, not this formula.
-	const workerCap = 64
+	// Occupancy and profiling use the same native closed-loop supply bounds.
 	queueBytesCap := min(int64(preparation.Config.MaxQueueBytes), int64(64<<20))
 	workers := int64(policy.Workers)
-	if workers < int64(intent.Batch) || workers > workerCap || requestBytes < 1 ||
-		queueBytesCap < requestBytes || workers > queueBytesCap/requestBytes {
-		return nil, occupancyInfeasible("configured workers cannot fit a complete batch within native supply caps")
+	if err := firstfloor.ValidateClosedLoopSupply(int(intent.Batch), int(policy.Workers), preparation.Config.MaxQueueRequests,
+		queueBytesCap, requestBytes, float64(policy.RequestLifetimeSeconds), float64(policy.DeliveryMarginMillis), tail); err != nil {
+		return nil, occupancyInfeasible(err.Error())
 	}
 	outstandingBatches := (workers + int64(intent.Batch) - 1) / int64(intent.Batch)
 	q := outstandingBatches - 1
-	waiting := int64(intent.Batch) * q
-	if preparation.Config.MaxQueueRequests < 1 || waiting > int64(preparation.Config.MaxQueueRequests) ||
-		waiting > queueBytesCap/requestBytes {
-		return nil, occupancyInfeasible("configured outstanding supply exceeds native queue capacity")
-	}
 	margin := float64(policy.DeliveryMarginMillis) / 1000
 	minimumLifetime := math.Max(math.Ceil(workload.Spec.SLO.TargetLatency.Duration.Seconds()),
 		math.Ceil(float64(outstandingBatches)*tail+margin))

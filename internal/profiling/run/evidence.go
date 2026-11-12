@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha10"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha11"
 
 	RKNNLiteCoreMask      = "NPU_CORE_0"
 	RKNNLiteInputLayout   = "NHWC"
@@ -47,7 +47,8 @@ type RuntimeResult struct {
 	MeasurementElapsedSeconds float64                    `json:"measurementElapsedSecondsMonotonic"`
 	CPUContract               RuntimeCPU                 `json:"cpuContract"`
 	DerivedContract           DerivedContract            `json:"derivedExecutionContract"`
-	RepetitionResults         []Repetition               `json:"repetitionResults"`
+	Phases                    []Phase                    `json:"phases"`
+	SupplySizing              SupplySizing               `json:"supplySizing"`
 	CompletionIndex           int                        `json:"completionIndex"`
 	Inputs                    []string                   `json:"inputs"`
 	// MemoryBytes is the kernel cgroup high-water mark (v2 memory.peak or v1
@@ -139,30 +140,50 @@ type RKNNDeviceObservation struct {
 	CharacterDevice bool   `json:"characterDevice"`
 	Opened          bool   `json:"opened"`
 }
-type Repetition struct {
-	Repetition           int                   `json:"repetition"`
-	MeasurementStartedAt string                `json:"measurementStartedAt"`
-	MeasurementEndedAt   string                `json:"measurementEndedAt"`
-	LatencyMilliseconds  []float64             `json:"latencyMs"`
-	NativeSamples        []NativeServiceSample `json:"nativeSamples,omitempty"`
+type Phase struct {
+	ID                        string                `json:"id"`
+	Kind                      string                `json:"kind"`
+	Utilization               float64               `json:"utilization,omitempty"`
+	ArrivalRatePerSecond      float64               `json:"arrivalRatePerSecond,omitempty"`
+	Workers                   int                   `json:"workers,omitempty"`
+	MeasurementStartedAt      string                `json:"measurementStartedAt"`
+	MeasurementEndedAt        string                `json:"measurementEndedAt"`
+	MeasurementElapsedSeconds float64               `json:"measurementElapsedSecondsMonotonic"`
+	CompletedInputs           int                   `json:"completedInputs"`
+	Requests                  []PhaseRequest        `json:"requests"`
+	LatencyMilliseconds       []float64             `json:"latencyMs"`
+	NativeSamples             []NativeServiceSample `json:"nativeSamples"`
+}
+
+type PhaseRequest struct {
+	RequestID           string              `json:"requestID"`
+	RecordID            string              `json:"recordID"`
+	ArrivalAt           time.Time           `json:"arrivalAt"`
+	SentAt              time.Time           `json:"sentAt"`
+	CompletedAt         time.Time           `json:"completedAt"`
+	LatencyMilliseconds float64             `json:"latencyMs"`
+	Response            firstfloor.Response `json:"response"`
 }
 
 // NativeServiceSample is one actual batch execution, aligned by slice index with
-// the repetition's client latency sample. Spans overlap and must not be summed.
-// RecordIDs and Units are per request of the batch; units are analysis
-// observations, not the batching unit.
+// the phase's maximum member client latency. Spans overlap and must not be summed.
+// RecordIDs and Units are per request; units are analysis observations.
 type NativeServiceSample struct {
 	BatchID   uint64   `json:"batchID"`
 	BatchSize int      `json:"batchSize"`
 	RecordIDs []string `json:"recordIDs"`
 	Units     []int    `json:"units"`
 	firstfloor.ServiceSample
-	RunnerServiceMilliseconds float64 `json:"runnerServiceMs"`
-	PreprocessMilliseconds    float64 `json:"preprocessMs"`
-	BackendCallMilliseconds   float64 `json:"backendCallMs"`
-	PostprocessMilliseconds   float64 `json:"postprocessMs"`
-	FirstTokenMilliseconds    float64 `json:"firstTokenMs,omitempty"`
-	NativeRequestMilliseconds float64 `json:"nativeRequestMs"`
+	RunnerServiceMilliseconds float64   `json:"runnerServiceMs"`
+	PreprocessMilliseconds    float64   `json:"preprocessMs"`
+	BackendCallMilliseconds   float64   `json:"backendCallMs"`
+	PostprocessMilliseconds   float64   `json:"postprocessMs"`
+	FirstTokenMilliseconds    float64   `json:"firstTokenMs,omitempty"`
+	NativeRequestMilliseconds float64   `json:"nativeRequestMs"`
+	StartedAt                 time.Time `json:"startedAt"`
+	FinishedAt                time.Time `json:"finishedAt"`
+	LatestEnqueuedAt          time.Time `json:"latestEnqueuedAt"`
+	EarliestEnqueuedAt        time.Time `json:"earliestEnqueuedAt"`
 }
 
 // Clone preserves pair/provenance ownership along with aligned request metadata.
@@ -224,9 +245,6 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 		result.MeasurementElapsedSeconds < minimumElapsed {
 		return errors.New("runtime measurement evidence is incomplete")
 	}
-	if len(result.RepetitionResults) != 1 {
-		return errors.New("one restarted trial must contain exactly one repetition result")
-	}
 	if result.TargetDurationSeconds == nil ||
 		*result.TargetDurationSeconds != float64(config.Measurement.DurationSeconds) {
 		return errors.New("runtime target duration does not match the measurement contract")
@@ -251,7 +269,7 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	if warmupCompleted.After(measurementStarted) {
 		return errors.New("warm-up does not precede the measurement window")
 	}
-	latencyCount, err := validateRepetitions(result.RepetitionResults, measurementStarted, measurementEnded)
+	latencyCount, err := validatePhases(config, result.Phases, result.SupplySizing, measurementStarted, measurementEnded)
 	if err != nil {
 		return err
 	}
@@ -279,7 +297,7 @@ func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 	if err := validateFirstfloorRuntimeEvidence(config, result.Firstfloor, uint64(result.InferenceCount)); err != nil {
 		return err
 	}
-	return validateNativeSamples(config, result.ExperimentID, result.RepetitionResults)
+	return validateNativeSamples(config, result.ExperimentID, result.Phases)
 }
 
 // MemorySample is one actual whole-container memory.current reading.
@@ -416,15 +434,15 @@ func validateFirstfloorBackend(config RunConfig, evidence *FirstfloorRuntimeEvid
 	return nil
 }
 
-func validateNativeSamples(config RunConfig, trialID string, repetitions []Repetition) error {
+func validateNativeSamples(config RunConfig, trialID string, phases []Phase) error {
 	seen := make(map[uint64]struct{})
-	knownGapCalls := 0
 	var callIndex uint64
-	for _, repetition := range repetitions {
-		if len(repetition.NativeSamples) != len(repetition.LatencyMilliseconds) {
+	for _, phase := range phases {
+		knownGapCalls := 0
+		if len(phase.NativeSamples) != len(phase.LatencyMilliseconds) {
 			return errors.New("firstfloor native and client samples are not correlated")
 		}
-		for index, sample := range repetition.NativeSamples {
+		for index, sample := range phase.NativeSamples {
 			if err := validateServicePair(trialID, sample, callIndex); err != nil {
 				return err
 			}
@@ -450,13 +468,13 @@ func validateNativeSamples(config RunConfig, trialID string, repetitions []Repet
 			serviceMS := float64(sample.ServiceDurationNanos) / 1e6
 			if sample.BackendCallMilliseconds > serviceMS ||
 				serviceMS > sample.NativeRequestMilliseconds ||
-				sample.NativeRequestMilliseconds > repetition.LatencyMilliseconds[index] {
+				sample.NativeRequestMilliseconds > phase.LatencyMilliseconds[index] {
 				return errors.New("firstfloor nested monotonic span order is invalid")
 			}
 		}
-	}
-	if knownGapCalls < config.Measurement.MinServiceSamples {
-		return errors.New("firstfloor known-gap service calls are incomplete")
+		if knownGapCalls < config.Measurement.MinServiceSamples {
+			return errors.New("firstfloor per-phase known-gap service calls are incomplete")
+		}
 	}
 	return nil
 }
@@ -568,33 +586,6 @@ func validateCPUObservation(cpuMax string) error {
 		}
 	}
 	return nil
-}
-
-func validateRepetitions(repetitions []Repetition, measurementStarted, measurementEnded time.Time) (int, error) {
-	latencyCount := 0
-	for index, repetition := range repetitions {
-		if repetition.Repetition != index+1 {
-			return 0, errors.New("runtime repetition sequence is invalid")
-		}
-		started, err := time.Parse(time.RFC3339Nano, repetition.MeasurementStartedAt)
-		if err != nil {
-			return 0, errors.New("runtime repetition start timestamp is invalid")
-		}
-		ended, err := time.Parse(time.RFC3339Nano, repetition.MeasurementEndedAt)
-		if err != nil || !ended.After(started) || started.Before(measurementStarted) || ended.After(measurementEnded) {
-			return 0, errors.New("runtime repetition window is invalid")
-		}
-		if len(repetition.LatencyMilliseconds) == 0 {
-			return 0, errors.New("raw latency distribution is empty")
-		}
-		for _, latency := range repetition.LatencyMilliseconds {
-			if latency <= 0 || math.IsNaN(latency) || math.IsInf(latency, 0) {
-				return 0, errors.New("raw latency sample is invalid")
-			}
-		}
-		latencyCount += len(repetition.LatencyMilliseconds)
-	}
-	return latencyCount, nil
 }
 
 func contains(values []string, wanted string) bool {

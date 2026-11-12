@@ -588,13 +588,19 @@ func testCurvePlanSpec(batchCount int) CurvePlanSpec {
 }
 
 func testCurveProtocol(mode, metricImage, workloadImage string) CurveProtocolContract {
-	return CurveProtocolContract{
+	protocol := CurveProtocolContract{
 		WorkloadMode:               mode,
 		DurationSeconds:            30,
 		MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900,
 		MetricDurationSeconds: 31, MetricObserverImage: metricImage,
 		WorkloadObserverImage: workloadImage, WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
 	}
+	if mode == "empirical-cadence-fixed-batch" {
+		protocol.DurationSeconds, protocol.MetricDurationSeconds = 90, 91
+		protocol.OperatingPoints = &OperatingPointsContract{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
+			PhaseDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768}
+	}
+	return protocol
 }
 
 func testVerifiedCurvePlan(t *testing.T, batchCount int) (CurvePlan, VerifiedCurvePlan) {

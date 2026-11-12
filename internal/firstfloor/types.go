@@ -52,8 +52,8 @@ func EffectiveDeadlinePolicy(value string) string {
 	return value
 }
 
-// Field carries one raw field: one element per request for inference and n
-// elements for a profile execution. Content checks belong to the gateway.
+// Field carries one raw field with one element per inference request.
+// Content checks belong to the gateway.
 type Field struct {
 	Name string   `json:"name"`
 	Data [][]byte `json:"data"`
@@ -214,6 +214,11 @@ type Progress struct {
 	ServiceSample     *ServiceSample     `json:"serviceSample,omitempty"`
 	NativeHTTP        *HTTPRequestTiming `json:"nativeHTTP,omitempty"`
 	NativeDeferredAt  *time.Time         `json:"nativeDeferredAt,omitempty"`
+
+	// Physical batch metadata accompanies profiling HTTP completions only.
+	BatchRequestIDs []string   `json:"batchRequestIDs,omitempty"`
+	BatchStartedAt  *time.Time `json:"batchStartedAt,omitempty"`
+	BatchFinishedAt *time.Time `json:"batchFinishedAt,omitempty"`
 }
 type RuntimeMetadata struct {
 	Runtime        string   `json:"runtime"`
@@ -296,24 +301,4 @@ type BatchChoice struct {
 	Reason                  string
 	DecisionIdleNanos       *int64
 	DecisionIdleApproximate bool
-}
-
-// ProfileRequest is exactly one execution of BatchSize samples.
-type ProfileRequest struct {
-	BatchSize int     `json:"batchSize"`
-	Inputs    []Field `json:"inputs"`
-	TrialID   string  `json:"trialID"`
-}
-type ProfileResponse struct {
-	BatchSize            int             `json:"batchSize"`
-	BatchIDs             []uint64        `json:"batchIDs"`
-	NativeSamplesMS      []float64       `json:"nativeSamplesMS"`
-	ServiceSamples       []ServiceSample `json:"serviceSamples"`
-	BackendSamplesMS     []float64       `json:"backendSamplesMS"`
-	PreprocessSamplesMS  []float64       `json:"preprocessSamplesMS"`
-	PostprocessSamplesMS []float64       `json:"postprocessSamplesMS"`
-	FirstTokenSamplesMS  []float64       `json:"firstTokenSamplesMS,omitempty"` // generative paths only
-	Units                []int           `json:"units"`                         // per request of the execution
-	NativeElapsedMS      float64         `json:"nativeElapsedMS"`
-	ExecutionComplete    bool            `json:"executionComplete"`
 }

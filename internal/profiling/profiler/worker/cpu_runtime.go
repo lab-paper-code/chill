@@ -39,12 +39,10 @@ type CPURuntime struct {
 
 var _ Runtime = (*CPURuntime)(nil)
 
-// Model files, the preprocessor directory, and the dataset profiling records
-// are mounted at these fixed Job paths.
+// Model files and the preprocessor directory use these fixed Job paths.
 const (
 	modelDirectory   = "/model"
 	preprocessorPath = "/preprocessor"
-	datasetPath      = "/dataset"
 )
 
 type cpuRuntimeRequest struct {
@@ -54,7 +52,6 @@ type cpuRuntimeRequest struct {
 	ScheduledNodeName                string                 `json:"scheduledNodeName"`
 	ModelDirectory                   string                 `json:"modelDirectory"`
 	PreprocessorPath                 string                 `json:"preprocessorPath"`
-	DatasetPath                      string                 `json:"datasetPath,omitempty"`
 	ObserverReadyPaths               []string               `json:"observerReadyPaths"`
 	WorkloadWindowStartPath          string                 `json:"workloadWindowStartPath"`
 	MeasurementStartPath             string                 `json:"measurementStartPath"`
@@ -183,9 +180,6 @@ func (r *CPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error
 		MaxLatencySamples:                r.config.MaxLatencySamples,
 		MaxInputBytes:                    r.config.MaxInputBytes,
 		MaxResultBytes:                   r.config.MaxResultBytes,
-	}
-	if runConfig.Measurement.Dataset != nil {
-		request.DatasetPath = datasetPath
 	}
 	payload, err := json.Marshal(request)
 	if err != nil {

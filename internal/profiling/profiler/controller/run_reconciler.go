@@ -40,6 +40,7 @@ type RunReconciler struct {
 	terminate func(context.Context, *edgev1alpha1.ProfilingRun, *batchv1.Job) (*edgev1alpha1.ProfilingRunRuntimeTermination, error)
 	// FailedJobRetentionSeconds is validated by the Profiler configuration boundary.
 	FailedJobRetentionSeconds int32
+	MeasurementLoad           MeasurementLoadOptions
 }
 
 func NewRunReconciler(
@@ -134,6 +135,25 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	decision, err := profiler.Decide(snapshot)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("decide ProfilingRun %s lifecycle: %w", req.NamespacedName, err)
+	}
+	if decision.Action != profiler.ActionReportExecutionFailure {
+		loadComplete, loadErr := r.reconcileMeasurementLoad(ctx, run, job, resolved.Prepared.RunConfig)
+		if loadErr != nil {
+			if !errors.Is(loadErr, errMeasurementLoadFailed) {
+				return ctrl.Result{}, loadErr
+			}
+			if err := r.publishExecutionOutcome(ctx, run, metav1.ConditionFalse, "JobFailed", loadErr.Error()); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.deleteMeasurementLoad(ctx, run); err != nil {
+				return ctrl.Result{}, err
+			}
+			background := metav1.DeletePropagationBackground
+			return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &background}))
+		}
+		if !loadComplete {
+			return ctrl.Result{RequeueAfter: admissionWait}, r.publishExecutionOutcome(ctx, run, metav1.ConditionUnknown, "LoadRunning", "off-node profiling load Job has not completed")
+		}
 	}
 	switch decision.Action {
 	case profiler.ActionWaitForJob:
@@ -427,6 +447,9 @@ func (r *RunReconciler) reconcileTerminalRun(ctx context.Context, run *edgev1alp
 }
 
 func (r *RunReconciler) deleteVerifiedJob(ctx context.Context, run *edgev1alpha1.ProfilingRun) (ctrl.Result, error) {
+	if err := r.deleteMeasurementLoad(ctx, run); err != nil {
+		return ctrl.Result{RequeueAfter: admissionWait}, err
+	}
 	if run.Status.Job == nil || run.Status.JobCleanup != runJobCleanupPending {
 		return ctrl.Result{}, nil
 	}
@@ -448,6 +471,9 @@ func (r *RunReconciler) deleteVerifiedJob(ctx context.Context, run *edgev1alpha1
 }
 
 func (r *RunReconciler) retainFailedJob(ctx context.Context, run *edgev1alpha1.ProfilingRun) error {
+	if err := r.deleteMeasurementLoad(ctx, run); err != nil {
+		return err
+	}
 	if run.Status.JobCleanup != runJobCleanupPending {
 		return nil
 	}

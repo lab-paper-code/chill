@@ -94,6 +94,8 @@ func profilerArgs(options Options, config Config) []string {
 		"--execution-policies-key=" + config.FactSource.ExecutionPoliciesKey,
 		"--actuation-policies-key=" + config.FactSource.ActuationPoliciesKey,
 		"--workload-observer-service-account=" + config.WorkloadObserver.ServiceAccountName,
+		"--load-generator-image=" + config.LoadGenerator.Image,
+		"--load-generator-service-account=" + config.LoadGenerator.ServiceAccountName,
 		"--transition-observer-image=" + config.Image,
 		"--transition-observer-image-pull-policy=" + string(config.ImagePullPolicy),
 		"--transition-observer-node-name=" + config.TransitionObserver.ObserverNodeName,

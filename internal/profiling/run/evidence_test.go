@@ -37,7 +37,7 @@ func TestValidateRuntimeRejectsMaterialDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !started.Equal(time.Date(2026, time.January, 1, 0, 0, 1, 0, time.UTC)) ||
-		!ended.Equal(time.Date(2026, time.January, 1, 0, 0, 31, 0, time.UTC)) {
+		!ended.Equal(time.Date(2026, time.January, 1, 0, 1, 31, 0, time.UTC)) {
 		t.Fatalf("measurement window = %s..%s", started, ended)
 	}
 }
@@ -45,12 +45,12 @@ func TestValidateRuntimeRejectsMaterialDrift(t *testing.T) {
 func TestActiveDurationToleranceCannotShortenMinimumWindow(t *testing.T) {
 	config := firstfloorRunConfig()
 	result := firstfloorResult(config)
-	result.MeasurementElapsedSeconds = 29.6
+	result.Phases[0].MeasurementElapsedSeconds = 29.6
 	config.Measurement.DurationToleranceSeconds = .5
 	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
 		t.Fatal("duration tolerance shortened the required elapsed window")
 	}
-	result.MeasurementElapsedSeconds = 30
+	result.Phases[0].MeasurementElapsedSeconds = 30
 	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestRuntimeEvidenceRejectsRawInputFieldDrift(t *testing.T) {
 	}
 }
 
-func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
+func TestValidateRuntimeRejectsInvalidPhaseEvidence(t *testing.T) {
 	config := firstfloorRunConfig()
 	base := firstfloorResult(config)
 
@@ -78,13 +78,13 @@ func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
 		mutate func(*RuntimeResult)
 	}{
 		{name: "wrong sequence", mutate: func(result *RuntimeResult) {
-			result.RepetitionResults[0].Repetition = 2
+			result.Phases[0].Kind = "saturation"
 		}},
 		{name: "window outside measurement", mutate: func(result *RuntimeResult) {
-			result.RepetitionResults[0].MeasurementStartedAt = "2025-12-31T23:59:59Z"
+			result.Phases[0].MeasurementStartedAt = "2025-12-31T23:59:59Z"
 		}},
 		{name: "zero latency", mutate: func(result *RuntimeResult) {
-			result.RepetitionResults[0].LatencyMilliseconds[0] = 0
+			result.Phases[0].LatencyMilliseconds[0] = 0
 		}},
 		{name: "target duration drift", mutate: func(result *RuntimeResult) {
 			other := 10.0
@@ -93,9 +93,9 @@ func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			candidate := base
-			candidate.RepetitionResults = append([]Repetition(nil), base.RepetitionResults...)
-			candidate.RepetitionResults[0].LatencyMilliseconds = append(
-				[]float64(nil), base.RepetitionResults[0].LatencyMilliseconds...,
+			candidate.Phases = append([]Phase(nil), base.Phases...)
+			candidate.Phases[0].LatencyMilliseconds = append(
+				[]float64(nil), base.Phases[0].LatencyMilliseconds...,
 			)
 			test.mutate(&candidate)
 			if err := ValidateRuntime(config, "pod-uid", candidate); err == nil {
@@ -108,10 +108,6 @@ func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
 func validRuntimeResult(config RunConfig) RuntimeResult {
 	targetDuration := float64(config.Measurement.DurationSeconds)
 	count := config.Measurement.MinServiceSamples + 1
-	samples := make([]float64, count)
-	for index := range samples {
-		samples[index] = 1
-	}
 	return RuntimeResult{
 		SchemaVersion: RuntimeResultSchemaVersion, Status: "Succeeded",
 		ExperimentID: "pod-uid", NodeName: config.TargetNode.Name, Model: config.State.Model,
@@ -131,10 +127,6 @@ func validRuntimeResult(config RunConfig) RuntimeResult {
 			Backend: config.State.Backend, Provider: config.State.Backend,
 			NodeSnapshot: config.TargetNode,
 		},
-		RepetitionResults: []Repetition{{
-			Repetition: 1, MeasurementStartedAt: "2026-01-01T00:00:01Z",
-			MeasurementEndedAt: "2026-01-01T00:00:31Z", LatencyMilliseconds: samples,
-		}},
 	}
 }
 
@@ -222,7 +214,7 @@ func TestVerifiedRuntimeAcceptsDeclaredLabelsAndDiagnosticRounding(t *testing.T)
 	result.DerivedContract.Backend = "historical-backend"
 	result.DerivedContract.Provider = "historical-provider"
 	result.Firstfloor.Runtime.NumpyVersion = "observed-numpy"
-	result.RepetitionResults[0].NativeSamples[0].RunnerServiceMilliseconds += 1e-12
+	result.Phases[0].NativeSamples[0].RunnerServiceMilliseconds += 1e-12
 	result.RuntimeVersion = ""
 	result.Firstfloor.Runtime.RuntimeVersion = "observed-label"
 	verified, err := ValidateRunConfig(config)
@@ -232,7 +224,7 @@ func TestVerifiedRuntimeAcceptsDeclaredLabelsAndDiagnosticRounding(t *testing.T)
 	if _, err := VerifyRuntimeResult(verified, "pod-uid", result); err != nil {
 		t.Fatal(err)
 	}
-	result.RepetitionResults[0].NativeSamples[0].ServiceDurationNanos = 0
+	result.Phases[0].NativeSamples[0].ServiceDurationNanos = 0
 	if _, err := VerifyRuntimeResult(verified, "pod-uid", result); err == nil {
 		t.Fatal("missing native duration was accepted")
 	}
@@ -241,6 +233,7 @@ func TestVerifiedRuntimeAcceptsDeclaredLabelsAndDiagnosticRounding(t *testing.T)
 func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing.T) {
 	config := firstfloorRunConfig()
 	active := firstfloorResult(config)
+	config.LoadOriginNode, config.LoadOriginGatewayPod = "", nil
 	config.Measurement = MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: IdleModelLoadedWorkloadMode,

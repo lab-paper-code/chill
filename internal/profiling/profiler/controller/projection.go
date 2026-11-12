@@ -48,6 +48,7 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 				DurationSeconds:          int(spec.Measurement.DurationSeconds),
 				DurationToleranceSeconds: tolerance,
 				WorkloadMode:             spec.Measurement.WorkloadMode,
+				OperatingPoints:          ProjectOperatingPoints(spec.Measurement.OperatingPoints),
 			},
 			Metrics: profiler.MetricObservationPolicy{
 				IntervalMilliseconds: int(spec.MetricObservation.IntervalMilliseconds),
@@ -69,6 +70,9 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 	}
 	if spec.Measurement.SettlingDurationSeconds != nil {
 		request.Preparation.Measurement.SettlingDurationSeconds = int(*spec.Measurement.SettlingDurationSeconds)
+	}
+	if err := request.Preparation.FreezePhaseDuration(); err != nil {
+		return RequestedRun{}, err
 	}
 	if err := request.Preparation.Validate(); err != nil {
 		return RequestedRun{}, fmt.Errorf("validate ProfilingRun preparation request: %w", err)

@@ -81,6 +81,7 @@ type ActiveProtocolSpec struct {
 	Dataset string `json:"dataset"`
 
 	MetricObservation ProfilingRunMetricObservationSpec `json:"metricObservation"`
+	OperatingPoints   MeasurementOperatingPointsSpec    `json:"operatingPoints"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"

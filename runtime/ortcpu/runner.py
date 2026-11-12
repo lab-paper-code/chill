@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha20"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha10"
+RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha21"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha11"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha3"
 SUPPORTED_WORKLOAD = "empirical-cadence-fixed-batch"
 IDLE_WORKLOAD = "idle-model-loaded"
@@ -249,7 +249,7 @@ def validate_request(
             "maxLatencySamples",
             "maxInputBytes",
             "maxResultBytes",
-        } | ({"datasetPath"} if active else set()),
+        },
         "runtime request",
     )
     if request["schemaVersion"] != request_schema:
@@ -260,8 +260,6 @@ def validate_request(
     )
     require_absolute_file_path(request["modelDirectory"], "modelDirectory")
     require_absolute_file_path(request["preprocessorPath"], "preprocessorPath")
-    if active:
-        require_absolute_file_path(request["datasetPath"], "datasetPath")
     ready_paths = request["observerReadyPaths"]
     if not isinstance(ready_paths, list) or not ready_paths:
         raise ContractError("observerReadyPaths must be a non-empty array")
@@ -302,6 +300,8 @@ def validate_request(
     }
     if "actuation" in run_config:
         run_config_fields.add("actuation")
+    if active:
+        run_config_fields.update({"loadOriginNode", "loadOriginGatewayPod"})
     require_fields(run_config, run_config_fields, "runConfig")
 
     if run_config["schemaVersion"] != RUN_CONFIG_SCHEMA:
@@ -360,6 +360,14 @@ def validate_request(
         require_string(target[field], f"run_config.targetNode.{field}")
     if scheduled_node_name != target["name"]:
         raise ContractError("scheduled Node does not match the RunConfig target Node")
+    if active:
+        origin = require_string(run_config["loadOriginNode"], "run_config.loadOriginNode")
+        if origin == target["name"]:
+            raise ContractError("profiling load origin must differ from measurement Node")
+        gateway = require_object(run_config["loadOriginGatewayPod"], "run_config.loadOriginGatewayPod")
+        require_fields(gateway, {"namespace", "name", "uid"}, "run_config.loadOriginGatewayPod")
+        for field in gateway:
+            require_string(gateway[field], "run_config.loadOriginGatewayPod." + field)
 
 
     common_measurement_fields = {
@@ -373,7 +381,7 @@ def validate_request(
         measurement,
         common_measurement_fields | ({"warmupBatchSizes"} if "warmupBatchSizes" in measurement else set()) |
         ({"startupWarmupIterations"} if "startupWarmupIterations" in measurement else set()) |
-        ({"dataset", "sloPercentile", "minServiceSamples", "sloTargetLatencyNanos",
+        ({"dataset", "sloPercentile", "minServiceSamples", "sloTargetLatencyNanos", "operatingPoints",
           "workloadName", "workloadUID"} |
          ({"workloadResourceVersion"} if "workloadResourceVersion" in measurement else set())
          if active else {"settlingDurationSeconds"}),
@@ -427,6 +435,28 @@ def validate_request(
         for field in ("name", "uid", "image"):
             require_string(dataset[field], f"run_config.measurement.dataset.{field}")
         require_absolute_file_path(dataset["path"], "run_config.measurement.dataset.path")
+        points = require_object(measurement["operatingPoints"], "measurement.operatingPoints")
+        require_fields(points, {"utilizations", "sparseMeanGapMilliseconds", "phaseDurationSeconds",
+                              "requestLifetimeSeconds", "deliveryMarginMilliseconds",
+                              "framedDecodedRequestUpperBytes", "queueBytesCap"}, "measurement.operatingPoints")
+        utilizations = points["utilizations"]
+        if not isinstance(utilizations, list) or not utilizations:
+            raise ContractError("operatingPoints.utilizations must be a nonempty array")
+        for value in utilizations:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value < 1:
+                raise ContractError("operatingPoints.utilizations must contain finite values in (0, 1)")
+        for field in ("sparseMeanGapMilliseconds",):
+            value = points[field]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ContractError("operatingPoints." + field + " must be finite and positive")
+        require_integer(points["phaseDurationSeconds"], "operatingPoints.phaseDurationSeconds", 30)
+        for field in ("requestLifetimeSeconds", "deliveryMarginMilliseconds", "framedDecodedRequestUpperBytes"):
+            require_integer(points[field], "operatingPoints." + field, 1)
+        queue_cap = require_integer(points["queueBytesCap"], "operatingPoints.queueBytesCap", 1)
+        if queue_cap != min(request["maxInputBytes"], 64 << 20):
+            raise ContractError("frozen queue byte cap differs from runtime request capacity")
+        if measurement["durationSeconds"] != points["phaseDurationSeconds"] * (len(utilizations) + 2):
+            raise ContractError("active measurement duration must cover its exact named phases")
     validate_candidate(run_config["delivery"])
 
 
@@ -686,17 +716,6 @@ def percentile(samples: list[float], fraction: float) -> float:
     return ordered[lower] * (upper - position) + ordered[upper] * (position - lower)
 
 
-def measurement_complete(
-    elapsed: float, duration: int, sample_count: int, max_samples: int, min_samples: int,
-    known_gap_count: int,
-) -> bool:
-    if elapsed >= duration and known_gap_count >= min_samples:
-        return True
-    if sample_count >= max_samples:
-        raise ContractError(
-            "latency sample budget exhausted before measurement stop policy"
-        )
-    return False
 
 
 def derived_contract(
@@ -839,141 +858,6 @@ def execute_idle(
     return result
 
 
-def execute_loaded(
-    request: dict[str, Any],
-    session: Any,
-    runtime_version: str,
-    available_providers: list[str],
-    architecture: str,
-    cpu_max: str,
-    affinity: list[int],
-    cpuset: str,
-    before_measurement: Any,
-    result_provider: str,
-    memory_sampler: MemorySampler | None = None,
-    phase: Any = None,
-) -> dict[str, Any]:
-    """Measure a loaded session whose startup and warm-up completed before the window."""
-    run_config = request["runConfig"]
-    state, measurement = run_config["state"], run_config["measurement"]
-    if phase is not None:
-        phase("Observer")
-
-    for ready_path in request["observerReadyPaths"]:
-        wait_for_signal(
-            Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0
-        )
-    warmup_completed_at = now()
-
-    publish_immutable(Path(request["workloadWindowStartPath"]), b"signal\n")
-    wait_for_signal(
-        Path(request["workloadWindowReadyPath"]),
-        request["observerReadyTimeoutMilliseconds"] / 1000.0,
-    )
-    before_measurement()
-    publish_immutable(Path(request["measurementStartPath"]), b"signal\n")
-    stat_before = cpu_stat()
-    process_before = time.process_time()
-    measurement_started_at = now()
-    repetition_started_at = measurement_started_at
-    monotonic_started = time.monotonic()
-    if memory_sampler is not None:
-        memory_sampler.start()
-    samples: list[float] = []
-    known_gap_count = 0
-    try:
-        if phase is not None:
-            phase("Execution")
-        while True:
-            session.prepare_next()
-            inference_started = time.perf_counter_ns()
-            sample = session.run()
-            samples.append((time.perf_counter_ns() - inference_started) / 1_000_000.0)
-            if sample["precedingIdleNanos"] is not None:
-                known_gap_count += 1
-            if measurement_complete(
-                time.monotonic() - monotonic_started,
-                measurement["durationSeconds"],
-                len(samples),
-                request["maxLatencySamples"],
-                measurement["minServiceSamples"],
-                known_gap_count,
-            ):
-                break
-    except Exception as error:
-        raise ContractError(f"execute {state['runtimeFamily']} measurement: {error}") from error
-    measurement_elapsed = time.monotonic() - monotonic_started
-    if phase is not None:
-        phase("ResultValidation")
-    memory = memory_sampler.stop() if memory_sampler is not None else {}
-    repetition_ended_at = now()
-    measurement_ended_at = repetition_ended_at
-    publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
-    process_cpu_seconds = time.process_time() - process_before
-    stat_after = cpu_stat()
-
-    mean_latency = sum(samples) / len(samples)
-    result = {
-        "schemaVersion": RESULT_SCHEMA,
-        "status": "Succeeded",
-        "experimentId": request["podUID"],
-        "nodeName": request["scheduledNodeName"],
-        "model": state["model"],
-        "architecture": architecture,
-        "runtime": state["runtimeFamily"],
-        "runtimeVersion": runtime_version,
-        "backend": state["backend"],
-        "provider": result_provider,
-        "availableProviders": available_providers,
-        "batchSize": measurement["batch"],
-        "warmupIterations": measurement["warmupIterations"],
-        "warmupCompletedAt": warmup_completed_at,
-        "inferenceCount": len(samples),
-        "measurementMode": "duration",
-        "measurementStartedAt": measurement_started_at,
-        "measurementEndedAt": measurement_ended_at,
-        "measurementElapsedSecondsMonotonic": round(measurement_elapsed, 6),
-        "cpuContract": runtime_cpu_evidence(
-            cpu_max,
-            affinity,
-            cpuset,
-            process_cpu_seconds,
-            stat_before,
-            stat_after,
-        ),
-        "derivedExecutionContract": derived_contract(run_config),
-        "repetitionResults": [
-            {
-                "repetition": 1,
-                "measurementStartedAt": repetition_started_at,
-                "measurementEndedAt": repetition_ended_at,
-                "latencyMs": [round(value, 6) for value in samples],
-            }
-        ],
-        "completionIndex": 0,
-        "inputs": state["preprocessor"]["inputs"],
-        "measurementIterations": 0,
-        "targetDurationSecondsPerRepetition": float(measurement["durationSeconds"]),
-        "latencyMs": {
-            "mean": round(mean_latency, 3),
-            "p50": round(percentile(samples, 0.50), 3),
-            "p95": round(percentile(samples, 0.95), 3),
-            "p99": round(percentile(samples, 0.99), 3),
-        },
-        "throughputItemsPerSecond": round(
-            measurement["batch"] * 1000.0 / mean_latency, 3
-        ),
-        "power": None,
-        "energyPerRequest": None,
-        **memory,
-    }
-    log(
-        "result",
-        f"completed {state['runtimeFamily']} CPU measurement",
-        inferences=len(samples),
-        elapsedSeconds=round(measurement_elapsed, 3),
-    )
-    return result
 
 
 def parse_args() -> argparse.Namespace:

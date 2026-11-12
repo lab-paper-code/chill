@@ -72,6 +72,9 @@ func DeriveExecutionPlan(
 		policy.WorkloadMode != config.Measurement.WorkloadMode {
 		return ExecutionPlan{}, errors.New("selected execution policy does not match the RunConfig")
 	}
+	if p := config.Measurement.OperatingPoints; p != nil && p.QueueBytesCap != min(policy.MaxInputBytes, int64(64<<20)) {
+		return ExecutionPlan{}, InvalidExecutionPolicy("measurement operatingPoints queueBytesCap differs from selected policy")
+	}
 
 	metricDuration := time.Duration(config.Metrics.DurationSeconds) * time.Second
 	settlingDuration := time.Duration(config.Measurement.SettlingDurationSeconds) * time.Second

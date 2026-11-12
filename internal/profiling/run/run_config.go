@@ -257,7 +257,8 @@ func (i RunConfig) validateMeasurementMode() error {
 			i.Measurement.WarmupIterations != 0 ||
 			i.Measurement.SettlingDurationSeconds < 1 ||
 			i.Measurement.Dataset != nil || i.Measurement.MinServiceSamples != 0 ||
-			i.Measurement.SLOPercentile != 0 {
+			i.Measurement.SLOPercentile != 0 || i.Measurement.OperatingPoints != nil ||
+			i.LoadOriginNode != "" || i.LoadOriginGatewayPod != nil {
 			return errors.New("model-loaded idle measurement protocol is invalid")
 		}
 		return nil
@@ -280,6 +281,16 @@ func (i RunConfig) validateMeasurementMode() error {
 	if dataset == nil || !cleanValue(dataset.Name) || !cleanValue(dataset.UID) || !cleanValue(dataset.Image) ||
 		!artifactPathPattern.MatchString(dataset.Path) || path.Clean(dataset.Path) == "/" {
 		return errors.New("active measurement requires a frozen dataset name, UID, image, and absolute path")
+	}
+	if err := i.Measurement.OperatingPoints.Validate(); err != nil {
+		return err
+	}
+	if i.Measurement.DurationSeconds != i.Measurement.OperatingPoints.PhaseDurationSeconds*(len(i.Measurement.OperatingPoints.Utilizations)+2) {
+		return errors.New("active measurement duration must cover exactly its named phase duration floor")
+	}
+	if !cleanValue(i.LoadOriginNode) || i.LoadOriginNode == i.TargetNode.Name || i.LoadOriginGatewayPod == nil ||
+		!cleanValue(i.LoadOriginGatewayPod.Namespace) || !cleanValue(i.LoadOriginGatewayPod.Name) || !cleanValue(i.LoadOriginGatewayPod.UID) {
+		return errors.New("active measurement requires the frozen off-node serving gateway origin and Pod identity")
 	}
 	return nil
 }

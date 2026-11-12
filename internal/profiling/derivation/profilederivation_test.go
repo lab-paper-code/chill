@@ -33,7 +33,7 @@ func TestMeasurementIntegratesWindowWithoutScientificVerdicts(t *testing.T) {
 			{start.Add(9 * time.Second), 10},
 		},
 	}
-	joules, err := measureTrial(trial)
+	joules, err := measurePower(trial.WindowStart, trial.WindowEnd, trial.Samples)
 	if err != nil || math.Abs(joules-100) > 1e-9 {
 		t.Fatalf("energy = %v, error = %v", joules, err)
 	}

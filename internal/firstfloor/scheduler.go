@@ -28,7 +28,6 @@ type request struct {
 	data           [][]byte
 	bytes          int
 	result         chan result
-	profile        *ProfileRequest
 	lifetime       time.Time
 	enqueued       time.Time
 	queueExited    time.Time
@@ -38,7 +37,6 @@ type request struct {
 }
 type result struct {
 	response Response
-	profile  ProfileResponse
 	err      error
 	complete bool
 	output   runnerOutput
@@ -122,7 +120,13 @@ func (s *Scheduler) Update(ctx context.Context, cfg *Config) error {
 	if !durationOK(next.Policy.MaxBatchWaitMS) || !identity(next.Policy.DecisionID) {
 		return errors.New("invalid mutable policy")
 	}
-	if err := validateBatchCap(next.Policy, current.BatchSizes); err != nil {
+	var err error
+	if current.Mode == modeProfiling {
+		err = validateProfilingPolicy(next.Policy, current.BatchSizes)
+	} else {
+		err = validateBatchCap(next.Policy, current.BatchSizes)
+	}
+	if err != nil {
 		return err
 	}
 	change := configChange{&next, make(chan struct{})}
@@ -295,9 +299,6 @@ func (a *schedulerActor) progress(r *request, phase string, now time.Time, o run
 	if phase == phaseRunning || phase == phaseFinished && inActive {
 		p.BatchID = a.batchID
 		p.BatchSize = len(a.active)
-		if r.profile != nil {
-			p.BatchSize = r.profile.BatchSize
-		}
 		p.ProfileID = a.activePolicy.ProfileID
 		p.DecisionID = a.activePolicy.DecisionID
 		p.QueueMS = milliseconds(a.started.Sub(r.received))
@@ -355,9 +356,6 @@ func (a *schedulerActor) requestStates(now time.Time) []RequestState {
 				service = milliseconds(now.Sub(a.started))
 				id = a.batchID
 				size = len(a.active)
-				if r.profile != nil {
-					size = r.profile.BatchSize
-				}
 				policy = a.activePolicy
 			}
 			rate := 0.0
@@ -458,28 +456,23 @@ func (a *schedulerActor) startBatch(ctx context.Context, next time.Time) time.Ti
 		if len(a.queue)+len(a.deferred) == 0 {
 			break
 		}
-		choice := BatchChoice{}
-		if a.cfg.Mode == modeProfiling {
-			choice = BatchChoice{Size: 1, WorkloadUID: a.queue[0].context.WorkloadUID, Definition: a.queue[0].context.Definition}
-		} else {
-			age, known := a.s.runner.decisionIdleNanos()
-			var decisionGap *int64
+		age, known := a.s.runner.decisionIdleNanos()
+		var decisionGap *int64
+		if known {
+			decisionGap = &age
+		}
+		choice := ChooseBatch(a.cfg.Policy, a.requestStates(now), decisionGap)
+		if choice.Size > 0 {
+			// Recheck cancellation, lifetime and normal SLO feasibility at
+			// confirmation, after the first selection's work has elapsed.
+			now = time.Now()
+			next = a.expireQueued(now)
+			age, known = a.s.runner.decisionIdleNanos()
+			decisionGap = nil
 			if known {
 				decisionGap = &age
 			}
 			choice = ChooseBatch(a.cfg.Policy, a.requestStates(now), decisionGap)
-			if choice.Size > 0 {
-				// Recheck cancellation, lifetime and normal SLO feasibility at
-				// confirmation, after the first selection's work has elapsed.
-				now = time.Now()
-				next = a.expireQueued(now)
-				age, known = a.s.runner.decisionIdleNanos()
-				decisionGap = nil
-				if known {
-					decisionGap = &age
-				}
-				choice = ChooseBatch(a.cfg.Policy, a.requestStates(now), decisionGap)
-			}
 		}
 		if choice.Reason == OutcomeDeadlineDrop || choice.Reason == ReasonDeadlineDefer {
 			for i, r := range a.queue {
@@ -540,36 +533,15 @@ func (a *schedulerActor) startBatch(ctx context.Context, next time.Time) time.Ti
 	return next
 }
 func (s *Scheduler) executeBatch(ctx context.Context, batch []*request, id uint64, snapshot *Config) {
-	if batch[0].profile != nil {
-		s.completed <- s.executeProfile(ctx, batch, id, snapshot)
-		return
-	}
 	tensors, data := packBatch(snapshot.Inputs, batch, len(batch))
-	o, e := s.runner.infer(ctx, id, tensors, data, "")
+	trialID := ""
+	if snapshot.Mode == modeProfiling {
+		trialID = batch[0].context.WorkloadUID
+	}
+	o, e := s.runner.infer(ctx, id, tensors, data, trialID)
 	s.completed <- result{output: o, err: e, complete: true}
 }
 
-// executeProfile runs exactly one execution of the profile request's samples.
-func (s *Scheduler) executeProfile(ctx context.Context, batch []*request, id uint64, snapshot *Config) result {
-	pr := batch[0].profile
-	tensors, data := packBatch(snapshot.Inputs, batch, pr.BatchSize)
-	span := time.Now()
-	o, e := s.runner.infer(ctx, id, tensors, data, pr.TrialID)
-	if e != nil {
-		return result{output: o, err: e, complete: true}
-	}
-	reply := ProfileResponse{BatchSize: pr.BatchSize, BatchIDs: []uint64{id}, NativeSamplesMS: []float64{milliseconds(time.Since(span))}, ServiceSamples: []ServiceSample{o.sample}, BackendSamplesMS: []float64{o.backendMS}, PreprocessSamplesMS: []float64{o.preprocessMS}, PostprocessSamplesMS: []float64{o.postprocessMS}, Units: make([]int, len(o.items)), ExecutionComplete: true}
-	if snapshot.MaxNewTokens > 0 {
-		reply.FirstTokenSamplesMS = []float64{o.firstMS}
-	}
-	for i, item := range o.items {
-		if item.Error != "" {
-			return result{output: o, err: &preprocessError{item.Error}, complete: true}
-		}
-		reply.Units[i] = item.Units
-	}
-	return result{profile: reply, output: o, complete: true}
-}
 func (a *schedulerActor) admit(r *request) {
 	if r.ctx.Err() != nil {
 		r.result <- result{err: r.ctx.Err(), complete: true}
@@ -584,19 +556,15 @@ func (a *schedulerActor) admit(r *request) {
 	}
 	r.enqueued = time.Now()
 	a.observeArrival(r)
-	if a.cfg.Mode == modeProfiling {
-		a.queue = append(a.queue, r)
-	} else {
-		now := time.Now()
-		slack := RemainingSLOMS(RequestState{Context: r.context, ElapsedMS: milliseconds(now.Sub(r.received))})
-		index := sort.Search(len(a.queue), func(i int) bool {
-			q := a.queue[i]
-			return RemainingSLOMS(RequestState{Context: q.context, ElapsedMS: milliseconds(now.Sub(q.received))}) > slack
-		})
-		a.queue = append(a.queue, nil)
-		copy(a.queue[index+1:], a.queue[index:])
-		a.queue[index] = r
-	}
+	now := time.Now()
+	slack := RemainingSLOMS(RequestState{Context: r.context, ElapsedMS: milliseconds(now.Sub(r.received))})
+	index := sort.Search(len(a.queue), func(i int) bool {
+		q := a.queue[i]
+		return RemainingSLOMS(RequestState{Context: q.context, ElapsedMS: milliseconds(now.Sub(q.received))}) > slack
+	})
+	a.queue = append(a.queue, nil)
+	copy(a.queue[index+1:], a.queue[index:])
+	a.queue[index] = r
 	a.queuedBytes += r.bytes
 	a.accepted++
 	emitProgress(a.progress(r, phaseQueued, time.Now(), runnerOutput{}, false))
@@ -633,51 +601,47 @@ func (a *schedulerActor) finishBatch(done result) {
 	a.completed += uint64(len(a.active))
 	a.executions++
 	var failedBatch *batchError
-	var failedItem *preprocessError
-	if a.active[0].profile != nil {
-		r := a.active[0]
-		if done.err == nil {
-			done.profile.NativeElapsedMS = milliseconds(now.Sub(r.received))
+	failed := errors.As(done.err, &failedBatch)
+	success := 0
+	var members []string
+	if a.cfg.Mode == modeProfiling {
+		members = make([]string, len(a.active))
+		for i, r := range a.active {
+			members[i] = r.context.RequestID
 		}
-		r.result <- done
+	}
+	for i, r := range a.active {
 		p := a.progress(r, phaseFinished, now, done.output, true)
+		response := Response{ModelName: a.cfg.Model, ID: r.context.RequestID, ExecutionComplete: true}
+		var e error
 		switch {
-		case errors.As(done.err, &failedBatch):
+		case failed:
 			p.Outcome = OutcomeBatchError
-		case errors.As(done.err, &failedItem):
+			e = failedBatch
+		case done.output.items[i].Error != "":
 			p.Outcome = OutcomePreprocessFailed
+			e = &preprocessError{done.output.items[i].Error}
+		default:
+			p.Units = done.output.items[i].Units
+			response.Outputs = make([]Field, len(done.output.outputs))
+			for k, f := range done.output.outputs {
+				response.Outputs[k] = Field{Name: f.Name, Data: f.Data[success : success+1]}
+			}
+			success++
+			p.Outcome = outcomeCompleted
+			if e = requestError(r, now); e != nil {
+				p.Outcome = e.Error()
+			}
 		}
 		emitProgress(p)
-	} else {
-		failed := errors.As(done.err, &failedBatch)
-		success := 0
-		for i, r := range a.active {
-			p := a.progress(r, phaseFinished, now, done.output, true)
-			response := Response{ModelName: a.cfg.Model, ID: r.context.RequestID, ExecutionComplete: true}
-			var e error
-			switch {
-			case failed:
-				p.Outcome = OutcomeBatchError
-				e = failedBatch
-			case done.output.items[i].Error != "":
-				p.Outcome = OutcomePreprocessFailed
-				e = &preprocessError{done.output.items[i].Error}
-			default:
-				p.Units = done.output.items[i].Units
-				response.Outputs = make([]Field, len(done.output.outputs))
-				for k, f := range done.output.outputs {
-					response.Outputs[k] = Field{Name: f.Name, Data: f.Data[success : success+1]}
-				}
-				success++
-				p.Outcome = outcomeCompleted
-				if e = requestError(r, now); e != nil {
-					p.Outcome = e.Error()
-				}
+		if members != nil {
+			p.BatchRequestIDs = members
+			if !done.output.startedAt.IsZero() {
+				p.BatchStartedAt, p.BatchFinishedAt = &done.output.startedAt, &done.output.finishedAt
 			}
-			emitProgress(p)
-			response.Progress = p
-			r.result <- result{response: response, err: e, complete: true}
 		}
+		response.Progress = p
+		r.result <- result{response: response, err: e, complete: true}
 	}
 	clear(a.active)
 	a.active = nil

@@ -18,6 +18,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/worker"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 type sampleStopRuntimeFunc func(context.Context, worker.RuntimeRequest) (worker.RuntimeMeasurement, error)
@@ -108,8 +109,8 @@ func sampleStopCommit(
 	if err := json.Unmarshal(store.payload, &raw); err != nil {
 		t.Fatal(err)
 	}
-	if raw.Runtime.InferenceCount != 60 || raw.Workload == nil || !raw.Workload.Continuous ||
-		raw.Runtime.MeasurementElapsedSeconds < 120 ||
+	if raw.Runtime.InferenceCount != 180 || raw.Workload == nil || !raw.Workload.Continuous ||
+		raw.Runtime.MeasurementElapsedSeconds < 360 ||
 		raw.Metrics.Summary.ObservationDurationSeconds < raw.Runtime.MeasurementElapsedSeconds+35 {
 		t.Fatalf("raw commit lost real observer/caller coverage: %+v", raw)
 	}
@@ -120,13 +121,13 @@ func assertSampleStopNativePairs(
 	t *testing.T, raw evidence.RawMeasurement, config profilingrun.RunConfig, opts options,
 ) {
 	t.Helper()
-	known := 0
-	for _, repetition := range raw.Runtime.RepetitionResults {
-		for index, sample := range repetition.NativeSamples {
+	for phaseIndex, phase := range raw.Runtime.Phases {
+		known := 0
+		for index, sample := range phase.NativeSamples {
 			if sample.ServiceDurationNanos <= 0 || sample.TrialID != opts.podUID {
 				t.Fatalf("raw commit lost the simulated native service/trial pair: %+v", sample)
 			}
-			if index == 0 {
+			if phaseIndex == 0 && index == 0 {
 				if sample.PrecedingIdleNanos != nil {
 					t.Fatalf("session startup invented a preceding gap: %+v", sample)
 				}
@@ -137,9 +138,9 @@ func assertSampleStopNativePairs(
 			}
 			known++
 		}
-	}
-	if known < config.Measurement.MinServiceSamples {
-		t.Fatalf("raw commit has %d known-gap pairs, need %d", known, config.Measurement.MinServiceSamples)
+		if known < config.Measurement.MinServiceSamples {
+			t.Fatalf("phase %s has %d known-gap pairs, need %d", phase.ID, known, config.Measurement.MinServiceSamples)
+		}
 	}
 }
 
@@ -197,13 +198,9 @@ func sampleStopRuntimeRecord(
 		CgroupCPUMax: "400000 100000", AffinityCPUCount: 4,
 		AffinityCPUs: []int{0, 1, 2, 3}, CPUSetEffective: "0-3",
 	}
-	latencies := make([]float64, len(native))
-	for index, sample := range native {
-		latencies[index] = sample.NativeRequestMilliseconds
-	}
 	calls := uint64(len(native))
 	target := float64(config.Measurement.DurationSeconds)
-	return profilingrun.RuntimeResult{
+	result := profilingrun.RuntimeResult{
 		SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded", ExperimentID: podUID,
 		NodeName: config.TargetNode.Name, Model: config.State.Model, Architecture: "x86_64",
 		Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0", Backend: config.State.Backend,
@@ -230,9 +227,48 @@ func sampleStopRuntimeRecord(
 				CgroupCPUMax: cpu.CgroupCPUMax, CPUSet: cpu.CPUSetEffective,
 			},
 		},
-		RepetitionResults: []profilingrun.Repetition{{
-			Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
-			MeasurementEndedAt: ended.Format(time.RFC3339Nano), LatencyMilliseconds: latencies, NativeSamples: native,
-		}},
 	}
+	points := config.Measurement.OperatingPoints
+	phaseCount := len(points.Utilizations) + 2
+	count := len(native) / phaseCount
+	var maximum int64
+	for _, sample := range native[:count] {
+		maximum = max(maximum, sample.ServiceDurationNanos)
+	}
+	workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap,
+		points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds), float64(maximum)/1e9)
+	fixtures.ApplyActivePhases(&result, fixtures.PhaseOptions{StartedAt: started, Duration: ended.Sub(started) / time.Duration(phaseCount),
+		Batch: config.Measurement.Batch, Samples: count, Workers: workers, Utilizations: points.Utilizations,
+		SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds, PodUID: podUID, SupplySizing: sizing})
+	result.MeasurementEndedAt, result.MeasurementElapsedSeconds = ended.Format(time.RFC3339Nano), ended.Sub(started).Seconds()
+	for phaseIndex := range result.Phases {
+		phase := &result.Phases[phaseIndex]
+		phase.NativeSamples = native[phaseIndex*count : (phaseIndex+1)*count]
+		start, end := phase.NativeSamples[0].StartedAt, phase.NativeSamples[count-1].FinishedAt
+		phase.MeasurementStartedAt, phase.MeasurementEndedAt = start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)
+		phase.MeasurementElapsedSeconds = end.Sub(start).Seconds()
+		for index := range phase.NativeSamples {
+			sample := &phase.NativeSamples[index]
+			phase.LatencyMilliseconds[index] = sample.NativeRequestMilliseconds
+			for member := range config.Measurement.Batch {
+				request := &phase.Requests[index*config.Measurement.Batch+member]
+				request.RecordID = sample.RecordIDs[member]
+				request.ArrivalAt, request.SentAt, request.CompletedAt = sample.StartedAt, sample.StartedAt, sample.FinishedAt
+				request.LatencyMilliseconds = sample.NativeRequestMilliseconds
+				progress := &request.Response.Progress
+				progress.At, progress.BatchID = sample.FinishedAt, sample.BatchID
+				progress.ServiceSample = &sample.ServiceSample
+				progress.BatchStartedAt, progress.BatchFinishedAt = &sample.StartedAt, &sample.FinishedAt
+				progress.ServiceMS, progress.BackendMS, progress.NativeElapsedMS = sample.RunnerServiceMilliseconds, sample.BackendCallMilliseconds, sample.NativeRequestMilliseconds
+				progress.PreprocessMS, progress.PostprocessMS = 0, 0
+				zero, finish := int64(0), sample.ServiceDurationNanos
+				progress.NativeHTTP = &firstfloor.HTTPRequestTiming{HandlerEnteredAt: sample.StartedAt, ReceivedNanos: &zero, EnqueueNanos: &zero, FinishedNanos: &finish}
+			}
+		}
+	}
+	saturation := &result.Phases[1]
+	for index := 2; index < len(result.Phases); index++ {
+		result.Phases[index].ArrivalRatePerSecond = result.Phases[index].Utilization * float64(saturation.CompletedInputs) / saturation.MeasurementElapsedSeconds
+	}
+	return result
 }

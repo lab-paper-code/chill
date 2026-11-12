@@ -357,9 +357,6 @@ func TestNativeServingHTTPRejectsControlAndInferenceMutation(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 		want := http.StatusNotFound
-		if path == "profile" {
-			want = http.StatusConflict
-		}
 		if resp.StatusCode != want {
 			t.Fatalf("serving %s: status %d, want %d", path, resp.StatusCode, want)
 		}

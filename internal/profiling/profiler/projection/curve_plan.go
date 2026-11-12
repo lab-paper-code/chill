@@ -24,6 +24,12 @@ func ApplyFrozenActiveProtocol(
 	measurement.SLOPercentile = protocol.SLOPercentile
 	measurement.SLOTargetLatencyNanos = protocol.SLOTargetLatencyNanos
 	measurement.MinServiceSamples = protocol.MinServiceSamples
+	measurement.OperatingPoints = (*profilingrun.OperatingPointsContract)(protocol.OperatingPoints)
+	if measurement.OperatingPoints != nil {
+		points := *measurement.OperatingPoints
+		points.Utilizations = slices.Clone(points.Utilizations)
+		measurement.OperatingPoints = &points
+	}
 }
 
 // ValidateRecordedIdleEvidence applies the existing curve-plan RunConfig
@@ -238,6 +244,9 @@ func validateCurvePlanRunConfig(
 		config.Measurement.Dataset != nil && config.Measurement.Dataset.Name != protocol.Dataset.Name {
 		return errors.New("RunConfig contradicts curve-plan dataset selection")
 	}
+	if !reflect.DeepEqual((*profilederivation.OperatingPointsContract)(config.Measurement.OperatingPoints), protocol.OperatingPoints) {
+		return errors.New("RunConfig contradicts curve-plan operatingPoints")
+	}
 	return nil
 }
 
@@ -267,6 +276,12 @@ func projectCurveMetricSource(metrics profilingrun.MetricContract) profilederiva
 
 func projectCurveProtocol(config profilingrun.RunConfig) profilederivation.CurveProtocolContract {
 	var dataset *profilederivation.CurveDatasetContract
+	var points *profilederivation.OperatingPointsContract
+	if config.Measurement.OperatingPoints != nil {
+		frozen := profilederivation.OperatingPointsContract(*config.Measurement.OperatingPoints)
+		frozen.Utilizations = slices.Clone(frozen.Utilizations)
+		points = &frozen
+	}
 	if config.Measurement.Dataset != nil {
 		dataset = &profilederivation.CurveDatasetContract{
 			Name: config.Measurement.Dataset.Name, UID: config.Measurement.Dataset.UID,
@@ -292,5 +307,6 @@ func projectCurveProtocol(config profilingrun.RunConfig) profilederivation.Curve
 		MetricObserverImage:        config.Images.MetricObserver,
 		WorkloadObserverImage:      config.Images.WorkloadObserver,
 		WorkloadSchemaVersion:      config.Workload.SchemaVersion,
+		OperatingPoints:            points,
 	}
 }

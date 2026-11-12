@@ -39,22 +39,24 @@ type MeasurementTrialQuality struct {
 }
 
 type MeasurementBatchFacts struct {
-	Batch                    int                       `json:"batch"`
-	P95Milliseconds          *float64                  `json:"p95Milliseconds"`
-	LatencySampleCount       int                       `json:"latencySampleCount"`
-	IdleWatts                *float64                  `json:"idleWatts"`
-	ActiveWatts              *float64                  `json:"activeWatts"`
-	TotalJoulesPerItem       *float64                  `json:"totalJoulesPerItem"`
-	IncrementalJoulesPerItem *float64                  `json:"incrementalJoulesPerItem"`
-	Confidence               *PointConfidence          `json:"confidence"`
-	ActiveTrialCount         int                       `json:"activeTrialCount"`
-	IdleTrialCount           int                       `json:"idleTrialCount"`
-	CompletedItems           int                       `json:"completedItems"`
-	CompletedCalls           int                       `json:"completedCalls"`
-	PowerSource              MeasurementPowerSource    `json:"powerSource"`
-	Quality                  []MeasurementTrialQuality `json:"quality"`
-	Sources                  []RawEvidenceIdentity     `json:"sources"`
-	MissingReasons           []string                  `json:"missingReasons"`
+	Batch                          int                       `json:"batch"`
+	P95Milliseconds                *float64                  `json:"p95Milliseconds"`
+	LatencySampleCount             int                       `json:"latencySampleCount"`
+	IdleWatts                      *float64                  `json:"idleWatts"`
+	ActiveWatts                    *float64                  `json:"activeWatts"`
+	TotalJoulesPerItem             *float64                  `json:"totalJoulesPerItem"`
+	IncrementalJoulesPerItem       *float64                  `json:"incrementalJoulesPerItem"`
+	Confidence                     *PointConfidence          `json:"confidence"`
+	ActiveTrialCount               int                       `json:"activeTrialCount"`
+	IdleTrialCount                 int                       `json:"idleTrialCount"`
+	CompletedItems                 int                       `json:"completedItems"`
+	CompletedCalls                 int                       `json:"completedCalls"`
+	PowerSource                    MeasurementPowerSource    `json:"powerSource"`
+	Quality                        []MeasurementTrialQuality `json:"quality"`
+	Sources                        []RawEvidenceIdentity     `json:"sources"`
+	MissingReasons                 []string                  `json:"missingReasons"`
+	PhasePower                     []PhasePower              `json:"phasePower"`
+	DispatchOccupancyNanosPerInput []float64                 `json:"dispatchOccupancyNanosPerInput"`
 }
 
 // MeasurementPointFacts shares the same pooled client percentile and point CI
@@ -80,6 +82,8 @@ func MeasurementPointFacts(point Point, baseline IdleBaseline, latencies []float
 	for _, trial := range point.Trials {
 		total += trial.ActiveWindowWallJoulesPerItem
 		watts += trial.ActiveWindowWallJoulesPerItem / trial.IdleBaselineSecondsPerItem
+		row.PhasePower = append(row.PhasePower, trial.PhasePower...)
+		row.DispatchOccupancyNanosPerInput = append(row.DispatchOccupancyNanosPerInput, trial.DispatchOccupancyNanosPerInput...)
 	}
 	total /= float64(len(point.Trials))
 	watts /= float64(len(point.Trials))

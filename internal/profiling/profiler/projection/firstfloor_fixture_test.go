@@ -2,6 +2,7 @@ package projection
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
@@ -22,24 +23,21 @@ func applyFirstfloorRuntime(config profilingrun.RunConfig, result *profilingrun.
 		AffinityCPUs: []int{0, 1, 2, 3}, CPUSetEffective: "0-3", CgroupCPUStatDelta: stat,
 	}
 	result.MemoryBytes, result.MemorySource = 123456, "cgroup-v2-memory.peak:runtime-container-lifetime"
-	executions := 0
-	recordIDs, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
-	for k := range recordIDs {
-		recordIDs[k], units[k] = "record-"+strconv.Itoa(k), 1
+	started, err := time.Parse(time.RFC3339Nano, result.MeasurementStartedAt)
+	if err != nil {
+		panic(err)
 	}
-	for i := range result.RepetitionResults {
-		repetition := &result.RepetitionResults[i]
-		repetition.NativeSamples = make([]profilingrun.NativeServiceSample, len(repetition.LatencyMilliseconds))
-		for j := range repetition.NativeSamples {
-			executions++
-			repetition.NativeSamples[j] = profilingrun.NativeServiceSample{
-				BatchID: uint64(executions), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
-				ServiceSample:             fixtures.ServiceSample(result.ExperimentID, uint64(executions-1), 700000),
-				RunnerServiceMilliseconds: 0.7, PreprocessMilliseconds: 0.1, PostprocessMilliseconds: 0.1,
-				BackendCallMilliseconds: 0.4, NativeRequestMilliseconds: 0.9,
-			}
-		}
-	}
+	points := config.Measurement.OperatingPoints
+	workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap,
+		points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds))
+	fixtures.ApplyActivePhases(result, fixtures.PhaseOptions{
+		StartedAt: started, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
+		Batch: config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers,
+		Utilizations: points.Utilizations, SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds,
+		PodUID: result.ExperimentID, Latencies: result.Phases[0].LatencyMilliseconds,
+		SupplySizing: sizing,
+	})
+	executions := result.InferenceCount
 	cpu := result.CPUContract
 	result.Firstfloor = &profilingrun.FirstfloorRuntimeEvidence{
 		Mode: "profiling", ModelInstanceCount: 1, MaxBatchSize: 4, MaxQueueSize: 32,

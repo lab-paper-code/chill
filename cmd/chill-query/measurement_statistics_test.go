@@ -102,7 +102,7 @@ func TestMeasurementStatisticsRetainedReferencesOnly(t *testing.T) {
 	}
 	row := statistics.Batches[0]
 	if row.Batch != 1 || row.ActiveTrialCount != 2 || row.IdleTrialCount != 2 ||
-		row.LatencySampleCount != 1260 ||
+		row.LatencySampleCount != 3780 ||
 		row.LatencyP95Milliseconds != 1 ||
 		row.Confidence.Level != .8 ||
 		row.Confidence.HalfWidth == 0 ||
@@ -714,7 +714,7 @@ func assertStatisticsReportingResponse(
 	} else if body.Statistics == nil || len(body.Statistics.Batches) != 1 ||
 		body.StatisticsReason != nil || body.MeasurementFactsReason != nil ||
 		body.Statistics.Batches[0].ActiveTrialCount != 2 || body.Statistics.Batches[0].IdleTrialCount != 2 ||
-		body.Statistics.Batches[0].LatencySampleCount != 1260 {
+		body.Statistics.Batches[0].LatencySampleCount != 3780 {
 		t.Fatalf("statistics changed: %s", response.Body.String())
 	}
 }
@@ -823,6 +823,8 @@ func statisticsFixture(
 	base.Actor.MemoryRequestBytes = 128 << 20
 	base.Actor.MemoryLimitBytes = 1024 << 20
 	idle := base
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
+	idle.Metrics.DurationSeconds = 31
 	idle.Measurement = runconfig.MeasurementContract{
 		Batch:                    1,
 		WarmupBatchSizes:         base.Measurement.WarmupBatchSizes,
@@ -878,6 +880,7 @@ func statisticsFixture(
 				DurationSeconds:          int32(base.Measurement.DurationSeconds),
 				DurationToleranceSeconds: ptr.To(base.Measurement.DurationToleranceSeconds),
 				Dataset:                  base.Measurement.Dataset.Name,
+				OperatingPoints:          fixtures.OperatingPoints[api.MeasurementOperatingPointsSpec](base.Measurement.OperatingPoints),
 			},
 			IdleProtocol: api.IdleProtocolSpec{
 				SettlingDurationSeconds:  int32(idle.Measurement.SettlingDurationSeconds),
@@ -892,6 +895,7 @@ func statisticsFixture(
 		DurationSeconds:      int32(base.Metrics.DurationSeconds),
 	}
 	cr.Spec.ActiveProtocol.MetricObservation, cr.Spec.IdleProtocol.MetricObservation = metricProtocol, metricProtocol
+	cr.Spec.IdleProtocol.MetricObservation.DurationSeconds = int32(idle.Metrics.DurationSeconds)
 	var refs []campaign.CompletedTrialReference
 	var native []client.Object
 	for _, isIdle := range []bool{false, true} {
@@ -935,11 +939,14 @@ func statisticsFixture(
 				measurement.WarmupBatchSizes = append(measurement.WarmupBatchSizes, int32(batch))
 			}
 			if isIdle {
+				metricProtocol = cr.Spec.IdleProtocol.MetricObservation
 				mode = campaign.WorkloadModeIdle
 				measurement.SettlingDurationSeconds = ptr.To(int32(config.Measurement.SettlingDurationSeconds))
 			} else {
 				measurement.Dataset = config.Measurement.Dataset.Name
 				measurement.Workload = config.Measurement.WorkloadName
+				points := fixtures.OperatingPoints[api.MeasurementOperatingPointsSpec](config.Measurement.OperatingPoints)
+				measurement.OperatingPoints = &points
 			}
 			ref := campaign.CompletedTrialReference{
 				Run:         campaign.RunReference{Namespace: cr.Namespace, Name: name, UID: name},
@@ -1101,7 +1108,11 @@ func statisticsTrial(
 ) (evidence.ExecutionEvidence, []byte) {
 	t.Helper()
 	start := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
-	end := start.Add(30 * time.Second)
+	windowSeconds := 30
+	if points := config.Measurement.OperatingPoints; points != nil {
+		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+	}
+	end := start.Add(time.Duration(windowSeconds) * time.Second)
 	cpu := runconfig.RuntimeCPU{
 		CgroupCPUMax:      "max 100000",
 		ORTIntraOpThreads: 0,
@@ -1157,9 +1168,9 @@ func statisticsTrial(
 		StartedAt: start,
 		EndedAt:   end.Add(time.Second),
 		Summary: metricobserver.Summary{
-			Attempts:                   30,
-			SuccessfulSamples:          30,
-			ObservationDurationSeconds: 31,
+			Attempts:                   windowSeconds,
+			SuccessfulSamples:          windowSeconds,
+			ObservationDurationSeconds: float64(windowSeconds + 1),
 			MaximumSampleGapSeconds:    1,
 			SourceTimestampAbsent:      true,
 		},
@@ -1168,7 +1179,7 @@ func statisticsTrial(
 	if idle {
 		watts = float64(4 + index)
 	}
-	for i := range 30 {
+	for i := range windowSeconds {
 		metrics.Samples = append(
 			metrics.Samples,
 			metricobserver.Sample{
@@ -1248,20 +1259,7 @@ func statisticsTrial(
 		ff.InferenceCount = ff.ExecutionCount * uint64(config.Measurement.Batch)
 		ff.BatchExecutionCounts[fmt.Sprint(config.Measurement.Batch)] = ff.ExecutionCount
 		ff.Runtime.WarmupIterations = config.Actor.WarmupIterations
-		var samples []runconfig.NativeServiceSample
-		for i := range latencies {
-			records, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
-			for index := range records {
-				records[index], units[index] = fmt.Sprint("record-", index), 1
-			}
-			samples = append(samples, runconfig.NativeServiceSample{
-				ServiceSample: fixtures.ServiceSample(name, uint64(i), 700000),
-				BatchID:       uint64(i + 1), BatchSize: config.Measurement.Batch, RecordIDs: records, Units: units,
-				RunnerServiceMilliseconds: .7, PreprocessMilliseconds: .1, PostprocessMilliseconds: .1,
-				BackendCallMilliseconds: .4, NativeRequestMilliseconds: .9,
-			})
-		}
-		raw, err = (evidence.RawMeasurement{
+		active := evidence.RawMeasurement{
 			SchemaVersion: evidence.RawMeasurementSchemaVersion, RunConfig: config, PodUID: name,
 			Metrics: metrics, Workload: workload,
 			Runtime: runconfig.RuntimeResult{
@@ -1275,14 +1273,22 @@ func statisticsTrial(
 				InferenceCount:    len(latencies), MeasurementMode: "duration",
 				MeasurementStartedAt: start.Format(time.RFC3339Nano),
 				MeasurementEndedAt:   end.Format(time.RFC3339Nano), MeasurementElapsedSeconds: 30,
-				TargetDurationSeconds: ptr.To(float64(30)),
+				TargetDurationSeconds: ptr.To(float64(config.Measurement.DurationSeconds)),
 				CPUContract:           cpu, DerivedContract: derived, Firstfloor: ff,
 				MemoryBytes: 123456, MemorySource: "cgroup-v2-memory.peak:runtime-container-lifetime",
-				RepetitionResults: []runconfig.Repetition{{Repetition: 1, MeasurementStartedAt: start.Format(time.RFC3339Nano),
-					MeasurementEndedAt: end.Format(time.RFC3339Nano), LatencyMilliseconds: latencies, NativeSamples: samples}},
 				Latency: map[string]float64{"p95": latencies[0], "mean": latencies[0]},
 			},
-		}).CanonicalJSON()
+		}
+		points := config.Measurement.OperatingPoints
+		workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap, points.FramedDecodedRequestUpperBytes,
+			float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds))
+		fixtures.ApplyActivePhases(&active.Runtime, fixtures.PhaseOptions{StartedAt: start, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
+			Batch: config.Measurement.Batch, Samples: count, Workers: workers, Utilizations: points.Utilizations,
+			SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds, PodUID: name, Latencies: []float64{latency}, SupplySizing: sizing})
+		ff.ExecutionCount = uint64(active.Runtime.InferenceCount)
+		ff.InferenceCount = ff.ExecutionCount * uint64(config.Measurement.Batch)
+		ff.BatchExecutionCounts[fmt.Sprint(config.Measurement.Batch)] = ff.ExecutionCount
+		raw, err = active.CanonicalJSON()
 	}
 	if err != nil {
 		t.Fatal(err)

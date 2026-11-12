@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -24,12 +25,10 @@ import (
 const (
 	modelVolumeName                 = "artifact"
 	preprocessorVolumeName          = "preprocessor"
-	datasetVolumeName               = "dataset"
 	coordinationVolumeName          = "coordination"
 	workspaceVolumeName             = "workspace"
 	workloadObserverTokenVolumeName = "workload-observer-kube-api"
 
-	datasetMountPath               = "/dataset"
 	coordinationMountPath          = "/coordination"
 	workspaceMountPath             = "/workspace"
 	workloadObserverTokenMountPath = "/var/run/secrets/chill-workload-observer"
@@ -38,7 +37,6 @@ const (
 
 	artifactCopyMountPath     = "/chill-artifact"
 	preprocessorCopyMountPath = "/chill-preprocessor"
-	datasetCopyMountPath      = "/chill-dataset"
 )
 
 func buildExecutionJob(
@@ -157,19 +155,14 @@ func buildExecutionJob(
 	return job, nil
 }
 
-// deliveryContainers copies every model file to /model/<basename>, the
-// preprocessor directory to /preprocessor, and, for active measurement only,
-// the dataset profiling records to /dataset/<recordID>/<field>.
+// deliveryContainers copies model files and preprocessing only. The off-node
+// load Job owns dataset delivery and request generation.
 func deliveryContainers(config profilingrun.RunConfig) []corev1.Container {
 	containers := []corev1.Container{
 		copyContainer("artifact", config.Actor.ArtifactImage, modelVolumeName, artifactCopyMountPath,
 			append([]string{`cp "$@" ` + artifactCopyMountPath + `/`, "artifact-copy"}, config.Actor.ArtifactFiles...)),
 		copyContainer("preprocessor", config.Actor.PreprocessorImage, preprocessorVolumeName, preprocessorCopyMountPath,
 			[]string{`cp -R "$1"/. ` + preprocessorCopyMountPath + `/`, "--", config.Actor.PreprocessorPath}),
-	}
-	if dataset := config.Measurement.Dataset; dataset != nil {
-		containers = append(containers, copyContainer("dataset", dataset.Image, datasetVolumeName, datasetCopyMountPath,
-			[]string{`cp -R "$1"/profiling/. ` + datasetCopyMountPath + `/`, "--", dataset.Path}))
 	}
 	return containers
 }
@@ -199,9 +192,6 @@ func runtimeContainer(
 	container.VolumeMounts = append(container.VolumeMounts,
 		corev1.VolumeMount{Name: coordinationVolumeName, MountPath: coordinationMountPath},
 		corev1.VolumeMount{Name: workspaceVolumeName, MountPath: workspaceMountPath})
-	if config.Measurement.Dataset != nil {
-		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: datasetVolumeName, MountPath: datasetMountPath, ReadOnly: true})
-	}
 	container.VolumeMounts = append(container.VolumeMounts, projection.VolumeMounts...)
 	container.Command = []string{"/measurement-worker"}
 	container.Args = []string{
@@ -223,10 +213,16 @@ func runtimeContainer(
 	}
 	container.Env = append(container.Env,
 		fieldEnv("POD_UID", "metadata.uid"), fieldEnv("NODE_NAME", "spec.nodeName"),
+		fieldEnv("POD_IP", "status.podIP"),
 		secretEnv("AWS_ACCESS_KEY_ID", binding.CredentialsSecretName, component.EvidenceStoreAccessKeyKey),
 		secretEnv("AWS_SECRET_ACCESS_KEY", binding.CredentialsSecretName, component.EvidenceStoreSecretKeyKey),
 	)
 	container.SecurityContext = projection.SecurityContext
+	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		container.ReadinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(8081)},
+		}, PeriodSeconds: 1, FailureThreshold: 3}
+	}
 	container.TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
 	return container
 }
@@ -326,9 +322,6 @@ func executionVolumes(config profilingrun.RunConfig, plan profiler.ExecutionPlan
 				}},
 			},
 		}}},
-	}
-	if config.Measurement.Dataset != nil {
-		volumes = append(volumes, corev1.Volume{Name: datasetVolumeName, VolumeSource: emptyDir})
 	}
 	return volumes
 }

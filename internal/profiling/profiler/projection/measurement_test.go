@@ -29,6 +29,7 @@ func TestMeasurementQualityDistinguishesUnsetPolicyWithoutJudgingObservations(t 
 			config.Measurement.WorkloadMode = mode
 			if mode == profilingrun.IdleModelLoadedWorkloadMode {
 				config.Measurement.Dataset = nil
+				config.Measurement.OperatingPoints = nil
 			}
 			protocol := projectCurveProtocol(config)
 			for _, metrics := range []metricobserver.Result{
@@ -112,8 +113,12 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 			MeasurementStartedAt: started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:   started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			InferenceCount:       2,
-			RepetitionResults: []profilingrun.Repetition{{
-				LatencyMilliseconds: []float64{1, 2},
+			Phases: []profilingrun.Phase{{
+				ID: "sparse-0", Kind: "sparse",
+				MeasurementStartedAt:      started.Format(time.RFC3339Nano),
+				MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
+				MeasurementElapsedSeconds: 30,
+				LatencyMilliseconds:       []float64{1, 2},
 			}},
 		},
 		Metrics: metricobserver.Result{
@@ -202,6 +207,11 @@ func projectionRunConfig() profilingrun.RunConfig {
 		TargetNode: profilingrun.NodeSnapshot{Name: "lattepanda", UID: "node-uid"},
 		Measurement: profilingrun.MeasurementContract{
 			Batch: 2, WarmupIterations: 20, DurationSeconds: 30, WorkloadMode: "empirical-cadence-fixed-batch",
+			OperatingPoints: &profilingrun.OperatingPointsContract{
+				Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000, PhaseDurationSeconds: 30,
+				RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100,
+				FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768,
+			},
 			Dataset: &profilingrun.DatasetContract{
 				Name: "vqav2-val-subset", UID: "dataset-uid", Image: "dataset", Path: "/artifact/vqav2-val-subset",
 			},
@@ -255,7 +265,7 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
 	podUID := "run-pod"
 	targetDuration := float64(config.Measurement.DurationSeconds)
-	samples := make([]metricobserver.Sample, 30)
+	samples := make([]metricobserver.Sample, 90)
 	for index := range samples {
 		samples[index] = metricobserver.Sample{
 			ObservedAt: started.Add(500*time.Millisecond + time.Duration(index)*time.Second),
@@ -279,7 +289,7 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 			PodUID:    podUID,
 		},
 		CoverageStartedAt:      started.Add(-time.Second),
-		CoverageEndedAt:        started.Add(31 * time.Second),
+		CoverageEndedAt:        started.Add(91 * time.Second),
 		InitialResourceVersion: "10",
 		LastResourceVersion:    "10",
 		EventLimit:             10,
@@ -332,8 +342,8 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 				Backend: config.State.Backend, Provider: config.State.Backend,
 				NodeSnapshot: config.TargetNode,
 			},
-			RepetitionResults: []profilingrun.Repetition{{
-				Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
+			Phases: []profilingrun.Phase{{
+				ID: "saturation-0", Kind: "saturation", MeasurementStartedAt: started.Format(time.RFC3339Nano),
 				MeasurementEndedAt:  started.Add(30 * time.Second).Format(time.RFC3339Nano),
 				LatencyMilliseconds: []float64{1, 2},
 			}},
@@ -353,18 +363,18 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 					MaximumTemperatureCelsius: config.Metrics.ThermalMetrics.MaximumTemperatureCelsius,
 				},
 			},
-			StartedAt: started, EndedAt: started.Add(31 * time.Second), Samples: samples,
+			StartedAt: started, EndedAt: started.Add(91 * time.Second), Samples: samples,
 			Summary: metricobserver.Summary{
-				Attempts: 30, SuccessfulSamples: 30, ObservationDurationSeconds: 31,
+				Attempts: 90, SuccessfulSamples: 90, ObservationDurationSeconds: 91,
 				MaximumSampleGapSeconds: 1, SourceTimestampAbsent: true,
 			},
 		},
 		Workload: &workload,
 	}
 	raw.Runtime.InferenceCount = 60
-	raw.Runtime.RepetitionResults[0].LatencyMilliseconds = make([]float64, 60)
-	for index := range raw.Runtime.RepetitionResults[0].LatencyMilliseconds {
-		raw.Runtime.RepetitionResults[0].LatencyMilliseconds[index] = float64(1 + index%2)
+	raw.Runtime.Phases[0].LatencyMilliseconds = make([]float64, 60)
+	for index := range raw.Runtime.Phases[0].LatencyMilliseconds {
+		raw.Runtime.Phases[0].LatencyMilliseconds[index] = float64(1 + index%2)
 	}
 	applyFirstfloorRuntime(config, &raw.Runtime)
 	rawBytes, err := raw.CanonicalJSON()
@@ -375,11 +385,11 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 	rawIdentity := evidencestore.ObjectIdentity{
 		Store: rawLocation.Store, Key: rawLocation.Key, Size: int64(len(rawBytes)),
 	}
-	completed := started.Add(time.Minute)
+	completed := started.Add(2 * time.Minute)
 	container := func(name, image string) profilerevidence.ContainerTerminal {
 		return profilerevidence.ContainerTerminal{
 			Name: name, RequestedImage: image, ImageID: "containerd://" + name,
-			Reason: "Completed", StartedAt: completed.Add(-time.Minute),
+			Reason: "Completed", StartedAt: started.Add(-time.Minute),
 			FinishedAt: completed.Add(-time.Second),
 		}
 	}
@@ -413,6 +423,9 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 			},
 		},
 		FinalizedAt: completed.Add(2 * time.Second),
+	}
+	if err := json.Unmarshal(rawBytes, &raw); err != nil {
+		t.Fatal(err)
 	}
 	executionBytes, err := execution.CanonicalJSON(raw)
 	if err != nil {

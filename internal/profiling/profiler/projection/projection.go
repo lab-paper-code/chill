@@ -1,6 +1,8 @@
 package projection
 
 import (
+	"time"
+
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 )
@@ -53,7 +55,7 @@ func projectTrial(
 	}
 	latencies := make([]float64, 0, raw.Runtime.InferenceCount)
 	nativeSamples := make([]profilederivation.NativeServiceSample, 0, raw.Runtime.InferenceCount)
-	for _, repetition := range raw.Runtime.RepetitionResults {
+	for _, repetition := range raw.Runtime.Phases {
 		latencies = append(latencies, repetition.LatencyMilliseconds...)
 		for _, sample := range repetition.NativeSamples {
 			copied := profilederivation.NativeServiceSample(sample).Clone()
@@ -63,6 +65,23 @@ func projectTrial(
 	samples := make([]profilederivation.Sample, len(raw.Metrics.Samples))
 	for index, sample := range raw.Metrics.Samples {
 		samples[index] = profilederivation.Sample{ObservedAt: sample.ObservedAt, Watts: sample.Watts}
+	}
+	phases := make([]profilederivation.OperatingPointPhase, len(raw.Runtime.Phases))
+	for index, phase := range raw.Runtime.Phases {
+		start, err := time.Parse(time.RFC3339Nano, phase.MeasurementStartedAt)
+		if err != nil {
+			return profilederivation.Trial{}, err
+		}
+		end, err := time.Parse(time.RFC3339Nano, phase.MeasurementEndedAt)
+		if err != nil {
+			return profilederivation.Trial{}, err
+		}
+		native := make([]profilederivation.NativeServiceSample, len(phase.NativeSamples))
+		for i, sample := range phase.NativeSamples {
+			native[i] = profilederivation.NativeServiceSample(sample).Clone()
+		}
+		phases[index] = profilederivation.OperatingPointPhase{ID: phase.ID, Kind: phase.Kind, WindowStart: start, WindowEnd: end,
+			CompletedItems: phase.CompletedInputs, Samples: samples, NativeSamples: native}
 	}
 	workload, err := projectWorkloadWindow(raw.Workload, windowStart, windowEnd)
 	if err != nil {
@@ -84,6 +103,7 @@ func projectTrial(
 		CompletedItems:              raw.Runtime.InferenceCount * execution.RunConfig.Measurement.Batch,
 		LatencyMilliseconds:         latencies,
 		NativeSamples:               nativeSamples,
+		Phases:                      phases,
 		Samples:                     samples,
 		Failures:                    len(raw.Metrics.Failures),
 		SourceTimestampAbsent:       raw.Metrics.Summary.SourceTimestampAbsent,

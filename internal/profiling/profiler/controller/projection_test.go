@@ -78,6 +78,7 @@ func TestProjectRequestPreservesIdleSettlingContract(t *testing.T) {
 	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	run.Spec.Measurement.Dataset = ""
 	run.Spec.Measurement.Workload = ""
+	run.Spec.Measurement.OperatingPoints = nil
 
 	request, err := ProjectRequest(run.Spec)
 	if err != nil {
@@ -276,6 +277,9 @@ func testRun() *edgev1alpha1.ProfilingRun {
 				WarmupBatchSizes: []int32{1},
 				WorkloadMode:     "empirical-cadence-fixed-batch", Dataset: "vqav2-val-subset",
 				Workload: "mobilenet",
+				OperatingPoints: &edgev1alpha1.MeasurementOperatingPointsSpec{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
+					PhaseDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100,
+					FramedDecodedRequestUpperBytes: 1024},
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,

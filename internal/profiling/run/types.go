@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha20"
+	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha21"
 
 	EmpiricalCadenceFixedBatchWorkloadMode = "empirical-cadence-fixed-batch"
 	IdleModelLoadedWorkloadMode            = "idle-model-loaded"
@@ -33,17 +33,27 @@ const (
 // RunConfig is the exact model, runtime, Node, workload, and observation
 // configuration used by one profiling execution.
 type RunConfig struct {
-	SchemaVersion string                   `json:"schemaVersion"`
-	Candidate     CandidateIdentity        `json:"candidate"`
-	State         ExecutionState           `json:"state"`
-	Images        Images                   `json:"images"`
-	Delivery      CandidateRuntimeDelivery `json:"delivery"`
-	TargetNode    NodeSnapshot             `json:"targetNode"`
-	Measurement   MeasurementContract      `json:"measurement"`
-	Metrics       MetricContract           `json:"metrics"`
-	Workload      WorkloadContract         `json:"workload"`
-	Actor         firstfloor.Config        `json:"actor"`
-	Actuation     *ActuationContract       `json:"actuation,omitempty"`
+	SchemaVersion        string                        `json:"schemaVersion"`
+	Candidate            CandidateIdentity             `json:"candidate"`
+	State                ExecutionState                `json:"state"`
+	Images               Images                        `json:"images"`
+	Delivery             CandidateRuntimeDelivery      `json:"delivery"`
+	TargetNode           NodeSnapshot                  `json:"targetNode"`
+	Measurement          MeasurementContract           `json:"measurement"`
+	Metrics              MetricContract                `json:"metrics"`
+	Workload             WorkloadContract              `json:"workload"`
+	Actor                firstfloor.Config             `json:"actor"`
+	Actuation            *ActuationContract            `json:"actuation,omitempty"`
+	LoadOriginNode       string                        `json:"loadOriginNode,omitempty"`
+	LoadOriginGatewayPod *LoadOriginGatewayPodContract `json:"loadOriginGatewayPod,omitempty"`
+}
+
+// LoadOriginGatewayPodContract records the actual serving gateway whose Node
+// supplies native profiling load, matching dispatch occupancy's origin.
+type LoadOriginGatewayPodContract struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	UID       string `json:"uid"`
 }
 
 // UnmarshalJSON strictly decodes the current wire fields.
@@ -180,7 +190,20 @@ type MeasurementContract struct {
 	WarmupBatchSizes         []int         `json:"warmupBatchSizes,omitempty"`
 	WorkloadMode             string        `json:"workloadMode"`
 	// Dataset is present for active measurement only.
-	Dataset *DatasetContract `json:"dataset,omitempty"`
+	Dataset         *DatasetContract         `json:"dataset,omitempty"`
+	OperatingPoints *OperatingPointsContract `json:"operatingPoints,omitempty"`
+}
+
+// OperatingPointsContract freezes the off-node load phases and supply bounds.
+type OperatingPointsContract struct {
+	Utilizations                   []float64 `json:"utilizations"`
+	SparseMeanGapMilliseconds      float64   `json:"sparseMeanGapMilliseconds"`
+	PhaseDurationSeconds           int       `json:"phaseDurationSeconds"`
+	RequestLifetimeSeconds         int       `json:"requestLifetimeSeconds"`
+	DeliveryMarginMilliseconds     int       `json:"deliveryMarginMilliseconds"`
+	FramedDecodedRequestUpperBytes int64     `json:"framedDecodedRequestUpperBytes"`
+	// QueueBytesCap is computed from the selected worker execution policy.
+	QueueBytesCap int64 `json:"queueBytesCap"`
 }
 
 type MetricContract struct {

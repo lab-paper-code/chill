@@ -1,6 +1,7 @@
 package profilingrun
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -22,48 +23,48 @@ func TestActiveTrialRequiresBothElapsedWindowAndNativeSampleCoverage(t *testing.
 		{"sample limited complete", 118, 60, true},
 		{"time limited complete", 30, 120, true},
 		{"time alone is insufficient", 118, 58, false},
-		{"samples alone are insufficient", 29.9, 59, false},
+		{"samples alone are insufficient", 29.9, 60, false},
 		{"startup does not count as a known gap", 118, 59, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result := firstfloorResult(config)
-			result.MeasurementElapsedSeconds = test.elapsed
-			started, err := time.Parse(time.RFC3339Nano, result.MeasurementStartedAt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			result.MeasurementEndedAt = started.Add(time.Duration(test.elapsed * float64(time.Second))).Format(time.RFC3339Nano)
-			result.InferenceCount = test.count
-			result.Firstfloor.ExecutionCount = uint64(test.count)
-			result.Firstfloor.InferenceCount = uint64(test.count)
-			result.Firstfloor.BatchExecutionCounts["1"] = uint64(test.count)
-			repetition := &result.RepetitionResults[0]
-			repetition.MeasurementEndedAt = result.MeasurementEndedAt
-			template := repetition.NativeSamples[0]
-			repetition.LatencyMilliseconds = make([]float64, test.count)
-			repetition.NativeSamples = make([]NativeServiceSample, test.count)
-			for index := range repetition.NativeSamples {
-				repetition.LatencyMilliseconds[index] = 1
-				repetition.NativeSamples[index] = template
-				repetition.NativeSamples[index].BatchID = uint64(index + 1)
-				repetition.NativeSamples[index].ServiceSample = fixtures.ServiceSample(result.ExperimentID, uint64(index), 700000)
-			}
+			populateFirstfloorPhases(config, &result, test.count, time.Duration(test.elapsed*float64(time.Second)))
 			if err := ValidateRuntime(config, "pod-uid", result); (err == nil) != test.valid {
 				t.Fatalf("valid=%t, error=%v", test.valid, err)
 			}
 		})
+	}
+	// A complete aggregate never hides an under-sampled individual phase.
+	for phase := range 3 {
+		result := firstfloorResult(config)
+		result.Phases[phase].NativeSamples = result.Phases[phase].NativeSamples[:58]
+		result.Phases[phase].LatencyMilliseconds = result.Phases[phase].LatencyMilliseconds[:58]
+		result.Phases[phase].Requests = result.Phases[phase].Requests[:58]
+		result.Phases[phase].CompletedInputs = 58
+		result.InferenceCount -= 2
+		result.Firstfloor.ExecutionCount -= 2
+		result.Firstfloor.InferenceCount -= 2
+		result.Firstfloor.BatchExecutionCounts["1"] -= 2
+		if phase == 1 {
+			result.Phases[2].ArrivalRatePerSecond = .5 * 58 / 30
+		}
+		if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+			t.Fatalf("phase %d borrowed another phase's known-gap samples", phase)
+		}
 	}
 }
 
 func TestActiveTrialPreservesInitiallyKnownNativeGap(t *testing.T) {
 	config := firstfloorRunConfig()
 	result := firstfloorResult(config)
-	repetition := &result.RepetitionResults[0]
+	repetition := &result.Phases[0]
 	observed := int64(123)
 	repetition.NativeSamples[0].PrecedingIdleNanos = &observed
 	repetition.NativeSamples = repetition.NativeSamples[:config.Measurement.MinServiceSamples]
 	repetition.LatencyMilliseconds = repetition.LatencyMilliseconds[:config.Measurement.MinServiceSamples]
-	result.InferenceCount = config.Measurement.MinServiceSamples
+	repetition.Requests = repetition.Requests[:config.Measurement.MinServiceSamples]
+	repetition.CompletedInputs = config.Measurement.MinServiceSamples
+	result.InferenceCount--
 	result.Firstfloor.ExecutionCount = uint64(result.InferenceCount)
 	result.Firstfloor.InferenceCount = uint64(result.InferenceCount)
 	result.Firstfloor.BatchExecutionCounts["1"] = uint64(result.InferenceCount)
@@ -80,11 +81,14 @@ func firstfloorRunConfig() RunConfig {
 	config.State.RuntimeFamily = FirstfloorRuntimeFamily
 	config.State.Backend = FirstfloorORTCPUBackend
 	config.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}
+	config.Actor.MaxQueueRequests = 32
+	config.Actor.MaxQueueBytes = int(config.Measurement.OperatingPoints.QueueBytesCap)
 	return config
 }
 
 func firstfloorResult(config RunConfig) RuntimeResult {
 	result := validRuntimeResult(config)
+	populateFirstfloorPhases(config, &result, config.Measurement.MinServiceSamples+1, 30*time.Second)
 	result.Provider = cpuExecutionProvider
 	result.AvailableProviders = []string{cpuExecutionProvider}
 	result.DerivedContract.Provider = cpuExecutionProvider
@@ -101,15 +105,24 @@ func firstfloorResult(config RunConfig) RuntimeResult {
 			AvailableProviders: []string{cpuExecutionProvider}, Device: "cpu", CPUAffinity: []int{0, 1, 2, 3},
 			IntraOpThreads: 4, InterOpThreads: 1, InitializedBatches: []int{1, 2, 4}, CgroupCPUMax: "400000 100000", CPUSet: "0-3"},
 	}
-	result.RepetitionResults[0].NativeSamples = make([]NativeServiceSample, result.InferenceCount)
-	for index := range result.RepetitionResults[0].NativeSamples {
-		result.RepetitionResults[0].NativeSamples[index] = NativeServiceSample{BatchID: uint64(21 + index), BatchSize: 1,
-			ServiceSample: fixtures.ServiceSample(result.ExperimentID, uint64(index), 700000),
-			RecordIDs:     []string{"262148000"}, Units: []int{1}, RunnerServiceMilliseconds: 0.7,
-			PreprocessMilliseconds: 0.1, BackendCallMilliseconds: 0.4, PostprocessMilliseconds: 0.1,
-			NativeRequestMilliseconds: 0.9}
-	}
 	return result
+}
+
+func populateFirstfloorPhases(config RunConfig, result *RuntimeResult, count int, duration time.Duration) {
+	points := config.Measurement.OperatingPoints
+	workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap,
+		points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds))
+	fixtures.ApplyActivePhases(result, fixtures.PhaseOptions{
+		StartedAt: time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC), Duration: duration,
+		Batch: config.Measurement.Batch, Samples: count, Workers: workers, Utilizations: points.Utilizations,
+		SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds, PodUID: result.ExperimentID, RecordIDs: []string{"262148000"},
+		SupplySizing: sizing,
+	})
+	if result.Firstfloor != nil {
+		result.Firstfloor.ExecutionCount = uint64(result.InferenceCount)
+		result.Firstfloor.InferenceCount = uint64(result.InferenceCount * config.Measurement.Batch)
+		result.Firstfloor.BatchExecutionCounts = map[string]uint64{fmt.Sprint(config.Measurement.Batch): uint64(result.InferenceCount)}
+	}
 }
 
 func TestFirstfloorEvidenceBindsSelectedDeadlinePolicy(t *testing.T) {
@@ -150,25 +163,25 @@ func TestFirstfloorEvidenceRetainsDistinctCorrelatedSpans(t *testing.T) {
 		{"batch not initialized", func(r *RuntimeResult) { r.Firstfloor.Runtime.InitializedBatches = []int{2, 4} }},
 		{"wrong provider", func(r *RuntimeResult) { r.Firstfloor.Runtime.Providers[0] = "CUDAExecutionProvider" }},
 		{"wrong actual affinity", func(r *RuntimeResult) { r.Firstfloor.Runtime.CPUAffinity = []int{1, 2, 3, 4} }},
-		{"uncorrelated samples", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples = nil }},
+		{"uncorrelated samples", func(r *RuntimeResult) { r.Phases[0].NativeSamples = nil }},
 		{"wrong measured items", func(r *RuntimeResult) { r.Firstfloor.InferenceCount = 2 }},
-		{"wrong batch", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].BatchSize = 2 }},
-		{"invalid backend", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].BackendCallMilliseconds = math.NaN() }},
-		{"zero diagnostic service", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].RunnerServiceMilliseconds = 0 }},
-		{"nonfinite diagnostic service", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].RunnerServiceMilliseconds = math.NaN() }},
-		{"canonical service below backend", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].ServiceDurationNanos = 300000 }},
-		{"canonical service above native request", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].ServiceDurationNanos = 1000000 }},
-		{"record IDs short of batch", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].RecordIDs = nil }},
-		{"units short of batch", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].Units = nil }},
-		{"zero units", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].Units = []int{0} }},
-		{"negative preprocess", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].PreprocessMilliseconds = -1 }},
+		{"wrong batch", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].BatchSize = 2 }},
+		{"invalid backend", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].BackendCallMilliseconds = math.NaN() }},
+		{"zero diagnostic service", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].RunnerServiceMilliseconds = 0 }},
+		{"nonfinite diagnostic service", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].RunnerServiceMilliseconds = math.NaN() }},
+		{"canonical service below backend", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].ServiceDurationNanos = 300000 }},
+		{"canonical service above native request", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].ServiceDurationNanos = 1000000 }},
+		{"record IDs short of batch", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].RecordIDs = nil }},
+		{"units short of batch", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].Units = nil }},
+		{"zero units", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].Units = []int{0} }},
+		{"negative preprocess", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].PreprocessMilliseconds = -1 }},
 		{"infinite postprocess", func(r *RuntimeResult) {
-			r.RepetitionResults[0].NativeSamples[0].PostprocessMilliseconds = math.Inf(1)
+			r.Phases[0].NativeSamples[0].PostprocessMilliseconds = math.Inf(1)
 		}},
-		{"first token without generation", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].FirstTokenMilliseconds = 0.3 }},
-		{"missing canonical duration", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].ServiceDurationNanos = 0 }},
-		{"donor is not physical trial", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].TrialID = "donor-trial" }},
-		{"unknown gap after startup", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[1].PrecedingIdleNanos = nil }},
+		{"first token without generation", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].FirstTokenMilliseconds = 0.3 }},
+		{"missing canonical duration", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].ServiceDurationNanos = 0 }},
+		{"donor is not physical trial", func(r *RuntimeResult) { r.Phases[0].NativeSamples[0].TrialID = "donor-trial" }},
+		{"unknown gap after startup", func(r *RuntimeResult) { r.Phases[0].NativeSamples[1].PrecedingIdleNanos = nil }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -188,8 +201,10 @@ func TestFirstfloorGenerativeNativeSamplesRequireFirstToken(t *testing.T) {
 	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
 		t.Fatal("generative native sample without a first-token span was accepted")
 	}
-	for index := range result.RepetitionResults[0].NativeSamples {
-		result.RepetitionResults[0].NativeSamples[index].FirstTokenMilliseconds = 0.3
+	for phase := range result.Phases {
+		for index := range result.Phases[phase].NativeSamples {
+			result.Phases[phase].NativeSamples[index].FirstTokenMilliseconds = 0.3
+		}
 	}
 	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
@@ -213,7 +228,7 @@ func TestFirstfloorSampledMemoryIsBoundToWindowAndRetainedMaximum(t *testing.T) 
 		mutate func(*RuntimeResult)
 	}{
 		{"maximum not retained", func(r *RuntimeResult) { r.MemoryBytes = 400 }},
-		{"sample outside window", func(r *RuntimeResult) { r.MemorySamples[2].At = "2026-01-01T00:00:32Z" }},
+		{"sample outside window", func(r *RuntimeResult) { r.MemorySamples[2].At = "2026-01-01T00:01:32Z" }},
 		{"unordered samples", func(r *RuntimeResult) { r.MemorySamples[1].At = r.MemorySamples[0].At }},
 		{"single sample", func(r *RuntimeResult) { r.MemorySamples = r.MemorySamples[:1] }},
 		{"peak source with samples", func(r *RuntimeResult) { r.MemorySource = memoryPeakCgroupV2 }},
@@ -231,10 +246,10 @@ func TestFirstfloorSampledMemoryIsBoundToWindowAndRetainedMaximum(t *testing.T) 
 
 func TestFirstfloorNativeSamplesRejectReusedBatchIdentity(t *testing.T) {
 	config := firstfloorRunConfig()
-	repetition := firstfloorResult(config).RepetitionResults[0]
+	repetition := firstfloorResult(config).Phases[0]
 	repetition.LatencyMilliseconds = []float64{1, 1}
 	repetition.NativeSamples = append(repetition.NativeSamples, repetition.NativeSamples[0])
-	if err := validateNativeSamples(config, "pod-uid", []Repetition{repetition}); err == nil {
+	if err := validateNativeSamples(config, "pod-uid", []Phase{repetition}); err == nil {
 		t.Fatal("reused batch ID accepted")
 	}
 }

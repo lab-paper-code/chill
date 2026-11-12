@@ -53,7 +53,7 @@ func TestRecordedJobUsesAuthoritativeReaderNotCache(t *testing.T) {
 			condition := findRunCondition(actual.Status.Conditions, edge.ProfilingRunConditionExecutionComplete)
 			want := "ExecutionLost"
 			if present {
-				want = "JobRunning"
+				want = "LoadRunning"
 			}
 			if condition == nil || condition.Reason != want {
 				t.Fatalf("condition=%+v want %s", condition, want)

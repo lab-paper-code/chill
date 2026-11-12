@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
@@ -38,13 +39,12 @@ func TestCoordinatorResultHandoffsConsumeRemainingAttemptBudget(t *testing.T) {
 			}
 			runtimeResult.MeasurementElapsedSeconds = 118
 			runtimeResult.MeasurementEndedAt = started.Add(118 * time.Second).Format(time.RFC3339Nano)
-			runtimeResult.RepetitionResults[0].MeasurementEndedAt = runtimeResult.MeasurementEndedAt
-			for i := range runtimeResult.RepetitionResults[0].LatencyMilliseconds {
-				runtimeResult.RepetitionResults[0].LatencyMilliseconds[i] = 2000
-			}
+			last := &runtimeResult.Phases[len(runtimeResult.Phases)-1]
+			last.MeasurementEndedAt = runtimeResult.MeasurementEndedAt
+			last.MeasurementElapsedSeconds = 58
 			metricResult := testMetricResult(config)
 			metricResult.EndedAt = started.Add(153 * time.Second)
-			metricResult.Summary.ObservationDurationSeconds = metricResult.EndedAt.Sub(metricResult.StartedAt).Seconds()
+			metricResult.Summary = metricobserver.Summarize(metricResult)
 			workloadResult := testWorkloadResult(t, config, runtimeResult)
 			workloadResult.CoverageEndedAt = metricResult.EndedAt.Add(time.Second)
 			directory := t.TempDir()

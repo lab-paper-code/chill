@@ -130,6 +130,14 @@ func (r *RunConfigResolver) authorizedCampaignRequest(ctx context.Context, run *
 	if protocol.Dataset != nil {
 		spec.Measurement.Dataset = protocol.Dataset.Name
 	}
+	if points := protocol.OperatingPoints; points != nil {
+		spec.Measurement.OperatingPoints = &edgev1alpha1.MeasurementOperatingPointsSpec{
+			Utilizations: slices.Clone(points.Utilizations), SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds,
+			PhaseDurationSeconds: int32(points.PhaseDurationSeconds), RequestLifetimeSeconds: int32(points.RequestLifetimeSeconds),
+			DeliveryMarginMilliseconds:     int32(points.DeliveryMarginMilliseconds),
+			FramedDecodedRequestUpperBytes: points.FramedDecodedRequestUpperBytes,
+		}
+	}
 	for _, k := range shared.Actor.WarmupBatchSizes {
 		spec.Measurement.WarmupBatchSizes = append(spec.Measurement.WarmupBatchSizes, int32(k))
 	}

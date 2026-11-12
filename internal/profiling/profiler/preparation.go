@@ -144,6 +144,8 @@ type Preparer struct {
 	workloads  WorkloadObservationResolver
 	actuation  ActuationPolicyResolver
 	execution  ExecutionPolicyResolver
+	// ResolveLoadOrigin observes the installation's actual serving gateway.
+	ResolveLoadOrigin func(context.Context, string) (string, profilingrun.LoadOriginGatewayPodContract, error)
 }
 
 func NewPreparer(
@@ -163,7 +165,30 @@ func NewPreparer(
 	}, nil
 }
 
+// FreezePhaseDuration expands the existing observation window for every named
+// active phase while retaining the caller's observation margin.
+func (r *PreparationRequest) FreezePhaseDuration() error {
+	if r.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
+		return nil
+	}
+	points := r.Measurement.OperatingPoints
+	if err := points.Validate(); err != nil {
+		return err
+	}
+	duration := points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+	margin := max(0, r.Metrics.DurationSeconds-r.Measurement.DurationSeconds)
+	if margin > int(^uint32(0)>>1)-duration {
+		return errors.New("active phase observation duration exceeds supported seconds")
+	}
+	r.Measurement.DurationSeconds = duration
+	r.Metrics.DurationSeconds = max(r.Metrics.DurationSeconds, duration+margin)
+	return nil
+}
+
 func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (PreparedRun, error) {
+	if err := request.FreezePhaseDuration(); err != nil {
+		return PreparedRun{}, err
+	}
 	if err := request.Validate(); err != nil {
 		return PreparedRun{}, err
 	}
@@ -221,12 +246,35 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err != nil {
 		return PreparedRun{}, err
 	}
+	if runConfig.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		if p.ResolveLoadOrigin == nil {
+			return PreparedRun{}, errors.New("active measurement requires a serving gateway load-origin resolver")
+		}
+		originNode, gateway, err := p.ResolveLoadOrigin(ctx, runConfig.TargetNode.Name)
+		if err != nil {
+			return PreparedRun{}, fmt.Errorf("resolve serving gateway load origin: %w", err)
+		}
+		runConfig.LoadOriginNode = originNode
+		runConfig.LoadOriginGatewayPod = &gateway
+	}
 	executionPolicy, err := p.execution.Resolve(ctx, runConfig)
 	if err != nil {
 		return PreparedRun{}, fmt.Errorf("resolve actor memory envelope: %w", err)
 	}
 	runConfig.Actor.MemoryRequestBytes = executionPolicy.Policy.RuntimeMemoryRequestBytes
 	runConfig.Actor.MemoryLimitBytes = executionPolicy.Policy.RuntimeMemoryLimitBytes
+	if runConfig.Measurement.OperatingPoints != nil {
+		points := *runConfig.Measurement.OperatingPoints
+		if points.QueueBytesCap != 0 && points.QueueBytesCap != min(executionPolicy.Policy.MaxInputBytes, int64(64<<20)) {
+			return PreparedRun{}, InvalidExecutionPolicy("selected queue capacity differs from the frozen measurement protocol")
+		}
+		points.QueueBytesCap = min(executionPolicy.Policy.MaxInputBytes, int64(64<<20))
+		if points.FramedDecodedRequestUpperBytes > points.QueueBytesCap {
+			return PreparedRun{}, InvalidExecutionPolicy("measurement queue cannot hold one framed request")
+		}
+		runConfig.Measurement.OperatingPoints = &points
+		runConfig.Actor.MaxQueueBytes = int(points.QueueBytesCap)
+	}
 	if _, err := DeriveExecutionPlan(runConfig, executionPolicy); err != nil {
 		return PreparedRun{}, err
 	}
@@ -399,6 +447,13 @@ func (r PreparationRequest) Validate() error {
 	}
 	if err := r.Measurement.ValidateDurationTolerance(); err != nil {
 		return err
+	}
+	if r.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		if err := r.Measurement.OperatingPoints.Validate(); err != nil {
+			return err
+		}
+	} else if r.Measurement.OperatingPoints != nil {
+		return errors.New("idle measurement cannot contain operatingPoints")
 	}
 	workloadMode := r.Measurement.WorkloadMode
 	if strings.TrimSpace(workloadMode) == "" || strings.TrimSpace(workloadMode) != workloadMode {

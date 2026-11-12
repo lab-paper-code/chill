@@ -2,8 +2,11 @@ package fixtures
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -83,8 +86,17 @@ func RunRealFirstfloorWorkerHelper(t *testing.T) {
 	config := flags.String("config", "", "worker configuration")
 	address := flags.String("bind-address", "", "HTTP listener")
 	node := flags.String("node-name", "", "scheduled node")
+	sizeSaturation := flags.Bool("size-saturation", false, "read saturation sizing inputs from stdin")
 	if err := flags.Parse(arguments[1:]); err != nil {
 		t.Fatal(err)
+	}
+	if *sizeSaturation {
+		if err := realFirstfloorSaturation(os.Stdin, os.Stdout); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		// This helper is a CLI process; the test harness must not append PASS.
+		os.Exit(0)
 	}
 	if *config == "" || *address == "" || *node == "" {
 		t.Fatal("native worker helper requires config, bind-address and node-name")
@@ -125,6 +137,50 @@ func RunRealFirstfloorWorkerHelper(t *testing.T) {
 	if ctx.Err() == nil && err != nil && !errors.Is(err, http.ErrServerClosed) {
 		t.Fatal(err)
 	}
+}
+
+func realFirstfloorSaturation(input io.Reader, output io.Writer) error {
+	var request struct {
+		Batch                          int     `json:"batch"`
+		MaxQueueRequests               int     `json:"maxQueueRequests"`
+		MaxQueueBytes                  int64   `json:"maxQueueBytes"`
+		FramedDecodedRequestUpperBytes int64   `json:"framedDecodedRequestUpperBytes"`
+		RequestLifetimeSeconds         float64 `json:"requestLifetimeSeconds"`
+		DeliveryMarginMilliseconds     float64 `json:"deliveryMarginMilliseconds"`
+		MaxBatchServiceSeconds         float64 `json:"maxBatchServiceSeconds"`
+	}
+	decoder := json.NewDecoder(input)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return errors.New("exactly one saturation sizing JSON object required")
+	}
+	workers, limitingBound, err := firstfloor.SaturationWorkers(request.Batch, request.MaxQueueRequests,
+		request.MaxQueueBytes, request.FramedDecodedRequestUpperBytes, request.RequestLifetimeSeconds,
+		request.DeliveryMarginMilliseconds, request.MaxBatchServiceSeconds)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(struct {
+		Batch                          int     `json:"batch"`
+		MaxBatchServiceSeconds         float64 `json:"maxBatchServiceSeconds"`
+		ServiceTimeSource              string  `json:"serviceTimeSource"`
+		RequestLifetimeSeconds         float64 `json:"requestLifetimeSeconds"`
+		MarginSeconds                  float64 `json:"marginSeconds"`
+		WorkerCap                      int     `json:"workerCap"`
+		QueueBytesCap                  int64   `json:"queueBytesCap"`
+		FramedDecodedRequestUpperBytes int64   `json:"framedDecodedRequestUpperBytes"`
+		Workers                        int     `json:"workers"`
+		LimitingBound                  string  `json:"limitingBound"`
+	}{
+		Batch: request.Batch, MaxBatchServiceSeconds: request.MaxBatchServiceSeconds,
+		ServiceTimeSource: "run.sparse.maxObservedSeconds", RequestLifetimeSeconds: request.RequestLifetimeSeconds,
+		MarginSeconds: request.DeliveryMarginMilliseconds / 1000, WorkerCap: 64,
+		QueueBytesCap: request.MaxQueueBytes, FramedDecodedRequestUpperBytes: request.FramedDecodedRequestUpperBytes,
+		Workers: workers, LimitingBound: limitingBound,
+	})
 }
 
 const realFirstfloorModel = `
@@ -201,7 +257,7 @@ popen = subprocess.Popen
 
 def local_worker(command, *args, **kwargs):
     if command[0] == "/opt/chill/bin/serving-worker":
-        command = [executable, "-test.run=^TestRealFirstfloorWorkerHelper$", "--"] + command[1:]
+        command = [executable, "-test.run=^TestRealFirstfloorWorkerHelper$", "-test.paniconexit0=false", "--"] + command[1:]
         environment = dict(os.environ if kwargs.get("env") is None else kwargs["env"])
         environment["CHILL_REAL_FIRSTFLOOR_HELPER"] = "1"
         kwargs["env"] = environment

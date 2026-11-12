@@ -36,6 +36,8 @@ func TestCurvePlanIdleBatchPolicy(t *testing.T) {
 			if backend == profilingrun.FirstfloorRKNNLiteBackend {
 				wantBatch = 4
 			}
+			idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
+			idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 			idle.Measurement = profilingrun.MeasurementContract{
 				Batch: wantBatch, SettlingDurationSeconds: 60, DurationSeconds: 30,
 				WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
@@ -71,6 +73,8 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 	active.Measurement.WorkloadUID = "workload-uid"
 	active.Measurement.WorkloadResourceVersion = "version"
 	idle := active
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
@@ -141,6 +145,8 @@ func TestCurveAndStateIdentityIgnoreObservationMetadata(t *testing.T) {
 	idle := active
 	active.TargetNode.AllocatableCPU = ""
 	idle.TargetNode.AllocatableCPU = "12"
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
@@ -185,6 +191,8 @@ func TestCurveAndStateIdentityIgnoreObservationMetadata(t *testing.T) {
 func TestCurvePlanProjectionFreezesPreprocessingInputs(t *testing.T) {
 	active := curvePlanRunConfig()
 	idle := active
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
@@ -247,6 +255,8 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			active := curvePlanRunConfig()
 			idle := active
+			idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
+			idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 			idle.Measurement = profilingrun.MeasurementContract{
 				Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 				WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
@@ -264,6 +274,8 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) {
 	active := curvePlanRunConfig()
 	idle := active
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
@@ -330,6 +342,8 @@ func TestVerifiedCurvePlanUsesBatchOneORTIdleWitness(t *testing.T) {
 	active.State.HostContract = nil
 	active.Measurement.Batch = 2
 	idle := active
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,

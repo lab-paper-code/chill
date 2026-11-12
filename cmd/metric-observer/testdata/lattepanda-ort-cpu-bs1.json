@@ -1,5 +1,7 @@
 {
-  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha20",
+  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha21",
+  "loadOriginNode": "gateway-node",
+  "loadOriginGatewayPod": {"namespace": "chill-system", "name": "gateway", "uid": "gateway-uid"},
   "candidate": {
     "inputs": {
       "modelSpec": {
@@ -72,6 +74,7 @@
     "workloadResourceVersion": "1",
     "warmupBatchSizes": [1],
     "workloadMode": "empirical-cadence-fixed-batch",
+    "operatingPoints": {"utilizations": [0.5], "sparseMeanGapMilliseconds": 1000, "phaseDurationSeconds": 30, "requestLifetimeSeconds": 30, "deliveryMarginMilliseconds": 100, "framedDecodedRequestUpperBytes": 1024, "queueBytesCap": 32768},
     "dataset": {
       "name": "vqav2-val-subset",
       "uid": "dataset-uid",

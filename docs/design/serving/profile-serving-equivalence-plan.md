@@ -89,7 +89,7 @@ profile 원시 trial의 단계별 시간(전처리·추론·후처리·IPC 잔�
 
 원칙:
 - 측정 경로는 serving 경로다. 실행기 서버의 serving 요청 경로, 대기열, 배치 실행, IPC를 그대로 쓴다. 측정 전용 `/profile` 경로와 요청 하나씩 넣는 방식은 지운다.
-- 부하는 다른 노드에서 네트워크로 보낸다. serving에서 gateway가 그렇게 하기 때문이다. 측정 노드에 부하 생성 프로세스를 두지 않는다.
+- 부하는 DOM과 같이 실제 gateway Pod의 노드에서 네트워크로 보낸다. 임의의 다른 노드를 고르지 않는다. 기존 설치 identity로 gateway의 실제 배치를 읽고, 선택한 노드와 Pod identity를 Run evidence에 동결한다. 측정 노드와 같거나 배치가 불명확하면 실패한다. 측정 노드·edge 노드에 부하 생성 프로세스를 추가하지 않는다.
 - 측정 부하 구성(포화 측정, 이용률 단계, 드문 도착 단계, 유휴 정착 시간)은 측정 입력 설정이다. Run에 동결한다. 스케줄러 설정이 아니다.
 - 스케줄러의 소비 계약(배치별 `ServiceSamples`·직전 유휴 간격·`EnergyPerInputJoules`·`IdleBaselineWatts`·`d`)은 파일럿이 맞다고 보이는 한 바꾸지 않는다. 표본의 대표성만 바꾼다. 파일럿이 계약의 부족을 보이면 계약을 바꾸는 단위를 이 계획에 추가한다.
 - 기존 profile은 모두 지운다. 측정 이미지로 현재 계약을 실행할 수 없고(§2.2), 측정 운영점이 다르다(§2.1). 지우기 전에 원시 evidence를 보관한다. 이전 profile을 새 profile로 바꿔 읽는 reader는 두지 않는다(ADR 0019). 삭제는 파일럿 확인 뒤에 한다.
@@ -103,7 +103,7 @@ profile 원시 trial의 단계별 시간(전처리·추론·후처리·IPC 잔�
 | B2 분석기 null | B | `prediction_analysis.py`의 두 의존성 읽기에서 JSON `null`을 빈 의존성으로 읽는다 | 회귀: `null`, `[]`, 실제 의존성 체인이 같은 결과 |
 | I1 실행 이미지 조건 | R2 | profile 선택·노드 간 재사용·operation-cost/idle·DOM 조건은 측정 Run이 기록한 image 문자열을 그대로 비교한다. 태그와 digest reference를 모두 허용하며 pinning·imageID·SHA·digest 검증은 없다. serving 준비는 측정 이미지 문자열로 시작하며 현재 선언 이미지로 덮어쓰지 않는다. 실제 동작의 일치는 C1의 serving batch service 대 profile 및 노드 전력 대 예측 대조로 보고한다. runtime gate나 자동 profile 배제는 두지 않는다 | 회귀: 태그 image가 RunConfig·CurvePlan·declaration·preparation·observer 경로를 통과한다. 선언 변경 뒤에도 준비 Pod는 측정 이미지 문자열을 쓴다. 실제 imageID가 달라도 observer가 Ready를 차단하지 않는다. 다른 이미지 문자열의 측정 조건은 섞지 않는다 |
 | N1 측정용 native 실행 | R1 | profiling mode의 native가 serving 요청 경로(`/infer`, 대기열, 고정 배치 정책, IPC)로 동작한다. 고정 배치 정책은 실행시간 분포를 쓰지 않으므로 profile bundle 없이 시작한다. `/profile` endpoint와 그 요청 형식을 지운다 | 회귀: profiling mode가 profile 없이 고정 배치 B로 `/infer` 요청을 실행하고, 배치마다 service·직전 유휴 간격·단계별 시간을 남긴다. serving mode 검증은 그대로다 |
-| L1 측정 부하 | R1 | 다른 노드의 부하 Job이 측정 노드의 native `/infer`로 요청을 보낸다. 단계: (1) 포화: 동시 요청 K로 지속 처리량 μ_B 측정. (2) 이용률 단계: 설정 목록의 이용률 × μ_B로 Poisson 도착. (3) 드문 도착: 설정한 평균 간격으로 긴 유휴 간격 표본. 단계별 노드 전력 구간을 남긴다. 단계별 최소 표본 수는 기존 규칙(설정 분위수에서 계산)을 따른다. 부하 Job 생성·종료·수집은 dispatch occupancy 측정의 부하 Job 경로를 재사용한다 | 원시 evidence에 단계·도착 시각·배치 표본·전력 구간이 남는다. 측정 노드에 부하 프로세스가 없다 |
+| L1 측정 부하 | R1 | 다른 노드의 부하 Job이 측정 노드의 native `/infer`로 요청을 보낸다. 단계: (1) 설정한 평균 간격의 드문 Poisson 도착에서 실제 무적체 배치 B 실행시간 최댓값을 얻는다. (2) 그 관측값으로 기존 K 식을 계산하고 동시 요청 K로 포화 처리량 μ_B를 측정한다. (3) 설정 목록의 이용률 × μ_B로 Poisson 도착을 보낸다. K의 출처는 `run.sparse.maxObservedSeconds`이며 추정값·기존 profile을 쓰지 않는다. 단계별 노드 전력 구간과 평균 전력, 기존 분위수 규칙의 최소 표본 수를 남긴다. 부하 Job 생성·종료·수집은 dispatch occupancy 측정의 부하 Job 패턴을 재사용한다 | 원시 evidence에 단계·도착 시각·배치 표본·전력 구간이 남는다. 측정 노드에 부하 프로세스가 없다 |
 | E1 유휴·증분 에너지 | R3 | 유휴 정착 시간은 이미 측정 입력이다. 값은 파일럿의 부하 중단 뒤 노드 전력 시계열로 정한다. 유휴 구간의 무추론·상태 유지 확인은 기존 `StableIdle` 검증(`internal/serving/operations/measurement.go:368-425`)을 재사용한다. 증분 에너지는 같은 Run의 이용률 단계에서 `(활성 J − 유휴 W × 시간) / 처리 입력 수`로 계산하고, 단계별 노드 평균 전력을 함께 남긴다 | 계산 회귀. 단계별 전력이 evidence에 남는다 |
 | O1 `d` 기준 | R5 | `d`를 포화 배치 쌍의 시작 간격에서 **앞 배치의 실제 실행시간**을 뺀 값으로 계산한다. 새 측정의 포화 단계도 같은 계산으로 `d`를 남긴다 | 회귀: 실제 실행시간이 profile 평균과 다른 배치 쌍에서 `cycle = S + B×d`가 성립한다 |
 | C1 대조 분석 | R4 | 평가 분석기 두 갈래. (a) 측정 원시 자료: 단계·trial 일부를 떼어 두고 나머지로 만든 profile로 스케줄러 재생을 돌려, 떼어 둔 이용률 단계의 실측 요청 지연·배치 실행시간 분포를 재현하는지, 단계별 실측 노드 전력이 `유휴 + EPI × 요청률`과 맞는지, 포화 단계에서 `cycle = S + B×d`가 맞는지 보고한다. (b) serving 기록: 같은 조건(profile ID, 배치 크기, 직전 유휴 간격 구간, 실행 중 유입 여부)의 profile 표본과 대조한다. 노드 전력은 판단 구간별 예측과 실측을 대조한다(기존 V1). 결과는 보고만 하고 자동으로 profile을 배제하지 않는다 | 합성 회귀. control380 원문에 (b)를 적용하면 §2.1의 표가 재현된다 |

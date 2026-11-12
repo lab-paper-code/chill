@@ -85,12 +85,18 @@ func preparationFromRunConfig(config profilingrun.RunConfig) profiler.Preparatio
 			DurationToleranceSeconds: measurement.DurationToleranceSeconds,
 			WarmupBatchSizes:         measurement.WarmupBatchSizes,
 			WorkloadMode:             measurement.WorkloadMode,
+			OperatingPoints:          measurement.OperatingPoints,
 		},
 		Metrics: profiler.MetricObservationPolicy{
 			IntervalMilliseconds: config.Metrics.IntervalMilliseconds,
 			TimeoutMilliseconds:  config.Metrics.TimeoutMilliseconds,
 			DurationSeconds:      config.Metrics.DurationSeconds,
 		},
+	}
+	if measurement.OperatingPoints != nil {
+		points := *measurement.OperatingPoints
+		points.QueueBytesCap = 0
+		request.Measurement.OperatingPoints = &points
 	}
 	if config.Measurement.Dataset != nil {
 		request.Candidate.Dataset = config.Measurement.Dataset.Name

@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,15 +19,17 @@ import (
 )
 
 type options struct {
-	configPath  string
-	bindAddress string
-	nodeName    string
+	configPath     string
+	bindAddress    string
+	nodeName       string
+	sizeSaturation bool
 }
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.configPath, "config", "", "Path to the complete serving configuration snapshot.")
 	flags.StringVar(&o.bindAddress, "bind-address", "127.0.0.1:8080", "Local HTTP listener address.")
 	flags.StringVar(&o.nodeName, "node-name", os.Getenv("NODE_NAME"), "Assigned Node name; defaults to NODE_NAME.")
+	flags.BoolVar(&o.sizeSaturation, "size-saturation", false, "Read saturation sizing inputs from stdin and write the sizing result as JSON.")
 }
 
 func (o options) validate() error {
@@ -51,6 +55,9 @@ func main() {
 }
 
 func run(ctx context.Context, opts options) error {
+	if opts.sizeSaturation {
+		return sizeSaturation(os.Stdin, os.Stdout)
+	}
 	if err := opts.validate(); err != nil {
 		return err
 	}
@@ -98,4 +105,48 @@ func run(ctx context.Context, opts options) error {
 		return nil
 	}
 	return err
+}
+
+func sizeSaturation(input io.Reader, output io.Writer) error {
+	var request struct {
+		Batch                          int     `json:"batch"`
+		MaxQueueRequests               int     `json:"maxQueueRequests"`
+		MaxQueueBytes                  int64   `json:"maxQueueBytes"`
+		FramedDecodedRequestUpperBytes int64   `json:"framedDecodedRequestUpperBytes"`
+		RequestLifetimeSeconds         float64 `json:"requestLifetimeSeconds"`
+		DeliveryMarginMilliseconds     float64 `json:"deliveryMarginMilliseconds"`
+		MaxBatchServiceSeconds         float64 `json:"maxBatchServiceSeconds"`
+	}
+	decoder := json.NewDecoder(input)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		return fmt.Errorf("read saturation sizing inputs: %w", err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return errors.New("exactly one saturation sizing JSON object required")
+	}
+	workers, limitingBound, err := firstfloor.SaturationWorkers(request.Batch, request.MaxQueueRequests,
+		request.MaxQueueBytes, request.FramedDecodedRequestUpperBytes, request.RequestLifetimeSeconds,
+		request.DeliveryMarginMilliseconds, request.MaxBatchServiceSeconds)
+	if err != nil {
+		return fmt.Errorf("size saturation: %w", err)
+	}
+	return json.NewEncoder(output).Encode(struct {
+		Batch                          int     `json:"batch"`
+		MaxBatchServiceSeconds         float64 `json:"maxBatchServiceSeconds"`
+		ServiceTimeSource              string  `json:"serviceTimeSource"`
+		RequestLifetimeSeconds         float64 `json:"requestLifetimeSeconds"`
+		MarginSeconds                  float64 `json:"marginSeconds"`
+		WorkerCap                      int     `json:"workerCap"`
+		QueueBytesCap                  int64   `json:"queueBytesCap"`
+		FramedDecodedRequestUpperBytes int64   `json:"framedDecodedRequestUpperBytes"`
+		Workers                        int     `json:"workers"`
+		LimitingBound                  string  `json:"limitingBound"`
+	}{
+		Batch: request.Batch, MaxBatchServiceSeconds: request.MaxBatchServiceSeconds,
+		ServiceTimeSource: "run.sparse.maxObservedSeconds", RequestLifetimeSeconds: request.RequestLifetimeSeconds,
+		MarginSeconds: request.DeliveryMarginMilliseconds / 1000, WorkerCap: 64,
+		QueueBytesCap: request.MaxQueueBytes, FramedDecodedRequestUpperBytes: request.FramedDecodedRequestUpperBytes,
+		Workers: workers, LimitingBound: limitingBound,
+	})
 }

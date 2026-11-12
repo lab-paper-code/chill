@@ -341,9 +341,7 @@ func TestRawMeasurementRequiresOverlappingRuntimeAndMetricWindows(t *testing.T) 
 			candidate.Metrics.StartedAt = test.powerStart
 			candidate.Metrics.EndedAt = test.powerEnd
 			candidate.Metrics.Samples = nil
-			candidate.Metrics.Summary.Attempts = 0
-			candidate.Metrics.Summary.SuccessfulSamples = 0
-			candidate.Metrics.Summary.ObservationDurationSeconds = test.powerEnd.Sub(test.powerStart).Seconds()
+			candidate.Metrics.Summary = metricobserver.Summarize(candidate.Metrics)
 			err := candidate.Validate()
 			if (err != nil) != test.wantError {
 				t.Fatalf("Validate() error = %v, wantError=%v", err, test.wantError)
@@ -536,6 +534,10 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 	started := time.Date(2026, time.July, 16, 12, 0, 0, 0, location)
 	podUID := "profiling-pod-uid"
 	targetDuration := float64(config.Measurement.DurationSeconds)
+	windowSeconds := 30
+	if points := config.Measurement.OperatingPoints; points != nil {
+		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+	}
 	raw := RawMeasurement{
 		SchemaVersion: RawMeasurementSchemaVersion,
 		RunConfig:     config,
@@ -575,8 +577,8 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 				Provider:     config.State.Backend,
 				NodeSnapshot: config.TargetNode,
 			},
-			RepetitionResults: []profilingrun.Repetition{{
-				Repetition:           1,
+			Phases: []profilingrun.Phase{{
+				ID: "saturation-0", Kind: "saturation",
 				MeasurementStartedAt: started.UTC().Format(time.RFC3339Nano),
 				MeasurementEndedAt:   started.Add(30 * time.Second).UTC().Format(time.RFC3339Nano),
 				LatencyMilliseconds:  make([]float64, 60),
@@ -601,7 +603,7 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 				},
 			},
 			StartedAt: started,
-			EndedAt:   started.Add(31 * time.Second),
+			EndedAt:   started.Add(time.Duration(windowSeconds+1) * time.Second),
 			Samples: []metricobserver.Sample{{
 				ObservedAt: started.Add(time.Second),
 				Watts:      5.2,
@@ -611,13 +613,13 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 				Attempts:                   1,
 				SuccessfulSamples:          1,
 				Failures:                   0,
-				ObservationDurationSeconds: 31,
+				ObservationDurationSeconds: float64(windowSeconds + 1),
 				SourceTimestampAbsent:      true,
 			},
 		},
 	}
-	for i := range raw.Runtime.RepetitionResults[0].LatencyMilliseconds {
-		raw.Runtime.RepetitionResults[0].LatencyMilliseconds[i] = 2
+	for i := range raw.Runtime.Phases[0].LatencyMilliseconds {
+		raw.Runtime.Phases[0].LatencyMilliseconds[i] = 2
 	}
 	runPod := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID, Phase: "Running",
@@ -631,13 +633,18 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 		Run: workloadobserver.RunIdentity{
 			Namespace: "chill-system", JobUID: "job-uid", PodName: "profiling-run-pod", PodUID: podUID,
 		},
-		CoverageStartedAt: started.Add(-time.Second), CoverageEndedAt: started.Add(31 * time.Second),
+		CoverageStartedAt: started.Add(-time.Second), CoverageEndedAt: started.Add(time.Duration(windowSeconds+1) * time.Second),
 		InitialResourceVersion: "10", LastResourceVersion: "11", EventLimit: 10,
 		InitialActivePods: []workloadobserver.Pod{runPod}, FinalActivePods: []workloadobserver.Pod{runPod},
 		Continuous: true,
 	}
 	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
 		applyFirstfloorRuntime(config, &raw.Runtime)
+		raw.Metrics.Samples = make([]metricobserver.Sample, windowSeconds)
+		for index := range raw.Metrics.Samples {
+			raw.Metrics.Samples[index] = metricobserver.Sample{ObservedAt: started.Add(time.Duration(index)*time.Second + 500*time.Millisecond), Watts: 5.2}
+		}
+		raw.Metrics.Summary = metricobserver.Summarize(raw.Metrics)
 	}
 	return raw
 }
@@ -645,6 +652,7 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 func idleRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	config := loadRunConfig(t)
+	config.LoadOriginNode, config.LoadOriginGatewayPod = "", nil
 	config.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
@@ -729,6 +737,9 @@ func validExecutionEvidenceBytes(
 	t.Helper()
 	location := time.FixedZone("KST", 9*60*60)
 	completed := time.Date(2026, time.July, 16, 12, 1, 0, 0, location)
+	if points := config.Measurement.OperatingPoints; points != nil {
+		completed = completed.Add(time.Duration(points.PhaseDurationSeconds*(len(points.Utilizations)+2)) * time.Second)
+	}
 	return ExecutionEvidence{
 		SchemaVersion: ExecutionEvidenceSchemaVersion,
 		RunConfig:     config,
@@ -805,9 +816,9 @@ func validActuatedExecutionEvidence(
 		},
 		Generation: &PowerModeGeneration{Start: 7, End: 7},
 		Target: ActuationObservation{
-			PowerMode: config.Actuation.PowerMode, Actuator: target(0), ObservedAt: completed.Add(-90 * time.Second),
+			PowerMode: config.Actuation.PowerMode, Actuator: target(0), ObservedAt: completed.Add(-210 * time.Second),
 		},
-		ReadyAt: completed.Add(-70 * time.Second),
+		ReadyAt: completed.Add(-190 * time.Second),
 	}
 	return config, raw, execution
 }
@@ -850,7 +861,7 @@ func terminalContainers(config profilingrun.RunConfig, completed time.Time) []Co
 			RequestedImage: image,
 			ImageID:        "containerd://" + name + "-image-id",
 			Reason:         "Completed",
-			StartedAt:      completed.Add(-time.Minute),
+			StartedAt:      completed.Add(-3 * time.Minute),
 			FinishedAt:     completed.Add(-time.Second),
 		}
 	}

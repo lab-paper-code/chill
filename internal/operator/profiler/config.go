@@ -30,6 +30,12 @@ type Config struct {
 	FactSource                FactSourceConfig            `json:"factSource"`
 	WorkloadObserver          WorkloadObserverConfig      `json:"workloadObserver"`
 	TransitionObserver        TransitionObserverConfig    `json:"transitionObserver"`
+	LoadGenerator             LoadGeneratorConfig         `json:"loadGenerator"`
+}
+
+type LoadGeneratorConfig struct {
+	Image              string `json:"image"`
+	ServiceAccountName string `json:"serviceAccountName"`
 }
 
 type FactSourceConfig struct {
@@ -76,6 +82,8 @@ func (c Config) Validate() error {
 		{name: "factSource.executionPoliciesKey", value: c.FactSource.ExecutionPoliciesKey},
 		{name: "factSource.actuationPoliciesKey", value: c.FactSource.ActuationPoliciesKey},
 		{name: "workloadObserver.serviceAccountName", value: c.WorkloadObserver.ServiceAccountName},
+		{name: "loadGenerator.image", value: c.LoadGenerator.Image},
+		{name: "loadGenerator.serviceAccountName", value: c.LoadGenerator.ServiceAccountName},
 		{name: "transitionObserver.observerNodeName", value: c.TransitionObserver.ObserverNodeName},
 		{name: "transitionObserver.serviceAccountName", value: c.TransitionObserver.ServiceAccountName},
 	} {

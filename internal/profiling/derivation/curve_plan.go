@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha12"
+	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha13"
 	curveRuntimeFirstfloor = "firstfloor"
 	curveBackendORTCUDA    = "ort-cuda"
 	curveBackendORTCPU     = "ort-cpu"
@@ -45,24 +45,36 @@ type CurveMetricSourceContract struct {
 type CurveProtocolContract struct {
 	WorkloadMode string `json:"workloadMode"`
 	// Dataset is the active protocol's sample source; idle protocols have none.
-	Dataset                    *CurveDatasetContract `json:"dataset,omitempty"`
-	WarmupIterations           int                   `json:"warmupIterations"`
-	StartupWarmupIterations    int                   `json:"startupWarmupIterations,omitempty"`
-	SettlingDurationSeconds    int                   `json:"settlingDurationSeconds"`
-	DurationSeconds            int                   `json:"durationSeconds"`
-	DurationToleranceSeconds   float64               `json:"durationToleranceSeconds"`
-	MetricIntervalMilliseconds int                   `json:"metricIntervalMilliseconds"`
-	MetricTimeoutMilliseconds  int                   `json:"metricTimeoutMilliseconds"`
-	MetricDurationSeconds      int                   `json:"metricDurationSeconds"`
-	MetricObserverImage        string                `json:"metricObserverImage"`
-	WorkloadObserverImage      string                `json:"workloadObserverImage"`
-	WorkloadSchemaVersion      string                `json:"workloadSchemaVersion"`
-	SLOPercentile              float64               `json:"sloPercentile,omitempty"`
-	MinServiceSamples          int                   `json:"minServiceSamples,omitempty"`
-	SLOTargetLatencyNanos      int64                 `json:"sloTargetLatencyNanos,omitempty"`
-	WorkloadName               string                `json:"workloadName,omitempty"`
-	WorkloadUID                string                `json:"workloadUID,omitempty"`
-	WorkloadResourceVersion    string                `json:"workloadResourceVersion,omitempty"`
+	Dataset                    *CurveDatasetContract    `json:"dataset,omitempty"`
+	WarmupIterations           int                      `json:"warmupIterations"`
+	StartupWarmupIterations    int                      `json:"startupWarmupIterations,omitempty"`
+	SettlingDurationSeconds    int                      `json:"settlingDurationSeconds"`
+	DurationSeconds            int                      `json:"durationSeconds"`
+	DurationToleranceSeconds   float64                  `json:"durationToleranceSeconds"`
+	MetricIntervalMilliseconds int                      `json:"metricIntervalMilliseconds"`
+	MetricTimeoutMilliseconds  int                      `json:"metricTimeoutMilliseconds"`
+	MetricDurationSeconds      int                      `json:"metricDurationSeconds"`
+	MetricObserverImage        string                   `json:"metricObserverImage"`
+	WorkloadObserverImage      string                   `json:"workloadObserverImage"`
+	WorkloadSchemaVersion      string                   `json:"workloadSchemaVersion"`
+	SLOPercentile              float64                  `json:"sloPercentile,omitempty"`
+	MinServiceSamples          int                      `json:"minServiceSamples,omitempty"`
+	SLOTargetLatencyNanos      int64                    `json:"sloTargetLatencyNanos,omitempty"`
+	WorkloadName               string                   `json:"workloadName,omitempty"`
+	WorkloadUID                string                   `json:"workloadUID,omitempty"`
+	WorkloadResourceVersion    string                   `json:"workloadResourceVersion,omitempty"`
+	OperatingPoints            *OperatingPointsContract `json:"operatingPoints,omitempty"`
+}
+
+// OperatingPointsContract freezes phase arrivals and native supply bounds.
+type OperatingPointsContract struct {
+	Utilizations                   []float64 `json:"utilizations"`
+	SparseMeanGapMilliseconds      float64   `json:"sparseMeanGapMilliseconds"`
+	PhaseDurationSeconds           int       `json:"phaseDurationSeconds"`
+	RequestLifetimeSeconds         int       `json:"requestLifetimeSeconds"`
+	DeliveryMarginMilliseconds     int       `json:"deliveryMarginMilliseconds"`
+	FramedDecodedRequestUpperBytes int64     `json:"framedDecodedRequestUpperBytes"`
+	QueueBytesCap                  int64     `json:"queueBytesCap"`
 }
 
 // CurveConversionContract identifies how the immutable plan artifact was derived.
@@ -365,6 +377,9 @@ func validateCurveProtocol(mode string, protocol CurveProtocolContract) error {
 		(dataset != nil && (!cleanCurveValue(dataset.Name) || !cleanCurveValue(dataset.UID))) {
 		return fmt.Errorf("curve plan %s protocol dataset is invalid", mode)
 	}
+	if (protocol.OperatingPoints != nil) != (mode == "active") {
+		return fmt.Errorf("curve plan %s protocol operatingPoints is invalid", mode)
+	}
 	if protocol.WarmupIterations < 0 || protocol.SettlingDurationSeconds < 0 ||
 		protocol.DurationSeconds < 1 ||
 		protocol.MetricIntervalMilliseconds < 1 || protocol.MetricTimeoutMilliseconds < 1 ||
@@ -422,6 +437,11 @@ func CloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
 	shared.Artifact.Files = slices.Clone(shared.Artifact.Files)
 	shared.Preprocessor.Inputs = slices.Clone(shared.Preprocessor.Inputs)
 	shared.Preprocessor.Outputs = slices.Clone(shared.Preprocessor.Outputs)
+	if shared.ActiveProtocol.OperatingPoints != nil {
+		points := *shared.ActiveProtocol.OperatingPoints
+		points.Utilizations = slices.Clone(points.Utilizations)
+		shared.ActiveProtocol.OperatingPoints = &points
+	}
 	if shared.ActiveProtocol.Dataset != nil {
 		dataset := *shared.ActiveProtocol.Dataset
 		shared.ActiveProtocol.Dataset = &dataset

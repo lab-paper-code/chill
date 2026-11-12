@@ -86,6 +86,7 @@ func (p *authorityPreparationPorts) Resolve(
 func authorityPlan(t *testing.T, config profilingrun.RunConfig) []byte {
 	t.Helper()
 	idle := config
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 		DurationSeconds: 30, DurationToleranceSeconds: .5, SettlingDurationSeconds: 5,
@@ -109,6 +110,7 @@ func authorityPlan(t *testing.T, config profilingrun.RunConfig) []byte {
 
 func authorityRoot(config profilingrun.RunConfig) (*edge.BatchEnergyOptimization, *core.Node) {
 	selected := testRun()
+	points := config.Measurement.OperatingPoints
 	root := &edge.BatchEnergyOptimization{
 		ObjectMeta: metav1.ObjectMeta{Namespace: selected.Namespace, Name: "frozen-plan", UID: "plan-uid",
 			Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}},
@@ -116,6 +118,12 @@ func authorityRoot(config profilingrun.RunConfig) (*edge.BatchEnergyOptimization
 			State: selected.Spec.MeasurementStateSpec, TrialsPerBatch: 3, RetryLimit: 1,
 			ActiveProtocol: edge.ActiveProtocolSpec{Workload: config.Measurement.WorkloadName,
 				Dataset: config.Measurement.Dataset.Name, WarmupIterations: 20, DurationSeconds: 30,
+				OperatingPoints: edge.MeasurementOperatingPointsSpec{
+					Utilizations: slices.Clone(points.Utilizations), SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds,
+					PhaseDurationSeconds: int32(points.PhaseDurationSeconds), RequestLifetimeSeconds: int32(points.RequestLifetimeSeconds),
+					DeliveryMarginMilliseconds:     int32(points.DeliveryMarginMilliseconds),
+					FramedDecodedRequestUpperBytes: points.FramedDecodedRequestUpperBytes,
+				},
 				MetricObservation: selected.Spec.MetricObservation},
 			IdleProtocol: edge.IdleProtocolSpec{SettlingDurationSeconds: 5, DurationSeconds: 30,
 				MetricObservation: selected.Spec.MetricObservation},
@@ -150,6 +158,9 @@ func authorityResolver(t *testing.T, kube client.Reader, config profilingrun.Run
 	preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports)
 	if err != nil {
 		t.Fatal(err)
+	}
+	preparer.ResolveLoadOrigin = func(context.Context, string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
+		return config.LoadOriginNode, *config.LoadOriginGatewayPod, nil
 	}
 	resolver, err := NewRunConfigResolver(preparer, ports, kube,
 		func(_ context.Context, uid types.UID) (derivation.CurvePlan, error) {

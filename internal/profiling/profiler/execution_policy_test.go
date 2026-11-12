@@ -94,6 +94,8 @@ func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
 	config.Measurement.SettlingDurationSeconds = 60
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	config.Measurement.Dataset = nil
+	config.Measurement.OperatingPoints = nil
+	config.LoadOriginNode, config.LoadOriginGatewayPod = "", nil
 
 	if err := deriveConfiguredExecutionPlan(t, config); err != nil {
 		t.Fatal(err)
@@ -138,9 +140,10 @@ func addWorkloadObservation(config *profilingrun.RunConfig) {
 
 func TestCaptureWatchdogAlignsEventsResultAndOuterEnvelopes(t *testing.T) {
 	config := currentExecutionPolicyTestRunConfig(t)
+	config.Measurement.OperatingPoints.PhaseDurationSeconds = 200
 	config.Measurement.DurationSeconds = 600
-	// 1160s is the explicit frozen-runtime batch envelope when the search can
-	// reach a batch size with no completed empirical tail yet; not a measured tail.
+	// Keep the configured startup allowance separate from measured sparse
+	// service times; add the final-read/coordination allowance explicitly.
 	config.Metrics.DurationSeconds = 600 + 1160 + 2 // final-read/coordination allowance
 	config.Metrics.IntervalMilliseconds = 1000
 	config.Metrics.TimeoutMilliseconds = 500

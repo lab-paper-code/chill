@@ -302,7 +302,9 @@ func TestCampaignCurvePlanFailureClassification(t *testing.T) {
 		mutate   func(*api.BatchEnergyOptimization)
 		terminal bool
 	}{
-		{name: "invalid protocol", mutate: func(parent *api.BatchEnergyOptimization) { parent.Spec.ActiveProtocol.DurationSeconds = 0 }, terminal: true},
+		{name: "invalid protocol", mutate: func(parent *api.BatchEnergyOptimization) {
+			parent.Spec.ActiveProtocol.OperatingPoints.Utilizations = []float64{0}
+		}, terminal: true},
 		{name: "temporary resolver failure", failure: errors.New("resolver temporarily unavailable")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -510,6 +512,7 @@ func newPolicyMismatchCampaignFixture(t *testing.T, excess bool) (*api.BatchEner
 	base := curveFixtureRunConfig(t)
 	base.State.Firstfloor.MaxBatchSize = 8
 	idle := base
+	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,

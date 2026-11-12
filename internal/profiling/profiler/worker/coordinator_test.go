@@ -30,7 +30,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	runtimeResult.DerivedContract.Backend = "historical-backend"
 	runtimeResult.DerivedContract.Provider = "historical-provider"
 	runtimeResult.DerivedContract.NodeSnapshot.UID = "historical-node"
-	runtimeResult.RepetitionResults[0].NativeSamples[0].RunnerServiceMilliseconds += 1e-12
+	runtimeResult.Phases[0].NativeSamples[0].RunnerServiceMilliseconds += 1e-12
 	metricResult := testMetricResult(config)
 	var calls []string
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, payload []byte) (evidencestore.Receipt, error) {
@@ -394,8 +394,12 @@ func testIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 	config.Measurement.WorkloadUID = ""
 	config.Measurement.WorkloadResourceVersion = ""
 	config.Measurement.SettlingDurationSeconds = 30
+	config.Measurement.DurationSeconds = 30
+	config.Metrics.DurationSeconds = 31
+	config.LoadOriginNode, config.LoadOriginGatewayPod = "", nil
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	config.Measurement.Dataset = nil
+	config.Measurement.OperatingPoints = nil
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -478,22 +482,7 @@ func testFirstfloorEvidence(
 func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.RuntimeResult {
 	started := time.Date(2026, time.July, 16, 3, 0, 0, 0, time.UTC)
 	targetDuration := float64(config.Measurement.DurationSeconds)
-	latencies := make([]float64, 60)
-	nativeSamples := make([]profilingrun.NativeServiceSample, 60)
-	recordIDs, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
-	for i := range recordIDs {
-		recordIDs[i], units[i] = "record-"+strconv.Itoa(i), 1
-	}
-	for i := range latencies {
-		latencies[i] = 2
-		nativeSamples[i] = profilingrun.NativeServiceSample{
-			BatchID: uint64(i + 1), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
-			ServiceSample:             fixtures.ServiceSample(podUID, uint64(i), 700000),
-			RunnerServiceMilliseconds: 0.7,
-			BackendCallMilliseconds:   0.4, NativeRequestMilliseconds: 0.9,
-		}
-	}
-	return profilingrun.RuntimeResult{
+	result := profilingrun.RuntimeResult{
 		SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded",
 		ExperimentID: podUID, NodeName: config.TargetNode.Name, Model: config.State.Model,
 		Architecture: "x86_64",
@@ -514,18 +503,32 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 		},
 		MemoryBytes: testMemoryBytes, MemorySource: testMemorySource,
 		Firstfloor: testFirstfloorEvidence(config, "1.16.0", 60),
-		RepetitionResults: []profilingrun.Repetition{{
-			Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
-			MeasurementEndedAt:  started.Add(30 * time.Second).Format(time.RFC3339Nano),
-			LatencyMilliseconds: latencies,
-			NativeSamples:       nativeSamples,
-		}},
 	}
+	points := config.Measurement.OperatingPoints
+	workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap,
+		points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds))
+	fixtures.ApplyActivePhases(&result, fixtures.PhaseOptions{
+		StartedAt: started, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
+		Batch: config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers,
+		Utilizations: points.Utilizations, SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds,
+		PodUID: podUID, Latencies: []float64{2},
+		SupplySizing: sizing,
+	})
+	result.Firstfloor = testFirstfloorEvidence(config, result.RuntimeVersion, uint64(result.InferenceCount))
+	return result
 }
 
 func testMetricResult(config profilingrun.RunConfig) metricobserver.Result {
 	started := time.Date(2026, time.July, 16, 2, 59, 59, 0, time.UTC)
-	return metricobserver.Result{
+	windowSeconds := 30
+	if points := config.Measurement.OperatingPoints; points != nil {
+		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+	}
+	samples := make([]metricobserver.Sample, windowSeconds)
+	for index := range samples {
+		samples[index] = metricobserver.Sample{ObservedAt: started.Add(time.Duration(index+1) * time.Second), Watts: 5.2}
+	}
+	result := metricobserver.Result{
 		Source: metricobserver.SourceIdentity{
 			Kind: config.Metrics.SourceKind, NodeName: config.Metrics.NodeName,
 			Endpoint: config.Metrics.Endpoint, Metric: config.Metrics.PowerMetric,
@@ -539,13 +542,11 @@ func testMetricResult(config profilingrun.RunConfig) metricobserver.Result {
 				MaximumTemperatureCelsius: config.Metrics.ThermalMetrics.MaximumTemperatureCelsius,
 			},
 		},
-		StartedAt: started, EndedAt: started.Add(31 * time.Second),
-		Samples: []metricobserver.Sample{{ObservedAt: started.Add(time.Second), Watts: 5.2}},
-		Summary: metricobserver.Summary{
-			Attempts: 1, SuccessfulSamples: 1, ObservationDurationSeconds: 31,
-			SourceTimestampAbsent: true,
-		},
+		StartedAt: started, EndedAt: started.Add(time.Duration(windowSeconds+1) * time.Second),
+		Samples: samples,
 	}
+	result.Summary = metricobserver.Summarize(result)
+	return result
 }
 
 func testWorkloadReader(t *testing.T, config profilingrun.RunConfig) WorkloadResultReader {

@@ -29,7 +29,7 @@ import (
 
 // The executable, source reads and same-watch handoff use real wall time.
 // Inference below is explicitly simulated, not hardware evidence. There is no
-// requested idle: startup has no G, followed by 59 measured natural-gap pairs.
+// requested idle: each phase retains 60 physical calls and its natural-gap pairs.
 func TestStandaloneObserversCoverSampleLimitedTrial(t *testing.T) {
 	runStandaloneSampleStop(t, 2*time.Second)
 }
@@ -194,13 +194,17 @@ func sampleStopConfiguration(t *testing.T, directory string) (options, profiling
 		t.Fatal(err)
 	}
 	protocol := campaign.Spec.ActiveProtocol
-	config.Measurement.DurationSeconds = int(protocol.DurationSeconds)
-	config.Metrics.DurationSeconds = int(protocol.MetricObservation.DurationSeconds)
+	config.Measurement.OperatingPoints.PhaseDurationSeconds = int(protocol.OperatingPoints.PhaseDurationSeconds)
+	config.Measurement.DurationSeconds = config.Measurement.OperatingPoints.PhaseDurationSeconds *
+		(len(config.Measurement.OperatingPoints.Utilizations) + 2)
+	config.Metrics.DurationSeconds = config.Measurement.DurationSeconds + 1
 	config.Metrics.IntervalMilliseconds = int(protocol.MetricObservation.IntervalMilliseconds)
 	config.Metrics.TimeoutMilliseconds = int(protocol.MetricObservation.TimeoutMilliseconds)
-	if config.Measurement.DurationSeconds != 30 || config.Metrics.DurationSeconds != 31 ||
+	config.Measurement.OperatingPoints.QueueBytesCap = 64 << 20
+	config.Measurement.OperatingPoints.FramedDecodedRequestUpperBytes = (64 << 20) / 32
+	if config.Measurement.DurationSeconds != 90 || config.Metrics.DurationSeconds != 91 ||
 		config.Measurement.MinServiceSamples != 59 {
-		t.Fatal("regression requires the shipped 30/31-second protocol and p95 n59 stop")
+		t.Fatal("regression requires three shipped 30-second phase floors and p95 n59 stop")
 	}
 	return opts, config
 }
@@ -285,27 +289,32 @@ func runSampleStopProducer(
 		recordIDs[index], units[index] = "record-"+strconv.Itoa(index), 1
 	}
 	var previousEnd time.Time
-	for time.Since(started) < time.Duration(config.Measurement.DurationSeconds)*time.Second ||
-		len(samples)-1 < config.Measurement.MinServiceSamples {
-		pair := firstfloor.ServiceSample{TrialID: trialID}
-		exchangeStart := time.Now()
-		if !previousEnd.IsZero() {
-			actualGap := exchangeStart.Sub(previousEnd).Nanoseconds()
-			pair.PrecedingIdleNanos = &actualGap
+	phaseCount := len(config.Measurement.OperatingPoints.Utilizations) + 2
+	for range phaseCount {
+		phaseStarted, offset := time.Now(), len(samples)
+		for time.Since(phaseStarted) < time.Duration(config.Measurement.OperatingPoints.PhaseDurationSeconds)*time.Second ||
+			len(samples)-offset-1 < config.Measurement.MinServiceSamples {
+			pair := firstfloor.ServiceSample{TrialID: trialID}
+			exchangeStart := time.Now()
+			if !previousEnd.IsZero() {
+				actualGap := exchangeStart.Sub(previousEnd).Nanoseconds()
+				pair.PrecedingIdleNanos = &actualGap
+			}
+			wait(service)
+			previousEnd = time.Now()
+			pair.ServiceDurationNanos = previousEnd.Sub(exchangeStart).Nanoseconds()
+			serviceMS := float64(pair.ServiceDurationNanos) / 1e6
+			samples = append(samples, profilingrun.NativeServiceSample{
+				BatchID: uint64(len(samples) + 1), BatchSize: config.Measurement.Batch,
+				RecordIDs: recordIDs, Units: units, ServiceSample: pair,
+				RunnerServiceMilliseconds: serviceMS, BackendCallMilliseconds: serviceMS, NativeRequestMilliseconds: serviceMS,
+				StartedAt: exchangeStart, FinishedAt: previousEnd, LatestEnqueuedAt: exchangeStart, EarliestEnqueuedAt: exchangeStart,
+			})
 		}
-		wait(service)
-		previousEnd = time.Now()
-		pair.ServiceDurationNanos = previousEnd.Sub(exchangeStart).Nanoseconds()
-		serviceMS := float64(pair.ServiceDurationNanos) / 1e6
-		samples = append(samples, profilingrun.NativeServiceSample{
-			BatchID: uint64(len(samples) + 1), BatchSize: config.Measurement.Batch,
-			RecordIDs: recordIDs, Units: units, ServiceSample: pair,
-			RunnerServiceMilliseconds: serviceMS, BackendCallMilliseconds: serviceMS, NativeRequestMilliseconds: serviceMS,
-		})
 	}
 	ended := time.Now()
-	if len(samples) != 60 {
-		t.Fatalf("producer stop: calls=%d elapsed=%s", len(samples), ended.Sub(started))
+	if len(samples) != 60*phaseCount {
+		t.Fatalf("producer stop: calls=%d expected=%d elapsed=%s", len(samples), 60*phaseCount, ended.Sub(started))
 	}
 	return started, ended, samples
 }
@@ -327,6 +336,8 @@ func sampleStopExecutionPlan(t *testing.T, config profilingrun.RunConfig) profil
 	policy := values.Profiling.Defaults
 	policy.Name, policy.DeviceClass = "sample-stop-regression", "*"
 	policy.ExecutionPath, policy.WorkloadMode = config.Candidate.ExecutionPath, config.Measurement.WorkloadMode
+	policy.AttemptTimeoutOverheadSeconds = max(policy.AttemptTimeoutOverheadSeconds, 420)
+	policy.ActiveDeadlineOverheadSeconds = max(policy.ActiveDeadlineOverheadSeconds, policy.AttemptTimeoutOverheadSeconds+30)
 	catalog, err := yaml.Marshal(profiler.ExecutionPolicyCatalog{
 		SchemaVersion: profiler.ExecutionPolicyCatalogSchemaVersion,
 		Policies:      []profiler.ExecutionPolicySpec{policy},

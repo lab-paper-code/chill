@@ -12,6 +12,7 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -20,29 +21,21 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 	const rawObjectKey = "raw.json"
 	run, execution := passportFixture()
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
-	execution.FinalizedAt = started.Add(time.Minute)
+	execution.FinalizedAt = started.Add(2 * time.Minute)
 	execution.RawMeasurement.Store = "chill-evidence"
 	execution.RawMeasurement.Key = rawObjectKey
 	execution.RawMeasurement.Size = 512
 	execution.RunConfig = profilingrun.RunConfig{Workload: profilingrun.CurrentWorkloadContract()}
 	workload := passportWorkloadResult(t, started)
+	workload.CoverageEndedAt = started.Add(91 * time.Second)
 	measurement := profilerevidence.RawMeasurement{
 		Runtime: profilingrun.RuntimeResult{
 			Runtime: "onnxruntime", RuntimeVersion: "1.16.0", Provider: "CPUExecutionProvider",
 			Architecture: "x86_64", BatchSize: 4, WarmupIterations: 20,
 			MeasurementStartedAt:      started.Format(time.RFC3339Nano),
-			MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
-			MeasurementElapsedSeconds: 30.001, InferenceCount: 3,
+			MeasurementEndedAt:        started.Add(90 * time.Second).Format(time.RFC3339Nano),
+			MeasurementElapsedSeconds: 90.001, InferenceCount: 3,
 			ThroughputItemsPerSecond: 400,
-			RepetitionResults: []profilingrun.Repetition{
-				{LatencyMilliseconds: []float64{3, 1}, NativeSamples: []profilingrun.NativeServiceSample{
-					{BatchID: 1, BatchSize: 4, RecordIDs: []string{"a", "b", "c", "d"}, Units: []int{1, 1, 1, 1}},
-					{BatchID: 2, BatchSize: 4, RecordIDs: []string{"e", "f", "g", "h"}, Units: []int{1, 1, 1, 1}},
-				}},
-				{LatencyMilliseconds: []float64{2}, NativeSamples: []profilingrun.NativeServiceSample{
-					{BatchID: 3, BatchSize: 4, RecordIDs: []string{"i", "j", "k", "l"}, Units: []int{1, 1, 1, 1}},
-				}},
-			},
 		},
 		Metrics: metricobserver.Result{
 			Source: metricobserver.SourceIdentity{
@@ -62,6 +55,22 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 			},
 		},
 		Workload: &workload,
+	}
+	measurement.Runtime.Phases = fixtures.ActivePhases[profilingrun.Phase](fixtures.PhaseOptions{
+		StartedAt: started, Duration: 30 * time.Second, Batch: 4, Samples: 1, Workers: 32,
+		Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000, PodUID: "pod-uid",
+	})
+	for index := range measurement.Runtime.Phases {
+		phase := &measurement.Runtime.Phases[index]
+		latency := []float64{3, 1, 2}[index]
+		phase.LatencyMilliseconds[0] = latency
+		for member := range phase.Requests {
+			record := string(rune('a' + index*4 + member))
+			phase.NativeSamples[0].RecordIDs[member] = record
+			phase.Requests[member].RecordID = record
+			phase.Requests[member].LatencyMilliseconds = latency
+			phase.Requests[member].CompletedAt = phase.Requests[member].SentAt.Add(time.Duration(latency) * time.Millisecond)
+		}
 	}
 
 	got, err := BuildEvidencePassport(EvidencePassportSnapshot{
@@ -168,9 +177,10 @@ func TestBuildEvidencePassportRepresentsNoSuccessfulPowerSamples(t *testing.T) {
 			Runtime: profilingrun.RuntimeResult{
 				BatchSize:            1,
 				MeasurementStartedAt: started.Format(time.RFC3339Nano),
-				MeasurementEndedAt:   started.Add(time.Second).Format(time.RFC3339Nano),
-				InferenceCount:       1,
-				RepetitionResults:    []profilingrun.Repetition{{LatencyMilliseconds: []float64{1}}},
+				MeasurementEndedAt:   started.Add(90 * time.Second).Format(time.RFC3339Nano),
+				InferenceCount:       3,
+				Phases: fixtures.ActivePhases[profilingrun.Phase](fixtures.PhaseOptions{StartedAt: started, Duration: 30 * time.Second,
+					Batch: 1, Samples: 1, Workers: 32, Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000, PodUID: "pod-uid"}),
 			},
 			Metrics: metricobserver.Result{Summary: metricobserver.Summary{Failures: 1}},
 		},

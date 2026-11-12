@@ -23,6 +23,7 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	transitioncontroller "github.com/lab-paper-code/chill/internal/profiling/transitioncost/controller"
 )
 
@@ -102,6 +103,9 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 		return fmt.Errorf("construct ProfilingRun reconciler: %w", err)
 	}
 	reconciler.FailedJobRetentionSeconds = int32(opts.failedJobRetentionSeconds)
+	reconciler.MeasurementLoad = profilercontroller.MeasurementLoadOptions{
+		Image: opts.measurementLoadImage, ServiceAccountName: opts.measurementLoadServiceAccount,
+	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up ProfilingRun reconciler: %w", err)
 	}
@@ -190,6 +194,9 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construct Run preparer: %w", err)
+	}
+	preparer.ResolveLoadOrigin = func(ctx context.Context, targetNode string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
+		return profilerkube.ResolveGatewayLoadOrigin(ctx, reader, opts.watchNamespace, opts.systemName, targetNode)
 	}
 	curvePlans, err := batchcontroller.NewCurvePlanSource(
 		reader, candidates, preparer, evidence,

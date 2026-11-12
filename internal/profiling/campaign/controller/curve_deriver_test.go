@@ -61,8 +61,27 @@ func TestSlowBatchOneServiceDoesNotTruncateDiscovery(t *testing.T) {
 		for index, run := range runs {
 			raw := curveFixtureActiveRaw(config, run.Name+"-pod", 6)
 			if test.oneFeasibleCall && index == 0 {
-				raw.Runtime.RepetitionResults[0].NativeSamples[0].RunnerServiceMilliseconds = .6
-				raw.Runtime.RepetitionResults[0].NativeSamples[0].ServiceDurationNanos = 600000
+				raw.Runtime.Phases[0].NativeSamples[0].RunnerServiceMilliseconds = .6
+				raw.Runtime.Phases[0].NativeSamples[0].ServiceDurationNanos = 600000
+				sample := &raw.Runtime.Phases[0].NativeSamples[0]
+				sample.FinishedAt = sample.StartedAt.Add(600 * time.Microsecond)
+				for requestIndex := range raw.Runtime.Phases[0].Requests {
+					request := &raw.Runtime.Phases[0].Requests[requestIndex]
+					if request.Response.Progress.BatchID == sample.BatchID {
+						request.Response.Progress.ServiceSample.ServiceDurationNanos = 600000
+						request.Response.Progress.ServiceMS = .6
+						request.Response.Progress.BatchFinishedAt = &sample.FinishedAt
+					}
+				}
+				next := &raw.Runtime.Phases[0].NativeSamples[1]
+				gap := next.StartedAt.Sub(sample.FinishedAt).Nanoseconds()
+				next.PrecedingIdleNanos = &gap
+				for requestIndex := range raw.Runtime.Phases[0].Requests {
+					request := &raw.Runtime.Phases[0].Requests[requestIndex]
+					if request.Response.Progress.BatchID == next.BatchID {
+						request.Response.Progress.ServiceSample.PrecedingIdleNanos = &gap
+					}
+				}
 			}
 			fixture.evidence.active[run.Name] = curveFixtureVerifiedActiveRaw(t, raw)
 		}
@@ -184,10 +203,12 @@ func TestCurveDeriverAcceptsObservedVariationAndRejectsNonWitnessConditionDrift(
 		}
 		raw := curveFixtureActiveRaw(execution.RunConfig, execution.Terminal.Pod.UID, float64(6+index))
 		raw.Runtime.MemoryBytes = uint64(1000 + index)
-		duration := 30*time.Second + time.Duration(index)*100*time.Millisecond
+		duration := time.Duration(len(raw.Runtime.Phases))*30*time.Second + time.Duration(index)*100*time.Millisecond
 		raw.Runtime.MeasurementEndedAt = raw.Metrics.StartedAt.Add(duration).Format(time.RFC3339Nano)
 		raw.Runtime.MeasurementElapsedSeconds = duration.Seconds()
-		raw.Runtime.RepetitionResults[0].MeasurementEndedAt = raw.Runtime.MeasurementEndedAt
+		last := &raw.Runtime.Phases[len(raw.Runtime.Phases)-1]
+		last.MeasurementEndedAt = raw.Runtime.MeasurementEndedAt
+		last.MeasurementElapsedSeconds = 30 + float64(index)*.1
 		if index%3 != 1 {
 			pod := workloadobserver.Pod{
 				Namespace: "baseline-fleet", Name: "fleet", UID: "fleet-pod",
@@ -427,6 +448,7 @@ func newCurveDeriverFixture(t *testing.T, batches ...int) curveDeriverFixture {
 	}
 	base.Measurement.Batch = batches[0]
 	idleRunConfig := base
+	idleRunConfig.LoadOriginNode, idleRunConfig.LoadOriginGatewayPod = "", nil
 	idleRunConfig.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode:            profilingrun.IdleModelLoadedWorkloadMode,
@@ -564,6 +586,8 @@ func curveFixtureRunConfig(t *testing.T) profilingrun.RunConfig {
 	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
+	config.Measurement.OperatingPoints.QueueBytesCap = 64 << 20
+	config.Measurement.OperatingPoints.FramedDecodedRequestUpperBytes = (64 << 20) / 32
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -584,6 +608,9 @@ func curveFixtureVerifiedActiveRaw(t *testing.T, raw profilerevidence.RawMeasure
 	t.Helper()
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rawBytes, &raw); err != nil {
 		t.Fatal(err)
 	}
 	execution := curveFixtureExecution(t, raw.RunConfig, raw.PodUID, rawBytes)
@@ -656,7 +683,11 @@ func curveFixtureActiveRaw(
 ) profilerevidence.RawMeasurement {
 	started := time.Date(2026, 8, 11, 1, 2, 3, 0, time.UTC)
 	targetDuration := float64(config.Measurement.DurationSeconds)
-	samples := make([]metricobserver.Sample, 30)
+	windowSeconds := 30
+	if points := config.Measurement.OperatingPoints; points != nil {
+		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+	}
+	samples := make([]metricobserver.Sample, windowSeconds)
 	for index := range samples {
 		samples[index] = metricobserver.Sample{
 			ObservedAt: started.Add(500*time.Millisecond + time.Duration(index)*time.Second),
@@ -691,8 +722,8 @@ func curveFixtureActiveRaw(
 			DerivedContract: profilingrun.DerivedContract{
 				Backend: config.State.Backend, Provider: config.State.Backend, NodeSnapshot: config.TargetNode,
 			},
-			RepetitionResults: []profilingrun.Repetition{{
-				Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
+			Phases: []profilingrun.Phase{{
+				ID: "saturation-0", Kind: "saturation", MeasurementStartedAt: started.Format(time.RFC3339Nano),
 				MeasurementEndedAt:  started.Add(30 * time.Second).Format(time.RFC3339Nano),
 				LatencyMilliseconds: []float64{1, 2},
 			}},
@@ -712,9 +743,9 @@ func curveFixtureActiveRaw(
 					MaximumTemperatureCelsius: "device_thermal_max_celsius",
 				},
 			},
-			StartedAt: started, EndedAt: started.Add(31 * time.Second), Samples: samples,
+			StartedAt: started, EndedAt: started.Add(time.Duration(windowSeconds+1) * time.Second), Samples: samples,
 			Summary: metricobserver.Summary{
-				Attempts: 30, SuccessfulSamples: 30, ObservationDurationSeconds: 31,
+				Attempts: windowSeconds, SuccessfulSamples: windowSeconds, ObservationDurationSeconds: float64(windowSeconds + 1),
 				MaximumSampleGapSeconds: 1, SourceTimestampAbsent: true,
 			},
 		},
@@ -727,7 +758,7 @@ func curveFixtureActiveRaw(
 				Namespace: "chill-system", JobUID: "job-" + podUID,
 				PodName: "profiling-run-pod", PodUID: podUID,
 			},
-			CoverageStartedAt: started.Add(-time.Second), CoverageEndedAt: started.Add(31 * time.Second),
+			CoverageStartedAt: started.Add(-time.Second), CoverageEndedAt: started.Add(time.Duration(windowSeconds+1) * time.Second),
 			InitialResourceVersion: "10", LastResourceVersion: "11", EventLimit: 10,
 			InitialActivePods: []workloadobserver.Pod{workloadPod},
 			FinalActivePods:   []workloadobserver.Pod{workloadPod}, Continuous: true,
@@ -755,10 +786,13 @@ func curveFixtureExecution(
 ) profilerevidence.ExecutionEvidence {
 	t.Helper()
 	completed := time.Date(2026, 8, 11, 1, 3, 3, 0, time.UTC)
+	if points := config.Measurement.OperatingPoints; points != nil {
+		completed = completed.Add(time.Duration(points.PhaseDurationSeconds*(len(points.Utilizations)+2)) * time.Second)
+	}
 	container := func(name, image string) profilerevidence.ContainerTerminal {
 		return profilerevidence.ContainerTerminal{
 			Name: name, RequestedImage: image, ImageID: "containerd://" + name,
-			Reason: "Completed", StartedAt: completed.Add(-time.Minute), FinishedAt: completed.Add(-time.Second),
+			Reason: "Completed", StartedAt: completed.Add(-5 * time.Minute), FinishedAt: completed.Add(-time.Second),
 		}
 	}
 	containers := []profilerevidence.ContainerTerminal{
@@ -812,7 +846,7 @@ func curveFixtureEvidenceLoader(
 	loader, err := profilerevidence.NewLoader(curveFixtureStore{
 		{Store: execution.RawMeasurement.Store, Key: execution.RawMeasurement.Key}: rawBytes,
 		{Store: reference.Store, Key: reference.Key}:                               executionBytes,
-	}, 1<<20)
+	}, 8<<20)
 	if err != nil {
 		t.Fatal(err)
 	}

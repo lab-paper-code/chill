@@ -52,8 +52,9 @@ func TestCampaignChildrenRetainFrozenWorkloadAfterIdle(t *testing.T) {
 				DurationSeconds:      int32(config.Metrics.DurationSeconds),
 			}
 			parent.Spec.ActiveProtocol = api.ActiveProtocolSpec{
-				WarmupIterations: 20, DurationSeconds: 30, DurationToleranceSeconds: ptr.To(.5),
+				WarmupIterations: 20, DurationSeconds: 90, DurationToleranceSeconds: ptr.To(.5),
 				Workload: "mobilenet", Dataset: config.Measurement.Dataset.Name, MetricObservation: metric,
+				OperatingPoints: parent.Spec.ActiveProtocol.OperatingPoints,
 			}
 			parent.Spec.IdleProtocol = api.IdleProtocolSpec{
 				SettlingDurationSeconds: 60, DurationSeconds: 30,
@@ -84,6 +85,7 @@ func TestCampaignChildrenRetainFrozenWorkloadAfterIdle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			preparer.ResolveLoadOrigin = ports.ResolveLoadOrigin
 			var frozenProtocol *derivation.CurveProtocolContract
 			prepare := func(child *api.ProfilingRun) run.RunConfig {
 				return prepareFrozenWorkloadChild(t, ctx, preparer, child, frozenProtocol)
@@ -224,6 +226,10 @@ func (p *frozenWorkloadPreparationPorts) ResolveCandidate(_ context.Context, sel
 
 func (p *frozenWorkloadPreparationPorts) ResolveNode(context.Context, profiler.NodeSelection) (run.NodeSnapshot, error) {
 	return p.config.TargetNode, nil
+}
+
+func (p *frozenWorkloadPreparationPorts) ResolveLoadOrigin(context.Context, string) (string, run.LoadOriginGatewayPodContract, error) {
+	return p.config.LoadOriginNode, *p.config.LoadOriginGatewayPod, nil
 }
 
 func (p *frozenWorkloadPreparationPorts) ResolveMetricSource(context.Context, string) (profiler.ResolvedMetricSource, error) {

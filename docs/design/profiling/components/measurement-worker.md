@@ -104,19 +104,44 @@ durable Node power-mode request-generation/readback/transition handoff, not a
 NodeActuation CRD or Lease. Settling duration uses the common measurement protocol
 and execution provenance, not a parallel execution type.
 
-### Sample-driven active stop
+### Serving-path operating points
 
-RunConfig v1alpha20 freezes the referenced Workload's name, UID, resourceVersion,
-SLO percentile and target latency. Model, preprocessor and dataset must match the
-measurement selection; no percentile is inferred or defaulted. The existing 95%
-confidence convention gives `ceil(log(.05) / log(percentile/100))` completed native
-service calls per trial (59 at p95). Percentile 100 cannot have finite coverage and
-is rejected for this measurement contract.
+RunConfig v1alpha21 freezes the referenced Workload's name, UID, resourceVersion,
+SLO percentile and target latency, plus `measurement.operatingPoints`:
+`utilizations`, `sparseMeanGapMilliseconds`, `phaseDurationSeconds`,
+`requestLifetimeSeconds`, `deliveryMarginMilliseconds`, and
+`framedDecodedRequestUpperBytes`. The selected execution policy freezes the
+computed `queueBytesCap`; this is not a public input. Model, preprocessor and
+dataset must match the measurement selection. The existing 95% confidence
+convention gives `ceil(log(.05)/log(percentile/100))` known-gap native batch
+samples **per phase** (59 at p95). Percentile 100 is rejected.
 
-Each of the three independently restarted active trials for every planned batch
-runs until **both** elapsed time is at least 30 seconds (or the longer requested
-minimum) and its derived known-G service-call count is complete. Budget exhaustion
-and the immutable safety timeout fail the trial; neither completes its evidence.
+Each independently restarted active trial uses the same native `/infer` decode,
+EDF queue, fixed-batch formation and IPC runner as serving, without a profile
+bundle. There is no `/profile` endpoint or in-pod active request driver. A
+Run-owned load Job on the gateway's actual node sends one raw input per native
+request, matching DOM's ChillServer-origin mechanism. The computed
+`runConfig.loadOriginNode` and `loadOriginGatewayPod` (`namespace`, `name`, `uid`)
+freeze that observed origin; there is no public load-node setting.
+
+The order is **sparse → saturation → utilization ladder**. Sparse Poisson load
+uses the configured mean gap and supplies actual no-backlog batch-B service
+observations. The largest such observed service supplies the existing K formula:
+`K=min(64,floor(queueBytesCap/framedDecodedRequestUpperBytes),
+floor((L-margin)/(B*maxObservedSparseServiceSeconds)))`. The shared native
+`SaturationWorkers` calculation also checks whole-batch and queue feasibility.
+Missing usable sparse observations or infeasible supply fails the Run. There is
+no guessed service bound, old-profile bootstrap, rounding K to a multiple of B,
+or fallback. The measured `supplySizing.serviceTimeSource` is
+`run.sparse.maxObservedSeconds`.
+
+Saturation uses closed-loop K outstanding requests and measures completed input
+throughput. Each configured utilization then produces open-loop Poisson arrivals
+at utilization × that throughput. Every phase runs until both its monotonic
+duration and known-gap sample floor complete. The producer stops offering on a
+whole-batch issuance boundary and drains every issued request. The immutable
+attempt/safety budget fails an unfinished phase; it never completes evidence.
+Observer duration and capacity account for the entire phase ladder.
 For BEO, runtime-execution memory exhaustion or an execution measurement-budget
 boundary ends discovery as `Complete/BatchDiscoveryComplete`, preserving the
 completed three-trial batch prefix. Memory exhaustion includes native `OOMKilled`
@@ -156,15 +181,15 @@ q95 with probability `1-.95^59 ≈ .9515` at 59 samples. This minimal coverage i
 a precise p95 estimate, an independence/stationarity check or proof of κ safety;
 59 is a count of calls, not a count of tail exceedances.
 
-Shared CPU policy: RunConfig v1alpha20 has no CPU allocation or thread-tuning field. Jobs carry
-no CPU requests/limits and the runner accepts no affinity or thread override.
-ORT SessionOptions defaults are unchanged; session readback records 0 for automatic
-thread selection, not a fixed single thread. Actual cgroup quota (v2 `max`, v1 `-1`
-included), cpuset/affinity, usage and throttling remain runtime evidence. Active
-runtime body v1alpha10 drops donor fields; idle runtime body v1alpha7 is unchanged. Active raw v1alpha10,
-idle raw v1alpha8 and finalized v1alpha17 cut over together after dependent campaigns finish.
-Old controlled evidence/publications are not rewritten or admitted through a compatibility reader. Memory/GPU/Node
-identity, ownership and physical-return checks remain mandatory.
+Shared CPU policy: RunConfig v1alpha21 has no CPU allocation or thread-tuning
+field. Jobs carry no CPU requests/limits and the runner accepts no affinity or
+thread override. Runtime-default session settings and actual quota/cpuset/
+affinity/usage/throttling remain observed evidence.
+
+Active runtime and raw bodies are v1alpha11; idle runtime v1alpha7 and idle raw
+v1alpha8 retain the existing loaded-idle protocol. Old active records are deleted
+operationally after archival; no reader accepts their previous shapes. Memory,
+GPU, Node identity, ownership and physical-return checks remain mandatory.
 
 
 Store delivery is not scientific input: logical store, internal endpoint/bucket/
@@ -241,8 +266,75 @@ Active raw contains verified RunConfig, actual Pod UID, validated runtime result
 complete metric and bounded workload results. Idle has separate current schema:
 exact load, settling completion, zero inference, residency and declared duration
 instead of active latency/output-validation proof. Both share store/key/size
-reference boundary. No Job completion, terminal Pod/Node snapshot, credentials or
-backend response: controller adds native facts independently during finalization.
+reference boundary. Job completion, terminal Pod/Node snapshots and credentials
+are absent; the controller adds terminal Kubernetes facts during finalization.
+
+### Active raw v1alpha11 field contract
+
+`raw.json` has `schemaVersion`, `runConfig` (v1alpha21), `podUID`, `runtime`,
+`metrics`, and `workload`. Raw evidence contains measured facts and boundaries.
+`runtime.schemaVersion` is
+`chill.dacs.io/batch-characterization.v1alpha11`. Existing actual runtime,
+CPU/memory, startup and execution metadata remain. `runtime.phases` replaces
+`repetitionResults`; there is no legacy reader.
+
+Phases appear once in sparse, saturation, then configured utilization order.
+Each object contains:
+
+| Field | Meaning |
+|---|---|
+| `id`, `kind` | Unique phase ID; `sparse`, `saturation`, or `utilization` |
+| `utilization` | Configured utilization, only for utilization phases |
+| `arrivalRatePerSecond` | Poisson rate, only for sparse/utilization phases |
+| `workers` | Measured sparse-derived K, only for saturation |
+| `measurementStartedAt`, `measurementEndedAt` | Measurement-node UTC power-window boundaries |
+| `measurementElapsedSecondsMonotonic` | Load-producer monotonic phase duration |
+| `completedInputs` | Completed native requests, each carrying one input |
+| `requests` | Every completed request; no failed request is silently omitted |
+| `nativeSamples` | One physical batch per globally unique `batchID` |
+| `latencyMs` | Maximum member sent-to-completed latency, aligned with each batch sample |
+
+Each request contains `requestID`, `recordID`, `arrivalAt`, `sentAt`,
+`completedAt`, `latencyMs`, and full native `/infer` `response`. Request UTC
+timestamps belong to the **load node**; latency uses its monotonic clock.
+`response.progress.nativeHTTP` retains measurement-node `handlerEnteredAt` and
+receive/decode/enqueue/finish offsets, alongside native queue/run spans,
+`batchRequestIDs`, `batchStartedAt`, `batchFinishedAt`, and `serviceSample`.
+Cross-host wall-clock subtraction never defines request latency.
+
+Each native sample retains `batchID`, `batchSize`, per-member `recordIDs` and
+`units`; `serviceDurationNanos`, nullable `precedingIdleNanos`, physical Pod
+`trialID`; `runnerServiceMs`, `preprocessMs`, `backendCallMs`, `postprocessMs`,
+`nativeRequestMs`, and optional generative `firstTokenMs`. Measurement-node UTC
+`startedAt`/`finishedAt` anchor the actual runner exchange;
+`earliestEnqueuedAt`/`latestEnqueuedAt` bound native member enqueue times.
+Only the first physical exchange may lack a preceding idle anchor.
+
+`runtime.supplySizing` contains `batch`, `maxBatchServiceSeconds`,
+`serviceTimeSource`, `requestLifetimeSeconds`, `marginSeconds`, `workerCap`,
+`queueBytesCap`, `framedDecodedRequestUpperBytes`, `workers`, and `limitingBound`.
+The source is `run.sparse.maxObservedSeconds`; bound names and tie order remain
+`queue-cap`, `bytes-cap`, `lifetime`. Every member of a no-backlog sparse batch
+must enqueue after the preceding batch finishes. The initial batch qualifies
+only because native starts with an empty queue.
+
+Derivation publishes `phasePower` in each derived trial and catalog measurement
+batch facts: `trialID`, `id`, `kind`, `windowStart`, `windowEnd`,
+`completedItems`, `wallJoules`, and `meanWallWatts`. These integrate the
+measurement node's retained `metrics.samples`, never the load node's power.
+Raw evidence itself retains only the phase boundaries and raw meter samples.
+The load producer obtains phase boundaries through worker-local
+`POST /measurement/phase` start/end markers. `GET /measurement/load` supplies
+the immutable plan; `POST /measurement/supply` derives K after sparse;
+`POST /measurement/load-result` delivers success phases or explicit failure.
+
+Energy per input uses **only utilization phases**:
+`(sum(wallJoules)-IdleBaselineWatts*sum(windowSeconds))/sum(completedInputs)`.
+All phases supply scheduler `ServiceSamples` unchanged. Derived trial and
+catalog batch facts retain `phasePower` and signed `dispatchOccupancyNanosPerInput`; saturation d
+uses consecutive complete backlogged batches and the preceding batch's actual
+service: `(nextStart-previousStart-previousServiceDurationNanos)/B`. A missing
+anchor, member, actual service, or backlog proof contributes no d pair.
 
 Exit zero requires successful immutable-create outcome and one
 `evidence-store-receipt.v1alpha1` JSON termination message within 4 KiB. An existing
@@ -264,24 +356,35 @@ first runtime termination and native Job reason/message, including early
 An absent Pod or execution stage leaves classification unknown even when the Job
 reports `DeadlineExceeded`. Unstructured logs remain diagnostic.
 
-Observer images and runtime/package/driver versions remain provenance.
-CurvePlan v1alpha12 retains the actor startup recipe and active/idle collection
-policy; these stored facts are not repeated provenance-equality rejection gates.
-Latest-success performance identity excludes runtime/package versions, exact
-runtime/observer images, initialized/warmup domains, collection windows and meter
-identity. Model/artifact/preprocessor/input population, actual backend/device and
-memory/power conditions remain relevant. Actual inference, shape, fixed-batch
-counts, native service-pair integrity and selected-device checks still apply.
-Latest failed selection and operator-directed replacement/reuse remain separate.
+Observer images and package/driver readbacks remain provenance. CurvePlan
+v1alpha13 retains the actor startup recipe and active/idle collection policy.
+Profile applicability includes the measured runtime image identity and runtime
+version; serving prepares that measured image and verifies the actual runtime
+container image ID. Model/artifact/preprocessor/input population, actual
+backend/device and memory/power conditions remain relevant. Initialized/warmup
+domains, collection windows and meter identity remain measurement provenance.
+Actual inference, shape, fixed-batch counts, native service-pair integrity and
+selected-device checks still apply. Latest failed selection and operator-directed
+replacement/reuse remain separate.
 
 ## Kubernetes execution and bounded capacity
 
-One deterministic Run-owned Job: `parallelism=1`, `completions=1`,
+One deterministic Run-owned measurement Job: `parallelism=1`, `completions=1`,
 `backoffLimit=0`, `restartPolicy=Never`, no replacement for same Run;
 `automountServiceAccountToken=false`; Downward API Pod UID/scheduled Node; exact
 Node placement, shared CPU and frozen memory/accelerator resources; immutable
 artifact/runtime/observer OCI references; restricted contexts; bounded deadline.
 Job name derives from Run UID: losing/deleting recorded Job never permits repeat.
+
+Active Runs also own one deterministic off-node load Job, pinned to the ready
+serving-entrypoint Pod's actual node, exactly where DOM originates load. The
+installation's existing system/release identity selects that Pod. Preparation
+freezes its node and identity; Job creation rechecks the same Pod UID/node.
+Missing/ambiguous gateway placement or equality with the measurement node fails
+the Run. There is no arbitrary other-node fallback or new topology knob.
+The profiler waits for the measurement Pod's control readiness before creating
+load, waits for load completion/failure before collecting the uploaded result,
+and removes the load Job through the same Run cleanup lifecycle.
 
 One versioned installation worker policy derives resources, deadlines/handoff
 margins and producer capacities coherently. Helm supplies default measured envelope;
