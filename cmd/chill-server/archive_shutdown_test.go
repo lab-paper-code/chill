@@ -37,7 +37,7 @@ func TestServeListenerErrorCancelsArchiveBeforeJoin(t *testing.T) {
 	defer cancel()
 	directory := t.TempDir()
 	hour := time.Now().UTC().Truncate(time.Hour).Add(-3 * time.Hour)
-	hourDir := filepath.Join(directory, "v1alpha6", hour.Format("20060102T15"))
+	hourDir := filepath.Join(directory, "v1alpha7", hour.Format("20060102T15"))
 	if err := os.MkdirAll(hourDir, 0700); err != nil {
 		t.Fatal(err)
 	}

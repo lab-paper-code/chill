@@ -13,5 +13,5 @@ from=$(to_epoch "$1") to=$(to_epoch "$2")
 for ((at = from - 3600; at <= to + 3600; at += 3600)); do
   hour=$(date -u -d "@$at" +%Y%m%dT%H)
   aws s3 cp --recursive --endpoint-url "$CHILL_S3_ENDPOINT" \
-    "s3://$CHILL_S3_BUCKET/serving/observations.v1alpha6/$hour/" "$3/obs/$hour/"
+    "s3://$CHILL_S3_BUCKET/serving/observations.v1alpha7/$hour/" "$3/obs/$hour/"
 done

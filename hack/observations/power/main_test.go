@@ -71,7 +71,7 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 	if err := log.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	obs := segments(t, filepath.Join(directory, "v1alpha6"), t.TempDir())
+	obs := segments(t, filepath.Join(directory, "v1alpha7"), t.TempDir())
 	if _, err := run(t.TempDir(), meters, from, to, 0); err == nil {
 		t.Fatal("missing boundary hours accepted")
 	}

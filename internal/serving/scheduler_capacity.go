@@ -53,9 +53,11 @@ type SchedulerCapacity struct {
 	Plans     []SchedulerNodePlan         `json:"plans"`
 	// GainUncertaintyJoules is the selected-evidence conditional B threshold.
 	// It excludes profile statistical uncertainty and leaves nominal energy unchanged.
-	GainUncertaintyJoules float64                      `json:"gainUncertaintyJoules,omitempty"`
-	TransitionReserves    []SchedulerTransitionReserve `json:"transitionReserves,omitempty"`
-	BridgeStages          []SchedulerBridgeStage       `json:"bridgeStages,omitempty"`
+	GainUncertaintyJoules float64                         `json:"gainUncertaintyJoules,omitempty"`
+	TransitionReserves    []SchedulerTransitionReserve    `json:"transitionReserves,omitempty"`
+	BridgeStages          []SchedulerBridgeStage          `json:"bridgeStages,omitempty"`
+	EnergyComparison      SchedulerEnergyComparison       `json:"energyComparison"`
+	UndecidableCandidates []SchedulerUndecidableCandidate `json:"undecidableCandidates,omitempty"`
 }
 
 // SchedulerPlanSearch is the scope of one plan search: the most Nodes one step
@@ -87,17 +89,18 @@ type SchedulerPlanSearch struct {
 	TerminationReason string `json:"terminationReason,omitempty"`
 	Strategy          string `json:"strategy,omitempty"`
 	// Key and Joules identify the selected exact candidate before postfilters.
-	Key                string         `json:"key,omitempty"`
-	Joules             float64        `json:"joules,omitempty"`
-	Pruned             map[string]int `json:"pruned,omitempty"`
-	SurrogateEvaluated int            `json:"surrogateEvaluated,omitempty"`
-	Finalists          int            `json:"finalists,omitempty"`
-	ExactEvaluated     int            `json:"exactEvaluated,omitempty"`
-	SurrogateGapJoules float64        `json:"surrogateGapJoules,omitempty"`
-	PostFilterReverts  int            `json:"postFilterReverts,omitempty"`
-	Fallback           string         `json:"fallback,omitempty"`
-	DualBound          float64        `json:"dualBound,omitempty"`
-	Start              string         `json:"start,omitempty"`
+	Key                 string         `json:"key,omitempty"`
+	Joules              float64        `json:"joules,omitempty"`
+	Pruned              map[string]int `json:"pruned,omitempty"`
+	SurrogateEvaluated  int            `json:"surrogateEvaluated,omitempty"`
+	Finalists           int            `json:"finalists,omitempty"`
+	ExcludedUndecidable int            `json:"excludedUndecidable"`
+	ExactEvaluated      int            `json:"exactEvaluated,omitempty"`
+	SurrogateGapJoules  float64        `json:"surrogateGapJoules,omitempty"`
+	PostFilterReverts   int            `json:"postFilterReverts,omitempty"`
+	Fallback            string         `json:"fallback,omitempty"`
+	DualBound           float64        `json:"dualBound,omitempty"`
+	Start               string         `json:"start,omitempty"`
 }
 
 // SchedulerPlanSearchStep records each start's origin (k = 0) and accepted moves
@@ -181,6 +184,29 @@ type SchedulerNodePlan struct {
 	EnergyUncertaintyJoules float64                        `json:"energyUncertaintyJoules,omitempty"`
 	ActionCosts             []SchedulerActionCost          `json:"actionCosts,omitempty"`
 	IdleCosts               map[string]IdlePowerProvenance `json:"idleCosts,omitempty"`
+}
+
+// SchedulerMissingEnergyCell names the target measurement, never its transferred estimate.
+type SchedulerMissingEnergyCell struct {
+	Node      NodeReference `json:"node"`
+	Phase     string        `json:"phase,omitempty"`
+	Kind      string        `json:"kind,omitempty"`
+	PowerMode string        `json:"powerMode,omitempty"`
+	From      string        `json:"from,omitempty"`
+	To        string        `json:"to,omitempty"`
+	State     []string      `json:"state,omitempty"`
+	Required  string        `json:"required"`
+}
+
+type SchedulerEnergyComparison struct {
+	Status       string                       `json:"status"`
+	MissingCells []SchedulerMissingEnergyCell `json:"missingCells,omitempty"`
+}
+
+type SchedulerUndecidableCandidate struct {
+	Key          string                       `json:"key"`
+	MissingCells []SchedulerMissingEnergyCell `json:"missingCells"`
+	Excluded     bool                         `json:"excluded"`
 }
 
 // EvaluateScheduler uses cheap profile heuristics and exact finite-demand finalists.
@@ -337,6 +363,9 @@ type capacityPlanner struct {
 	compared                 []bool
 	periodSeconds            float64
 	keepWatts                float64 // keep energy is linear in the common comparison window
+	keepEnergyOnce           sync.Once
+	keepEnergy               capacityResult
+	undecidable              []SchedulerUndecidableCandidate
 	examined                 int
 	searched                 SchedulerPlanSearch
 	// Resolved once during construction; every plan and sweep worker only reads.
@@ -347,6 +376,11 @@ type capacityPlanner struct {
 	// process started: arrivals there still reflect the restart, so plans
 	// only add instances and keep every route.
 	partial bool
+}
+
+func (p *capacityPlanner) currentKeep() capacityResult {
+	p.keepEnergyOnce.Do(func() { p.keepEnergy = p.evaluateCurrentKeep(p.periodSeconds) })
+	return p.keepEnergy
 }
 
 func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, keep SchedulerCandidate, decision SchedulerDecision) *capacityPlanner {

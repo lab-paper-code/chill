@@ -189,7 +189,7 @@ POOL 전환은 신규 인스턴스 실제 준비/연결 후 route 편입, 제외
 | `management` | UID·종류·전후 정의·저장/수락/실제 적용 시각·단계/결과 |
 | `scheduler`, `catalog` | 설정/snapshot/decision/action/power raw; 불변 정의/profile/비용/baseline/meter는 catalog key 참조 |
 
-[관측 분리](observability-split.md): private PVC `v1alpha6/<시>/<stream>.<분>.jsonl` append, 지난 시간은 stream별 gzip 하나를 immutable S3 `serving/observations.v1alpha6/<시>/`에 보존한다. A1의 단일 저장 전환이며 기존 과학 원시·publication은 보존한다. retention은 시간 디렉터리 시작 기준 양수 duration 기본2h(현재/직전 시간), 업로드 성공·미완료 보호 조건을 유지한다. 업로드는 writer 잠금 밖이며 append/조회·Flush/Close가 같은 경계를 사용한다.
+[관측 분리](observability-split.md): private PVC `v1alpha7/<시>/<stream>.<분>.jsonl` append, 지난 시간은 stream별 gzip 하나를 immutable S3 `serving/observations.v1alpha7/<시>/`에 보존한다. A1은 과거 observation `v1alpha6` 단일 전환이며, 현행 E1/C1/V1은 observation만 `v1alpha7`로 한 번 전환한다. profiling·transition 버전과 기존 과학 원시·publication은 보존한다. retention은 시간 디렉터리 시작 기준 양수 duration 기본2h(현재/직전 시간), 업로드 성공·미완료 보호 조건을 유지한다. 업로드는 writer 잠금 밖이며 append/조회·Flush/Close가 같은 경계를 사용한다.
 조회 `from,to`는 RFC3339Nano `[from,to)` 접수 모집단, 반복 `definition,outcome`, `cursor=nextCursor`; 구간과 겹치는 창의 해당 사실만 읽는다. UID/정의/outcome/표본 모집단을 반환하며 전체 필터 집계를 먼저 하고 raw page를 투영한다. page1000 등의 크기로 백분위를 계산하지 않는다.
 최종 행의 양수 monotonic elapsed만 지연에 사용하고 `delivery_failed,canceled,incomplete`는 제외한다. error/rejected/timeout은 별도 집계; 무표본은 `sampleCount:0,quantileNanos:null`, quantile은 `gonum/stat.Empirical`. 완료 시각/지연 합성, SLO 변경/동명 재등록의 묵시 합산, 완료-only 유입 계산은 금지한다.
 무영속 큐 재시작은 요청을 재실행하지 않는다. 최종 행 없는 배정은 RestartDrain이 실제 종료를 관측하여 incomplete 최종 행을 쓴다. 미확인 실행은 drain 성공이 아니다. append/local sync/read 오류는 무결성을 닫고 window incomplete·기록 공백을 남긴다. local 온전한 archive-only 오류는 반환/로그하고 기존 Flush가 미게시 창을 재전송한다(영구 local 손실/새 recovery 상태 아님).

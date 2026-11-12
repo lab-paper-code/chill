@@ -118,8 +118,8 @@ func TestOperationCostPowerAndIdleHistoricalLoadedState(t *testing.T) {
 		t.Fatalf("historical idle stranded: %g %v", watts, refs)
 	}
 	watts, _, refs, _ = schedulerBaseline(s, nil, snap.Nodes[0], []SchedulerInstance{i}, snap.Options)
-	if refs.Source != operationSourceDefault || watts != s.DefaultIdlePower.NodeWatts+s.DefaultIdlePower.PerInstanceWatts {
-		t.Fatalf("idle default missing: %+v", refs)
+	if refs.Source != operationSourceExact || watts != i.Profile.IdleBaselineWatts || !slices.Equal(refs.References, []string{i.Profile.ID}) {
+		t.Fatalf("single-instance profile idle missing: %+v", refs)
 	}
 }
 
@@ -205,6 +205,7 @@ func TestIdleTransferredBaselinePreservesUncertainty(t *testing.T) {
 	s, snap := schedulerFixture()
 	snap.Baselines[0].PowerMode = "old-mode"
 	snap.Baselines[0].WattsUncertainty = 2
+	snap.Instances[0].IdleScope = "unknown"
 	watts, _, provenance, reasons := schedulerBaseline(s, snap.Baselines, snap.Nodes[0], snap.Instances, snap.Options)
 	bound := schedulerBaselineUncertainty(snap.Baselines, provenance, 1)
 	if len(reasons) != 1 || watts != 10 || provenance.Source != operationSourceNode || provenance.Reconstructed || bound.watts != 2 {

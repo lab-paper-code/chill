@@ -49,6 +49,7 @@ type capacityPlan struct {
 	before, mid, after                 float64 // watts
 	operationBounds                    schedulerEnergyBounds
 	beforeBound, midBound, afterBound  schedulerBaselineBound
+	energyCells                        []SchedulerMissingEnergyCell
 	// replaces marks a plan that changes the batch policy of a current instance,
 	// or removes one while adding another.
 	replaces bool
@@ -204,9 +205,10 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	p.annotate(keep, nil)
 	p.sum(keep)
 	before, _, beforeSources, _ := schedulerBaseline(p.settings, p.snapshot.Baselines, common[n], current, p.snapshot.Options)
+	beforeSources.PowerMode, beforeSources.State = m0, schedulerEnergyState(current)
 	keep.before = before
 	keep.beforeBound = schedulerBaselineUncertainty(p.snapshot.Baselines, beforeSources, len(current))
-	keep.record.IdleCosts = map[string]IdlePowerProvenance{"before": beforeSources}
+	keep.record.IdleCosts = map[string]IdlePowerProvenance{"before": beforeSources, "mid": beforeSources, "after": beforeSources}
 	for _, instance := range p.pending {
 		if instance.Node != node.Node {
 			continue
@@ -487,11 +489,18 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	var midSources, afterSources IdlePowerProvenance
 	plan.mid, _, midSources, _ = schedulerBaseline(p.settings, p.snapshot.Baselines, at, mid, p.snapshot.Options)
 	plan.after, _, afterSources, _ = schedulerBaseline(p.settings, p.snapshot.Baselines, at, plan.instances, p.snapshot.Options)
+	_, _, beforeSources, _ := schedulerBaseline(p.settings, p.snapshot.Baselines, node, current, p.snapshot.Options)
+	beforeSources.PowerMode, beforeSources.State = node.PowerMode, schedulerEnergyState(current)
+	midSources.PowerMode, midSources.State = mode, schedulerEnergyState(mid)
+	afterSources.PowerMode, afterSources.State = mode, schedulerEnergyState(plan.instances)
+	plan.before = beforeSources.Watts
+	plan.beforeBound = schedulerBaselineUncertainty(p.snapshot.Baselines, beforeSources, len(current))
 	plan.midBound = schedulerBaselineUncertainty(p.snapshot.Baselines, midSources, len(mid))
 	plan.afterBound = schedulerBaselineUncertainty(p.snapshot.Baselines, afterSources, len(plan.instances))
 	plan.record.IdleCosts = map[string]IdlePowerProvenance{
-		"mid":   midSources,
-		"after": afterSources,
+		"before": beforeSources,
+		"mid":    midSources,
+		"after":  afterSources,
 	}
 	plan.record.Eligible = true
 	return plan

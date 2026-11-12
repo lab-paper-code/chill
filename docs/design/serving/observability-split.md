@@ -2,6 +2,7 @@
 
 [채택한 이행 단계](../architecture-rethink/README.md)의 M1/T4 설계다. ChillServer는 로컬 버퍼와 evidence store의 같은 시간 세그먼트로 조회·오프라인 표 산출에 답한다. [M0](decision-record-diet.md)가 전제이며 T4 원본은 [scheduler SRS](../../spec/scheduler/SRS.md)의 `SCH-42~47`이다. 코드 반영은 배포·클러스터 검증 완료가 아니다.
 현행 evaluation 계약은 [17장](#17-evaluation-증거-api-2026-10-30)의 SCH-67~70 / SCH-AC-52~55와 [ADR 0030](../../adr/0030-observation-evidence-api-streams.md)이다. A1 요청별 판단·전송 기록은 [측정 계약](scheduler-runtime-measurement.md#a1-요청별-판단전송-근거)에 따라 observation `v1alpha6`으로 한 번 전환했다. 아래 `v1alpha5`의 실측·cutover 이력과 과학 원시는 보존하며, 과거 버전 삭제나 7·15장의 호스트/S3 직접 회수를 새 evaluation 수집 경로로 쓰지 않는다.
+현행 E1/C1/V1은 observation만 `v1alpha6→v1alpha7`로 한 번 cutover한다([ADR 0030](../../adr/0030-observation-evidence-api-streams.md)). 노드별 phase 전력·동작별 시간/J·에너지 판단 불가와 누락 후보를 기존 capacity 기록에 보존한다([에너지 계약](scheduler-operations.md#operation-and-idle-estimates)). profiling·transition 저장 버전은 변경하지 않으며 과거 원시·publication과 A1 전환 이력은 보존한다.
 
 ## 1. 측정한 문제
 E1 재실행(2026-10-19, rev35, `v1alpha4`, [workload-pools](workload-pools.md)) S3 `serving/` 636창·659MB와 2req/s/무부하 1분 창 분석이 근거다.
@@ -83,8 +84,8 @@ catalog 행은 `{kind,key,at,body}`다. 시간 안 첫 key 참조와 프로세�
 target.id==keep.id이면 `{id,keep:true}`(7.7KB 절약). 전력은 `{at,startedAt,node,meter,samples,failures,powerJoules,powerError}`(at=관측 끝, failures=실패 때만)이며 재계산 가능한 summary는 생략한다. options는 가변 입력이라 유지한다. SchedulerObservationPage는 참조/target 본문을 복원해 기존 API/Dashboard 형태를 유지한다. candidates 요약·무부하 변경 시만 기록은 M4 소관이다.
 
 ## 5. 세그먼트와 보존
-파일은 `<directory>/v1alpha6/<YYYYMMDDTHH>/<stream>.<MM>.jsonl`(쓰는 시각 UTC 분), 루트 `v1alpha6/definitions.jsonl`은 DefinitionRecord append다. 초기 stream은 requests/scheduler/management/catalog, evaluation 추가는17장. 경로가 버전이므로 행에 schemaVersion/window는 없다.
-1분 archive ticker는 지난 시간의 분 파일을 stream별 순서로 이어 gzip(`compress/gzip`, 헤더 시각0)하고 `serving/observations.v1alpha6/<YYYYMMDDTHH>/<stream>.jsonl.gz`에 `StreamImmutable`로 올린다. gzip → 순차 multipart로 직접 흘려 쓰며 archive 경로는 `/tmp` 파일을 만들지 않는다. Complete의 `If-None-Match: *`가 412이면 Existing, 409와 다른 오류는 실패다. 모든 segment read/close와 gzip.Close가 성공한 뒤에만 Complete한다. 모든 stream 성공 시간은 프로세스 메모리에 기억한다.
+파일은 `<directory>/v1alpha7/<YYYYMMDDTHH>/<stream>.<MM>.jsonl`(쓰는 시각 UTC 분), 루트 `v1alpha7/definitions.jsonl`은 DefinitionRecord append다. 초기 stream은 requests/scheduler/management/catalog, evaluation 추가는17장. 경로가 버전이므로 행에 schemaVersion/window는 없다.
+1분 archive ticker는 지난 시간의 분 파일을 stream별 순서로 이어 gzip(`compress/gzip`, 헤더 시각0)하고 `serving/observations.v1alpha7/<YYYYMMDDTHH>/<stream>.jsonl.gz`에 `StreamImmutable`로 올린다. gzip → 순차 multipart로 직접 흘려 쓰며 archive 경로는 `/tmp` 파일을 만들지 않는다. Complete의 `If-None-Match: *`가 412이면 Existing, 409와 다른 오류는 실패다. 모든 segment read/close와 gzip.Close가 성공한 뒤에만 Complete한다. 모든 stream 성공 시간은 프로세스 메모리에 기억한다.
 전송 payload는 S3 최소 part 크기인 고정 5MiB 버퍼 한 개다(새 설정·동시 part 없음). 추가 메모리는 gzip/flate 약 0.8MiB, 복사/HTTP/SDK의 유한 요청 버퍼, 최대 10,000개 ETag/part 완료 목록(파트 수에 비례)이다. 전체 프로세스 RAM 상한을 보장하지 않으며 SDK/HTTP 할당은 대형 replay에서 별도 측정한다. 10,000 part 초과(약 48.8GiB gzip)는 오류로 raw를 보존한다. producer/upload/complete 오류·취소에는 취소를 분리한 30초 context로 Abort하고 원래 오류를 보존한다. 프로세스 kill은 incomplete multipart를 남길 수 있다; 별도 cleanup 장치는 추가하지 않는다. 기존 `PutImmutable` 호출자는 staging `chill-evidence-*`를 그대로 쓰며 기동의 legacy `.archive-*`/candidate 잔재 정리도 유지한다. Flush는 serve loop 밖 goroutine 하나, 진행 중 tick 생략, source refresh/Advance는 기다리지 않는다.
 Flush 전체에는 requestTimeout deadline을 두지 않고, 기존 `opts.requestTimeout`을 Store 생성 시 전달하여 CreateMultipartUpload·각 UploadPart·CompleteMultipartUpload SDK 호출마다 재시도/backoff를 포함한 상한으로 적용한다(HTTP 시도마다 리셋하지 않음). 다른 Store 호출자가 값을 지정하지 않으면 0이며 추가 요청 deadline은 없다. 종료 신호뿐 아니라 listener/초기화 오류로 serve를 빠져나갈 때도 archive 소유 context를 먼저 취소한 뒤 진행 Flush를 기다린다. 종료 Close는 취소된 context로 로컬 파일만 sync/close하고 업로드하지 않으며, 미완료·미표시 raw hour는 다음 프로세스 첫 Flush tick에서 게시 후 기존 retention에 따라 삭제한다.
 17b 경계 재현(2026-11-05): server `archiveInBackground → Flush → archive → gzip → StreamImmutable`로 T04 원본 scheduler gzip 511,073,995B(98 parts)와 catalog 47B(1 part)를 보냈다. 동일 테스트 `requestTimeout=1s`에서 수정 전은 2회 연속 abort/완료0(전체2.01s), 수정 후는 전체113.257s·최장 part44.225ms·abort0·두 stream 완료 후 retention 삭제였다. 작은 재현은 첫 `UploadPart` deadline과 뒤 stream `CreateMultipartUpload`의 이미 만료된 context를 분리해 보였다. 이전 T04 검증은 Store를 직접 호출해 server의 전체 Flush deadline을 지나지 않은 탓에 이 회귀를 놓쳤다. 실크기 재현은 `CHILL_ARCHIVE_HOUR=<기존 hour.jsonl.gz> go test ./cmd/chill-server -run TestArchiveTickRealT04Hour -v -count=1`; 실제 listener 오류 종료는 1분 tick 후 in-flight Flush를 취소/join하고 raw를 보존하는 별도 회귀로 검사한다.
@@ -218,7 +219,7 @@ hour-prefix List 0.008s / 6 objects, scheduler GET headers 0.006s /
 GET+87MB transfer 0.761s. Thus the reported 13s one-second query is not a fixed
 13s List cost; archive expansion and whole-row JSON scanning dominate the
 fixture (live CPU contention is not isolated by these measurements).
-The existing `serving/observations.v1alpha5/<UTC-hour>/<stream>.jsonl.gz`
+The current `serving/observations.v1alpha7/<UTC-hour>/<stream>.jsonl.gz`
 layout permits finite append ranges to List only requested nonlocal hours;
 unbounded queries still List the full prefix. No cache or index is added.
 
@@ -290,7 +291,7 @@ control316-network.json의 10 Node·15분·5초 **181 bucket**을 이 열 계약
 
 
 ### 6.2 투명한 로컬·archive 읽기 (`SCH-42`)
-ObservationArchive=기존 evidencestore.Reader+Lister와 CapacityRecords의 readArchivedStream gzip scanner를 재사용한다. 같은 v1alpha5 prefix/네 stream, cmd/chill-server의 objects를 쓰며 새 저장 형식·TSDB·옛 reader는 없다.
+ObservationArchive=기존 evidencestore.Reader+Lister와 CapacityRecords의 readArchivedStream gzip scanner를 재사용한다. 같은 현행 v1alpha7 prefix/등록 stream, cmd/chill-server의 objects를 쓰며 새 저장 형식·TSDB·옛 reader는 없다.
 Capture holds the writer mutex only while copying registered committed paths/offsets and open-row/catalog metadata. Directory listing, sorting, file opens, reads and decoding run outside that mutex. A separate retention-only `captureMu` protects selected paths until opens complete; appends never acquire it. Local reads stop at the frozen complete-line offsets, so later appends/partial tails are excluded and already-open files survive retention. **시간 디렉터리 단위 로컬 우선**, 없는 시간만 archive+그 catalog를 읽고 로컬 stream 부재를 archive로 보충하지 않는다. requestID final>open>assigned로 archive assigned/늦은 로컬 final을 병합하고 scheduler/management/power는 같은 시간을 두 소스로 더하지 않는다. page는 합친 시간순 append에 offset/limit, errObservationStop은 archive에서도 정상 종료다.
 기존 본문/필터/nextCursor에 `coverage:{from,to,sources:[{from,to,stream,source}],gaps:[{from,to,stream,reason}]}` 추가: RFC3339Nano, source=local|archive(archive는store/key), from/to는 확보 외곽·전무하면null, 내부 gap은gaps, gapUntil은 실제 선두 공백만이다.
 Coverage is limited to the captured append time, even when an explicit query end or power boundary-support search extends into the future. An hour that has not started is not a missing stream. The current hour is local before its first append; a first record later than the query end does not create a gap. Elapsed missing archive hours and observation-start/retention gaps remain unavailable, without a grace period. `ObservationLogConfig.Now` supplies the same clock for startup, appends, and capture; nil uses UTC wall time.
@@ -434,7 +435,7 @@ catalog dependencies, immutable profile/definition reuse, and event values.
 |---|---|
 | `GET /api/v1/observations/raw?hour=<hour>` | JSON `{hour,at,status,kinds:[{kind,available,segments:[{minute,bytes}],archive:null 또는 {store,key,bytes}}]}`. `at`은 목록을 잡은 서버 시각, `minute`는 `00`~`59`. 로컬 segments는 닫힌 분만, 분/종류 오름차순이다. archive 출처면 segments는 빈 배열이며 저장된 gzip 객체 위치·크기를 싣는다. 토큰·호스트 경로·자격증명 URL은 노출하지 않는다 |
 | `GET /api/v1/observations/raw/{hour}/{kind}` | 로컬 시간은 요청 시작 시 확정한 닫힌 분 파일을 분 순으로 이어 원래 JSONL 바이트를 전송(`application/x-ndjson`). 로컬에 없는 과거 시간은 해당 stream의 보관된 gzip 바이트를 그대로 전송(`application/gzip`). gzip에는 `Content-Encoding: gzip`을 붙이지 않아 HTTP client가 자동 해제하지 않게 한다. 둘 다 `Cache-Control: no-store`; 즉석 gzip/해제·JSON decode/re-encode·필터·집계 없음 |
-| `GET /api/v1/observations/raw/definitions` | 루트 `v1alpha6/definitions.jsonl`을 요청 시작 시 확정한 마지막 개행까지 원래 JSONL로 전송. 마지막 미완결 행 제외. 시간별 catalog의 대체물이 아니며 빈 완결 기록은 길이 0 |
+| `GET /api/v1/observations/raw/definitions` | 루트 `v1alpha7/definitions.jsonl`을 요청 시작 시 확정한 마지막 개행까지 원래 JSONL로 전송. 마지막 미완결 행 제외. 시간별 catalog의 대체물이 아니며 빈 완결 기록은 길이 0 |
 
 시간 상태는 다음처럼 source와 진행을 구분한다. `open`은 현재 UTC 시간으로 닫힌 분이 일부 있어도 open이다. `closed-local`은 지난 시간이고 로컬 디렉터리가 남은 상태다. `archived`는 로컬이 없고 기존 prefix에 보관본이 있는 시간이다. 업로드됐어도 로컬이 남으면 로컬이 우선이다. 기본 보존 `2h`와 archive 성공 전 삭제 금지·미완료 assigned pin을 그대로 지키므로 경과 2시간만으로 archive 사용을 강제하지 않는다.
 

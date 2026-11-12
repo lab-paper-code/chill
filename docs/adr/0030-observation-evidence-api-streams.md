@@ -6,6 +6,10 @@ Accepted (2026-10-30) — 문서 계약 채택. 구현·승인 배포·리허설
 
 2026-11-12 A1은 요청별 판단·전송 기록을 위해 observation만 `v1alpha6`으로 한 번 전환한다([측정 계약](../design/serving/scheduler-runtime-measurement.md#a1-요청별-판단전송-근거), ADR 0019). 아래 `v1alpha5` 유지 결정은 당시 stream 추가의 범위다. 과학 원시·기존 publication은 보존하며 현재 reader의 이중 버전·변환은 추가하지 않는다.
 
+2026-11-12 E1/C1/V1은 observation만 `v1alpha6→v1alpha7`로 한 번 cutover한다(ADR 0019). 현행 로컬은 `<directory>/v1alpha7/<YYYYMMDDTHH>/<stream>.<MM>.jsonl`과 `v1alpha7/definitions.jsonl`, archive는 `serving/observations.v1alpha7/<YYYYMMDDTHH>/<stream>.jsonl.gz`다. profiling·transition 버전은 바꾸지 않는다. 기존 과학 원시·publication은 보존하며 이중 reader·변환·소급 재기록은 추가하지 않는다.
+
+기존 capacity의 `idleCosts`에 phase별 `powerMode/state`, idle `watts`, `requestWatts`, profile ID `requestReferences`를 보존하고, `actionCosts`에는 예측 `seconds/joules`와 기존 출처를 남긴다. `energyComparison{status,missingCells}`의 status는 `decidable|undecidable|not-applicable`이며, `undecidableCandidates[{key,missingCells,excluded}]`와 `search.excludedUndecidable`로 제외 후보도 기록한다. 누락 셀은 Node·phase 또는 kind·mode 또는 from/to·loaded state·required 조건을 식별한다. 고정 H=600초, exact 셀 적격성·공통 노출 소거·SLO 회복 계약은 [scheduler operations](../design/serving/scheduler-operations.md#operation-and-idle-estimates)를 따른다. 아래 v1alpha5 결정은 당시 stream 추가 이력이다.
+
 ## Context
 
 [evaluation 증거 API 계획](../plans/2026-10-28-e5-evidence-api.md) §1~6은 CHILL 내부 사실을 CHILL API로 수집하도록 바꾼다. 기존 ObservationLog의 요청·판단·정의·관리 기록에 컨테이너 자원과 Pod/observer issue 기록을 추가해야 한다. #213의 보관된 관측은 `serving/observations.v1alpha5/`에 있고, 새 API로 그 실험도 다시 읽어야 한다.

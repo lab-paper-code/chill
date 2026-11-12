@@ -130,7 +130,7 @@ func TestRawHTTPStoredGzipAndTransferFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	hour := time.Now().UTC().Add(-4 * time.Hour).Format("20060102T15")
-	archive := &rawHTTPArchive{body: compressed.Bytes(), objects: []evidencestore.ObjectIdentity{{Store: "evidence", Key: "serving/observations.v1alpha6/" + hour + "/scheduler.jsonl.gz", Size: int64(compressed.Len())}}}
+	archive := &rawHTTPArchive{body: compressed.Bytes(), objects: []evidencestore.ObjectIdentity{{Store: "evidence", Key: "serving/observations.v1alpha7/" + hour + "/scheduler.jsonl.gz", Size: int64(compressed.Len())}}}
 	h := rawHTTPHandler(t, archive, true)
 	response := rawHTTPRequest(h, rawObservationsPath+"/"+hour+"/scheduler")
 	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/gzip" || response.Header().Get("Content-Encoding") != "" || response.Header().Get("Cache-Control") != "no-store" || !bytes.Equal(response.Body.Bytes(), compressed.Bytes()) {
@@ -305,7 +305,7 @@ func TestSchedulerHistorySummaryDoesNotRestoreArchivedEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	archive := &rawHTTPArchive{body: compressed.Bytes(), objects: []evidencestore.ObjectIdentity{{
-		Store: "evidence", Key: "serving/observations.v1alpha6/" + from.Format("20060102T15") + "/scheduler.jsonl.gz", Size: int64(compressed.Len()),
+		Store: "evidence", Key: "serving/observations.v1alpha7/" + from.Format("20060102T15") + "/scheduler.jsonl.gz", Size: int64(compressed.Len()),
 	}}}
 	h := rawHTTPHandler(t, archive, true)
 	base := "/api/v1/observations/scheduler?from=" + from.Format(time.RFC3339Nano) + "&to=" + from.Add(time.Minute).Format(time.RFC3339Nano) + "&limit=2"

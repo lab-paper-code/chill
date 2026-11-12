@@ -2,6 +2,7 @@ package serving
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/scheduler"
@@ -11,15 +12,17 @@ import (
 // capacityExact keeps lifecycle admission, reserve evidence and native results in CHILL.
 // Observer slots are private to each exact worker in both engines.
 type capacityExact struct {
-	p        *capacityPlanner
-	excluded []map[string]int
-	reserves []map[string]SchedulerTransitionReserve
+	p           *capacityPlanner
+	excluded    []map[string]int
+	reserves    []map[string]SchedulerTransitionReserve
+	undecidable []map[string]SchedulerUndecidableCandidate
 }
 
 func newCapacityExact(p *capacityPlanner) *capacityExact {
-	e := &capacityExact{p: p, excluded: make([]map[string]int, p.settings.PlanSearchWorkers), reserves: make([]map[string]SchedulerTransitionReserve, p.settings.PlanSearchWorkers)}
+	e := &capacityExact{p: p, excluded: make([]map[string]int, p.settings.PlanSearchWorkers), reserves: make([]map[string]SchedulerTransitionReserve, p.settings.PlanSearchWorkers), undecidable: make([]map[string]SchedulerUndecidableCandidate, p.settings.PlanSearchWorkers)}
 	for w := range e.excluded {
 		e.excluded[w] = map[string]int{}
+		e.undecidable[w] = map[string]SchedulerUndecidableCandidate{}
 	}
 	return e
 }
@@ -49,6 +52,9 @@ func (e *capacityExact) PostFilter(r capacityResult) capacityResult {
 func (e *capacityExact) FilterKept(r capacityResult) bool { return capacityFilterKept(r) }
 func (e *capacityExact) Observe(r capacityResult, w int) {
 	e.reserves[w] = reserveRejections(e.reserves[w], r.reserves, r.key)
+	if len(r.missingCells) > 0 {
+		e.undecidable[w][r.key] = SchedulerUndecidableCandidate{Key: r.key, MissingCells: r.missingCells, Excluded: r.exclusion == "EnergyUndecidable"}
+	}
 	if r.exclusion != "" {
 		e.excluded[w][r.exclusion]++
 	}
@@ -77,6 +83,19 @@ func (e *capacityExact) record(d protocol.Diagnostics) {
 			p.searched.Excluded[reason] += count
 		}
 	}
+	byKey := map[string]SchedulerUndecidableCandidate{}
+	for _, records := range e.undecidable {
+		for key, record := range records {
+			byKey[key] = record
+		}
+	}
+	for _, record := range byKey {
+		p.undecidable = append(p.undecidable, record)
+		if record.Excluded {
+			p.searched.ExcludedUndecidable++
+		}
+	}
+	slices.SortFunc(p.undecidable, func(a, b SchedulerUndecidableCandidate) int { return strings.Compare(a.Key, b.Key) })
 	for _, records := range e.reserves {
 		for _, record := range records {
 			p.searched.ReserveRejections = reserveRejections(p.searched.ReserveRejections, []SchedulerTransitionReserve{record}, "")

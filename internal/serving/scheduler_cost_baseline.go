@@ -16,7 +16,7 @@ func schedulerValidHalfWidth(value float64) bool {
 	return schedulerFinite(value) && value >= 0
 }
 
-func selectIdleMeasurements(baselines []NodeBaseline, node SchedulerNode, state []string, identities, classes map[string]string) (unloaded, selected *NodeBaseline, selectedRank int) {
+func selectIdleMeasurements(baselines []NodeBaseline, node SchedulerNode, state []string, meter string, identities, classes map[string]string) (unloaded, selected *NodeBaseline, selectedRank int) {
 	selectedRank = 3
 	for j := range baselines {
 		b := &baselines[j]
@@ -28,7 +28,7 @@ func selectIdleMeasurements(baselines []NodeBaseline, node SchedulerNode, state 
 			class = classes[b.Node.UID]
 		}
 		rank := measurementRank(b.Node.UID, class, node.Node.UID, classes[node.Node.UID],
-			b.PowerMode == node.PowerMode && measurementEqualState(b.State, state, identities))
+			b.PowerMode == node.PowerMode && (meter == "" || b.Meter == meter) && measurementEqualState(b.State, state, identities))
 		if rank < 3 && (selected == nil || measurementPreferred(rank, b.MeasuredAt, b.ID, selectedRank, selected.MeasuredAt, selected.ID)) {
 			selected, selectedRank = b, rank
 		}
@@ -43,14 +43,26 @@ func selectIdleMeasurements(baselines []NodeBaseline, node SchedulerNode, state 
 func schedulerBaseline(settings SchedulerSettings, baselines []NodeBaseline, node SchedulerNode, instances []SchedulerInstance, options []SchedulerOption) (float64, string, IdlePowerProvenance, []string) {
 	identities := schedulerMeasurementIdentities(SchedulerSnapshot{Baselines: baselines, Instances: instances, Options: options}, nil)
 	state := make([]string, 0, len(instances))
+	meter := ""
+	if len(instances) > 0 {
+		meter = instances[0].IdleMeter
+	}
 	for _, i := range instances {
 		state = append(state, schedulerState(i))
 	}
 	classes := measurementDeviceClasses(SchedulerSnapshot{Instances: instances, Options: options}, nil)
-	unloaded, selected, rank := selectIdleMeasurements(baselines, node, state, identities, classes)
+	unloaded, selected, rank := selectIdleMeasurements(baselines, node, state, meter, identities, classes)
 	if selected != nil && rank == 0 {
 		provenance := IdlePowerProvenance{Source: operationSourceExact, Watts: selected.Watts, References: []string{selected.ID}}
 		return selected.Watts, selected.Meter, provenance, nil
+	}
+	if len(instances) == 1 {
+		i := instances[0]
+		if p := i.Profile; p != nil && p.Condition.NodeUID == node.Node.UID && p.Condition.PowerMode == node.PowerMode &&
+			i.IdleMeter != "" && i.IdleScope == schedulerNodeWallScope && schedulerFinite(p.IdleBaselineWatts) && p.IdleBaselineWatts >= 0 {
+			provenance := IdlePowerProvenance{Source: operationSourceExact, Watts: p.IdleBaselineWatts, References: []string{p.ID}}
+			return provenance.Watts, i.IdleMeter, provenance, nil
+		}
 	}
 	if unloaded != nil {
 		if provenance, ok := reconstructIdlePower(unloaded, instances, node.PowerMode, options); ok {
@@ -90,7 +102,7 @@ func reconstructIdlePower(unloaded *NodeBaseline, instances []SchedulerInstance,
 	if !schedulerFinite(watts) || watts < 0 {
 		return IdlePowerProvenance{}, false
 	}
-	return IdlePowerProvenance{Source: operationSourceExact, Watts: watts, References: sources, Reconstructed: true}, true
+	return IdlePowerProvenance{Source: "reconstructed", Watts: watts, References: sources, Reconstructed: true}, true
 }
 
 func schedulerIdleAtMode(i SchedulerInstance, mode string, options []SchedulerOption) (SchedulerInstance, bool) {

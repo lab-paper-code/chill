@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PRIVATE_OPERATIONAL_ONLY: read archived v1alpha6 facts, never live APIs.
+"""PRIVATE_OPERATIONAL_ONLY: read archived v1alpha7 facts, never live APIs.
 
 RequestRow follows internal/serving/observation_log*.go.
 HTTP finals are returned verbatim; late native records never amend them. All refs

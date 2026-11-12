@@ -107,6 +107,13 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 	}
 	visit(route)
 	stopped, removed := map[string]bool{}, map[string]bool{}
+	mode := p.snapshot.Nodes[n].PowerMode
+	var loaded []string
+	for _, instance := range p.snapshot.Instances {
+		if instance.Node == node {
+			loaded = append(loaded, schedulerState(instance))
+		}
+	}
 	for _, a := range actions {
 		if a.Node != node || a.Status == schedulerActionComplete || a.Status == schedulerActionCancel {
 			continue
@@ -123,7 +130,21 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 		}
 		cost := schedulerCost(p.snapshot.Costs, a.CostID)
 		mean, longest, joules := actionOperationCost(p.settings, p.snapshot.Costs, a)
-		plan.record.ActionCosts = append(plan.record.ActionCosts, SchedulerActionCost{Action: a.ID, Kind: a.Kind, Provenance: a.CostProvenance})
+		plan.record.ActionCosts = append(plan.record.ActionCosts, SchedulerActionCost{Action: a.ID, Kind: a.Kind, Seconds: mean, Joules: joules, Provenance: a.CostProvenance})
+		cell := SchedulerMissingEnergyCell{Node: a.Node, Kind: a.Kind, PowerMode: mode, From: a.From, To: a.To, Required: "node-wall operation seconds and joules for this exact action cell"}
+		switch a.Kind {
+		case schedulerActionPower:
+			cell.State = slices.Clone(loaded)
+			slices.Sort(cell.State)
+			mode = a.To
+		case schedulerActionPrepare:
+			loaded = append(loaded, a.To)
+		case schedulerActionRemove:
+			if index := slices.Index(loaded, a.From); index >= 0 {
+				loaded = slices.Delete(loaded, index, index+1)
+			}
+		}
+		plan.energyCells = append(plan.energyCells, cell)
 		var trials []OperationTrial
 		if cost != nil {
 			trials = cost.Trials
@@ -211,10 +232,13 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 		alt[n] = 0
 		r := p.routeOf(alt)
 		kept := p.evaluate(alt, r)
+		if kept.exclusion == "EnergyUndecidable" {
+			kept.exclusion = ""
+		}
 		if best.feasible && !kept.feasible || !best.feasible && !kept.feasible && slices.Compare(best.excesses, kept.excesses) < 0 {
 			continue
 		}
-		paid := p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route)
+		paid := len(p.missingEnergyCells(kept, best)) == 0 && p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route)
 		bound, withinUncertainty := 0.0, false
 		if emptySaving {
 			bound = p.gainBound(kept, best)
@@ -248,6 +272,9 @@ func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 	keep.keepJoules = keep.joules
 	if !keep.feasible {
 		return best
+	}
+	if len(p.missingEnergyCells(keep, best)) > 0 {
+		return keep
 	}
 	best.gainUncertainty = p.gainBound(keep, best)
 	if keep.joules-best.joules > best.gainUncertainty {

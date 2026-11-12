@@ -2251,7 +2251,11 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	snap.Routing = map[string]map[string]int32{"w1": {"i1": 400, "a": 600}}
 	prepare := poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(b), "fixed")
 	prepare.Trials = []OperationTrial{{Duration: time.Second, Joules: 500}}
-	snap.Costs = []OperationCost{poolsCost(schedulerActionRemove, n2, schedulerState(a), "unloaded", "fixed"), prepare}
+	snap.Costs = []OperationCost{
+		poolsCost(schedulerActionRemove, n2, schedulerState(a), "unloaded", "fixed"),
+		poolsCost(schedulerActionRemove, snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", "fixed"),
+		prepare,
+	}
 	capacityServiceRatesForTest(&snap, map[string]float64{"profile": 100, a.Profile.ID: 50, b.Profile.ID: 50})
 	load := func(rates ...float64) {
 		d := snap.Workloads[0]

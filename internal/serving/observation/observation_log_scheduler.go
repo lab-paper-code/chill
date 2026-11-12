@@ -92,7 +92,7 @@ type SchedulerControlObservation struct {
 	WindowJoin    time.Duration `json:"windowJoinNanos"`
 	WindowSort    time.Duration `json:"windowSortNanos"`
 	WindowCache   time.Duration `json:"windowCacheNanos"`
-	// Kept at zero for the stored observations.v1alpha6 contract; retention uses time span only.
+	// Kept at zero for the stored observations.v1alpha7 contract; retention uses time span only.
 	WindowBudgetFallbacks int `json:"windowBudgetFallbacks"`
 }
 

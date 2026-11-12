@@ -70,7 +70,7 @@ func TestSchedulerCapturedProfileVersionsResolveFromPersistedCatalog(t *testing.
 	var catalog []observation.CatalogRow
 	readRows := func(stream string, consume func([]byte)) {
 		t.Helper()
-		paths, err := filepath.Glob(filepath.Join(directory, "v1alpha6", "*", stream+".*.jsonl"))
+		paths, err := filepath.Glob(filepath.Join(directory, "v1alpha7", "*", stream+".*.jsonl"))
 		if err != nil {
 			t.Fatal(err)
 		}

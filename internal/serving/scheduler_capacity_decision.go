@@ -34,6 +34,31 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	search := p.searched
 	record := &SchedulerCapacity{Period: time.Duration(best.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search, GainUncertaintyJoules: best.gainUncertainty}
 	record.TransitionReserves = best.reserves
+	p.recordRequestPower(keepResult, best)
+	record.UndecidableCandidates = p.undecidable
+	record.EnergyComparison.Status = "decidable"
+	record.EnergyComparison.MissingCells = best.missingCells
+	if len(best.missingCells) > 0 {
+		record.EnergyComparison.Status = "undecidable"
+	}
+	if best.keep {
+		if !slices.Contains(p.compared, true) {
+			record.EnergyComparison.Status = "not-applicable"
+		}
+		for _, candidate := range p.undecidable {
+			if candidate.Excluded {
+				record.EnergyComparison.Status = "undecidable"
+				for _, cell := range candidate.MissingCells {
+					if !slices.ContainsFunc(record.EnergyComparison.MissingCells, func(old SchedulerMissingEnergyCell) bool {
+						return old.Node == cell.Node && old.Phase == cell.Phase && old.Kind == cell.Kind && old.PowerMode == cell.PowerMode &&
+							old.From == cell.From && old.To == cell.To && slices.Equal(old.State, cell.State)
+					}) {
+						record.EnergyComparison.MissingCells = append(record.EnergyComparison.MissingCells, cell)
+					}
+				}
+			}
+		}
+	}
 	for _, plans := range p.plans {
 		for _, plan := range plans {
 			record.Plans = append(record.Plans, plan.record)

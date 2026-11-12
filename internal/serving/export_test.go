@@ -65,7 +65,7 @@ func (l *runtimeTestLog) RequestClosed(id string, timing RequestTimings) error {
 // this and the next hour, so failures do not depend on a private clock or a minute boundary.
 func blockRuntimeObservationWrites(t *testing.T, log *runtimeTestLog) {
 	t.Helper()
-	root := filepath.Join(log.config.Directory, "v1alpha6")
+	root := filepath.Join(log.config.Directory, "v1alpha7")
 	hour := time.Now().UTC().Truncate(time.Hour)
 	var paths []string
 	for h := range 2 {

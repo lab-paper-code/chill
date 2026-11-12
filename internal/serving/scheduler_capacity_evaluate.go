@@ -219,6 +219,7 @@ type capacityResult struct {
 	exclusion                         string
 	reserves                          []SchedulerTransitionReserve
 	bridge                            *schedulerBridgeSchedule
+	missingCells                      []SchedulerMissingEnergyCell
 }
 
 type capacityFeedbackMemo struct {
@@ -263,7 +264,13 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 	return res
 }
 func (p *capacityPlanner) evaluateAtWindow(choice []int, r float64, bridge *schedulerBridgeSchedule, t float64) capacityResult {
-	return p.assessResult(p.evaluateEnergyAtWindow(choice, r, bridge, t))
+	res := p.assessResult(p.evaluateEnergyAtWindow(choice, r, bridge, t))
+	keep := p.currentKeep()
+	res.missingCells = p.missingEnergyCells(keep, res)
+	if keep.feasible && len(res.missingCells) > 0 {
+		res.exclusion = cmp.Or(res.exclusion, "EnergyUndecidable")
+	}
+	return res
 }
 func (p *capacityPlanner) evaluateCurrentKeep(t float64) capacityResult {
 	res := p.assessResult(p.evaluateEnergyForRoutes(make([]int, len(p.plans)), 0, nil, t, p.keep.Routing))

@@ -4,37 +4,62 @@ physical instance transport와 수동 실행 계약이다. 배분/reset의 구�
 
 ## Operation and idle estimates
 
-Missing measurements do not make a plan ineligible. Operation estimates select
-the latest completed usable measurement at the first available tier: same Node
-and exact model/execution-path/power condition, same Node and operation, same
-device class and operation, then `settings.defaultOperationCost.{prepare,remove,power}`
-(`{seconds,joules}`, whole-wall). Equal completion times use the smaller cost ID.
-Historical profile bodies resolve model/path identities; profile ID, runtime
-image, CPU tokens and memory headroom are not measurement-validity conditions.
-Physical instance count remains part of exact loaded-state matching; a nearby
-measurement is explicitly a transferred estimate, not an exact measurement.
-Actions expose additive `costProvenance.source = exact|node|deviceClass|default`
-and `costRef` or configured `value`; capacity `actionCosts` retains every choice.
-Idle estimates use the same ranking and expose `idleCosts` provenance. Missing
-idle components use `settings.defaultIdlePower.{nodeWatts,perInstanceWatts}`.
-Both estimate blocks, including every operation kind, are required ConfigMap
-scheduler settings. Omitted keys fail settings validation before planning; no
-embedded or Go policy fallback exists. GET/PUT preserves the explicit values,
-and effective settings are frozen in decisions. Main must set both blocks.
-The policy/sample operation defaults are rounded-up maxima of control-324's
-77 prepare, 77 remove and 18 power trials, restoring baseline-delta energy to
-whole-wall. Idle defaults round up the maximum of 19 unloaded readings and
-67 loaded-minus-corresponding-unloaded increments. These are estimates, not bounds.
+Missing measurements do not make a plan ineligible for SLO recovery. Operation
+estimates select the latest completed usable measurement at the first available
+tier: same Node and exact model/execution-path/power condition, same Node and
+operation, same device class and operation, then
+`settings.defaultOperationCost.{prepare,remove,power}` (`{seconds,joules}`,
+whole-wall). Equal completion times use the smaller cost ID. Historical profile
+bodies resolve model/path identities; profile ID, runtime image, CPU tokens and
+memory headroom are not measurement-validity conditions. Exact prepare/remove
+requires the same Node and profile condition; exact power requires the same Node,
+from/to modes and loaded states. Physical instance count is part of loaded-state
+matching. Only existing rank-0 cells decide operation energy. Transferred
+rank-1/device-class/default cells remain labeled estimates for timing, including
+recovery planning, and cannot decide an energy move.
+Actions expose `costProvenance.source = exact|node|deviceClass|default` and
+`costRef` or configured `value`. Capacity `actionCosts` records each action's
+predicted `seconds` and `joules` with that provenance.
 
-An operation chain longer than the configured comparison period is displayed
-as `TransitionExceedsHorizon`, not removed. Every choice is compared with keep
-over the same window `W = route + max(postMax) + comparisonPeriod`; all transition
-energy and actual transient capacity shortfall remain included. Energy ordering
-uses the difference from keep over that same window. W9 `steps[].joules` now means
-total energy over that step's `comparisonWindowNanos`, with additive `keepJoules`;
-raw joules need not decrease between steps with different windows. Compare
-`joules - keepJoules` for the energy ordering. Request ownership, drain, resource
-and transition-reserve safety checks are unchanged.
+Before, mid and after phases each use their own Node power mode and loaded
+state. Serving power is exact node-state idle power plus profile incremental
+energy per input times request rate; count node-wall idle once. Exact idle is
+rank-0 same-Node/mode/loaded-state node-wall measurement, or, for a single
+instance, its same-Node/mode profile idle base with the same node-wall meter/scope
+as its incremental energy. Multiple standalone profile idle bases cannot form an
+exact co-located baseline. Transferred, reconstructed and configured default idle
+values are labeled estimates and cannot decide energy moves. Existing
+`settings.defaultIdlePower.{nodeWatts,perInstanceWatts}` and operation defaults
+remain required explicit settings for estimates; omitted keys fail validation.
+No embedded or Go policy fallback exists. GET/PUT preserves explicit values and
+decisions freeze effective settings. These estimates are not bounds.
+
+Comparison uses the unchanged configured horizon `H = 600 s`; route/post time
+does not extend H. An operation chain longer than H is displayed as
+`TransitionExceedsHorizon`, not removed. Compare candidate and keep total energy
+over that same H, including transition energy and transient capacity shortfall.
+W9 `steps[].joules`, `keepJoules` and `comparisonWindowNanos` describe that fixed
+window; energy ordering uses `joules - keepJoules`.
+In the signed candidate-minus-keep difference, unknown cells with equal common
+exposure cancel. Any remaining unknown required energy cell makes comparison
+undecidable. When keep is SLO-feasible, exclude and record such candidates from
+energy selection; estimates never authorize an energy move. SLO recovery keeps
+its existing ordering. Undecidable payback remains unpaid. Request ownership,
+drain, resource and transition-reserve safety checks are unchanged.
+
+Observation `v1alpha7` extends existing capacity records without another stream:
+`idleCosts` records per-phase `powerMode`, loaded `state`, idle `watts`,
+incremental `requestWatts` and `requestReferences` (profile IDs), retaining
+source/reference provenance. Keep and selected node plans carry route-specific
+request terms; other inventory plans omit them rather than imply zero traffic.
+`watts + requestWatts` is predicted Node power. Bridge request power is averaged
+over that node's constant-state phase using the same staged routing energy law.
+`energyComparison` contains `status = decidable|undecidable|not-applicable` and
+`missingCells`. `undecidableCandidates` records `{key,missingCells,excluded}`,
+including candidates not selected; `search.excludedUndecidable` counts exclusions.
+Each missing cell identifies `node`, idle `phase` or operation `kind`, applicable
+`powerMode` or `from`/`to`, loaded `state`, and `required` measurement condition.
+Canceled common exposures do not require replacement measurements.
 Executed-action duration updates are deferred: attach them to ingestion of the
 completed native operation receipt, retaining its actual start/end and cost cell.
 

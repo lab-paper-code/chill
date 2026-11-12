@@ -73,7 +73,7 @@ func (a *observationArchive) StreamImmutable(_ context.Context, location evidenc
 
 func readRequestRows(t *testing.T, directory string) []RequestRow {
 	t.Helper()
-	names, err := filepath.Glob(filepath.Join(directory, "v1alpha6", "*", "requests"+".*.jsonl"))
+	names, err := filepath.Glob(filepath.Join(directory, "v1alpha7", "*", "requests"+".*.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
