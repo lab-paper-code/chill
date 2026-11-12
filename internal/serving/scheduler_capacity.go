@@ -53,11 +53,12 @@ type SchedulerCapacity struct {
 	Plans     []SchedulerNodePlan         `json:"plans"`
 	// GainUncertaintyJoules is the selected-evidence conditional B threshold.
 	// It excludes profile statistical uncertainty and leaves nominal energy unchanged.
-	GainUncertaintyJoules float64                         `json:"gainUncertaintyJoules,omitempty"`
-	TransitionReserves    []SchedulerTransitionReserve    `json:"transitionReserves,omitempty"`
-	BridgeStages          []SchedulerBridgeStage          `json:"bridgeStages,omitempty"`
-	EnergyComparison      SchedulerEnergyComparison       `json:"energyComparison"`
-	UndecidableCandidates []SchedulerUndecidableCandidate `json:"undecidableCandidates,omitempty"`
+	GainUncertaintyJoules float64                               `json:"gainUncertaintyJoules,omitempty"`
+	TransitionReserves    []SchedulerTransitionReserve          `json:"transitionReserves,omitempty"`
+	BridgeStages          []SchedulerBridgeStage                `json:"bridgeStages,omitempty"`
+	EnergyComparison      SchedulerEnergyComparison             `json:"energyComparison"`
+	MissingCells          []SchedulerMissingEnergyCell          `json:"missingCells,omitempty"`
+	UndecidableCandidates []SchedulerUndecidableCandidateRecord `json:"undecidableCandidates,omitempty"`
 }
 
 // SchedulerPlanSearch is the scope of one plan search: the most Nodes one step
@@ -199,14 +200,21 @@ type SchedulerMissingEnergyCell struct {
 }
 
 type SchedulerEnergyComparison struct {
-	Status       string                       `json:"status"`
-	MissingCells []SchedulerMissingEnergyCell `json:"missingCells,omitempty"`
+	Status          string `json:"status"`
+	MissingCellRefs []int  `json:"missingCellRefs,omitempty"`
 }
 
 type SchedulerUndecidableCandidate struct {
 	Key          string                       `json:"key"`
 	MissingCells []SchedulerMissingEnergyCell `json:"missingCells"`
 	Excluded     bool                         `json:"excluded"`
+}
+
+// SchedulerUndecidableCandidateRecord references the decision's shared cell table.
+type SchedulerUndecidableCandidateRecord struct {
+	Key             string `json:"key"`
+	MissingCellRefs []int  `json:"missingCellRefs"`
+	Excluded        bool   `json:"excluded"`
 }
 
 // EvaluateScheduler uses cheap profile heuristics and exact finite-demand finalists.

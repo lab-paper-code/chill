@@ -130,7 +130,7 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 		}
 		cost := schedulerCost(p.snapshot.Costs, a.CostID)
 		mean, longest, joules := actionOperationCost(p.settings, p.snapshot.Costs, a)
-		plan.record.ActionCosts = append(plan.record.ActionCosts, SchedulerActionCost{Action: a.ID, Kind: a.Kind, Seconds: mean, Joules: joules, Provenance: a.CostProvenance})
+		plan.record.ActionCosts = append(plan.record.ActionCosts, SchedulerActionCost{Action: a.ID, Kind: a.Kind, Provenance: a.CostProvenance})
 		cell := SchedulerMissingEnergyCell{Node: a.Node, Kind: a.Kind, PowerMode: mode, From: a.From, To: a.To, Required: "node-wall operation seconds and joules for this exact action cell"}
 		switch a.Kind {
 		case schedulerActionPower:
@@ -145,6 +145,7 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 			}
 		}
 		plan.energyCells = append(plan.energyCells, cell)
+		plan.energyPre = append(plan.energyPre, before[a.ID])
 		var trials []OperationTrial
 		if cost != nil {
 			trials = cost.Trials

@@ -23,6 +23,9 @@ func TestIdleSingleInstanceUsesItsProfileBase(t *testing.T) {
 		t.Fatalf("serving W=%g, want profile base + request increment=%g", got.joules, 118.44+8.77)
 	}
 	d := p.decide(SchedulerDecision{Keep: p.keep, Settings: s}, p.evaluateCurrentKeep(p.periodSeconds))
+	if idle := p.plans[0][0].record.IdleCosts["before"]; idle.RequestWatts != nil || idle.PowerMode != "GPU_1500" || len(idle.State) == 0 {
+		t.Fatalf("decision projection changed planner metadata: %+v", idle)
+	}
 	for _, plan := range d.Capacity.Plans {
 		if plan.Key == "keep" && plan.Node.UID == snap.Nodes[0].Node.UID {
 			if watts := plan.IdleCosts["before"].RequestWatts; watts == nil || math.Abs(*watts-8.77) > 1e-8 {
@@ -57,8 +60,9 @@ func TestCapacityOtherModeIdleCannotDecideEnergyMove(t *testing.T) {
 	if !strings.Contains(string(raw), "undecidable") || !strings.Contains(string(raw), "missingCells") {
 		t.Fatalf("missing energy measurement absent from record: %s", raw)
 	}
-	if !slices.ContainsFunc(d.Capacity.UndecidableCandidates, func(candidate SchedulerUndecidableCandidate) bool {
-		return candidate.Excluded && slices.ContainsFunc(candidate.MissingCells, func(cell SchedulerMissingEnergyCell) bool {
+	if !slices.ContainsFunc(d.Capacity.UndecidableCandidates, func(candidate SchedulerUndecidableCandidateRecord) bool {
+		return candidate.Excluded && slices.ContainsFunc(candidate.MissingCellRefs, func(ref int) bool {
+			cell := d.Capacity.MissingCells[ref]
 			return cell.Node == snap.Nodes[0].Node && cell.Kind == "" && cell.PowerMode == "eco"
 		})
 	}) {
@@ -120,7 +124,7 @@ func TestCapacityIdenticalUnknownIdleCancelsForRouteChange(t *testing.T) {
 	if d.Target == nil || d.Target.Keep || d.Target.Routing["w1"][cheap.ID] <= 0 {
 		t.Fatalf("identical unknown blocked route saving: %+v reasons=%v", d.Target, d.Reasons)
 	}
-	if d.Capacity.EnergyComparison.Status != "decidable" || len(d.Capacity.EnergyComparison.MissingCells) > 0 {
+	if d.Capacity.EnergyComparison.Status != "decidable" || len(d.Capacity.EnergyComparison.MissingCellRefs) > 0 {
 		t.Fatalf("identical terms did not cancel: %+v", d.Capacity.EnergyComparison)
 	}
 	for _, plan := range d.Capacity.Plans {

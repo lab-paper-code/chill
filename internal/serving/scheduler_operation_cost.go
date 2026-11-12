@@ -98,8 +98,8 @@ type IdlePowerProvenance struct {
 	Source            string   `json:"source"`
 	Watts             float64  `json:"watts"`
 	References        []string `json:"references,omitempty"`
-	PowerMode         string   `json:"powerMode"`
-	State             []string `json:"state"`
+	PowerMode         string   `json:"powerMode,omitempty"`
+	State             []string `json:"state,omitempty"`
 	RequestWatts      *float64 `json:"requestWatts,omitempty"`
 	RequestReferences []string `json:"requestReferences,omitempty"`
 	// Reconstructed distinguishes unloaded + per-instance increments from one
@@ -117,8 +117,8 @@ type OperationCostProvenance struct {
 type SchedulerActionCost struct {
 	Action     string                   `json:"action"`
 	Kind       string                   `json:"kind"`
-	Seconds    float64                  `json:"seconds"`
-	Joules     float64                  `json:"joules"`
+	Seconds    *float64                 `json:"seconds,omitempty"`
+	Joules     *float64                 `json:"joules,omitempty"`
 	Provenance *OperationCostProvenance `json:"provenance,omitempty"`
 }
 

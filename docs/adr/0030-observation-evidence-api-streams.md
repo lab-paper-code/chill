@@ -8,7 +8,9 @@ Accepted (2026-10-30) — 문서 계약 채택. 구현·승인 배포·리허설
 
 2026-11-12 E1/C1/V1은 observation만 `v1alpha6→v1alpha7`로 한 번 cutover한다(ADR 0019). 현행 로컬은 `<directory>/v1alpha7/<YYYYMMDDTHH>/<stream>.<MM>.jsonl`과 `v1alpha7/definitions.jsonl`, archive는 `serving/observations.v1alpha7/<YYYYMMDDTHH>/<stream>.jsonl.gz`다. profiling·transition 버전은 바꾸지 않는다. 기존 과학 원시·publication은 보존하며 이중 reader·변환·소급 재기록은 추가하지 않는다.
 
-기존 capacity의 `idleCosts`에 phase별 `powerMode/state`, idle `watts`, `requestWatts`, profile ID `requestReferences`를 보존하고, `actionCosts`에는 예측 `seconds/joules`와 기존 출처를 남긴다. `energyComparison{status,missingCells}`의 status는 `decidable|undecidable|not-applicable`이며, `undecidableCandidates[{key,missingCells,excluded}]`와 `search.excludedUndecidable`로 제외 후보도 기록한다. 누락 셀은 Node·phase 또는 kind·mode 또는 from/to·loaded state·required 조건을 식별한다. 고정 H=600초, exact 셀 적격성·공통 노출 소거·SLO 회복 계약은 [scheduler operations](../design/serving/scheduler-operations.md#operation-and-idle-estimates)를 따른다. 아래 v1alpha5 결정은 당시 stream 추가 이력이다.
+기존 capacity의 전체 node-plan inventory와 기존 필드는 보존한다. `idleCosts`의 phase별 `powerMode/state`, `requestWatts`, profile ID `requestReferences`와 `actionCosts`의 예측 `seconds/joules`는 keep 및 선택된 target node plan에만 투영한다. 모든 plan의 기존 idle `source/watts/references`와 action 출처는 유지한다. 선택된 예측의 0W·0J도 기록하며, `powerMode/requestWatts`가 있는 선택된 phase에서 생략된 `state`는 빈 loaded-state multiset이다. 내부 planner의 실제 상태 metadata는 바꾸지 않는다.
+
+`capacity.missingCells`는 판단별 중복 없는 셀 표다. `energyComparison{status,missingCellRefs}`의 status는 `decidable|undecidable|not-applicable`이며, `undecidableCandidates[{key,missingCellRefs,excluded}]`와 `search.excludedUndecidable`로 제외 후보도 기록한다. 두 `missingCellRefs`는 같은 표의 0-based 정수 index이며, 셀·참조 순서는 결정적이고 각 참조 목록에 중복이 없다. 직렬화된 비교·후보에 inline `missingCells`는 없다. 누락 셀은 Node·phase 또는 kind·mode 또는 from/to·loaded state·required 조건을 식별한다. 이 정리는 미배포 `v1alpha7` 계약 안에서 완료하며 추가 버전 전환은 없다. 고정 H=600초, exact 셀 적격성·공통 노출 소거·SLO 회복 계약은 [scheduler operations](../design/serving/scheduler-operations.md#operation-and-idle-estimates)를 따른다. 아래 v1alpha5 결정은 당시 stream 추가 이력이다.
 
 ## Context
 

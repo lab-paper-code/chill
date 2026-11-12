@@ -50,6 +50,7 @@ type capacityPlan struct {
 	operationBounds                    schedulerEnergyBounds
 	beforeBound, midBound, afterBound  schedulerBaselineBound
 	energyCells                        []SchedulerMissingEnergyCell
+	energyPre                          []bool // same index as energyCells: operation lies before the route
 	// replaces marks a plan that changes the batch policy of a current instance,
 	// or removes one while adding another.
 	replaces bool

@@ -18,8 +18,9 @@ matching. Only existing rank-0 cells decide operation energy. Transferred
 rank-1/device-class/default cells remain labeled estimates for timing, including
 recovery planning, and cannot decide an energy move.
 Actions expose `costProvenance.source = exact|node|deviceClass|default` and
-`costRef` or configured `value`. Capacity `actionCosts` records each action's
-predicted `seconds` and `joules` with that provenance.
+`costRef` or configured `value`. Capacity `actionCosts` records predicted
+`seconds` and `joules` only for keep and selected target node plans, retaining
+action identity and provenance on every inventory plan.
 
 Before, mid and after phases each use their own Node power mode and loaded
 state. Serving power is exact node-state idle power plus profile incremental
@@ -47,16 +48,28 @@ energy selection; estimates never authorize an energy move. SLO recovery keeps
 its existing ordering. Undecidable payback remains unpaid. Request ownership,
 drain, resource and transition-reserve safety checks are unchanged.
 
-Observation `v1alpha7` extends existing capacity records without another stream:
-`idleCosts` records per-phase `powerMode`, loaded `state`, idle `watts`,
-incremental `requestWatts` and `requestReferences` (profile IDs), retaining
-source/reference provenance. Keep and selected node plans carry route-specific
-request terms; other inventory plans omit them rather than imply zero traffic.
+Observation `v1alpha7` extends existing capacity records without another stream
+or another version cutover. The complete node-plan inventory and all legacy
+fields remain. Only keep and selected target node plans add per-phase
+`idleCosts.powerMode`, loaded `state`, incremental `requestWatts` and
+`requestReferences` (profile IDs), plus `actionCosts.seconds/joules`.
+Every plan retains idle `source`, `watts`, `references` and action provenance.
+Unselected plans omit all these new prediction fields; selected real 0W and 0J
+remain explicit. A selected phase with `powerMode/requestWatts` and omitted
+`state` has an empty loaded-state multiset. Projection copies leave the internal
+planner's actual state metadata unchanged. Action prediction values are computed
+only for selected/keep plans, without per-action prediction pointers throughout
+the inventory.
 `watts + requestWatts` is predicted Node power. Bridge request power is averaged
 over that node's constant-state phase using the same staged routing energy law.
+`capacity.missingCells` is one deduplicated decision-level table.
 `energyComparison` contains `status = decidable|undecidable|not-applicable` and
-`missingCells`. `undecidableCandidates` records `{key,missingCells,excluded}`,
+`missingCellRefs`. `undecidableCandidates` records `{key,missingCellRefs,excluded}`,
 including candidates not selected; `search.excludedUndecidable` counts exclusions.
+Both reference lists contain zero-based integer indexes into that same table,
+with no duplicate references. Table and reference ordering are deterministic;
+stored-record round trips preserve resolvable references. Comparisons and
+candidates never repeat inline cell objects.
 Each missing cell identifies `node`, idle `phase` or operation `kind`, applicable
 `powerMode` or `from`/`to`, loaded `state`, and `required` measurement condition.
 Canceled common exposures do not require replacement measurements.
