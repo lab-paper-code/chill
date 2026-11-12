@@ -272,13 +272,12 @@ func powerModePending(node *core.Node, classes []edge.DeviceClass, config Schedu
 	return !ok || !requested || now.Before(deadline)
 }
 
-// servingPodsOn names the non-terminal CHILL serving Pods on the Node.
+// servingPodsOn names every CHILL serving Pod whose actual deletion is unproved.
 func servingPodsOn(pods []core.Pod, node string) []string {
 	var names []string
 	for i := range pods {
 		p := &pods[i]
-		if p.Spec.NodeName == node && p.Status.Phase != core.PodSucceeded && p.Status.Phase != core.PodFailed &&
-			p.Labels["app.kubernetes.io/component"] == servingstate.ServingInstanceComponent {
+		if p.Spec.NodeName == node && p.Labels["app.kubernetes.io/component"] == servingstate.ServingInstanceComponent {
 			names = append(names, p.Namespace+"/"+p.Name)
 		}
 	}

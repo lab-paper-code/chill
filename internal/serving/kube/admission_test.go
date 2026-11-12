@@ -257,6 +257,31 @@ func TestAdmitRefusesNodeServingAndNamesThePod(t *testing.T) {
 	}
 }
 
+func TestAdmitRefusesTerminalServingPodUntilDeleted(t *testing.T) {
+	for _, phase := range []core.PodPhase{core.PodFailed, core.PodSucceeded} {
+		t.Run(string(phase), func(t *testing.T) {
+			pod := servingPod("terminal-serving")
+			pod.Status.Phase = phase
+			h := newAdmissionHarness(t, pod)
+			root := baselineRoot("before-delete", time.Now())
+			h.create(root)
+			h.admit()
+			if got := h.admission(root); got != "Refused: NodeServing chill-system/terminal-serving" || h.holder() != "" {
+				t.Fatalf("terminal Pod was treated as absence: admission=%q holder=%q", got, h.holder())
+			}
+			if err := h.kube.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, meta.DeleteOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			after := baselineRoot("after-delete", time.Now())
+			h.create(after)
+			h.admit()
+			if granted, _, _ := profilingrun.Admission(map[string]string{profilingrun.AdmissionAnnotation: h.admission(after)}); !granted {
+				t.Fatal("actual Pod absence did not allow measurement")
+			}
+		})
+	}
+}
+
 func TestAdmitRefusesMissingNode(t *testing.T) {
 	h := newAdmissionHarness(t)
 	root := baselineRoot("idle", time.Now())

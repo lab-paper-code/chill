@@ -24,6 +24,7 @@ import (
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	kubefake "k8s.io/client-go/kubernetes/fake"
@@ -478,6 +479,75 @@ func TestManualRemovePodUIDOnlyFailedStart(t *testing.T) {
 	}
 	if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).Get(ctx, h.owned.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("failed-start Pod remains: %v", err)
+	}
+}
+
+func TestFailedResetRetainsTerminalPodUntilActualDeletion(t *testing.T) {
+	h := newResetHarness(t)
+	h.failedStart(t)
+	h.api.refuseDelete = true
+	h.controller.config.MeasurementNamespaces = []string{h.owned.Namespace}
+	// client-go's object tracker implements label selectors but not phase
+	// selectors. Apply the API's field filtering so Capture sees the real lists.
+	h.kube.PrependReactor("list", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+		selector := action.(ktesting.ListAction).GetListRestrictions().Fields
+		if selector.Empty() {
+			return false, nil, nil
+		}
+		object, err := h.kube.Tracker().List(action.GetResource(), core.SchemeGroupVersion.WithKind("Pod"), action.GetNamespace())
+		if err != nil {
+			return true, nil, err
+		}
+		pods := object.(*core.PodList)
+		pods.Items = slices.DeleteFunc(pods.Items, func(pod core.Pod) bool {
+			return !selector.Matches(fields.Set{"status.phase": string(pod.Status.Phase)})
+		})
+		return true, pods, nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := h.controller.ExecuteManual(ctx, h.request())
+	if err != nil || result.Status != servingstate.NativeOperationPartial || result.Steps[len(result.Steps)-1].Name != "remove" {
+		t.Fatalf("reset did not stop at actual Pod deletion: %+v err=%v", result, err)
+	}
+	if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).Get(ctx, h.owned.Name, meta.GetOptions{}); err != nil {
+		t.Fatal("failed deletion lost the real terminal Pod", err)
+	}
+	snapshot, err := h.controller.capture(ctx, time.Now(), h.controller.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.controller.state.Snapshot = snapshot
+	if h.controller.authorize(servingstate.Operation{Node: testNode}) == nil {
+		t.Error("nonterminal inventory was used as proof of terminal Pod absence")
+	}
+	root := baselineRoot("after-failed-delete", time.Now())
+	if err := h.api.Create(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.controller.Admit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.api.Get(ctx, client.ObjectKeyFromObject(root), root); err != nil {
+		t.Fatal(err)
+	}
+	if granted, _, _ := profilingrun.Admission(root.Annotations); granted {
+		t.Error("measurement admitted while the failed-start Pod still exists")
+		return
+	}
+	h.api.refuseDelete = false
+	retry, err := h.controller.ExecuteManual(ctx, h.request())
+	if err != nil || retry.Status != servingstate.NativeOperationComplete {
+		t.Fatalf("reset did not finish actual cleanup: %+v err=%v", retry, err)
+	}
+	if err := h.controller.Admit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.api.Get(ctx, client.ObjectKeyFromObject(root), root); err != nil {
+		t.Fatal(err)
+	}
+	if granted, _, _ := profilingrun.Admission(root.Annotations); !granted {
+		t.Fatal("actual Pod deletion did not allow measurement")
 	}
 }
 
@@ -1281,5 +1351,163 @@ func TestResetRemovesInitFailedPodByUIDAC37(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func newControl382ResetHarness(t *testing.T) (*resetHarness, []serving.NodeReference) {
+	t.Helper()
+	h := newResetHarness(t)
+	ctx := context.Background()
+	template, err := h.kube.CoreV1().Nodes().Get(ctx, testNode.Name, meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	class := &edge.DeviceClass{}
+	if err := h.api.Get(ctx, client.ObjectKey{Name: "cpu"}, class); err != nil {
+		t.Fatal(err)
+	}
+	class.Name, class.UID, class.ResourceVersion = "reset-power", "", ""
+	class.Spec.NodeSelector = map[string]string{"hardware": "reset-power"}
+	class.Spec.PowerModes = append(class.Spec.PowerModes, edge.PowerMode{Name: lowMode,
+		Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 1}}})
+	if err := h.api.Create(ctx, class); err != nil {
+		t.Fatal(err)
+	}
+	var refs []serving.NodeReference
+	for index, name := range []string{"orangepi", "genesis2", "genesis3", "jetsono", "jetsonx"} {
+		node := template.DeepCopy()
+		node.Name, node.UID, node.ResourceVersion = name, types.UID(name+"-uid"), ""
+		if index > 0 {
+			node.Labels["hardware"] = "reset-power"
+		}
+		if _, err := h.kube.CoreV1().Nodes().Create(ctx, node, meta.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		refs = append(refs, serving.NodeReference{Name: node.Name, UID: string(node.UID)})
+	}
+	h.owned.Spec.NodeName = refs[0].Name
+	if err := h.api.Update(ctx, h.owned); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).Update(ctx, h.owned, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	h.failedStart(t)
+	if err := h.kube.CoreV1().Nodes().Delete(ctx, testNode.Name, meta.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	workloads := h.controller.runtime.SchedulerInputs(time.Now).Workloads
+	definition := workloads[slices.IndexFunc(workloads, func(d *serving.Definition) bool { return d.UID == h.selectedUID })]
+	profiles := make([]serving.Profile, 0, 4)
+	h.controller.config.Preparations = map[string]servingstate.PrepareSpec{}
+	for _, ref := range refs[1:] {
+		profile := managerProfile(definition)
+		profile.ID, profile.NodeName = "reset-profile-"+ref.Name, ref.Name
+		profile.Condition.NodeUID, profile.Condition.DeviceClass, profile.Condition.PowerMode = ref.UID, class.Name, "fixed"
+		profiles = append(profiles, profile)
+		h.controller.config.Preparations[profile.ID] = servingstate.PrepareSpec{Instance: serving.SchedulerInstance{Node: ref, Profile: &profile}}
+	}
+	h.controller.observer.SetProfiles(profiles)
+	h.controller.config.Baselines = nil
+	h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: lowMode, DeviceClass: class.Name, PowerMode: lowMode,
+		ActuatorKind: string(edge.PowerModeActuatorJetsonNVPModel), MaxActuationDurationSeconds: 1}}
+	h.controller.config.MeasurementNamespaces = []string{h.owned.Namespace}
+	return h, refs
+}
+
+// control382: one failed-start Pod, four empty power candidates, fixed-only skip,
+// then genesis2's missing measured lowest mode. No power request has started.
+func TestControl382PartialResetReturnsEmptyPowerCandidatesForMeasurement(t *testing.T) {
+	h, refs := newControl382ResetHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	snapshot, err := h.controller.capture(ctx, time.Now(), h.controller.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.controller.state.Snapshot = snapshot
+	pods, err := h.kube.CoreV1().Pods(h.owned.Namespace).List(ctx, meta.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, ref := range refs {
+		count := 0
+		for _, pod := range pods.Items {
+			if pod.Spec.NodeName == ref.Name && servingstate.WorkloadOwner(pod.OwnerReferences) == h.selectedUID {
+				count++
+			}
+		}
+		want := 0
+		if index == 0 {
+			want = 1
+		}
+		if count != want {
+			t.Fatalf("control382 Node %s has %d owned Pods", ref.Name, count)
+		}
+	}
+	oldID := "control382-retained-owner"
+	h.controller.runs[oldID] = &actionRun{owner: oldID, reserved: true,
+		action: serving.Action{Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationPartial},
+		scope: resourceScope{Nodes: refs, Workloads: []string{h.selectedUID}, Pods: []string{string(h.owned.UID), "retired-genesis2"},
+			Instances: []string{"retired-genesis2/container"}},
+		result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRoute, WorkloadUID: h.selectedUID},
+			Before: servingstate.OperationState{Instances: []serving.InstanceState{
+				{PodUID: string(h.owned.UID), Node: refs[0]}, {ID: "retired-genesis2/container", PodUID: "retired-genesis2", Node: refs[1]},
+			}}, EndedAt: time.Now().Add(-time.Second), Status: servingstate.NativeOperationPartial}}
+	h.controller.config.OnAction = func(result servingstate.OperationResult) error {
+		if result.Status == servingstate.NativeOperationRunning && len(result.Steps) == 0 {
+			h.controller.mu.Lock()
+			delete(h.controller.runs, oldID)
+			h.controller.mu.Unlock()
+		}
+		return nil
+	}
+	powerRequests := 0
+	h.kube.PrependReactor("patch", "nodes", func(ktesting.Action) (bool, runtime.Object, error) {
+		powerRequests++
+		return false, nil, nil
+	})
+	result, err := h.controller.ExecuteManual(ctx, h.request())
+	if err != nil || result.Status != servingstate.NativeOperationPartial || result.Error != "Node genesis2 lacks the measured lowest power mode" {
+		t.Fatalf("control382 failure was not reproduced: status=%s error=%s err=%v", result.Status, result.Error, err)
+	}
+	assertResetSteps(t, result, "disable-autonomy", "unroute", "drain", "remove", "release", "lower-power")
+	if !slices.Equal(result.Operation.Nodes, refs) || powerRequests != 0 ||
+		!slices.Contains(result.Progress, "orangepi: power skipped; fixed-only device class") {
+		t.Fatalf("control382 scope/order/power proof differs: Nodes=%+v requests=%d progress=%v", result.Operation.Nodes, powerRequests, result.Progress)
+	}
+	snapshot, err = h.controller.captureReconciled(ctx, time.Now(), h.controller.config, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.controller.mu.Lock()
+	h.controller.publishSnapshotLocked(&snapshot)
+	h.controller.mu.Unlock()
+	if slices.ContainsFunc(snapshot.Reservations, func(reservation serving.SchedulerReservation) bool { return reservation.Owner == result.Operation.ID }) {
+		t.Fatalf("settled control382 Nodes remain reserved: %+v", snapshot.Reservations)
+	}
+	for _, ref := range refs {
+		root := baselineRoot("control382-after-"+ref.Name, time.Now())
+		root.Spec.State.TargetNode = ref.Name
+		if err := h.api.Create(ctx, root); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.controller.Admit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range refs {
+		root := &edge.ModelLoadedIdleBaseline{}
+		if err := h.api.Get(ctx, client.ObjectKey{Namespace: h.owned.Namespace, Name: "control382-after-" + ref.Name}, root); err != nil {
+			t.Fatal(err)
+		}
+		if granted, _, _ := profilingrun.Admission(root.Annotations); !granted {
+			t.Errorf("control382 Node %s still blocks measurement: %v", ref.Name, root.Annotations)
+		}
+	}
+	state := h.controller.State()
+	index := slices.IndexFunc(state.Results, func(receipt servingstate.OperationResult) bool { return receipt.Operation.ID == result.Operation.ID })
+	if index < 0 || state.Results[index].Status != servingstate.NativeOperationPartial || state.Results[index].Error != result.Error {
+		t.Fatal("physical return changed the original control382 partial receipt")
 	}
 }

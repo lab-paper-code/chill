@@ -135,10 +135,36 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 	capturePathFeedback(&s, window.PathSamples, config.Settings.CompletionMarginMS)
 	capturePreparationOptions(&s, profiles, profileByID, config.Preparations, now)
 	bindProfileMeters(&s, config.Meters)
+	// Placement inventory excludes terminal Pods. Return proof must instead
+	// establish exact serving-Pod absence, including Failed/Succeeded Pods.
+	c.mu.Lock()
+	returning := false
+	for _, run := range c.runs {
+		if run.reserved && run.result != nil && run.action.Status != servingstate.NativeOperationRunning && run.action.Status != servingstate.NativeOperationCancel {
+			returning = true
+			break
+		}
+	}
+	c.mu.Unlock()
+	if returning {
+		listStarted := time.Now()
+		exact, err := c.kube.CoreV1().Pods(c.observer.config.Namespace).List(ctx, meta.ListOptions{})
+		if timing != nil {
+			elapsed := time.Since(listStarted)
+			timing.RefreshList += elapsed
+			timing.RefreshPods += elapsed
+		}
+		if err != nil {
+			return s, err
+		}
+		if err := ctx.Err(); err != nil {
+			return s, err
+		}
+		c.releaseObservedScopes(nodes.Items, exact.Items, physicalStates, now)
+	}
 	if err := ctx.Err(); err != nil {
 		return s, err
 	}
-	c.releaseObservedScopes(nodes.Items, pods.Items, physicalStates, now)
 	return s, nil
 }
 

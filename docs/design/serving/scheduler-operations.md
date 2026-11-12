@@ -275,6 +275,17 @@ power 요청을 시작하지 않은 Node에도 같은 proof를 쓴다. pending p
 인가 Pod 신원 또는 API 생성 근거가 생긴 뒤 기존 fresh 반환 proof로 판단하며,
 다른 Node의 정리 완료는 이 의무를 해소하지 않는다.
 
+Pod 부재 증명은 placement용 nonterminal 목록을 사용하지 않는다. terminal
+예약의 반환을 확인하는 capture는 serving namespace의 실제 Pod 전체 목록을
+새로 읽으며 `Failed`/`Succeeded`도 포함한다. 목록 읽기 실패는 반환 근거가 아니다.
+terminal 예약이 없는 capture에는 이 추가 List를 하지 않는다. 측정 admission도
+terminal CHILL serving Pod를 실제 삭제 전까지 점유로 취급한다.
+
+로컬 control382 회귀는 fixed-only orangepi의 failed-start Pod 1개와 빈 전력
+후보 genesis2·genesis3·jetsono·jetsonx를 사용한다. orangepi skip 뒤 genesis2의
+최저 모드 측정 부재로 `partial`, power 요청 0회, fresh 반환과 5노드 측정 승인을
+검사한다. 이는 fake API 기반 회귀이며 실클러스터 재검증은 별도다.
+
 ## serving-operation CLI
 
 JSON 파일을 보내 응답 stdout, `--execute-config FILE`, `--chill-server URL`(HTTPS origin1개), `--chill-ca-file`, `--chill-token-file`, `--timeout`(기본30분)을 쓴다. 명시 CA/token만·redirect 금지·전송 전 strict decode·응답 error면 nonzero다. 서버 `--operation-timeout` 기본30분까지 기다린다.
