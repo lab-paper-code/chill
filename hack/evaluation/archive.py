@@ -219,7 +219,7 @@ def collect(folder, phase, collection, io, timeout_seconds):
     query = {'from': decisions['from'], 'to': decisions['to'], 'filter': 'decision', 'view': 'compact', 'limit': 500}
     try:
         while True:
-            page = io.api('GET', '/api/v1/observations/scheduler?' + urllib.parse.urlencode(query), timeout=_remaining(deadline))
+            page = io.api('GET', '/api/v1/observations/scheduler?' + urllib.parse.urlencode(query), timeout=min(timeout_seconds, maximum))
             coverage = page.get('coverage')
             decisions['pages'].append({'cursor': query.get('cursor'), 'nextCursor': page.get('nextCursor'), 'coverage': coverage})
             if not isinstance(coverage, dict) or coverage.get('gaps') != []:

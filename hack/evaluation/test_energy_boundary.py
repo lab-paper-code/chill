@@ -148,6 +148,12 @@ class EnergyBoundaryTests(unittest.TestCase):
         self.assertIn(' | 175 | ', text)
 
     def test_collected_decision_pages_reach_stage_report(self):
+        self.collected_decision_pages_reach_stage_report()
+
+    def test_raw_collection_timeout_does_not_prevent_decision_capture(self):
+        self.collected_decision_pages_reach_stage_report(raw_exhausted=True)
+
+    def collected_decision_pages_reach_stage_report(self, raw_exhausted=False):
         import os
         import urllib.parse
         with tempfile.TemporaryDirectory() as directory:
@@ -164,7 +170,13 @@ class EnergyBoundaryTests(unittest.TestCase):
                  'meterJoules': joules, 'meterComplete': True, 'samples': 10, 'gapSeconds': 0,
                  'gapFraction': 0, 'maximumSampleGapSeconds': 1}
                 for node, joules in zip(NODES, (100, 50, 25))]}
+            now = [100]
+            def collect_streams(*args):
+                if raw_exhausted:
+                    now[0] = 104
+                    raise TimeoutError('raw deadline exhausted')
             def api(method, path, **kwargs):
+                self.assertEqual(kwargs['timeout'], 3)
                 if path.startswith('/api/v1/observations/power?'):
                     return window
                 self.assertTrue(path.startswith('/api/v1/observations/scheduler?'), path)
@@ -175,10 +187,17 @@ class EnergyBoundaryTests(unittest.TestCase):
                 index = 1 if query.get('cursor') else 0
                 return {'events': [events[index]], 'nextCursor': '1' if index == 0 else '',
                         'coverage': {'gaps': []}}
-            collection = {'powerMeasurement': measurement, 'energyCoverage': {'maxGapFraction': .1, 'maxSingleGapSeconds': 2}}
-            with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(env)), patch.object(archive, '_collect_streams'), patch.object(
+            collection = {'powerMeasurement': measurement, 'maximumDurationSeconds': 3,
+                          'energyCoverage': {'maxGapFraction': .1, 'maxSingleGapSeconds': 2}}
+            with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(env)), patch.object(
+                    archive, '_collect_streams', side_effect=collect_streams), patch.object(
+                    archive.time, 'monotonic', side_effect=lambda: now[0]), patch.object(
                     archive.time, 'time_ns', return_value=evidence_io.timestamp_ns(END) + 180_000_000_000):
                 archive.collect(folder, {'startUTC': START, 'endUTC': END, 'drainedUTC': END}, collection, SimpleNamespace(api=api), 5)
+            if raw_exhausted:
+                raw_index = evidence_io.load(folder / 'raw-source-index.json')
+                self.assertFalse(raw_index['complete'])
+                self.assertIn('raw deadline exhausted', raw_index['errors'])
             decisions = evidence_io.load(folder / 'scheduler-decisions.json')
             result = judgment.energy_boundary(evidence_io.load(folder / 'power.json'), decisions, NODES)
             self.assertEqual(result['comparedSetStatus'], 'VARYING')
