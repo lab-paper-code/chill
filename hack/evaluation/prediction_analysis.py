@@ -51,6 +51,9 @@ def windows(start, end, observations):
     first, last = ns(start), ns(end)
     rows, ordered = [], decisions(observations)
     actual = receipts(observations)
+    leading_end = min(last, ns(ordered[0]['at'])) if ordered else last
+    if first < leading_end:
+        rows.append({'decisionAt': None, 'from': stamp(first), 'to': stamp(leading_end)})
     for index, decision in enumerate(ordered):
         left = max(first, ns(decision['at']))
         right = min(last, ns(ordered[index + 1]['at']) if index + 1 < len(ordered) else last)
@@ -88,21 +91,44 @@ def phase(decision, plan, at, actual):
     routes = [a for a in actions if a['kind'] == 'route' and a.get('from') != 'ready-subset']
     if not routes:
         return None, 'transition final route receipt unavailable'
-    route = actual.get((routes[-1]['id'], identity(routes[-1]['node'])), {})
+    final_route = routes[-1]
+    route = actual.get((final_route['id'], identity(final_route['node'])), {})
     if not route.get('completedAt') or route.get('error'):
         return None, 'transition final route completion unavailable'
-    node_actions = [a for a in actions if identity(a['node']) == identity(plan['node']) and a['kind'] in ('prepare', 'power', 'remove')]
+    by_id = {action['id']: action for action in actions}
+    pre_ids, frontier = set(), list(final_route.get('dependsOn', []))
+    while frontier:
+        key = frontier.pop()
+        if key not in pre_ids:
+            pre_ids.add(key)
+            frontier.extend(by_id.get(key, {}).get('dependsOn', []))
+    node_actions = [a for a in actions if identity(a['node']) == identity(plan['node'])
+                    and a['kind'] in ('prepare', 'power', 'stop', 'drain', 'remove')]
+    def completed(action):
+        receipt = actual.get((action['id'], identity(action['node'])), {})
+        return bool(receipt.get('completedAt') and not receipt.get('error') and ns(receipt['completedAt']) <= at)
     for action in node_actions:
         receipt = actual.get((action['id'], identity(action['node'])), {})
-        if not receipt.get('startedAt') or not receipt.get('completedAt') or receipt.get('error'):
-            return None, 'node transition completion unavailable: ' + action['id']
-        if ns(receipt['startedAt']) <= at < ns(receipt['completedAt']):
-            return 'action:' + action['id'], None
+        if not receipt.get('startedAt'):
+            return None, 'node action start unavailable: ' + action['id']
+        if receipt.get('startedAt') and ns(receipt['startedAt']) <= at:
+            if receipt.get('error') or not receipt.get('completedAt'):
+                return None, 'node action completion unavailable: ' + action['id']
+            if at < ns(receipt['completedAt']):
+                if action['kind'] in ('prepare', 'power', 'remove'):
+                    return 'action:' + action['id'], None
+                return None, 'active stop/drain loaded state/routing has no predicted phase'
+    pre = [action for action in node_actions if action['id'] in pre_ids]
+    post = [action for action in node_actions if action['id'] not in pre_ids]
     if at >= ns(route['completedAt']):
-        return 'after', None
-    if node_actions and at < min(ns(actual[(a['id'], identity(a['node']))]['startedAt']) for a in node_actions):
+        if all(completed(action) for action in post):
+            return 'after', None
+        return None, 'post-route loaded state/routing has no predicted phase until post actions complete'
+    if all(completed(action) for action in pre):
+        return 'mid', None
+    if not any(completed(action) for action in pre):
         return 'before', None
-    return 'mid', None
+    return None, 'intermediate pre-route loaded state/routing has no predicted phase'
 
 
 def action_windows(observations):
@@ -116,6 +142,12 @@ def analyze(stage, start, end, observations, powers):
     by_at = {row['at']: row for row in ordered}
     nodes, actions, acceptance = [], [], []
     for window in windows(start, end, observations):
+        if window['decisionAt'] is None:
+            nodes.append({'stage': stage, **window, 'node': None, 'compared': None, 'phase': None,
+                          'predictedWatts': None, 'measuredWatts': None, 'errorWatts': None,
+                          'predictedJoules': None, 'measuredJoules': None, 'status': 'UNKNOWN',
+                          'reasons': ['last decision before stage start unavailable']})
+            continue
         decision = by_at[window['decisionAt']]
         compared = {identity(node) for node in (decision.get('search', {}).get('comparedNodes') or [])}
         plans = selected_plans(decision)
@@ -162,8 +194,7 @@ def analyze(stage, start, end, observations, powers):
             cost, receipt = costs.get(key, {}), actual.get(key, {})
             seconds = (ns(receipt['completedAt']) - ns(receipt['startedAt'])) / 1e9 if receipt.get('completedAt') else None
             joules, reason = measured(powers, receipt['startedAt'], receipt['completedAt'], action['node']) if seconds and seconds > 0 else (None, 'action measurement unavailable')
-            predicted_seconds = (cost.get('seconds') if (cost.get('provenance') or {}).get('source') == 'exact'
-                                 else action.get('expectedSeconds') if not cost else None)
+            predicted_seconds = cost.get('seconds') if (cost.get('provenance') or {}).get('source') == 'exact' else None
             predicted_joules = cost.get('joules') if (cost.get('provenance') or {}).get('source') == 'exact' else None
             actions.append({'stage': stage, 'decisionAt': decision['at'], 'id': action['id'], 'kind': action['kind'], 'node': action['node'],
                             'predictedSeconds': predicted_seconds, 'predictedJoules': predicted_joules,
@@ -181,8 +212,13 @@ def analyze(stage, start, end, observations, powers):
         keep_j, target_j = decision.get('keep', {}).get('expectedJoules'), target.get('expectedJoules')
         gain = keep_j - target_j if number(keep_j) and number(target_j) else None
         transition = bool(target) and not target.get('keep', False)
-        applicable = transition and gain is not None and gain > 0
-        acceptance.append({'stage': stage, 'decisionAt': decision['at'], 'kind': 'transition' if transition else 'keep',
+        feasible = decision.get('keep', {}).get('status') == 'Feasible'
+        comparison = (decision.get('capacity') or {}).get('energyComparison') or {}
+        applicable = transition and feasible and comparison.get('status') == 'decidable' and gain is not None and gain > 0
+        kind = 'keep' if not transition else 'slo-recovery' if decision.get('keep', {}).get('status') == 'Overload' else 'transition'
+        acceptance.append({'stage': stage, 'decisionAt': decision['at'], 'kind': kind,
+                           'energyComparison': comparison,
+                           'missingCells': (decision.get('capacity') or {}).get('missingCells', []),
                            'from': min((r['from'] for r in compared_rows), key=ns, default=None),
                            'to': max((r['to'] for r in compared_rows), key=ns, default=None),
                            'predictedDeltaJoules': gain, 'absoluteErrorJoules': error,

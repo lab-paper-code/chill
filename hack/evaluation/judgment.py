@@ -285,7 +285,7 @@ def judge(binding, folder):
     import prediction_analysis
     windows_path = folder / 'prediction-power.json'
     result['predictionAnalysis'] = prediction_analysis.analyze(
-        phase['stage'], phase['startUTC'], phase['endUTC'], observations,
+        phase['stage']['id'], phase['startUTC'], phase['endUTC'], observations,
         evidence_io.load(windows_path) if windows_path.exists() else [power])
     resources = folder / 'producer-resources.json'
     result['cgroups'] = evidence_io.load(resources) if resources.exists() else {'rows': [], 'meaning': 'No generator offered in this window'}

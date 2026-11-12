@@ -235,7 +235,7 @@ class RequestAnalysisTest(unittest.TestCase):
         request = {'D1': 'FAIL', 'issuanceFidelity': {}, 'requestAnalysis': [{'requestID': 'r'}],
                    'nonOnTimeBreakdown': {'requests': 1},
                    'substages': [{'requestAnalysis': [{'requestID': 'r'}]}]}
-        phase = {'stage': 'workload', 'startUTC': '2026-11-12T00:00:00Z',
+        phase = {'stage': {'id': 'workload'}, 'startUTC': '2026-11-12T00:00:00Z',
                  'endUTC': '2026-11-12T00:00:01Z'}
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)

@@ -19,8 +19,9 @@ def fixture(transition=False, gain=100):
             'preNanos': 0, 'postNanos': 0, 'actionCosts': []}
     target = {'id': 'target', 'keep': not transition, 'expectedJoules': 100,
               'actions': [{'id': 'route', 'kind': 'route', 'node': NODE, 'dependsOn': []}] if transition else []}
-    decision = {'at': stamp(1), 'keep': {'expectedJoules': 100 + gain}, 'target': target,
-                'search': {'comparedNodes': [NODE]}, 'capacity': {'routeNanos': 2_000_000_000, 'plans': [plan]}}
+    decision = {'at': stamp(1), 'keep': {'expectedJoules': 100 + gain, 'status': 'Feasible'}, 'target': target,
+                'search': {'comparedNodes': [NODE]}, 'capacity': {'routeNanos': 2_000_000_000, 'plans': [plan],
+                                                                'energyComparison': {'status': 'decidable'}}}
     events = [{'at': stamp(1), 'decision': decision}]
     if transition:
         events.append({'at': stamp(3), 'action': {'id': 'route', 'kind': 'route', 'node': NODE,
@@ -78,6 +79,7 @@ class PredictionTests(unittest.TestCase):
         observations = fixture(True)
         target = observations['events'][0]['decision']['target']
         target['actions'].insert(0, {'id': 'prepare', 'kind': 'prepare', 'node': NODE, 'dependsOn': []})
+        target['actions'][1]['dependsOn'] = ['prepare']
         plan = observations['events'][0]['decision']['capacity']['plans'][0]
         plan['actionCosts'] = [{'action': 'prepare', 'kind': 'prepare', 'seconds': 1, 'joules': 40,
                                 'provenance': {'source': 'exact', 'costRef': 'operation-cost'}}]
@@ -161,8 +163,8 @@ class PredictionTests(unittest.TestCase):
             captured = evidence_io.load(folder / 'scheduler-decisions.json')
             self.assertEqual(len(captured['events'][0]['decision']['capacity']['plans']), 1)
             self.assertNotIn('workloads', captured['events'][0]['decision']['capacity'])
-            # Only existing stage/drain power queries; no third identical query.
-            self.assertEqual(sum('/power?' in call for call in calls), 2)
+            # Stage/drain and decision windows coincide: one meter API call.
+            self.assertEqual(sum('/power?' in call for call in calls), 1)
             result = analysis.analyze('stage', stamp(1), stamp(6), captured, evidence_io.load(folder / 'prediction-power.json'))
             text = tables.render(root, evaluation={'schema': 'e5-summary.v5', 'status': 'MEASURED_DESCRIPTIVE',
                 'stages': [{'id': 'stage', 'kpis': {'requests': {}, 'power': power(stamp(1), stamp(6)),
