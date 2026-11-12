@@ -138,8 +138,18 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 	})
 	condition := snapshot.Plan.Shared()
 	id := MeasurementVariantID(condition)
+	selectedID := ""
 	for _, evidence := range snapshot.ExactEvidence {
-		if MeasurementVariantID(evidence.Condition) == id {
+		measured := evidence.Condition
+		if condition.RuntimeVersion == "" {
+			// The plan fixes the image; the runtime version is observed later.
+			measured.RuntimeVersion = ""
+		}
+		if MeasurementVariantID(measured) == id {
+			evidenceID := MeasurementVariantID(evidence.Condition)
+			if snapshot.VariantID == "" || snapshot.VariantID == evidenceID {
+				selectedID = evidenceID
+			}
 			result.ConditionMatch = MeasurementConditionExact
 			for _, batch := range evidence.Batches {
 				if slices.Contains(result.PlannedBatches, batch) {
@@ -154,7 +164,7 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 	}
 	if result.ConditionMatch == MeasurementConditionExact {
 		if snapshot.VariantID == "" {
-			result.VariantID = &id
+			result.VariantID = &selectedID
 		}
 		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
 			Code: "DeclarationUIDsNotRetained",
@@ -170,8 +180,8 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 		return slices.Contains(result.MeasuredBatches, batch)
 	})
 	if snapshot.VariantID != "" {
-		if snapshot.VariantID == id && result.ConditionMatch == MeasurementConditionExact {
-			result.VariantID = &id
+		if snapshot.VariantID == selectedID && result.ConditionMatch == MeasurementConditionExact {
+			result.VariantID = &selectedID
 		} else {
 			result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
 				Code: "VariantConditionChanged",

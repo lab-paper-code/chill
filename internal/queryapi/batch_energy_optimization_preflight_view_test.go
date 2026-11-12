@@ -274,3 +274,32 @@ func TestObserverImagesDoNotInvalidateMeasuredBatches(t *testing.T) {
 		}
 	}
 }
+
+func TestPreflightMatchesMeasuredRuntimeVersionOnlyWhenPlanFixesIt(t *testing.T) {
+	original := batchEnergyOptimizationPreflightPlan(t)
+	measured := original.Shared()
+	measured.RuntimeVersion = "measured-version"
+	measuredID := MeasurementVariantID(measured)
+	for _, version := range []string{"", "measured-version", "different-version"} {
+		t.Run(version, func(t *testing.T) {
+			planned := original.Shared()
+			planned.RuntimeVersion = version
+			plan, err := profilederivation.NewCurvePlan(planned)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := BuildMeasurementBatchPlan(BatchEnergyOptimizationPreflightSnapshot{
+				Plan: plan, VariantID: measuredID, RequestsComplete: true,
+				ExactEvidence: []MeasurementPreflightEvidence{{Condition: measured, Batches: []int{1}}},
+			})
+			if version == "different-version" {
+				if len(got.MeasuredBatches) != 0 || got.VariantID != nil {
+					t.Fatalf("different fixed version borrowed measured batches: %+v", got)
+				}
+			} else if got.ConditionMatch != MeasurementConditionExact || got.VariantID == nil ||
+				*got.VariantID != measuredID || !reflect.DeepEqual(got.MeasuredBatches, []int{1}) {
+				t.Fatalf("unobserved planned version stranded measured batches: %+v", got)
+			}
+		})
+	}
+}
