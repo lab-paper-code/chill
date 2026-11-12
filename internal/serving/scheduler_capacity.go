@@ -185,8 +185,12 @@ type SchedulerNodePlan struct {
 
 // EvaluateScheduler uses cheap profile heuristics and exact finite-demand finalists.
 // Offline BuildCapacityRow/CapacityTable remain explicit full-grid analysis APIs.
-func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) (decision SchedulerDecision, err error) {
+func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) (SchedulerDecision, error) {
 	started := time.Now()
+	return evaluateScheduler(ctx, settings, snapshot, started, started.Add(settings.ControlInterval/2))
+}
+
+func evaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, started, deadline time.Time) (decision SchedulerDecision, err error) {
 	timing := SchedulerEvaluationTiming{}
 	stage, stageStarted := &timing.Preparation, started
 	defer func() {
@@ -257,7 +261,7 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	}
 	timing.Preparation = time.Since(stageStarted)
 	stage, stageStarted = &timing.Search, time.Now()
-	best, err := planner.search(started.Add(settings.ControlInterval / 2))
+	best, err := planner.search(deadline)
 	timing.Surrogate, timing.Exact = planner.searched.SurrogateElapsed, planner.searched.ExactElapsed
 	if err != nil {
 		return SchedulerDecision{}, err

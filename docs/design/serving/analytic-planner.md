@@ -135,7 +135,7 @@ v2는 adapter가 만든 노드·option·모드별 계획표를 Tick마다 전처
 
 v2의 `planSearchEvaluations` 기본값은 증분 평가 500,000회이며 `delta` 직전에 검사한다. 벽시계 마감은 v1과 같이 판단 시작 + `controlIntervalNanos/2`이고 계획 생성 시간도 포함한다. v2는 출발점 시작, 피복·연마의 반복/노드/이동 묶음 경계와 결합 탐색 재귀 진입에서 마감을 검사한다. 평가 수에 닿으면 `terminationReason: evaluationBudget`을 남기고, 벽시계 마감에 닿으면 `terminationReason: deadline`과 `budgetCut`을 남긴다. 두 경우 모두 그때까지의 후보·끝점을 정확 평가한다. 계획표 전처리·가격 반복·정확 깔때기·정확 k = 1 fallback은 이 증분 평가 수에 포함하지 않으며 그 안에서 마감을 검사하지 않는다. 따라서 벽시계 마감은 탐색 중단 기준이며 판단 반환의 엄격한 시간 상한은 아니다. v2는 단일 goroutine으로 UID·논리 key 순으로 순회하고, 고정 평가 예산과 같은 입력에서는 결정적이다. 벽시계로 잘리는 위치는 실행 환경에 따라 달라질 수 있다.
 
-내부 `protocol.Problem.Deadline`의 영값은 v1·v2 모두 벽시계 중단을 끈다. 계획 선택·projection·탐색 기록 회귀는 이 경로에서 탐색을 끝까지 실행하므로 호스트 CPU 경합에 의존하지 않는다. 공개 `EvaluateScheduler`는 기존의 제어 주기 절반 마감을 그대로 적용한다.
+내부 `protocol.Problem.Deadline`의 영값은 v1·v2 모두 벽시계 중단을 끈다. `capacityDecideForTest`는 실제 `ControlInterval`을 유지한 채 공통 평가 경로에 영값 마감을 전달하고, `capacitySearchForTest`는 같은 방식으로 탐색을 실행한다. 계획 선택·projection·탐색 기록 회귀는 이 경로에서 탐색을 끝까지 실행하므로 호스트 CPU 경합에 의존하지 않는다. 공개 `EvaluateScheduler`는 기존의 판단 시작 + 제어 주기 절반 마감을 그대로 적용한다. 마감 회귀는 공개 평가 또는 명시적 마감의 search를 사용한다.
 
 **router 가중치.** Routing ON은 기존 1000 단위 정수 allocator에 양의 profile `RoutingWeight`를 넣는다. 안정적인 입력 순서는 기존 per-input energy·physical ID 순서다. allocator 식은 [M0 §3.3](path-aware-implementation-plan.md#33-처리율탐색최종-평가)의 profile routing 계약을 따른다. Routing OFF는 현재 instance weight와 신규 option의 configured weight를 유지한다. nominal share가 RoutingWeight나 κ̂를 넘는다는 이유만으로 거절하지 않고 demand replay에서 overload를 평가한다. 요청 에너지는 같은 최종 정수 weight를 사용하며 keep의 weight만 바뀌면 사슬 없이 route 하나다.
 

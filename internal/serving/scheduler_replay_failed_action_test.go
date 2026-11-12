@@ -255,7 +255,7 @@ func TestCapacityCommonScopePreservesIndependentExpansion(t *testing.T) {
 		Instance: "missing-target", Status: "partial", Reason: "profile: Error (exit 1)"}}
 	decision := capacityDecideForTest(t, settings, snapshot)
 	if decision.Keep.Status == schedulerStatusPending || decision.Target == nil || !poolsOn(*decision.Target, fast) {
-		t.Fatalf("local exclusion blocked independent recovery: keep=%+v target=%+v", decision.Keep, decision.Target)
+		t.Fatalf("local exclusion blocked independent recovery: keep=%+v target=%+v search=%+v", decision.Keep, decision.Target, decision.Capacity.Search)
 	}
 	if !slices.ContainsFunc(decision.Capacity.Plans, func(plan SchedulerNodePlan) bool {
 		return plan.Node == blocked && !plan.Eligible && plan.Reason == "ReplayExcludedNode"

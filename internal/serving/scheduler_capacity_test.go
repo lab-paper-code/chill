@@ -28,7 +28,9 @@ func capacityDecideForTest(t testing.TB, s SchedulerSettings, snap SchedulerSnap
 		snap.Routing = schedulerInstanceRouting(context.Background(), snap.Workloads, snap.Instances)
 	}
 	capacityFeedbackForTest(s, &snap)
-	d, err := EvaluateScheduler(context.Background(), s, snap)
+	// Outcome assertions must finish search regardless of host CPU contention.
+	// Keep the real control interval for demand windows and policy checks.
+	d, err := evaluateScheduler(context.Background(), s, snap, time.Now(), time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +198,34 @@ func TestCapacityRejectAtP95PrefersCheaperFeasibleExpansion(t *testing.T) {
 	}
 	decision := capacityDecideForTest(t, s, snap)
 	if decision.Target == nil || !poolsOn(*decision.Target, NodeReference{Name: "node-lut", UID: "lut"}) || poolsOn(*decision.Target, genesis3) {
-		t.Fatalf("p95 Reject must choose the cheaper feasible route: target=%+v exclusions=%v", decision.Target, decision.Capacity.Search.Excluded)
+		t.Fatalf("p95 Reject must choose the cheaper feasible route: target=%+v exclusions=%v termination=%s budgetCut=%t", decision.Target, decision.Capacity.Search.Excluded, decision.Capacity.Search.TerminationReason, decision.Capacity.Search.BudgetCut)
+	}
+}
+
+func TestCapacityDecisionHelperIgnoresSearchDeadline(t *testing.T) {
+	for _, strategy := range []string{protocol.V1, protocol.V2} {
+		t.Run(strategy, func(t *testing.T) {
+			settings, snapshot, _ := capacityE1Fixture()
+			settings.ControlInterval = time.Nanosecond
+			settings.PlanSearchStrategy = strategy
+			snapshot.Workloads[0].SLO.Percentile = 95
+			budgeted, err := EvaluateScheduler(context.Background(), settings, snapshot)
+			if err != nil || budgeted.Capacity == nil || budgeted.Capacity.Search == nil || !budgeted.Capacity.Search.BudgetCut {
+				t.Fatalf("public evaluation lost its control-interval deadline: decision=%+v err=%v", budgeted, err)
+			}
+			decision := capacityDecideForTest(t, settings, snapshot)
+			if decision.Capacity == nil || decision.Capacity.Search == nil {
+				t.Fatalf("missing capacity search: %+v", decision)
+			}
+			search := decision.Capacity.Search
+			if search.BudgetCut || search.TerminationReason != protocol.NoImprovement ||
+				decision.Target == nil || !poolsOn(*decision.Target, NodeReference{Name: "node-lut", UID: "lut"}) {
+				t.Fatalf("outcome helper used the control-interval deadline: target=%+v search=%+v", decision.Target, search)
+			}
+			if decision.Settings.ControlInterval != settings.ControlInterval {
+				t.Fatal("outcome helper changed the demand/policy control interval")
+			}
+		})
 	}
 }
 

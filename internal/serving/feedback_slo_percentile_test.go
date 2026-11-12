@@ -126,9 +126,9 @@ func TestFeedbackConsumerAllowedTailReachesBothPlannerSearches(t *testing.T) {
 			settings.AutonomousWorkloads = []string{snapshot.Workloads[0].UID}
 			planner := capacityPlannerForTest(t, settings, snapshot)
 			keep := planner.evaluateCurrentKeep(planner.periodSeconds)
-			chosen, err := planner.search(time.Now().Add(time.Minute))
-			if err != nil || !keep.feasible || !chosen.feasible || chosen.exclusion != "" || chosen.joules > keep.joules {
-				t.Fatalf("allowed tail lost feasibility or energy order: keep=%+v chosen=%+v err=%v", keep, chosen, err)
+			chosen := capacitySearchForTest(t, planner)
+			if !keep.feasible || !chosen.feasible || chosen.exclusion != "" || chosen.joules > keep.joules {
+				t.Fatalf("allowed tail lost feasibility or energy order: keep=%+v chosen=%+v search=%+v", keep, chosen, planner.searched)
 			}
 			if len(chosen.feedback) != 1 || chosen.feedback[0].Failed != 10 || chosen.feedback[0].OnTime != 990 {
 				t.Fatalf("search discarded failures to become feasible: %+v", chosen)
