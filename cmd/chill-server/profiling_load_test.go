@@ -173,6 +173,25 @@ func TestProfilingLoadPoissonWaitsFIFOForNativeAdmissionSlots(t *testing.T) {
 	}
 }
 
+func TestProfilingLoadFIFOConsumesResultBudgetBeforeAnyCompletion(t *testing.T) {
+	plan := profilingTestPlan("http://native")
+	plan.MaxQueueRequests = 1
+	plan.MaxResultBytes = 8 << 10
+	plan.MaxLatencySamples = 1_000_000
+	driver := newProfilingLoadDriver(plan, profilingTestRecords(t), "")
+	defer driver.close()
+	driver.native.HTTPClient.Transport = profilingDelayedTransport{base: driver.transport, delay: time.Second}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	phase, err := driver.runPhase(ctx, profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 1_000_000})
+	if !errors.Is(err, errProfilingResultBudget) {
+		t.Fatalf("FIFO did not fail with the result budget: phase=%+v err=%v", phase, err)
+	}
+	if phase.CompletedInputs != 0 || phase.ScheduledInputs >= plan.MaxLatencySamples {
+		t.Fatalf("FIFO budget waited for responses or the sample limit: %+v", phase)
+	}
+}
+
 func TestProfilingLoadPoissonReplaysEveryArrivalAndExcludesDrain(t *testing.T) {
 	var count atomic.Int64
 	server := profilingNativeStub(t, &count)

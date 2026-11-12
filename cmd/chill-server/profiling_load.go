@@ -23,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -174,13 +175,13 @@ func profilingControlCall(ctx context.Context, client *http.Client, endpoint, me
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Scheme != "http" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return errors.New("invalid measurement control HTTP endpoint")
 	}
-	if method != http.MethodGet || path != "/measurement/load" {
+	if (method != http.MethodGet || path != "/measurement/load") && path != "/measurement/load-result" {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 	}
-	// GET /measurement/load long-polls model/actor readiness. Its finite
-	// absolute root deadline must permit legitimate warmup longer than 30s.
+	// Readiness and result upload use the finite root deadline: model warmup
+	// or the request-free post-load observation may legitimately exceed 30s.
 	var body io.Reader
 	if reader, ok := payload.(io.Reader); ok {
 		body = reader
@@ -320,20 +321,22 @@ func loadProfilingRecords(ctx context.Context, directory string, plan profilingL
 }
 
 type profilingLoadDriver struct {
-	plan          profilingLoadPlan
-	records       []profilingRecord
-	endpoint      string
-	control       *http.Client
-	native        *gateway.Client
-	transport     *http.Transport
-	inferURL      string
-	dataDir       string
-	evidenceDir   string
-	stores        map[string]*profilingPhaseStore
-	result        profilingLoadResult
-	metadataBytes int64
-	metadataValid bool
-	cache         struct {
+	plan              profilingLoadPlan
+	records           []profilingRecord
+	endpoint          string
+	control           *http.Client
+	native            *gateway.Client
+	transport         *http.Transport
+	inferURL          string
+	dataDir           string
+	evidenceDir       string
+	stores            map[string]*profilingPhaseStore
+	result            profilingLoadResult
+	metadataBytes     int64
+	metadataValid     bool
+	budgetBytes       atomic.Int64
+	resultBudgetBytes int64
+	cache             struct {
 		sync.Mutex
 		id     string
 		inputs gateway.PreparedNativeInputs
@@ -649,6 +652,8 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 			head  int
 			done  bool
 		}{}
+		var fifoBytes int64
+		defer func() { d.budgetBytes.Add(-fifoBytes) }()
 		wakeDispatcher := make(chan struct{}, 1)
 		notify := func() {
 			select {
@@ -691,10 +696,30 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 					break
 				}
 				if !now.Before(next) {
-					produced.scheduled++
 					queue.Lock()
+					if len(queue.items) == cap(queue.items) {
+						if queue.head > 0 && queue.head >= len(queue.items)-queue.head {
+							copy(queue.items, queue.items[queue.head:])
+							queue.items = queue.items[:len(queue.items)-queue.head]
+							queue.head = 0
+						} else {
+							capacity := max(1, 2*cap(queue.items))
+							bytes := int64(capacity-cap(queue.items)) * int64(unsafe.Sizeof(arrival{}))
+							if err := d.reserveResultBudget(bytes); err != nil {
+								queue.Unlock()
+								produced.err = err
+								cancel()
+								break
+							}
+							fifoBytes += bytes
+							items := make([]arrival, len(queue.items), capacity)
+							copy(items, queue.items)
+							queue.items = items
+						}
+					}
 					queue.items = append(queue.items, arrival{index: issued, scheduled: next})
 					queue.Unlock()
+					produced.scheduled++
 					issued++
 					notify()
 					produced.last = next
@@ -791,6 +816,11 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 			accept(result)
 		}
 		produced := <-producerDone
+		// FIFO exhaustion cancels in-flight HTTP calls before collection sees
+		// the producer failure. Keep that budget cause over its cancellation.
+		if errors.Is(produced.err, errProfilingResultBudget) && errors.Is(firstErr, context.Canceled) {
+			firstErr = nil
+		}
 		recordError(produced.err)
 		lastScheduled = produced.last
 		phase.IssueLag = profilingLagSummary(lags)

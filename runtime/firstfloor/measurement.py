@@ -158,6 +158,8 @@ class LoadControl:
         self.supply_sizing: dict[str, Any] | None = None
         self.begin_post_load = None
         self.post_load_start: dict[str, Any] | None = None
+        self.finish_post_load = None
+        self.post_load_end: dict[str, Any] | None = None
         socket_timeout = self.plan["operatingPoints"]["requestLifetimeSeconds"]
         ready_timeout = request["observerReadyTimeoutMilliseconds"] / 1000 * (len(request["observerReadyPaths"]) + 3)
         self.phase_ids = ["sparse", "saturation"] + [f"utilization-{index}" for index in range(len(self.plan["operatingPoints"]["utilizations"]))]
@@ -200,6 +202,12 @@ class LoadControl:
                         length = int(self.headers.get("Content-Length", "0"))
                         if not 0 < length <= request["maxResultBytes"]:
                             raise common.ContractError("measurement load result exceeds frozen result budget")
+                        if self.path == "/measurement/load-result" and control.post_load_start is not None:
+                            if control.finish_post_load is None:
+                                raise common.ContractError("post-load observer is not ready")
+                            # No upload bytes or decoded evidence may enter the
+                            # runtime memory observation.
+                            control.post_load_end = control.finish_post_load()
                         payload = self.rfile.read(length)
                         if len(payload) != length:
                             raise common.ContractError("measurement load result is truncated")
@@ -737,47 +745,55 @@ def execute_active(request: dict[str, Any], process: subprocess.Popen, session: 
         session.connection.close()
         return {"countersBefore": before, "startedAt": common.now(), "started": time.monotonic()}
 
+    def finish_post_load() -> dict[str, Any]:
+        post_start = control.post_load_start
+        if post_start is None:
+            raise common.ContractError("load result lacks the final drained phase post-load boundary")
+        before = post_start["countersBefore"]
+        post_started_at, post_started = post_start["startedAt"], post_start["started"]
+        post_duration = measurement["operatingPoints"]["postLoadDurationSeconds"]
+        while True:
+            if process.poll() is not None:
+                raise ExecutionError("native actor exited during post-load observation")
+            remaining = post_duration - (time.monotonic() - post_started)
+            if remaining <= 0:
+                break
+            time.sleep(min(common.SIGNAL_POLL_SECONDS, remaining))
+        after = session.counts()
+        if after != before:
+            raise common.ContractError("actor counters changed during post-load observation")
+        validate_metadata(session.metadata(), request, cpu_max, affinity, cpuset)
+        if process.poll() is not None:
+            raise ExecutionError("native actor exited during post-load observation")
+        ended_at = common.now()
+        post_load = {"startedAt": post_started_at, "endedAt": ended_at,
+                     "durationSecondsMonotonic": time.monotonic() - post_started,
+                     "actorPID": process.pid, "modelResidentAtEnd": True,
+                     "countersBefore": before, "countersAfter": after}
+        if sampler is not None:
+            memory = sampler.stop()
+        else:
+            peak, source = memory_peak()
+            memory = {"memoryBytes": peak, "memorySource": source}
+        elapsed = time.monotonic() - started
+        process_cpu, stat_after = time.process_time() - process_before, common.cpu_stat()
+        common.publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
+        record_stage("ResultValidation")
+        return {"postLoad": post_load, "memory": memory, "elapsed": elapsed,
+                "processCPU": process_cpu, "statAfter": stat_after}
+
     control.begin_post_load = begin_post_load
+    control.finish_post_load = finish_post_load
     record_stage("Execution")
     control.ready.set()
     uploaded = control.wait_result(process)
+    observed = control.post_load_end
+    if observed is None:
+        raise common.ContractError("load result lacks the final drained phase post-load observation")
     phases = uploaded["phases"]
-    # Start at the final drained phase marker, so upload/decode cannot hide the
-    # beginning of stabilization or restart its request-free observation clock.
-    post_start = control.post_load_start
-    if post_start is None:
-        raise common.ContractError("load result lacks the final drained phase post-load boundary")
-    before = post_start["countersBefore"]
-    post_started_at, post_started = post_start["startedAt"], post_start["started"]
-    post_duration = measurement["operatingPoints"]["postLoadDurationSeconds"]
-    while True:
-        if process.poll() is not None:
-            raise ExecutionError("native actor exited during post-load observation")
-        remaining = post_duration - (time.monotonic() - post_started)
-        if remaining <= 0:
-            break
-        time.sleep(min(common.SIGNAL_POLL_SECONDS, remaining))
-    after = session.counts()
-    if after != before:
-        raise common.ContractError("actor counters changed during post-load observation")
-    validate_metadata(session.metadata(), request, cpu_max, affinity, cpuset)
-    if process.poll() is not None:
-        raise ExecutionError("native actor exited during post-load observation")
-    post_ended_at = common.now()
-    post_load = {"startedAt": post_started_at, "endedAt": post_ended_at,
-                 "durationSecondsMonotonic": time.monotonic() - post_started,
-                 "actorPID": process.pid, "modelResidentAtEnd": True,
-                 "countersBefore": before, "countersAfter": after}
-    if sampler is not None:
-        memory = sampler.stop()
-    else:
-        peak, source = memory_peak()
-        memory = {"memoryBytes": peak, "memorySource": source}
-    ended_at = post_ended_at
-    elapsed = time.monotonic() - started
-    process_cpu, stat_after = time.process_time() - process_before, common.cpu_stat()
-    common.publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
-    record_stage("ResultValidation")
+    post_load, memory = observed["postLoad"], observed["memory"]
+    ended_at, elapsed = post_load["endedAt"], observed["elapsed"]
+    process_cpu, stat_after = observed["processCPU"], observed["statAfter"]
     latencies = [latency for phase in phases for latency in phase["latencyMs"]]
     completed_inputs = sum(phase["completedInputs"] for phase in phases)
     return {"schemaVersion": common.RESULT_SCHEMA, "status": "Succeeded", "experimentId": request["podUID"],

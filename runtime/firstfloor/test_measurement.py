@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -282,6 +283,9 @@ class ExternalLoadConsumerTest(unittest.TestCase):
         session.counts.side_effect = [zero, loaded, loaded]
         def upload(process):
             control.post_load_start = control.begin_post_load()
+            control.post_load_end = control.finish_post_load()
+            sampler.stop.assert_called_once_with()
+            self.assertEqual(fences[-1], Path(request["measurementEndPath"]))
             return {"phases": phases, "supplySizing": {"workers": 4}}
         control.wait_result.side_effect = upload
         sampler.stop.return_value = {"memoryBytes": 123, "memorySource": "observed"}
@@ -322,6 +326,35 @@ class ExternalLoadConsumerTest(unittest.TestCase):
         metadata.assert_called_once()
         session.run.assert_not_called()
 
+    def test_post_load_freezes_kernel_peak_before_result_evidence(self):
+        request, plan = self.make_plan()
+        session, process, control = mock.Mock(), mock.Mock(), mock.Mock()
+        process.poll.return_value = None
+        process.pid = 123
+        counts = {"acceptedRequests": 12, "completedRequests": 12, "executions": 6}
+        session.counts.side_effect = [{key: 0 for key in counts}, counts, counts]
+        evidence_held = [False]
+
+        def upload(process):
+            control.post_load_start = control.begin_post_load()
+            control.post_load_end = control.finish_post_load()
+            evidence_held[0] = True
+            return {"phases": phase_results(plan), "supplySizing": {"workers": 4}}
+
+        control.wait_result.side_effect = upload
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(measurement.common, "wait_for_signal"))
+            stack.enter_context(mock.patch.object(measurement.common, "publish_immutable"))
+            stack.enter_context(mock.patch.object(measurement.common, "cpu_stat", return_value={}))
+            stack.enter_context(mock.patch.object(measurement.time, "monotonic", side_effect=[0, 0, 5, 5, 5]))
+            stack.enter_context(mock.patch.object(measurement, "validate_metadata", return_value={}))
+            peak = stack.enter_context(mock.patch.object(
+                measurement, "memory_peak", side_effect=lambda: (999 if evidence_held[0] else 123, "kernel")))
+            result = measurement.execute_active(request, process, session, control, {},
+                                                "amd64", "max 100000", [0], "0", None)
+        self.assertEqual(result["memoryBytes"], 123)
+        peak.assert_called_once_with()
+
     def test_post_load_rejects_actor_exit_or_any_inference(self):
         request, plan = self.make_plan()
         for changed in ("acceptedRequests", "completedRequests", "executions", "exit"):
@@ -336,6 +369,7 @@ class ExternalLoadConsumerTest(unittest.TestCase):
                 process.poll.return_value = 1 if changed == "exit" else None
                 def upload(process):
                     control.post_load_start = control.begin_post_load()
+                    control.post_load_end = control.finish_post_load()
                     return {"phases": phase_results(plan), "supplySizing": {"workers": 4}}
                 control.wait_result.side_effect = upload
                 stack.enter_context(mock.patch.object(measurement.common, "wait_for_signal"))
@@ -534,6 +568,47 @@ class ExternalLoadConsumerTest(unittest.TestCase):
 
 
 class PostLoadControlTest(unittest.TestCase):
+    def test_result_body_is_not_decoded_until_postload_and_memory_are_frozen(self):
+        import http.client
+
+        request = coordination_request(Path("/coordination"))
+        with mock.patch.dict(os.environ, {"POD_IP": "127.0.0.1"}):
+            control = measurement.LoadControl(request, ("127.0.0.1", 0))
+        self.addCleanup(control.close)
+        control.post_load_start = {"startedAt": "2026-11-13T00:00:00Z"}
+        frozen = threading.Event()
+
+        def freeze():
+            frozen.set()
+            return {"memoryBytes": 123}
+
+        control.finish_post_load = mock.Mock(side_effect=freeze)
+        control.ready.set()
+        payload = json.dumps({"status": "Failed", "error": "failed" + " " * (1 << 18)})
+        decode = json.loads
+
+        def decode_after_freeze(value, **kwargs):
+            control.finish_post_load.assert_called_once_with()
+            self.assertEqual(control.post_load_end, {"memoryBytes": 123})
+            return decode(value, **kwargs)
+
+        client = http.client.HTTPConnection("127.0.0.1", control.server.server_port, timeout=2)
+        try:
+            with mock.patch.object(measurement.json, "loads", side_effect=decode_after_freeze):
+                client.putrequest("POST", "/measurement/load-result")
+                client.putheader("Content-Type", "application/json")
+                client.putheader("Content-Length", str(len(payload)))
+                client.endheaders()
+                # The observer must finish before the body is even available.
+                self.assertTrue(frozen.wait(1), "post-load observation waited for result body")
+                client.send(payload)
+                response = client.getresponse()
+                self.assertEqual(response.status, 200, response.read())
+            with self.assertRaises(measurement.ExecutionError):
+                control.wait_result(mock.Mock())
+        finally:
+            client.close()
+
     def test_final_phase_opens_postload_before_upload_and_preserves_actor_failure(self):
         import http.client
 

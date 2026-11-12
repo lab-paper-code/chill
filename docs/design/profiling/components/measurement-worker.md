@@ -413,6 +413,11 @@ Post-load samples never enter utilization energy-per-input or service population
 Only after this observation does the worker stop the native memory sampler or
 read the kernel peak, freeze CPU/window observations and publish measurement-end.
 The kernel peak retains its runtime-container-lifetime source.
+The result-upload handler completes post-load observation and freezes memory,
+CPU and the end fence before reading or decoding the large result body. Result
+upload uses the immutable attempt deadline, so a post-load window longer than
+the short control-call timeout remains valid. Evidence bytes and decoded request
+objects do not contribute to the published memory observation.
 
 Energy per input uses **only utilization phases**:
 `(sum(wallJoules)-IdleBaselineWatts*sum(windowSeconds))/sum(completedInputs)`.
@@ -509,10 +514,13 @@ Required relationships:
 - Reject input tensor before allocation above calculated-byte budget; ceiling leaves
   measured reserve for model/session/outputs/bounded input-generation temp/worker.
 - Retained latency cap and serialized-runtime-result cap fit memory and handoff.
-- The producer enforces exact cumulative serialized result bytes incrementally
-  during collection and upload against the frozen result cap. Exceeding the cap
-  fails immediately; there is no throughput/result-size projection admission gate,
-  `6√N` reserve or per-phase 4096-byte reserve.
+- The producer enforces exact cumulative serialized result bytes plus retained
+  FIFO allocation bytes incrementally against the same frozen result cap.
+  FIFO capacity is reserved before allocation and released after phase drain.
+  Exceeding the cap cancels outstanding requests immediately and reports the
+  result-budget error, even when no native response has completed. There is no
+  throughput/result-size projection admission gate, `6√N` reserve or per-phase
+  4096-byte reserve.
 - Workspace fits private result plus one bounded evidence candidate, not image layer.
 - Common deadline is established once before worker preparation and covers
   artifact/model/input preparation, observer synchronization, warm-up, measurement,

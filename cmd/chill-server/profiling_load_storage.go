@@ -155,10 +155,24 @@ func (d *profilingLoadDriver) checkResultBudget() error {
 	if err != nil {
 		return err
 	}
-	if size > d.plan.MaxResultBytes {
-		return fmt.Errorf("%w: %d bytes exceeds frozen limit %d", errProfilingResultBudget, size, d.plan.MaxResultBytes)
+	if err := d.reserveResultBudget(size - d.resultBudgetBytes); err != nil {
+		return err
 	}
+	d.resultBudgetBytes = size
 	return nil
+}
+
+// Collection and the independent FIFO producer share the frozen byte limit.
+func (d *profilingLoadDriver) reserveResultBudget(bytes int64) error {
+	for {
+		used := d.budgetBytes.Load()
+		if bytes > d.plan.MaxResultBytes-used {
+			return fmt.Errorf("%w: %d bytes exceeds frozen limit %d", errProfilingResultBudget, used+bytes, d.plan.MaxResultBytes)
+		}
+		if d.budgetBytes.CompareAndSwap(used, used+bytes) {
+			return nil
+		}
+	}
 }
 
 func (d *profilingLoadDriver) writePhase(w io.Writer, phase profilingrun.Phase) error {
