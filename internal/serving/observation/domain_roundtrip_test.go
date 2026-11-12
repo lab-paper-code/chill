@@ -144,7 +144,11 @@ func capacityFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	s.CapacityWindow, s.CapacityWindows, s.CapacityPassingWindows, s.CapacityMinimumRequests = time.Second, 3, 2, 200
 	s.CompletionMarginMS = 0
 	c := snap.Instances[0].Profile.Condition
-	snap.DispatchOccupancy = []serving.DispatchOccupancy{{Node: snap.Nodes[0].Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel, Source: "fixture"}}
+	snap.DispatchOccupancy = []serving.DispatchOccupancy{{
+		Node: snap.Nodes[0].Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel,
+		ProfileID: snap.Instances[0].Profile.ID, ExecutionPath: c.Artifact.ExecutionPath, Batch: snap.Instances[0].MaxBatch,
+		Source: "fixture",
+	}}
 	p := *snap.Instances[0].Profile
 	p.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 8e5), fixtures.ServiceSample("physical-trial", 1, 1e6), fixtures.ServiceSample("physical-trial", 2, 1.2e6)}, EnergyPerInputJoules: 0.01, MemoryBytes: 100}}
 	distribution, err := firstfloor.NewServiceDistribution(p.Batches[0].ServiceSamples)

@@ -952,7 +952,11 @@ func TestReplayNextGapStartsAtNativeFinishNotOccupancyOrReturn(t *testing.T) {
 	})
 	snapshot.Instances[0].LastServiceEndAgeNanos = &busy
 	condition := snapshot.Instances[0].Profile.Condition
-	snapshot.DispatchOccupancy = []DispatchOccupancy{{Node: snapshot.Nodes[0].Node, PowerMode: condition.PowerMode, RuntimeImage: condition.RuntimeImage, Model: condition.LogicalModel, Source: "synthetic", PerRequest: 30 * time.Millisecond}}
+	snapshot.DispatchOccupancy = []DispatchOccupancy{{
+		Node: snapshot.Nodes[0].Node, PowerMode: condition.PowerMode, RuntimeImage: condition.RuntimeImage, Model: condition.LogicalModel,
+		ProfileID: snapshot.Instances[0].Profile.ID, ExecutionPath: condition.Artifact.ExecutionPath, Batch: snapshot.Instances[0].MaxBatch,
+		Source: "synthetic", PerRequest: 30 * time.Millisecond,
+	}}
 	zero := 0.0
 	for _, id := range []string{"first", "second"} {
 		snapshot.Outstanding = append(snapshot.Outstanding, SchedulerRequest{ID: id, Definition: d, ReceivedAt: snapshot.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero})

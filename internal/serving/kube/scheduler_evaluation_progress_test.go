@@ -286,7 +286,8 @@ func TestSchedulerApprovalUsesAppliedOccupancyCells(t *testing.T) {
 			initial := []serving.DispatchOccupancy{{
 				Node: instance.Node, PowerMode: condition.PowerMode, Model: condition.LogicalModel,
 				ProfileID: instance.Profile.ID, ExecutionPath: condition.Artifact.ExecutionPath, Batch: instance.MaxBatch,
-				PerRequest: time.Millisecond, Source: "original-record",
+				RuntimeImage: condition.RuntimeImage,
+				PerRequest:   time.Millisecond, Source: "original-record",
 				Provenance: &serving.DispatchOccupancyProvenance{Source: "measured", UpdatedAt: at, Pairs: 10, Value: int64(time.Millisecond)},
 			}, {
 				Node: serving.NodeReference{Name: "unused", UID: "unused"}, PerRequest: time.Second,

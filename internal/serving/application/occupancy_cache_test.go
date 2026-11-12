@@ -22,16 +22,25 @@ func rollingOccupancyFixture() *rollingOccupancyInput {
 	profile.Condition.NodeUID = "node-uid"
 	profile.Condition.LogicalModel = occupancyModelTest
 	profile.Condition.PowerMode = "fixed"
+	profile.Condition.RuntimeImage = "runtime@sha256:measured"
 	profile.Condition.Artifact.ExecutionPath = "cpu"
 	other := profile
 	other.ID, other.NodeName, other.Condition.NodeUID = "other", "other-node", "other-uid"
+	legacy := make([]serving.DispatchOccupancy, len(profile.Batches))
+	for index, batch := range profile.Batches {
+		legacy[index] = serving.DispatchOccupancy{
+			Node:      serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID},
+			PowerMode: profile.Condition.PowerMode, Model: occupancyModelTest, RuntimeImage: profile.Condition.RuntimeImage,
+			ProfileID: profile.ID, ExecutionPath: profile.Condition.Artifact.ExecutionPath, Batch: batch.Batch,
+			PerRequest: 270625, Source: "accepted-dom.json",
+		}
+	}
 	return &rollingOccupancyInput{
 		configuration: &SchedulerConfiguration{Settings: settings, DispatchOccupancy: &policy},
 		catalog: &ProfilesView{ConfigVersion: "accepted",
 			CatalogView: servingkube.CatalogView{Profiles: []serving.Profile{profile, other}}},
 		profiles: map[string]*serving.Profile{profile.ID: &profile, other.ID: &other},
-		legacy: []serving.DispatchOccupancy{{Node: serving.NodeReference{Name: "node", UID: "node-uid"},
-			PowerMode: "fixed", Model: occupancyModelTest, PerRequest: 270625, Source: "accepted-dom.json"}},
+		legacy:   legacy,
 	}
 }
 
@@ -43,9 +52,10 @@ func rollingEstimate(
 		Node:  serving.NodeReference{Name: p.NodeName, UID: p.Condition.NodeUID},
 		Model: p.Condition.LogicalModel, PowerMode: p.Condition.PowerMode,
 		ExecutionPath: p.Condition.Artifact.ExecutionPath, Batch: batch, Pairs: pairs,
-		Profile:    serving.OccupancyProfile{ProfileID: profile},
-		Statistics: &serving.OccupancyStatistics{Median: median, Mean: median},
-		Window:     serving.OccupancyWindow{Start: now.Add(-120 * time.Second), End: now},
+		RuntimeImage: p.Condition.RuntimeImage,
+		Profile:      serving.OccupancyProfile{ProfileID: profile},
+		Statistics:   &serving.OccupancyStatistics{Median: median, Mean: median},
+		Window:       serving.OccupancyWindow{Start: now.Add(-120 * time.Second), End: now},
 	}
 }
 

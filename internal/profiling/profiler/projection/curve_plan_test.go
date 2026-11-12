@@ -382,13 +382,14 @@ func TestVerifiedCurvePlanUsesBatchOneORTIdleWitness(t *testing.T) {
 
 func curvePlanRunConfig() profilingrun.RunConfig {
 	config := projectionRunConfigWithWorkloadContract()
+	runtimeImage := "runtime@sha256:" + strings.Repeat("a", 64)
 	config.Candidate = profilingrun.CandidateIdentity{
 		Inputs: profilingrun.CandidateReportInputs{
 			ModelSpec:   profilingrun.CandidateReportObjectInput{Name: "mobilenet", UID: "model-uid", ResourceVersion: "1"},
 			DeviceClass: profilingrun.CandidateReportObjectInput{Name: "lattepanda", UID: "class-uid", ResourceVersion: "1"},
 			RuntimeDeclaration: profilingrun.CandidateReportRuntimeInput{
 				Namespace: "chill-system", Name: "facts", UID: "facts-uid", ResourceVersion: "1",
-				Key: "execution-facts.yaml", Image: "runtime",
+				Key: "execution-facts.yaml", Image: runtimeImage,
 			},
 		},
 		ExecutionPath: "rknnlite", Verdict: "Compatible",
@@ -397,7 +398,7 @@ func curvePlanRunConfig() profilingrun.RunConfig {
 	config.State.ArtifactFiles = []string{"/artifact/model.rknn"}
 	config.State.HostContract = &profilingrun.CandidateReportHostContract{}
 	config.Images = profilingrun.Images{
-		Runtime: "runtime", Artifact: "artifact", MetricObserver: "metric", WorkloadObserver: "workload",
+		Runtime: runtimeImage, Artifact: "artifact", MetricObserver: "metric", WorkloadObserver: "workload",
 	}
 	config.Measurement.Batch = 1
 	config.Delivery.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
