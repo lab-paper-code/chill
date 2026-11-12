@@ -113,6 +113,12 @@ spec:
                         format: int32
                         minimum: 30
                         type: integer
+                      postLoadDurationSeconds:
+                        description: PostLoadDurationSeconds observes the same loaded
+                          actor without inference after the final load phase.
+                        format: int32
+                        minimum: 1
+                        type: integer
                       requestLifetimeSeconds:
                         format: int32
                         minimum: 1
@@ -134,6 +140,7 @@ spec:
                     - deliveryMarginMilliseconds
                     - framedDecodedRequestUpperBytes
                     - phaseDurationSeconds
+                    - postLoadDurationSeconds
                     - requestLifetimeSeconds
                     - sparseMeanGapMilliseconds
                     - utilizations

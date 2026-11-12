@@ -42,6 +42,9 @@ func ComposeRawMeasurement(
 	); err != nil {
 		return nil, err
 	}
+	if metricRecord.EndedAt.Before(ended) {
+		return nil, errors.New("metric observation ended before the post-load window closed")
+	}
 	raw := RawMeasurement{
 		SchemaVersion: RawMeasurementSchemaVersion,
 		RunConfig:     runConfig,

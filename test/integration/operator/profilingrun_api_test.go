@@ -63,6 +63,12 @@ var _ = Describe("ProfilingRun API", func() {
 		Entry("active mode without Workload", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Measurement.Workload = ""
 		}),
+		Entry("active mode without post-load observation", func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Measurement.OperatingPoints.PostLoadDurationSeconds = 0
+		}),
+		Entry("negative post-load observation", func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Measurement.OperatingPoints.PostLoadDurationSeconds = -1
+		}),
 		Entry("idle mode with dataset", func(run *edgev1alpha1.ProfilingRun) {
 			configureIdleProfilingRun(run)
 			run.Spec.Measurement.Dataset = "vqav2-val-subset"
@@ -92,6 +98,19 @@ var _ = Describe("ProfilingRun API", func() {
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
 
 		run.Spec.Measurement.Batch = 2
+		err := k8sClient.Update(ctx, run)
+		Expect(err).To(HaveOccurred())
+		Expect(apierrors.IsInvalid(err)).To(BeTrue())
+	})
+
+	It("freezes the explicit post-load duration in the immutable Run spec", func() {
+		ctx := context.Background()
+		run := validProfilingRun(uniqueProfilingRunName("postload"))
+		run.Spec.Measurement.OperatingPoints.PostLoadDurationSeconds = 17
+		Expect(k8sClient.Create(ctx, run)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
+		Expect(run.Spec.Measurement.OperatingPoints.PostLoadDurationSeconds).To(Equal(int32(17)))
+		run.Spec.Measurement.OperatingPoints.PostLoadDurationSeconds = 18
 		err := k8sClient.Update(ctx, run)
 		Expect(err).To(HaveOccurred())
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
@@ -142,13 +161,18 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 				TargetNode: "lattepanda",
 			},
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
-				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
+				Batch: 1, WarmupIterations: 20, DurationSeconds: 120,
 				WorkloadMode: "empirical-cadence-fixed-batch",
 				Dataset:      "vqav2-val-subset",
 				Workload:     "mobilenet",
+				OperatingPoints: &edgev1alpha1.MeasurementOperatingPointsSpec{
+					Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
+					PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30, RequestLifetimeSeconds: 30,
+					DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024,
+				},
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
-				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
+				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 121,
 			},
 		},
 	}
@@ -161,4 +185,7 @@ func configureIdleProfilingRun(run *edgev1alpha1.ProfilingRun) {
 	run.Spec.Measurement.WorkloadMode = "idle-model-loaded"
 	run.Spec.Measurement.Dataset = ""
 	run.Spec.Measurement.Workload = ""
+	run.Spec.Measurement.OperatingPoints = nil
+	run.Spec.Measurement.DurationSeconds = 30
+	run.Spec.MetricObservation.DurationSeconds = 31
 }

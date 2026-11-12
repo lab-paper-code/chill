@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha21",
+  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha22",
   "loadOriginNode": "gateway-node",
   "loadOriginGatewayPod": {"namespace": "chill-system", "name": "gateway", "uid": "gateway-uid"},
   "candidate": {
@@ -65,7 +65,7 @@
     "batch": 1,
     "warmupIterations": 20,
     "startupWarmupIterations": 20,
-    "durationSeconds": 90,
+    "durationSeconds": 120,
     "sloPercentile": 95,
     "minServiceSamples": 59,
     "sloTargetLatencyNanos": 1000000000,
@@ -74,7 +74,7 @@
     "workloadResourceVersion": "1",
     "warmupBatchSizes": [1],
     "workloadMode": "empirical-cadence-fixed-batch",
-    "operatingPoints": {"utilizations": [0.5], "sparseMeanGapMilliseconds": 1000, "phaseDurationSeconds": 30, "requestLifetimeSeconds": 30, "deliveryMarginMilliseconds": 100, "framedDecodedRequestUpperBytes": 1024, "queueBytesCap": 32768},
+    "operatingPoints": {"utilizations": [0.5], "sparseMeanGapMilliseconds": 1000, "phaseDurationSeconds": 30, "postLoadDurationSeconds": 30, "requestLifetimeSeconds": 30, "deliveryMarginMilliseconds": 100, "framedDecodedRequestUpperBytes": 1024, "queueBytesCap": 32768},
     "dataset": {
       "name": "vqav2-val-subset",
       "uid": "dataset-uid",
@@ -102,7 +102,7 @@
     },
     "intervalMilliseconds": 1000,
     "timeoutMilliseconds": 500,
-    "durationSeconds": 91
+    "durationSeconds": 121
   },
   "actor": {
     "runtimeImage": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

@@ -141,8 +141,10 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 	returning := false
 	for _, run := range c.runs {
 		if run.reserved && run.result != nil && run.action.Status != servingstate.NativeOperationRunning && run.action.Status != servingstate.NativeOperationCancel {
-			returning = true
-			break
+			if _, eligible := c.observedReturnParent(run, now); eligible {
+				returning = true
+				break
+			}
 		}
 	}
 	c.mu.Unlock()

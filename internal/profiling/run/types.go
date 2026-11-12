@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha21"
+	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha22"
 
 	EmpiricalCadenceFixedBatchWorkloadMode = "empirical-cadence-fixed-batch"
 	IdleModelLoadedWorkloadMode            = "idle-model-loaded"
@@ -199,6 +199,7 @@ type OperatingPointsContract struct {
 	Utilizations                   []float64 `json:"utilizations"`
 	SparseMeanGapMilliseconds      float64   `json:"sparseMeanGapMilliseconds"`
 	PhaseDurationSeconds           int       `json:"phaseDurationSeconds"`
+	PostLoadDurationSeconds        int       `json:"postLoadDurationSeconds"`
 	RequestLifetimeSeconds         int       `json:"requestLifetimeSeconds"`
 	DeliveryMarginMilliseconds     int       `json:"deliveryMarginMilliseconds"`
 	FramedDecodedRequestUpperBytes int64     `json:"framedDecodedRequestUpperBytes"`

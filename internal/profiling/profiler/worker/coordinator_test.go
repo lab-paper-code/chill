@@ -509,7 +509,8 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 		points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds))
 	fixtures.ApplyActivePhases(&result, fixtures.PhaseOptions{
 		StartedAt: started, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
-		Batch: config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers,
+		PostLoadDuration: time.Duration(points.PostLoadDurationSeconds) * time.Second,
+		Batch:            config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers,
 		Utilizations: points.Utilizations, SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds,
 		PodUID: podUID, Latencies: []float64{2},
 		SupplySizing: sizing,
@@ -522,7 +523,7 @@ func testMetricResult(config profilingrun.RunConfig) metricobserver.Result {
 	started := time.Date(2026, time.July, 16, 2, 59, 59, 0, time.UTC)
 	windowSeconds := 30
 	if points := config.Measurement.OperatingPoints; points != nil {
-		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+		windowSeconds = points.PhaseDurationSeconds*(len(points.Utilizations)+2) + points.PostLoadDurationSeconds
 	}
 	samples := make([]metricobserver.Sample, windowSeconds)
 	for index := range samples {

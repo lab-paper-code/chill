@@ -11,7 +11,7 @@ import (
 func TestBuildRunFreezesNamedOperatingPoints(t *testing.T) {
 	parent := testParent()
 	parent.Spec.ActiveProtocol.OperatingPoints = api.MeasurementOperatingPointsSpec{
-		Utilizations: []float64{.2, .8}, SparseMeanGapMilliseconds: 1000, PhaseDurationSeconds: 30,
+		Utilizations: []float64{.2, .8}, SparseMeanGapMilliseconds: 1000, PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30,
 		RequestLifetimeSeconds: 10, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024,
 	}
 	child, err := BuildRun(parent, campaign.Measurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 2}, 1, "ort-cpu")

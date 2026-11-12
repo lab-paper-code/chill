@@ -9,7 +9,7 @@ import (
 
 func TestFrozenOperatingPointsRoundTripWithoutAliasing(t *testing.T) {
 	config := profilingrun.RunConfig{Measurement: profilingrun.MeasurementContract{OperatingPoints: &profilingrun.OperatingPointsContract{
-		Utilizations: []float64{.2, .8}, SparseMeanGapMilliseconds: 1000, PhaseDurationSeconds: 30,
+		Utilizations: []float64{.2, .8}, SparseMeanGapMilliseconds: 1000, PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30,
 		RequestLifetimeSeconds: 10, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 64 << 20,
 	}}}
 	protocol := projectCurveProtocol(config)

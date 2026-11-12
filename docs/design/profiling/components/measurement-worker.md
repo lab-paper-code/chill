@@ -107,11 +107,13 @@ and execution provenance, not a parallel execution type.
 
 ### Serving-path operating points
 
-RunConfig v1alpha21 freezes the referenced Workload's name, UID, resourceVersion,
+RunConfig v1alpha22 freezes the referenced Workload's name, UID, resourceVersion,
 SLO percentile and target latency, plus `measurement.operatingPoints`:
 `utilizations`, `sparseMeanGapMilliseconds`, `phaseDurationSeconds`,
-`requestLifetimeSeconds`, `deliveryMarginMilliseconds`, and
-`framedDecodedRequestUpperBytes`. The selected execution policy freezes the
+`postLoadDurationSeconds`, `requestLifetimeSeconds`, `deliveryMarginMilliseconds`,
+and `framedDecodedRequestUpperBytes`. `postLoadDurationSeconds` is a required
+positive integer number of seconds, propagated unchanged to the native load plan.
+The selected execution policy freezes the
 computed `queueBytesCap`; this is not a public input. Model, preprocessor and
 dataset must match the measurement selection. The existing 95% confidence
 convention gives `ceil(log(.05)/log(percentile/100))` known-gap native batch
@@ -131,6 +133,7 @@ observations. The largest such observed service supplies the existing K formula:
 `K=min(64,floor(queueBytesCap/framedDecodedRequestUpperBytes),
 floor((L-margin)/(B*maxObservedSparseServiceSeconds)))`. The shared native
 `SaturationWorkers` calculation also checks whole-batch and queue feasibility.
+K need not divide B: B=2, K=5 is valid. Total sent inputs end on a B boundary.
 Admission slots remain held until the response completes, so K must not exceed
 `maxQueueRequests`, including requests already executing.
 Missing usable sparse observations or infeasible supply fails the Run. There is
@@ -156,9 +159,11 @@ Derivation and analyzers use actual sent counts and the offering exposure, never
 the target rate as measured throughput or an inferred arrival process.
 Every phase runs until both its monotonic duration and known-gap sample floor
 complete. The producer stops offering on a whole-batch issuance boundary and
-drains every issued request. The immutable attempt/safety budget fails an
-unfinished phase; it never completes evidence. Observer duration and capacity
-account for the entire phase ladder.
+drains every issued request. After the final drained phase, the runtime retains
+the same actor and both observers for `postLoadDurationSeconds`, with no inference.
+The nominal Run duration is the sum of all phase floors and this post-load window.
+The immutable attempt/safety budget fails an unfinished phase; it never completes
+evidence. Observer duration and capacity account for the complete lifecycle.
 For BEO, runtime-execution memory exhaustion or an execution measurement-budget
 boundary ends discovery as `Complete/BatchDiscoveryComplete`, preserving the
 completed three-trial batch prefix. Memory exhaustion includes native `OOMKilled`
@@ -176,13 +181,19 @@ not publish a completed-prefix profile. See [Plan 7](../plans/07-batch-energy-op
 Native/client sample alignment and actual counts/windows remain retained evidence.
 Metric observation follows the runtime end fence, including sample-limited windows.
 
-The sample minimum is not a successful upper bound: 59 calls at 2 seconds
-complete at 118 seconds even with the sample YAML's 30-second minimum and
-31-second nominal metric duration. The immutable selected execution policy's
-`AttemptTimeout` (`Metrics.DurationSeconds + settling duration +
-attemptTimeoutOverheadSeconds`) is the producer's total failure budget, applied
-by `cmd/measurement-worker` to its root attempt context. The Job's longer
-`ActiveDeadline` is the outer Kubernetes safety budget, not a completion rule.
+The sample minimum is not a successful upper bound. The frozen execution budget
+reserves `(minServiceSamples+1)*B/arrivalRate` seconds for sparse issuance,
+or its configured phase floor if longer. The extra batch supplies the collector's
+initial unknown-gap sample. It adds every other phase floor, one
+`requestLifetimeSeconds + deliveryMarginMilliseconds/1000` HTTP drain allowance
+per phase and `postLoadDurationSeconds`, then rounds the total up to whole seconds.
+The configured metric-versus-measurement margin is retained. At p99, B=8 and
+one sparse input/second, sparse issuance alone reserves 2,400 seconds.
+`AttemptTimeout` adds settling and the existing `attemptTimeoutOverheadSeconds`;
+the Job adds the existing longer `activeDeadlineOverheadSeconds` instead.
+These bounds derive from immutable Run inputs and selected execution policy.
+Poisson arrivals and sample-limited service have no deterministic finite
+completion guarantee; the frozen bound remains a failure budget.
 Both observers' measurement-end waits use that producer failure bound; the metric
 observer's `ObserveUntil` watchdog and pre-readiness capacity admission use the
 same bound, including its final real power read. Interval/per-read timeout and
@@ -199,13 +210,13 @@ a precise p95 estimate, an independence/stationarity check or proof of κ safety
 59 is a count of calls, not a count of tail exceedances.
 
 Shared CPU policy: every CHILL operation runs without CPU reservation, quota or
-pinning. RunConfig v1alpha21 has no CPU allocation or thread-tuning field.
+pinning. RunConfig v1alpha22 has no CPU allocation or thread-tuning field.
 Measurement and load Jobs carry no CPU requests/limits; the runner accepts no
 affinity or thread override, and the Go producer uses default runtime scheduling.
 Actual quota/cpuset/affinity/usage/throttling remain observed evidence. The
 gateway-side load Job has bounded memory resources described below.
 
-Active runtime and raw bodies are v1alpha13; idle runtime v1alpha7 and idle raw
+Active runtime and raw bodies are v1alpha14; idle runtime v1alpha7 and idle raw
 v1alpha8 retain the existing loaded-idle protocol. Old active records are deleted
 operationally after archival; no reader accepts their previous shapes. Memory,
 GPU, Node identity, ownership and physical-return checks remain mandatory.
@@ -245,7 +256,7 @@ cross-container protocol or retained store.
 | `workload-window-start` | Runtime warm-up complete; request retained session |
 | `workload-window-ready` | Workload retained list-watch established |
 | `measurement-start` | Runtime opens window after warm-up/idle settling |
-| `measurement-end` | Runtime closes window after last active inference/idle duration |
+| `measurement-end` | Runtime closes the window after active post-load observation or idle duration |
 | `metric-result.json` | Complete result via temp-file + rename |
 | `workload-result.json` | Complete atomic result after causal status fence |
 | `runtime-failed` | Runtime failure; observers end all waits/watch and exit failed |
@@ -253,7 +264,7 @@ cross-container protocol or retained store.
 Runtime: strict config validation; verify Pod UID, Node, artifact, runtime/
 provider/output-validation capability and observe actual CPU environment; bounded wait for both preflight readiness
 signals; actor startup warmup and, for loaded-idle, settling; request/await retained
-workload window; emit start; measure until elapsed and sample floors (idle: duration); emit end; bounded
+workload window; emit start; measure until elapsed/sample floors and active post-load observation (idle: duration); emit end; bounded
 wait for both results; check new source/target/window relationships; encode
 mode-specific raw object within the byte cap; immutable-create without replacing
 an existing winner; write bounded validated receipt to `/dev/termination-log`; exit zero.
@@ -288,12 +299,12 @@ instead of active latency/output-validation proof. Both share store/key/size
 reference boundary. Job completion, terminal Pod/Node snapshots and credentials
 are absent; the controller adds terminal Kubernetes facts during finalization.
 
-### Active raw v1alpha13 field contract
+### Active raw v1alpha14 field contract
 
-`raw.json` has `schemaVersion`, `runConfig` (v1alpha21), `podUID`, `runtime`,
+`raw.json` has `schemaVersion`, `runConfig` (v1alpha22), `podUID`, `runtime`,
 `metrics`, and `workload`. Raw evidence contains measured facts and boundaries.
 `runtime.schemaVersion` is
-`chill.dacs.io/batch-characterization.v1alpha13`. Existing actual runtime,
+`chill.dacs.io/batch-characterization.v1alpha14`. Existing actual runtime,
 CPU/memory, startup and execution metadata remain. `runtime.phases` replaces
 `repetitionResults`; there is no legacy reader.
 
@@ -357,11 +368,23 @@ The load producer obtains phase boundaries through worker-local
 `POST /measurement/phase` start/end markers. `GET /measurement/load` supplies
 the immutable plan; `POST /measurement/supply` derives K after sparse;
 `POST /measurement/load-result` delivers success phases or explicit failure.
-At the final phase-end control marker, the measurement worker stops its native
-memory sampler or reads the kernel memory peak and freezes CPU/window observations.
-It publishes measurement-end before accepting the full load-result body.
-Evidence upload, JSON decoding, validation and commit do not extend this native
-memory observation. The kernel peak retains its runtime-container-lifetime source.
+The final phase-end marker closes only that load phase and immediately snapshots
+the actor counters and post-load start clocks. Load-result transfer/decoding
+cannot hide the initial stabilization interval or restart this clock. The worker
+keeps the same live loaded actor without requests until the frozen post-load
+duration completes, then closes the measurement window.
+`runtime.postLoad` contains measurement-node `startedAt`, `endedAt`, monotonic
+`durationSecondsMonotonic`, `actorPID`, `modelResidentAtEnd`, `countersBefore`
+and `countersAfter`. Both counter snapshots retain `acceptedRequests`,
+`completedRequests` and `executions`; equality proves zero inference/requests.
+The actor remains ready with no outstanding requests; metadata verifies model
+residency before the final end fence. Timestamped `metrics.samples` within these
+boundaries are the unaggregated post-load power stabilization series, including
+their original thermal observations; `metrics.failures` retains read failures.
+Post-load samples never enter utilization energy-per-input or service populations.
+Only after this observation does the worker stop the native memory sampler or
+read the kernel peak, freeze CPU/window observations and publish measurement-end.
+The kernel peak retains its runtime-container-lifetime source.
 
 Energy per input uses **only utilization phases**:
 `(sum(wallJoules)-IdleBaselineWatts*sum(windowSeconds))/sum(completedInputs)`.
@@ -392,7 +415,7 @@ An absent Pod or execution stage leaves classification unknown even when the Job
 reports `DeadlineExceeded`. Unstructured logs remain diagnostic.
 
 Observer images and package/driver readbacks remain provenance. CurvePlan
-v1alpha13 retains the actor startup recipe and active/idle collection policy.
+v1alpha14 retains the actor startup recipe and active/idle collection policy.
 Profile applicability includes the measured runtime image identity and runtime
 version; serving prepares that measured image and verifies the actual runtime
 container image ID. Model/artifact/preprocessor/input population, actual
@@ -434,10 +457,14 @@ These are installation delivery resources, not Run inputs or thread controls.
 The driver retains complete evidence within the frozen result cap; it never
 trims requests to fit.
 
-The producer prepares each dataset payload once, reuses encoder/response buffers
-and reserves its planned phase evidence before starting the issue clock. The
-shared gateway client keeps the standard in-memory HTTP body path; buffers with
-unfinished or unobserved transport writes are not recycled.
+The dataset record index is disk-backed. The producer retains one immutable
+prepared-record cache, bounded by the existing framed-record cap; it does not
+preload the whole dataset as wire payloads. Encoder/response buffers are reused.
+The shared gateway client keeps its standard in-memory HTTP body path; buffers
+with unfinished or unobserved transport writes are not recycled.
+Raw request/sample/latency arrays stream to `/data/.profiling-evidence-*` during
+collection and upload. Memory retains ordering indexes and unfinished-batch
+metadata, rather than the complete evidence arrays.
 
 One versioned installation worker policy derives resources, deadlines/handoff
 margins and producer capacities coherently. Helm supplies default measured envelope;
@@ -454,10 +481,10 @@ Required relationships:
 - Reject input tensor before allocation above calculated-byte budget; ceiling leaves
   measured reserve for model/session/outputs/bounded input-generation temp/worker.
 - Retained latency cap and serialized-runtime-result cap fit memory and handoff.
-- Before utilization load starts, the producer checks projected whole-Run result
-  size from encoded sparse/saturation bytes per completed input, measured μ,
-  configured phase durations/rates, sample floor and in-flight drain. A projected
-  overflow fails with the measured coefficient and reason before the ladder.
+- The producer enforces exact cumulative serialized result bytes incrementally
+  during collection and upload against the frozen result cap. Exceeding the cap
+  fails immediately; there is no throughput/result-size projection admission gate,
+  `6√N` reserve or per-phase 4096-byte reserve.
 - Workspace fits private result plus one bounded evidence candidate, not image layer.
 - Common deadline is established once before worker preparation and covers
   artifact/model/input preparation, observer synchronization, warm-up, measurement,
@@ -468,10 +495,9 @@ Required relationships:
 
 Derive capacities from resources/duration, never predicted throughput. Oversize
 artifact shape or inability to retain full latency distribution fails explicitly;
-no truncation, sampling or silent aggregation. Numeric reserves/serialized-byte
-coefficients require measurements from the exact delivered runtime image, become versioned
-installation defaults, affect only new Runs and change content-derived execution
-identity. Later runtimes may have their own policy; no generic planner framework.
+no truncation, sampling or silent aggregation. Installation envelopes affect only
+new Runs and change content-derived execution identity. Later runtimes may have
+their own policy; no generic planner framework.
 
 ## Dependencies and remaining boundary
 
@@ -521,8 +547,8 @@ retains its `arrivalSeed`; the 1000/s seeds are
 reported scheduling/GC gaps. Every scheduled input was sent; no response-driven
 backpressure or count loss occurred.
 
-The measured peak supports the 512 MiB load-container envelope with headroom for
-dataset/evidence retention. The fixture's **1.30 KiB/input** serialized result
-coefficient is not a policy constant: every Run measures its own sparse and
-saturation bytes/input before admitting its ladder.
+The measured peak describes this local fixture within the 512 MiB load-container
+envelope. Its **1.30 KiB/input** serialized result coefficient is diagnostic,
+not an admission gate. Current collection streams exact evidence bytes and uses
+a bounded single-record cache instead of whole-dataset/evidence wire retention.
 

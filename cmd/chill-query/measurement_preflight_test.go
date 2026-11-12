@@ -122,11 +122,11 @@ func measurementPreflightTestPlan(t *testing.T) derivation.CurvePlan {
 	active := derivation.CurveProtocolContract{
 		WorkloadMode:    "empirical-cadence-fixed-batch",
 		Dataset:         &derivation.CurveDatasetContract{Name: "dataset", UID: "dataset-uid"},
-		DurationSeconds: 90, MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900, MetricDurationSeconds: 91,
+		DurationSeconds: 120, MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900, MetricDurationSeconds: 121,
 		MetricObserverImage: image, WorkloadObserverImage: image,
 		WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
 		OperatingPoints: &derivation.OperatingPointsContract{
-			Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000, PhaseDurationSeconds: 30,
+			Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000, PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30,
 			RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768,
 		},
 	}

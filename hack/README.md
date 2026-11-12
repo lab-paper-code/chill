@@ -844,6 +844,11 @@ Metric observation follows the runtime's actual end fence through sample-limited
 windows; its immutable safety timeout remains a failure bound, never a successful
 stop. The generator preserves inherited metric padding above the elapsed minimum,
 without call-duration multipliers or invented rates for unknown timings.
+Profile-derived requests deep-copy the required `activeProtocol.operatingPoints`,
+including positive integer `postLoadDurationSeconds`; retained values are not
+replaced with generator defaults. The nominal active duration is
+`phaseDurationSeconds × (len(utilizations) + 2) + postLoadDurationSeconds`.
+The metric window preserves inherited padding above that nominal duration.
 Active evidence must satisfy the full elapsed minimum regardless of the retained
 `durationToleranceSeconds`; observation windows and exact images are provenance,
 not performance-key identity.
@@ -851,7 +856,7 @@ The policy contributes to deterministic request naming. Existing requests are
 reused only through the explicit current-schema conditions above, never rewritten.
 A running feeder keeps its frozen plan until the operator explicitly replaces it.
 Idle retains its inherited window or config `idleSeconds` (10 seconds).
-Work estimates use `3 × Σ_batch max(windowSeconds, n_min × secondsPerCall)` where
+Work estimates use `3 × Σ_batch max(nominalActiveSeconds, n_min × secondsPerCall)` where
 same-condition timing exists. Unknown rates contribute only the elapsed lower
 bound, explicitly not a completion estimate. Idle/settling and the existing
 20-second per-Run overhead scenario are added; variable startup/warmup/polling are

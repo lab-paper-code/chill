@@ -354,7 +354,7 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 	observation := validObservation()
 	windowSeconds := 30
 	if points := config.Measurement.OperatingPoints; points != nil {
-		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+		windowSeconds = points.PhaseDurationSeconds*(len(points.Utilizations)+2) + points.PostLoadDurationSeconds
 	}
 	start := observation.Job.Status.CompletionTime.Time.Add(-time.Duration(windowSeconds+2) * time.Second)
 	podUID := string(observation.Pod.UID)
@@ -432,7 +432,8 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 			points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds))
 		fixtures.ApplyActivePhases(&raw.Runtime, fixtures.PhaseOptions{
 			StartedAt: start, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
-			Batch: config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers,
+			PostLoadDuration: time.Duration(points.PostLoadDurationSeconds) * time.Second,
+			Batch:            config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers,
 			Utilizations: points.Utilizations, SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds,
 			PodUID: podUID, Latencies: []float64{2},
 			SupplySizing: sizing,

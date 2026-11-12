@@ -15,7 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-const RawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha13"
+const RawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha14"
 
 // RawMeasurement contains only facts available to the in-Job worker before it
 // exits. Kubernetes terminal state is deliberately excluded.
@@ -78,6 +78,9 @@ func (m RawMeasurement) validate() error {
 	}
 	if !m.Metrics.StartedAt.Before(runtimeEnded) || !runtimeStarted.Before(m.Metrics.EndedAt) {
 		return errors.New("runtime and metric observation windows do not overlap")
+	}
+	if m.Metrics.EndedAt.Before(runtimeEnded) {
+		return errors.New("metric observation ended before the post-load window closed")
 	}
 	if m.Workload == nil {
 		return errors.New("raw measurement workload observation is required")

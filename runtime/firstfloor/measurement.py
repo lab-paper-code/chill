@@ -156,8 +156,8 @@ class LoadControl:
         self.lock = threading.Lock()
         self.phase_windows: list[dict[str, str]] = []
         self.supply_sizing: dict[str, Any] | None = None
-        self.finalize_measurement = None
-        self.final_observation: dict[str, Any] | None = None
+        self.begin_post_load = None
+        self.post_load_start: dict[str, Any] | None = None
         socket_timeout = self.plan["operatingPoints"]["requestLifetimeSeconds"]
         ready_timeout = request["observerReadyTimeoutMilliseconds"] / 1000 * (len(request["observerReadyPaths"]) + 3)
         self.phase_ids = ["sparse", "saturation"] + [f"utilization-{index}" for index in range(len(self.plan["operatingPoints"]["utilizations"]))]
@@ -227,10 +227,10 @@ class LoadControl:
                                 if not control.phase_windows or control.phase_windows[-1]["id"] != value["id"] or "measurementEndedAt" in control.phase_windows[-1]:
                                     raise common.ContractError("phase end has no matching active phase")
                                 if len(control.phase_windows) == len(control.phase_ids):
-                                    if control.finalize_measurement is None:
-                                        raise common.ContractError("measurement finalizer is not ready")
-                                    control.final_observation = control.finalize_measurement()
-                                    at = control.final_observation["endedAt"]
+                                    if control.begin_post_load is None:
+                                        raise common.ContractError("post-load observer is not ready")
+                                    control.post_load_start = control.begin_post_load()
+                                    at = control.post_load_start["startedAt"]
                                 else:
                                     at = common.now()
                                 control.phase_windows[-1]["measurementEndedAt"] = at
@@ -267,6 +267,11 @@ class LoadControl:
                                 if any(phase.get(field) != window.get(field) for field in ("id", "measurementStartedAt", "measurementEndedAt")):
                                     raise common.ContractError("phase power windows must use measurement-node boundaries")
                             control.result = value
+                    except ExecutionError as error:
+                        control.error = error
+                        control.finished.set()
+                        self.reply(503, {"error": str(error)})
+                        return
                     except (ValueError, TypeError, KeyError, common.ContractError, OSError, subprocess.SubprocessError) as error:
                         control.error = common.ContractError(f"invalid external load result: {error}")
                         control.finished.set()
@@ -698,28 +703,51 @@ def execute_active(request: dict[str, Any], process: subprocess.Popen, session: 
     started_at, started = common.now(), time.monotonic()
     if sampler is not None:
         sampler.start()
-    def finalize_measurement() -> dict[str, Any]:
-        if sampler is not None:
-            memory = sampler.stop()
-        else:
-            peak, source = memory_peak()
-            memory = {"memoryBytes": peak, "memorySource": source}
-        ended_at = common.now()
-        elapsed = time.monotonic() - started
-        common.publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
-        return {"memory": memory, "endedAt": ended_at, "elapsed": elapsed,
-                "processCPU": time.process_time() - process_before, "cpuStat": common.cpu_stat()}
+    def begin_post_load() -> dict[str, Any]:
+        before = session.counts()
+        session.connection.close()
+        return {"countersBefore": before, "startedAt": common.now(), "started": time.monotonic()}
 
-    control.finalize_measurement = finalize_measurement
+    control.begin_post_load = begin_post_load
     record_stage("Execution")
     control.ready.set()
     uploaded = control.wait_result(process)
     phases = uploaded["phases"]
-    observation = control.final_observation
-    if observation is None:
-        raise common.ContractError("load result lacks frozen measurement-end observations")
-    elapsed, ended_at, memory = observation["elapsed"], observation["endedAt"], observation["memory"]
-    process_cpu, stat_after = observation["processCPU"], observation["cpuStat"]
+    # Start at the final drained phase marker, so upload/decode cannot hide the
+    # beginning of stabilization or restart its request-free observation clock.
+    post_start = control.post_load_start
+    if post_start is None:
+        raise common.ContractError("load result lacks the final drained phase post-load boundary")
+    before = post_start["countersBefore"]
+    post_started_at, post_started = post_start["startedAt"], post_start["started"]
+    post_duration = measurement["operatingPoints"]["postLoadDurationSeconds"]
+    while True:
+        if process.poll() is not None:
+            raise ExecutionError("native actor exited during post-load observation")
+        remaining = post_duration - (time.monotonic() - post_started)
+        if remaining <= 0:
+            break
+        time.sleep(min(common.SIGNAL_POLL_SECONDS, remaining))
+    after = session.counts()
+    if after != before:
+        raise common.ContractError("actor counters changed during post-load observation")
+    validate_metadata(session.metadata(), request, cpu_max, affinity, cpuset)
+    if process.poll() is not None:
+        raise ExecutionError("native actor exited during post-load observation")
+    post_ended_at = common.now()
+    post_load = {"startedAt": post_started_at, "endedAt": post_ended_at,
+                 "durationSecondsMonotonic": time.monotonic() - post_started,
+                 "actorPID": process.pid, "modelResidentAtEnd": True,
+                 "countersBefore": before, "countersAfter": after}
+    if sampler is not None:
+        memory = sampler.stop()
+    else:
+        peak, source = memory_peak()
+        memory = {"memoryBytes": peak, "memorySource": source}
+    ended_at = post_ended_at
+    elapsed = time.monotonic() - started
+    process_cpu, stat_after = time.process_time() - process_before, common.cpu_stat()
+    common.publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
     record_stage("ResultValidation")
     latencies = [latency for phase in phases for latency in phase["latencyMs"]]
     completed_inputs = sum(phase["completedInputs"] for phase in phases)
@@ -734,6 +762,7 @@ def execute_active(request: dict[str, Any], process: subprocess.Popen, session: 
             "measurementElapsedSecondsMonotonic": elapsed,
             "cpuContract": common.runtime_cpu_evidence(cpu_max, affinity, cpuset, process_cpu, stat_before, stat_after),
             "derivedExecutionContract": common.derived_contract(run), "phases": phases, "supplySizing": uploaded["supplySizing"],
+            "postLoad": post_load,
             "completionIndex": 0, "inputs": state["preprocessor"]["inputs"], "measurementIterations": 0,
             "targetDurationSecondsPerRepetition": float(measurement["durationSeconds"]),
             "latencyMs": {"mean": sum(latencies) / len(latencies),

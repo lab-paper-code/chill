@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { parseMeasurementDocument } from "./measurement-document.ts"
 import { parseCatalogManifest } from "./catalog-manifest.ts"
+import { readFileSync } from "node:fs"
+import { measurementRequestExample } from "./measurement-guidance.ts"
 
 const envelope = "apiVersion: edge.dacs.io/v1alpha1\nkind: BatchEnergyOptimization\nmetadata: {name: producer-request, namespace: lab}\n"
 
@@ -34,6 +36,23 @@ test("document envelope rejects wrong kinds, versions and changed namespaces wit
   assert.throws(() => parseMeasurementDocument(source, "other"))
   for (const invalid of [source.replace("BatchEnergyOptimization", "Dataset"), source.replace("v1alpha1", "v2"), source.replace("name: producer-request", "name: ''"), envelope + "spec: []", "name: short-form\nspec: {}", source + "\n---\nspec: {}"])
     assert.throws(() => parseMeasurementDocument(invalid, "lab"))
+})
+
+test("provided sample and authoring reference include all required operating point inputs",()=>{
+  const sample=parseMeasurementDocument(readFileSync(new URL("../../config/samples/profiling/edge_v1alpha1_batchenergyoptimization.yaml",import.meta.url),"utf8"),"chill-system")
+  const active=sample.spec.activeProtocol as Record<string,unknown>
+  const points=active.operatingPoints as Record<string,unknown>
+  assert.ok((points.utilizations as number[]).length>0)
+  assert.ok((points.utilizations as number[]).every(value=>value>0&&value<1))
+  assert.ok(Number(points.sparseMeanGapMilliseconds)>0)
+  for(const field of ["phaseDurationSeconds","postLoadDurationSeconds","requestLifetimeSeconds","deliveryMarginMilliseconds","framedDecodedRequestUpperBytes"]) {
+    assert.ok(Number.isInteger(points[field])&&Number(points[field])>0,field)
+    assert.match(measurementRequestExample,new RegExp(`${field}:`))
+  }
+  assert.ok(Number(points.phaseDurationSeconds)>=30)
+  assert.equal(active.durationSeconds,Number(points.phaseDurationSeconds)*((points.utilizations as number[]).length+2)+Number(points.postLoadDurationSeconds))
+  assert.ok(Number((active.metricObservation as Record<string,unknown>).durationSeconds)>Number(active.durationSeconds))
+  for(const field of ["utilizations","sparseMeanGapMilliseconds"])assert.match(measurementRequestExample,new RegExp(`${field}:`))
 })
 
 test("measurement and catalog imports retain shared JSON transport and default alias protections", () => {

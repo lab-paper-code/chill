@@ -79,7 +79,7 @@ func TestPreparerAdmitsMetricScheduleWithinSelectedExecutionPolicy(t *testing.T)
 			wantDuration := test.duration
 			if !test.idle {
 				points := config.Measurement.OperatingPoints
-				phaseFloor := points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+				phaseFloor := points.PhaseDurationSeconds*(len(points.Utilizations)+2) + points.PostLoadDurationSeconds
 				wantDuration = max(test.duration, phaseFloor+max(0, test.duration-config.Measurement.DurationSeconds))
 			}
 			prepared, err := newFixturePreparer(t, resolvers).Prepare(context.Background(), fixtureRequest(config))

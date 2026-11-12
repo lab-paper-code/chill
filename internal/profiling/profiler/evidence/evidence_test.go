@@ -60,6 +60,75 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	}
 }
 
+func TestPostLoadRawRetainsZeroInferenceAndStabilizationPowerSeries(t *testing.T) {
+	raw := validRaw(t, loadRunConfig(t))
+	encoded, err := raw.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retained RawMeasurement
+	if err := json.Unmarshal(encoded, &retained); err != nil {
+		t.Fatal(err)
+	}
+	post := retained.Runtime.PostLoad
+	if post == nil || post.CountersBefore != post.CountersAfter || !post.ModelResidentAtEnd {
+		t.Fatalf("retained raw lost loaded zero-inference proof: %+v", post)
+	}
+	start, err := time.Parse(time.RFC3339Nano, post.StartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end, err := time.Parse(time.RFC3339Nano, post.EndedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := 0
+	for _, sample := range retained.Metrics.Samples {
+		if !sample.ObservedAt.Before(start) && !sample.ObservedAt.After(end) {
+			samples++
+			if sample.Watts != 5.2 {
+				t.Fatalf("post-load power changed during raw round trip: %+v", sample)
+			}
+		}
+	}
+	if samples != retained.RunConfig.Measurement.OperatingPoints.PostLoadDurationSeconds {
+		t.Fatalf("post-load stabilization series lost: got %d samples", samples)
+	}
+	for _, mutate := range []func(*profilingrun.PostLoadObservation){
+		func(p *profilingrun.PostLoadObservation) { p.CountersAfter.Executions++ },
+		func(p *profilingrun.PostLoadObservation) { p.CountersAfter.AcceptedRequests++ },
+		func(p *profilingrun.PostLoadObservation) { p.CountersAfter.CompletedRequests++ },
+		func(p *profilingrun.PostLoadObservation) { p.ModelResidentAtEnd = false },
+		func(p *profilingrun.PostLoadObservation) { p.ActorPID = 0 },
+		func(p *profilingrun.PostLoadObservation) { p.DurationSecondsMonotonic-- },
+		func(p *profilingrun.PostLoadObservation) { p.StartedAt = retained.Runtime.MeasurementStartedAt },
+		func(p *profilingrun.PostLoadObservation) { p.EndedAt = p.StartedAt },
+	} {
+		changed := *post
+		mutate(&changed)
+		retained.Runtime.PostLoad = &changed
+		if err := retained.Validate(); err == nil {
+			t.Fatalf("invalid post-load raw admitted: %+v", changed)
+		}
+	}
+	retained.Runtime.PostLoad = nil
+	if err := retained.Validate(); err == nil {
+		t.Fatal("active raw without post-load proof admitted")
+	}
+	early := raw
+	early.Metrics.EndedAt = start
+	early.Metrics.Samples = nil
+	for _, sample := range raw.Metrics.Samples {
+		if !sample.ObservedAt.After(start) {
+			early.Metrics.Samples = append(early.Metrics.Samples, sample)
+		}
+	}
+	early.Metrics.Summary = metricobserver.Summarize(early.Metrics)
+	if err := early.Validate(); err == nil || !strings.Contains(err.Error(), "post-load") {
+		t.Fatalf("raw admitted an observer that stopped before post-load: %v", err)
+	}
+}
+
 func TestCompositeMetricSourceRejectsRetiredRawSchemas(t *testing.T) {
 	config := loadRunConfig(t)
 	active := validRaw(t, config)
@@ -536,7 +605,7 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 	targetDuration := float64(config.Measurement.DurationSeconds)
 	windowSeconds := 30
 	if points := config.Measurement.OperatingPoints; points != nil {
-		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+		windowSeconds = points.PhaseDurationSeconds*(len(points.Utilizations)+2) + points.PostLoadDurationSeconds
 	}
 	raw := RawMeasurement{
 		SchemaVersion: RawMeasurementSchemaVersion,
@@ -738,7 +807,7 @@ func validExecutionEvidenceBytes(
 	location := time.FixedZone("KST", 9*60*60)
 	completed := time.Date(2026, time.July, 16, 12, 1, 0, 0, location)
 	if points := config.Measurement.OperatingPoints; points != nil {
-		completed = completed.Add(time.Duration(points.PhaseDurationSeconds*(len(points.Utilizations)+2)) * time.Second)
+		completed = completed.Add(time.Duration(points.PhaseDurationSeconds*(len(points.Utilizations)+2)+points.PostLoadDurationSeconds) * time.Second)
 	}
 	return ExecutionEvidence{
 		SchemaVersion: ExecutionEvidenceSchemaVersion,
@@ -882,8 +951,8 @@ func terminalContainers(config profilingrun.RunConfig, completed time.Time) []Co
 
 func TestRawCompactResponseRejectsRepeatedNativeBatchProof(t *testing.T) {
 	raw := validRaw(t, loadRunConfig(t))
-	if raw.SchemaVersion != "chill.dacs.io/profiling-raw-measurement.v1alpha13" ||
-		raw.Runtime.SchemaVersion != "chill.dacs.io/batch-characterization.v1alpha13" {
+	if raw.SchemaVersion != "chill.dacs.io/profiling-raw-measurement.v1alpha14" ||
+		raw.Runtime.SchemaVersion != "chill.dacs.io/batch-characterization.v1alpha14" {
 		t.Fatal("raw/runtime schema versions disagree with compact membership")
 	}
 	encoded, err := json.Marshal(raw)

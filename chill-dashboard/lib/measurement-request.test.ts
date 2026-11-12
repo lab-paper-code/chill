@@ -15,6 +15,7 @@ import * as measurementHelpers from "./measurements.ts"
 import * as measurementSummary from "./measurement-summary.ts"
 
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
+const operatingPoints={utilizations:[0.25,0.5,0.75],sparseMeanGapMilliseconds:1000.5,phaseDurationSeconds:30,postLoadDurationSeconds:37,requestLifetimeSeconds:30,deliveryMarginMilliseconds:100,framedDecodedRequestUpperBytes:2097152}
 const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
 
 
@@ -46,6 +47,32 @@ test("CPU-free catalog fallback retains the measured protocol",()=>{
   assert.deepEqual(selected?.spec,{...plan.spec,retryLimit:NaN})
   assert.match(selected?.source??"",/profile/)
   assert.equal(requestDefaults({...condition,path:"cpu"},[],profiles),null)
+})
+
+test("direct authoring emits every operating point input without inherited protocol",()=>{
+  const context:requestHelpers.Context={models:[],workloads:[],classes:[],plans:[],preprocessors:[],datasets:[],profiles:[]}
+  const values:requestHelpers.Advanced={warmup:5,activeDuration:187,activeWindow:188,activeInterval:1000,activeTimeout:500,settling:2,idleDuration:30,idleWindow:31,idleInterval:1000,idleTimeout:500,retryLimit:1,utilizations:"0.25, 0.5, 0.75",sparseMeanGap:1000.5,phaseDuration:30,postLoadDuration:37,requestLifetime:30,deliveryMargin:100,framedDecodedRequestUpperBytes:2097152}
+  const draft={...requestHelpers.emptyDraft,protocol:{values,from:null}}
+  assert.equal(requestHelpers.view(draft,context).problem("advanced"),"")
+  const body=requestHelpers.manifest(draft,context,"ns")
+  assert.deepEqual(body.spec.activeProtocol.operatingPoints,operatingPoints)
+  for(const patch of [{utilizations:""},{utilizations:"0, 0.5"},{utilizations:"1"},{utilizations:"0.5,"},{sparseMeanGap:0},{phaseDuration:29},{postLoadDuration:0},{postLoadDuration:1.5},{postLoadDuration:NaN},{requestLifetime:0},{deliveryMargin:0},{framedDecodedRequestUpperBytes:0}]) {
+    assert.notEqual(requestHelpers.view({...draft,protocol:{values:{...values,...patch},from:null}},context).problem("advanced"),"",JSON.stringify(patch))
+  }
+})
+
+test("request and profile defaults freeze operating point inputs, while old requests require author input",()=>{
+  const source={...plan,spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,operatingPoints}}}
+  const profile={id:"native-profile",nodeName:condition.node,measuredAt:"2026-11-01",condition:{logicalModel:condition.model,deviceClass:condition.deviceClass,powerMode:condition.powerMode,artifact:{executionPath:condition.path},preprocessor:{name:"pre"},activeProtocol:{warmupIterations:5,durationSeconds:187,dataset:{name:"data"},operatingPoints:{...operatingPoints,queueBytesCap:67108864},metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:188},idleProtocol:{settlingDurationSeconds:2,durationSeconds:30,metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:31}}} as unknown as NonNullable<ProfilesView["profiles"]>[number]
+  for(const [plans,profiles] of [[[source],[]],[[],[profile]]] as [MeasurementPlan[],ProfilesView["profiles"]][]) {
+    const context:requestHelpers.Context={models:[],workloads:[],classes:[],preprocessors:[],datasets:[],plans,profiles}
+    const draft=requestHelpers.fillDefaults({...requestHelpers.emptyDraft,...condition},context)
+    assert.equal(draft.protocol?.values.postLoadDuration,37)
+    assert.deepEqual(requestHelpers.manifest(draft,context,"ns").spec.activeProtocol.operatingPoints,operatingPoints)
+  }
+  const context:requestHelpers.Context={models:[],workloads:[],classes:[],preprocessors:[],datasets:[],plans:[plan],profiles:[]}
+  const old=requestHelpers.fillDefaults({...requestHelpers.emptyDraft,...condition},context)
+  assert.notEqual(requestHelpers.view(old,context).problem("advanced"),"")
 })
 
 test("unmeasured targets reuse successful protocol without copying another device's Node",()=>{

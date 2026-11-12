@@ -56,12 +56,17 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				Workload:         "mobilenet",
 				WarmupIterations: 20,
-				DurationSeconds:  30,
+				DurationSeconds:  120,
 				Dataset:          "vqav2-val-subset",
+				OperatingPoints: edgev1alpha1.MeasurementOperatingPointsSpec{
+					Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
+					PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30, RequestLifetimeSeconds: 30,
+					DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024,
+				},
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000,
 					TimeoutMilliseconds:  500,
-					DurationSeconds:      31,
+					DurationSeconds:      121,
 				},
 			},
 			IdleProtocol: edgev1alpha1.IdleProtocolSpec{

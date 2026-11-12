@@ -121,6 +121,7 @@ func authorityRoot(config profilingrun.RunConfig) (*edge.BatchEnergyOptimization
 				OperatingPoints: edge.MeasurementOperatingPointsSpec{
 					Utilizations: slices.Clone(points.Utilizations), SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds,
 					PhaseDurationSeconds: int32(points.PhaseDurationSeconds), RequestLifetimeSeconds: int32(points.RequestLifetimeSeconds),
+					PostLoadDurationSeconds:        int32(points.PostLoadDurationSeconds),
 					DeliveryMarginMilliseconds:     int32(points.DeliveryMarginMilliseconds),
 					FramedDecodedRequestUpperBytes: points.FramedDecodedRequestUpperBytes,
 				},

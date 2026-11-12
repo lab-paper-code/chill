@@ -153,6 +153,9 @@ type MeasurementOperatingPointsSpec struct {
 	SparseMeanGapMilliseconds float64 `json:"sparseMeanGapMilliseconds"`
 	// +kubebuilder:validation:Minimum=30
 	PhaseDurationSeconds int32 `json:"phaseDurationSeconds"`
+	// PostLoadDurationSeconds observes the same loaded actor without inference after the final load phase.
+	// +kubebuilder:validation:Minimum=1
+	PostLoadDurationSeconds int32 `json:"postLoadDurationSeconds"`
 	// +kubebuilder:validation:Minimum=1
 	RequestLifetimeSeconds int32 `json:"requestLifetimeSeconds"`
 	// +kubebuilder:validation:Minimum=1

@@ -14,6 +14,7 @@ func ProjectOperatingPoints(p *api.MeasurementOperatingPointsSpec) *profilingrun
 	return &profilingrun.OperatingPointsContract{
 		Utilizations: slices.Clone(p.Utilizations), SparseMeanGapMilliseconds: p.SparseMeanGapMilliseconds,
 		PhaseDurationSeconds: int(p.PhaseDurationSeconds), RequestLifetimeSeconds: int(p.RequestLifetimeSeconds),
+		PostLoadDurationSeconds:    int(p.PostLoadDurationSeconds),
 		DeliveryMarginMilliseconds: int(p.DeliveryMarginMilliseconds), FramedDecodedRequestUpperBytes: p.FramedDecodedRequestUpperBytes,
 	}
 }

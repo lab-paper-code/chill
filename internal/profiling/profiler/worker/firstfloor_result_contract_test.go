@@ -66,17 +66,19 @@ class FakeControl:
     def wait_result(self, process):
         clock[0] = sum(phase["measurementElapsedSecondsMonotonic"] for phase in uploaded["phases"])
         FakeActor.counter = sum(len(phase["nativeSamples"]) for phase in uploaded["phases"])
+        self.post_load_start = self.begin_post_load()
         return uploaded
     def close(self):
         pass
 
-process = mock.Mock(poll=mock.Mock(return_value=None))
+process = mock.Mock(pid=123, poll=mock.Mock(return_value=None))
 with mock.patch.object(measurement, "FirstfloorSession", FakeActor), \
         mock.patch.object(measurement, "LoadControl", FakeControl), \
         mock.patch.object(measurement.subprocess, "Popen", return_value=process), \
         mock.patch.object(measurement, "memory_peak", return_value=(123456, "cgroup-v2-memory.peak:runtime-container-lifetime")), \
         mock.patch.object(common, "cpu_stat", return_value={"usage_usec": 1}), \
         mock.patch.object(common.time, "monotonic", side_effect=lambda: clock[0]), \
+        mock.patch.object(common.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
         mock.patch.object(common.time, "perf_counter_ns", side_effect=lambda: int(clock[0] * 1e9)), \
         mock.patch.object(common, "now", side_effect=lambda: (epoch + timedelta(seconds=clock[0])).isoformat()):
     result = measurement.execute_sampled(request, work, run, "x86_64", CPU_MAX, AFFINITY, CPUSET, None)

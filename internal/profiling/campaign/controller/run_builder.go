@@ -131,6 +131,7 @@ func applyFrozenRunProtocol(run *edgev1alpha1.ProfilingRun, plan profilederivati
 		measurement.OperatingPoints = &edgev1alpha1.MeasurementOperatingPointsSpec{
 			Utilizations: append([]float64(nil), p.Utilizations...), SparseMeanGapMilliseconds: p.SparseMeanGapMilliseconds,
 			PhaseDurationSeconds: int32(p.PhaseDurationSeconds), RequestLifetimeSeconds: int32(p.RequestLifetimeSeconds),
+			PostLoadDurationSeconds:        int32(p.PostLoadDurationSeconds),
 			DeliveryMarginMilliseconds:     int32(p.DeliveryMarginMilliseconds),
 			FramedDecodedRequestUpperBytes: p.FramedDecodedRequestUpperBytes,
 		}

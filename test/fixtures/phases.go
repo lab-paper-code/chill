@@ -13,6 +13,7 @@ import (
 type PhaseOptions struct {
 	StartedAt                 time.Time
 	Duration                  time.Duration
+	PostLoadDuration          time.Duration
 	Batch                     int
 	Samples                   int
 	Workers                   int
@@ -134,10 +135,19 @@ func ActivePhases[P any](options PhaseOptions) []P {
 // ApplyActivePhases replaces only phase-dependent runtime fields.
 func ApplyActivePhases[R any](result *R, options PhaseOptions) {
 	phases := ActivePhases[map[string]any](options)
-	duration := options.Duration * time.Duration(len(phases))
+	loadDuration := options.Duration * time.Duration(len(phases))
+	duration := loadDuration + options.PostLoadDuration
+	calls := options.Samples * len(phases)
+	counters := map[string]any{"acceptedRequests": calls * options.Batch, "completedRequests": calls * options.Batch, "executions": calls}
 	payload, err := json.Marshal(map[string]any{
 		"phases": phases, "inferenceCount": options.Samples * len(phases),
-		"supplySizing":                       options.SupplySizing,
+		"supplySizing": options.SupplySizing,
+		"postLoad": map[string]any{
+			"startedAt":                options.StartedAt.Add(loadDuration).Format(time.RFC3339Nano),
+			"endedAt":                  options.StartedAt.Add(duration).Format(time.RFC3339Nano),
+			"durationSecondsMonotonic": options.PostLoadDuration.Seconds(),
+			"actorPID":                 123, "modelResidentAtEnd": true, "countersBefore": counters, "countersAfter": counters,
+		},
 		"measurementStartedAt":               options.StartedAt.Format(time.RFC3339Nano),
 		"measurementEndedAt":                 options.StartedAt.Add(duration).Format(time.RFC3339Nano),
 		"measurementElapsedSecondsMonotonic": duration.Seconds(),

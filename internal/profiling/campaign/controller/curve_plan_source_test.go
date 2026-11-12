@@ -165,7 +165,7 @@ func TestCurvePlanSourceFreezesWithoutArchiveAndRecoversWorkloadBeforeChildren(t
 					Preprocessor: config.State.Preprocessor.Name,
 				},
 			}
-			parent.Spec.ActiveProtocol.DurationSeconds = 90
+			parent.Spec.ActiveProtocol.DurationSeconds = int32(config.Measurement.DurationSeconds)
 			parent.Spec.ActiveProtocol.Dataset = config.Measurement.Dataset.Name
 			metric := edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: int32(config.Metrics.IntervalMilliseconds),

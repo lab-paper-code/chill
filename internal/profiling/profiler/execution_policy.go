@@ -3,6 +3,7 @@ package profiler
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
@@ -77,6 +78,25 @@ func DeriveExecutionPlan(
 	}
 
 	metricDuration := time.Duration(config.Metrics.DurationSeconds) * time.Second
+	if points := config.Measurement.OperatingPoints; points != nil {
+		// Poisson arrivals have no finite completion upper bound. Freeze the
+		// expected sparse sample-floor exposure, including the collector's
+		// first unknown-gap batch, then retain every phase's drain allowance.
+		sparseSeconds := (float64(config.Measurement.MinServiceSamples) + 1) *
+			float64(config.Measurement.Batch) * points.SparseMeanGapMilliseconds / 1000
+		phaseCount := len(points.Utilizations) + 2
+		executionSeconds := max(float64(points.PhaseDurationSeconds), sparseSeconds) +
+			float64(points.PhaseDurationSeconds)*float64(phaseCount-1) +
+			(float64(points.RequestLifetimeSeconds)+float64(points.DeliveryMarginMilliseconds)/1000)*float64(phaseCount) +
+			float64(points.PostLoadDurationSeconds)
+		observationMargin := max(0, config.Metrics.DurationSeconds-config.Measurement.DurationSeconds)
+		executionSeconds = math.Ceil(executionSeconds + float64(observationMargin))
+		if math.IsNaN(executionSeconds) || math.IsInf(executionSeconds, 0) ||
+			executionSeconds > float64(int(^uint32(0)>>1)) {
+			return ExecutionPlan{}, errors.New("active execution budget exceeds supported seconds")
+		}
+		metricDuration = max(metricDuration, time.Duration(executionSeconds)*time.Second)
+	}
 	settlingDuration := time.Duration(config.Measurement.SettlingDurationSeconds) * time.Second
 	interval := time.Duration(config.Metrics.IntervalMilliseconds) * time.Millisecond
 	// Observers, result readers, capacity and the Job use this same lifecycle.

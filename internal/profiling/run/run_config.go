@@ -285,8 +285,8 @@ func (i RunConfig) validateMeasurementMode() error {
 	if err := i.Measurement.OperatingPoints.Validate(); err != nil {
 		return err
 	}
-	if i.Measurement.DurationSeconds != i.Measurement.OperatingPoints.PhaseDurationSeconds*(len(i.Measurement.OperatingPoints.Utilizations)+2) {
-		return errors.New("active measurement duration must cover exactly its named phase duration floor")
+	if i.Measurement.DurationSeconds != i.Measurement.OperatingPoints.PhaseDurationSeconds*(len(i.Measurement.OperatingPoints.Utilizations)+2)+i.Measurement.OperatingPoints.PostLoadDurationSeconds {
+		return errors.New("active measurement duration must cover exactly its named phase floors and post-load window")
 	}
 	if !cleanValue(i.LoadOriginNode) || i.LoadOriginNode == i.TargetNode.Name || i.LoadOriginGatewayPod == nil ||
 		!cleanValue(i.LoadOriginGatewayPod.Namespace) || !cleanValue(i.LoadOriginGatewayPod.Name) || !cleanValue(i.LoadOriginGatewayPod.UID) {

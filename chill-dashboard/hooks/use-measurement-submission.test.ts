@@ -16,7 +16,8 @@ import * as measurementHelpers from "../lib/measurements.ts"
 import * as measurementSummary from "../lib/measurement-summary.ts"
 
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
-const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
+const operatingPoints={utilizations:[0.25,0.5,0.75],sparseMeanGapMilliseconds:1000,phaseDurationSeconds:30,postLoadDurationSeconds:30,requestLifetimeSeconds:30,deliveryMarginMilliseconds:100,framedDecodedRequestUpperBytes:2097152}
+const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",operatingPoints,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
 
 function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ,patch?:Record<string,unknown>,unknown=false,interact?:(render:()=>ReactNode)=>ReactNode) {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
@@ -139,6 +140,7 @@ test("the guided form submits current conditions without diagnostics despite cat
   })
   assert.equal(submitted.at(-1)?.path,"v1/namespaces/ns/batch-energy-optimizations")
   assert.equal((submitted.at(-1)?.body.spec.activeProtocol as Record<string,unknown>).workload,"chosen-workload")
+  assert.deepEqual((submitted.at(-1)?.body.spec.activeProtocol as Record<string,unknown>).operatingPoints,operatingPoints)
 })
 test("defaults and a uniquely matching profile never choose a Workload; missing selection renders an error",()=>{
   const profile={id:"profile",nodeName:condition.node,measuredAt:"2026-11-05",condition:{logicalModel:condition.model,deviceClass:condition.deviceClass,powerMode:condition.powerMode,artifact:{executionPath:condition.path},preprocessor:{name:"pre"},activeProtocol:{workloadName:"chosen-workload",warmupIterations:5,durationSeconds:30,dataset:{name:"data"},metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:30},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:11}}}
@@ -227,6 +229,8 @@ test("new and copied requests construct CPU-free manifests with the complete mea
     assert.equal(body.metadata.namespace,"ns")
     assert.deepEqual(body.spec,{...source.spec,activeProtocol:{...source.spec.activeProtocol,workload:""}})
     assert.ok(!Object.hasOwn(body.spec,"batchSizes"))
+    assert.deepEqual(body.spec.activeProtocol.operatingPoints,operatingPoints)
+    assert.match(renderRequest(props,"","",1),/부하 종료 후 전력 기록 시간 · 초/)
     assert.equal(source.spec.retryLimit,2)
   }
 })

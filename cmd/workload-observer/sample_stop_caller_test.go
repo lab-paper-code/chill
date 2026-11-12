@@ -237,10 +237,15 @@ func sampleStopRuntimeRecord(
 	}
 	workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap,
 		points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds), float64(maximum)/1e9)
-	fixtures.ApplyActivePhases(&result, fixtures.PhaseOptions{StartedAt: started, Duration: ended.Sub(started) / time.Duration(phaseCount),
-		Batch: config.Measurement.Batch, Samples: count, Workers: workers, Utilizations: points.Utilizations,
+	postDuration := time.Duration(points.PostLoadDurationSeconds) * time.Second
+	fixtures.ApplyActivePhases(&result, fixtures.PhaseOptions{StartedAt: started, Duration: (ended.Sub(started) - postDuration) / time.Duration(phaseCount),
+		PostLoadDuration: postDuration,
+		Batch:            config.Measurement.Batch, Samples: count, Workers: workers, Utilizations: points.Utilizations,
 		SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds, PodUID: podUID, SupplySizing: sizing})
 	result.MeasurementEndedAt, result.MeasurementElapsedSeconds = ended.Format(time.RFC3339Nano), ended.Sub(started).Seconds()
+	result.PostLoad.StartedAt = native[len(native)-1].FinishedAt.Format(time.RFC3339Nano)
+	result.PostLoad.EndedAt = ended.Format(time.RFC3339Nano)
+	result.PostLoad.DurationSecondsMonotonic = ended.Sub(native[len(native)-1].FinishedAt).Seconds()
 	for phaseIndex := range result.Phases {
 		phase := &result.Phases[phaseIndex]
 		phase.NativeSamples = native[phaseIndex*count : (phaseIndex+1)*count]
@@ -249,21 +254,24 @@ func sampleStopRuntimeRecord(
 		phase.MeasurementElapsedSeconds = end.Sub(start).Seconds()
 		for index := range phase.NativeSamples {
 			sample := &phase.NativeSamples[index]
+			sample.RequestIDs = make([]string, config.Measurement.Batch)
 			phase.LatencyMilliseconds[index] = sample.NativeRequestMilliseconds
 			for member := range config.Measurement.Batch {
 				request := &phase.Requests[index*config.Measurement.Batch+member]
+				sample.RequestIDs[member] = request.RequestID
 				request.RecordID = sample.RecordIDs[member]
 				request.ArrivalAt, request.SentAt, request.CompletedAt = sample.StartedAt, sample.StartedAt, sample.FinishedAt
 				request.LatencyMilliseconds = sample.NativeRequestMilliseconds
 				progress := &request.Response.Progress
 				progress.At, progress.BatchID = sample.FinishedAt, sample.BatchID
-				progress.ServiceSample = &sample.ServiceSample
-				progress.BatchStartedAt, progress.BatchFinishedAt = &sample.StartedAt, &sample.FinishedAt
-				progress.ServiceMS, progress.BackendMS, progress.NativeElapsedMS = sample.RunnerServiceMilliseconds, sample.BackendCallMilliseconds, sample.NativeRequestMilliseconds
-				progress.PreprocessMS, progress.PostprocessMS = 0, 0
+				progress.ServiceMS, progress.NativeElapsedMS = sample.RunnerServiceMilliseconds, sample.NativeRequestMilliseconds
 				zero, finish := int64(0), sample.ServiceDurationNanos
 				progress.NativeHTTP = &firstfloor.HTTPRequestTiming{HandlerEnteredAt: sample.StartedAt, ReceivedNanos: &zero, EnqueueNanos: &zero, FinishedNanos: &finish}
 			}
+		}
+		if phase.Kind != "saturation" {
+			phase.IssueElapsedSeconds = phase.Requests[len(phase.Requests)-1].SentAt.Sub(start).Seconds()
+			phase.AchievedArrivalRatePerSecond = float64(phase.SentInputs) / phase.IssueElapsedSeconds
 		}
 	}
 	saturation := &result.Phases[1]

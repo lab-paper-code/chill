@@ -11,6 +11,11 @@ from collections import defaultdict
 from pathlib import Path
 from unittest.mock import patch
 
+OPERATING_POINTS = {"utilizations": [.25, .5, .75], "sparseMeanGapMilliseconds": 1000,
+                    "phaseDurationSeconds": 30, "postLoadDurationSeconds": 37,
+                    "requestLifetimeSeconds": 30, "deliveryMarginMilliseconds": 100,
+                    "framedDecodedRequestUpperBytes": 2097152}
+
 
 def load_coverage_plan():
     with tempfile.TemporaryDirectory() as temp:
@@ -66,6 +71,7 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
                         'state': {'targetNode': 'node', 'candidate': {'modelSpec': model, 'deviceClass': device,
                                   'executionPath': path, 'powerMode': source_mode, 'preprocessor': 'pre'}},
                         'activeProtocol': {'durationSeconds': 60, 'dataset': 'dataset',
+                                           'operatingPoints': copy.deepcopy(OPERATING_POINTS),
                                            'metricObservation': {'durationSeconds': 62}},
                         'idleProtocol': {'durationSeconds': 10, 'metricObservation': {'durationSeconds': 12}},
                         'retryLimit': 1}}
@@ -237,7 +243,10 @@ def timing_generation_self_check(gen):
         assert planned['cells'][0]['minimumServiceSamplesPerTrial'] == 299
         spec = planned['manifests'][0]['spec']
         assert spec['activeProtocol']['workload'] == 'actual-workload'
-        assert spec['activeProtocol']['durationSeconds'] == 30
+        assert spec['activeProtocol']['durationSeconds'] == 187
+        assert spec['activeProtocol']['metricObservation']['durationSeconds'] == 189
+        assert spec['activeProtocol']['operatingPoints'] == OPERATING_POINTS
+        assert planned['cells'][0]['activeSecondsPerSession'] == 187
         assert spec['trialsPerBatch'] == 3
     higher_mode = generate_case(gen, image='new-runtime', timing_seconds=61,
         power_mode='high', timing_power_mode='low', variant=False, cell_annotation=False)
@@ -329,12 +338,19 @@ def coverage_self_check(gen):
                                       "settlingDurationSeconds": 2, "dataset": {"name": "dataset"},
                                       "metricIntervalMilliseconds": 1000, "metricTimeoutMilliseconds": 500,
                                       "metricDurationSeconds": 12}
+    operating = copy.deepcopy(OPERATING_POINTS)
+    profile["condition"]["activeProtocol"]["operatingPoints"] = copy.deepcopy(operating)
+    profile["condition"]["activeProtocol"]["operatingPoints"]["queueBytesCap"] = 67108864
     different = copy.deepcopy(plan)
     different["spec"]["state"]["targetNode"] = "other"
     spec, source = gen.coverage_defaults(cell, "node", [different], [profile])
     assert source == "profile:profile" and spec["retryLimit"] == 1
     assert "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
     assert "settlingDurationSeconds" not in spec["activeProtocol"]
+    assert spec["activeProtocol"]["operatingPoints"] == operating
+    spec["activeProtocol"]["operatingPoints"]["utilizations"][0] = .1
+    spec["activeProtocol"]["operatingPoints"]["postLoadDurationSeconds"] = 1
+    assert profile["condition"]["activeProtocol"]["operatingPoints"] == dict(operating, queueBytesCap=67108864)
     execution_conditions = {"runtimeImage": "current-runtime", "curveSchema": gen.SHARED_CURVE_SCHEMA,
                             "evidenceSchema": gen.SHARED_EVIDENCE_SCHEMA}
     historical_conditions = dict(execution_conditions, runtimeImage="historical-runtime")
@@ -364,10 +380,12 @@ def coverage_self_check(gen):
     included, estimates, reason = gen.coverage_batch_plan(cell, [4, 1, 2], mixed, policy, execution_conditions=execution_conditions)
     assert included == [1, 2, 4] and reason is None
     active = {"durationSeconds": 60, "durationToleranceSeconds": 0,
+              "operatingPoints": copy.deepcopy(OPERATING_POINTS),
               "metricObservation": {"durationSeconds": 62}}
     gen.coverage_active_protocol(active, policy)
-    assert active["durationSeconds"] == 30 and active["durationToleranceSeconds"] == 0
-    assert active["metricObservation"]["durationSeconds"] == 32
+    assert active["durationSeconds"] == 187 and active["durationToleranceSeconds"] == 0
+    assert active["metricObservation"]["durationSeconds"] == 189
+    assert active["operatingPoints"] == OPERATING_POINTS
     facts = {"condition": {"logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"},
                           "powerMode": "mode", "runtimeImage": execution_conditions["runtimeImage"]},
              "request": {"name": "source", "uid": "source-uid"},

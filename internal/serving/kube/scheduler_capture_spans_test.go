@@ -7,7 +7,9 @@ import (
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"k8s.io/apimachinery/pkg/runtime"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
@@ -82,6 +84,60 @@ func TestSchedulerTickReusesRefreshListsAndRecordsCaptureSpans(t *testing.T) {
 						event.Window+event.RefreshList+event.SourceProbe+event.Rest != event.Capture {
 						t.Fatalf("capture sub-spans overlap, omit live I/O, or exceed capture: %+v; List duration=%s", event, listElapsed)
 					}
+				}
+			}
+		})
+	}
+}
+
+func TestSchedulerCaptureListsExactPodsOnlyForReturnEligibleOwner(t *testing.T) {
+	for _, running := range []bool{true, false} {
+		name := "return-eligible"
+		if running {
+			name = "parent-running"
+		}
+		t.Run(name, func(t *testing.T) {
+			controller := schedulerEmptyPoolController(t)
+			kube := controller.kube.(*kubefake.Clientset)
+			capture := func() {
+				t.Helper()
+				if _, err := controller.capture(context.Background(), time.Now(), controller.config); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var lists []ktesting.ListAction
+			kube.PrependReactor(listVerb, "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+				lists = append(lists, action.(ktesting.ListAction))
+				return false, nil, nil
+			})
+			capture()
+			baseline := len(lists)
+			lists = nil
+			ended := time.Now().Add(-time.Second)
+			parent := &actionRun{owner: "return-owner", reserved: true,
+				action: serving.Action{ID: "parent", Kind: transitionRunKind, Status: servingstate.NativeOperationComplete},
+				result: &servingstate.OperationResult{EndedAt: ended}}
+			if running {
+				parent.action.Status = servingstate.NativeOperationRunning
+				parent.result = nil
+			}
+			child := &actionRun{owner: parent.owner, reserved: true, proofParent: parent,
+				action: serving.Action{ID: "child", Status: servingstate.NativeOperationComplete},
+				result: &servingstate.OperationResult{EndedAt: ended}}
+			controller.runs[parent.action.ID], controller.runs[child.action.ID] = parent, child
+			capture()
+			want := baseline
+			if !running {
+				want++
+			}
+			if len(lists) != want {
+				t.Fatalf("Pod Lists=%d, want %d (parent running=%t)", len(lists), want, running)
+			}
+			if !running {
+				exact := lists[len(lists)-1]
+				if exact.GetNamespace() != controller.observer.config.Namespace ||
+					!exact.GetListRestrictions().Fields.Empty() || !exact.GetListRestrictions().Labels.Empty() {
+					t.Fatalf("return proof did not list every namespace Pod: %+v", exact)
 				}
 			}
 		})

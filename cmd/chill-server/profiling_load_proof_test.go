@@ -29,14 +29,14 @@ func profilingProofPair(id string) (profilingrun.PhaseRequest, native.Response) 
 func TestProfilingLoadCompactMembershipKeepsNativeOrder(t *testing.T) {
 	plan := profilingTestPlan("http://native")
 	plan.Batch = 2
-	collector := profilingPhaseCollector{plan: plan, groups: make(map[uint64]native.Progress), requests: make(map[string]int)}
+	collector, driver := profilingTestCollector(t, plan)
 	for _, id := range []string{"left", "right"} {
 		row, response := profilingProofPair(id)
 		if _, err := collector.add(row, response); err != nil {
 			t.Fatal(err)
 		}
 	}
-	rows, samples, latencies, err := collector.finish()
+	rows, samples, latencies, err := profilingTestFinishCollector(t, collector, driver)
 	if err != nil || len(rows) != 2 || len(samples) != 1 || len(latencies) != 1 || strings.Join(samples[0].RequestIDs, ",") != "right,left" || strings.Join(samples[0].RecordIDs, ",") != "record-right,record-left" {
 		t.Fatalf("compact evidence lost native membership order: samples=%+v err=%v", samples, err)
 	}
@@ -49,7 +49,7 @@ func TestProfilingLoadCompactMembershipKeepsNativeOrder(t *testing.T) {
 func TestProfilingLoadRetainsActualSendOrder(t *testing.T) {
 	plan := profilingTestPlan("http://native")
 	plan.Batch = 2
-	collector := profilingPhaseCollector{plan: plan, groups: make(map[uint64]native.Progress), requests: make(map[string]int)}
+	collector, driver := profilingTestCollector(t, plan)
 	for _, id := range []string{"left", "right"} {
 		row, response := profilingProofPair(id)
 		if id == "left" {
@@ -62,7 +62,7 @@ func TestProfilingLoadRetainsActualSendOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rows, _, _, err := collector.finish()
+	rows, _, _, err := profilingTestFinishCollector(t, collector, driver)
 	if err != nil || len(rows) != 2 || rows[0].RequestID != "right" || rows[1].RequestID != "left" || !rows[0].ArrivalAt.After(rows[1].ArrivalAt) {
 		t.Fatalf("diagnostic schedule overrode actual send order: rows=%+v err=%v", rows, err)
 	}
@@ -73,7 +73,7 @@ func TestProfilingLoadValidatesFullProofBeforeCompaction(t *testing.T) {
 		t.Run(corrupt, func(t *testing.T) {
 			plan := profilingTestPlan("http://native")
 			plan.Batch = 2
-			collector := profilingPhaseCollector{plan: plan, groups: make(map[uint64]native.Progress), requests: make(map[string]int)}
+			collector, _ := profilingTestCollector(t, plan)
 			row, response := profilingProofPair("left")
 			switch corrupt {
 			case "membership":
@@ -86,7 +86,7 @@ func TestProfilingLoadValidatesFullProofBeforeCompaction(t *testing.T) {
 			_, err := collector.add(row, response)
 			if corrupt == "incomplete" {
 				if err == nil {
-					_, _, _, err = collector.finish()
+					err = collector.finish()
 				}
 			} else if corrupt == "disagreement" && err == nil {
 				row, response = profilingProofPair("right")
@@ -137,7 +137,7 @@ func TestProfilingLoadUploadsFirstNativeAllocationFailure(t *testing.T) {
 	defer control.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := profilingLoad(ctx, control.URL, dataset, io.Discard); err == nil {
+	if err := profilingLoad(ctx, control.URL, dataset); err == nil {
 		t.Fatal("allocation failure succeeded")
 	}
 	mu.Lock()
@@ -148,7 +148,7 @@ func TestProfilingLoadUploadsFirstNativeAllocationFailure(t *testing.T) {
 }
 
 func TestProfilingLoadDeadlineStopsSchedulerBeforeNextArrival(t *testing.T) {
-	driver := newProfilingLoadDriver(profilingTestPlan("http://127.0.0.1:1"), profilingTestRecords(), "", io.Discard)
+	driver := newProfilingLoadDriver(profilingTestPlan("http://127.0.0.1:1"), profilingTestRecords(t), "")
 	defer driver.close()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()

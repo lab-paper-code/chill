@@ -44,7 +44,7 @@ func TestRealFirstfloorWorkerHelper(t *testing.T) {
 // accounting are required. The shared helper generates a genuine tiny Identity
 // model, not the MobileNet artifact whose basename the old fixture uses.
 // Three native active trials retain sparse, saturation and utilization phases,
-// each with its own 30 s AND 59-known-gap stop rule; idle retains 60 s settling + 30 s.
+// each with its own 30 s AND 59-known-gap stop rule, followed by 30 s loaded post-load observation; idle retains 60 s settling + 30 s.
 // Only meter readings, workload isolation and Kubernetes terminal/ownership facts
 // are controlled fixtures. No cluster, measured hardware watts or deployment
 // image verification is claimed. There are no donor, Eval or history objects.
@@ -84,8 +84,8 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	frozen := retained.Plan.Shared()
-	if frozen.ActiveProtocol.DurationSeconds != 90 || frozen.ActiveProtocol.MinServiceSamples != 59 ||
-		frozen.ActiveProtocol.SLOPercentile != 95 || campaign.Spec.TrialsPerBatch != 3 {
+	if frozen.ActiveProtocol.DurationSeconds != 120 || frozen.ActiveProtocol.MinServiceSamples != 59 ||
+		frozen.ActiveProtocol.SLOPercentile != 95 || frozen.ActiveProtocol.OperatingPoints.PostLoadDurationSeconds != 30 || campaign.Spec.TrialsPerBatch != 3 {
 		t.Fatalf("native acceptance recipe changed: %+v", frozen.ActiveProtocol)
 	}
 	resultSpec := retained.Result.Spec()
@@ -406,6 +406,26 @@ func assertNativeActiveTrial(
 	}
 	if len(runtime.Phases) != len(wireConfig.Measurement.OperatingPoints.Utilizations)+2 {
 		t.Fatalf("native runtime lost operating-point phases: %+v", runtime.Phases)
+	}
+	post := runtime.PostLoad
+	if post == nil || post.ActorPID <= 0 || !post.ModelResidentAtEnd ||
+		post.CountersBefore != post.CountersAfter ||
+		post.DurationSecondsMonotonic < float64(wireConfig.Measurement.OperatingPoints.PostLoadDurationSeconds) ||
+		post.EndedAt != runtime.MeasurementEndedAt {
+		t.Fatalf("native actor post-load continuity or zero-inference proof lost: %+v", post)
+	}
+	postStart, err := time.Parse(time.RFC3339Nano, post.StartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postPower := 0
+	for _, sample := range raw.Metrics.Samples {
+		if !sample.ObservedAt.Before(postStart) {
+			postPower++
+		}
+	}
+	if postPower == 0 {
+		t.Fatal("native raw lost the controlled post-load power series")
 	}
 	for phaseIndex, phase := range runtime.Phases {
 		known := 0

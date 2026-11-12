@@ -1058,7 +1058,7 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 	start := time.Date(2026, 8, 11, 1, 2, 3, 0, time.UTC)
 	windowSeconds := 30
 	if points := config.Measurement.OperatingPoints; points != nil {
-		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+		windowSeconds = points.PhaseDurationSeconds*(len(points.Utilizations)+2) + points.PostLoadDurationSeconds
 	}
 	end := start.Add(time.Duration(windowSeconds) * time.Second)
 	completed := end.Add(30 * time.Second)
@@ -1129,7 +1129,8 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 		workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap, points.FramedDecodedRequestUpperBytes,
 			float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds), .0015)
 		fixtures.ApplyActivePhases(&raw.Runtime, fixtures.PhaseOptions{StartedAt: start, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
-			Batch: config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers, Utilizations: points.Utilizations,
+			PostLoadDuration: time.Duration(points.PostLoadDurationSeconds) * time.Second,
+			Batch:            config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers, Utilizations: points.Utilizations,
 			SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds, PodUID: podUID, Latencies: []float64{1, 2},
 			ServiceNanos: []int64{500000, 1500000}, GapPattern: true, SupplySizing: sizing})
 		count := uint64(raw.Runtime.InferenceCount)

@@ -195,16 +195,17 @@ func sampleStopConfiguration(t *testing.T, directory string) (options, profiling
 	}
 	protocol := campaign.Spec.ActiveProtocol
 	config.Measurement.OperatingPoints.PhaseDurationSeconds = int(protocol.OperatingPoints.PhaseDurationSeconds)
-	config.Measurement.DurationSeconds = config.Measurement.OperatingPoints.PhaseDurationSeconds *
-		(len(config.Measurement.OperatingPoints.Utilizations) + 2)
+	config.Measurement.OperatingPoints.PostLoadDurationSeconds = int(protocol.OperatingPoints.PostLoadDurationSeconds)
+	config.Measurement.DurationSeconds = config.Measurement.OperatingPoints.PhaseDurationSeconds*
+		(len(config.Measurement.OperatingPoints.Utilizations)+2) + config.Measurement.OperatingPoints.PostLoadDurationSeconds
 	config.Metrics.DurationSeconds = config.Measurement.DurationSeconds + 1
 	config.Metrics.IntervalMilliseconds = int(protocol.MetricObservation.IntervalMilliseconds)
 	config.Metrics.TimeoutMilliseconds = int(protocol.MetricObservation.TimeoutMilliseconds)
 	config.Measurement.OperatingPoints.QueueBytesCap = 64 << 20
 	config.Measurement.OperatingPoints.FramedDecodedRequestUpperBytes = (64 << 20) / 32
-	if config.Measurement.DurationSeconds != 90 || config.Metrics.DurationSeconds != 91 ||
+	if config.Measurement.DurationSeconds != 120 || config.Metrics.DurationSeconds != 121 ||
 		config.Measurement.MinServiceSamples != 59 {
-		t.Fatal("regression requires three shipped 30-second phase floors and p95 n59 stop")
+		t.Fatal("regression requires three shipped 30-second phase floors, 30-second post-load and p95 n59 stop")
 	}
 	return opts, config
 }
@@ -312,6 +313,7 @@ func runSampleStopProducer(
 			})
 		}
 	}
+	wait(time.Duration(config.Measurement.OperatingPoints.PostLoadDurationSeconds) * time.Second)
 	ended := time.Now()
 	if len(samples) != 60*phaseCount {
 		t.Fatalf("producer stop: calls=%d expected=%d elapsed=%s", len(samples), 60*phaseCount, ended.Sub(started))

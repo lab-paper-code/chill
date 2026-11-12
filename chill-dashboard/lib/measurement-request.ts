@@ -57,7 +57,7 @@ export function requestDefaults(condition:RequestCondition, plans:MeasurementPla
   const c=profile.condition,active=c.activeProtocol,idle=c.idleProtocol
   return {exact:true,source:`측정 프로파일 ${profile.id} (동일 조건; 인프라 재시도 한도는 직접 지정)`,spec:{
     state:{candidate:{modelSpec:c.logicalModel,deviceClass:c.deviceClass,executionPath:c.artifact.executionPath,powerMode:c.powerMode,preprocessor:c.preprocessor.name},targetNode:profile.nodeName},
-    activeProtocol:{warmupIterations:active.warmupIterations,durationSeconds:active.durationSeconds,dataset:active.dataset?.name,metricObservation:{intervalMilliseconds:active.metricIntervalMilliseconds,timeoutMilliseconds:active.metricTimeoutMilliseconds,durationSeconds:active.metricDurationSeconds}},
+    activeProtocol:{warmupIterations:active.warmupIterations,durationSeconds:active.durationSeconds,dataset:active.dataset?.name,...(active.operatingPoints?{operatingPoints:active.operatingPoints}:{}),metricObservation:{intervalMilliseconds:active.metricIntervalMilliseconds,timeoutMilliseconds:active.metricTimeoutMilliseconds,durationSeconds:active.metricDurationSeconds}},
     idleProtocol:{settlingDurationSeconds:idle.settlingDurationSeconds,durationSeconds:idle.durationSeconds,metricObservation:{intervalMilliseconds:idle.metricIntervalMilliseconds,timeoutMilliseconds:idle.metricTimeoutMilliseconds,durationSeconds:idle.metricDurationSeconds}},
     trialsPerBatch:3,retryLimit:NaN,
   }}
@@ -151,13 +151,19 @@ export const steps = ["workload", "device", "run", "size", "advanced", "name", "
 export type Step = typeof steps[number]
 const dns1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/
 
-export type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number }
-export const advancedFields: [key: keyof Advanced, label: string, min: number][] = [
+export type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number; utilizations:string; sparseMeanGap:number; phaseDuration:number; postLoadDuration:number; requestLifetime:number; deliveryMargin:number; framedDecodedRequestUpperBytes:number }
+export const advancedFields: [key: keyof Omit<Advanced,"utilizations">, label: string, min: number, max?:number, step?:number|"any"][] = [
   ["warmup", "측정 전 예열 횟수", 0],
   ["activeDuration", "측정 시간 · 초", 1],
   ["activeWindow", "전력 기록 시간 · 초", 1],
   ["activeInterval", "전력 기록 간격 · 밀리초", 1],
   ["activeTimeout", "전력 기록 대기 한도 · 밀리초", 1],
+  ["sparseMeanGap", "희소 요청 평균 간격 · 밀리초", 0, Number.MAX_VALUE, "any"],
+  ["phaseDuration", "운영점별 측정 시간 · 초", 30],
+  ["postLoadDuration", "부하 종료 후 전력 기록 시간 · 초", 1],
+  ["requestLifetime", "요청 수명 · 초", 1],
+  ["deliveryMargin", "응답 전달 여유 · 밀리초", 1],
+  ["framedDecodedRequestUpperBytes", "디코딩된 요청 프레임 상한 · 바이트", 1, Number.MAX_SAFE_INTEGER],
   ["settling", "쉬는 상태 안정 시간 · 초", 1],
   ["idleDuration", "쉬는 상태 측정 시간 · 초", 1],
   ["idleWindow", "쉬는 상태 전력 기록 시간 · 초", 1],
@@ -171,12 +177,16 @@ export type Draft = { workload: string; model: string; preprocessor: string; dat
 export type Context = { models: ModelResource[]; workloads: WorkloadSummary[]; classes: InventoryClass[]; plans: MeasurementPlan[]; preprocessors: PreprocessorResource[]; datasets: DatasetResource[]; profiles:ProfilesView["profiles"]; prefill?:boolean }
 
 export const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", trials: null, protocol: null, name: null }
-const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN }
+const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN, utilizations:"", sparseMeanGap:NaN, phaseDuration:NaN, postLoadDuration:NaN, requestLifetime:NaN, deliveryMargin:NaN, framedDecodedRequestUpperBytes:NaN }
 function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
   const active = spec.activeProtocol, idle = spec.idleProtocol
   return {
     warmup: active.warmupIterations ?? NaN, activeDuration: active.durationSeconds ?? NaN, activeWindow: active.metricObservation?.durationSeconds ?? NaN,
     activeInterval: active.metricObservation?.intervalMilliseconds ?? NaN, activeTimeout: active.metricObservation?.timeoutMilliseconds ?? NaN,
+    utilizations:active.operatingPoints?.utilizations.join(", ")??"", sparseMeanGap:active.operatingPoints?.sparseMeanGapMilliseconds??NaN,
+    phaseDuration:active.operatingPoints?.phaseDurationSeconds??NaN, postLoadDuration:active.operatingPoints?.postLoadDurationSeconds??NaN,
+    requestLifetime:active.operatingPoints?.requestLifetimeSeconds??NaN, deliveryMargin:active.operatingPoints?.deliveryMarginMilliseconds??NaN,
+    framedDecodedRequestUpperBytes:active.operatingPoints?.framedDecodedRequestUpperBytes??NaN,
     settling: idle.settlingDurationSeconds ?? NaN, idleDuration: idle.durationSeconds ?? NaN, idleWindow: idle.metricObservation?.durationSeconds ?? NaN,
     idleInterval: idle.metricObservation?.intervalMilliseconds ?? NaN, idleTimeout: idle.metricObservation?.timeoutMilliseconds ?? NaN,
     retryLimit: spec.retryLimit,
@@ -200,8 +210,9 @@ export function updateDraft(current:Draft,patch:Partial<Draft>,context:Context,i
   return {...next,workload:patch.workload||"",protocol:next.protocol?.spec?{...next.protocol,spec:{...next.protocol.spec,activeProtocol:{...next.protocol.spec.activeProtocol,workload:undefined}}}:next.protocol}
 }
 function advancedProblem(values: Advanced) {
-  const bad = advancedFields.find(([key, , min]) => !Number.isInteger(values[key]) || values[key] < min || values[key] > 2147483647)
-  if (bad) return `"${bad[1]}"에 ${bad[2]} 이상의 정수를 적어 주세요.`
+  const bad = advancedFields.find(([key, , min, max=2147483647, step=1]) => !Number.isFinite(values[key]) || step!=="any"&&!Number.isInteger(values[key]) || values[key] < min || key==="sparseMeanGap"&&values[key]===0 || values[key] > max)
+  if (bad) return `"${bad[1]}"에 ${bad[2]}${bad[0]==="sparseMeanGap"?" 초과의 수": " 이상의 정수"}를 적어 주세요.`
+  if(values.utilizations.split(",").some(value=>!value.trim()||!Number.isFinite(Number(value))||Number(value)<=0||Number(value)>=1))return "운영점 이용률에 0보다 크고 1보다 작은 수를 쉼표로 구분해 적어 주세요."
   if (values.retryLimit > 10) return "일시적 인프라 장애 재시도 한도는 10번까지 정할 수 있어요."
   if (values.activeTimeout >= values.activeInterval || values.idleTimeout >= values.idleInterval) return "전력 기록 대기 한도는 기록 간격보다 짧아야 해요."
   if (values.activeWindow < values.activeDuration || values.idleWindow < values.idleDuration) return "전력 기록 시간은 측정 시간보다 짧을 수 없어요."
@@ -256,7 +267,7 @@ export function manifest(d: Draft, context: Context, namespace: string) {
   const activeProtocol = v.protocol.spec?.activeProtocol ?? {}
   const spec: MeasurementPlanSpec & {activeProtocol:ActiveProtocol} = {
     state: { candidate: { modelSpec: d.model, preprocessor: d.preprocessor, deviceClass: d.deviceClass, executionPath: d.path, powerMode: v.powerMode }, targetNode: d.node },
-    activeProtocol: { ...activeProtocol, workload: d.workload, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
+    activeProtocol: { ...activeProtocol, workload: d.workload, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, operatingPoints:{utilizations:p.utilizations.split(",").map(Number),sparseMeanGapMilliseconds:p.sparseMeanGap,phaseDurationSeconds:p.phaseDuration,postLoadDurationSeconds:p.postLoadDuration,requestLifetimeSeconds:p.requestLifetime,deliveryMarginMilliseconds:p.deliveryMargin,framedDecodedRequestUpperBytes:p.framedDecodedRequestUpperBytes}, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
     idleProtocol: { ...v.protocol.spec?.idleProtocol, settlingDurationSeconds: p.settling, durationSeconds: p.idleDuration, metricObservation: { intervalMilliseconds: p.idleInterval, timeoutMilliseconds: p.idleTimeout, durationSeconds: p.idleWindow } },
     trialsPerBatch: v.trials,
     retryLimit: p.retryLimit,

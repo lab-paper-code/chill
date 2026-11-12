@@ -208,7 +208,7 @@ func projectionRunConfig() profilingrun.RunConfig {
 		Measurement: profilingrun.MeasurementContract{
 			Batch: 2, WarmupIterations: 20, DurationSeconds: 30, WorkloadMode: "empirical-cadence-fixed-batch",
 			OperatingPoints: &profilingrun.OperatingPointsContract{
-				Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000, PhaseDurationSeconds: 30,
+				Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000, PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30,
 				RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100,
 				FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768,
 			},
@@ -265,7 +265,7 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
 	podUID := "run-pod"
 	targetDuration := float64(config.Measurement.DurationSeconds)
-	samples := make([]metricobserver.Sample, 90)
+	samples := make([]metricobserver.Sample, config.Measurement.DurationSeconds)
 	for index := range samples {
 		samples[index] = metricobserver.Sample{
 			ObservedAt: started.Add(500*time.Millisecond + time.Duration(index)*time.Second),
@@ -289,7 +289,7 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 			PodUID:    podUID,
 		},
 		CoverageStartedAt:      started.Add(-time.Second),
-		CoverageEndedAt:        started.Add(91 * time.Second),
+		CoverageEndedAt:        started.Add(time.Duration(config.Measurement.DurationSeconds+1) * time.Second),
 		InitialResourceVersion: "10",
 		LastResourceVersion:    "10",
 		EventLimit:             10,
@@ -363,9 +363,9 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 					MaximumTemperatureCelsius: config.Metrics.ThermalMetrics.MaximumTemperatureCelsius,
 				},
 			},
-			StartedAt: started, EndedAt: started.Add(91 * time.Second), Samples: samples,
+			StartedAt: started, EndedAt: started.Add(time.Duration(config.Measurement.DurationSeconds+1) * time.Second), Samples: samples,
 			Summary: metricobserver.Summary{
-				Attempts: 90, SuccessfulSamples: 90, ObservationDurationSeconds: 91,
+				Attempts: len(samples), SuccessfulSamples: len(samples), ObservationDurationSeconds: float64(config.Measurement.DurationSeconds + 1),
 				MaximumSampleGapSeconds: 1, SourceTimestampAbsent: true,
 			},
 		},

@@ -55,6 +55,7 @@ type profilingOperatingPoints struct {
 	Utilizations                   []float64 `json:"utilizations"`
 	SparseMeanGapMilliseconds      float64   `json:"sparseMeanGapMilliseconds"`
 	PhaseDurationSeconds           float64   `json:"phaseDurationSeconds"`
+	PostLoadDurationSeconds        float64   `json:"postLoadDurationSeconds"`
 	RequestLifetimeSeconds         float64   `json:"requestLifetimeSeconds"`
 	DeliveryMarginMilliseconds     float64   `json:"deliveryMarginMilliseconds"`
 	FramedDecodedRequestUpperBytes int64     `json:"framedDecodedRequestUpperBytes"`
@@ -62,8 +63,8 @@ type profilingOperatingPoints struct {
 }
 
 type profilingRecord struct {
-	ID     string
-	Inputs gateway.PreparedNativeInputs
+	ID        string
+	directory string
 }
 
 type profilingLoadResult struct {
@@ -131,10 +132,10 @@ func profilingLoadCommand(args []string) error {
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	return profilingLoad(ctx, *control, *dataset, os.Stderr)
+	return profilingLoad(ctx, *control, *dataset)
 }
 
-func profilingLoad(ctx context.Context, endpoint, dataset string, report io.Writer) (err error) {
+func profilingLoad(ctx context.Context, endpoint, dataset string) (err error) {
 	control := &http.Client{}
 	defer control.CloseIdleConnections()
 	defer func() {
@@ -164,20 +165,18 @@ func profilingLoad(ctx context.Context, endpoint, dataset string, report io.Writ
 	if err != nil {
 		return err
 	}
-	driver := newProfilingLoadDriver(plan, records, endpoint, report)
+	driver := newProfilingLoadDriver(plan, records, endpoint)
 	defer driver.close()
-	result, err := driver.run(ctx)
+	_, err = driver.run(ctx)
 	if err != nil {
 		return err
 	}
-	encoded, err := json.Marshal(result)
+	file, err := driver.resultFile()
 	if err != nil {
 		return err
 	}
-	if int64(len(encoded)) > plan.MaxResultBytes {
-		return errors.New("native profile result exceeds frozen runtime result budget")
-	}
-	return profilingControlCall(ctx, control, endpoint, http.MethodPost, "/measurement/load-result", json.RawMessage(encoded), nil)
+	defer file.Close()
+	return profilingControlCall(ctx, control, endpoint, http.MethodPost, "/measurement/load-result", file, nil)
 }
 
 func profilingControlCall(ctx context.Context, client *http.Client, endpoint, method, path string, payload, target any) error {
@@ -192,16 +191,30 @@ func profilingControlCall(ctx context.Context, client *http.Client, endpoint, me
 	}
 	// GET /measurement/load long-polls model/actor readiness. Its finite
 	// absolute root deadline must permit legitimate warmup longer than 30s.
-	var body []byte
-	if payload != nil {
-		body, err = json.Marshal(payload)
+	var body io.Reader
+	if reader, ok := payload.(io.Reader); ok {
+		body = reader
+	} else if payload != nil {
+		raw, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		body = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(endpoint, "/")+path, body)
+	if err != nil {
+		return err
+	}
+	if file, ok := payload.(*os.File); ok {
+		info, err := file.Stat()
 		if err != nil {
 			return err
 		}
-	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(endpoint, "/")+path, bytes.NewReader(body))
-	if err != nil {
-		return err
+		offset, err := file.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return err
+		}
+		req.ContentLength = info.Size() - offset
 	}
 	req.Header.Set("Content-Type", "application/json")
 	response, err := client.Do(req)
@@ -247,7 +260,7 @@ func (p profilingLoadPlan) validate() error {
 	if p.Batch < 1 || p.MaxQueueRequests < p.Batch || p.MinServiceSamples < 1 || p.MaxLatencySamples < p.MinServiceSamples || p.MaxLatencySamples > math.MaxInt/p.Batch || p.MaxResultBytes < 1 || p.MaxQueueBytes < 1 || p.Model == "" || p.PodUID == "" || p.WorkloadResourceVersion == "" || len(p.Fields) == 0 {
 		return errors.New("measurement load plan has invalid identity, sample or byte bounds")
 	}
-	if !profilingPositive(points.PhaseDurationSeconds) || !profilingPositive(points.SparseMeanGapMilliseconds) || !profilingPositive(points.RequestLifetimeSeconds) || !profilingPositive(points.DeliveryMarginMilliseconds) || points.DeliveryMarginMilliseconds/1000 >= points.RequestLifetimeSeconds || points.FramedDecodedRequestUpperBytes < 1 || points.FramedDecodedRequestUpperBytes > native.MaxFrameBytes || points.QueueBytesCap < 1 || !profilingPositive(p.SLOPercentile) || p.SLOPercentile > 100 || p.SLOTargetLatencyNanos < 1 || len(points.Utilizations) == 0 {
+	if !profilingPositive(points.PhaseDurationSeconds) || !profilingPositive(points.PostLoadDurationSeconds) || !profilingPositive(points.SparseMeanGapMilliseconds) || !profilingPositive(points.RequestLifetimeSeconds) || !profilingPositive(points.DeliveryMarginMilliseconds) || points.DeliveryMarginMilliseconds/1000 >= points.RequestLifetimeSeconds || points.FramedDecodedRequestUpperBytes < 1 || points.FramedDecodedRequestUpperBytes > native.MaxFrameBytes || points.QueueBytesCap < 1 || !profilingPositive(p.SLOPercentile) || p.SLOPercentile > 100 || p.SLOTargetLatencyNanos < 1 || len(points.Utilizations) == 0 {
 		return errors.New("measurement load plan has invalid frozen operating points")
 	}
 	if points.PhaseDurationSeconds > float64(math.MaxInt64)/1e9 || points.RequestLifetimeSeconds+points.DeliveryMarginMilliseconds/1000 > float64(math.MaxInt64)/1e9 {
@@ -293,35 +306,20 @@ func loadProfilingRecords(ctx context.Context, directory string, plan profilingL
 		if !entry.IsDir() {
 			continue
 		}
-		record := profilingRecord{ID: entry.Name()}
-		inputs := make([]native.Field, len(plan.Fields))
+		record := profilingRecord{ID: entry.Name(), directory: filepath.Join(directory, entry.Name())}
 		var framed int64
-		for index, field := range plan.Fields {
+		for _, field := range plan.Fields {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			remaining := plan.OperatingPoints.FramedDecodedRequestUpperBytes - framed - 4
-			if remaining < 0 {
-				return nil, errors.New("dataset record exceeds frozen framed decoded request upper bytes")
-			}
-			file, err := os.Open(filepath.Join(directory, entry.Name(), field))
+			info, err := os.Stat(filepath.Join(record.directory, field))
 			if err != nil {
 				return nil, err
 			}
-			data, readErr := io.ReadAll(io.LimitReader(file, remaining+1))
-			err = errors.Join(readErr, file.Close())
-			if err != nil {
-				return nil, err
+			if !info.Mode().IsRegular() || info.Size() > plan.OperatingPoints.FramedDecodedRequestUpperBytes-framed-4 {
+				return nil, errors.New("dataset record exceeds frozen framed decoded request upper bytes or is not a regular file")
 			}
-			if int64(len(data)) > remaining {
-				return nil, errors.New("dataset record exceeds frozen framed decoded request upper bytes")
-			}
-			framed += 4 + int64(len(data))
-			inputs[index] = native.Field{Name: field, Data: [][]byte{data}}
-		}
-		record.Inputs, err = gateway.PrepareNativeInputs(inputs)
-		if err != nil {
-			return nil, err
+			framed += 4 + info.Size()
 		}
 		records = append(records, record)
 	}
@@ -332,68 +330,109 @@ func loadProfilingRecords(ctx context.Context, directory string, plan profilingL
 }
 
 type profilingLoadDriver struct {
-	plan      profilingLoadPlan
-	records   []profilingRecord
-	endpoint  string
-	control   *http.Client
-	native    *gateway.Client
-	transport *http.Transport
-	report    io.Writer
-	inferURL  string
+	plan          profilingLoadPlan
+	records       []profilingRecord
+	endpoint      string
+	control       *http.Client
+	native        *gateway.Client
+	transport     *http.Transport
+	inferURL      string
+	dataDir       string
+	evidenceDir   string
+	stores        map[string]*profilingPhaseStore
+	result        profilingLoadResult
+	metadataBytes int64
+	metadataValid bool
+	cache         struct {
+		sync.Mutex
+		id     string
+		inputs gateway.PreparedNativeInputs
+	}
 }
 
-func newProfilingLoadDriver(plan profilingLoadPlan, records []profilingRecord, endpoint string, report io.Writer) *profilingLoadDriver {
+func newProfilingLoadDriver(plan profilingLoadPlan, records []profilingRecord, endpoint string) *profilingLoadDriver {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	// No transport connection limit: waiting behind a pool limit would silently
 	// reshape Poisson input. The scheduler fails explicitly at the frozen cap.
 	transport.MaxIdleConnsPerHost = max(plan.MaxQueueRequests, 64)
 	transport.MaxIdleConns = transport.MaxIdleConnsPerHost
-	return &profilingLoadDriver{plan: plan, records: records, endpoint: endpoint, inferURL: strings.TrimRight(plan.NativeEndpoint, "/") + plan.InferPath, report: report, transport: transport, control: &http.Client{}, native: &gateway.Client{HTTPClient: &http.Client{Transport: transport, Timeout: time.Duration((plan.OperatingPoints.RequestLifetimeSeconds + plan.OperatingPoints.DeliveryMarginMilliseconds/1000) * 1e9)}}}
+	driver := &profilingLoadDriver{plan: plan, records: records, endpoint: endpoint, inferURL: strings.TrimRight(plan.NativeEndpoint, "/") + plan.InferPath, transport: transport, control: &http.Client{}, native: &gateway.Client{HTTPClient: &http.Client{Transport: transport, Timeout: time.Duration((plan.OperatingPoints.RequestLifetimeSeconds + plan.OperatingPoints.DeliveryMarginMilliseconds/1000) * 1e9)}}, result: profilingLoadResult{Status: "Succeeded", Phases: []profilingrun.Phase{}}}
+	if len(records) > 0 {
+		driver.dataDir = filepath.Dir(records[0].directory)
+	}
+	return driver
 }
 
 func (d *profilingLoadDriver) close() {
 	d.transport.CloseIdleConnections()
 	d.control.CloseIdleConnections()
+	for _, store := range d.stores {
+		_ = store.close()
+	}
+	if d.evidenceDir != "" {
+		_ = os.RemoveAll(d.evidenceDir)
+	}
 }
 
 func (d *profilingLoadDriver) run(ctx context.Context) (profilingLoadResult, error) {
-	result := profilingLoadResult{Status: "Succeeded"}
-	sparse, err := d.measuredPhase(ctx, profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 1000 / d.plan.OperatingPoints.SparseMeanGapMilliseconds})
+	result := &d.result
+	_, err := d.measuredPhase(ctx, profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 1000 / d.plan.OperatingPoints.SparseMeanGapMilliseconds})
 	if err != nil {
-		return result, err
+		return *result, err
 	}
-	result.Phases = append(result.Phases, sparse)
-	if err := profilingControlCall(ctx, d.control, d.endpoint, http.MethodPost, "/measurement/supply", struct {
-		NativeSamples []profilingrun.NativeServiceSample `json:"nativeSamples"`
-	}{sparse.NativeSamples}, &result.SupplySizing); err != nil {
-		return result, err
+	supply, err := os.CreateTemp(d.evidenceDir, "supply-")
+	if err != nil {
+		return *result, err
+	}
+	defer supply.Close()
+	if _, err := io.WriteString(supply, `{"nativeSamples":`); err != nil {
+		return *result, err
+	}
+	if err := d.stores["sparse"].samples.write(supply); err != nil {
+		return *result, err
+	}
+	if _, err := io.WriteString(supply, "}"); err != nil {
+		return *result, err
+	}
+	if _, err := supply.Seek(0, io.SeekStart); err != nil {
+		return *result, err
+	}
+	if err := profilingControlCall(ctx, d.control, d.endpoint, http.MethodPost, "/measurement/supply", supply, &result.SupplySizing); err != nil {
+		return *result, err
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, result.SupplySizing); err != nil {
+		return *result, err
+	}
+	result.SupplySizing = compact.Bytes()
+	d.metadataValid = false
+	if err := d.checkResultBudget(); err != nil {
+		return *result, err
 	}
 	var sizing struct {
 		Workers int `json:"workers"`
 	}
 	if err := json.Unmarshal(result.SupplySizing, &sizing); err != nil {
-		return result, err
+		return *result, err
 	}
-	if sizing.Workers < d.plan.Batch || sizing.Workers > 64 || sizing.Workers > d.plan.MaxQueueRequests || sizing.Workers%d.plan.Batch != 0 {
-		return result, errors.New("native saturation sizing exceeds frozen request/worker cap or fixed batch")
+	if sizing.Workers < d.plan.Batch || sizing.Workers > 64 || sizing.Workers > d.plan.MaxQueueRequests {
+		return *result, errors.New("native saturation sizing exceeds frozen request/worker cap or fixed batch")
 	}
 	saturation, err := d.measuredPhase(ctx, profilingrun.Phase{ID: "saturation", Kind: "saturation", Workers: sizing.Workers})
 	if err != nil {
-		return result, err
+		return *result, err
 	}
-	result.Phases = append(result.Phases, saturation)
 	throughput := float64(saturation.CompletedInputs) / saturation.MeasurementElapsedSeconds
-	if err := d.checkLadderBudget(result.Phases, throughput); err != nil {
-		return result, err
+	if !profilingPositive(throughput) {
+		return *result, errors.New("measured saturation input throughput is invalid")
 	}
 	for index, utilization := range d.plan.OperatingPoints.Utilizations {
-		phase, err := d.measuredPhase(ctx, profilingrun.Phase{ID: fmt.Sprintf("utilization-%d", index), Kind: "utilization", Utilization: utilization, ArrivalRatePerSecond: utilization * throughput})
+		_, err := d.measuredPhase(ctx, profilingrun.Phase{ID: fmt.Sprintf("utilization-%d", index), Kind: "utilization", Utilization: utilization, ArrivalRatePerSecond: utilization * throughput})
 		if err != nil {
-			return result, err
+			return *result, err
 		}
-		result.Phases = append(result.Phases, phase)
 	}
-	return result, nil
+	return *result, d.checkResultBudget()
 }
 
 func (d *profilingLoadDriver) measuredPhase(ctx context.Context, spec profilingrun.Phase) (profilingrun.Phase, error) {
@@ -420,49 +459,7 @@ func (d *profilingLoadDriver) measuredPhase(ctx context.Context, spec profilingr
 	}
 	ended, err := boundary("end")
 	phase.MeasurementStartedAt, phase.MeasurementEndedAt = started, ended
-	return phase, err
-}
-
-func (d *profilingLoadDriver) checkLadderBudget(phases []profilingrun.Phase, throughput float64) error {
-	if !profilingPositive(throughput) {
-		return errors.New("measured saturation input throughput is invalid")
-	}
-	var measured, bytesPerInput float64
-	for _, phase := range phases {
-		raw, err := json.Marshal(phase)
-		if err != nil {
-			return err
-		}
-		if phase.CompletedInputs < 1 {
-			return errors.New("cannot project native profile without measured inputs")
-		}
-		measured += float64(len(raw))
-		bytesPerInput = max(bytesPerInput, float64(len(raw))/float64(phase.CompletedInputs))
-	}
-	projected := measured + 4096
-	for _, utilization := range d.plan.OperatingPoints.Utilizations {
-		expected := throughput * utilization * d.plan.OperatingPoints.PhaseDurationSeconds
-		// Include six Poisson standard deviations, the known-gap sample floor
-		// (plus the unknown first gap), and all in-flight requests draining.
-		count := math.Ceil(expected+6*math.Sqrt(expected)) + float64(d.plan.MinServiceSamples+1)*float64(d.plan.Batch) + float64(d.plan.MaxQueueRequests)
-		projected += math.Ceil(count*bytesPerInput) + 4096
-	}
-	// Keep LoadControl's immutable result schema unchanged. The Job log owns
-	// the measured admission report, including rejected full-run projections.
-	if d.report != nil {
-		if err := json.NewEncoder(d.report).Encode(struct {
-			MeasuredBytesPerInput     float64 `json:"measuredBytesPerInput"`
-			ProjectedResultBytes      float64 `json:"projectedResultBytes"`
-			MaxResultBytes            int64   `json:"maxResultBytes"`
-			SaturationInputsPerSecond float64 `json:"measuredSaturationInputsPerSecond"`
-		}{bytesPerInput, projected, d.plan.MaxResultBytes, throughput}); err != nil {
-			return err
-		}
-	}
-	if !profilingPositive(projected) || projected > float64(d.plan.MaxResultBytes) {
-		return fmt.Errorf("projected native profile %.0f bytes exceeds result budget %d before utilization ladder (%.1f measured bytes/input, mu=%.3f/s)", projected, d.plan.MaxResultBytes, bytesPerInput, throughput)
-	}
-	return nil
+	return phase, errors.Join(err, d.updatePhase(phase))
 }
 
 type profilingCompletion struct {
@@ -475,6 +472,12 @@ type profilingCompletion struct {
 
 func (d *profilingLoadDriver) send(ctx context.Context, spec profilingrun.Phase, index int, scheduled time.Time, issued, completed func()) profilingCompletion {
 	record := d.records[index%len(d.records)]
+	inputs, err := d.recordInputs(ctx, record)
+	if err != nil {
+		issued()
+		completed()
+		return profilingCompletion{err: err}
+	}
 	var idBuffer [64]byte
 	id := string(strconv.AppendInt(append(append(idBuffer[:0], spec.ID...), '-'), int64(index), 10))
 	points := d.plan.OperatingPoints
@@ -485,7 +488,7 @@ func (d *profilingLoadDriver) send(ctx context.Context, spec profilingrun.Phase,
 	sent := time.Now()
 	issued()
 	request := native.Request{ID: id, Context: native.RequestContext{RequestID: id, WorkloadUID: d.plan.PodUID, Definition: d.plan.WorkloadResourceVersion, AdmissionPolicy: "Delay", ReceivedAt: sent.UTC(), CompletionMarginMS: points.DeliveryMarginMilliseconds, SLO: native.SLO{Percentile: d.plan.SLOPercentile, TargetMS: float64(d.plan.SLOTargetLatencyNanos) / 1e6}, LifetimeMS: points.RequestLifetimeSeconds * 1000}}
-	status, err := d.native.InferNative(ctx, d.inferURL, request, record.Inputs, response)
+	status, err := d.native.InferNative(ctx, d.inferURL, request, inputs, response)
 	// HTTP completion releases the outstanding slot before JSON decoding and
 	// native-proof collection, neither of which may reshape Poisson issuance.
 	completed()
@@ -513,32 +516,33 @@ func (d *profilingLoadDriver) send(ctx context.Context, spec profilingrun.Phase,
 }
 
 func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.Phase) (profilingrun.Phase, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if len(d.records) == 0 || (phase.Kind != "saturation" && !profilingPositive(phase.ArrivalRatePerSecond)) || (phase.Kind == "saturation" && (phase.Workers < d.plan.Batch || phase.Workers > d.plan.MaxQueueRequests)) {
 		return phase, errors.New("invalid profiling phase supply or dataset")
 	}
-	limit := d.plan.MaxLatencySamples * d.plan.Batch
-	capacity := min(limit, (d.plan.MinServiceSamples+1)*d.plan.Batch+d.plan.MaxQueueRequests)
-	if phase.Kind != "saturation" {
-		expected := phase.ArrivalRatePerSecond * d.plan.OperatingPoints.PhaseDurationSeconds
-		planned := math.Ceil(expected+6*math.Sqrt(expected)) + float64(capacity)
-		capacity = limit
-		if planned < float64(limit) {
-			capacity = int(planned)
-		}
+	store, err := d.openPhaseStore(phase.ID)
+	if err != nil {
+		return phase, err
 	}
+	limit := d.plan.MaxLatencySamples * d.plan.Batch
 	results := make(chan profilingCompletion, d.plan.MaxQueueRequests)
 	stop := make(chan struct{})
-	collector := profilingPhaseCollector{plan: d.plan, groups: make(map[uint64]native.Progress, (capacity+d.plan.Batch-1)/d.plan.Batch),
-		requests: make(map[string]int, capacity), rows: make([]profilingrun.PhaseRequest, 0, capacity)}
-	lags := make([]float64, 0, capacity)
+	collector := profilingPhaseCollector{plan: d.plan, store: store, groups: make(map[uint64]*profilingBatchGroup), requests: make(map[string]bool), completed: make(map[uint64]bool), checkBudget: d.checkResultBudget}
+	var lags []float64
 	var memoryBefore, memoryAfter runtime.MemStats
 	runtime.ReadMemStats(&memoryBefore)
 	start := time.Now()
 	endFloor := start.Add(time.Duration(d.plan.OperatingPoints.PhaseDurationSeconds * 1e9))
+	phase.MeasurementStartedAt = start.UTC().Format(time.RFC3339Nano)
+	if err := d.updatePhase(phase); err != nil {
+		return phase, err
+	}
 	var firstErr error
 	var outstanding, known atomic.Int64
 	var requests, sending sync.WaitGroup
 	issued, sent := 0, 0
+	sendSpec := profilingrun.Phase{ID: phase.ID}
 	stopping := false
 	recordError := func(err error) {
 		if err == nil {
@@ -549,6 +553,9 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 		var failure *profilingLoadFailure
 		if firstErr == nil || errors.As(err, &failure) && failure.FailureReason == "MemoryAllocationFailed" {
 			firstErr = err
+		}
+		if errors.Is(err, errProfilingResultBudget) {
+			cancel()
 		}
 		if !stopping {
 			close(stop)
@@ -566,7 +573,7 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 		sending.Add(1)
 		go func() {
 			defer requests.Done()
-			result := d.send(ctx, phase, index, scheduled, sending.Done, func() { outstanding.Add(-1) })
+			result := d.send(ctx, sendSpec, index, scheduled, sending.Done, func() { outstanding.Add(-1) })
 			results <- result
 		}()
 	}
@@ -583,8 +590,15 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 				return
 			}
 		}
+		if errors.Is(firstErr, errProfilingResultBudget) {
+			return
+		}
 		newKnown, err := collector.add(result.row, result.response)
 		recordError(err)
+		if err == nil {
+			phase.CompletedInputs = collector.count
+			recordError(d.updatePhase(phase))
+		}
 		if newKnown {
 			known.Add(1)
 		}
@@ -721,7 +735,7 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 	elapsed := time.Since(start).Seconds()
 	phase.MeasurementStartedAt, phase.MeasurementEndedAt = start.UTC().Format(time.RFC3339Nano), start.Add(time.Duration(elapsed*1e9)).UTC().Format(time.RFC3339Nano)
 	phase.MeasurementElapsedSeconds = elapsed
-	phase.CompletedInputs = len(collector.rows)
+	phase.CompletedInputs = collector.count
 	phase.DriverGC = profilingDriverGCSummary(memoryBefore, memoryAfter)
 	if firstErr == nil && !complete() {
 		firstErr = errors.New("latency sample budget exhausted before phase duration and known-gap minimum")
@@ -730,7 +744,7 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 		firstErr = errors.New("Poisson scheduled, sent and completed input counts differ")
 	}
 	if firstErr == nil {
-		phase.Requests, phase.NativeSamples, phase.LatencyMilliseconds, firstErr = collector.finish()
+		firstErr = errors.Join(collector.finish(), d.updatePhase(phase))
 	}
 	if firstErr != nil {
 		failure := &profilingLoadFailure{Status: "Failed", Message: firstErr.Error(), cause: firstErr}
@@ -771,13 +785,21 @@ func profilingLagSummary(values []float64) *profilingrun.IssueLag {
 	return result
 }
 
-// Only one full proof per physical batch stays live. Each response is checked
-// before its per-request record sheds repeated batch fields.
+// Only unfinished physical batches retain proof and member metadata in memory.
+// Outputs are appended to the data volume immediately after proof validation.
 type profilingPhaseCollector struct {
-	plan     profilingLoadPlan
-	groups   map[uint64]native.Progress
-	requests map[string]int
-	rows     []profilingrun.PhaseRequest
+	plan        profilingLoadPlan
+	store       *profilingPhaseStore
+	groups      map[uint64]*profilingBatchGroup
+	requests    map[string]bool
+	completed   map[uint64]bool
+	count       int
+	checkBudget func() error
+}
+
+type profilingBatchGroup struct {
+	proof native.Progress
+	rows  map[string]profilingrun.PhaseRequest
 }
 
 func (c *profilingPhaseCollector) add(row profilingrun.PhaseRequest, response native.Response) (bool, error) {
@@ -793,6 +815,9 @@ func (c *profilingPhaseCollector) add(row profilingrun.PhaseRequest, response na
 		return false, errors.New("native service pair/provenance or fixed-batch membership is invalid")
 	}
 	previous, exists := c.groups[p.BatchID]
+	if c.completed[p.BatchID] {
+		return false, errors.New("native batch ID was reused after completion")
+	}
 	if !exists {
 		seen := make(map[string]bool, len(p.BatchRequestIDs))
 		for _, id := range p.BatchRequestIDs {
@@ -809,15 +834,31 @@ func (c *profilingPhaseCollector) add(row profilingrun.PhaseRequest, response na
 	if p.BatchStartedAt == nil || p.BatchFinishedAt == nil || !p.BatchFinishedAt.After(*p.BatchStartedAt) || timing == nil || timing.HandlerEnteredAt.IsZero() || timing.ReceivedNanos == nil || timing.EnqueueNanos == nil || timing.FinishedNanos == nil || *timing.ReceivedNanos < 0 || *timing.EnqueueNanos < *timing.ReceivedNanos || *timing.FinishedNanos < *timing.EnqueueNanos || timing.HandlerEnteredAt.Add(time.Duration(*timing.EnqueueNanos)).After(*p.BatchStartedAt) {
 		return false, errors.New("native batch timestamps or HTTP receive/enqueue/finish boundaries are invalid")
 	}
-	if exists && !profilingSameBatch(previous, p) {
+	if exists && !profilingSameBatch(previous.proof, p) {
 		return false, errors.New("member responses disagree on native batch evidence")
 	}
 	if !exists {
-		c.groups[p.BatchID] = p
+		previous = &profilingBatchGroup{proof: p, rows: make(map[string]profilingrun.PhaseRequest, c.plan.Batch)}
+		c.groups[p.BatchID] = previous
 	}
 	row.Response = profilingrun.PhaseResponse{ModelName: response.ModelName, ID: response.ID, Outputs: response.Outputs, ExecutionComplete: response.ExecutionComplete, Progress: profilingrun.PhaseProgress{RequestID: p.RequestID, WorkloadUID: p.WorkloadUID, Definition: p.Definition, Phase: p.Phase, At: p.At, BatchID: p.BatchID, BatchSize: p.BatchSize, ProfileID: p.ProfileID, DecisionID: p.DecisionID, QueueMS: p.QueueMS, ExecutorWaitNanos: p.ExecutorWaitNanos, ServiceMS: p.ServiceMS, Units: p.Units, NativeElapsedMS: p.NativeElapsedMS, ExecutionComplete: p.ExecutionComplete, Outcome: p.Outcome, NativeHTTP: p.NativeHTTP, NativeDeferredAt: p.NativeDeferredAt}}
-	c.requests[row.RequestID] = len(c.rows)
-	c.rows = append(c.rows, row)
+	if err := c.store.requests.append(row, profilingJSONEntry{at: row.SentAt, id: row.RequestID}); err != nil {
+		return false, err
+	}
+	if err := c.checkBudget(); err != nil {
+		return false, err
+	}
+	c.count++
+	c.requests[row.RequestID] = true
+	row.Response.Outputs = nil
+	previous.rows[row.RequestID] = row
+	if len(previous.rows) == c.plan.Batch {
+		if err := c.completeBatch(p.BatchID, previous); err != nil {
+			return false, err
+		}
+		delete(c.groups, p.BatchID)
+		c.completed[p.BatchID] = true
+	}
 	return !exists && pair.PrecedingIdleNanos != nil, nil
 }
 
@@ -826,57 +867,42 @@ func profilingSameBatch(a, b native.Progress) bool {
 	return slices.Equal(a.BatchRequestIDs, b.BatchRequestIDs) && pa.ServiceDurationNanos == pb.ServiceDurationNanos && pa.TrialID == pb.TrialID && (pa.PrecedingIdleNanos == nil && pb.PrecedingIdleNanos == nil || pa.PrecedingIdleNanos != nil && pb.PrecedingIdleNanos != nil && *pa.PrecedingIdleNanos == *pb.PrecedingIdleNanos) && a.PreprocessMS == b.PreprocessMS && a.BackendMS == b.BackendMS && a.PostprocessMS == b.PostprocessMS && a.FirstTokenMS == b.FirstTokenMS && a.BatchStartedAt.Equal(*b.BatchStartedAt) && a.BatchFinishedAt.Equal(*b.BatchFinishedAt)
 }
 
-func (c *profilingPhaseCollector) finish() ([]profilingrun.PhaseRequest, []profilingrun.NativeServiceSample, []float64, error) {
-	ids := make([]uint64, 0, len(c.groups))
-	for id := range c.groups {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	samples := make([]profilingrun.NativeServiceSample, 0, len(ids))
-	latencies := make([]float64, 0, len(ids))
-	covered := make(map[string]bool, len(c.rows))
-	for _, id := range ids {
-		p := c.groups[id]
-		sample := profilingrun.NativeServiceSample{BatchID: id, BatchSize: c.plan.Batch, RequestIDs: p.BatchRequestIDs, ServiceSample: *p.ServiceSample, RunnerServiceMilliseconds: float64(p.ServiceSample.ServiceDurationNanos) / 1e6, PreprocessMilliseconds: p.PreprocessMS, BackendCallMilliseconds: p.BackendMS, PostprocessMilliseconds: p.PostprocessMS, FirstTokenMilliseconds: p.FirstTokenMS, StartedAt: *p.BatchStartedAt, FinishedAt: *p.BatchFinishedAt}
-		var latency float64
-		for _, requestID := range p.BatchRequestIDs {
-			index, found := c.requests[requestID]
-			if !found || covered[requestID] {
-				return nil, nil, nil, errors.New("native batch membership is incomplete or duplicated")
-			}
-			row := c.rows[index]
-			if row.Response.Progress.BatchID != id {
-				return nil, nil, nil, errors.New("native batch membership disagrees with member batch IDs")
-			}
-			covered[requestID] = true
-			sample.RecordIDs = append(sample.RecordIDs, row.RecordID)
-			sample.Units = append(sample.Units, row.Response.Progress.Units)
-			sample.NativeRequestMilliseconds = max(sample.NativeRequestMilliseconds, row.Response.Progress.NativeElapsedMS)
-			latency = max(latency, row.LatencyMilliseconds)
-			httpTiming := row.Response.Progress.NativeHTTP
-			enqueued := httpTiming.HandlerEnteredAt.Add(time.Duration(*httpTiming.EnqueueNanos))
-			if sample.EarliestEnqueuedAt.IsZero() || enqueued.Before(sample.EarliestEnqueuedAt) {
-				sample.EarliestEnqueuedAt = enqueued
-			}
-			if enqueued.After(sample.LatestEnqueuedAt) {
-				sample.LatestEnqueuedAt = enqueued
-			}
+func (c *profilingPhaseCollector) completeBatch(id uint64, group *profilingBatchGroup) error {
+	p := group.proof
+	sample := profilingrun.NativeServiceSample{BatchID: id, BatchSize: c.plan.Batch, RequestIDs: p.BatchRequestIDs, ServiceSample: *p.ServiceSample, RunnerServiceMilliseconds: float64(p.ServiceSample.ServiceDurationNanos) / 1e6, PreprocessMilliseconds: p.PreprocessMS, BackendCallMilliseconds: p.BackendMS, PostprocessMilliseconds: p.PostprocessMS, FirstTokenMilliseconds: p.FirstTokenMS, StartedAt: *p.BatchStartedAt, FinishedAt: *p.BatchFinishedAt}
+	var latency float64
+	for _, requestID := range p.BatchRequestIDs {
+		row, found := group.rows[requestID]
+		if !found {
+			return errors.New("native batch membership is incomplete or duplicated")
 		}
-		samples, latencies = append(samples, sample), append(latencies, latency)
-	}
-	if len(covered) != len(c.rows) {
-		return nil, nil, nil, errors.New("completed requests have no native batch sample")
-	}
-	// Actual send order defines the arrival process. Scheduled timestamps are
-	// diagnostics and may differ when request goroutines resume out of order.
-	slices.SortFunc(c.rows, func(a, b profilingrun.PhaseRequest) int {
-		if a.SentAt.Before(b.SentAt) {
-			return -1
+		sample.RecordIDs = append(sample.RecordIDs, row.RecordID)
+		sample.Units = append(sample.Units, row.Response.Progress.Units)
+		sample.NativeRequestMilliseconds = max(sample.NativeRequestMilliseconds, row.Response.Progress.NativeElapsedMS)
+		latency = max(latency, row.LatencyMilliseconds)
+		httpTiming := row.Response.Progress.NativeHTTP
+		enqueued := httpTiming.HandlerEnteredAt.Add(time.Duration(*httpTiming.EnqueueNanos))
+		if sample.EarliestEnqueuedAt.IsZero() || enqueued.Before(sample.EarliestEnqueuedAt) {
+			sample.EarliestEnqueuedAt = enqueued
 		}
-		if a.SentAt.After(b.SentAt) {
-			return 1
+		if enqueued.After(sample.LatestEnqueuedAt) {
+			sample.LatestEnqueuedAt = enqueued
 		}
-		return strings.Compare(a.RequestID, b.RequestID)
-	})
-	return c.rows, samples, latencies, nil
+	}
+	if err := c.store.samples.append(sample, profilingJSONEntry{batch: id}); err != nil {
+		return err
+	}
+	if err := c.store.latencies.append(latency, profilingJSONEntry{batch: id}); err != nil {
+		return err
+	}
+	return c.checkBudget()
+}
+
+func (c *profilingPhaseCollector) finish() error {
+	if len(c.groups) != 0 || c.count != len(c.completed)*c.plan.Batch {
+		return errors.New("native batch membership is incomplete or duplicated")
+	}
+	c.store.sort()
+	c.groups, c.requests, c.completed = nil, nil, nil
+	return nil
 }

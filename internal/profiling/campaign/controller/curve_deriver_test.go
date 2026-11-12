@@ -195,12 +195,15 @@ func TestCurveDeriverAcceptsObservedVariationAndRejectsNonWitnessConditionDrift(
 		}
 		raw := curveFixtureActiveRaw(execution.RunConfig, execution.Terminal.Pod.UID, float64(6+index))
 		raw.Runtime.MemoryBytes = uint64(1000 + index)
-		duration := time.Duration(len(raw.Runtime.Phases))*30*time.Second + time.Duration(index)*100*time.Millisecond
+		postDuration := time.Duration(execution.RunConfig.Measurement.OperatingPoints.PostLoadDurationSeconds) * time.Second
+		duration := time.Duration(len(raw.Runtime.Phases))*30*time.Second + postDuration + time.Duration(index)*100*time.Millisecond
 		raw.Runtime.MeasurementEndedAt = raw.Metrics.StartedAt.Add(duration).Format(time.RFC3339Nano)
 		raw.Runtime.MeasurementElapsedSeconds = duration.Seconds()
 		last := &raw.Runtime.Phases[len(raw.Runtime.Phases)-1]
-		last.MeasurementEndedAt = raw.Runtime.MeasurementEndedAt
+		last.MeasurementEndedAt = raw.Metrics.StartedAt.Add(duration - postDuration).Format(time.RFC3339Nano)
 		last.MeasurementElapsedSeconds = 30 + float64(index)*.1
+		raw.Runtime.PostLoad.StartedAt = last.MeasurementEndedAt
+		raw.Runtime.PostLoad.EndedAt = raw.Runtime.MeasurementEndedAt
 		if index%3 != 1 {
 			pod := workloadobserver.Pod{
 				Namespace: "baseline-fleet", Name: "fleet", UID: "fleet-pod",
@@ -677,7 +680,7 @@ func curveFixtureActiveRaw(
 	targetDuration := float64(config.Measurement.DurationSeconds)
 	windowSeconds := 30
 	if points := config.Measurement.OperatingPoints; points != nil {
-		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+		windowSeconds = points.PhaseDurationSeconds*(len(points.Utilizations)+2) + points.PostLoadDurationSeconds
 	}
 	samples := make([]metricobserver.Sample, windowSeconds)
 	for index := range samples {
@@ -779,7 +782,7 @@ func curveFixtureExecution(
 	t.Helper()
 	completed := time.Date(2026, 8, 11, 1, 3, 3, 0, time.UTC)
 	if points := config.Measurement.OperatingPoints; points != nil {
-		completed = completed.Add(time.Duration(points.PhaseDurationSeconds*(len(points.Utilizations)+2)) * time.Second)
+		completed = completed.Add(time.Duration(points.PhaseDurationSeconds*(len(points.Utilizations)+2)+points.PostLoadDurationSeconds) * time.Second)
 	}
 	container := func(name, image string) profilerevidence.ContainerTerminal {
 		return profilerevidence.ContainerTerminal{

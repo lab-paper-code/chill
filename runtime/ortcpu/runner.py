@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha21"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha13"
+RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha22"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha14"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha3"
 SUPPORTED_WORKLOAD = "empirical-cadence-fixed-batch"
 IDLE_WORKLOAD = "idle-model-loaded"
@@ -437,7 +437,7 @@ def validate_request(
         require_absolute_file_path(dataset["path"], "run_config.measurement.dataset.path")
         points = require_object(measurement["operatingPoints"], "measurement.operatingPoints")
         require_fields(points, {"utilizations", "sparseMeanGapMilliseconds", "phaseDurationSeconds",
-                              "requestLifetimeSeconds", "deliveryMarginMilliseconds",
+                              "postLoadDurationSeconds", "requestLifetimeSeconds", "deliveryMarginMilliseconds",
                               "framedDecodedRequestUpperBytes", "queueBytesCap"}, "measurement.operatingPoints")
         utilizations = points["utilizations"]
         if not isinstance(utilizations, list) or not utilizations:
@@ -450,12 +450,12 @@ def validate_request(
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ContractError("operatingPoints." + field + " must be finite and positive")
         require_integer(points["phaseDurationSeconds"], "operatingPoints.phaseDurationSeconds", 30)
-        for field in ("requestLifetimeSeconds", "deliveryMarginMilliseconds", "framedDecodedRequestUpperBytes"):
+        for field in ("postLoadDurationSeconds", "requestLifetimeSeconds", "deliveryMarginMilliseconds", "framedDecodedRequestUpperBytes"):
             require_integer(points[field], "operatingPoints." + field, 1)
         queue_cap = require_integer(points["queueBytesCap"], "operatingPoints.queueBytesCap", 1)
         if queue_cap != min(request["maxInputBytes"], 64 << 20):
             raise ContractError("frozen queue byte cap differs from runtime request capacity")
-        if measurement["durationSeconds"] != points["phaseDurationSeconds"] * (len(utilizations) + 2):
+        if measurement["durationSeconds"] != points["phaseDurationSeconds"] * (len(utilizations) + 2) + points["postLoadDurationSeconds"]:
             raise ContractError("active measurement duration must cover its exact named phases")
     validate_candidate(run_config["delivery"])
 

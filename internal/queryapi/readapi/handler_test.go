@@ -560,9 +560,9 @@ func preflightProtocol(mode string) profilederivation.CurveProtocolContract {
 		WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
 	}
 	if mode == "empirical-cadence-fixed-batch" {
-		protocol.DurationSeconds, protocol.MetricDurationSeconds = 90, 91
+		protocol.DurationSeconds, protocol.MetricDurationSeconds = 120, 121
 		protocol.OperatingPoints = &profilederivation.OperatingPointsContract{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
-			PhaseDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768}
+			PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768}
 	}
 	return protocol
 }
@@ -619,7 +619,8 @@ func passportSnapshot() queryapi.EvidencePassportSnapshot {
 	}
 	workers, sizing := fixtures.PhaseSupply(1, 32, 32768, 1024, 30, 100)
 	fixtures.ApplyActivePhases(&snapshot.Measurement.Runtime, fixtures.PhaseOptions{StartedAt: started, Duration: 30 * time.Second,
-		Batch: 1, Samples: 2, Workers: workers, Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
+		PostLoadDuration: 30 * time.Second,
+		Batch:            1, Samples: 2, Workers: workers, Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
 		PodUID: "pod-uid", Latencies: []float64{1, 2}, SupplySizing: sizing})
 	return snapshot
 }
@@ -634,7 +635,7 @@ func campaignResultSnapshot(t *testing.T) queryapi.BatchEnergyOptimizationResult
 		},
 		CurvePlan: batchenergyoptimization.StoredObjectReference{
 			Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha13", Size: 2459,
+			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha14", Size: 2459,
 		},
 		CompletedTrials: []batchenergyoptimization.CompletedTrialReference{{
 			Run: batchenergyoptimization.RunReference{

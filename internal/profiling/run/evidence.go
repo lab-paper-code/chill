@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha13"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha14"
 
 	RKNNLiteCoreMask      = "NPU_CORE_0"
 	RKNNLiteInputLayout   = "NHWC"
@@ -50,6 +50,7 @@ type RuntimeResult struct {
 	DerivedContract           DerivedContract            `json:"derivedExecutionContract"`
 	Phases                    []Phase                    `json:"phases"`
 	SupplySizing              SupplySizing               `json:"supplySizing"`
+	PostLoad                  *PostLoadObservation       `json:"postLoad"`
 	CompletionIndex           int                        `json:"completionIndex"`
 	Inputs                    []string                   `json:"inputs"`
 	// MemoryBytes is the kernel cgroup high-water mark (v2 memory.peak or v1
@@ -67,6 +68,24 @@ type RuntimeResult struct {
 	ThroughputItemsPerSecond float64            `json:"throughputItemsPerSecond"`
 	Power                    json.RawMessage    `json:"power"`
 	EnergyPerRequest         json.RawMessage    `json:"energyPerRequest"`
+}
+
+// PostLoadObservation proves the same actor stayed loaded without serving
+// requests while metrics.samples retained its post-load stabilization series.
+type PostLoadObservation struct {
+	StartedAt                string        `json:"startedAt"`
+	EndedAt                  string        `json:"endedAt"`
+	DurationSecondsMonotonic float64       `json:"durationSecondsMonotonic"`
+	ActorPID                 int           `json:"actorPID"`
+	ModelResidentAtEnd       bool          `json:"modelResidentAtEnd"`
+	CountersBefore           ActorCounters `json:"countersBefore"`
+	CountersAfter            ActorCounters `json:"countersAfter"`
+}
+
+type ActorCounters struct {
+	AcceptedRequests  uint64 `json:"acceptedRequests"`
+	CompletedRequests uint64 `json:"completedRequests"`
+	Executions        uint64 `json:"executions"`
 }
 
 type RuntimeCPU struct {
@@ -382,6 +401,37 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	}
 	if latencyCount != result.InferenceCount {
 		return errors.New("raw latency count does not match inference count")
+	}
+	if err := validatePostLoad(config, result); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePostLoad(config RunConfig, result RuntimeResult) error {
+	post := result.PostLoad
+	if post == nil || post.ActorPID <= 0 || !post.ModelResidentAtEnd ||
+		!finitePositive(post.DurationSecondsMonotonic) ||
+		post.DurationSecondsMonotonic < float64(config.Measurement.OperatingPoints.PostLoadDurationSeconds) {
+		return errors.New("post-load requires loaded actor identity, residency and the frozen observation duration")
+	}
+	start, err := time.Parse(time.RFC3339Nano, post.StartedAt)
+	if err != nil {
+		return errors.New("post-load start is invalid")
+	}
+	end, err := time.Parse(time.RFC3339Nano, post.EndedAt)
+	if err != nil || !end.After(start) || post.EndedAt != result.MeasurementEndedAt {
+		return errors.New("post-load end must close the runtime measurement window")
+	}
+	lastEnd, err := time.Parse(time.RFC3339Nano, result.Phases[len(result.Phases)-1].MeasurementEndedAt)
+	if err != nil || !start.Equal(lastEnd) {
+		return errors.New("post-load must begin at the final drained load-phase boundary")
+	}
+	before := post.CountersBefore
+	if before != post.CountersAfter || before.Executions != uint64(result.InferenceCount) ||
+		before.AcceptedRequests != uint64(result.InferenceCount)*uint64(config.Measurement.Batch) ||
+		before.CompletedRequests != before.AcceptedRequests {
+		return errors.New("post-load actor counters require zero requests and zero inference")
 	}
 	return nil
 }

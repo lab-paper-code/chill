@@ -277,6 +277,7 @@ func writeTestRunConfig(t *testing.T, directory, endpoint string) {
 		Batch: 1, SettlingDurationSeconds: 1, DurationSeconds: 1,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
+	runConfig.LoadOriginNode, runConfig.LoadOriginGatewayPod = "", nil
 	runConfig.Metrics.DurationSeconds = 1
 	runConfig.Metrics.IntervalMilliseconds = 20
 	runConfig.Metrics.TimeoutMilliseconds = 10

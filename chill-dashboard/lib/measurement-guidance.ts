@@ -20,6 +20,14 @@ spec:
     durationSeconds: "<active-duration-seconds>"
     durationToleranceSeconds: "<active-duration-tolerance-seconds>"
     dataset: "<registered-dataset-name>"
+    operatingPoints:
+      utilizations: ["<utilization-between-zero-and-one>"]
+      sparseMeanGapMilliseconds: "<positive-sparse-mean-gap-milliseconds>"
+      phaseDurationSeconds: "<phase-duration-seconds-at-least-30>"
+      postLoadDurationSeconds: "<positive-post-load-duration-seconds>"
+      requestLifetimeSeconds: "<positive-request-lifetime-seconds>"
+      deliveryMarginMilliseconds: "<positive-delivery-margin-milliseconds>"
+      framedDecodedRequestUpperBytes: "<positive-decoded-request-upper-bytes>"
     metricObservation:
       intervalMilliseconds: "<active-power-interval-milliseconds>"
       timeoutMilliseconds: "<active-power-timeout-milliseconds>"

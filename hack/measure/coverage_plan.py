@@ -198,6 +198,8 @@ def coverage_defaults(cell, node, plans, profiles):
             if field == "activeProtocol":
                 spec[field].pop("settlingDurationSeconds", None)
                 spec[field]["dataset"] = protocol["dataset"]["name"]
+                spec[field]["operatingPoints"] = copy.deepcopy(protocol["operatingPoints"])
+                spec[field]["operatingPoints"].pop("queueBytesCap", None)
             spec[field]["metricObservation"] = {
                 "intervalMilliseconds": protocol["metricIntervalMilliseconds"],
                 "timeoutMilliseconds": protocol["metricTimeoutMilliseconds"],
@@ -482,7 +484,8 @@ def coverage_batch_plan(cell, batches, timings, policy, declared_batches=(), exe
 
 
 def coverage_active_protocol(active, policy):
-    seconds = policy["windowSeconds"]
+    points = active["operatingPoints"]
+    seconds = points["phaseDurationSeconds"] * (len(points["utilizations"]) + 2) + points["postLoadDurationSeconds"]
     padding = max(0, active["metricObservation"]["durationSeconds"] - active["durationSeconds"])
     active.update(durationSeconds=seconds, warmupIterations=policy["warmupIterations"])
     active["metricObservation"]["durationSeconds"] = seconds + padding
@@ -644,8 +647,8 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                                          executionPath=cell["executionPath"], powerMode=cell["powerMode"])
         coverage_inputs(spec, model, artifact, inputs["preprocessors"]["items"], inputs["datasets"]["items"])
         minimum_samples = coverage_workload(spec, inputs["workloads"])
-        seconds = policy["windowSeconds"]
         coverage_active_protocol(spec["activeProtocol"], policy)
+        seconds = spec["activeProtocol"]["durationSeconds"]
         idle = spec["idleProtocol"]
         idle_padding = max(0, idle["metricObservation"]["durationSeconds"] - idle.get("durationSeconds", policy["idleSeconds"]))
         idle["durationSeconds"] = idle.get("durationSeconds") or policy["idleSeconds"]

@@ -17,16 +17,16 @@ import (
 func TestCoordinatorResultHandoffsConsumeRemainingAttemptBudget(t *testing.T) {
 	// Explicit wall-time scaling only: each scenario second is 10ms. The real
 	// Coordinator, file readers, atomic publishers, verification and raw commit
-	// boundary execute unchanged; retained runtime timestamps still span 118s.
+	// boundary execute unchanged; retained runtime timestamps still span 148s.
 	const second = 10 * time.Millisecond
-	const attempt = 181 * second
+	const attempt = 211 * second
 	for _, test := range []struct {
 		name          string
 		metricDelay   time.Duration
 		workloadDelay time.Duration
 		wantFailure   error
 	}{
-		{"118s runtime plus 35s final read commits", 35 * second, 0, nil},
+		{"148s runtime plus 35s final read commits", 35 * second, 0, nil},
 		{"metric exceeds remaining 63s", 80 * second, 0, ErrMetricObservation},
 		{"workload cannot reset budget after metric", 35 * second, 50 * second, ErrWorkloadObservation},
 	} {
@@ -37,13 +37,15 @@ func TestCoordinatorResultHandoffsConsumeRemainingAttemptBudget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			runtimeResult.MeasurementElapsedSeconds = 118
-			runtimeResult.MeasurementEndedAt = started.Add(118 * time.Second).Format(time.RFC3339Nano)
+			runtimeResult.MeasurementElapsedSeconds = 148
+			runtimeResult.MeasurementEndedAt = started.Add(148 * time.Second).Format(time.RFC3339Nano)
 			last := &runtimeResult.Phases[len(runtimeResult.Phases)-1]
-			last.MeasurementEndedAt = runtimeResult.MeasurementEndedAt
+			last.MeasurementEndedAt = started.Add(118 * time.Second).Format(time.RFC3339Nano)
 			last.MeasurementElapsedSeconds = 58
+			runtimeResult.PostLoad.StartedAt = last.MeasurementEndedAt
+			runtimeResult.PostLoad.EndedAt = runtimeResult.MeasurementEndedAt
 			metricResult := testMetricResult(config)
-			metricResult.EndedAt = started.Add(153 * time.Second)
+			metricResult.EndedAt = started.Add(183 * time.Second)
 			metricResult.Summary = metricobserver.Summarize(metricResult)
 			workloadResult := testWorkloadResult(t, config, runtimeResult)
 			workloadResult.CoverageEndedAt = metricResult.EndedAt.Add(time.Second)
@@ -73,14 +75,14 @@ func TestCoordinatorResultHandoffsConsumeRemainingAttemptBudget(t *testing.T) {
 				if err := json.Unmarshal(payload, &raw); err != nil {
 					t.Fatal(err)
 				}
-				if raw.Runtime.MeasurementElapsedSeconds != 118 || raw.Workload == nil {
+				if raw.Runtime.MeasurementElapsedSeconds != 148 || raw.Workload == nil {
 					t.Fatalf("raw measurement lost long runtime/workload: %#v", raw)
 				}
 				return createdReceipt(identity), nil
 			}}
 			coordinator := mustCoordinator(t, runtimeFunc(func(ctx context.Context, _ RuntimeRequest) (profilingrun.RuntimeResult, error) {
 				select {
-				case <-time.After(118 * second):
+				case <-time.After(148 * second):
 				case <-ctx.Done():
 					published <- nil
 					return profilingrun.RuntimeResult{}, ctx.Err()

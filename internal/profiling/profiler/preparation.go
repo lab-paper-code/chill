@@ -175,7 +175,7 @@ func (r *PreparationRequest) FreezePhaseDuration() error {
 	if err := points.Validate(); err != nil {
 		return err
 	}
-	duration := points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+	duration := points.PhaseDurationSeconds*(len(points.Utilizations)+2) + points.PostLoadDurationSeconds
 	margin := max(0, r.Metrics.DurationSeconds-r.Measurement.DurationSeconds)
 	if margin > int(^uint32(0)>>1)-duration {
 		return errors.New("active phase observation duration exceeds supported seconds")

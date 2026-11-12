@@ -37,7 +37,7 @@ func TestValidateRuntimeRejectsMaterialDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !started.Equal(time.Date(2026, time.January, 1, 0, 0, 1, 0, time.UTC)) ||
-		!ended.Equal(time.Date(2026, time.January, 1, 0, 1, 31, 0, time.UTC)) {
+		!ended.Equal(time.Date(2026, time.January, 1, 0, 2, 1, 0, time.UTC)) {
 		t.Fatalf("measurement window = %s..%s", started, ended)
 	}
 }

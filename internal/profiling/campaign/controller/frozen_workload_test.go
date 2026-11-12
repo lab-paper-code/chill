@@ -52,7 +52,7 @@ func TestCampaignChildrenRetainFrozenWorkloadAfterIdle(t *testing.T) {
 				DurationSeconds:      int32(config.Metrics.DurationSeconds),
 			}
 			parent.Spec.ActiveProtocol = api.ActiveProtocolSpec{
-				WarmupIterations: 20, DurationSeconds: 90, DurationToleranceSeconds: ptr.To(.5),
+				WarmupIterations: 20, DurationSeconds: int32(config.Measurement.DurationSeconds), DurationToleranceSeconds: ptr.To(.5),
 				Workload: "mobilenet", Dataset: config.Measurement.Dataset.Name, MetricObservation: metric,
 				OperatingPoints: parent.Spec.ActiveProtocol.OperatingPoints,
 			}

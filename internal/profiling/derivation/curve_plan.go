@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha13"
+	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha14"
 	curveRuntimeFirstfloor = "firstfloor"
 	curveBackendORTCUDA    = "ort-cuda"
 	curveBackendORTCPU     = "ort-cpu"
@@ -71,6 +71,7 @@ type OperatingPointsContract struct {
 	Utilizations                   []float64 `json:"utilizations"`
 	SparseMeanGapMilliseconds      float64   `json:"sparseMeanGapMilliseconds"`
 	PhaseDurationSeconds           int       `json:"phaseDurationSeconds"`
+	PostLoadDurationSeconds        int       `json:"postLoadDurationSeconds"`
 	RequestLifetimeSeconds         int       `json:"requestLifetimeSeconds"`
 	DeliveryMarginMilliseconds     int       `json:"deliveryMarginMilliseconds"`
 	FramedDecodedRequestUpperBytes int64     `json:"framedDecodedRequestUpperBytes"`
@@ -379,6 +380,9 @@ func validateCurveProtocol(mode string, protocol CurveProtocolContract) error {
 	}
 	if (protocol.OperatingPoints != nil) != (mode == "active") {
 		return fmt.Errorf("curve plan %s protocol operatingPoints is invalid", mode)
+	}
+	if points := protocol.OperatingPoints; points != nil && points.PostLoadDurationSeconds < 1 {
+		return fmt.Errorf("curve plan %s protocol requires positive post-load duration seconds", mode)
 	}
 	if protocol.WarmupIterations < 0 || protocol.SettlingDurationSeconds < 0 ||
 		protocol.DurationSeconds < 1 ||

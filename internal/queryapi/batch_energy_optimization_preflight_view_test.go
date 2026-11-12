@@ -250,9 +250,9 @@ func batchEnergyOptimizationPreflightProtocol(mode string) profilederivation.Cur
 		WorkloadSchemaVersion:      "chill.dacs.io/workload-contract.v1alpha1",
 	}
 	if mode == "empirical-cadence-fixed-batch" {
-		protocol.DurationSeconds, protocol.MetricDurationSeconds = 90, 91
+		protocol.DurationSeconds, protocol.MetricDurationSeconds = 120, 121
 		protocol.OperatingPoints = &profilederivation.OperatingPointsContract{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
-			PhaseDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768}
+			PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768}
 	}
 	return protocol
 }

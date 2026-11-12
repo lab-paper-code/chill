@@ -278,7 +278,7 @@ func testRun() *edgev1alpha1.ProfilingRun {
 				WorkloadMode:     "empirical-cadence-fixed-batch", Dataset: "vqav2-val-subset",
 				Workload: "mobilenet",
 				OperatingPoints: &edgev1alpha1.MeasurementOperatingPointsSpec{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
-					PhaseDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100,
+					PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100,
 					FramedDecodedRequestUpperBytes: 1024},
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{

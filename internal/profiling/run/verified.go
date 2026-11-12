@@ -124,6 +124,11 @@ func cloneRunConfig(source RunConfig) RunConfig {
 		dataset := *source.Measurement.Dataset
 		result.Measurement.Dataset = &dataset
 	}
+	if source.Measurement.OperatingPoints != nil {
+		points := *source.Measurement.OperatingPoints
+		points.Utilizations = slices.Clone(points.Utilizations)
+		result.Measurement.OperatingPoints = &points
+	}
 	result.Delivery = cloneRuntimeDelivery(source.Delivery)
 	result.Metrics.MetricLabels = maps.Clone(source.Metrics.MetricLabels)
 	if source.Actuation != nil {

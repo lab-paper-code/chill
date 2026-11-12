@@ -32,7 +32,8 @@ func applyFirstfloorRuntime(config profilingrun.RunConfig, result *profilingrun.
 		points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds))
 	fixtures.ApplyActivePhases(result, fixtures.PhaseOptions{
 		StartedAt: started, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
-		Batch: config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers,
+		PostLoadDuration: time.Duration(points.PostLoadDurationSeconds) * time.Second,
+		Batch:            config.Measurement.Batch, Samples: config.Measurement.MinServiceSamples + 1, Workers: workers,
 		Utilizations: points.Utilizations, SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds,
 		PodUID: result.ExperimentID, Latencies: result.Phases[0].LatencyMilliseconds,
 		SupplySizing: sizing,

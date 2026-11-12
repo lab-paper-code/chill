@@ -30,12 +30,13 @@ def coordination_request(root):
                                     "preprocessor": dict(PREPROCESSOR)},
                           "actor": {"model": "model", "maxQueueRequests": 64, "runnerCommand": ["runner"]},
                           "delivery": {}, "targetNode": {"name": "node", "uid": "node-uid"},
-                          "measurement": {"batch": 2, "warmupIterations": 0, "durationSeconds": 30,
+                          "measurement": {"batch": 2, "warmupIterations": 0, "durationSeconds": 95,
                                           "workloadMode": measurement.common.SUPPORTED_WORKLOAD,
                                           "sloPercentile": 95, "sloTargetLatencyNanos": 1_000_000_000,
                                           "minServiceSamples": 2,
                                           "operatingPoints": {"utilizations": [.5], "sparseMeanGapMilliseconds": 1000,
-                                                              "phaseDurationSeconds": 30, "requestLifetimeSeconds": 60,
+                                                              "phaseDurationSeconds": 30, "postLoadDurationSeconds": 5,
+                                                              "requestLifetimeSeconds": 60,
                                                               "deliveryMarginMilliseconds": 10,
                                                               "framedDecodedRequestUpperBytes": 1024}}}}
 
@@ -127,6 +128,7 @@ class ExternalLoadConsumerTest(unittest.TestCase):
         request, plan = self.make_plan()
         self.assertEqual(plan["nativeEndpoint"], "http://10.0.0.7:8080")
         self.assertEqual(plan["inferPath"], "/v2/models/model/infer")
+        self.assertEqual(plan["operatingPoints"]["postLoadDurationSeconds"], 5)
         self.assertEqual(plan["fields"], ["image"])
         self.assertNotIn("workers", plan)
         self.assertNotIn("maxBatchServiceSeconds", plan["operatingPoints"])
@@ -246,112 +248,82 @@ class ExternalLoadConsumerTest(unittest.TestCase):
         with self.assertRaises(measurement.common.ContractError):
             measurement.sparse_max_seconds([], plan)
 
-    def test_active_worker_waits_for_upload_and_keeps_observer_memory_handoff(self):
+    def test_post_load_keeps_same_actor_observer_and_power_window_until_zero_inference_proof(self):
         request, plan = self.make_plan()
         phases = phase_results(plan)
-        session = mock.Mock()
-        session.counts.return_value = {"acceptedRequests": 0, "completedRequests": 0, "executions": 0}
-        control = mock.Mock()
+        session, process, control, sampler = mock.Mock(), mock.Mock(), mock.Mock(), mock.Mock()
+        process.pid = 123
+        process.poll.return_value = None
+        zero = {"acceptedRequests": 0, "completedRequests": 0, "executions": 0}
+        loaded = {"acceptedRequests": 12, "completedRequests": 12, "executions": 6}
+        session.counts.side_effect = [zero, loaded, loaded]
         def upload(process):
-            control.final_observation = control.finalize_measurement()
+            control.post_load_start = control.begin_post_load()
             return {"phases": phases, "supplySizing": {"workers": 4}}
-
         control.wait_result.side_effect = upload
-        sampler = mock.Mock()
         sampler.stop.return_value = {"memoryBytes": 123, "memorySource": "observed"}
+        clock, power_samples, fences = [10.0], [], []
+
+        def sleep(seconds):
+            self.assertNotIn(Path(request["measurementEndPath"]), fences)
+            process.terminate.assert_not_called()
+            sampler.stop.assert_not_called()
+            clock[0] += seconds
+            # Stand in for the independent observer, which must still own its window.
+            power_samples.append((clock[0], 10.0))
+
         with ExitStack() as stack:
             stack.enter_context(mock.patch.object(measurement.common, "wait_for_signal"))
-            publish = stack.enter_context(mock.patch.object(measurement.common, "publish_immutable"))
+            stack.enter_context(mock.patch.object(measurement.common, "publish_immutable",
+                                                 side_effect=lambda path, body: fences.append(path)))
             stack.enter_context(mock.patch.object(measurement.common, "cpu_stat", return_value={}))
-            stack.enter_context(mock.patch.object(measurement.time, "monotonic", side_effect=[10, 110]))
-            result = measurement.execute_active(request, mock.Mock(), session, control, {"availableProviders": ["CPUExecutionProvider"]},
+            stack.enter_context(mock.patch.object(measurement.common, "SIGNAL_POLL_SECONDS", 1))
+            stack.enter_context(mock.patch.object(measurement.time, "monotonic", side_effect=lambda: clock[0]))
+            stack.enter_context(mock.patch.object(measurement.time, "sleep", side_effect=sleep))
+            metadata = stack.enter_context(mock.patch.object(measurement, "validate_metadata", return_value={}))
+            result = measurement.execute_active(request, process, session, control, {},
                                                 "amd64", "max 100000", [0], "0", sampler)
-        self.assertEqual(result["schemaVersion"], "chill.dacs.io/batch-characterization.v1alpha13")
+        self.assertEqual(result["schemaVersion"], measurement.common.RESULT_SCHEMA)
         self.assertEqual(result["inferenceCount"], 6)
         self.assertEqual(result["phases"], phases)
-        self.assertNotIn("repetitionResults", result)
-        self.assertEqual(result["memoryBytes"], 123)
+        self.assertEqual(result["postLoad"]["durationSecondsMonotonic"], 5)
+        self.assertEqual(result["postLoad"]["actorPID"], 123)
+        self.assertTrue(result["postLoad"]["modelResidentAtEnd"])
+        self.assertEqual(result["postLoad"]["countersBefore"], loaded)
+        self.assertEqual(result["postLoad"]["countersAfter"], loaded)
+        self.assertEqual(result["measurementEndedAt"], result["postLoad"]["endedAt"])
+        self.assertEqual(len(power_samples), 5)
+        self.assertEqual(fences[-1], Path(request["measurementEndPath"]))
         sampler.start.assert_called_once_with()
         sampler.stop.assert_called_once_with()
-        control.ready.set.assert_called_once_with()
-        self.assertEqual([call.args[0] for call in publish.call_args_list],
-                         [Path(request[key]) for key in ("workloadWindowStartPath", "measurementStartPath", "measurementEndPath")])
+        metadata.assert_called_once()
         session.run.assert_not_called()
 
-    def test_last_phase_freezes_sampled_or_kernel_memory_before_upload_decode(self):
-        import http.client
-
-        for sampled in (True, False):
-            with self.subTest(sampled=sampled):
-                request, plan = self.make_plan()
-                phases = phase_results(plan)
-                events = []
-                with mock.patch.dict(os.environ, {"POD_IP": "10.0.0.7"}):
-                    control = measurement.LoadControl(request, ("127.0.0.1", 0))
-                try:
-                    control.phase_windows = [{key: phase[key] for key in
-                                              ("id", "measurementStartedAt", "measurementEndedAt")} for phase in phases]
-                    control.phase_windows[-1].pop("measurementEndedAt")
-                    control.supply_sizing = {"workers": 4, "maxBatchServiceSeconds": .002}
-                    sampler = mock.Mock() if sampled else None
-                    if sampler is not None:
-                        sampler.stop.side_effect = lambda: events.append("memory") or {
-                            "memoryBytes": 123, "memorySource": "sampled"}
-                    session, process = mock.Mock(), mock.Mock()
-                    process.poll.return_value = None
-                    original_wait = control.wait_result
-                    original_loads = json.loads
-
-                    def decode(payload, **kwargs):
-                        if isinstance(payload, bytes) and payload.startswith(b'{"status"'):
-                            self.assertIsNotNone(control.final_observation)
-                            self.assertIn("end", events)
-                            self.assertEqual(events[-1], "cpu")
-                            events.append("decode")
-                        return original_loads(payload, **kwargs)
-
-                    def upload(process):
-                        client = http.client.HTTPConnection("127.0.0.1", control.server.server_port, timeout=2)
-                        try:
-                            client.request("POST", "/measurement/phase",
-                                           json.dumps({"id": "utilization-0", "action": "end"}))
-                            response = client.getresponse()
-                            self.assertEqual(response.status, 200, response.read())
-                            self.assertEqual(events[-3:], ["memory", "end", "cpu"])
-                            body = json.dumps({"status": "Succeeded", "phases": phases,
-                                               "supplySizing": control.supply_sizing})
-                            client.request("POST", "/measurement/load-result", body)
-                            response = client.getresponse()
-                            self.assertEqual(response.status, 200, response.read())
-                        finally:
-                            client.close()
-                        return original_wait(process)
-
-                    def publish(path, body):
-                        if path == Path(request["measurementEndPath"]):
-                            events.append("end")
-
-                    with ExitStack() as stack:
-                        stack.enter_context(mock.patch.object(measurement.common, "wait_for_signal"))
-                        stack.enter_context(mock.patch.object(measurement.common, "publish_immutable", side_effect=publish))
-                        stack.enter_context(mock.patch.object(measurement.common, "now", return_value=phases[-1]["measurementEndedAt"]))
-                        stack.enter_context(mock.patch.object(measurement.common, "cpu_stat", side_effect=lambda: events.append("cpu") or {}))
-                        kernel = stack.enter_context(mock.patch.object(measurement, "memory_peak",
-                                                     side_effect=lambda: events.append("memory") or (123, "kernel")))
-                        stack.enter_context(mock.patch.object(measurement.json, "loads", side_effect=decode))
-                        stack.enter_context(mock.patch.object(control, "wait_result", side_effect=upload))
-                        result = measurement.execute_active(request, process, session, control, {}, "amd64",
-                                                            "max 100000", [0], "0", sampler)
-                    self.assertEqual(result["memoryBytes"], 123)
-                    self.assertEqual(result["measurementEndedAt"], phases[-1]["measurementEndedAt"])
-                    self.assertEqual(events[-1], "decode")
-                    if sampled:
-                        sampler.stop.assert_called_once_with()
-                        kernel.assert_not_called()
-                    else:
-                        kernel.assert_called_once_with()
-                finally:
-                    control.close()
+    def test_post_load_rejects_actor_exit_or_any_inference(self):
+        request, plan = self.make_plan()
+        for changed in ("acceptedRequests", "completedRequests", "executions", "exit"):
+            with self.subTest(changed=changed), ExitStack() as stack:
+                session, process, control = mock.Mock(), mock.Mock(), mock.Mock()
+                process.pid = 123
+                before = {"acceptedRequests": 12, "completedRequests": 12, "executions": 6}
+                after = dict(before)
+                if changed != "exit":
+                    after[changed] += 1
+                session.counts.side_effect = [{key: 0 for key in before}, before, after]
+                process.poll.return_value = 1 if changed == "exit" else None
+                def upload(process):
+                    control.post_load_start = control.begin_post_load()
+                    return {"phases": phase_results(plan), "supplySizing": {"workers": 4}}
+                control.wait_result.side_effect = upload
+                stack.enter_context(mock.patch.object(measurement.common, "wait_for_signal"))
+                publish = stack.enter_context(mock.patch.object(measurement.common, "publish_immutable"))
+                stack.enter_context(mock.patch.object(measurement.common, "cpu_stat", return_value={}))
+                stack.enter_context(mock.patch.object(measurement.time, "monotonic", side_effect=[0, 0, 5, 5]))
+                stack.enter_context(mock.patch.object(measurement, "validate_metadata", return_value={}))
+                with self.assertRaises((measurement.ExecutionError, measurement.common.ContractError)):
+                    measurement.execute_active(request, process, session, control, {},
+                                               "amd64", "max 100000", [0], "0", None)
+                self.assertNotIn(Path(request["measurementEndPath"]), [call.args[0] for call in publish.call_args_list])
 
     def test_control_failure_preserves_phase_issue_summary(self):
         import http.client
@@ -526,6 +498,45 @@ class ExternalLoadConsumerTest(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertEqual(json.loads(response.read()), {"at": "2026-11-13T00:00:00.123456Z"})
         client.close()
+
+
+class PostLoadControlTest(unittest.TestCase):
+    def test_final_phase_opens_postload_before_upload_and_preserves_actor_failure(self):
+        import http.client
+
+        for failed in (False, True):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as directory:
+                request = coordination_request(Path(directory))
+                with mock.patch.dict(os.environ, {"POD_IP": "127.0.0.1"}):
+                    control = measurement.LoadControl(request, ("127.0.0.1", 0))
+                client = http.client.HTTPConnection("127.0.0.1", control.server.server_port, timeout=2)
+                try:
+                    phases = phase_results(control.plan)
+                    control.phase_windows = [{key: phase[key] for key in
+                                              ("id", "measurementStartedAt", "measurementEndedAt")} for phase in phases]
+                    control.phase_windows[-1].pop("measurementEndedAt")
+                    boundary = {"startedAt": phases[-1]["measurementEndedAt"], "started": 10,
+                                "countersBefore": {"acceptedRequests": 12, "completedRequests": 12, "executions": 6}}
+                    control.begin_post_load = mock.Mock(return_value=boundary)
+                    if failed:
+                        control.begin_post_load.side_effect = measurement.ExecutionError("actor exited")
+                    control.ready.set()
+                    client.request("POST", "/measurement/phase",
+                                   json.dumps({"id": "utilization-0", "action": "end"}))
+                    response = client.getresponse()
+                    self.assertEqual(response.status, 503 if failed else 200, response.read())
+                    control.begin_post_load.assert_called_once_with()
+                    self.assertFalse(Path(request["measurementEndPath"]).exists())
+                    if failed:
+                        with self.assertRaisesRegex(measurement.ExecutionError, "actor exited"):
+                            control.wait_result(mock.Mock())
+                    else:
+                        self.assertIs(control.post_load_start, boundary)
+                        self.assertEqual(control.phase_windows[-1]["measurementEndedAt"], boundary["startedAt"])
+                        self.assertFalse(control.finished.is_set())
+                finally:
+                    client.close()
+                    control.close()
 
 
 class MeasurementBoundaryTest(unittest.TestCase):

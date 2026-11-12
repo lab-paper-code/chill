@@ -187,6 +187,12 @@ func batchEnergyOptimizationPreflightQueryPlan(t *testing.T) profilederivation.C
 	active := batchEnergyOptimizationPreflightQueryProtocol("empirical-cadence-fixed-batch")
 	active.WarmupIterations = 20
 	active.Dataset = &profilederivation.CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
+	active.OperatingPoints = &profilederivation.OperatingPointsContract{
+		Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
+		PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30, RequestLifetimeSeconds: 30,
+		DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768,
+	}
+	active.DurationSeconds, active.MetricDurationSeconds = 120, 121
 	idle := batchEnergyOptimizationPreflightQueryProtocol("idle-model-loaded")
 	idle.SettlingDurationSeconds = 5
 	plan, err := profilederivation.NewCurvePlan(profilederivation.CurvePlanSpec{

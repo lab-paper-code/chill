@@ -1110,7 +1110,7 @@ func statisticsTrial(
 	start := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
 	windowSeconds := 30
 	if points := config.Measurement.OperatingPoints; points != nil {
-		windowSeconds = points.PhaseDurationSeconds * (len(points.Utilizations) + 2)
+		windowSeconds = points.PhaseDurationSeconds*(len(points.Utilizations)+2) + points.PostLoadDurationSeconds
 	}
 	end := start.Add(time.Duration(windowSeconds) * time.Second)
 	cpu := runconfig.RuntimeCPU{
@@ -1283,7 +1283,8 @@ func statisticsTrial(
 		workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap, points.FramedDecodedRequestUpperBytes,
 			float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds))
 		fixtures.ApplyActivePhases(&active.Runtime, fixtures.PhaseOptions{StartedAt: start, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
-			Batch: config.Measurement.Batch, Samples: count, Workers: workers, Utilizations: points.Utilizations,
+			PostLoadDuration: time.Duration(points.PostLoadDurationSeconds) * time.Second,
+			Batch:            config.Measurement.Batch, Samples: count, Workers: workers, Utilizations: points.Utilizations,
 			SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds, PodUID: name, Latencies: []float64{latency}, SupplySizing: sizing})
 		ff.ExecutionCount = uint64(active.Runtime.InferenceCount)
 		ff.InferenceCount = ff.ExecutionCount * uint64(config.Measurement.Batch)

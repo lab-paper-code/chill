@@ -3,9 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -34,7 +32,7 @@ func BenchmarkProfilingLoadNative(b *testing.B) {
 			plan.MaxQueueRequests = 256
 			plan.MinServiceSamples = 10
 			plan.MaxLatencySamples = 100000
-			driver := newProfilingLoadDriver(plan, profilingTestRecords(), "", io.Discard)
+			driver := newProfilingLoadDriver(plan, profilingTestRecords(b), "")
 			defer driver.close()
 			var achieved, elapsed, p50, p95, p99, maximum, encodedBytes float64
 			var scheduled, sent, completed int
@@ -56,8 +54,8 @@ func BenchmarkProfilingLoadNative(b *testing.B) {
 				if err != nil {
 					failures = append(failures, err)
 				}
-				encoded, encodeErr := json.Marshal(phase)
-				if encodeErr != nil {
+				var encoded profilingByteCounter
+				if encodeErr := driver.writePhase(&encoded, phase); encodeErr != nil {
 					failures = append(failures, encodeErr)
 				}
 				scheduled += phase.ScheduledInputs
@@ -76,7 +74,7 @@ func BenchmarkProfilingLoadNative(b *testing.B) {
 					gc.PauseTotalMilliseconds += phase.DriverGC.PauseTotalMilliseconds
 					gc.MaxPauseMilliseconds = max(gc.MaxPauseMilliseconds, phase.DriverGC.MaxPauseMilliseconds)
 				}
-				encodedBytes += float64(len(encoded))
+				encodedBytes += float64(encoded)
 			}
 			b.StopTimer()
 			if err := syscall.Getrusage(syscall.RUSAGE_SELF, &cpuAfter); err != nil {

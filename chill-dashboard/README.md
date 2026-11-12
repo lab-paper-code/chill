@@ -41,9 +41,16 @@ HF/KServe/BentoML/MLflow에서 참고한 분리 원칙과 지원하지 않는 �
 관리자는 DeviceClass·Node·실행 경로·전력 모드와 장비 가용성·실행 권한을 준비한다.
 
 - 직접 작성은 등록된 선택지와 이전 측정 방식을 사용한다. 첫 측정 조건은 측정 담당자에게 받는다.
+  고급 측정 설정에서 `activeProtocol.operatingPoints`의 이용률 목록·희소 요청 간격·운영점 측정 시간·
+  부하 종료 후 전력 기록 시간(`postLoadDurationSeconds`, 양의 정수)·요청 수명·전달 여유·프레임 바이트 상한을 모두 지정한다.
+  기존 요청과 프로파일의 실제 값을 그대로 가져오며, 누락된 값은 임의로 채우지 않고 직접 입력한다.
+  실행 측정 시간은 `(이용률 개수 + 2) × 운영점별 측정 시간 + postLoadDurationSeconds`를 포함하고,
+  전력 기록 창은 이 전체 구간을 포함해야 한다.
 - 가져오기는 단일 `edge.dacs.io/v1alpha1` / `BatchEnergyOptimization` 문서를 파일 또는 붙여넣기로 읽는다.
   namespace를 화면 선택과 맞추고 예시의 `<...>`를 실제 등록값으로 바꾼다.
   숫자 자리표시자는 따옴표까지 지워 숫자로 적는다. 예시는 빈 입력란에만 삽입한다.
+  `activeProtocol.operatingPoints`는 필수다. 이용률은 0 초과 1 미만, 희소 간격은 양수,
+  운영점 측정 시간은 30초 이상, 나머지 운영점 입력은 양의 정수다.
 - 배치는 K=1,2,4…로 자동 탐색한다. 공개 요청에는 `batchSizes`가 없으므로 과거 고정 배치 문서의
   `spec.batchSizes`를 지운다. 모델 artifact·runtime capability가 상한을 정하며, 실제 OOM·측정 예산 경계에서
   완료된 낮은 K의 결과를 보관한다. `retryLimit`은 일시적 인프라 장애의 재시도 한도다.

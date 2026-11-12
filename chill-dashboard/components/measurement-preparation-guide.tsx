@@ -22,7 +22,8 @@ export function MeasurementPreparationGuide() {
       <summary className="min-h-11 cursor-pointer py-2 font-medium">입력 방법과 측정 시간 읽기</summary>
       <div className="grid gap-3 pt-2">
         <p>직접 작성은 등록된 선택지와 이전 측정 방식을 이용해요. YAML/JSON 가져오기는 담당자가 준비한 네이티브 BEO 문서를 읽어요. 문서의 spec은 제공한 그대로 서버에 전달하며, 브라우저가 누락된 측정 숫자를 채우지 않아요.</p>
-        <p><code>activeProtocol.durationSeconds</code>는 부하를 실행하며 측정하는 시간이고, <code>idleProtocol.durationSeconds</code>는 유휴 측정 시간이에요. 유휴 측정 전 안정 대기는 <code>settlingDurationSeconds</code>로 구분해요.</p>
+        <p><code>activeProtocol.durationSeconds</code>는 각 운영점과 부하 종료 후 전력 기록을 합친 명목 측정 시간이고, <code>idleProtocol.durationSeconds</code>는 유휴 측정 시간이에요. 유휴 측정 전 안정 대기는 <code>settlingDurationSeconds</code>로 구분해요.</p>
+        <p><code>activeProtocol.operatingPoints</code>는 필수예요. 이용률 목록·희소 요청 평균 간격·운영점별 측정 시간·요청 수명·전달 여유·디코딩된 프레임 바이트 상한을 적으세요. <code>postLoadDurationSeconds</code>는 부하 종료 후 전력을 기록할 양의 정수 초이며, 실행 측정 시간과 전력 기록 구간에 포함해요. 기존 요청이나 프로파일에 값이 없으면 담당자의 측정 조건을 입력하세요.</p>
         <p><code>durationToleranceSeconds</code>는 실행·유휴 시간의 허용 오차예요. 전체 소요 시간은 자동 탐색 범위와 실행 상태에 따라 달라져요.</p>
         <p>각 <code>metricObservation.durationSeconds</code>는 전력 기록 구간이에요. 실행·유휴 측정 시간과 별도 설정이며 해당 측정 구간을 포함해야 해요. <code>intervalMilliseconds</code>는 기록 간격, <code>timeoutMilliseconds</code>는 수집 요청 대기 한도예요. <code>warmupIterations</code>는 초가 아닌 예열 횟수예요.</p>
         <p>문서 검토는 로컬 읽기와 내용 확인이에요. 그다음 명시적으로 서버 검사(dryRun·preflight)를 요청해 접수 조건과 실행 계획을 확인하세요. 검사 성공도 측정 완료가 아니에요. 최종 제출에서만 실제 장비를 사용하는 측정을 요청하며, 접수 뒤 요청 목록에서 진행과 결과를 확인해요.</p>

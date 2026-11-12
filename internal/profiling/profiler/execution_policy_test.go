@@ -30,6 +30,13 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 		frozen.Policy.AttemptTimeoutOverheadSeconds) * time.Second
 	wantDeadline := time.Duration(config.Metrics.DurationSeconds+config.Measurement.SettlingDurationSeconds+
 		frozen.Policy.ActiveDeadlineOverheadSeconds) * time.Second
+	// p95 B1 needs 60 sparse arrivals and one complete HTTP allowance per drain.
+	drain := time.Duration(config.Measurement.OperatingPoints.RequestLifetimeSeconds)*time.Second +
+		time.Duration(config.Measurement.OperatingPoints.DeliveryMarginMilliseconds)*time.Millisecond
+	extra := 30*time.Second + 3*drain
+	extra = (extra + time.Second - 1) / time.Second * time.Second
+	wantAttempt += extra
+	wantDeadline += extra
 	if plan.AttemptTimeout != wantAttempt || plan.ActiveDeadline != wantDeadline ||
 		plan.MetricObservationTimeout != wantAttempt || plan.MetricResultTimeout != wantAttempt ||
 		plan.WorkloadEndFenceTimeout != wantAttempt || plan.WorkloadResultTimeout != wantAttempt {
@@ -138,13 +145,50 @@ func addWorkloadObservation(config *profilingrun.RunConfig) {
 	config.Workload = profilingrun.CurrentWorkloadContract()
 }
 
+func TestFrozenDeadlineCoversP99BatchEightSparseSamplesDrainsAndPostLoad(t *testing.T) {
+	config := currentExecutionPolicyTestRunConfig(t)
+	config.Measurement.Batch = 8
+	config.Actor.BatchSizes = append(config.Actor.BatchSizes, 8)
+	config.State.Firstfloor.MaxBatchSize = 8
+	config.Actor.MaxBatchSize = 8
+	config.Delivery.ArtifactCapability.DeclaredBatchSizes = nil
+	config.Measurement.SLOPercentile = 99
+	config.Measurement.MinServiceSamples = 299
+	points := config.Measurement.OperatingPoints
+	points.PostLoadDurationSeconds = 30
+	config.Measurement.DurationSeconds = points.PhaseDurationSeconds*(len(points.Utilizations)+2) + points.PostLoadDurationSeconds
+	config.Metrics.DurationSeconds = config.Measurement.DurationSeconds + 1
+	frozen, err := FreezeConfiguredExecutionPolicy(executionPolicyCatalogFixture(t), config, validExecutionPolicySource())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := DeriveExecutionPlan(config, frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The collector needs one unknown-gap batch before its 299 known-gap samples.
+	sparse := 2400 * time.Second
+	otherPhases := time.Duration(points.PhaseDurationSeconds*(len(points.Utilizations)+1)) * time.Second
+	drain := time.Duration(points.RequestLifetimeSeconds)*time.Second + time.Duration(points.DeliveryMarginMilliseconds)*time.Millisecond
+	drains := time.Duration(len(points.Utilizations)+2) * drain
+	measured := sparse + otherPhases + drains + 30*time.Second
+	measured = (measured + time.Second - 1) / time.Second * time.Second
+	wantAttempt := measured + time.Duration(1+frozen.Policy.AttemptTimeoutOverheadSeconds)*time.Second
+	wantDeadline := measured + time.Duration(1+frozen.Policy.ActiveDeadlineOverheadSeconds)*time.Second
+	if plan.AttemptTimeout != wantAttempt || plan.ActiveDeadline != wantDeadline ||
+		plan.MetricObservationTimeout != wantAttempt || plan.MetricResultTimeout != wantAttempt ||
+		plan.WorkloadEndFenceTimeout != wantAttempt || plan.WorkloadResultTimeout != wantAttempt {
+		t.Fatalf("p99 B8 phase budget not frozen end-to-end: %+v; want attempt %s, deadline %s", plan, wantAttempt, wantDeadline)
+	}
+}
+
 func TestCaptureWatchdogAlignsEventsResultAndOuterEnvelopes(t *testing.T) {
 	config := currentExecutionPolicyTestRunConfig(t)
 	config.Measurement.OperatingPoints.PhaseDurationSeconds = 200
-	config.Measurement.DurationSeconds = 600
+	config.Measurement.DurationSeconds = 600 + config.Measurement.OperatingPoints.PostLoadDurationSeconds
 	// Keep the configured startup allowance separate from measured sparse
 	// service times; add the final-read/coordination allowance explicitly.
-	config.Metrics.DurationSeconds = 600 + 1160 + 2 // final-read/coordination allowance
+	config.Metrics.DurationSeconds = config.Measurement.DurationSeconds + 1160 + 2 // final-read/coordination allowance
 	config.Metrics.IntervalMilliseconds = 1000
 	config.Metrics.TimeoutMilliseconds = 500
 	frozen, err := FreezeConfiguredExecutionPolicy(executionPolicyCatalogFixture(t), config, validExecutionPolicySource())

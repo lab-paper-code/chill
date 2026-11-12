@@ -93,7 +93,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "batch": 1,
                 "warmupIterations": 2,
                 "startupWarmupIterations": 2,
-                "durationSeconds": 90,
+                "durationSeconds": 120,
                 "sloPercentile": 95,
                 "minServiceSamples": 59,
                 "sloTargetLatencyNanos": 1_000_000_000,
@@ -103,7 +103,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "durationToleranceSeconds": 0.5,
                 "workloadMode": runner.SUPPORTED_WORKLOAD,
                 "operatingPoints": {"utilizations": [.5], "sparseMeanGapMilliseconds": 1000,
-                                    "phaseDurationSeconds": 30, "requestLifetimeSeconds": 60,
+                                    "phaseDurationSeconds": 30, "postLoadDurationSeconds": 30, "requestLifetimeSeconds": 60,
                                     "deliveryMarginMilliseconds": 10, "framedDecodedRequestUpperBytes": 1024,
                                     "queueBytesCap": 1 << 20},
                 "dataset": {
@@ -179,7 +179,8 @@ class RunnerTest(unittest.TestCase):
 
     def test_operating_points_are_frozen_and_never_accept_a_guessed_service_bound(self) -> None:
         for changes in ({"utilizations": []}, {"utilizations": [0]}, {"utilizations": [1]},
-                        {"sparseMeanGapMilliseconds": 0}, {"phaseDurationSeconds": 29},
+                        {"sparseMeanGapMilliseconds": 0}, {"phaseDurationSeconds": 29}, {"postLoadDurationSeconds": 0},
+                        {"postLoadDurationSeconds": True}, {"postLoadDurationSeconds": 1.5},
                         {"requestLifetimeSeconds": True}, {"maxBatchServiceSeconds": 1}):
             request = valid_request(Path("/model"))
             request["runConfig"]["measurement"]["operatingPoints"].update(changes)

@@ -25,20 +25,23 @@ import (
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	gateway "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 )
 
 func profilingTestPlan(endpoint string) profilingLoadPlan {
 	return profilingLoadPlan{NativeEndpoint: endpoint, InferPath: "/v2/models/classifier/infer", Model: "classifier", Fields: []string{"image"}, Batch: 1, PodUID: "pod", WorkloadResourceVersion: "definition", SLOPercentile: 99, SLOTargetLatencyNanos: 1e9, MaxQueueRequests: 64, MaxQueueBytes: 4 << 20, MinServiceSamples: 1, MaxLatencySamples: 10000, MaxResultBytes: 32 << 20,
-		OperatingPoints: profilingOperatingPoints{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 2, PhaseDurationSeconds: .04, RequestLifetimeSeconds: 2, DeliveryMarginMilliseconds: 10, FramedDecodedRequestUpperBytes: 20 << 10, QueueBytesCap: 4 << 20}}
+		OperatingPoints: profilingOperatingPoints{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 2, PhaseDurationSeconds: .04, PostLoadDurationSeconds: .01, RequestLifetimeSeconds: 2, DeliveryMarginMilliseconds: 10, FramedDecodedRequestUpperBytes: 20 << 10, QueueBytesCap: 4 << 20}}
 }
 
-func profilingTestRecords() []profilingRecord {
-	inputs, err := gateway.PrepareNativeInputs([]native.Field{{Name: "image", Data: [][]byte{make([]byte, 16<<10)}}})
-	if err != nil {
-		panic(err)
+func profilingTestRecords(t testing.TB) []profilingRecord {
+	t.Helper()
+	directory := filepath.Join(t.TempDir(), "record")
+	if err := os.Mkdir(directory, 0700); err != nil {
+		t.Fatal(err)
 	}
-	return []profilingRecord{{ID: "record", Inputs: inputs}}
+	if err := os.WriteFile(filepath.Join(directory, "image"), make([]byte, 16<<10), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return []profilingRecord{{ID: "record", directory: directory}}
 }
 
 // This server emits real native wire proof, not compact retained evidence.
@@ -108,9 +111,9 @@ func TestProfilingLoadPoissonLagIsDiagnosticAndNativeOriginIsActual(t *testing.T
 	}}
 	defer func() { profilingResponseBuffers = sync.Pool{New: oldNew} }()
 	plan := profilingTestPlan(server.URL)
-	driver := newProfilingLoadDriver(plan, profilingTestRecords(), "", io.Discard)
+	driver := newProfilingLoadDriver(plan, profilingTestRecords(t), "")
 	defer driver.close()
-	phase, err := driver.runPhase(context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
+	phase, err := profilingTestRunPhase(t, driver, context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +139,7 @@ func TestProfilingLoadPoissonResponseBackpressureFails(t *testing.T) {
 			defer server.Close()
 			plan := profilingTestPlan(server.URL)
 			plan.MaxQueueRequests = 2
-			driver := newProfilingLoadDriver(plan, profilingTestRecords(), "", io.Discard)
+			driver := newProfilingLoadDriver(plan, profilingTestRecords(t), "")
 			defer driver.close()
 			if blocked == "pool" {
 				driver.transport.MaxConnsPerHost = 1
@@ -157,10 +160,10 @@ func TestProfilingLoadPoissonReplaysEveryArrivalAndExcludesDrain(t *testing.T) {
 	server.Start()
 	defer server.Close()
 	plan := profilingTestPlan(server.URL)
-	driver := newProfilingLoadDriver(plan, profilingTestRecords(), "", io.Discard)
+	driver := newProfilingLoadDriver(plan, profilingTestRecords(t), "")
 	defer driver.close()
 	driver.native.HTTPClient.Transport = profilingDelayedTransport{base: driver.transport, delay: 20 * time.Millisecond}
-	phase, err := driver.runPhase(context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
+	phase, err := profilingTestRunPhase(t, driver, context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,9 +203,9 @@ func TestProfilingLoadPoissonKeepsKnownGapSampleFloor(t *testing.T) {
 	plan := profilingTestPlan(server.URL)
 	plan.OperatingPoints.PhaseDurationSeconds = .005
 	plan.MinServiceSamples = 59
-	driver := newProfilingLoadDriver(plan, profilingTestRecords(), "", io.Discard)
+	driver := newProfilingLoadDriver(plan, profilingTestRecords(t), "")
 	defer driver.close()
-	phase, err := driver.runPhase(context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
+	phase, err := profilingTestRunPhase(t, driver, context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,9 +256,9 @@ func TestProfilingLoadReusesGatewayConnectionsAndCompactsProof(t *testing.T) {
 	}
 	server.Start()
 	defer server.Close()
-	driver := newProfilingLoadDriver(profilingTestPlan(server.URL), profilingTestRecords(), "", io.Discard)
+	driver := newProfilingLoadDriver(profilingTestPlan(server.URL), profilingTestRecords(t), "")
 	defer driver.close()
-	phase, err := driver.runPhase(context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
+	phase, err := profilingTestRunPhase(t, driver, context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +287,7 @@ func TestProfilingLoadReusesGatewayConnectionsAndCompactsProof(t *testing.T) {
 	}
 }
 
-func TestProfilingLoadEarlyBudgetFailsBeforeLadder(t *testing.T) {
+func TestProfilingLoadRejectsExactBudgetDuringFirstPhase(t *testing.T) {
 	var requests atomic.Int64
 	server := profilingNativeStub(t, &requests)
 	server.Start()
@@ -308,15 +311,11 @@ func TestProfilingLoadEarlyBudgetFailsBeforeLadder(t *testing.T) {
 		}
 	}))
 	defer control.Close()
-	var report bytes.Buffer
-	driver := newProfilingLoadDriver(plan, profilingTestRecords(), control.URL, &report)
+	driver := newProfilingLoadDriver(plan, profilingTestRecords(t), control.URL)
 	defer driver.close()
 	_, err := driver.run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "before utilization ladder") || strings.Join(phaseIDs, ",") != "sparse,saturation" {
-		t.Fatalf("late or missing byte-budget rejection: phases=%v err=%v", phaseIDs, err)
-	}
-	if !strings.Contains(report.String(), "measuredBytesPerInput") || !strings.Contains(report.String(), "projectedResultBytes") {
-		t.Fatalf("missing measured budget report: %s", report.String())
+	if err == nil || !strings.Contains(err.Error(), "result budget") || strings.Join(phaseIDs, ",") != "sparse" {
+		t.Fatalf("late or missing exact byte-budget rejection: phases=%v err=%v", phaseIDs, err)
 	}
 }
 
@@ -335,9 +334,9 @@ func TestProfilingLoadAbsoluteDeadlineCancelsControlAndNative(t *testing.T) {
 			start := time.Now()
 			var err error
 			if blocked == "control" {
-				err = profilingLoad(ctx, server.URL, t.TempDir(), io.Discard)
+				err = profilingLoad(ctx, server.URL, t.TempDir())
 			} else {
-				driver := newProfilingLoadDriver(profilingTestPlan(server.URL), profilingTestRecords(), "", io.Discard)
+				driver := newProfilingLoadDriver(profilingTestPlan(server.URL), profilingTestRecords(t), "")
 				defer driver.close()
 				_, err = driver.runPhase(ctx, profilingrun.Phase{ID: "saturation", Kind: "saturation", Workers: 1})
 				var failure *profilingLoadFailure
@@ -369,7 +368,7 @@ func TestProfilingLoadMemoryFailureWinsEarlierBackpressureFailure(t *testing.T) 
 		_ = json.NewEncoder(w).Encode(native.ErrorResponse{Error: "BFCArena allocation failed", FailureReason: "MemoryAllocationFailed", ExecutionComplete: true})
 	}))
 	defer server.Close()
-	driver := newProfilingLoadDriver(profilingTestPlan(server.URL), profilingTestRecords(), "", io.Discard)
+	driver := newProfilingLoadDriver(profilingTestPlan(server.URL), profilingTestRecords(t), "")
 	driver.plan.MaxQueueRequests = 1
 	defer driver.close()
 	driver.native.HTTPClient.Transport = profilingDelayedTransport{base: driver.native.HTTPClient.Transport, delay: 20 * time.Millisecond}
@@ -399,6 +398,9 @@ func TestProfilingLoadProtocolUploadsMeasuredLadder(t *testing.T) {
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
+		if r.Method == http.MethodPost && r.ContentLength <= 0 {
+			t.Error("LoadControl requires an exact Content-Length for streamed uploads")
+		}
 		switch r.URL.Path {
 		case "/measurement/load":
 			_ = json.NewEncoder(w).Encode(plan)
@@ -428,7 +430,7 @@ func TestProfilingLoadProtocolUploadsMeasuredLadder(t *testing.T) {
 	defer control.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := profilingLoad(ctx, control.URL, dataset, io.Discard); err != nil {
+	if err := profilingLoad(ctx, control.URL, dataset); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -459,7 +461,13 @@ func TestProfilingLoadDatasetFieldOrderAndFramedBound(t *testing.T) {
 	if err != nil || len(records) != 1 {
 		t.Fatalf("dataset records: %+v %v", records, err)
 	}
-	raw, err := json.Marshal(records[0].Inputs)
+	driver := newProfilingLoadDriver(plan, records, "")
+	defer driver.close()
+	inputs, err := driver.recordInputs(context.Background(), records[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(inputs)
 	var fields []native.Field
 	if err == nil {
 		err = json.Unmarshal(raw, &fields)

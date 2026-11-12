@@ -73,6 +73,8 @@ func TestActiveTrialPreservesInitiallyKnownNativeGap(t *testing.T) {
 	result.Firstfloor.ExecutionCount = uint64(result.InferenceCount)
 	result.Firstfloor.InferenceCount = uint64(result.InferenceCount)
 	result.Firstfloor.BatchExecutionCounts["1"] = uint64(result.InferenceCount)
+	result.PostLoad.CountersBefore = ActorCounters{AcceptedRequests: result.Firstfloor.InferenceCount, CompletedRequests: result.Firstfloor.InferenceCount, Executions: result.Firstfloor.ExecutionCount}
+	result.PostLoad.CountersAfter = result.PostLoad.CountersBefore
 	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
 		t.Fatalf("observed initial native gap must count without donor authority: %v", err)
 	}
@@ -119,7 +121,8 @@ func populateFirstfloorPhases(config RunConfig, result *RuntimeResult, count int
 		points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds))
 	fixtures.ApplyActivePhases(result, fixtures.PhaseOptions{
 		StartedAt: time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC), Duration: duration,
-		Batch: config.Measurement.Batch, Samples: count, Workers: workers, Utilizations: points.Utilizations,
+		PostLoadDuration: time.Duration(points.PostLoadDurationSeconds) * time.Second,
+		Batch:            config.Measurement.Batch, Samples: count, Workers: workers, Utilizations: points.Utilizations,
 		SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds, PodUID: result.ExperimentID, RecordIDs: []string{"262148000"},
 		SupplySizing: sizing,
 	})
@@ -233,7 +236,13 @@ func TestFirstfloorSampledMemoryIsBoundToWindowAndRetainedMaximum(t *testing.T) 
 		mutate func(*RuntimeResult)
 	}{
 		{"maximum not retained", func(r *RuntimeResult) { r.MemoryBytes = 400 }},
-		{"sample outside window", func(r *RuntimeResult) { r.MemorySamples[2].At = "2026-01-01T00:01:32Z" }},
+		{"sample outside window", func(r *RuntimeResult) {
+			_, ended, err := r.MeasurementWindow()
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.MemorySamples[2].At = ended.Add(time.Nanosecond).Format(time.RFC3339Nano)
+		}},
 		{"unordered samples", func(r *RuntimeResult) { r.MemorySamples[1].At = r.MemorySamples[0].At }},
 		{"single sample", func(r *RuntimeResult) { r.MemorySamples = r.MemorySamples[:1] }},
 		{"peak source with samples", func(r *RuntimeResult) { r.MemorySource = memoryPeakCgroupV2 }},
