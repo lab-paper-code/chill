@@ -288,6 +288,18 @@ func TestPreparationFreezesMeasuredDigestInCommonConfig(t *testing.T) {
 	}
 }
 
+func TestPreparationExcludesUnpinnedMeasuredRuntimeImage(t *testing.T) {
+	service := schedulerTestService(t, schedulerTestConfiguration())
+	profile := measuredAdoptionProfile()
+	profile.Condition.RuntimeImage = "registry/runtime:mutable"
+	profile.Condition.Actor.RuntimeImage = profile.Condition.RuntimeImage
+	prepared, issues, err := service.preparations(context.Background(), schedulerTestConfiguration(), []serving.Profile{profile})
+	if err != nil || len(prepared) != 0 || len(issues) != 1 ||
+		issues[0].Code != preparationUnavailable || !strings.Contains(issues[0].Reason, "digest-pinned") {
+		t.Fatalf("unpinned measured image was not excluded before Pod creation: prepared=%v issues=%v err=%v", prepared, issues, err)
+	}
+}
+
 // Queue bytes fit inside the frozen measured envelope, rather than defining a
 // second serving-only memory limit.
 func TestMeasuredPreparationBoundsQueueWithinFrozenEnvelope(t *testing.T) {

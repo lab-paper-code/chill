@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -339,6 +340,9 @@ func decodeRuntimeDeclaration(source runtimeDeclarationSource) (runtimeDeclarati
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return runtimeDeclaration{}, fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
+	}
+	if err := modelcompat.ValidateRuntimeImage(declaration.Image); err != nil {
+		return runtimeDeclaration{}, err
 	}
 	if declaration.Verification != trustedRuntimeInspection {
 		return runtimeDeclaration{}, fmt.Errorf("unsupported runtime verification %q", declaration.Verification)

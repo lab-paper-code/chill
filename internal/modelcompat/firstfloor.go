@@ -1,6 +1,9 @@
 package modelcompat
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // FirstfloorSettings are selected scheduler settings shared by every
 // measurement trial and serving instance of the same frozen condition.
@@ -8,6 +11,16 @@ type FirstfloorSettings struct {
 	MaxBatchSize   int32  `json:"maxBatchSize"`
 	MaxQueueSize   int32  `json:"maxQueueSize"`
 	DeadlinePolicy string `json:"deadlinePolicy,omitempty"`
+}
+
+// ValidateRuntimeImage requires a frozen digest reference, not a mutable tag.
+// Digest spelling is left to the registry; this boundary selects the pin.
+func ValidateRuntimeImage(image string) error {
+	repository, digest, pinned := strings.Cut(image, "@sha256:")
+	if !pinned || repository == "" || digest == "" || strings.ContainsAny(image, " \t\r\n") {
+		return errors.New("runtime image must be digest-pinned as repository@sha256:digest")
+	}
+	return nil
 }
 
 func ValidateFirstfloorRuntimeSettings(settings *FirstfloorSettings) error {

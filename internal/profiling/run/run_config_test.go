@@ -12,6 +12,14 @@ func decodeTestRunConfig(payload []byte) (RunConfig, error) {
 	return config, err
 }
 
+func TestRunConfigRejectsUnpinnedRuntimeImage(t *testing.T) {
+	config := validRunConfig()
+	config.Images.Runtime = "registry/runtime:mutable"
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "digest-pinned") {
+		t.Fatalf("unpinned runtime image accepted: %v", err)
+	}
+}
+
 func TestSampleCoverageDerivesFromWorkloadPercentile(t *testing.T) {
 	for _, test := range []struct {
 		percentile float64
@@ -139,14 +147,6 @@ func TestCurrentRunConfigValidatesTypedActuation(t *testing.T) {
 	fixed.Actuation = config.Actuation
 	if err := fixed.Validate(); err == nil || !strings.Contains(err.Error(), "fixed power mode") {
 		t.Fatalf("fixed RunConfig accepted actuation: %v", err)
-	}
-}
-
-func TestRunConfigAcceptsConfiguredImageReference(t *testing.T) {
-	config := validRunConfig()
-	config.Images.Runtime = "registry/runtime:latest"
-	if err := config.Validate(); err != nil {
-		t.Fatalf("configured image reference rejected: %v", err)
 	}
 }
 

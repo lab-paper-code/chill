@@ -47,6 +47,16 @@ func TestKubernetesCandidateResolverBuildsBoundCompatibleCandidate(t *testing.T)
 	assertCandidateReport(t, resolved, selection)
 }
 
+func TestKubernetesCandidateResolverRejectsUnpinnedRuntimeImage(t *testing.T) {
+	objects := validCandidateObjects()
+	config := objects[2].(*corev1.ConfigMap)
+	config.Data["execution-facts.yaml"] = strings.ReplaceAll(config.Data["execution-facts.yaml"], testRuntimeImage, "registry/runtime:mutable")
+	_, err := newCandidateResolver(t, objects...).ResolveCandidate(context.Background(), validCandidateSelection())
+	if err == nil || !strings.Contains(err.Error(), "digest-pinned") {
+		t.Fatalf("unpinned runtime declaration accepted: %v", err)
+	}
+}
+
 func TestKubernetesCandidateResolverRejectsMalformedArtifactInputs(t *testing.T) {
 	tests := []struct {
 		name   string

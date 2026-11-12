@@ -163,7 +163,7 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 		"exact":              func(*profilederivation.CurvePlanSpec) {},
 		"protocol":           func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.WarmupIterations++ },
 		"metric source":      func(s *profilederivation.CurvePlanSpec) { s.MetricSource.Endpoint = "http://new-metrics" },
-		"mutable image":      func(s *profilederivation.CurvePlanSpec) { s.RuntimeImage = "registry.example/image:tag" },
+		"runtime image":      func(s *profilederivation.CurvePlanSpec) { s.RuntimeImage = "registry.example/image@sha256:" + strings.Repeat("b", 64) },
 		"artifact image":     func(s *profilederivation.CurvePlanSpec) { s.Artifact.Image = "registry.example/artifact:new" },
 		"preprocessor image": func(s *profilederivation.CurvePlanSpec) { s.Preprocessor.Image = "registry.example/preprocessor:new" },
 	} {
@@ -210,7 +210,7 @@ func batchEnergyOptimizationPreflightPlan(t *testing.T) profilederivation.CurveP
 		Name: "mobilenet-rknn-curve", LogicalModel: "mobilenet-v2-050",
 		DeviceClass: "orangepi-5-plus-16g",
 		NodeUID:     "node-uid", RuntimeFamily: "rknnlite", Backend: "not-applicable",
-		RuntimeImage: "registry.example/chill/runtime:v1", PowerMode: "fixed",
+		RuntimeImage: "registry.example/chill/runtime@sha256:" + strings.Repeat("a", 64), PowerMode: "fixed",
 		MetricSource: profilederivation.CurveMetricSourceContract{
 			SourceKind: "prometheus", NodeName: "orangepi", Endpoint: "http://metrics",
 			PowerMetric: "power_watts",

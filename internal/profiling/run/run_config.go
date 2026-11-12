@@ -65,6 +65,9 @@ func (i RunConfig) Validate() error {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
 	}
+	if err := modelcompat.ValidateRuntimeImage(i.Images.Runtime); err != nil {
+		return err
+	}
 	if value := i.Images.WorkloadObserver; strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 		return errors.New("images.workloadObserver is required without surrounding whitespace")
 	}

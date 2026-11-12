@@ -17,6 +17,14 @@ const (
 	mutatedPath  = "/mutated"
 )
 
+func TestNewCurvePlanRejectsUnpinnedRuntimeImage(t *testing.T) {
+	spec := validCurvePlanSpec()
+	spec.RuntimeImage = "registry/runtime:mutable"
+	if _, err := NewCurvePlan(spec); err == nil || !strings.Contains(err.Error(), "digest-pinned") {
+		t.Fatalf("unpinned runtime image accepted: %v", err)
+	}
+}
+
 func TestNewCurvePlanCarriesThePlannedBatchSizes(t *testing.T) {
 	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{4, 1, 2}

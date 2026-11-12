@@ -109,6 +109,8 @@ profiling/serving은 [같은 공유 실행 계약](../../spec/00_measurement.md#
 
 Runtime declarations use runnable per-platform `REPOSITORY@sha256:DIGEST` references (`hack/runtime-declarations.py`); serving preserves that frozen reference. Native observation uses `Condition.Actor.Model`, and capture/drain/transition-cost consumers use the executor's mounted startup `Config.Model`, never a separate model alias. The shared memory request is a positive scheduling reservation no greater than its limit, not a lower bound on observed peak usage: request128Mi/limit1Gi with peak256Mi is legal for both Job and Pod. Observer peak safety checks use the actual limit and Node memory; preparation retains its queue-headroom bound within that same limit.
 
+새 RunConfig·CurvePlan·runtime declaration은 runtime image가 `repository@sha256:digest`로 고정되어야 한다. 이 검사는 입력 경계에서 수행한다. digest 없는 과거 profile은 preparation에서 `PreparationUnavailable`로 제외하며, 실행 불가능한 Pod를 만들어 deadline까지 기다리지 않는다.
+
 ### D40 empirical cadence and conditional service
 
 The common Runner measures **actual G** from the previous IPC exchange end to the next exchange start, and **S** around that exchange, using the same monotonic clock. Actor-running, dispatch/interarrival and return timestamps are different boundaries. Profiling adds no wait or target gap. A first exchange without an anchor has null G, not observed zero; physical TrialID remains attached to each sample.

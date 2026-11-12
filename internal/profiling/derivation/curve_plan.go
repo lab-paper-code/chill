@@ -250,8 +250,8 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 			return fmt.Errorf("curve plan %s is required without surrounding whitespace", name)
 		}
 	}
-	if !cleanCurveValue(shared.RuntimeImage) {
-		return errors.New("curve plan runtime image is invalid")
+	if err := modelcompat.ValidateRuntimeImage(shared.RuntimeImage); err != nil {
+		return err
 	}
 	if err := validateCurveRuntime(shared); err != nil {
 		return err
