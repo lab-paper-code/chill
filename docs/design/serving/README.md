@@ -33,6 +33,7 @@ Cold start는 TLS·인증·HTTP 구성을 완료한 뒤 listener를 먼저 열�
 | [overload-admission-plan](overload-admission-plan.md) | plan: 완료 가능성 기반 admission(gateway 예측·executor 재확인, Workload별 Reject·Delay·maxQueuedRequests), SLO 기한과 최종 기한 분리, 기한 내 성공률·goodput·결과 분류 지표 |
 | [decision-fidelity-plan](decision-fidelity-plan.md) | plan: control379 남은 실패·비용의 공통 원인 — gateway 실행기 상태가 관측으로만 갱신(pre-IPC running 하나로 10초 무배정), 후보 간 초기 물리 상태 불일치(실패한 prepare 하나로 keep 평가 불가, route 139회), profile 대표성 미검증(예측 p95 213ms vs 실제 828ms), 판단 계산 회귀(Tick 191/282가 10초 초과), 원인 미기록 |
 | [energy-objective-plan](energy-objective-plan.md) | plan: control380 정상 상태에서 에너지 최적화가 작동하지 않는 원인 — 탐색이 정밀 평가 충족·저에너지 후보를 넘기지 못함(keep 충족 중 prepare 0/301, fluid 근사의 전환 구간 지연·출발점 기아), 다른 모드·조건 측정을 옮긴 에너지 항(genesis2 예측 62W vs 실측 131W)과 전환 비용 셀, 예측-실측 대조 부재, 판정 경계; 전환 후보 정밀 평가로 늘어난 판단 비용(D1) |
+| [profile-serving-equivalence-plan](profile-serving-equivalence-plan.md) | plan: profile과 serving의 능력 차이(genesis2 IC CUDA 1.8~3배, 이미지 14/14 불일치, 유휴 118W vs 69W) — 측정이 serving 운영점(유휴 간격·실행 중 유입)을 재현하지 않음, 이미지가 적용 조건에서 빠짐, 대조 부재; serving 경로·다른 노드 부하·운영점 단계 측정, 기존 profile 삭제·재측정, 측정을 막는 reset 예약 반환 결함 |
 | [capacity-table-evidence](capacity-table-evidence.md) | completed: 당시 전체 격자 κ·탐색의 역사적 근거; 현행 수치 계약은 승인 M0 |
 | [scheduler-operations](scheduler-operations.md) | active: Pod-bound Service/수동원자실행 |
 | [scheduler-srs-audit](scheduler-srs-audit.md) | completed: 당시 SRS대조 결과·증거 경계 |
