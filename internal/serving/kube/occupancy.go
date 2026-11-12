@@ -354,7 +354,7 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 		}
 		return state != "", nil
 	})
-	loadErr := errors.Join(err, c.deleteLoadJobs(ctx, ref, config.LoadGenerator))
+	loadErr := errors.Join(err, c.deleteLoadJobs(ctx, ref, config))
 	drainState, drainErr := c.waitOccupancyDrain(ctx, string(plan.workload.UID), ref, time.Duration(m.Spec.DrainSeconds)*time.Second)
 	collected := time.Now()
 	record, err := c.collectOccupancy(ctx, m, ref, plan, started, collected, &drainState)
@@ -521,16 +521,25 @@ func loadJob(m *edge.DispatchOccupancyMeasurement, ref serving.NodeReference, pl
 }
 
 // deleteLoadJobs removes the load Jobs of the Node with their Pods.
-func (c *SchedulerController) deleteLoadJobs(ctx context.Context, ref serving.NodeReference, config LoadGeneratorConfig) error {
-	jobs, err := c.kube.BatchV1().Jobs(config.Namespace).List(ctx, meta.ListOptions{LabelSelector: loadNodeLabel + "=" + ref.UID})
-	if err != nil {
-		return err
+func (c *SchedulerController) deleteLoadJobs(ctx context.Context, ref serving.NodeReference, config SchedulerControllerConfig) error {
+	namespaces := slices.Clone(config.MeasurementNamespaces)
+	if !slices.Contains(namespaces, config.LoadGenerator.Namespace) {
+		namespaces = append(namespaces, config.LoadGenerator.Namespace)
 	}
-	for _, job := range jobs.Items {
-		// Background propagation removes the Pods; the default orphans them and the load goes on.
-		if err = servingstate.IgnoreNotFound(c.kube.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name,
-			meta.DeleteOptions{PropagationPolicy: ptr.To(meta.DeletePropagationBackground)})); err != nil {
+	for _, namespace := range namespaces {
+		if namespace == "" {
+			continue
+		}
+		jobs, err := c.kube.BatchV1().Jobs(namespace).List(ctx, meta.ListOptions{LabelSelector: loadNodeLabel + "=" + ref.UID})
+		if err != nil {
 			return err
+		}
+		for _, job := range jobs.Items {
+			// Background propagation removes the Pods; the default orphans them and the load goes on.
+			if err = servingstate.IgnoreNotFound(c.kube.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name,
+				meta.DeleteOptions{PropagationPolicy: ptr.To(meta.DeletePropagationBackground)})); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

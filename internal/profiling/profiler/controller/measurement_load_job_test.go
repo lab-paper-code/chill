@@ -39,6 +39,7 @@ func TestRunReconcilerCreatesOffNodeLoadThenCollectsWorkerUpload(t *testing.T) {
 	}
 	worker.UID = "worker-uid"
 	worker.Status.Active = 1
+	worker.Status.StartTime = ptr.To(metav1.Now())
 	run.Status.Job = &api.ProfilingRunObjectReference{Name: worker.Name, UID: string(worker.UID)}
 	run.Status.JobCleanup = runJobCleanupPending
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "measurement-pod", Namespace: run.Namespace, Labels: map[string]string{"job-name": worker.Name},
@@ -47,7 +48,7 @@ func TestRunReconcilerCreatesOffNodeLoadThenCollectsWorkerUpload(t *testing.T) {
 	gatewayIdentity := prepared.RunConfig.LoadOriginGatewayPod
 	gateway := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: gatewayIdentity.Name, Namespace: gatewayIdentity.Namespace, UID: types.UID(gatewayIdentity.UID),
 		Labels: map[string]string{"app.kubernetes.io/instance": "actual-installation", "app.kubernetes.io/component": "serving-entrypoint"}},
-		Spec: corev1.PodSpec{NodeName: prepared.RunConfig.LoadOriginNode}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}
+		Spec: corev1.PodSpec{NodeName: prepared.RunConfig.LoadOriginNode, Containers: []corev1.Container{{Name: "serving-entrypoint", Image: "gateway:test"}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}
 	system := &api.ChillSystem{ObjectMeta: metav1.ObjectMeta{Name: "installation-system", Labels: map[string]string{"app.kubernetes.io/instance": "actual-installation"}}}
 	random := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "arbitrary-other-node"}}
 	foreignGateway := gateway.DeepCopy()
@@ -65,7 +66,7 @@ func TestRunReconcilerCreatesOffNodeLoadThenCollectsWorkerUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.MeasurementLoad = MeasurementLoadOptions{Image: "load:test", ServiceAccountName: "load-account"}
+	r.MeasurementLoad = MeasurementLoadOptions{ServiceAccountName: "load-account"}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
 	if _, err := r.Reconcile(ctx, request); err != nil {
 		t.Fatal(err)
@@ -90,7 +91,7 @@ func TestRunReconcilerCreatesOffNodeLoadThenCollectsWorkerUpload(t *testing.T) {
 		t.Fatal("load must use the actual gateway Node, never an arbitrary other Node")
 	}
 	container := load.Spec.Template.Spec.Containers[0]
-	if container.Image != "load:test" || !slices.Equal(container.Args, []string{"native-profile", "--control-endpoint", "http://10.42.1.7:8081", "--dataset-dir", "/data"}) {
+	if container.Image != "gateway:test" || !slices.Equal(container.Args[:len(container.Args)-1], []string{"profiling-load", "--control-endpoint", "http://10.42.1.7:8081", "--dataset-dir=/data"}) {
 		t.Fatalf("load target=%+v", container)
 	}
 	if got := load.Spec.Template.Spec.InitContainers[0].Command; !strings.HasSuffix(got[len(got)-1], "/profiling") {
@@ -125,7 +126,7 @@ func TestProfilingLoadRejectsSameNodeAndCollectsFailure(t *testing.T) {
 	worker := ownedJob(run, nil)
 	pod := &corev1.Pod{Spec: corev1.PodSpec{NodeName: config.TargetNode.Name}, Status: corev1.PodStatus{PodIP: "10.42.1.7"}}
 	config.LoadOriginNode = config.TargetNode.Name
-	if _, err := buildMeasurementLoadJob(run, worker, pod, config, MeasurementLoadOptions{Image: "load:test", ServiceAccountName: "load"}); err == nil {
+	if _, err := buildMeasurementLoadJob(run, worker, pod, &corev1.Pod{}, config, MeasurementLoadOptions{ServiceAccountName: "load"}); err == nil {
 		t.Fatal("accepted same-node active load")
 	}
 	config.LoadOriginNode = "gateway-node"

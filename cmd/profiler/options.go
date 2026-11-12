@@ -34,7 +34,6 @@ type options struct {
 	transitionMaximumObjectBytes              int64
 	failedJobRetentionSeconds                 int
 	measurementMemoryFraction                 float64
-	measurementLoadImage                      string
 	measurementLoadServiceAccount             string
 }
 
@@ -44,7 +43,6 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		"Failed measurement Job retention in seconds (1..604800).")
 	flags.Float64Var(&o.measurementMemoryFraction, "measurement-memory-fraction", 0,
 		"Required fraction of Node allocatable memory available to the measurement runtime (0 < fraction < 1).")
-	flags.StringVar(&o.measurementLoadImage, "load-generator-image", "", "Existing load-generator image for off-node profiling load.")
 	flags.StringVar(&o.measurementLoadServiceAccount, "load-generator-service-account", "", "ServiceAccount for profiling load Jobs.")
 	flags.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "The address the health probes bind to.")
 	flags.StringVar(&o.systemName, "system-name", "", "ChillSystem name that owns this Profiler instance.")
@@ -148,7 +146,6 @@ func (o options) validate() error {
 		{name: "execution-policies key", value: o.executionPoliciesKey},
 		{name: "actuation-policies key", value: o.actuationPoliciesKey},
 		{name: "workload-observer ServiceAccount", value: o.workloadObserverServiceAccount},
-		{name: "load-generator image", value: o.measurementLoadImage},
 		{name: "load-generator ServiceAccount", value: o.measurementLoadServiceAccount},
 		{name: "transition-observer image", value: o.transitionObserverImage},
 		{name: "transition-observer image pull policy", value: o.transitionObserverPullPolicy},

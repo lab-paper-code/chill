@@ -104,7 +104,7 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 	}
 	reconciler.FailedJobRetentionSeconds = int32(opts.failedJobRetentionSeconds)
 	reconciler.MeasurementLoad = profilercontroller.MeasurementLoadOptions{
-		Image: opts.measurementLoadImage, ServiceAccountName: opts.measurementLoadServiceAccount,
+		ServiceAccountName: opts.measurementLoadServiceAccount,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up ProfilingRun reconciler: %w", err)

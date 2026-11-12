@@ -85,7 +85,7 @@ func TestFailedRunAddsRetentionOnlyAfterRecordedFailure(t *testing.T) {
 		recordRunConfigAndJob(run)
 		run.Status.JobCleanup = runJobCleanupPending
 		run.Status.Conditions = []meta.Condition{{Type: edge.ProfilingRunConditionExecutionComplete, Status: meta.ConditionFalse, Reason: "JobFailed"}}
-		job := ownedJob(run, &batch.JobStatus{})
+		job := ownedJob(run, &batch.JobStatus{Failed: 1, Conditions: []batch.JobCondition{{Type: batch.JobFailed, Status: "True"}}})
 		job.Name, job.UID = run.Status.Job.Name, types.UID(run.Status.Job.UID)
 		if job.Spec.TTLSecondsAfterFinished != nil {
 			t.Fatal("Job starts with TTL")

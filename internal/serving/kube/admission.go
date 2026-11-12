@@ -402,7 +402,7 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 	if root == nil && interrupted {
 		result.Progress = append(result.Progress, "Interrupted "+holder)
 	}
-	if err := errors.Join(c.deleteLoadJobs(ctx, node, config.LoadGenerator), c.operations.ClearNode(ctx, node)); err != nil {
+	if err := errors.Join(c.deleteLoadJobs(ctx, node, config), c.operations.ClearNode(ctx, node)); err != nil {
 		return err
 	}
 	runners, err := c.kube.CoreV1().Services(c.observer.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: runnerNodeLabel + "=" + node.UID})

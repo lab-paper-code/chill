@@ -22,6 +22,7 @@ func TestProfilingLoadRejectsChangedFrozenGatewayIdentity(t *testing.T) {
 			run := testRun()
 			config := currentPreparedRun(t).RunConfig
 			worker := ownedJob(run, nil)
+			worker.Status.StartTime = ptr.To(metav1.Now())
 			measurement := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "measurement", Namespace: run.Namespace, Labels: map[string]string{"job-name": worker.Name},
 				OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: worker.Name, UID: worker.UID, Controller: ptr.To(true)}}},
 				Spec: corev1.PodSpec{NodeName: config.TargetNode.Name}, Status: corev1.PodStatus{PodIP: "10.42.1.7", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}
@@ -33,7 +34,7 @@ func TestProfilingLoadRejectsChangedFrozenGatewayIdentity(t *testing.T) {
 				gateway.Spec.NodeName = "different-node"
 			}
 			kube := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).WithObjects(measurement, gateway).Build()
-			r := &RunReconciler{Client: kube, jobReader: kube, MeasurementLoad: MeasurementLoadOptions{Image: "load:test", ServiceAccountName: "load"}}
+			r := &RunReconciler{Client: kube, jobReader: kube, MeasurementLoad: MeasurementLoadOptions{ServiceAccountName: "load"}}
 			if _, err := r.reconcileMeasurementLoad(ctx, run, worker, config); !errors.Is(err, errMeasurementLoadFailed) {
 				t.Fatalf("accepted changed gateway identity: %v", err)
 			}

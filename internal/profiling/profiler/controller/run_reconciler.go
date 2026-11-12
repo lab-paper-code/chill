@@ -86,9 +86,10 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, err
 		}
 		if job == nil {
-			return ctrl.Result{}, r.publishExecutionOutcome(
-				ctx, run, metav1.ConditionFalse, "ExecutionLost", "recorded measurement Job no longer exists",
-			)
+			if err := r.publishExecutionOutcome(ctx, run, metav1.ConditionFalse, "ExecutionLost", "recorded measurement Job no longer exists"); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, r.deleteMeasurementLoad(ctx, run)
 		}
 		resolved, err = resolvedRunFromJob(run, job)
 		if err != nil {
@@ -142,14 +143,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			if !errors.Is(loadErr, errMeasurementLoadFailed) {
 				return ctrl.Result{}, loadErr
 			}
-			if err := r.publishExecutionOutcome(ctx, run, metav1.ConditionFalse, "JobFailed", loadErr.Error()); err != nil {
-				return ctrl.Result{}, err
-			}
-			if err := r.deleteMeasurementLoad(ctx, run); err != nil {
-				return ctrl.Result{}, err
-			}
-			background := metav1.DeletePropagationBackground
-			return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &background}))
+			return r.publishJobFailure(ctx, run, job, loadErr.Error())
 		}
 		if !loadComplete {
 			return ctrl.Result{RequeueAfter: admissionWait}, r.publishExecutionOutcome(ctx, run, metav1.ConditionUnknown, "LoadRunning", "off-node profiling load Job has not completed")
@@ -159,7 +153,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	case profiler.ActionWaitForJob:
 		return ctrl.Result{}, r.publishExecutionOutcome(ctx, run, metav1.ConditionUnknown, "JobRunning", "measurement Job has not completed")
 	case profiler.ActionReportExecutionFailure:
-		return ctrl.Result{}, r.publishJobFailure(ctx, run, job)
+		return r.publishJobFailure(ctx, run, job, "measurement Job failed")
 	case profiler.ActionFinalizeEvidence:
 		finalized, finalizeErr := r.finalize(ctx, run, resolved.Prepared, job)
 		if finalizeErr != nil {
@@ -291,24 +285,34 @@ func (r *RunReconciler) publishJobFailure(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
 	job *batchv1.Job,
-) error {
+	message string,
+) (ctrl.Result, error) {
 	termination := run.Status.RuntimeTermination
 	if termination == nil {
 		var err error
 		termination, err = r.terminate(ctx, run, job)
 		if err != nil {
-			return fmt.Errorf("read failed runtime termination: %w", err)
+			return ctrl.Result{}, fmt.Errorf("read failed runtime termination: %w", err)
+		}
+	}
+	if termination == nil {
+		observation, err := observeJob(job)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if observation == profiler.JobActive {
+			return ctrl.Result{RequeueAfter: admissionWait}, nil
 		}
 	}
 	if err := r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
 		desired.JobCleanup = runJobCleanupPending
 		desired.RuntimeTermination = termination
 		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionExecutionComplete,
-			metav1.ConditionFalse, "JobFailed", "measurement Job failed")
+			metav1.ConditionFalse, "JobFailed", message)
 	}); err != nil {
-		return err
+		return ctrl.Result{}, err
 	}
-	return r.retainFailedJob(ctx, run)
+	return ctrl.Result{}, r.retainFailedJob(ctx, run)
 }
 
 func (r *RunReconciler) publishRunConfigFailure(
@@ -439,6 +443,9 @@ func (r *RunReconciler) reconcileTerminalRun(ctx context.Context, run *edgev1alp
 		return true, result, err
 	}
 	failed := meta.FindStatusCondition(run.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
+	if failed != nil && failed.Status == metav1.ConditionFalse && failed.Reason == "ExecutionLost" {
+		return true, ctrl.Result{}, r.deleteMeasurementLoad(ctx, run)
+	}
 	if run.Status.Job != nil && (evidenceIsTerminallyInvalid(run.Status.Conditions) ||
 		(failed != nil && failed.Status == metav1.ConditionFalse && failed.Reason == "JobFailed")) {
 		return true, ctrl.Result{}, r.retainFailedJob(ctx, run)
@@ -482,6 +489,19 @@ func (r *RunReconciler) retainFailedJob(ctx context.Context, run *edgev1alpha1.P
 		return err
 	}
 	if job == nil {
+		return r.finishJobCleanup(ctx, run)
+	}
+	observation, err := observeJob(job)
+	if err != nil {
+		return err
+	}
+	if observation == profiler.JobActive {
+		background := metav1.DeletePropagationBackground
+		if err := client.IgnoreNotFound(r.Delete(ctx, job, &client.DeleteOptions{
+			PropagationPolicy: &background, Preconditions: &metav1.Preconditions{UID: &job.UID},
+		})); err != nil {
+			return err
+		}
 		return r.finishJobCleanup(ctx, run)
 	}
 	if job.Spec.TTLSecondsAfterFinished != nil && *job.Spec.TTLSecondsAfterFinished == r.FailedJobRetentionSeconds {
