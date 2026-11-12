@@ -23,8 +23,9 @@ func directFixture(batch int) (*Profile, map[string]firstfloor.Metadata, time.Ti
 
 func directRow(at time.Time, id uint64, batch, member int, start, finish time.Duration) RequestRow {
 	q, s, f := at, at.Add(start), at.Add(finish)
+	service := int64(finish - start)
 	// Receipt anchors incomplete-request facts; worker timestamps anchor execution.
-	return RequestRow{Kind: RequestRowFinal, RequestID: fmt.Sprintf("%d/%d", id, member), ReceivedAt: at, Node: &NodeReference{Name: "node", UID: "node-uid"}, Instance: "instance", WorkloadUID: "workload", ProfileID: "profile", DecisionID: "decision", DefinitionID: "definition", BatchID: id, BatchSize: batch, Outcome: outcomeCompleted, ExecutionComplete: true, NativeOutcome: outcomeCompleted, NativeExecutionComplete: true, NativeQueuedAt: &q, NativeRunningAt: &s, NativeFinishedAt: &f}
+	return RequestRow{Kind: RequestRowFinal, RequestID: fmt.Sprintf("%d/%d", id, member), ReceivedAt: at, Node: &NodeReference{Name: "node", UID: "node-uid"}, Instance: "instance", WorkloadUID: "workload", ProfileID: "profile", DecisionID: "decision", DefinitionID: "definition", BatchID: id, BatchSize: batch, Outcome: outcomeCompleted, ExecutionComplete: true, NativeOutcome: outcomeCompleted, NativeExecutionComplete: true, NativeQueuedAt: &q, NativeRunningAt: &s, NativeFinishedAt: &f, ServiceDurationNanos: service}
 }
 
 func TestOccupancyEstimatorPairEligibilityAndLateJoin(t *testing.T) {
@@ -35,15 +36,28 @@ func TestOccupancyEstimatorPairEligibilityAndLateJoin(t *testing.T) {
 		pairs  int
 		want   float64
 	}{
-		{name: "backlogged", batch: 1, pairs: 1, want: 50},
-		{name: "late supplement", batch: 1, pairs: 1, want: 50, mutate: func(rows []RequestRow, _ map[string]firstfloor.Metadata) {
+		{name: "backlogged actual service differs from mean", batch: 1, pairs: 1, want: 100},
+		{name: "late supplement", batch: 1, pairs: 1, want: 100, mutate: func(rows []RequestRow, _ map[string]firstfloor.Metadata) {
+			rows[0].ServiceDurationNanos = 0
 			rows[0].NativeQueuedAt = nil
 			rows[0].NativeRunningAt = nil
 			rows[0].NativeFinishedAt = nil
 			rows[0].NativeExecutionComplete = false
 			rows[0].NativeOutcome = ""
 		}},
-		{name: "full batch two signed negative", batch: 2, pairs: 1, want: -25},
+		{name: "full batch two actual service differs from mean", batch: 2, pairs: 1, want: 50},
+		{name: "missing previous service excluded", batch: 1, mutate: func(rows []RequestRow, _ map[string]firstfloor.Metadata) {
+			rows[0].ServiceDurationNanos = 0
+		}},
+		{name: "missing next service still uses previous service", batch: 1, pairs: 1, want: 100, mutate: func(rows []RequestRow, _ map[string]firstfloor.Metadata) {
+			rows[1].ServiceDurationNanos = 0
+		}},
+		{name: "batch member supplies actual service", batch: 2, pairs: 1, want: 50, mutate: func(rows []RequestRow, _ map[string]firstfloor.Metadata) {
+			rows[0].ServiceDurationNanos = 0
+		}},
+		{name: "conflicting batch service excluded", batch: 2, mutate: func(rows []RequestRow, _ map[string]firstfloor.Metadata) {
+			rows[0].ServiceDurationNanos++
+		}},
 		{name: "one early member not enough", batch: 2, mutate: func(rows []RequestRow, _ map[string]firstfloor.Metadata) {
 			late := rows[0].NativeFinishedAt.Add(time.Nanosecond)
 			rows[3].NativeQueuedAt = &late
@@ -107,6 +121,9 @@ func TestOccupancyEstimatorPairEligibilityAndLateJoin(t *testing.T) {
 				if r.Pairs > 0 && (r.Statistics == nil || r.Statistics.Mean != tc.want) {
 					t.Fatalf("residual=%+v want %v", r.Statistics, tc.want)
 				}
+				if r.Pairs > 0 && 50+float64(tc.batch)*r.Statistics.Mean != 150 {
+					t.Fatalf("cycle != actual service + B*d: %+v", r)
+				}
 			}
 			if pairs != tc.pairs {
 				t.Fatalf("pairs=%d want %d results=%+v", pairs, tc.pairs, results)
@@ -121,6 +138,7 @@ func TestOccupancyEstimatorExactQuantilesCompletenessAndWorkerWindow(t *testing.
 	var start time.Duration
 	for i, cycle := range []time.Duration{90, 100, 110, 120, 130, 140, 0} {
 		r := directRow(at, uint64(i+1), 1, 0, start, start+20)
+		r.ServiceDurationNanos = 100
 		// Gateway clocks may precede or follow the worker by an arbitrary offset.
 		r.ReceivedAt = at.Add(24 * time.Hour)
 		assigned := r
@@ -225,7 +243,7 @@ func TestOccupancyEstimatorPoolsSamplesAcrossWorkloads(t *testing.T) {
 	}
 	pooled := e.ResultsByCell()
 	if len(pooled) != 1 || pooled[0].WorkloadUID != "" || pooled[0].Pairs != 3 ||
-		pooled[0].Statistics.Median != 50 || pooled[0].Requests != 5 {
+		pooled[0].Statistics.Median != 130 || pooled[0].Requests != 5 {
 		t.Fatalf("pooled raw residuals=%+v", pooled)
 	}
 }

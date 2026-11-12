@@ -64,6 +64,7 @@ type occupancyRequest struct {
 	node                                                        NodeReference
 	id                                                          uint64
 	size                                                        int
+	serviceNanos                                                int64
 	queued, running, finished                                   time.Time
 	received                                                    time.Time
 	finals, completeFinals, rows, completeRows                  int
@@ -79,12 +80,14 @@ type directCellKey struct {
 	batch                   int
 }
 type directBatch struct {
-	key     directBatchKey
-	member  *occupancyRequest
-	ready   time.Time
-	members int
-	valid   bool
-	cell    directCellKey
+	key            directBatchKey
+	member         *occupancyRequest
+	ready          time.Time
+	members        int
+	serviceNanos   int64
+	serviceInvalid bool
+	valid          bool
+	cell           directCellKey
 }
 
 type OccupancyEstimator struct {
@@ -199,6 +202,12 @@ func (e *OccupancyEstimator) Add(row RequestRow) {
 	stamp(&r.queued, raw.queued)
 	stamp(&r.running, raw.running)
 	stamp(&r.finished, raw.finished)
+	if row.ServiceDurationNanos != 0 {
+		if r.serviceNanos != 0 && r.serviceNanos != row.ServiceDurationNanos {
+			r.invalid = true
+		}
+		r.serviceNanos = row.ServiceDurationNanos
+	}
 	if row.Kind == RequestRowFinal {
 		r.finals++
 		r.execution = row.ExecutionComplete
@@ -280,9 +289,10 @@ func (e *OccupancyEstimator) results(poolWorkloads bool) []OccupancyEstimate {
 	for i := 1; i < len(sequence); i++ {
 		prev, next := sequence[i-1], sequence[i]
 		if e.backloggedPair(prev, next) {
-			cycle := float64(next.member.running.Sub(prev.member.running).Nanoseconds())
-			d := (cycle - cells[prev.cell].Profile.MeanNanos) / float64(prev.member.size)
-			values[prev.cell] = append(values[prev.cell], d)
+			cycle := next.member.running.Sub(prev.member.running).Nanoseconds()
+			if d, ok := DispatchOccupancyNanos(cycle, prev.serviceNanos, prev.member.size); ok && !prev.serviceInvalid {
+				values[prev.cell] = append(values[prev.cell], d)
+			}
 		}
 	}
 	out := make([]OccupancyEstimate, 0, len(cells))
@@ -304,6 +314,16 @@ func (e *OccupancyEstimator) results(poolWorkloads bool) []OccupancyEstimate {
 		return cmp.Compare(a.Batch, b.Batch)
 	})
 	return out
+}
+
+// DispatchOccupancyNanos returns signed dispatch occupancy per input from a
+// backlogged batch pair. Callers establish pair eligibility before calling.
+// Missing actual runner service is not a sample; profile means are never used.
+func DispatchOccupancyNanos(cycleNanos, serviceDurationNanos int64, batchSize int) (float64, bool) {
+	if cycleNanos <= 0 || serviceDurationNanos <= 0 || batchSize <= 0 {
+		return 0, false
+	}
+	return (float64(cycleNanos) - float64(serviceDurationNanos)) / float64(batchSize), true
 }
 
 func (e *OccupancyEstimator) cell(r *occupancyRequest, cells map[directCellKey]*OccupancyEstimate, poolWorkloads bool) *OccupancyEstimate {
@@ -364,6 +384,11 @@ func (e *OccupancyEstimator) physicalBatches(cells map[directCellKey]*OccupancyE
 }
 
 func (b *directBatch) add(r *occupancyRequest) {
+	if r.serviceNanos != 0 {
+		b.serviceInvalid = b.serviceInvalid || r.serviceNanos < 0 ||
+			b.serviceNanos != 0 && b.serviceNanos != r.serviceNanos
+		b.serviceNanos = r.serviceNanos
+	}
 	valid := !r.invalid && r.finals == 1 && directComplete(r) && r.execution &&
 		r.nativeExecution && r.success && r.nativeSuccess && r.instance != "" &&
 		!r.queued.After(r.running) && !r.running.After(r.finished)

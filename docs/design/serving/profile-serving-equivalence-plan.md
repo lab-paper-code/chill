@@ -115,6 +115,8 @@ X1부터 P1이 끝날 때까지 serving은 멈춘다. profile이 없으면 스�
 
 순서: B1·B2는 바로. I1·N1·L1·E1·O1·C1은 한 배포로 묶는다. 배포 뒤 T1 파일럿 → 판정 → X1 → P1 → E5 수용 실측.
 
+O1 구현: serving의 `DispatchOccupancyNanos(cycleNanos, serviceDurationNanos int64, batchSize int) (float64, bool)`가 포화 배치 쌍의 단일 `d` 계산이다. 호출자가 기존 쌍 적격성을 확인한다. 앞 배치의 native `ServiceDurationNanos`가 없거나 배치 구성원 간 값이 충돌하면 표본에서 제외한다. profile 평균은 근거 표시로만 보존하며 `d`에서 빼지 않는다.
+
 ```mermaid
 flowchart LR
   B1 --> D[배포]
