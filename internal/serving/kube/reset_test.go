@@ -1511,3 +1511,95 @@ func TestControl382PartialResetReturnsEmptyPowerCandidatesForMeasurement(t *test
 		t.Fatal("physical return changed the original control382 partial receipt")
 	}
 }
+
+func TestPartialResetWaitsForCurrentPowerRequestTerminalRecord(t *testing.T) {
+	for _, terminal := range []string{chillmeta.PowerModeSuccess, chillmeta.PowerModeFailed} {
+		t.Run(terminal, func(t *testing.T) {
+			h := newResetHarness(t)
+			h.failedStart(t)
+			class := h.powerReturnCandidate(t)
+			h.controller.config.MeasurementNamespaces = []string{h.owned.Namespace}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			node, err := h.kube.CoreV1().Nodes().Get(ctx, testNode.Name, meta.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			previous := time.Now().Add(-time.Hour)
+			previousStamp := previous.UTC().Format(time.RFC3339Nano)
+			// The host left the previous successful low-mode generation. Reset
+			// requests that same mode again, changing only the request timestamp
+			// until the delayed agent starts processing it.
+			chillmeta.SetPowerModeTransition(node, chillmeta.PowerModeSuccess, 2, chillmeta.PowerModeTransitionRecord{
+				PowerMode: lowMode, RequestedAt: previousStamp, Generation: 1,
+				ApplyStartedAt: &previous, VerifiedAt: &previous, ReadyAt: &previous,
+			})
+			if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			result, err := h.controller.ExecuteManual(ctx, h.request())
+			if err != nil || result.Status != servingstate.NativeOperationPartial || !strings.Contains(result.Error, "did not reach power mode") {
+				t.Fatalf("delayed power request did not leave a partial reset: status=%s error=%s err=%v", result.Status, result.Error, err)
+			}
+			assertResetSteps(t, result, "disable-autonomy", "unroute", "drain", "remove", "release", "lower-power")
+			node, err = h.kube.CoreV1().Nodes().Get(ctx, testNode.Name, meta.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			transition, found, err := chillmeta.NodePowerModeTransition(node)
+			if err != nil || !found || node.Labels[chillmeta.PowerModeState] != chillmeta.PowerModeSuccess ||
+				node.Annotations[chillmeta.PowerModeRequestedAt] == previousStamp || transition.RequestedAt != previousStamp ||
+				chillmeta.ServesRequest(node, transition, lowMode) {
+				t.Fatalf("real request did not coexist with the previous success: labels=%v annotations=%v err=%v", node.Labels, node.Annotations, err)
+			}
+			root := baselineRoot("delayed-power-"+terminal, time.Now())
+			if err := h.api.Create(ctx, root); err != nil {
+				t.Fatal(err)
+			}
+			admitted := func() bool {
+				t.Helper()
+				if err := h.controller.Admit(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if err := h.api.Get(ctx, client.ObjectKeyFromObject(root), root); err != nil {
+					t.Fatal(err)
+				}
+				granted, _, _ := profilingrun.Admission(root.Annotations)
+				return granted
+			}
+			if admitted() {
+				t.Error("previous success returned a Node whose current power request has not been processed")
+				return
+			}
+			requested := node.Annotations[chillmeta.PowerModeRequestedAt]
+			started := time.Now()
+			chillmeta.SetPowerModeTransition(node, chillmeta.PowerModePending, 2, chillmeta.PowerModeTransitionRecord{
+				PowerMode: lowMode, RequestedAt: requested, Generation: 2, ApplyStartedAt: &started,
+			})
+			if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if admitted() {
+				t.Fatal("matching pending power record returned its reservation")
+			}
+			if terminal == chillmeta.PowerModeSuccess {
+				settleAgent(class)(node)
+			} else {
+				chillmeta.SetPowerModeTransition(node, terminal, 2, chillmeta.PowerModeTransitionRecord{
+					PowerMode: lowMode, RequestedAt: requested, Generation: 2, ApplyStartedAt: &started, Failure: "agent refused",
+				})
+			}
+			if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if !admitted() {
+				t.Fatal("matching terminal power result did not return the Node for measurement")
+			}
+			state := h.controller.State()
+			index := slices.IndexFunc(state.Results, func(receipt servingstate.OperationResult) bool { return receipt.Operation.ID == result.Operation.ID })
+			if index < 0 || state.Results[index].Status != servingstate.NativeOperationPartial || state.Results[index].Error != result.Error {
+				t.Fatal("current power outcome rewrote the original partial reset receipt")
+			}
+		})
+	}
+}

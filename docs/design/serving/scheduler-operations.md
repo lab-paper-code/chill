@@ -269,6 +269,11 @@ power 요청을 시작하지 않은 Node에도 같은 proof를 쓴다. pending p
 인계한 미확인 Node 범위는 exact 관측과 구별하며, 새 exact identity가 확인되면
 그 연결로 기존 반환 proof를 다시 판단한다.
 
+전력 요청 annotation이 있는 Node는 현재 desired mode·요청 시각에
+`ServesRequest`가 일치하는 `success` 또는 `failed` transition 뒤에만 반환한다.
+새 요청과 공존하는 이전 success, 아직 없는/잘못된 record, pending은 반환 proof가
+아니다. 요청이 없는 fixed-only Node는 기존 부재·writer 종료 proof를 유지한다.
+
 실패한 prepare/resize가 Create를 시작했으나 Pod UID나 API 생성 receipt를
 얻지 못했다면 reset도 그 미확정 생성 의무를 인계한다. 이전 owner의 receipt가
 장부에서 정리되거나 reset 자체가 `complete`여도 해당 Node를 바로 반환하지 않는다.

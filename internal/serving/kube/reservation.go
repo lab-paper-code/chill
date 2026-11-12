@@ -427,7 +427,16 @@ func (c *reservationState) ownerNodeReturned(run *actionRun, ref serving.NodeRef
 		return false
 	}
 	settled := slices.ContainsFunc(nodes, func(node core.Node) bool {
-		return node.Name == ref.Name && string(node.UID) == ref.UID && node.Labels[chillmeta.PowerModeState] != chillmeta.PowerModePending
+		state := node.Labels[chillmeta.PowerModeState]
+		if node.Name != ref.Name || string(node.UID) != ref.UID || state == chillmeta.PowerModePending {
+			return false
+		}
+		if _, requested := node.Annotations[chillmeta.PowerModeRequestedAt]; !requested {
+			return true
+		}
+		transition, found, err := chillmeta.NodePowerModeTransition(&node)
+		return err == nil && found && chillmeta.ServesRequest(&node, transition, node.Labels[chillmeta.PowerMode]) &&
+			(state == chillmeta.PowerModeSuccess || state == chillmeta.PowerModeFailed)
 	})
 	if !settled {
 		return false
