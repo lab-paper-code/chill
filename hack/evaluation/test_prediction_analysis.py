@@ -59,6 +59,26 @@ class PredictionTests(unittest.TestCase):
         self.assertEqual(result['actions'][0]['actualSeconds'], 2)
         self.assertIsNone(result['actions'][0]['actualJoules'])
 
+    def test_dependency_leaves_accept_null_and_empty_lists(self):
+        for dependencies in (None, []):
+            for chain in (False, True):
+                with self.subTest(dependencies=dependencies, chain=chain):
+                    observations = fixture(True)
+                    decision = observations['events'][0]['decision']
+                    actions = decision['target']['actions']
+                    actions[0]['dependsOn'] = ['bridge'] if chain else dependencies
+                    if chain:
+                        actions.extend([
+                            {'id': 'bridge', 'kind': 'route', 'node': NODE,
+                             'from': 'ready-subset', 'dependsOn': ['leaf']},
+                            {'id': 'leaf', 'kind': 'route', 'node': NODE,
+                             'from': 'ready-subset', 'dependsOn': dependencies},
+                        ])
+                    result = self.analyze(observations)
+                    expected = self.analyze(fixture(True))
+                    self.assertEqual(result['nodes'], expected['nodes'])
+                    self.assertEqual(result['acceptance'], expected['acceptance'])
+
     def test_incomplete_meter_is_unknown_not_zero(self):
         result = self.analyze(complete=False)
         self.assertEqual(result['nodes'][0]['status'], 'UNKNOWN')

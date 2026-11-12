@@ -113,12 +113,12 @@ def phase(decision, plan, at, actual):
     if not route.get('completedAt') or route.get('error'):
         return None, 'transition final route completion unavailable'
     by_id = {action['id']: action for action in actions}
-    pre_ids, frontier = set(), list(final_route.get('dependsOn', []))
+    pre_ids, frontier = set(), list(final_route.get('dependsOn') or [])
     while frontier:
         key = frontier.pop()
         if key not in pre_ids:
             pre_ids.add(key)
-            frontier.extend(by_id.get(key, {}).get('dependsOn', []))
+            frontier.extend(by_id.get(key, {}).get('dependsOn') or [])
     node_actions = [a for a in actions if identity(a['node']) == identity(plan['node'])
                     and a['kind'] in ('prepare', 'power', 'stop', 'drain', 'remove')]
     def completed(action):

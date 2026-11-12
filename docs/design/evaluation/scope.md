@@ -86,6 +86,7 @@ python3 hack/evaluation/prediction_analysis.py report --scheduler "$PAGES" --sta
 
 미리 빌드한 power 실행 파일이 있으면 `prediction_analysis.py run --scheduler "$PAGES" --stages "$STAGES" --binding "$BINDING" --out "$OUT" --power-cli /absolute/path/to/power --raw "$OUT/obs" --settings "$SETTINGS" --state "$STATE" --table "$OUT/prediction-tables.txt"`가 windows 작성·CLI 한 번 호출·결합을 수행한다. 직전 판단·meter·coverage·실제 phase가 불명확하면 UNKNOWN이며, route 뒤 post 제거 대기를 after로 취급하지 않는다. 예측 초/J는 exact `actionCosts`만 사용한다. 노드별 구간 J 오차 절댓값 합의 §6 판정은 keep SLO 충족·에너지 비교 decidable·전환 ΔJ>0일 때만 적용하고 keep·SLO 복구는 별도로 보고한다. v1alpha6에는 예측 항이 없어 정합 검증은 UNKNOWN이며 power 구간 적분만 검증할 수 있다.
 Scheduler gap의 원래 `[from,to)` 범위는 보존하고 각 판단·동작 구간과 겹칠 때만 해당 행을 UNKNOWN으로 처리한다. 다른 stage에만 있는 gap은 완전한 stage의 정합 판정에 영향을 주지 않는다. gap 범위 자체가 누락·잘못됐거나 페이지 수집이 불완전하면 전체 coverage는 UNKNOWN이다.
+전환 action의 `dependsOn: null`과 `dependsOn: []`는 모두 빈 의존성이다. 최종 route부터 의존성 체인을 순회할 때 같은 규칙을 적용한다.
 
 D44 recovery gaps from each raw-hour inventory are retained verbatim in
 `raw-source-index.json.gaps[]`, with API endpoint/hour provenance. Collection
