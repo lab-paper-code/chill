@@ -79,6 +79,19 @@ class PredictionTests(unittest.TestCase):
                     self.assertEqual(result['nodes'], expected['nodes'])
                     self.assertEqual(result['acceptance'], expected['acceptance'])
 
+    def test_noniterable_dependencies_are_rejected(self):
+        for dependencies in (False, 0, 0.0):
+            for chain in (False, True):
+                with self.subTest(dependencies=dependencies, chain=chain):
+                    observations = fixture(True)
+                    actions = observations['events'][0]['decision']['target']['actions']
+                    actions[0]['dependsOn'] = ['leaf'] if chain else dependencies
+                    if chain:
+                        actions.append({'id': 'leaf', 'kind': 'route', 'node': NODE,
+                                        'from': 'ready-subset', 'dependsOn': dependencies})
+                    with self.assertRaises(TypeError):
+                        self.analyze(observations)
+
     def test_incomplete_meter_is_unknown_not_zero(self):
         result = self.analyze(complete=False)
         self.assertEqual(result['nodes'][0]['status'], 'UNKNOWN')
