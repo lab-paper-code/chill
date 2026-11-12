@@ -118,27 +118,30 @@ def validate_runs(runs):
             if (type(cycles) is not int or not 0 <= cycles <= 2**32 - 1 or
                     not 0 <= maximum <= total or (cycles == 0 and total != 0)):
                 raise ValueError('driverGC cycles and pauses disagree')
+            scheduled = phase['scheduledInputs']
+            if (type(scheduled) is not int or phase['sentInputs'] != scheduled or
+                    scheduled != phase['completedInputs']):
+                raise ValueError('scheduled, sent and completed input counts must agree')
+            exposure = number(phase['issueElapsedSecondsMonotonic'], 'offering window', positive=True)
+            if exposure > phase['measurementElapsedSecondsMonotonic']:
+                raise ValueError('offering window cannot include response drain')
+            offering_start, offering_end, drain_end = [evidence_io.timestamp_ns(phase[key]) for key in
+                                                       ('offeringStartedAt', 'offeringEndedAt', 'drainEndedAt')]
+            if not offering_start < offering_end <= drain_end:
+                raise ValueError('offering and drain timestamps must be positive and ordered')
+            if not math.isclose(number(phase['achievedArrivalRatePerSecond'], 'scheduled rate', positive=True),
+                                scheduled / exposure, rel_tol=1e-12):
+                raise ValueError('achieved rate must equal scheduled inputs / offering window')
             if phase['kind'] == 'saturation':
-                if any(key in phase for key in ('scheduledInputs', 'sentInputs', 'arrivalSeed', 'issueLagMs',
-                                               'issueElapsedSecondsMonotonic', 'achievedArrivalRatePerSecond')):
+                if any(key in phase for key in ('arrivalSeed', 'issueLagMs', 'arrivalRatePerSecond')):
                     raise ValueError('saturation must omit Poisson issue evidence')
-            if phase['kind'] != 'saturation':
-                sent = phase['sentInputs']
-                if (type(sent) is not int or phase['scheduledInputs'] != sent or
-                        sent != phase['completedInputs']):
-                    raise ValueError('scheduled, sent and completed input counts must agree')
-                exposure = number(phase['issueElapsedSecondsMonotonic'], 'offering window', positive=True)
-                if exposure > phase['measurementElapsedSecondsMonotonic']:
-                    raise ValueError('offering window cannot include response drain')
+            else:
                 if phase['arrivalSeed'] != f"{trial}/{phase['id']}":
                     raise ValueError('arrivalSeed must identify physical trial/phase')
-                if not math.isclose(number(phase['achievedArrivalRatePerSecond'], 'sent rate', positive=True),
-                                    sent / exposure, rel_tol=1e-12):
-                    raise ValueError('achieved rate must equal sent inputs / offering window')
                 lag = phase['issueLagMs']
                 values = [number(lag[key], 'issue lag') for key in ('min', 'p50', 'p95', 'p99', 'max')]
                 mean = number(lag['mean'], 'mean issue lag')
-                if (lag['count'] != sent or values[0] < 0 or values != sorted(values) or
+                if (lag['count'] != scheduled or values[0] < 0 or values != sorted(values) or
                         not values[0] <= mean <= values[-1]):
                     raise ValueError('issue lag counts or statistics disagree')
             for sample in native:
@@ -158,11 +161,11 @@ def validate_runs(runs):
                 if not request['requestID'] or request['requestID'] in request_ids:
                     raise ValueError('missing or duplicate request ID')
                 request_ids.add(request['requestID'])
-                for key in ('arrivalAt', 'sentAt', 'completedAt'):
+                for key in ('scheduledAt', 'dispatchedAt', 'completedAt'):
                     evidence_io.timestamp_ns(request[key])
-                if not (evidence_io.timestamp_ns(request['arrivalAt']) <= evidence_io.timestamp_ns(request['sentAt'])
+                if not (evidence_io.timestamp_ns(request['scheduledAt']) <= evidence_io.timestamp_ns(request['dispatchedAt'])
                         < evidence_io.timestamp_ns(request['completedAt'])):
-                    raise ValueError('request schedule, actual send and completion must be ordered')
+                    raise ValueError('request schedule, native dispatch and completion must be ordered')
                 number(request['latencyMs'], 'request latency', positive=True)
 
 
@@ -195,8 +198,8 @@ def training_trials(runs, fold, indices):
                               'completedItems': phase['completedInputs'], 'samples': raw['metrics']['samples'],
                               'measurementElapsedSecondsMonotonic': phase['measurementElapsedSecondsMonotonic'],
                               'nativeSamples': native[offset:offset + count],
-                              **({key: phase[key] for key in ('sentInputs', 'issueElapsedSecondsMonotonic')}
-                                 if phase['kind'] != 'saturation' else {})})
+                              **{key: phase[key] for key in ('scheduledInputs', 'issueElapsedSecondsMonotonic',
+                                                            'offeringStartedAt', 'offeringEndedAt')}})
             offset += count
         result.append({'trialID': trial_id, 'batch': raw['runConfig']['measurement']['batch'],
                        'windowStart': phases[0]['measurementStartedAt'], 'windowEnd': phases[-1]['measurementEndedAt'],
@@ -277,7 +280,7 @@ def evaluate_fold(runs, idle, bridge, fold, train_indices):
             if fold['kind'] == 'phase' and phase['id'] != fold['id']:
                 continue
             heldout.append({'trialID': raw['podUID'], 'phaseID': phase['id'],
-                            'arrivals': [r['sentAt'] for r in phase['requests']],
+                            'arrivals': [r['scheduledAt'] for r in phase['requests']],
                             'sloPercentile': measurement['sloPercentile'],
                             'sloTargetLatencyNanos': measurement['sloTargetLatencyNanos'],
                             **measurement['operatingPoints']})
@@ -305,11 +308,12 @@ def phase_metrics(runs, evaluated, selected, powers, fold):
         for index in selected:
             raw = runs[index]
             actual = next(p for p in raw['runtime']['phases'] if p['id'] == phase_id)
-            rates.append(actual['completedInputs'] / actual['measurementElapsedSecondsMonotonic'])
+            rates.append(actual['scheduledInputs'] / actual['issueElapsedSecondsMonotonic'])
             watts.append(powers[(raw['podUID'], phase_id)])
             estimate = estimates.get((raw['podUID'], phase_id), {})
             predicted.append(estimate.get('expectedNanos'))
-            latencies = sorted(r['latencyMs'] * 1e6 for r in actual['requests'])
+            latencies = sorted(evidence_io.timestamp_ns(r['completedAt']) - evidence_io.timestamp_ns(r['scheduledAt'])
+                               for r in actual['requests'])
             percentile = raw['runConfig']['measurement']['sloPercentile']
             measured.append(latencies[math.ceil(percentile / 100 * len(latencies)) - 1])
         profile = evaluated['profile']
@@ -321,7 +325,7 @@ def phase_metrics(runs, evaluated, selected, powers, fold):
                                                                     for reason in estimates.get((runs[i]['podUID'], phase_id), {}).get('reasons', [])
                                                                     if estimates.get((runs[i]['podUID'], phase_id), {}).get('expectedNanos') is None}),
                                        'measuredNanos': statistics.mean(measured)},
-                           'power': {'measuredWatts': statistics.mean(watts), 'sentRatePerSecond': rate,
+                           'power': {'measuredWatts': statistics.mean(watts), 'scheduledRatePerSecond': rate,
                                      'predictedWatts': profile['idleWatts'] + profile['energyPerInputJoules'] * rate}}
     return result
 
@@ -433,11 +437,11 @@ def analyze_batch(runs, idle, bridge, repetitions, seed, confidence, uncertainty
               'analysisBoundary': 'offline task outside CHILL; existing exported derivation and scheduler APIs only',
               'replayExecuted': True,
               'retainedMetrics': ['held-out SLO percentile vs keep scheduler expectedNanos',
-                                  'phase power vs idle + EPI * sent rate',
+                                  'phase power vs idle + EPI * scheduled rate',
                                   'saturation cycle vs S + B * d', 'post-load power stabilization'],
               'removedMetrics': ['batch service distribution prediction'],
               'removedMetricsReason': 'existing product exports do not expose batch-service replay populations',
-              'powerRateBasis': 'completed sent inputs / total measurement window; response drain included in both power and rate, including saturation',
+              'powerRateBasis': 'scheduledInputs / issueElapsedSecondsMonotonic; power uses explicit offeringStartedAt/offeringEndedAt; drain excluded, including saturation',
               'limitations': ['One trial cannot identify between-trial uncertainty; its CI is null.',
                               'Stabilization stays in band only through the recorded suffix, not indefinitely.'],
               'folds': [], 'postLoadPower': []}
@@ -503,7 +507,7 @@ def analyze_batch(runs, idle, bridge, repetitions, seed, confidence, uncertainty
         phase_power = []
         for trial in full['trials']:
             for phase in trial['phasePower']:
-                rate = phase['sentRatePerSecond']
+                rate = phase['scheduledRatePerSecond']
                 watts = (evaluated['profile']['idleWatts'] + evaluated['profile']['energyPerInputJoules'] * rate
                          if rate is not None else None)
                 ci = (interval([p['idleWatts'] + p['energyPerInputJoules'] * rate for p in bootstrap_profiles],

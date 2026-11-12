@@ -22,24 +22,24 @@ def request(rid, instance, batch, start, finish, receive, idle=0, service=10):
 
 
 def profile_trial(trial='physical'):
-    """Two batches sharing an idle bin, with opposite observed ingress."""
+    """Two batches sharing an idle bin and scheduled arrivals, with opposite dispatch ingress."""
     samples, requests = [], []
-    for batch, start, finish, receives in [
+    for batch, start, finish, dispatches in [
             (1, 10_000_000, 12_000_000, [1_000_000, 10_000_000]),
             (2, 30_000_000, 50_000_000, [12_000_000, 11_000_000])]:
         members = [trial + '-%s-%s' % (batch, member) for member in range(2)]
         samples.append({'trialID': trial, 'batchID': batch, 'batchSize': 2,
                         'requestIDs': members, 'serviceDurationNanos': finish - start,
                         'precedingIdleNanos': 0, 'startedAt': stamp(start), 'finishedAt': stamp(finish)})
-        for rid, receive in zip(members, receives):
-            requests.append({'requestID': rid, 'arrivalAt': stamp(0),
-                             'sentAt': stamp(receive - 5_000), 'completedAt': stamp(finish),
-                             'latencyMs': (finish - receive + 5_000) / 1e6,
+        for rid, dispatch in zip(members, dispatches):
+            requests.append({'requestID': rid, 'scheduledAt': stamp(0),
+                             'dispatchedAt': stamp(dispatch), 'completedAt': stamp(finish),
+                             'latencyMs': finish / 1e6,
                              'response': {'progress': {'batchID': batch, 'at': stamp(finish),
-                                          'nativeElapsedMS': (finish - receive) / 1e6,
-                                          'nativeHTTP': {'handlerEnteredAt': stamp(receive - 1_000),
-                                                         'receivedNanos': 1_000}}}})
-    return {'schemaVersion': 'chill.dacs.io/profiling-raw-measurement.v1alpha13',
+                                          'nativeElapsedMS': finish / 1e6,
+                                          'nativeHTTP': {'handlerEnteredAt': stamp(dispatch + 1_000),
+                                                         'receivedNanos': -(dispatch + 1_000)}}}})
+    return {'schemaVersion': 'chill.dacs.io/profiling-raw-measurement.v1alpha14',
             'podUID': trial, 'runtime': {'phases': [{'nativeSamples': samples, 'requests': requests}]}}
 
 
@@ -192,15 +192,15 @@ class ProfileComparisonTests(unittest.TestCase):
         self.assertEqual(cell['profile']['n'], 0)
         self.assertEqual(report['marginalByIngress'][0]['profile']['n'], 1)
 
-    def test_profile_raw_conditions_same_idle_bin_on_native_ingress(self):
+    def test_profile_raw_conditions_same_idle_bin_on_dispatch_ingress(self):
         raw = profile_trial()
         first = request('serving-first', 'one', 1, 10_000_000, 20_000_000, 0)
         arrival = request('arrival', 'one', 2, 70_000_000, 80_000_000, 15_000_000,
                           service=40)
-        # Another physical trial's receive at 40ms must not affect this trial.
+        # Another physical trial's dispatch at 40ms must not affect this trial.
         elsewhere = profile_trial('elsewhere')
         for member in elsewhere['runtime']['phases'][0]['requests']:
-            member['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(40_000_000)
+            member['dispatchedAt'] = stamp(40_000_000)
         report = self.run_report([first, arrival], catalog_samples(raw), profile_raws=[raw, elsewhere])
         self.assertEqual(report['profileIngressConditioning'], 'conditioned on ingress')
         self.assertEqual(report['profileConditioning'], ['profileID', 'batchSize', 'idleBin', 'otherArrived'])
@@ -213,6 +213,7 @@ class ProfileComparisonTests(unittest.TestCase):
         self.assertTrue(all(cell['profileIngressSupported'] for cell in cells.values()))
         self.assertEqual(report['counts']['profileSamplesWithIngress'], 2)
         self.assertEqual(len(report['sources']['profileRaw']), 2)
+        self.assertIn('dispatchedAt directly', report['profileReceiveDefinition'])
         marginal = {cell['otherArrived']: cell for cell in report['marginalByIngress']}
         self.assertEqual(marginal[True]['profile']['p50'], 2)
         self.assertEqual(marginal[False]['profile']['p50'], 20)
@@ -222,34 +223,60 @@ class ProfileComparisonTests(unittest.TestCase):
         raw = profile_trial()
         phase = raw['runtime']['phases'][0]
         # Own member at start is excluded. Other batch at finish is excluded.
-        phase['requests'][3]['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(12_000_000 - 1_000)
+        phase['requests'][3]['dispatchedAt'] = stamp(12_000_000)
         serving = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
         no_arrival = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
         self.assertEqual(no_arrival['cells'][0]['profile']['n'], 2)
         # Other batch at exact start belongs to the ingress cell.
-        phase['requests'][3]['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(10_000_000 - 1_000)
+        phase['requests'][3]['dispatchedAt'] = stamp(10_000_000)
         at_start = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
         self.assertEqual(at_start['cells'][0]['profile']['p50'], 20)
         self.assertEqual(at_start['cells'][0]['profile']['n'], 1)
 
-    def test_profile_raw_missing_receive_or_run_stays_unconditioned(self):
-        for missing in ('sentAt', 'nativeHTTP', 'startedAt'):
+    def test_profile_raw_missing_dispatch_or_run_stays_unconditioned(self):
+        for missing in ('dispatchedAt', 'startedAt', 'finishedAt'):
             with self.subTest(missing=missing):
                 raw = profile_trial()
                 phase = raw['runtime']['phases'][0]
-                if missing == 'startedAt':
-                    for sample in phase['nativeSamples']:
-                        sample.pop(missing)
-                else:
-                    for member in phase['requests']:
-                        target = member if missing == 'sentAt' else member['response']['progress']
-                        target.pop(missing)
+                for record in phase['requests' if missing == 'dispatchedAt' else 'nativeSamples']:
+                    record.pop(missing)
                 report = self.run_report([request('a', 'one', 1, 10_000_000, 20_000_000, 0)],
                                          catalog_samples(raw), profile_raws=[raw])
                 self.assertEqual(report['profileIngressConditioning'], 'not conditioned on ingress')
                 self.assertFalse(report['cells'][0]['profileIngressConditioned'])
                 self.assertEqual(report['cells'][0]['profile']['n'], 2)
                 self.assertEqual(report['counts']['profileSamplesWithoutIngress'], 2)
+
+    def test_delayed_dispatch_changes_ingress_with_same_scheduled_arrivals(self):
+        raw = profile_trial()
+        requests = raw['runtime']['phases'][0]['requests']
+        arrivals = [member['scheduledAt'] for member in requests]
+        serving = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
+        before = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
+        self.assertEqual(before['cells'][0]['profile'], {'n': 1, 'p50': 20, 'p95': 20})
+        requests[3]['dispatchedAt'] = stamp(12_000_000)
+        after = self.run_report([serving], catalog_samples(raw), profile_raws=[raw])
+        self.assertEqual(after['cells'][0]['profile'], {'n': 2, 'p50': 11, 'p95': 20})
+        self.assertEqual([member['scheduledAt'] for member in requests], arrivals)
+
+    def test_profile_dispatch_does_not_require_native_http_receipts(self):
+        raw = profile_trial()
+        for member in raw['runtime']['phases'][0]['requests']:
+            member.pop('response')
+        report = self.run_report([request('a', 'one', 1, 10_000_000, 20_000_000, 0)],
+                                 catalog_samples(raw), profile_raws=[raw])
+        self.assertEqual(report['profileIngressConditioning'], 'conditioned on ingress')
+        self.assertEqual(report['cells'][0]['profile'], {'n': 1, 'p50': 20, 'p95': 20})
+
+    def test_catalog_without_raw_timestamps_stays_unconditioned(self):
+        report = self.run_report([request('a', 'one', 1, 10_000_000, 20_000_000, 0)],
+                                 catalog_samples(profile_trial()))
+        cell = report['cells'][0]
+        self.assertEqual(report['profileIngressConditioning'], 'not conditioned on ingress')
+        self.assertFalse(cell['profileIngressConditioned'])
+        self.assertFalse(cell['sameConditionsComparison'])
+        self.assertEqual(cell['profile'], {'n': 2, 'p50': 11, 'p95': 20})
+        self.assertEqual(cell['profileUnconditioned'], cell['profile'])
 
     def test_mixed_profile_evidence_never_pools_unknown_ingress(self):
         raw = profile_trial()
@@ -267,7 +294,7 @@ class ProfileComparisonTests(unittest.TestCase):
     def test_missing_ingress_cell_does_not_fall_back_to_other_population(self):
         raw = profile_trial()
         for member in raw['runtime']['phases'][0]['requests'][2:]:
-            member['response']['progress']['nativeHTTP']['handlerEnteredAt'] = stamp(12_000_000 - 1_000)
+            member['dispatchedAt'] = stamp(12_000_000)
         serving = request('a', 'one', 1, 10_000_000, 20_000_000, 0)
         arrival = request('b', 'one', 2, 30_000_000, 40_000_000, 15_000_000)
         report = self.run_report([serving, arrival], catalog_samples(raw), profile_raws=[raw])

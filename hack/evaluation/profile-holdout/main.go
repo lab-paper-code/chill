@@ -27,13 +27,16 @@ type request struct {
 	SupportIdle       []derivation.IdleObservation `json:"supportIdle"`
 }
 
-// Power and completed-input rate share the whole measurement window, including drain.
+// Diagnostic power and scheduled-input rate share the explicit offering window.
 type phase struct {
 	derivation.OperatingPointPhase
-	MeasurementSeconds float64 `json:"measurementElapsedSecondsMonotonic"`
+	ScheduledInputs   int       `json:"scheduledInputs"`
+	OfferingSeconds   float64   `json:"issueElapsedSecondsMonotonic"`
+	OfferingStartedAt time.Time `json:"offeringStartedAt"`
+	OfferingEndedAt   time.Time `json:"offeringEndedAt"`
 }
 
-// Arrivals are actual sentAt timestamps, never scheduled arrivals or completions.
+// Arrivals are client scheduledAt timestamps, never dispatches or completions.
 type heldoutPhase struct {
 	TrialID                    string        `json:"trialID"`
 	PhaseID                    string        `json:"phaseID"`
@@ -59,7 +62,7 @@ type trial struct {
 
 type phasePower struct {
 	derivation.PhasePower
-	SentRatePerSecond *float64 `json:"sentRatePerSecond"`
+	ScheduledRatePerSecond *float64 `json:"scheduledRatePerSecond"`
 }
 
 type energyTrial struct {
@@ -142,14 +145,21 @@ func analyze(input request) (result, error) {
 			return out, err
 		}
 		row := energyTrial{EnergyTrial: derived}
-		for k, power := range derived.PhasePower {
+		for k := range derived.PhasePower {
 			observation := supplied.Phases[k]
-			if observation.CompletedItems <= 0 || observation.MeasurementSeconds <= 0 ||
-				math.IsNaN(observation.MeasurementSeconds) || math.IsInf(observation.MeasurementSeconds, 0) {
-				return out, fmt.Errorf("positive complete measurement exposure and completed inputs required")
+			if observation.ScheduledInputs <= 0 || observation.OfferingSeconds <= 0 ||
+				math.IsNaN(observation.OfferingSeconds) || math.IsInf(observation.OfferingSeconds, 0) {
+				return out, fmt.Errorf("positive offering exposure and scheduled inputs required")
 			}
-			rate := float64(observation.CompletedItems) / observation.MeasurementSeconds
-			row.PhasePower = append(row.PhasePower, phasePower{PhasePower: power, SentRatePerSecond: &rate})
+			offering := observation.OperatingPointPhase
+			offering.WindowStart, offering.WindowEnd = observation.OfferingStartedAt, observation.OfferingEndedAt
+			power, err := derivation.MeasurePhasePower(offering)
+			if err != nil {
+				return out, err
+			}
+			power.TrialID = trial.TrialID
+			rate := float64(observation.ScheduledInputs) / observation.OfferingSeconds
+			row.PhasePower = append(row.PhasePower, phasePower{PhasePower: power, ScheduledRatePerSecond: &rate})
 		}
 		out.Trials = append(out.Trials, row)
 		energy[j] = derived.IncrementalWorkJoulesPerItem
@@ -233,7 +243,7 @@ func analyze(input request) (result, error) {
 func predictLatency(training profile, batches []serving.BatchProfile, heldout heldoutPhase, settings serving.SchedulerSettings) (latencyPrediction, error) {
 	out := latencyPrediction{TrialID: heldout.TrialID, PhaseID: heldout.PhaseID}
 	if heldout.TrialID == "" || heldout.PhaseID == "" || len(heldout.Arrivals) == 0 {
-		return out, fmt.Errorf("heldout trialID, phaseID and actual sentAt arrivals required")
+		return out, fmt.Errorf("heldout trialID, phaseID and client scheduledAt arrivals required")
 	}
 	if heldout.SLOPercentile <= 0 || heldout.SLOPercentile > 100 || math.IsNaN(heldout.SLOPercentile) ||
 		math.IsInf(heldout.SLOPercentile, 0) || heldout.SLOTargetLatency <= 0 ||
@@ -245,25 +255,25 @@ func predictLatency(training profile, batches []serving.BatchProfile, heldout he
 		return out, fmt.Errorf("heldout SLO, positive request lifetime and nonnegative delivery margin required")
 	}
 	start, last := heldout.Arrivals[0], heldout.Arrivals[0]
-	for _, sentAt := range heldout.Arrivals {
-		if sentAt.IsZero() {
-			return out, fmt.Errorf("heldout actual sentAt must be nonzero")
+	for _, scheduledAt := range heldout.Arrivals {
+		if scheduledAt.IsZero() {
+			return out, fmt.Errorf("heldout client scheduledAt must be nonzero")
 		}
-		if sentAt.Before(start) {
-			start = sentAt
+		if scheduledAt.Before(start) {
+			start = scheduledAt
 		}
-		if sentAt.After(last) {
-			last = sentAt
+		if scheduledAt.After(last) {
+			last = scheduledAt
 		}
 	}
 	if err := settings.Validate(); err != nil {
 		return out, fmt.Errorf("frozen schedulerSettings: %w", err)
 	}
-	// Anchor the unchanged scheduler observation window after the final send.
+	// Anchor the unchanged scheduler observation window after the final scheduledAt.
 	// Reject a short window instead of silently discarding heldout arrivals.
 	at := last.Add(time.Nanosecond)
 	if at.Sub(start) > settings.ObservationWindow {
-		return out, fmt.Errorf("schedulerSettings observationWindowNanos must cover all heldout sentAt arrivals")
+		return out, fmt.Errorf("schedulerSettings observationWindowNanos must cover all heldout scheduledAt arrivals")
 	}
 	start = at.Add(-settings.ObservationWindow)
 	lifetime := time.Duration(heldout.RequestLifetimeSeconds * float64(time.Second))
@@ -308,9 +318,9 @@ func predictLatency(training profile, batches []serving.BatchProfile, heldout he
 		Routing:   map[string]map[string]int32{definition.UID: {instance.ID: 1}},
 		Arrivals:  make([]serving.SchedulerArrival, len(heldout.Arrivals)),
 	}
-	for j, sentAt := range heldout.Arrivals {
+	for j, scheduledAt := range heldout.Arrivals {
 		snapshot.Arrivals[j] = serving.SchedulerArrival{
-			ID: fmt.Sprintf("sent-%09d", j), At: sentAt, Definition: definition,
+			ID: fmt.Sprintf("scheduled-%09d", j), At: scheduledAt, Definition: definition,
 			WorkloadUID: definition.UID, Accepted: true, Compute: true, Lifetime: lifetime,
 		}
 	}

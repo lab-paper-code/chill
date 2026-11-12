@@ -7,8 +7,8 @@ This diagnostic never changes profiles or evaluation judgments.
 Optional --profile-raw files are archived profiling-raw-measurement JSON objects.
 Their podUID and native sample batchSize join catalog serviceSamples by trialID
 and batch size. The complete trial's service/idle multiset must match the catalog.
-Native HTTP receive anchors and batch startedAt/finishedAt condition that trial
-on other-request ingress; sentAt is retained as the actual-send evidence.
+Request dispatchedAt and batch startedAt/finishedAt condition that trial on
+other-request ingress after FIFO admission; scheduledAt records client arrival.
 Catalog-only samples remain explicitly not conditioned on ingress.
 """
 import argparse
@@ -112,7 +112,7 @@ def comparison(key, serving, profile, edges=None, conditioned=False, uncondition
 
 
 def profile_ingress(raws):
-    """Recover ingress on each trial's native clock, never from scheduled arrivalAt."""
+    """Classify reaching-native ingress from dispatchedAt, after FIFO admission."""
     trials = {}
     for raw in raws:
         trial = raw['podUID']
@@ -129,15 +129,8 @@ def profile_ingress(raws):
                 rid = request['requestID']
                 if not rid or rid in requests:
                     raise ValueError('missing or duplicate profile raw request ID')
-                receive = None
-                timing = request.get('response', {}).get('progress', {}).get('nativeHTTP') or {}
-                if request.get('sentAt') and timing.get('handlerEnteredAt') and timing.get('receivedNanos') is not None:
-                    evidence_io.timestamp_ns(request['sentAt'])
-                    offset = timing['receivedNanos']
-                    if type(offset) is not int or offset < 0:
-                        raise ValueError('invalid profile native receivedNanos')
-                    receive = evidence_io.timestamp_ns(timing['handlerEnteredAt']) + offset
-                requests[rid] = receive
+                requests[rid] = (evidence_io.timestamp_ns(request['dispatchedAt'])
+                                 if request.get('dispatchedAt') else None)
         receives = sorted(value for value in requests.values() if value is not None)
         batches = defaultdict(list)
         seen = set()
@@ -311,14 +304,14 @@ def analyze(paths, profiles, edges, cohort=None, profile_raws=()):
         'profileSupportMeaning': 'profileIdleBinSupported tests idle-bin support; profileIngressSupported tests the matched ingress cell',
         'sameConditionsMeaning': 'sameConditionsComparison matches profileID, batchSize, measured idle bin and observed ingress only; runtime image equivalence is not established',
         'receiveDefinition': 'nativeFinishedAt - nativeElapsedMS; same instance; running interval [nativeRunningAt,nativeFinishedAt); exclude own batch requests',
-        'profileReceiveDefinition': 'nativeHTTP.handlerEnteredAt + receivedNanos, with actual sentAt evidence; same physical trial; interval [startedAt,finishedAt); exclude own batch requests',
+        'profileReceiveDefinition': 'dispatchedAt directly after FIFO admission; same physical trial; interval [startedAt,finishedAt); exclude own batch requests',
         'limitations': [
             'Only requests with observed native finish and elapsed contribute derived receives; absence is not proof of no ingress.',
             'Longer executions are more likely to overlap arrivals (length bias); ingress association does not establish causality.',
             'Profile ID joins do not verify actual serving runtime image or other instance conditions.',
             'Unknown idle is not zero and cannot establish profile idle-bin support.',
-            'Profile samples without native receive/run timestamps remain not conditioned; profileUnconditioned reports them separately.',
-            'Native UTC anchors correlate profiling receives and runs; sentAt is a client-clock send anchor, not native receipt.'],
+            'Profile samples without dispatch/run timestamps remain not conditioned; profileUnconditioned reports them separately.',
+            'Profile ingress uses dispatchedAt directly; scheduledAt and nativeHTTP receive timestamps record client arrival, not dispatch.'],
         'counts': dict(counts),
         'cells': [compare(key, serving_cells[key]) for key in ordered(serving_cells)],
         # Reproduce the plan table separately; these rows deliberately marginalize idle.

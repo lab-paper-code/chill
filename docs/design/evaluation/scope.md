@@ -128,8 +128,8 @@ serving n/p50/p95와 profile 참고분포 n/p50/p95, p50/p95 비율을 보존한
 `profileIdleBinSupported`는 해당 profile·배치·유휴 구간의 표본 존재만 뜻한다.
 unknown 유휴는 측정된 유휴 구간의 support를 세우지 않는다.
 `--profile-raw`가 있으면 catalog trialID·배치의 실제 service/idle 쌍을 보존하며,
-nativeHTTP `handlerEnteredAt + receivedNanos` 수신과 `[startedAt,finishedAt)` 실행 시각으로
-profile도 다른 배치 유입 여부별로 나눈다. 실제 `sentAt` 근거와 같은 physical trial만 사용한다.
+native 도달 `dispatchedAt`과 `[startedAt,finishedAt)` 실행 시각으로
+profile도 다른 배치 유입 여부별로 나눈다. 같은 physical trial만 사용한다.
 시각 없는 과거 표본은 `profileUnconditioned`에 남고 **미조건화**로 명시한다.
 `profileIngressConditioned`와 `profileIngressSupported`가 조건 일치·표본 존재를 구분하며,
 `sameConditionsComparison`은 profile·배치·측정 유휴·유입 셀의 일치만 뜻한다.
@@ -187,13 +187,15 @@ signed residual 평균이며 operational d만 0 이상으로 clamp한다.
 분석기가 검색·용량·동작 비용 설정을 임의로 만들지 않는다.
 
 `profile-holdout-report.v3`는 다음 비교를 보고한다.
-- held-out phase의 실제 `sentAt` 도착과 같은 측정 설정으로 만든 단일 인스턴스 `SchedulerSnapshot`의 keep 후보 SLO `expectedNanos`와 실측 요청 지연의 같은 분위수
-- phase별 실측 노드 W와 `유휴 W + EPI × sent rate`
+- held-out phase의 client 도착 `scheduledAt`과 같은 측정 설정으로 만든 단일 인스턴스 `SchedulerSnapshot`의 keep 후보 SLO `expectedNanos`와 실측 `completedAt − scheduledAt`의 같은 분위수
+- phase별 실측 노드 W와 `유휴 W + EPI × scheduled rate`
 - 포화 배치 쌍의 실측 cycle과 `앞 배치의 실제 S + B × d`
 - 부하 중단 뒤 원시 전력 표본·rolling mean과 안정화 시간
 
-전력 적분과 rate는 모두 drain을 포함한 전체 측정 창을 쓴다.
-rate는 포화 closed-loop 단계도 포함해 `completedInputs / measurementElapsedSecondsMonotonic`다.
+전력 적분은 명시된 `offeringStartedAt`~`offeringEndedAt`, rate는
+`scheduledInputs / issueElapsedSecondsMonotonic`를 쓴다. 포화도 같은 필드를 가지며 drain을 모두 제외한다.
+offering UTC를 monotonic 시간으로 재구성하지 않는다. native admission FIFO 대기는
+`scheduledAt`~`dispatchedAt`이며 client 지연에 포함한다.
 전체 요청 지연분포나 batch service 재생분포는 기존 export가 반환하지 않는다.
 보고하는 지연 예측은 scheduler가 공개하는 SLO 분위수 추정치로 한정하며,
 batch service 예측분포는 `removedMetrics`와 사유로 명시한다.

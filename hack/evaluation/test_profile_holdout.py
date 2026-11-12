@@ -34,8 +34,8 @@ def raw_fixture(trial, service_ms=10, batch=2):
                            'earliestEnqueuedAt': stamp(at - .02), 'latestEnqueuedAt': stamp(at - .02)})
             for member, record in enumerate(records):
                 arrival = at - .002 + member * .001
-                requests.append({'requestID': record, 'recordID': record, 'arrivalAt': stamp(arrival),
-                                 'sentAt': stamp(arrival), 'completedAt': stamp(at + service),
+                requests.append({'requestID': record, 'recordID': record, 'scheduledAt': stamp(arrival),
+                                 'dispatchedAt': stamp(arrival), 'completedAt': stamp(at + service),
                                  'latencyMs': service_ms + 2 - member, 'response': {}})
         phases.append({'id': f'p{index}', 'kind': kind, 'utilization': .3 * (index - 1) if index > 1 else 0,
                        'arrivalRatePerSecond': .8, 'measurementStartedAt': stamp(start),
@@ -43,10 +43,14 @@ def raw_fixture(trial, service_ms=10, batch=2):
                        'measurementElapsedSecondsMonotonic': 10, 'completedInputs': 4 * batch,
                        'driverGC': {'cycles': 0, 'pauseTotalMilliseconds': 0, 'maxPauseMilliseconds': 0},
                        'latencyMs': [service_ms + 2] * 4, 'nativeSamples': native, 'requests': requests})
+        exposure = (analysis.evidence_io.timestamp_ns(requests[-1]['scheduledAt']) -
+                    analysis.evidence_io.timestamp_ns(stamp(start))) / 1e9
+        phases[-1].update(scheduledInputs=4 * batch, sentInputs=4 * batch,
+                          offeringStartedAt=stamp(start), offeringEndedAt=requests[-1]['scheduledAt'],
+                          drainEndedAt=max(r['completedAt'] for r in requests),
+                          issueElapsedSecondsMonotonic=exposure, achievedArrivalRatePerSecond=4 * batch / exposure)
         if kind != 'saturation':
-            exposure = 3.999
-            phases[-1].update(scheduledInputs=4 * batch, sentInputs=4 * batch, arrivalSeed=f'{trial}/p{index}',
-                              issueElapsedSecondsMonotonic=exposure, achievedArrivalRatePerSecond=4 * batch / exposure,
+            phases[-1].update(arrivalSeed=f'{trial}/p{index}',
                               issueLagMs=dict(count=4 * batch, min=0, mean=0, p50=0, p95=0, p99=0, max=0))
         else:
             phases[-1].pop('arrivalRatePerSecond')
@@ -150,37 +154,61 @@ class HoldoutTests(unittest.TestCase):
         raw = raw_fixture('a')
         phase = raw['runtime']['phases'][2]
         for request in phase['requests']:
-            request['sentAt'] = stamp(25)
+            request['dispatchedAt'] = stamp(25)
             request['completedAt'] = stamp(26)
+            request['latencyMs'] = (analysis.evidence_io.timestamp_ns(request['completedAt']) -
+                                    analysis.evidence_io.timestamp_ns(request['scheduledAt'])) / 1e6
         phase['arrivalRatePerSecond'] = 100
         phase['measurementElapsedSecondsMonotonic'] = 100
         analysis.validate_runs([raw])
         metrics = analysis.phase_metrics([raw], {'profile': {'idleWatts': 10, 'energyPerInputJoules': 5}},
                                          [0], {('a', 'p2'): 14}, {'kind': 'phase', 'id': 'p2'})
-        self.assertAlmostEqual(metrics['p2']['power']['sentRatePerSecond'], 8 / 100)
+        self.assertAlmostEqual(metrics['p2']['power']['scheduledRatePerSecond'], 8 / 3.999)
 
-    def test_power_and_rate_include_same_drain_window(self):
+    def test_power_and_rate_share_offering_window_excluding_drain(self):
         raw = raw_fixture('a')
         phase = raw['runtime']['phases'][2]
-        phase.update(completedInputs=100, sentInputs=100,
+        phase.update(completedInputs=100, scheduledInputs=100, sentInputs=100,
                      issueElapsedSecondsMonotonic=10, measurementElapsedSecondsMonotonic=20)
         metrics = analysis.phase_metrics([raw], {'profile': {'idleWatts': 10, 'energyPerInputJoules': 1}},
-                                         [0], {('a', 'p2'): 15}, {'kind': 'phase', 'id': 'p2'})
-        self.assertEqual(metrics['p2']['power']['sentRatePerSecond'], 5)
-        self.assertEqual(metrics['p2']['power']['predictedWatts'], 15)
+                                         [0], {('a', 'p2'): 20}, {'kind': 'phase', 'id': 'p2'})
+        self.assertEqual(metrics['p2']['power']['scheduledRatePerSecond'], 10)
+        self.assertEqual(metrics['p2']['power']['predictedWatts'], 20)
+        points = [(0, 20), (10, 20), (10.000000001, 10), (20, 10)]
+        self.assertAlmostEqual(analysis.time_mean(points, 0, 20), 15)
+        self.assertEqual(analysis.time_mean(points, 0, 10), 20)
 
-    def test_scheduler_input_uses_actual_heldout_sends(self):
+    @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
+    def test_bridge_power_uses_explicit_offering_timestamps(self):
+        raw = raw_fixture('a')
+        raw['runtime']['phases'][0]['offeringEndedAt'] = stamp(4)
+        for i, point in enumerate(raw['metrics']['samples']):
+            if i <= 40:
+                point['watts'] = 10 + i
+        with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
+            result = bridge.call({'trials': analysis.training_trials([raw], {'kind': 'all'}, [0]),
+                                  'idle': analysis.idle_observations(analysis.postload_idle([raw], [0]))})
+        power = result['trials'][0]['phasePower'][0]
+        self.assertEqual(power['windowStart'], raw['runtime']['phases'][0]['offeringStartedAt'])
+        self.assertAlmostEqual(power['meanWallWatts'], 12)
+        self.assertAlmostEqual(power['scheduledRatePerSecond'], 8 / 3.999)
+
+    def test_scheduler_input_uses_scheduled_arrivals_before_native_dispatch(self):
         runs = [raw_fixture('a'), raw_fixture('b')]
         phase = runs[0]['runtime']['phases'][2]
-        phase['requests'][0]['sentAt'] = stamp(21)
+        phase['requests'][0]['scheduledAt'] = stamp(20.5)
+        phase['requests'][0]['dispatchedAt'] = stamp(21)
         bridge = mock.Mock(support_runs=[], support_indices=[])
         fold = analysis.folds(runs)[0]
         analysis.evaluate_fold(runs, [idle_fixture()], bridge, fold, [1])
         request = bridge.call.call_args[0][0]
         heldout = request['heldout'][0]
-        self.assertEqual(heldout['arrivals'][0], stamp(21))
+        self.assertEqual(heldout['arrivals'][0], stamp(20.5))
         self.assertEqual(heldout['sloPercentile'], 97)
         self.assertTrue(all(p['id'] != phase['id'] for t in request['trials'] for p in t['phases']))
+        metrics = analysis.phase_metrics(runs, {'profile': {'idleWatts': 10, 'energyPerInputJoules': 1}},
+                                         [0], {('a', phase['id']): 14}, fold)
+        self.assertEqual(metrics[phase['id']]['latency']['measuredNanos'], 510_000_000)
 
     def test_artifact_image_changes_cannot_share_active_or_idle_evidence(self):
         active = raw_fixture('a')
@@ -255,14 +283,14 @@ class HoldoutTests(unittest.TestCase):
         self.assertEqual(first['phases'][0]['latency']['measuredNanos'], 12_000_000)
         self.assertNotIn('serviceMS', first['phases'][0])
         self.assertEqual(first['phases'][0]['power']['measuredWatts'], 14)
-        expected = 14
-        self.assertAlmostEqual(first['phases'][0]['power']['sentRatePerSecond'], .8)
+        expected = 10 + 5 * 8 / 3.999
+        self.assertAlmostEqual(first['phases'][0]['power']['scheduledRatePerSecond'], 8 / 3.999)
         self.assertAlmostEqual(first['phases'][0]['power']['predictedWatts'], expected)
         for bound in first['phases'][0]['power']['predictedCIWatts']:
             self.assertAlmostEqual(bound, expected)
-        self.assertAlmostEqual(first['phasePower'][0]['sentRatePerSecond'], .8)
-        self.assertAlmostEqual(first['phasePower'][1]['sentRatePerSecond'], .8)
-        self.assertEqual(first['phasePower'][1]['predictedWatts'], 14)
+        self.assertAlmostEqual(first['phasePower'][0]['scheduledRatePerSecond'], 8 / 3.999)
+        self.assertAlmostEqual(first['phasePower'][1]['scheduledRatePerSecond'], 8 / 1.035)
+        self.assertAlmostEqual(first['phasePower'][1]['predictedWatts'], 10 + 5 * 8 / 1.035)
         self.assertEqual(len(first['phasePower']), 12)
         self.assertIsNone(report['folds'][2]['phases'][0]['power']['measuredCIWatts'])
         self.assertAlmostEqual(first['saturation'][0]['measuredCycleMS'], 12)
