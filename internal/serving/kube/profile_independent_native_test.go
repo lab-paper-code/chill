@@ -347,10 +347,19 @@ func commitNativeCatalogTrial(
 				case <-time.After(10 * time.Millisecond):
 				}
 			}
-			producer := exec.CommandContext(loadCtx, "python3", "-c",
-				"import sys; from chill_loadgen.native_profile import main; sys.exit(main(sys.argv[1], sys.argv[2]))",
-				"http://127.0.0.1:8081", filepath.Join(command[3], "dataset"))
-			producer.Env = append(os.Environ(), "PYTHONPATH="+filepath.Join(command[2], "load-generator", "src"))
+			binary := os.Getenv("CHILL_TEST_CHILL_SERVER")
+			if binary == "" {
+				loadDone <- errors.New("CHILL_TEST_CHILL_SERVER must name the built chill-server binary; use make test-native")
+				return
+			}
+			deadline, ok := loadCtx.Deadline()
+			if !ok {
+				loadDone <- errors.New("native load integration requires an absolute test deadline")
+				return
+			}
+			producer := exec.CommandContext(loadCtx, binary, "profiling-load",
+				"--control-endpoint=http://127.0.0.1:8081", "--dataset-dir="+filepath.Join(command[3], "dataset"),
+				"--deadline="+deadline.UTC().Format(time.RFC3339Nano))
 			producer.Stdout, producer.Stderr = &loadDiagnostics, &loadDiagnostics
 			loadDone <- producer.Run()
 		}()

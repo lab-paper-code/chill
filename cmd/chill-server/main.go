@@ -9,6 +9,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "profiling-load" {
+		if err := profilingLoadCommand(os.Args[2:]); err != nil {
+			_, _ = os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
+		return
+	}
 	opts := options{}
 	opts.bindFlags(flag.CommandLine)
 	zapOptions := zap.Options{Development: true}

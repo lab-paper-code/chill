@@ -130,18 +130,29 @@ observations. The largest such observed service supplies the existing K formula:
 `K=min(64,floor(queueBytesCap/framedDecodedRequestUpperBytes),
 floor((L-margin)/(B*maxObservedSparseServiceSeconds)))`. The shared native
 `SaturationWorkers` calculation also checks whole-batch and queue feasibility.
+Admission slots remain held until the response completes, so K must not exceed
+`maxQueueRequests`, including requests already executing.
 Missing usable sparse observations or infeasible supply fails the Run. There is
 no guessed service bound, old-profile bootstrap, rounding K to a multiple of B,
 or fallback. The measured `supplySizing.serviceTimeSource` is
 `run.sparse.maxObservedSeconds`.
 
 Saturation uses closed-loop K outstanding requests and measures completed input
-throughput. Each configured utilization then produces open-loop Poisson arrivals
-at utilization × that throughput. Every phase runs until both its monotonic
-duration and known-gap sample floor complete. The producer stops offering on a
-whole-batch issuance boundary and drains every issued request. The immutable
-attempt/safety budget fails an unfinished phase; it never completes evidence.
-Observer duration and capacity account for the entire phase ladder.
+throughput as completed inputs divided by monotonic phase elapsed time. The
+Evidence Passport divides total completed inputs by the full monotonic runtime window.
+Each configured utilization then
+produces open-loop Poisson arrivals at utilization × that throughput. The
+`chill-server profiling-load` subcommand reuses the gateway's native request
+encoder and pooled HTTP client. It runs in the validated gateway Pod's actual
+`serving-entrypoint` image; the Python load-generator retains only gateway E5 load.
+The producer never serializes Poisson issuance behind a previous response.
+An actual issue lag over 10 ms fails the phase, with target/achieved rates and
+issue-lag statistics retained in its control failure evidence.
+Every phase runs until both its monotonic duration and known-gap sample floor
+complete. The producer stops offering on a whole-batch issuance boundary and
+drains every issued request. The immutable attempt/safety budget fails an
+unfinished phase; it never completes evidence. Observer duration and capacity
+account for the entire phase ladder.
 For BEO, runtime-execution memory exhaustion or an execution measurement-budget
 boundary ends discovery as `Complete/BatchDiscoveryComplete`, preserving the
 completed three-trial batch prefix. Memory exhaustion includes native `OOMKilled`
@@ -181,12 +192,14 @@ q95 with probability `1-.95^59 ≈ .9515` at 59 samples. This minimal coverage i
 a precise p95 estimate, an independence/stationarity check or proof of κ safety;
 59 is a count of calls, not a count of tail exceedances.
 
-Shared CPU policy: RunConfig v1alpha21 has no CPU allocation or thread-tuning
-field. Jobs carry no CPU requests/limits and the runner accepts no affinity or
-thread override. Runtime-default session settings and actual quota/cpuset/
-affinity/usage/throttling remain observed evidence.
+Shared CPU policy: every CHILL operation runs without CPU reservation, quota or
+pinning. RunConfig v1alpha21 has no CPU allocation or thread-tuning field.
+Measurement and load Jobs carry no CPU requests/limits; the runner accepts no
+affinity or thread override, and the Go producer uses default runtime scheduling.
+Actual quota/cpuset/affinity/usage/throttling remain observed evidence. The
+gateway-side load Job has bounded memory resources described below.
 
-Active runtime and raw bodies are v1alpha11; idle runtime v1alpha7 and idle raw
+Active runtime and raw bodies are v1alpha12; idle runtime v1alpha7 and idle raw
 v1alpha8 retain the existing loaded-idle protocol. Old active records are deleted
 operationally after archival; no reader accepts their previous shapes. Memory,
 GPU, Node identity, ownership and physical-return checks remain mandatory.
@@ -269,12 +282,12 @@ instead of active latency/output-validation proof. Both share store/key/size
 reference boundary. Job completion, terminal Pod/Node snapshots and credentials
 are absent; the controller adds terminal Kubernetes facts during finalization.
 
-### Active raw v1alpha11 field contract
+### Active raw v1alpha12 field contract
 
 `raw.json` has `schemaVersion`, `runConfig` (v1alpha21), `podUID`, `runtime`,
 `metrics`, and `workload`. Raw evidence contains measured facts and boundaries.
 `runtime.schemaVersion` is
-`chill.dacs.io/batch-characterization.v1alpha11`. Existing actual runtime,
+`chill.dacs.io/batch-characterization.v1alpha12`. Existing actual runtime,
 CPU/memory, startup and execution metadata remain. `runtime.phases` replaces
 `repetitionResults`; there is no legacy reader.
 
@@ -293,22 +306,29 @@ Each object contains:
 | `requests` | Every completed request; no failed request is silently omitted |
 | `nativeSamples` | One physical batch per globally unique `batchID` |
 | `latencyMs` | Maximum member sent-to-completed latency, aligned with each batch sample |
+| `issueElapsedSecondsMonotonic` | Phase start to last actual issue, Poisson phases only |
+| `achievedArrivalRatePerSecond` | Completed issued requests divided by issue elapsed time |
+| `issueLagToleranceMs` | Fixed 10 ms schedule failure boundary |
+| `issueLagMs` | Count, min, mean, p50, p95, p99 and max of actual monotonic send lag |
 
 Each request contains `requestID`, `recordID`, `arrivalAt`, `sentAt`,
-`completedAt`, `latencyMs`, and full native `/infer` `response`. Request UTC
-timestamps belong to the **load node**; latency uses its monotonic clock.
-`response.progress.nativeHTTP` retains measurement-node `handlerEnteredAt` and
-receive/decode/enqueue/finish offsets, alongside native queue/run spans,
-`batchRequestIDs`, `batchStartedAt`, `batchFinishedAt`, and `serviceSample`.
-Cross-host wall-clock subtraction never defines request latency.
+`completedAt`, `latencyMs`, and native `/infer` response identity, output and
+request-local progress. Request UTC timestamps belong to the **load node**;
+latency and issue lag use its monotonic clock. `response.progress.nativeHTTP`
+retains measurement-node handler entry and receive/decode/enqueue/finish offsets,
+alongside request-local queue/run spans. Cross-host wall-clock subtraction never
+defines request latency.
 
-Each native sample retains `batchID`, `batchSize`, per-member `recordIDs` and
-`units`; `serviceDurationNanos`, nullable `precedingIdleNanos`, physical Pod
-`trialID`; `runnerServiceMs`, `preprocessMs`, `backendCallMs`, `postprocessMs`,
-`nativeRequestMs`, and optional generative `firstTokenMs`. Measurement-node UTC
-`startedAt`/`finishedAt` anchor the actual runner exchange;
-`earliestEnqueuedAt`/`latestEnqueuedAt` bound native member enqueue times.
-Only the first physical exchange may lack a preceding idle anchor.
+Each native sample retains `batchID`, `batchSize`, ordered `requestIDs`,
+per-member `recordIDs` and `units`; `serviceDurationNanos`, nullable
+`precedingIdleNanos`, physical Pod `trialID`; `runnerServiceMs`, `preprocessMs`,
+`backendCallMs`, `postprocessMs`, `nativeRequestMs`, and optional generative
+`firstTokenMs`. Measurement-node UTC `startedAt`/`finishedAt` anchor the runner
+exchange; `earliestEnqueuedAt`/`latestEnqueuedAt` bound native member enqueue times.
+Only the first physical exchange may lack a preceding idle anchor. Repeated batch
+membership, batch times and service/stage facts are removed from each retained
+request response after validating the original native responses; samples own
+these facts once per physical batch. The serving HTTP response itself is unchanged.
 
 `runtime.supplySizing` contains `batch`, `maxBatchServiceSeconds`,
 `serviceTimeSource`, `requestLifetimeSeconds`, `marginSeconds`, `workerCap`,
@@ -327,6 +347,11 @@ The load producer obtains phase boundaries through worker-local
 `POST /measurement/phase` start/end markers. `GET /measurement/load` supplies
 the immutable plan; `POST /measurement/supply` derives K after sparse;
 `POST /measurement/load-result` delivers success phases or explicit failure.
+At the final phase-end control marker, the measurement worker stops its native
+memory sampler or reads the kernel memory peak and freezes CPU/window observations.
+It publishes measurement-end before accepting the full load-result body.
+Evidence upload, JSON decoding, validation and commit do not extend this native
+memory observation. The kernel peak retains its runtime-container-lifetime source.
 
 Energy per input uses **only utilization phases**:
 `(sum(wallJoules)-IdleBaselineWatts*sum(windowSeconds))/sum(completedInputs)`.
@@ -384,7 +409,20 @@ Missing/ambiguous gateway placement or equality with the measurement node fails
 the Run. There is no arbitrary other-node fallback or new topology knob.
 The profiler waits for the measurement Pod's control readiness before creating
 load, waits for load completion/failure before collecting the uploaded result,
-and removes the load Job through the same Run cleanup lifecycle.
+and removes load on normal completion, runtime failure and ExecutionLost.
+Load-first failure waits for runtime termination evidence before cleanup, preserving
+typed `MemoryAllocationFailed` discovery completion and the completed batch prefix.
+Profiling load Jobs carry the existing target-Node measurement-load label so
+terminal-root handback removes them across configured measurement namespaces.
+The load command receives measurement Job start + ActiveDeadlineSeconds as one
+absolute deadline; late load creation or Pod startup never extends that deadline.
+All control HTTP exchanges have finite timeouts within the remaining attempt.
+
+The load and dataset-init containers each request and limit **512 MiB**, with no
+CPU reservation, quota or pinning. Their dataset `emptyDir` is limited to **1 GiB**.
+These are installation delivery resources, not Run inputs or thread controls.
+The driver retains complete evidence within the frozen result cap; it never
+trims requests to fit.
 
 One versioned installation worker policy derives resources, deadlines/handoff
 margins and producer capacities coherently. Helm supplies default measured envelope;
@@ -401,6 +439,10 @@ Required relationships:
 - Reject input tensor before allocation above calculated-byte budget; ceiling leaves
   measured reserve for model/session/outputs/bounded input-generation temp/worker.
 - Retained latency cap and serialized-runtime-result cap fit memory and handoff.
+- Before utilization load starts, the producer checks projected whole-Run result
+  size from encoded sparse/saturation bytes per completed input, measured μ,
+  configured phase durations/rates, sample floor and in-flight drain. A projected
+  overflow fails with the measured coefficient and reason before the ladder.
 - Workspace fits private result plus one bounded evidence candidate, not image layer.
 - Common deadline is established once before worker preparation and covers
   artifact/model/input preparation, observer synchronization, warm-up, measurement,

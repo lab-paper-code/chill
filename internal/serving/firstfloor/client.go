@@ -43,17 +43,64 @@ type Spec struct {
 	DecisionID      string
 }
 
+var nativeRequestBuffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+// A transport may retain request-body readers after RoundTrip returns. Seal
+// every reader before returning the encoder buffer to its pool.
+type nativeRequestBytes struct {
+	sync.RWMutex
+	data []byte
+}
+
+type nativeRequestReader struct {
+	bytes  *nativeRequestBytes
+	offset int
+}
+
+func (r *nativeRequestReader) Read(destination []byte) (int, error) {
+	r.bytes.RLock()
+	defer r.bytes.RUnlock()
+	if r.bytes.data == nil {
+		return 0, io.ErrClosedPipe
+	}
+	if r.offset == len(r.bytes.data) {
+		return 0, io.EOF
+	}
+	n := copy(destination, r.bytes.data[r.offset:])
+	r.offset += n
+	return n, nil
+}
+
+func (*nativeRequestReader) Close() error { return nil }
+
+func (b *nativeRequestBytes) close() {
+	b.Lock()
+	b.data = nil
+	b.Unlock()
+}
+
 func (c *Client) request(ctx context.Context, method, endpoint string, body []byte, limit int64) ([]byte, int, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 		return nil, 0, errors.New("invalid native endpoint")
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	var source io.Reader
+	var encoded *nativeRequestBytes
+	if body != nil {
+		encoded = &nativeRequestBytes{data: body}
+		source = &nativeRequestReader{bytes: encoded}
+		defer encoded.close()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, source)
 	if err != nil {
 		return nil, 0, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+		req.ContentLength = int64(len(body))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return &nativeRequestReader{bytes: encoded}, nil
+		}
 	}
 	client := c.HTTPClient
 	if client == nil {
@@ -84,6 +131,31 @@ func decode(raw []byte, target any) error {
 		return errors.New("native response contains trailing JSON")
 	}
 	return nil
+}
+
+func (c *Client) encodeNative(request native.Request) (*bytes.Buffer, error) {
+	buffer := nativeRequestBuffers.Get().(*bytes.Buffer)
+	buffer.Reset()
+	c.Diagnostics.Mark(serving.DiagnosticClientMarshal, serving.DiagnosticBegin, request.ID, 0)
+	err := json.NewEncoder(buffer).Encode(request)
+	c.Diagnostics.Mark(serving.DiagnosticClientMarshal, serving.DiagnosticEnd, request.ID, 0)
+	if err != nil {
+		nativeRequestBuffers.Put(buffer)
+		return nil, err
+	}
+	return buffer, nil
+}
+
+// InferNative sends an unprofiled native request using the gateway serializer
+// and HTTP connection pool. The caller owns native completion-proof validation.
+// Execute additionally validates the measured serving profile and dispatch.
+func (c *Client) InferNative(ctx context.Context, endpoint string, request native.Request) ([]byte, int, error) {
+	buffer, err := c.encodeNative(request)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer nativeRequestBuffers.Put(buffer)
+	return c.request(ctx, http.MethodPost, endpoint, buffer.Bytes(), native.MaxFrameBytes)
 }
 func modelURL(spec Spec, suffix string) string {
 	return strings.TrimRight(spec.Endpoint, "/") + "/v2/models/" + url.PathEscape(spec.ModelName) + "/" + suffix
@@ -204,13 +276,13 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	for i, field := range d.Input.Inputs {
 		request.Inputs[i] = native.Field{Name: field.Name, Data: [][]byte{field.Data}}
 	}
-	c.Diagnostics.Mark(serving.DiagnosticClientMarshal, serving.DiagnosticBegin, d.RequestID, 0)
-	raw, err := json.Marshal(request)
-	c.Diagnostics.Mark(serving.DiagnosticClientMarshal, serving.DiagnosticEnd, d.RequestID, 0)
+	buffer, err := c.encodeNative(request)
 	d.Input = nil // raw carries the sample; d stays live until the completion check.
 	if err != nil {
 		return serving.BackendResult{Finished: true}, err
 	}
+	defer nativeRequestBuffers.Put(buffer)
+	raw := buffer.Bytes()
 	// Hooks can run concurrently, including after Do fails. Keep their mutable
 	// storage separate from the returned value and freeze it under the same lock.
 	var traceMu sync.Mutex

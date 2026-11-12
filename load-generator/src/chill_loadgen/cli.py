@@ -358,9 +358,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command")
-    native_parser = commands.add_parser("native-profile", help="run frozen off-node native profiling phases")
-    native_parser.add_argument("--control-endpoint", required=True, help="measurement worker HTTP origin")
-    native_parser.add_argument("--dataset-dir", required=True, type=Path)
     replay_parser = commands.add_parser(
         "replay",
         help="replay a Dataset evaluation directory to one Workload",
@@ -392,9 +389,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "native-profile":
-        from chill_loadgen.native_profile import main as native_main
-        return native_main(args.control_endpoint, args.dataset_dir)
     if args.command != "replay":
         parser.print_help()
         return 0

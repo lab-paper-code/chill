@@ -161,7 +161,10 @@ func TestMeasurementLoadUsesWorkerAbsoluteDeadlineAndResourceBounds(t *testing.T
 	}
 	for _, container := range append(load.Spec.Template.Spec.InitContainers, container) {
 		for _, resources := range []corev1.ResourceList{container.Resources.Requests, container.Resources.Limits} {
-			if resources.Cpu().Cmp(resource.MustParse("1")) != 0 || resources.Memory().Cmp(resource.MustParse("512Mi")) != 0 {
+			if _, exists := resources[corev1.ResourceCPU]; exists {
+				t.Errorf("load container %s reserves or limits shared CPU: %+v", container.Name, container.Resources)
+			}
+			if resources.Memory().Cmp(resource.MustParse("512Mi")) != 0 {
 				t.Errorf("unbounded load container %s: %+v", container.Name, container.Resources)
 			}
 		}

@@ -60,8 +60,8 @@ func buildMeasurementLoadJob(run *api.ProfilingRun, worker *batchv1.Job, pod, ga
 		return nil, errors.New("measurement Job active deadline has elapsed")
 	}
 	resources := corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("512Mi")},
-		Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("512Mi")},
+		Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("512Mi")},
+		Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("512Mi")},
 	}
 	data := corev1.VolumeMount{Name: "data", MountPath: "/data"}
 	labels := map[string]string{"chill.dacs.io/profiling-load": string(run.UID), "chill.dacs.io/measurement-load": config.TargetNode.UID}

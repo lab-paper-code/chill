@@ -166,7 +166,8 @@ test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-l
 
 .PHONY: test-native
 test-native: envtest ## Run the real firstfloor native profiling integration test.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./internal/serving/kube -run '^TestProfileIndependentNativeCommitCatalogCapacity$$' -count=1
+	go build -o $(LOCALBIN)/chill-server ./cmd/chill-server
+	CHILL_TEST_CHILL_SERVER="$(LOCALBIN)/chill-server" KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./internal/serving/kube -run '^TestProfileIndependentNativeCommitCatalogCapacity$$' -count=1
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e
