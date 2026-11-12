@@ -108,12 +108,15 @@ func ActivePhases[P any](options PhaseOptions) []P {
 			"workers": workers, "utilization": utilization, "arrivalRatePerSecond": rate,
 			"measurementStartedAt": start.Format(time.RFC3339Nano), "measurementEndedAt": end.Format(time.RFC3339Nano),
 			"measurementElapsedSecondsMonotonic": options.Duration.Seconds(), "completedInputs": len(requests),
-			"requests": requests, "latencyMs": latencies, "nativeSamples": samples}
+			"requests": requests, "latencyMs": latencies, "nativeSamples": samples,
+			"driverGC": map[string]any{"cycles": 0, "pauseTotalMilliseconds": 0, "maxPauseMilliseconds": 0}}
 		if kind != "saturation" {
-			issueElapsed := requests[len(requests)-1]["sentAt"].(time.Time).Sub(start).Seconds()
+			issueElapsed := requests[len(requests)-1]["arrivalAt"].(time.Time).Sub(start).Seconds()
 			phases[index]["achievedArrivalRatePerSecond"] = float64(len(requests)) / issueElapsed
 			phases[index]["issueElapsedSecondsMonotonic"] = issueElapsed
-			phases[index]["issueLagToleranceMs"] = 10
+			phases[index]["scheduledInputs"] = len(requests)
+			phases[index]["sentInputs"] = len(requests)
+			phases[index]["arrivalSeed"] = options.PodUID + "/" + phases[index]["id"].(string)
 			phases[index]["issueLagMs"] = map[string]any{"count": len(requests), "min": 0, "mean": 0, "p50": 0, "p95": 0, "p99": 0, "max": 0}
 		}
 	}

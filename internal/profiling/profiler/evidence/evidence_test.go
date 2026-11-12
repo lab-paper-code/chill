@@ -882,8 +882,8 @@ func terminalContainers(config profilingrun.RunConfig, completed time.Time) []Co
 
 func TestRawCompactResponseRejectsRepeatedNativeBatchProof(t *testing.T) {
 	raw := validRaw(t, loadRunConfig(t))
-	if raw.SchemaVersion != "chill.dacs.io/profiling-raw-measurement.v1alpha12" ||
-		raw.Runtime.SchemaVersion != "chill.dacs.io/batch-characterization.v1alpha12" {
+	if raw.SchemaVersion != "chill.dacs.io/profiling-raw-measurement.v1alpha13" ||
+		raw.Runtime.SchemaVersion != "chill.dacs.io/batch-characterization.v1alpha13" {
 		t.Fatal("raw/runtime schema versions disagree with compact membership")
 	}
 	encoded, err := json.Marshal(raw)
@@ -918,5 +918,13 @@ func TestRawCompactResponseRejectsRepeatedNativeBatchProof(t *testing.T) {
 				t.Fatal("retired per-request batch proof was accepted")
 			}
 		})
+	}
+}
+
+func TestCurrentRawRejectsUnshippedPreviousArrivalShape(t *testing.T) {
+	raw := validRaw(t, loadRunConfig(t))
+	raw.SchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha12"
+	if err := raw.Validate(); err == nil {
+		t.Fatal("retired raw schema was accepted")
 	}
 }

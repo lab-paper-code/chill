@@ -17,7 +17,7 @@ from typing import Any, BinaryIO
 
 
 RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha21"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha12"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha13"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha3"
 SUPPORTED_WORKLOAD = "empirical-cadence-fixed-batch"
 IDLE_WORKLOAD = "idle-model-loaded"

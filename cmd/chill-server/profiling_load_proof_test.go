@@ -46,6 +46,28 @@ func TestProfilingLoadCompactMembershipKeepsNativeOrder(t *testing.T) {
 	}
 }
 
+func TestProfilingLoadRetainsActualSendOrder(t *testing.T) {
+	plan := profilingTestPlan("http://native")
+	plan.Batch = 2
+	collector := profilingPhaseCollector{plan: plan, groups: make(map[uint64]native.Progress), requests: make(map[string]int)}
+	for _, id := range []string{"left", "right"} {
+		row, response := profilingProofPair(id)
+		if id == "left" {
+			row.SentAt = row.SentAt.Add(100 * time.Microsecond)
+		} else {
+			row.ArrivalAt = row.ArrivalAt.Add(50 * time.Microsecond)
+			row.SentAt = row.ArrivalAt
+		}
+		if _, err := collector.add(row, response); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, _, _, err := collector.finish()
+	if err != nil || len(rows) != 2 || rows[0].RequestID != "right" || rows[1].RequestID != "left" || !rows[0].ArrivalAt.After(rows[1].ArrivalAt) {
+		t.Fatalf("diagnostic schedule overrode actual send order: rows=%+v err=%v", rows, err)
+	}
+}
+
 func TestProfilingLoadValidatesFullProofBeforeCompaction(t *testing.T) {
 	for _, corrupt := range []string{"membership", "timing", "identity", "disagreement", "incomplete"} {
 		t.Run(corrupt, func(t *testing.T) {
@@ -120,8 +142,8 @@ func TestProfilingLoadUploadsFirstNativeAllocationFailure(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if uploaded.Status != "Failed" || uploaded.FailureReason != "MemoryAllocationFailed" || uploaded.Message == "" || uploaded.IssueEvidence == nil {
-		t.Fatalf("first native allocation failure not uploaded: %+v", uploaded)
+	if uploaded.Status != "Failed" || uploaded.FailureReason != "MemoryAllocationFailed" || uploaded.Message == "" || uploaded.IssueEvidence == nil || uploaded.IssueEvidence.DriverGC == nil || uploaded.IssueEvidence.ArrivalSeed != plan.PodUID+"/sparse" || uploaded.IssueEvidence.SentInputs < 1 {
+		t.Fatalf("first native allocation failure or driver evidence not uploaded: %+v", uploaded)
 	}
 }
 
@@ -132,8 +154,8 @@ func TestProfilingLoadDeadlineStopsSchedulerBeforeNextArrival(t *testing.T) {
 	defer cancel()
 	start := time.Now()
 	phase, err := driver.runPhase(ctx, profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: .000001})
-	if err == nil || time.Since(start) > time.Second || phase.IssueLag.Count != 0 {
-		t.Fatalf("absolute deadline did not interrupt scheduler wait: %+v %v", phase, err)
+	if err == nil || time.Since(start) > time.Second || phase.IssueLag.Count != 0 || phase.ScheduledInputs != 0 || phase.SentInputs != 0 || phase.DriverGC == nil {
+		t.Fatalf("absolute deadline did not interrupt independent scheduler wait: %+v %v", phase, err)
 	}
 }
 

@@ -51,7 +51,7 @@ No uploader container: it adds handoff/failure ownership without removing worker
 responsibility. MetricObserver has no storage credentials. Runtime image is the
 trusted complete worker/firstfloor actor/runner plus ORT/RKNNLite helpers; trusted
 execution references that image, not the artifact init supply image. Observer
-images remain separately pinned; only WorkloadObserver receives Kubernetes token.
+images are delivered separately; only WorkloadObserver receives Kubernetes token.
 
 Each regular process validates its delivered RunConfig at its own execution
 boundary; runtime carries `profilingrun.VerifiedRunConfig`, not parallel mutable
@@ -59,7 +59,8 @@ inputs. Atomic result readers and runtime adapters validate their process result
 once. Coordinator consumes sealed values and checks only new source, target and
 window relationships before raw composition. Retained loading validates the raw
 record independently; later consumers do not repeat its spec/status/provenance
-comparisons. Deploy schema-compatible images, each pinned independently.
+comparisons. Deploy schema-compatible runtime and observer images. Tags and digest
+references are accepted; no digest-pin admission gate applies.
 
 ## RunConfig and delivery inputs
 
@@ -146,8 +147,13 @@ produces open-loop Poisson arrivals at utilization × that throughput. The
 encoder and pooled HTTP client. It runs in the validated gateway Pod's actual
 `serving-entrypoint` image; the Python load-generator retains only gateway E5 load.
 The producer never serializes Poisson issuance behind a previous response.
-An actual issue lag over 10 ms fails the phase, with target/achieved rates and
-issue-lag statistics retained in its control failure evidence.
+Every scheduled arrival in the offering window must actually be sent; reaching
+the outstanding-response cap fails the phase instead of delaying its issue loop.
+The actual `sentAt` point process is the measurement authority. Scheduled times,
+target rates, issue-lag distributions and producer GC pauses remain diagnostics;
+a single delayed issue or a low Poisson realization does not invalidate a phase.
+Derivation and analyzers use actual sent counts and the offering exposure, never
+the target rate as measured throughput or an inferred arrival process.
 Every phase runs until both its monotonic duration and known-gap sample floor
 complete. The producer stops offering on a whole-batch issuance boundary and
 drains every issued request. The immutable attempt/safety budget fails an
@@ -199,7 +205,7 @@ affinity or thread override, and the Go producer uses default runtime scheduling
 Actual quota/cpuset/affinity/usage/throttling remain observed evidence. The
 gateway-side load Job has bounded memory resources described below.
 
-Active runtime and raw bodies are v1alpha12; idle runtime v1alpha7 and idle raw
+Active runtime and raw bodies are v1alpha13; idle runtime v1alpha7 and idle raw
 v1alpha8 retain the existing loaded-idle protocol. Old active records are deleted
 operationally after archival; no reader accepts their previous shapes. Memory,
 GPU, Node identity, ownership and physical-return checks remain mandatory.
@@ -282,12 +288,12 @@ instead of active latency/output-validation proof. Both share store/key/size
 reference boundary. Job completion, terminal Pod/Node snapshots and credentials
 are absent; the controller adds terminal Kubernetes facts during finalization.
 
-### Active raw v1alpha12 field contract
+### Active raw v1alpha13 field contract
 
 `raw.json` has `schemaVersion`, `runConfig` (v1alpha21), `podUID`, `runtime`,
 `metrics`, and `workload`. Raw evidence contains measured facts and boundaries.
 `runtime.schemaVersion` is
-`chill.dacs.io/batch-characterization.v1alpha12`. Existing actual runtime,
+`chill.dacs.io/batch-characterization.v1alpha13`. Existing actual runtime,
 CPU/memory, startup and execution metadata remain. `runtime.phases` replaces
 `repetitionResults`; there is no legacy reader.
 
@@ -298,7 +304,7 @@ Each object contains:
 |---|---|
 | `id`, `kind` | Unique phase ID; `sparse`, `saturation`, or `utilization` |
 | `utilization` | Configured utilization, only for utilization phases |
-| `arrivalRatePerSecond` | Poisson rate, only for sparse/utilization phases |
+| `arrivalRatePerSecond` | Target Poisson scheduling rate, only for sparse/utilization phases |
 | `workers` | Measured sparse-derived K, only for saturation |
 | `measurementStartedAt`, `measurementEndedAt` | Measurement-node UTC power-window boundaries |
 | `measurementElapsedSecondsMonotonic` | Load-producer monotonic phase duration |
@@ -306,18 +312,22 @@ Each object contains:
 | `requests` | Every completed request; no failed request is silently omitted |
 | `nativeSamples` | One physical batch per globally unique `batchID` |
 | `latencyMs` | Maximum member sent-to-completed latency, aligned with each batch sample |
-| `issueElapsedSecondsMonotonic` | Phase start to last actual issue, Poisson phases only |
-| `achievedArrivalRatePerSecond` | Completed issued requests divided by issue elapsed time |
-| `issueLagToleranceMs` | Fixed 10 ms schedule failure boundary |
-| `issueLagMs` | Count, min, mean, p50, p95, p99 and max of actual monotonic send lag |
+| `issueElapsedSecondsMonotonic` | Offering window through the last covered scheduled arrival, excluding response drain |
+| `achievedArrivalRatePerSecond` | Actually sent inputs divided by offering exposure |
+| `scheduledInputs`, `sentInputs` | Schedule coverage proof; both equal `completedInputs` on success |
+| `arrivalSeed` | Trial/phase seed identity, `podUID/phaseID` |
+| `issueLagMs` | Count, min, mean, p50, p95, p99 and max of actual monotonic send lag; no lag threshold |
+| `driverGC` | Producer GC cycle count and total/maximum stop-the-world pause milliseconds |
 
-Each request contains `requestID`, `recordID`, `arrivalAt`, `sentAt`,
-`completedAt`, `latencyMs`, and native `/infer` response identity, output and
-request-local progress. Request UTC timestamps belong to the **load node**;
-latency and issue lag use its monotonic clock. `response.progress.nativeHTTP`
-retains measurement-node handler entry and receive/decode/enqueue/finish offsets,
-alongside request-local queue/run spans. Cross-host wall-clock subtraction never
-defines request latency.
+Each request contains `requestID`, `recordID`, scheduled `arrivalAt`, actual
+`sentAt`, `completedAt`, `latencyMs`, and native `/infer` response identity, output
+and request-local progress. `sentAt` is the actual call into the shared native
+encoder/exchange and also sets the native request's `receivedAt`; scheduling lag
+does not consume request lifetime. UTC request timestamps belong to the **load
+node**; latency and issue lag use its monotonic clock. The recorded `arrivalSeed`
+is hashed with FNV-1a128; its first/last big-endian 64-bit words seed Go PCG.
+`response.progress.nativeHTTP` retains measurement-node handler entry and
+receive/decode/enqueue/finish offsets. Cross-host subtraction never defines latency.
 
 Each native sample retains `batchID`, `batchSize`, ordered `requestIDs`,
 per-member `recordIDs` and `units`; `serviceDurationNanos`, nullable
@@ -424,6 +434,11 @@ These are installation delivery resources, not Run inputs or thread controls.
 The driver retains complete evidence within the frozen result cap; it never
 trims requests to fit.
 
+The producer prepares each dataset payload once, reuses encoder/response buffers
+and reserves its planned phase evidence before starting the issue clock. The
+shared gateway client keeps the standard in-memory HTTP body path; buffers with
+unfinished or unobserved transport writes are not recycled.
+
 One versioned installation worker policy derives resources, deadlines/handoff
 margins and producer capacities coherently. Helm supplies default measured envelope;
 Profiler selects by DeviceClass/execution path/workload mode before Job creation.
@@ -454,7 +469,7 @@ Required relationships:
 Derive capacities from resources/duration, never predicted throughput. Oversize
 artifact shape or inability to retain full latency distribution fails explicitly;
 no truncation, sampling or silent aggregation. Numeric reserves/serialized-byte
-coefficients require measurements from exact pinned runtime image, become versioned
+coefficients require measurements from the exact delivered runtime image, become versioned
 installation defaults, affect only new Runs and change content-derived execution
 identity. Later runtimes may have their own policy; no generic planner framework.
 
@@ -467,3 +482,47 @@ Pod list-watch adapter. No Job container imports controller-runtime or reconcile
 objects. Controller trusts independently verified immutable evidence/native facts,
 never terminated-Pod shared files. Current-schema live verification, idle Passport,
 image rebuild/remeasurement and measured capacity defaults retain the limits above.
+
+## Local native driver microbenchmark
+
+Measured on genesis1, Intel i7-8700K, linux/amd64, Go 1.26.4. Each offering
+window lasts 10 seconds. A separate local process serves the native HTTP wire
+contract with a 16 KiB input and a small classification output. The producer
+uses the real shared gateway encoder/transport. CPU, allocations and kernel
+`VmHWM` below measure the driver process only. No CPU quota, reservation, affinity
+or `GOMAXPROCS` override applies.
+
+```sh
+systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 \
+  env GOTOOLCHAIN=go1.26.4 GOFLAGS=-p=1 \
+  go test ./cmd/chill-server -run '^$' \
+    -bench '^BenchmarkProfilingLoadNative$' -benchtime=1x -count=1 -timeout=3m
+```
+
+| Target / trial | Scheduled = sent = completed | Achieved inputs/s | Lag p50 ms | p95 ms | p99 ms | Maximum ms |
+|---|---:|---:|---:|---:|---:|---:|
+| 200 / 1 | 2,036 | 203.604 | 0.0516 | 0.5223 | 0.5945 | 4.158 |
+| 500 / 1 | 4,992 | 499.243 | 0.0423 | 0.4805 | 0.5700 | 3.895 |
+| 1000 / 1 | 10,021 | 1002.145 | 0.0659 | 0.4600 | 0.5731 | 7.457 |
+| 1000 / 2 | 10,114 | 1011.383 | 0.0661 | 0.4696 | 0.6105 | 13.860 |
+| 1000 / 3 | 10,010 | 1001.082 | 0.0671 | 0.4533 | 0.7995 | 13.430 |
+
+| Target / trial | CPU cores | Peak RSS MiB | Allocated B/input | GC cycles | Total pause ms | Maximum pause ms | Raw result B/input |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 200 / 1 | 0.1386 | 61.35 | 37,702 | 14 | 1.029 | 0.131 | 1,330 |
+| 500 / 1 | 0.2730 | 81.43 | 36,284 | 20 | 1.232 | 0.136 | 1,331 |
+| 1000 / 1 | 0.4874 | 117.57 | 36,047 | 26 | 1.916 | 0.158 | 1,335 |
+| 1000 / 2 | 0.4903 | 117.76 | 36,087 | 26 | 2.990 | 1.366 | 1,336 |
+| 1000 / 3 | 0.7088 | 118.65 | 36,127 | 25 | 4.638 | 0.737 | 1,336 |
+
+All five phases completed, including three independent 1000/s trials. Each
+retains its `arrivalSeed`; the 1000/s seeds are
+`pod/benchmark-1000-trial-{1,2,3}-0`. The observed arrival process includes the
+reported scheduling/GC gaps. Every scheduled input was sent; no response-driven
+backpressure or count loss occurred.
+
+The measured peak supports the 512 MiB load-container envelope with headroom for
+dataset/evidence retention. The fixture's **1.30 KiB/input** serialized result
+coefficient is not a policy constant: every Run measures its own sparse and
+saturation bytes/input before admitting its ladder.
+

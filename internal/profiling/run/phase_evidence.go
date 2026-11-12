@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
@@ -66,10 +67,16 @@ func validatePhases(config RunConfig, phases []Phase, sizing SupplySizing, start
 		if phase.CompletedInputs != len(phase.NativeSamples)*config.Measurement.Batch || phase.CompletedInputs != len(phase.Requests) {
 			return 0, errors.New("phase completed-input/request/batch counts disagree")
 		}
+		if err := validateDriverGC(phase.DriverGC); err != nil {
+			return 0, err
+		}
 		if err := validateIssueEvidence(phase); err != nil {
 			return 0, err
 		}
 		for _, request := range phase.Requests {
+			if request.Response.Progress.NativeElapsedMS > float64(points.RequestLifetimeSeconds)*1000 {
+				return 0, errors.New("native receipt-to-completion span exceeds frozen request lifetime")
+			}
 			if seenRequests[request.RequestID] {
 				return 0, errors.New("request identity is duplicated across phases")
 			}
@@ -142,7 +149,8 @@ func finitePositive(value float64) bool {
 
 func validateIssueEvidence(phase Phase) error {
 	if phase.Kind == "saturation" {
-		if phase.AchievedArrivalRatePerSecond != 0 || phase.IssueElapsedSeconds != 0 || phase.IssueLag != nil || phase.IssueLagToleranceMS != 0 {
+		if phase.AchievedArrivalRatePerSecond != 0 || phase.IssueElapsedSeconds != 0 || phase.IssueLag != nil ||
+			phase.ScheduledInputs != 0 || phase.SentInputs != 0 || phase.ArrivalSeed != "" {
 			return errors.New("saturation must omit Poisson issue evidence")
 		}
 		return nil
@@ -150,18 +158,36 @@ func validateIssueEvidence(phase Phase) error {
 	lag := phase.IssueLag
 	if !finitePositive(phase.IssueElapsedSeconds) || phase.IssueElapsedSeconds > phase.MeasurementElapsedSeconds ||
 		!finitePositive(phase.AchievedArrivalRatePerSecond) ||
-		phase.AchievedArrivalRatePerSecond != float64(phase.CompletedInputs)/phase.IssueElapsedSeconds ||
-		phase.IssueLagToleranceMS != 10 || lag == nil || lag.Count != phase.CompletedInputs || lag.Count < 1 {
-		return errors.New("Poisson issue count, rate, duration or tolerance is invalid")
+		phase.AchievedArrivalRatePerSecond != float64(phase.SentInputs)/phase.IssueElapsedSeconds ||
+		phase.ScheduledInputs != phase.SentInputs || phase.SentInputs != phase.CompletedInputs ||
+		strings.TrimSpace(phase.ArrivalSeed) == "" || strings.TrimSpace(phase.ArrivalSeed) != phase.ArrivalSeed ||
+		lag == nil || lag.Count != phase.SentInputs || lag.Count < 1 {
+		return errors.New("Poisson schedule, send count, rate or offering duration is invalid")
 	}
 	for _, value := range []float64{lag.Min, lag.Mean, lag.P50, lag.P95, lag.P99, lag.Max} {
 		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 			return errors.New("Poisson issue lag must be finite and nonnegative")
 		}
 	}
-	if lag.Max > 10 || lag.Min > lag.P50 || lag.P50 > lag.P95 || lag.P95 > lag.P99 || lag.P99 > lag.Max ||
+	if lag.Min > lag.P50 || lag.P50 > lag.P95 || lag.P95 > lag.P99 || lag.P99 > lag.Max ||
 		lag.Mean < lag.Min || lag.Mean > lag.Max {
-		return errors.New("Poisson issue lag exceeds schedule tolerance or has unordered statistics")
+		return errors.New("Poisson issue lag statistics are unordered")
+	}
+	return nil
+}
+
+func validateDriverGC(gc *DriverGC) error {
+	if gc == nil {
+		return errors.New("phase driverGC observation is required")
+	}
+	for _, value := range []float64{gc.PauseTotalMilliseconds, gc.MaxPauseMilliseconds} {
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return errors.New("driverGC pauses must be finite and nonnegative")
+		}
+	}
+	if gc.MaxPauseMilliseconds > gc.PauseTotalMilliseconds ||
+		gc.Cycles == 0 && (gc.PauseTotalMilliseconds != 0 || gc.MaxPauseMilliseconds != 0) {
+		return errors.New("driverGC cycles and pause observations disagree")
 	}
 	return nil
 }

@@ -248,10 +248,7 @@ class LoadControl:
                             control.error = ExecutionError(common.require_string(value["error"], "load failure"), reason)
                             if "issueEvidence" in value:
                                 issue = common.require_object(value["issueEvidence"], "failed issue evidence")
-                                common.require_fields(issue, {"id", "kind", "arrivalRatePerSecond",
-                                                      "issueElapsedSecondsMonotonic", "achievedArrivalRatePerSecond",
-                                                      "issueLagToleranceMs", "issueLagMs"} |
-                                                      ({"utilization"} if "utilization" in issue else set()), "failed issue evidence")
+                                validate_failed_issue_evidence(issue, control.plan)
                                 control.error.issue_evidence = issue
                                 control.error.args = (str(control.error) + "; issueEvidence=" +
                                                       json.dumps(issue, allow_nan=False, separators=(",", ":")),)
@@ -361,6 +358,70 @@ def size_supply(plan: dict[str, Any], samples: Any) -> dict[str, Any]:
     return result
 
 
+def validate_driver_gc(value: Any) -> None:
+    gc = common.require_object(value, "driverGC")
+    common.require_fields(gc, {"cycles", "pauseTotalMilliseconds", "maxPauseMilliseconds"}, "driverGC")
+    cycles = common.require_integer(gc["cycles"], "driver GC cycles")
+    if cycles > 0xFFFFFFFF:
+        raise common.ContractError("driver GC cycles exceed uint32")
+    total = milliseconds(gc["pauseTotalMilliseconds"], "driver GC total pause", False)
+    maximum = milliseconds(gc["maxPauseMilliseconds"], "driver GC maximum pause", False)
+    if maximum > total or cycles == 0 and (total != 0 or maximum != 0):
+        raise common.ContractError("driver GC cycles and pauses disagree")
+
+
+def validate_issue_evidence(issue: dict[str, Any], plan: dict[str, Any], completed: int | None = None) -> None:
+    sent = common.require_integer(issue["sentInputs"], "sent inputs")
+    scheduled = common.require_integer(issue["scheduledInputs"], "scheduled inputs")
+    if sent > scheduled or completed is not None and (sent != completed or scheduled != sent):
+        raise common.ContractError("Poisson scheduled, sent and completed input counts disagree")
+    if issue["arrivalSeed"] != plan["podUID"] + "/" + issue["id"]:
+        raise common.ContractError("Poisson arrival seed differs from Run and phase identity")
+    elapsed = milliseconds(issue["issueElapsedSecondsMonotonic"], "issue elapsed seconds", completed is not None)
+    rate = milliseconds(issue["achievedArrivalRatePerSecond"], "achieved arrival rate", completed is not None)
+    if sent > 0 and elapsed == 0 or rate != (sent / elapsed if elapsed else 0):
+        raise common.ContractError("Poisson achieved arrival rate uses the wrong offering duration")
+    lag = issue["issueLagMs"]
+    if lag is None and sent == 0 and completed is None:
+        return
+    lag = common.require_object(lag, "issue lag")
+    common.require_fields(lag, {"count", "min", "mean", "p50", "p95", "p99", "max"}, "issue lag")
+    values = {key: milliseconds(lag[key], "issue lag " + key, False)
+              for key in ("min", "mean", "p50", "p95", "p99", "max")}
+    if (common.require_integer(lag["count"], "issue lag count") != sent or
+            not values["min"] <= values["p50"] <= values["p95"] <= values["p99"] <= values["max"] or
+            not values["min"] <= values["mean"] <= values["max"]):
+        raise common.ContractError("Poisson issue lag count or ordered statistics are invalid")
+
+
+def validate_failed_issue_evidence(issue: dict[str, Any], plan: dict[str, Any]) -> None:
+    kind = issue.get("kind")
+    phase_id = common.require_string(issue.get("id"), "failed phase ID")
+    expected_ids = {"sparse": "sparse", "saturation": "saturation"}
+    expected_ids.update({f"utilization-{index}": "utilization"
+                         for index in range(len(plan["operatingPoints"]["utilizations"]))})
+    if kind not in ("sparse", "saturation", "utilization") or kind != expected_ids.get(phase_id):
+        raise common.ContractError("failed issue phase identity is invalid")
+    fields = {"id", "kind", "completedInputs", "driverGC"}
+    if kind != "saturation":
+        fields |= {"arrivalRatePerSecond", "issueElapsedSecondsMonotonic", "achievedArrivalRatePerSecond",
+                   "scheduledInputs", "sentInputs", "arrivalSeed", "issueLagMs"}
+    if kind == "utilization":
+        fields.add("utilization")
+    common.require_fields(issue, fields, "failed issue evidence")
+    completed = common.require_integer(issue["completedInputs"], "failed phase completed inputs")
+    validate_driver_gc(issue["driverGC"])
+    if kind != "saturation":
+        milliseconds(issue["arrivalRatePerSecond"], "arrival rate")
+        if kind == "sparse" and issue["arrivalRatePerSecond"] != 1000 / plan["operatingPoints"]["sparseMeanGapMilliseconds"]:
+            raise common.ContractError("failed sparse arrival rate differs from frozen mean gap")
+        if kind == "utilization" and issue["utilization"] != plan["operatingPoints"]["utilizations"][int(phase_id.rsplit("-", 1)[1])]:
+            raise common.ContractError("failed utilization differs from frozen operating point")
+        validate_issue_evidence(issue, plan)
+        if completed > issue["sentInputs"]:
+            raise common.ContractError("failed phase completed inputs exceed actual sends")
+
+
 def validate_phases(phases: Any, plan: dict[str, Any], supply_sizing: dict[str, Any]) -> None:
     points = plan["operatingPoints"]
     expected = [("sparse", "sparse", None), ("saturation", "saturation", None)] + [
@@ -374,12 +435,14 @@ def validate_phases(phases: Any, plan: dict[str, Any], supply_sizing: dict[str, 
     for phase, (phase_id, kind, utilization) in zip(phases, expected):
         phase = common.require_object(phase, "load phase")
         required = {"id", "kind", "measurementStartedAt", "measurementEndedAt",
-                    "measurementElapsedSecondsMonotonic", "completedInputs", "requests", "nativeSamples", "latencyMs"}
-        issue_fields = {"achievedArrivalRatePerSecond", "issueElapsedSecondsMonotonic", "issueLagMs", "issueLagToleranceMs"}
+                    "measurementElapsedSecondsMonotonic", "completedInputs", "requests", "nativeSamples", "latencyMs", "driverGC"}
+        issue_fields = {"achievedArrivalRatePerSecond", "issueElapsedSecondsMonotonic", "issueLagMs",
+                        "scheduledInputs", "sentInputs", "arrivalSeed"}
         common.require_fields(phase, required | ({"workers"} if kind == "saturation" else {"arrivalRatePerSecond"} | issue_fields) |
                               ({"utilization"} if kind == "utilization" else set()), "load phase")
         if phase["id"] != phase_id or phase["kind"] != kind:
             raise common.ContractError("load phases differ from frozen order")
+        validate_driver_gc(phase["driverGC"])
         start = utc_timestamp(phase["measurementStartedAt"], "phase start")
         end = utc_timestamp(phase["measurementEndedAt"], "phase end")
         elapsed = milliseconds(phase["measurementElapsedSecondsMonotonic"], "phase elapsed seconds")
@@ -402,18 +465,9 @@ def validate_phases(phases: Any, plan: dict[str, Any], supply_sizing: dict[str, 
         if completed != len(requests) or completed != len(samples) * plan["batch"]:
             raise common.ContractError("load phase completed inputs do not match fixed-batch membership")
         if kind != "saturation":
-            issue_elapsed = milliseconds(phase["issueElapsedSecondsMonotonic"], "issue elapsed seconds")
-            achieved_rate = milliseconds(phase["achievedArrivalRatePerSecond"], "achieved arrival rate")
-            lag = common.require_object(phase["issueLagMs"], "issue lag")
-            common.require_fields(lag, {"count", "min", "mean", "p50", "p95", "p99", "max"}, "issue lag")
-            values = {key: milliseconds(lag[key], "issue lag " + key, False)
-                      for key in ("min", "mean", "p50", "p95", "p99", "max")}
-            if (common.require_integer(lag["count"], "issue lag count", 1) != completed or
-                    phase["issueLagToleranceMs"] != 10 or values["max"] > 10 or
-                    issue_elapsed > elapsed or achieved_rate != completed / issue_elapsed or
-                    not values["min"] <= values["p50"] <= values["p95"] <= values["p99"] <= values["max"] or
-                    not values["min"] <= values["mean"] <= values["max"]):
-                raise common.ContractError("Poisson issue evidence disagrees with completed inputs or schedule tolerance")
+            validate_issue_evidence(phase, plan, completed)
+            if phase["issueElapsedSecondsMonotonic"] > elapsed:
+                raise common.ContractError("Poisson offering duration exceeds phase duration")
         rows, groups = {}, {}
         for row in requests:
             row = common.require_object(row, "load request")
@@ -439,6 +493,8 @@ def validate_phases(phases: Any, plan: dict[str, Any], supply_sizing: dict[str, 
                 raise common.ContractError("native response identity/completion disagrees with load request")
             if progress.get("batchSize") != plan["batch"] or milliseconds(progress.get("nativeElapsedMS"), "native elapsed span") > row["latencyMs"]:
                 raise common.ContractError("retained native request batch size or elapsed span is invalid")
+            if progress["nativeElapsedMS"] > points["requestLifetimeSeconds"] * 1000:
+                raise common.ContractError("native receipt-to-completion span exceeds frozen request lifetime")
             actual_batch_id = common.require_integer(progress.get("batchID"), "native response batch ID", 1)
             common.require_integer(progress.get("units"), "native request units", 1)
             groups.setdefault(actual_batch_id, []).append(row)

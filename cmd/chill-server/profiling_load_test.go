@@ -3,14 +3,20 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"io"
+	"math"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +25,7 @@ import (
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	gateway "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 )
 
 func profilingTestPlan(endpoint string) profilingLoadPlan {
@@ -27,7 +34,11 @@ func profilingTestPlan(endpoint string) profilingLoadPlan {
 }
 
 func profilingTestRecords() []profilingRecord {
-	return []profilingRecord{{ID: "record", Inputs: []native.Field{{Name: "image", Data: [][]byte{make([]byte, 16<<10)}}}}}
+	inputs, err := gateway.PrepareNativeInputs([]native.Field{{Name: "image", Data: [][]byte{make([]byte, 16<<10)}}})
+	if err != nil {
+		panic(err)
+	}
+	return []profilingRecord{{ID: "record", Inputs: inputs}}
 }
 
 // This server emits real native wire proof, not compact retained evidence.
@@ -60,7 +71,87 @@ func profilingNativeStub(t testing.TB, requests *atomic.Int64) *httptest.Server 
 	return server
 }
 
-func TestProfilingLoadPoissonLagFailsAndKeepsEvidence(t *testing.T) {
+func TestProfilingLoadPoissonLagIsDiagnosticAndNativeOriginIsActual(t *testing.T) {
+	var count atomic.Int64
+	server := profilingNativeStub(t, &count)
+	var lock sync.Mutex
+	origins := make(map[string]native.RequestContext)
+	handler := server.Config.Handler
+	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		var request native.Request
+		if err := json.Unmarshal(raw, &request); err != nil {
+			t.Error(err)
+			return
+		}
+		lock.Lock()
+		origins[request.ID] = request.Context
+		lock.Unlock()
+		handler.ServeHTTP(w, r)
+	})
+	server.Start()
+	defer server.Close()
+	// Stall one pre-send allocation like a rare scheduler/GC pause.
+	// Keep all other arrivals and the native lifetime independent of that gap.
+	oldNew := profilingResponseBuffers.New
+	var delayed atomic.Bool
+	profilingResponseBuffers = sync.Pool{New: func() any {
+		if delayed.CompareAndSwap(false, true) {
+			time.Sleep(11 * time.Millisecond)
+		}
+		return new(bytes.Buffer)
+	}}
+	defer func() { profilingResponseBuffers = sync.Pool{New: oldNew} }()
+	plan := profilingTestPlan(server.URL)
+	driver := newProfilingLoadDriver(plan, profilingTestRecords(), "", io.Discard)
+	defer driver.close()
+	phase, err := driver.runPhase(context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if phase.IssueLag.Max < 11 || phase.DriverGC == nil || phase.ScheduledInputs != phase.SentInputs || phase.SentInputs != phase.CompletedInputs {
+		t.Fatalf("diagnostic gap lost or arrivals dropped: %+v", phase)
+	}
+	lock.Lock()
+	defer lock.Unlock()
+	for _, row := range phase.Requests {
+		origin := origins[row.RequestID]
+		if !origin.ReceivedAt.Equal(row.SentAt) || origin.SenderElapsedMS != 0 || origin.LifetimeMS != plan.OperatingPoints.RequestLifetimeSeconds*1000 {
+			t.Fatalf("schedule lag consumed native lifetime: row=%+v origin=%+v", row, origin)
+		}
+	}
+}
+
+func TestProfilingLoadPoissonResponseBackpressureFails(t *testing.T) {
+	for _, blocked := range []string{"outstanding", "pool"} {
+		t.Run(blocked, func(t *testing.T) {
+			var count atomic.Int64
+			server := profilingNativeStub(t, &count)
+			server.Start()
+			defer server.Close()
+			plan := profilingTestPlan(server.URL)
+			plan.MaxQueueRequests = 2
+			driver := newProfilingLoadDriver(plan, profilingTestRecords(), "", io.Discard)
+			defer driver.close()
+			if blocked == "pool" {
+				driver.transport.MaxConnsPerHost = 1
+			}
+			driver.native.HTTPClient.Transport = profilingDelayedTransport{base: driver.transport, delay: 30 * time.Millisecond}
+			phase, err := driver.runPhase(context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 1000})
+			var failure *profilingLoadFailure
+			if !errors.As(err, &failure) || !strings.Contains(err.Error(), "block") || blocked == "pool" && !strings.Contains(err.Error(), "pool") || failure.IssueEvidence == nil || phase.ScheduledInputs <= phase.SentInputs {
+				t.Fatalf("response backpressure silently changed offered arrivals: phase=%+v err=%v", phase, err)
+			}
+		})
+	}
+}
+
+func TestProfilingLoadPoissonReplaysEveryArrivalAndExcludesDrain(t *testing.T) {
 	var count atomic.Int64
 	server := profilingNativeStub(t, &count)
 	server.Start()
@@ -68,12 +159,71 @@ func TestProfilingLoadPoissonLagFailsAndKeepsEvidence(t *testing.T) {
 	plan := profilingTestPlan(server.URL)
 	driver := newProfilingLoadDriver(plan, profilingTestRecords(), "", io.Discard)
 	defer driver.close()
-	base := driver.native.HTTPClient.Transport
-	driver.native.HTTPClient.Transport = profilingDelayedTransport{base: base, delay: 20 * time.Millisecond}
-	_, err := driver.runPhase(context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
-	var failure *profilingLoadFailure
-	if !errors.As(err, &failure) || failure.IssueEvidence == nil || failure.IssueEvidence.IssueLag.Max <= 10 || !strings.Contains(err.Error(), "issue lag") {
-		t.Fatalf("missing hard scheduling failure and observed issue evidence: %v", err)
+	driver.native.HTTPClient.Transport = profilingDelayedTransport{base: driver.transport, delay: 20 * time.Millisecond}
+	phase, err := driver.runPhase(context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if phase.ArrivalSeed != plan.PodUID+"/"+phase.ID || phase.IssueElapsedSeconds >= phase.MeasurementElapsedSeconds || phase.AchievedArrivalRatePerSecond != float64(phase.SentInputs)/phase.IssueElapsedSeconds {
+		t.Fatalf("incorrect arrival identity or offering exposure: %+v", phase)
+	}
+	hash := fnv.New128a()
+	_, _ = io.WriteString(hash, phase.ArrivalSeed)
+	seed := hash.Sum(nil)
+	rng := rand.New(rand.NewPCG(binary.BigEndian.Uint64(seed[:8]), binary.BigEndian.Uint64(seed[8:])))
+	start, err := time.Parse(time.RFC3339Nano, phase.MeasurementStartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arrivals := make([]time.Time, 0, len(phase.Requests))
+	for _, row := range phase.Requests {
+		arrivals = append(arrivals, row.ArrivalAt)
+	}
+	slices.SortFunc(arrivals, func(a, b time.Time) int { return a.Compare(b) })
+	next := start
+	for index, arrival := range arrivals {
+		next = next.Add(time.Duration(max(1, math.Round(rng.ExpFloat64()/phase.ArrivalRatePerSecond*1e9))))
+		if !next.Equal(arrival) {
+			t.Fatalf("scheduled arrival %d skipped or changed: want=%s got=%s", index, next, arrival)
+		}
+	}
+	if phase.ScheduledInputs != len(arrivals) || phase.SentInputs != len(arrivals) || phase.IssueElapsedSeconds != next.Sub(start).Seconds() {
+		t.Fatalf("offering exposure does not end at last covered scheduled arrival: %+v", phase)
+	}
+}
+
+func TestProfilingLoadPoissonKeepsKnownGapSampleFloor(t *testing.T) {
+	var count atomic.Int64
+	server := profilingNativeStub(t, &count)
+	server.Start()
+	defer server.Close()
+	plan := profilingTestPlan(server.URL)
+	plan.OperatingPoints.PhaseDurationSeconds = .005
+	plan.MinServiceSamples = 59
+	driver := newProfilingLoadDriver(plan, profilingTestRecords(), "", io.Discard)
+	defer driver.close()
+	phase, err := driver.runPhase(context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	known := 0
+	for _, sample := range phase.NativeSamples {
+		if sample.ServiceSample.PrecedingIdleNanos != nil {
+			known++
+		}
+	}
+	if known < plan.MinServiceSamples || phase.MeasurementElapsedSeconds <= plan.OperatingPoints.PhaseDurationSeconds || phase.ScheduledInputs != phase.CompletedInputs {
+		t.Fatalf("duration stop weakened known-gap sample floor: %+v known=%d", phase, known)
+	}
+}
+
+func TestProfilingDriverGCSummaryUsesIssuingInterval(t *testing.T) {
+	before := runtime.MemStats{NumGC: 255, PauseTotalNs: 9_000_000}
+	after := runtime.MemStats{NumGC: 257, PauseTotalNs: 12_000_000}
+	after.PauseNs[254], after.PauseNs[255], after.PauseNs[0] = 50_000_000, 2_000_000, 1_000_000
+	gc := profilingDriverGCSummary(before, after)
+	if gc.Cycles != 2 || gc.PauseTotalMilliseconds != 3 || gc.MaxPauseMilliseconds != 2 {
+		t.Fatalf("GC summary includes pauses outside issuing interval: %+v", gc)
 	}
 }
 
@@ -112,8 +262,8 @@ func TestProfilingLoadReusesGatewayConnectionsAndCompactsProof(t *testing.T) {
 	if requests.Load() < 5 || connections.Load() >= requests.Load()/2 {
 		t.Fatalf("native connections not reused: requests=%d connections=%d", requests.Load(), connections.Load())
 	}
-	if phase.IssueLag.Count != phase.CompletedInputs || phase.AchievedArrivalRatePerSecond != float64(phase.CompletedInputs)/phase.IssueElapsedSeconds {
-		t.Fatalf("issue evidence lost completed arrivals: %+v", phase)
+	if phase.IssueLag.Count != phase.SentInputs || phase.ScheduledInputs != phase.SentInputs || phase.SentInputs != phase.CompletedInputs || phase.AchievedArrivalRatePerSecond != float64(phase.SentInputs)/phase.IssueElapsedSeconds {
+		t.Fatalf("issue evidence lost scheduled or actual arrivals: %+v", phase)
 	}
 	encoded, err := json.Marshal(phase)
 	if err != nil {
@@ -190,6 +340,15 @@ func TestProfilingLoadAbsoluteDeadlineCancelsControlAndNative(t *testing.T) {
 				driver := newProfilingLoadDriver(profilingTestPlan(server.URL), profilingTestRecords(), "", io.Discard)
 				defer driver.close()
 				_, err = driver.runPhase(ctx, profilingrun.Phase{ID: "saturation", Kind: "saturation", Workers: 1})
+				var failure *profilingLoadFailure
+				if !errors.As(err, &failure) || failure.IssueEvidence == nil || failure.IssueEvidence.DriverGC == nil {
+					t.Fatalf("failed saturation lost driver GC evidence: %v", err)
+				}
+				raw, marshalErr := json.Marshal(failure.IssueEvidence)
+				var summary map[string]json.RawMessage
+				if marshalErr != nil || json.Unmarshal(raw, &summary) != nil || len(summary) != 4 || summary["driverGC"] == nil || summary["completedInputs"] == nil || summary["id"] == nil || summary["kind"] == nil {
+					t.Fatalf("failed saturation retained Poisson fields or lost GC: %s err=%v", raw, marshalErr)
+				}
 			}
 			if err == nil || !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
 				t.Fatalf("absolute deadline did not abort %s: %v", blocked, err)
@@ -203,7 +362,7 @@ func TestProfilingLoadAbsoluteDeadlineCancelsControlAndNative(t *testing.T) {
 	}
 }
 
-func TestProfilingLoadMemoryFailureWinsEarlierLagFailure(t *testing.T) {
+func TestProfilingLoadMemoryFailureWinsEarlierBackpressureFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -211,6 +370,7 @@ func TestProfilingLoadMemoryFailureWinsEarlierLagFailure(t *testing.T) {
 	}))
 	defer server.Close()
 	driver := newProfilingLoadDriver(profilingTestPlan(server.URL), profilingTestRecords(), "", io.Discard)
+	driver.plan.MaxQueueRequests = 1
 	defer driver.close()
 	driver.native.HTTPClient.Transport = profilingDelayedTransport{base: driver.native.HTTPClient.Transport, delay: 20 * time.Millisecond}
 	_, err := driver.runPhase(context.Background(), profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: 500})
@@ -277,8 +437,8 @@ func TestProfilingLoadProtocolUploadsMeasuredLadder(t *testing.T) {
 		t.Fatalf("control sequence incomplete: %+v %v", result, boundaries)
 	}
 	saturation := result.Phases[1]
-	if saturation.IssueLag != nil || result.Phases[2].ArrivalRatePerSecond != .5*float64(saturation.CompletedInputs)/saturation.MeasurementElapsedSeconds {
-		t.Fatalf("ladder did not use measured completed-input saturation: %+v", result.Phases)
+	if saturation.IssueLag != nil || saturation.ArrivalSeed != "" || saturation.ScheduledInputs != 0 || saturation.SentInputs != 0 || saturation.DriverGC == nil || result.Phases[2].ArrivalRatePerSecond != .5*float64(saturation.CompletedInputs)/saturation.MeasurementElapsedSeconds {
+		t.Fatalf("ladder did not use measured completed-input saturation or retained wrong driver fields: %+v", result.Phases)
 	}
 }
 
@@ -296,8 +456,16 @@ func TestProfilingLoadDatasetFieldOrderAndFramedBound(t *testing.T) {
 	plan.Fields = []string{"z", "a"}
 	plan.OperatingPoints.FramedDecodedRequestUpperBytes = 10
 	records, err := loadProfilingRecords(context.Background(), dir, plan)
-	if err != nil || len(records) != 1 || records[0].Inputs[0].Name != "z" || records[0].Inputs[1].Name != "a" {
-		t.Fatalf("dataset ignored frozen field order: %+v %v", records, err)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("dataset records: %+v %v", records, err)
+	}
+	raw, err := json.Marshal(records[0].Inputs)
+	var fields []native.Field
+	if err == nil {
+		err = json.Unmarshal(raw, &fields)
+	}
+	if err != nil || len(fields) != 2 || fields[0].Name != "z" || fields[1].Name != "a" {
+		t.Fatalf("dataset ignored frozen field order: %+v %v", fields, err)
 	}
 	plan.OperatingPoints.FramedDecodedRequestUpperBytes = 9
 	if _, err := loadProfilingRecords(context.Background(), dir, plan); err == nil {

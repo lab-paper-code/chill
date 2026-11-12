@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"sync/atomic"
 	"testing"
 
@@ -75,8 +76,8 @@ func TestCatalogMeasurementFactsReuseLoadedRaw(t *testing.T) {
 
 func assertCatalogMeasurementBatchFacts(t *testing.T, row profilederivation.MeasurementBatchFacts) {
 	t.Helper()
-	if row.LatencySampleCount != 180 || row.ActiveTrialCount != 3 || row.IdleTrialCount != 3 ||
-		row.CompletedItems != 180 || row.CompletedCalls != 180 {
+	if row.LatencySampleCount != 540 || row.ActiveTrialCount != 3 || row.IdleTrialCount != 3 ||
+		row.CompletedItems != 540 || row.CompletedCalls != 540 {
 		t.Fatalf("raw-derived repetition/call counts changed: %+v", row)
 	}
 	for _, quantity := range []struct {
@@ -90,7 +91,7 @@ func assertCatalogMeasurementBatchFacts(t *testing.T, row profilederivation.Meas
 		{"total J/item", row.TotalJoulesPerItem, 3},
 		{"incremental J/item", row.IncrementalJoulesPerItem, 1},
 	} {
-		if quantity.value == nil || *quantity.value != quantity.want {
+		if quantity.value == nil || math.Abs(*quantity.value-quantity.want) > 1e-9 {
 			t.Errorf("%s = %v, want %g", quantity.name, quantity.value, quantity.want)
 		}
 	}

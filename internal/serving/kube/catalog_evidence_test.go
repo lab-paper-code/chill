@@ -757,9 +757,17 @@ func TestCatalogNegativeIncrementalEnergyResolution(t *testing.T) {
 			}
 			if !tc.below {
 				if len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 ||
-					view.Insufficiencies[0].Code != "NegativeIncrementalEnergy" ||
-					!strings.Contains(view.Insufficiencies[0].Reason, "batch 1 incremental energy -1 J/item has 95% CI [") {
-					t.Fatalf("resolved negative estimate was not diagnosed with value and CI: %+v", view)
+					view.Insufficiencies[0].Code != "NegativeIncrementalEnergy" {
+					t.Fatalf("resolved negative estimate was not diagnosed: %+v", view)
+				}
+				var batch int
+				var energy, confidence, lower, upper float64
+				count, err := fmt.Sscanf(view.Insufficiencies[0].Reason,
+					"batch %d incremental energy %f J/item has %f%% CI [%f, %f]",
+					&batch, &energy, &confidence, &lower, &upper)
+				if err != nil || count != 5 || batch != 1 || math.Abs(energy+1) > 1e-9 ||
+					confidence != 95 || lower > upper || upper >= 0 {
+					t.Fatalf("negative value/CI diagnosis changed: %s (%v)", view.Insufficiencies[0].Reason, err)
 				}
 				return
 			}
@@ -769,7 +777,7 @@ func TestCatalogNegativeIncrementalEnergyResolution(t *testing.T) {
 			profile := view.Profiles[0]
 			batch := profile.Batches[0]
 			if batch.EnergyPerInputJoules != 0 || !batch.EnergyBelowResolution ||
-				len(batch.ServiceSamples) != 180 || batch.MemoryBytes != 4096 {
+				len(batch.ServiceSamples) != 540 || batch.MemoryBytes != 4096 {
 				t.Fatalf("below-resolution serving contract changed other measured facts: %+v", batch)
 			}
 			native := profile.NativeBundle().Batches[0]
@@ -801,7 +809,7 @@ func TestCatalogTwoTrialsReloadAndSelectedConfidence(t *testing.T) {
 		}
 		profile := view.Profiles[0]
 		if profile.ConfidenceLevel != want || profile.TrialsPerBatch != 2 || profile.IdleBaselineWatts != 4 ||
-			len(profile.Batches[0].ServiceSamples) != 120 || profile.Batches[0].EnergyPerInputJoules != 1.25 {
+			len(profile.Batches[0].ServiceSamples) != 360 || math.Abs(profile.Batches[0].EnergyPerInputJoules-1.25) > 1e-9 {
 			t.Fatalf("selected two-trial measurement lost serving values: %+v", profile)
 		}
 	}

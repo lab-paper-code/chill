@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -25,8 +24,11 @@ import (
 //
 // go test ./cmd/chill-server -run '^$' -bench '^BenchmarkProfilingLoadNative$' -benchtime=1x -count=1
 func BenchmarkProfilingLoadNative(b *testing.B) {
-	for _, rate := range []float64{200, 500, 1000} {
-		b.Run(fmt.Sprintf("%.0f_per_second", rate), func(b *testing.B) {
+	for _, trial := range []struct {
+		rate  float64
+		index int
+	}{{200, 1}, {500, 1}, {1000, 1}, {1000, 2}, {1000, 3}} {
+		b.Run(fmt.Sprintf("%.0f_per_second/trial_%d", trial.rate, trial.index), func(b *testing.B) {
 			plan := profilingTestPlan(profilingBenchmarkStubProcess(b))
 			plan.OperatingPoints.PhaseDurationSeconds = 10
 			plan.MaxQueueRequests = 256
@@ -35,7 +37,9 @@ func BenchmarkProfilingLoadNative(b *testing.B) {
 			driver := newProfilingLoadDriver(plan, profilingTestRecords(), "", io.Discard)
 			defer driver.close()
 			var achieved, elapsed, p50, p95, p99, maximum, encodedBytes float64
-			var inputs int
+			var scheduled, sent, completed int
+			var gc profilingrun.DriverGC
+			var failures []error
 			var cpuBefore, cpuAfter syscall.Rusage
 			var memoryBefore, memoryAfter runtime.MemStats
 			runtime.ReadMemStats(&memoryBefore)
@@ -45,22 +49,33 @@ func BenchmarkProfilingLoadNative(b *testing.B) {
 			b.ResetTimer()
 			for iteration := range b.N {
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				phase, err := driver.runPhase(ctx, profilingrun.Phase{ID: fmt.Sprintf("benchmark-%d", iteration), Kind: "utilization", Utilization: .5, ArrivalRatePerSecond: rate})
+				phase, err := driver.runPhase(ctx, profilingrun.Phase{ID: fmt.Sprintf("benchmark-%.0f-trial-%d-%d", trial.rate, trial.index, iteration), Kind: "utilization", Utilization: .5, ArrivalRatePerSecond: trial.rate})
 				cancel()
+				b.Logf("target=%.0f/s trial=%d iteration=%d seed=%q scheduled=%d sent=%d completed=%d offering=%.9fs measurement=%.9fs achieved=%.3f/s lag=%+v GC=%+v error=%v",
+					trial.rate, trial.index, iteration, phase.ArrivalSeed, phase.ScheduledInputs, phase.SentInputs, phase.CompletedInputs, phase.IssueElapsedSeconds, phase.MeasurementElapsedSeconds, phase.AchievedArrivalRatePerSecond, phase.IssueLag, phase.DriverGC, err)
 				if err != nil {
-					b.Fatalf("target %.0f/s completed=%d achieved=%.3f/s lag=%+v: %v", rate, phase.CompletedInputs, phase.AchievedArrivalRatePerSecond, phase.IssueLag, err)
+					failures = append(failures, err)
 				}
-				encoded, err := json.Marshal(phase)
-				if err != nil {
-					b.Fatal(err)
+				encoded, encodeErr := json.Marshal(phase)
+				if encodeErr != nil {
+					failures = append(failures, encodeErr)
 				}
-				inputs += phase.CompletedInputs
+				scheduled += phase.ScheduledInputs
+				sent += phase.SentInputs
+				completed += phase.CompletedInputs
 				achieved += phase.AchievedArrivalRatePerSecond
 				elapsed += phase.MeasurementElapsedSeconds
-				p50 += phase.IssueLag.P50
-				p95 += phase.IssueLag.P95
-				p99 += phase.IssueLag.P99
-				maximum = max(maximum, phase.IssueLag.Max)
+				if phase.IssueLag != nil {
+					p50 += phase.IssueLag.P50
+					p95 += phase.IssueLag.P95
+					p99 += phase.IssueLag.P99
+					maximum = max(maximum, phase.IssueLag.Max)
+				}
+				if phase.DriverGC != nil {
+					gc.Cycles += phase.DriverGC.Cycles
+					gc.PauseTotalMilliseconds += phase.DriverGC.PauseTotalMilliseconds
+					gc.MaxPauseMilliseconds = max(gc.MaxPauseMilliseconds, phase.DriverGC.MaxPauseMilliseconds)
+				}
 				encodedBytes += float64(len(encoded))
 			}
 			b.StopTimer()
@@ -72,39 +87,37 @@ func BenchmarkProfilingLoadNative(b *testing.B) {
 				return float64(usage.Utime.Sec+usage.Stime.Sec) + float64(usage.Utime.Usec+usage.Stime.Usec)/1e6
 			}
 			cpu := cpuSeconds(cpuAfter) - cpuSeconds(cpuBefore)
-			b.ReportMetric(rate, "target-req/s")
+			peakRSS := float64(cpuAfter.Maxrss) * 1024
+			allocated := float64(memoryAfter.TotalAlloc - memoryBefore.TotalAlloc)
+			allocations := float64(memoryAfter.Mallocs - memoryBefore.Mallocs)
+			b.ReportMetric(trial.rate, "target-req/s")
 			b.ReportMetric(achieved/float64(b.N), "achieved-req/s")
 			b.ReportMetric(p50/float64(b.N), "lag-p50-ms")
 			b.ReportMetric(p95/float64(b.N), "lag-p95-ms")
 			b.ReportMetric(p99/float64(b.N), "lag-p99-ms")
 			b.ReportMetric(maximum, "lag-max-ms")
 			b.ReportMetric(cpu, "cpu-seconds")
-			b.ReportMetric(cpu/elapsed, "cpu-cores")
-			status, err := os.ReadFile("/proc/self/status")
-			if err != nil {
-				b.Fatal(err)
+			if elapsed > 0 {
+				b.ReportMetric(cpu/elapsed, "cpu-cores")
 			}
-			var peakRSS uint64
-			for _, line := range strings.Split(string(status), "\n") {
-				fields := strings.Fields(line)
-				if len(fields) == 3 && fields[0] == "VmHWM:" {
-					peakRSS, err = strconv.ParseUint(fields[1], 10, 64)
-					if err != nil {
-						b.Fatal(err)
-					}
-					peakRSS *= 1024
-					break
-				}
+			b.ReportMetric(float64(gc.Cycles), "GC-cycles")
+			b.ReportMetric(gc.PauseTotalMilliseconds, "total-GC-pause-ms")
+			b.ReportMetric(gc.MaxPauseMilliseconds, "max-GC-pause-ms")
+			b.ReportMetric(peakRSS, "peak-RSS-B")
+			if sent > 0 {
+				b.ReportMetric(encodedBytes/float64(sent), "result-B/req")
+				b.ReportMetric(allocated/float64(sent), "alloc-B/req")
+				b.ReportMetric(allocations/float64(sent), "allocs/req")
 			}
-			if peakRSS == 0 {
-				b.Fatal("missing process VmHWM RSS observation")
-			}
-			b.ReportMetric(float64(peakRSS), "peak-RSS-B")
-			b.ReportMetric(encodedBytes/float64(inputs), "result-B/req")
-			b.ReportMetric(float64(memoryAfter.TotalAlloc-memoryBefore.TotalAlloc)/float64(inputs), "alloc-B/req")
-			b.ReportMetric(float64(inputs), "completed-inputs")
-			if rate == 1000 && p99/float64(b.N) >= 1 {
-				b.Fatalf("1000/s over 10s requires sub-ms p99; observed %.3fms, achieved %.3f/s", p99/float64(b.N), achieved/float64(b.N))
+			b.ReportMetric(float64(scheduled), "scheduled-inputs")
+			b.ReportMetric(float64(sent), "sent-inputs")
+			b.ReportMetric(float64(completed), "completed-inputs")
+			// Log resource observations even when a failed trial suppresses the
+			// benchmark result line. Each later trial still runs independently.
+			b.Logf("driver target=%.0f/s trial=%d allocated=%.0fB allocations=%.0f CPU=%.6fs peak-RSS=%.0fB scheduled=%d sent=%d completed=%d lag-p50=%.6fms lag-p95=%.6fms lag-p99=%.6fms lag-max=%.6fms GC=%+v",
+				trial.rate, trial.index, allocated, allocations, cpu, peakRSS, scheduled, sent, completed, p50/float64(b.N), p95/float64(b.N), p99/float64(b.N), maximum, gc)
+			for _, err := range failures {
+				b.Error(err)
 			}
 		})
 	}

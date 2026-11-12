@@ -1,6 +1,7 @@
 package profilingrun
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha12"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha13"
 
 	RKNNLiteCoreMask      = "NPU_CORE_0"
 	RKNNLiteInputLayout   = "NHWC"
@@ -141,22 +142,51 @@ type RKNNDeviceObservation struct {
 	Opened          bool   `json:"opened"`
 }
 type Phase struct {
-	ID                           string                `json:"id"`
-	Kind                         string                `json:"kind"`
-	Utilization                  float64               `json:"utilization,omitempty"`
-	ArrivalRatePerSecond         float64               `json:"arrivalRatePerSecond,omitempty"`
-	AchievedArrivalRatePerSecond float64               `json:"achievedArrivalRatePerSecond,omitempty"`
-	IssueElapsedSeconds          float64               `json:"issueElapsedSecondsMonotonic,omitempty"`
-	IssueLag                     *IssueLag             `json:"issueLagMs,omitempty"`
-	IssueLagToleranceMS          float64               `json:"issueLagToleranceMs,omitempty"`
-	Workers                      int                   `json:"workers,omitempty"`
-	MeasurementStartedAt         string                `json:"measurementStartedAt"`
-	MeasurementEndedAt           string                `json:"measurementEndedAt"`
-	MeasurementElapsedSeconds    float64               `json:"measurementElapsedSecondsMonotonic"`
-	CompletedInputs              int                   `json:"completedInputs"`
-	Requests                     []PhaseRequest        `json:"requests"`
-	LatencyMilliseconds          []float64             `json:"latencyMs"`
-	NativeSamples                []NativeServiceSample `json:"nativeSamples"`
+	ID                           string  `json:"id"`
+	Kind                         string  `json:"kind"`
+	Utilization                  float64 `json:"utilization,omitempty"`
+	ArrivalRatePerSecond         float64 `json:"arrivalRatePerSecond,omitempty"`
+	AchievedArrivalRatePerSecond float64 `json:"achievedArrivalRatePerSecond,omitempty"`
+	// IssueElapsedSeconds ends at the last scheduled arrival and excludes response drain.
+	IssueElapsedSeconds       float64               `json:"issueElapsedSecondsMonotonic,omitempty"`
+	IssueLag                  *IssueLag             `json:"issueLagMs,omitempty"`
+	ScheduledInputs           int                   `json:"scheduledInputs,omitempty"`
+	SentInputs                int                   `json:"sentInputs,omitempty"`
+	ArrivalSeed               string                `json:"arrivalSeed,omitempty"`
+	DriverGC                  *DriverGC             `json:"driverGC"`
+	Workers                   int                   `json:"workers,omitempty"`
+	MeasurementStartedAt      string                `json:"measurementStartedAt"`
+	MeasurementEndedAt        string                `json:"measurementEndedAt"`
+	MeasurementElapsedSeconds float64               `json:"measurementElapsedSecondsMonotonic"`
+	CompletedInputs           int                   `json:"completedInputs"`
+	Requests                  []PhaseRequest        `json:"requests"`
+	LatencyMilliseconds       []float64             `json:"latencyMs"`
+	NativeSamples             []NativeServiceSample `json:"nativeSamples"`
+}
+
+// UnmarshalJSON rejects retired fields and Poisson-only fields on saturation.
+func (p *Phase) UnmarshalJSON(payload []byte) error {
+	type wire Phase
+	var decoded wire
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	if decoded.Kind == "saturation" {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(payload, &fields); err != nil {
+			return err
+		}
+		for _, name := range []string{"scheduledInputs", "sentInputs", "arrivalSeed", "issueLagMs",
+			"issueElapsedSecondsMonotonic", "achievedArrivalRatePerSecond"} {
+			if _, present := fields[name]; present {
+				return fmt.Errorf("saturation must omit %s", name)
+			}
+		}
+	}
+	*p = Phase(decoded)
+	return nil
 }
 
 type IssueLag struct {
@@ -167,6 +197,36 @@ type IssueLag struct {
 	P95   float64 `json:"p95"`
 	P99   float64 `json:"p99"`
 	Max   float64 `json:"max"`
+}
+
+// DriverGC observes collections from issuance start through the last send, excluding response drain.
+type DriverGC struct {
+	Cycles                 uint32  `json:"cycles"`
+	PauseTotalMilliseconds float64 `json:"pauseTotalMilliseconds"`
+	MaxPauseMilliseconds   float64 `json:"maxPauseMilliseconds"`
+}
+
+// UnmarshalJSON admits only the complete current driver observation shape.
+func (g *DriverGC) UnmarshalJSON(payload []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return err
+	}
+	if len(fields) != 3 {
+		return errors.New("driverGC requires cycles, pauseTotalMilliseconds and maxPauseMilliseconds")
+	}
+	for _, name := range []string{"cycles", "pauseTotalMilliseconds", "maxPauseMilliseconds"} {
+		if len(fields[name]) == 0 || string(fields[name]) == "null" {
+			return fmt.Errorf("driverGC.%s is required", name)
+		}
+	}
+	type wire DriverGC
+	var decoded wire
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return err
+	}
+	*g = DriverGC(decoded)
+	return nil
 }
 
 type PhaseRequest struct {
@@ -485,6 +545,9 @@ func validateNativeSamples(config RunConfig, trialID string, phases []Phase) err
 	seen := make(map[uint64]struct{})
 	var callIndex uint64
 	for _, phase := range phases {
+		if phase.Kind != "saturation" && phase.ArrivalSeed != trialID+"/"+phase.ID {
+			return errors.New("Poisson arrival seed differs from Run and phase identity")
+		}
 		knownGapCalls := 0
 		if len(phase.NativeSamples) != len(phase.LatencyMilliseconds) {
 			return errors.New("firstfloor native and client samples are not correlated")

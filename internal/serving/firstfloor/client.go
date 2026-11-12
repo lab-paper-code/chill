@@ -45,62 +45,61 @@ type Spec struct {
 
 var nativeRequestBuffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
-// A transport may retain request-body readers after RoundTrip returns. Seal
-// every reader before returning the encoder buffer to its pool.
-type nativeRequestBytes struct {
-	sync.RWMutex
-	data []byte
+// PreparedNativeInputs owns the one-time wire encoding of an input record.
+type PreparedNativeInputs struct{ raw json.RawMessage }
+
+func PrepareNativeInputs(inputs []native.Field) (PreparedNativeInputs, error) {
+	raw, err := json.Marshal(inputs)
+	return PreparedNativeInputs{raw: raw}, err
 }
 
-type nativeRequestReader struct {
-	bytes  *nativeRequestBytes
-	offset int
-}
-
-func (r *nativeRequestReader) Read(destination []byte) (int, error) {
-	r.bytes.RLock()
-	defer r.bytes.RUnlock()
-	if r.bytes.data == nil {
-		return 0, io.ErrClosedPipe
+func (p PreparedNativeInputs) MarshalJSON() ([]byte, error) {
+	if p.raw == nil {
+		return nil, errors.New("native inputs were not prepared")
 	}
-	if r.offset == len(r.bytes.data) {
-		return 0, io.EOF
-	}
-	n := copy(destination, r.bytes.data[r.offset:])
-	r.offset += n
-	return n, nil
-}
-
-func (*nativeRequestReader) Close() error { return nil }
-
-func (b *nativeRequestBytes) close() {
-	b.Lock()
-	b.data = nil
-	b.Unlock()
+	return p.raw, nil
 }
 
 func (c *Client) request(ctx context.Context, method, endpoint string, body []byte, limit int64) ([]byte, int, error) {
+	return c.requestBuffer(ctx, method, endpoint, body, limit, nil, nil)
+}
+
+func (c *Client) requestBuffer(ctx context.Context, method, endpoint string, body []byte, limit int64, target *bytes.Buffer, reusable *bool) ([]byte, int, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 		return nil, 0, errors.New("invalid native endpoint")
 	}
-	var source io.Reader
-	var encoded *nativeRequestBytes
-	if body != nil {
-		encoded = &nativeRequestBytes{data: body}
-		source = &nativeRequestReader{bytes: encoded}
-		defer encoded.close()
+	var writeMu sync.Mutex
+	var started, finished int
+	var writeFailed, responseRead bool
+	if reusable != nil {
+		// Keep bytes.Reader's zero-copy transport path. Recycle only after
+		// every observed write finishes; late/unknown writers retain ownership.
+		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+			GetConn: func(string) {
+				writeMu.Lock()
+				started++
+				writeMu.Unlock()
+			},
+			WroteRequest: func(info httptrace.WroteRequestInfo) {
+				writeMu.Lock()
+				finished++
+				writeFailed = writeFailed || info.Err != nil
+				writeMu.Unlock()
+			},
+		})
+		defer func() {
+			writeMu.Lock()
+			*reusable = responseRead && started > 0 && started == finished && !writeFailed
+			writeMu.Unlock()
+		}()
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, source)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
-		req.ContentLength = int64(len(body))
-		req.GetBody = func() (io.ReadCloser, error) {
-			return &nativeRequestReader{bytes: encoded}, nil
-		}
 	}
 	client := c.HTTPClient
 	if client == nil {
@@ -110,7 +109,15 @@ func (c *Client) request(ctx context.Context, method, endpoint string, body []by
 	if err != nil {
 		return nil, 0, err
 	}
-	raw, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	var raw []byte
+	var readErr error
+	if target == nil {
+		raw, readErr = io.ReadAll(io.LimitReader(response.Body, limit+1))
+	} else {
+		target.Reset()
+		_, readErr = target.ReadFrom(io.LimitReader(response.Body, limit+1))
+		raw = target.Bytes()
+	}
 	err = errors.Join(readErr, response.Body.Close())
 	if err != nil {
 		return nil, response.StatusCode, err
@@ -118,6 +125,7 @@ func (c *Client) request(ctx context.Context, method, endpoint string, body []by
 	if int64(len(raw)) > limit {
 		return nil, response.StatusCode, errors.New("native response exceeds bound")
 	}
+	responseRead = true
 	return raw, response.StatusCode, nil
 }
 func decode(raw []byte, target any) error {
@@ -133,29 +141,49 @@ func decode(raw []byte, target any) error {
 	return nil
 }
 
-func (c *Client) encodeNative(request native.Request) (*bytes.Buffer, error) {
+func (c *Client) encodeNative(request native.Request, inputs PreparedNativeInputs) (*bytes.Buffer, error) {
+	if inputs.raw == nil {
+		return nil, errors.New("native inputs were not prepared")
+	}
 	buffer := nativeRequestBuffers.Get().(*bytes.Buffer)
 	buffer.Reset()
 	c.Diagnostics.Mark(serving.DiagnosticClientMarshal, serving.DiagnosticBegin, request.ID, 0)
-	err := json.NewEncoder(buffer).Encode(request)
-	c.Diagnostics.Mark(serving.DiagnosticClientMarshal, serving.DiagnosticEnd, request.ID, 0)
+	defer c.Diagnostics.Mark(serving.DiagnosticClientMarshal, serving.DiagnosticEnd, request.ID, 0)
+	err := json.NewEncoder(buffer).Encode(struct {
+		ID      string                `json:"id"`
+		Context native.RequestContext `json:"context"`
+	}{request.ID, request.Context})
 	if err != nil {
 		nativeRequestBuffers.Put(buffer)
 		return nil, err
 	}
+	// Encoder ends this header object with "}\n". Append the already encoded
+	// record without re-scanning or re-encoding its payload on every request.
+	buffer.Truncate(buffer.Len() - 2)
+	buffer.WriteString(`,"inputs":`)
+	buffer.Write(inputs.raw)
+	buffer.WriteString("}\n")
 	return buffer, nil
 }
 
-// InferNative sends an unprofiled native request using the gateway serializer
-// and HTTP connection pool. The caller owns native completion-proof validation.
-// Execute additionally validates the measured serving profile and dispatch.
-func (c *Client) InferNative(ctx context.Context, endpoint string, request native.Request) ([]byte, int, error) {
-	buffer, err := c.encodeNative(request)
-	if err != nil {
-		return nil, 0, err
+// InferNative uses the gateway encoder and pooled HTTP exchange with a prepared
+// dataset record. The caller owns response storage and native-proof validation.
+func (c *Client) InferNative(ctx context.Context, endpoint string, request native.Request, inputs PreparedNativeInputs, response *bytes.Buffer) (int, error) {
+	if response == nil {
+		return 0, errors.New("native response buffer is required")
 	}
-	defer nativeRequestBuffers.Put(buffer)
-	return c.request(ctx, http.MethodPost, endpoint, buffer.Bytes(), native.MaxFrameBytes)
+	buffer, err := c.encodeNative(request, inputs)
+	if err != nil {
+		return 0, err
+	}
+	reusable := false
+	defer func() {
+		if reusable {
+			nativeRequestBuffers.Put(buffer)
+		}
+	}()
+	_, status, err := c.requestBuffer(ctx, http.MethodPost, endpoint, buffer.Bytes(), native.MaxFrameBytes, response, &reusable)
+	return status, err
 }
 func modelURL(spec Spec, suffix string) string {
 	return strings.TrimRight(spec.Endpoint, "/") + "/v2/models/" + url.PathEscape(spec.ModelName) + "/" + suffix
@@ -276,12 +304,21 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	for i, field := range d.Input.Inputs {
 		request.Inputs[i] = native.Field{Name: field.Name, Data: [][]byte{field.Data}}
 	}
-	buffer, err := c.encodeNative(request)
-	d.Input = nil // raw carries the sample; d stays live until the completion check.
+	inputs, err := PrepareNativeInputs(request.Inputs)
+	d.Input = nil // encoded inputs carry the sample through completion checks.
 	if err != nil {
 		return serving.BackendResult{Finished: true}, err
 	}
-	defer nativeRequestBuffers.Put(buffer)
+	buffer, err := c.encodeNative(request, inputs)
+	if err != nil {
+		return serving.BackendResult{Finished: true}, err
+	}
+	reusable := false
+	defer func() {
+		if reusable {
+			nativeRequestBuffers.Put(buffer)
+		}
+	}()
 	raw := buffer.Bytes()
 	// Hooks can run concurrently, including after Do fails. Keep their mutable
 	// storage separate from the returned value and freeze it under the same lock.
@@ -305,7 +342,7 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	})
 	c.Diagnostics.Mark(serving.DiagnosticClientExchange, serving.DiagnosticBegin, d.RequestID, 0)
 	started := time.Now()
-	body, status, err := c.request(ctx, http.MethodPost, modelURL(spec, "infer"), raw, native.MaxFrameBytes)
+	body, status, err := c.requestBuffer(ctx, http.MethodPost, modelURL(spec, "infer"), raw, native.MaxFrameBytes, nil, &reusable)
 	traceMu.Lock()
 	finished := time.Now()
 	traceClosed = true

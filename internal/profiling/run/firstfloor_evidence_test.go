@@ -1,6 +1,7 @@
 package profilingrun
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"testing"
@@ -65,6 +66,8 @@ func TestActiveTrialPreservesInitiallyKnownNativeGap(t *testing.T) {
 	repetition.Requests = repetition.Requests[:config.Measurement.MinServiceSamples]
 	repetition.CompletedInputs = config.Measurement.MinServiceSamples
 	repetition.IssueLag.Count = repetition.CompletedInputs
+	repetition.ScheduledInputs = repetition.CompletedInputs
+	repetition.SentInputs = repetition.CompletedInputs
 	repetition.AchievedArrivalRatePerSecond = float64(repetition.CompletedInputs) / repetition.IssueElapsedSeconds
 	result.InferenceCount--
 	result.Firstfloor.ExecutionCount = uint64(result.InferenceCount)
@@ -360,7 +363,7 @@ func TestCompactBatchMembershipUsesSampleRequestIDsOnce(t *testing.T) {
 	}
 }
 
-func TestPoissonIssueEvidenceRejectsIncompleteLateOrNonfiniteSchedules(t *testing.T) {
+func TestPoissonIssueEvidenceRejectsIncompleteOrNonfiniteSchedules(t *testing.T) {
 	config := firstfloorRunConfig()
 	tests := []struct {
 		name   string
@@ -368,12 +371,14 @@ func TestPoissonIssueEvidenceRejectsIncompleteLateOrNonfiniteSchedules(t *testin
 	}{
 		{"missing lag", func(p *Phase) { p.IssueLag = nil }},
 		{"count mismatch", func(p *Phase) { p.IssueLag.Count-- }},
-		{"late send", func(p *Phase) { p.IssueLag.Max = 10.001 }},
 		{"nonfinite mean", func(p *Phase) { p.IssueLag.Mean = math.NaN() }},
 		{"infinite tail", func(p *Phase) { p.IssueLag.P99 = math.Inf(1) }},
 		{"negative minimum", func(p *Phase) { p.IssueLag.Min = -1 }},
 		{"unordered percentiles", func(p *Phase) { p.IssueLag.P95, p.IssueLag.P99, p.IssueLag.Max = 2, 1, 3 }},
-		{"wrong tolerance", func(p *Phase) { p.IssueLagToleranceMS = 11 }},
+		{"unsent schedule", func(p *Phase) { p.ScheduledInputs++ }},
+		{"sent count mismatch", func(p *Phase) { p.SentInputs-- }},
+		{"missing seed", func(p *Phase) { p.ArrivalSeed = "" }},
+		{"foreign seed", func(p *Phase) { p.ArrivalSeed = "other-pod/" + p.ID }},
 		{"missing elapsed", func(p *Phase) { p.IssueElapsedSeconds = 0 }},
 		{"elapsed beyond phase", func(p *Phase) { p.IssueElapsedSeconds = p.MeasurementElapsedSeconds + 1 }},
 		{"wrong denominator", func(p *Phase) { p.AchievedArrivalRatePerSecond++ }},
@@ -389,17 +394,87 @@ func TestPoissonIssueEvidenceRejectsIncompleteLateOrNonfiniteSchedules(t *testin
 		})
 	}
 	result := firstfloorResult(config)
-	result.Phases[0].IssueLag.Max = 10
+	result.Phases[0].IssueLag.Max = 100000
+	for index := range result.Phases[0].Requests {
+		result.Phases[0].Requests[index].ArrivalAt = result.Phases[0].Requests[index].SentAt.Add(-100 * time.Second)
+	}
 	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
-		t.Fatalf("inclusive 10ms tolerance rejected: %v", err)
+		t.Fatalf("diagnostic lag must not reject actual sends: %v", err)
 	}
 	result.Phases[1].IssueLag = &IssueLag{}
 	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
 		t.Fatal("saturation accepted Poisson issue evidence")
 	}
 	result = firstfloorResult(config)
-	result.SchemaVersion = "chill.dacs.io/batch-characterization.v1alpha11"
+	result.SchemaVersion = "chill.dacs.io/batch-characterization.v1alpha12"
 	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
 		t.Fatal("retired runtime schema was accepted")
+	}
+}
+
+func TestNativeRequestLifetimeUsesReceiptSpanRatherThanScheduledArrival(t *testing.T) {
+	config := firstfloorRunConfig()
+	result := firstfloorResult(config)
+	phase := &result.Phases[0]
+	request := &phase.Requests[0]
+	span := float64(config.Measurement.OperatingPoints.RequestLifetimeSeconds)*1000 + 1
+	request.LatencyMilliseconds = span
+	request.CompletedAt = request.SentAt.Add(time.Duration(span * float64(time.Millisecond)))
+	request.Response.Progress.NativeElapsedMS = span
+	phase.LatencyMilliseconds[0] = span
+	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+		t.Fatal("native receipt-to-completion lifetime overflow was accepted")
+	}
+}
+
+func TestDriverGCRequiresFiniteConsistentObservationsInEveryPhase(t *testing.T) {
+	config := firstfloorRunConfig()
+	for phase := range 3 {
+		for _, mutate := range []func(*Phase){
+			func(p *Phase) { p.DriverGC = nil },
+			func(p *Phase) { p.DriverGC.PauseTotalMilliseconds = math.NaN() },
+			func(p *Phase) { p.DriverGC.MaxPauseMilliseconds = math.Inf(1) },
+			func(p *Phase) { p.DriverGC.PauseTotalMilliseconds = -1 },
+			func(p *Phase) { p.DriverGC.MaxPauseMilliseconds = 1 },
+			func(p *Phase) { p.DriverGC.PauseTotalMilliseconds = 1 },
+		} {
+			result := firstfloorResult(config)
+			mutate(&result.Phases[phase])
+			if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+				t.Fatalf("phase %d accepted malformed driver GC", phase)
+			}
+		}
+	}
+	result := firstfloorResult(config)
+	for index := range result.Phases {
+		result.Phases[index].DriverGC = &DriverGC{Cycles: 2, PauseTotalMilliseconds: 3, MaxPauseMilliseconds: 2}
+	}
+	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
+		t.Fatal(err)
+	}
+	for _, payload := range []string{
+		`{}`, `{"cycles":0,"pauseTotalMilliseconds":0}`, `{"cycles":null,"pauseTotalMilliseconds":0,"maxPauseMilliseconds":0}`,
+		`{"cycles":0,"pauseTotalMilliseconds":0,"maxPauseMilliseconds":0,"extra":0}`,
+		`{"cycles":4294967296,"pauseTotalMilliseconds":0,"maxPauseMilliseconds":0}`,
+	} {
+		var gc DriverGC
+		if err := json.Unmarshal([]byte(payload), &gc); err == nil {
+			t.Fatalf("accepted malformed driverGC: %s", payload)
+		}
+	}
+}
+
+func TestCurrentPhaseJSONRejectsToleranceAndSaturationScheduleFields(t *testing.T) {
+	for _, payload := range []string{
+		`{"kind":"sparse","issueLagToleranceMs":10}`,
+		`{"kind":"saturation","scheduledInputs":0}`,
+		`{"kind":"saturation","sentInputs":0}`,
+		`{"kind":"saturation","arrivalSeed":""}`,
+		`{"kind":"saturation","issueLagMs":null}`,
+	} {
+		var phase Phase
+		if err := json.Unmarshal([]byte(payload), &phase); err == nil {
+			t.Fatalf("accepted retired or misplaced phase field: %s", payload)
+		}
 	}
 }

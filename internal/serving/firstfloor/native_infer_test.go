@@ -1,9 +1,9 @@
 package firstfloor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,10 +40,16 @@ func TestInferNativeUsesGatewayEncodingAndPoolWithoutProfile(t *testing.T) {
 			reused.Add(1)
 		}
 	}})
+	prepared, err := PrepareNativeInputs([]native.Field{{Name: "image", Data: [][]byte{input}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body bytes.Buffer
 	for range 2 {
-		body, status, err := client.InferNative(ctx, server.URL+"/v2/models/model/infer", native.Request{ID: "request", Context: native.RequestContext{RequestID: "request"}, Inputs: []native.Field{{Name: "image", Data: [][]byte{input}}}})
-		if err != nil || status != http.StatusOK || string(body) != `{"executionComplete":true}` {
-			t.Fatalf("native exchange failed without profile: status=%d body=%s err=%v", status, body, err)
+		status, err := client.InferNative(ctx, server.URL+"/v2/models/model/infer",
+			native.Request{ID: "request", Context: native.RequestContext{RequestID: "request"}}, prepared, &body)
+		if err != nil || status != http.StatusOK || body.String() != `{"executionComplete":true}` {
+			t.Fatalf("native exchange failed without profile: status=%d body=%s err=%v", status, body.Bytes(), err)
 		}
 	}
 	if reused.Load() != 1 {
@@ -51,21 +57,38 @@ func TestInferNativeUsesGatewayEncodingAndPoolWithoutProfile(t *testing.T) {
 	}
 }
 
-func TestNativeRequestBuffersFenceLateTransportReads(t *testing.T) {
-	var replay io.ReadCloser
+func TestNativeRequestBuffersKeepLateTransportOwnedBytes(t *testing.T) {
+	var outstanding []io.ReadCloser
 	client := &Client{HTTPClient: &http.Client{Transport: traceTransport(func(request *http.Request) (*http.Response, error) {
-		var err error
-		replay, err = request.GetBody()
+		replay, err := request.GetBody()
 		if err != nil {
 			t.Fatal(err)
 		}
+		if _, ok := replay.(io.WriterTo); !ok {
+			t.Fatal("native body lost bytes.Reader's optimized write path")
+		}
+		outstanding = append(outstanding, replay)
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
 			Body: io.NopCloser(strings.NewReader("{}"))}, nil
 	})}}
-	if _, _, err := client.InferNative(context.Background(), "http://native/infer", native.Request{ID: "r"}); err != nil {
+	prepared, err := PrepareNativeInputs(nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := io.ReadAll(replay); !errors.Is(err, io.ErrClosedPipe) {
-		t.Fatalf("request buffer remains readable after pool return: %v", err)
+	var response bytes.Buffer
+	for _, id := range []string{"first", "second"} {
+		if _, err := client.InferNative(context.Background(), "http://native/infer", native.Request{ID: id}, prepared, &response); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var first native.Request
+	if err := json.NewDecoder(outstanding[0]).Decode(&first); err != nil || first.ID != "first" {
+		t.Fatalf("late writer's request was recycled: %+v %v", first, err)
+	}
+	var writer io.Writer = struct{ io.Writer }{io.Discard}
+	if allocations := testing.AllocsPerRun(100, func() {
+		_, _ = io.Copy(writer, outstanding[0])
+	}); allocations != 0 {
+		t.Fatalf("request body allocates copy buffers: %g", allocations)
 	}
 }
