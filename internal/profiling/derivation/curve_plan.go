@@ -244,14 +244,11 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 	for name, value := range map[string]string{
 		"name": shared.Name, "logical model": shared.LogicalModel, "device class": shared.DeviceClass,
 		"Node UID": shared.NodeUID, "runtime family": shared.RuntimeFamily,
-		"backend": shared.Backend, "power mode": shared.PowerMode,
+		"backend": shared.Backend, "power mode": shared.PowerMode, "runtime image": shared.RuntimeImage,
 	} {
 		if !cleanCurveValue(value) {
 			return fmt.Errorf("curve plan %s is required without surrounding whitespace", name)
 		}
-	}
-	if err := firstfloor.ValidateRuntimeImage(shared.RuntimeImage); err != nil {
-		return err
 	}
 	if err := validateCurveRuntime(shared); err != nil {
 		return err

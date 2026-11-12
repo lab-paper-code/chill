@@ -160,10 +160,12 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 	}
 	id := MeasurementVariantID(spec)
 	for name, change := range map[string]func(*profilederivation.CurvePlanSpec){
-		"exact":              func(*profilederivation.CurvePlanSpec) {},
-		"protocol":           func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.WarmupIterations++ },
-		"metric source":      func(s *profilederivation.CurvePlanSpec) { s.MetricSource.Endpoint = "http://new-metrics" },
-		"runtime image":      func(s *profilederivation.CurvePlanSpec) { s.RuntimeImage = "registry.example/image@sha256:" + strings.Repeat("b", 64) },
+		"exact":         func(*profilederivation.CurvePlanSpec) {},
+		"protocol":      func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.WarmupIterations++ },
+		"metric source": func(s *profilederivation.CurvePlanSpec) { s.MetricSource.Endpoint = "http://new-metrics" },
+		"runtime image": func(s *profilederivation.CurvePlanSpec) {
+			s.RuntimeImage = "registry.example/image@sha256:" + strings.Repeat("b", 64)
+		},
 		"artifact image":     func(s *profilederivation.CurvePlanSpec) { s.Artifact.Image = "registry.example/artifact:new" },
 		"preprocessor image": func(s *profilederivation.CurvePlanSpec) { s.Preprocessor.Image = "registry.example/preprocessor:new" },
 	} {
@@ -328,5 +330,34 @@ func TestPreflightKeepsCompletedVariantWithInProgressEvidence(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestPreflightComparesPlainRuntimeImageTagsWithObservedVersion(t *testing.T) {
+	const image = "registry.example/runtime:measured"
+	spec := batchEnergyOptimizationPreflightPlan(t).Shared()
+	spec.RuntimeImage = image
+	plan, err := profilederivation.NewCurvePlan(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, measuredImage := range []string{image, "registry.example/runtime:different"} {
+		t.Run(measuredImage, func(t *testing.T) {
+			measured := plan.Shared()
+			measured.RuntimeImage, measured.RuntimeVersion = measuredImage, "observed-version"
+			id := MeasurementVariantID(measured)
+			got := BuildMeasurementBatchPlan(BatchEnergyOptimizationPreflightSnapshot{
+				Plan: plan, VariantID: id, RequestsComplete: true,
+				ExactEvidence: []MeasurementPreflightEvidence{{Condition: measured, Batches: []int{1}}},
+			})
+			if measuredImage == image {
+				if got.ConditionMatch != MeasurementConditionExact || got.VariantID == nil ||
+					*got.VariantID != id || !reflect.DeepEqual(got.MeasuredBatches, []int{1}) {
+					t.Fatalf("plain image tag stranded observed runtime facts: %+v", got)
+				}
+			} else if got.VariantID != nil || len(got.MeasuredBatches) != 0 {
+				t.Fatalf("different runtime image tag borrowed measured batches: %+v", got)
+			}
+		})
 	}
 }

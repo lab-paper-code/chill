@@ -11,19 +11,8 @@ import (
 	"math"
 	"os"
 	"sort"
-	"strings"
 	"time"
 )
-
-// ValidateRuntimeImage requires a frozen digest reference, not a mutable tag.
-// Digest spelling is left to the registry; this boundary selects the pin.
-func ValidateRuntimeImage(image string) error {
-	repository, digest, pinned := strings.Cut(image, "@sha256:")
-	if !pinned || repository == "" || digest == "" || strings.ContainsAny(image, " \t\r\n") {
-		return errors.New("runtime image must be digest-pinned as repository@sha256:digest")
-	}
-	return nil
-}
 
 func finite(n float64) bool { return !math.IsNaN(n) && !math.IsInf(n, 0) }
 func durationOK(ms float64) bool {

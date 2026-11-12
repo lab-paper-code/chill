@@ -399,3 +399,19 @@ func operationCostReplayReport(t *testing.T, report map[string]any) {
 		}
 	}
 }
+
+func TestMeasurementProfileIdentityComparesPlainRuntimeImageTags(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	profile := *snapshot.Instances[0].Profile
+	profile.Condition.RuntimeImage = "registry.example/runtime:measured"
+	identity := MeasurementProfileIdentity(&profile)
+	same := profile
+	same.ID = "another-measurement"
+	if MeasurementProfileIdentity(&same) != identity {
+		t.Fatal("same runtime image tag split operation and idle identity")
+	}
+	same.Condition.RuntimeImage = "registry.example/runtime:different"
+	if MeasurementProfileIdentity(&same) == identity {
+		t.Fatal("different runtime image tags joined operation and idle identity")
+	}
+}

@@ -64,7 +64,7 @@ func TestObserverKeepsServingAcrossRuntimeDeclarationChange(t *testing.T) {
 	}
 }
 
-func TestObserverMeasuredImageMismatchClosesDispatch(t *testing.T) {
+func TestObserverRuntimeImageChangeDoesNotGateDispatch(t *testing.T) {
 	c, _ := tickReadySubsetController(t, nil)
 	ctx := context.Background()
 	if err := c.observer.Refresh(ctx); err != nil {
@@ -82,8 +82,8 @@ func TestObserverMeasuredImageMismatchClosesDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
-	if state == nil || state.Ready || !strings.Contains(state.Reason, "measured runtime image") {
-		t.Fatalf("different actual runtime image left dispatch enabled: %+v", state)
+	if state == nil || !state.Ready {
+		t.Fatalf("runtime image observation gated a responding executor: %+v", state)
 	}
 }
 

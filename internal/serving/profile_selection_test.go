@@ -129,3 +129,17 @@ func TestSelectConditionProfilesSemanticExecutionIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectConditionProfilesKeepsPlainImageTagIdentity(t *testing.T) {
+	old := Profile{ID: "old", MeasuredAt: time.Unix(1, 0),
+		Condition: profilederivation.CurvePlanSpec{RuntimeImage: "registry/runtime:measured"}}
+	newer := old
+	newer.ID, newer.MeasuredAt = "new", time.Unix(2, 0)
+	different := newer
+	different.ID, different.MeasuredAt = "different", time.Unix(3, 0)
+	different.Condition.RuntimeImage = "registry/runtime:different"
+	got, err := SelectConditionProfiles([]Profile{old, newer, different}, nil)
+	if err != nil || len(got) != 2 || got[0].ID != newer.ID || got[1].ID != different.ID {
+		t.Fatalf("plain image tag identities split or merged: %+v error=%v", got, err)
+	}
+}

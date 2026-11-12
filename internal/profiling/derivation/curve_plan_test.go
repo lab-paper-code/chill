@@ -17,11 +17,11 @@ const (
 	mutatedPath  = "/mutated"
 )
 
-func TestNewCurvePlanRejectsUnpinnedRuntimeImage(t *testing.T) {
+func TestNewCurvePlanAcceptsTaggedRuntimeImage(t *testing.T) {
 	spec := validCurvePlanSpec()
 	spec.RuntimeImage = "registry/runtime:mutable"
-	if _, err := NewCurvePlan(spec); err == nil || !strings.Contains(err.Error(), "digest-pinned") {
-		t.Fatalf("unpinned runtime image accepted: %v", err)
+	if _, err := NewCurvePlan(spec); err != nil {
+		t.Fatalf("tagged runtime image rejected: %v", err)
 	}
 }
 

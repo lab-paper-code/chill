@@ -12,11 +12,11 @@ func decodeTestRunConfig(payload []byte) (RunConfig, error) {
 	return config, err
 }
 
-func TestRunConfigRejectsUnpinnedRuntimeImage(t *testing.T) {
+func TestRunConfigAcceptsTaggedRuntimeImage(t *testing.T) {
 	config := validRunConfig()
 	config.Images.Runtime = "registry/runtime:mutable"
-	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "digest-pinned") {
-		t.Fatalf("unpinned runtime image accepted: %v", err)
+	if err := config.Validate(); err != nil {
+		t.Fatalf("tagged runtime image rejected: %v", err)
 	}
 }
 

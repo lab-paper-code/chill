@@ -848,8 +848,8 @@ func validatePhysicalSource(pod *corev1.Pod, node *corev1.Node) error {
 		return errors.New("Node readiness unconfirmed")
 	}
 	status := servingstate.FirstfloorStatus(pod)
-	if status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || status.ImageID == "" {
-		return errors.New("actual immutable native runtime image/container unavailable")
+	if status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" {
+		return errors.New("actual running native container unavailable")
 	}
 	return nil
 }
@@ -905,22 +905,11 @@ func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.Curv
 	}
 	runtime, artifact, preprocessor, bundle := pod.Spec.Containers[0], pod.Spec.InitContainers[0], pod.Spec.InitContainers[1], pod.Spec.InitContainers[2]
 	status := servingstate.FirstfloorStatus(pod)
-	if runtime.Name != servingstate.FirstfloorContainerName || artifact.Name != "artifact" || preprocessor.Name != "preprocessor" || bundle.Name != profileInitContainerName || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || status.ImageID == "" {
-		return errors.New("actual immutable native runtime image/container unavailable")
+	if runtime.Name != servingstate.FirstfloorContainerName || artifact.Name != "artifact" || preprocessor.Name != "preprocessor" || bundle.Name != profileInitContainerName || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" {
+		return errors.New("actual running native container unavailable")
 	}
-	// CRI image IDs may carry a transport prefix and/or repository name.
-	// Compare the digest itself with the frozen per-platform image reference.
-	actual := status.ImageID
-	if _, reference, ok := strings.Cut(actual, "://"); ok {
-		actual = reference
-	}
-	if _, digest, ok := strings.Cut(actual, "@"); ok {
-		actual = digest
-	}
-	_, measured, pinned := strings.Cut(condition.RuntimeImage, "@")
-	if runtime.Image != condition.RuntimeImage || !pinned || measured == "" || actual != measured {
-		return errors.New("actual native image does not match measured runtime image")
-	}
+	// Serving launches the measured image reference. Behavioral comparison
+	// reports runtime drift without making image IDs an admission gate.
 	if !initCompleted(pod, artifact, condition.Artifact.Image) {
 		return errors.New("immutable artifact preparation unconfirmed")
 	}
@@ -944,11 +933,11 @@ func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.Curv
 	return nil
 }
 
-// initCompleted confirms the init container ran the frozen image and exited 0.
+// initCompleted confirms the declared init image and a successful exit.
 func initCompleted(pod *corev1.Pod, init corev1.Container, image string) bool {
 	for _, status := range pod.Status.InitContainerStatuses {
 		if status.Name == init.Name {
-			return status.State.Terminated != nil && status.State.Terminated.ExitCode == 0 && observedImage(init.Image, status.ImageID, image)
+			return init.Image == image && status.State.Terminated != nil && status.State.Terminated.ExitCode == 0
 		}
 	}
 	return false
@@ -979,7 +968,6 @@ func validateSourceResources(runtime *corev1.Container, node *corev1.Node, profi
 	}
 	return nil
 }
-func observedImage(requested, actual, frozen string) bool { return requested == frozen && actual != "" }
 func sharedProjection(pod *corev1.Pod, init, runtime corev1.Container, initPath, runtimePath string) bool {
 	for _, a := range init.VolumeMounts {
 		for _, r := range runtime.VolumeMounts {

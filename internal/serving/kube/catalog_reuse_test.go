@@ -482,3 +482,19 @@ func TestProfileReuseIgnoresCollectionProtocolProvenance(t *testing.T) {
 		t.Fatal("collection protocol provenance blocked otherwise verified reuse", err)
 	}
 }
+
+func TestProfileReuseComparesPlainRuntimeImageTags(t *testing.T) {
+	const image = "registry.example/runtime:measured"
+	for _, targetImage := range []string{image, "registry.example/runtime:different"} {
+		t.Run(targetImage, func(t *testing.T) {
+			source, target := reuseProfilesFixture(t)
+			source.Condition.RuntimeImage, source.Condition.Actor.RuntimeImage = image, image
+			target.Condition.RuntimeImage, target.Condition.Actor.RuntimeImage = targetImage, targetImage
+			check := serving.ProfileReuseCheck{MaximumRelativeDifference: .05, MinimumMeasurementSeconds: 30, MinimumTrials: 3}
+			err := compareReuseProfiles(source, target, &check)
+			if (err == nil) != (targetImage == image) {
+				t.Fatalf("plain runtime image comparison source=%q target=%q error=%v", image, targetImage, err)
+			}
+		})
+	}
+}

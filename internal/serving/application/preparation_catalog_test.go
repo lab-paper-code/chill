@@ -45,6 +45,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+func TestRefreshPreparesRecordedRuntimeTag(t *testing.T) {
+	fixture := newPreparationCatalogFixture(t)
+	if err := fixture.service.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fixture.prepared(t)
+	spec := fixture.service.Profiles.Load().Preparations[fixture.profile.ID]
+	spec.Instance.Profile = &fixture.profile
+	pod, _, err := fixture.service.operations.PreparationPod(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const measured = "registry/runtime:measured"
+	if fixture.profile.Condition.RuntimeImage != measured ||
+		pod.Spec.Containers[0].Image != measured || pod.Spec.InitContainers[2].Image != measured {
+		t.Fatalf("retained tag did not reach serving containers: profile=%s pod=%+v", fixture.profile.Condition.RuntimeImage, pod.Spec)
+	}
+}
+
 // Before the fix, the failed pass accepted an empty preparation map and froze
 // its source signature. The healthy pass then skipped materialization forever.
 func TestRefreshRecoversPreparationsAfterTransientMaterialization(t *testing.T) {
@@ -412,6 +431,8 @@ func preparationCatalogEvidence(t *testing.T, identity ...string) (map[string]an
 	if err := json.Unmarshal(payload, &active); err != nil {
 		t.Fatal(err)
 	}
+	active.Images.Runtime = "registry/runtime:measured"
+	active.Actor.RuntimeImage = active.Images.Runtime
 	active.Candidate.Inputs.ModelSpec.Name += suffix
 	active.State.Model += suffix
 	active.Actor.Model += suffix

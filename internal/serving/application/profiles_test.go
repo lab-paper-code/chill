@@ -182,10 +182,12 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 	}
 }
 
-func TestPreparationFreezesMeasuredDigestInCommonConfig(t *testing.T) {
+func TestPreparationKeepsMeasuredTagAcrossDeclarationChanges(t *testing.T) {
 	ctx := context.Background()
 	service := schedulerTestService(t, schedulerTestConfiguration())
 	profile := measuredAdoptionProfile()
+	profile.Condition.RuntimeImage = "registry/runtime:measured-A"
+	profile.Condition.Actor.RuntimeImage = profile.Condition.RuntimeImage
 	profile.Condition.DeviceClass, profile.Condition.RuntimeFamily = "gpu", "firstfloor"
 	profile.Condition.Actor.ArtifactImage = "registry/artifact:measured"
 	profile.Condition.Actor.ArtifactFiles = profile.Condition.Artifact.Files
@@ -281,22 +283,10 @@ func TestPreparationFreezesMeasuredDigestInCommonConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if pod.Spec.Containers[0].Image != profile.Condition.RuntimeImage || pod.Spec.InitContainers[2].Image != profile.Condition.RuntimeImage || resolves != 0 {
-		t.Fatal("launch used declared image instead of measured digest")
+		t.Fatal("launch used declared image instead of measured reference")
 	}
 	if spec.Instance.Profile.Condition.Actor.RuntimeImage != profile.Condition.Actor.RuntimeImage || profile.Condition.Actor.RuntimeImage == declaredImage {
 		t.Fatal("current launch image rewrote historical measurement provenance")
-	}
-}
-
-func TestPreparationExcludesUnpinnedMeasuredRuntimeImage(t *testing.T) {
-	service := schedulerTestService(t, schedulerTestConfiguration())
-	profile := measuredAdoptionProfile()
-	profile.Condition.RuntimeImage = "registry/runtime:mutable"
-	profile.Condition.Actor.RuntimeImage = profile.Condition.RuntimeImage
-	prepared, issues, err := service.preparations(context.Background(), schedulerTestConfiguration(), []serving.Profile{profile})
-	if err != nil || len(prepared) != 0 || len(issues) != 1 ||
-		issues[0].Code != preparationUnavailable || !strings.Contains(issues[0].Reason, "digest-pinned") {
-		t.Fatalf("unpinned measured image was not excluded before Pod creation: prepared=%v issues=%v err=%v", prepared, issues, err)
 	}
 }
 

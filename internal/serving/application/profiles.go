@@ -62,9 +62,6 @@ func (o *SchedulerService) preparations(
 func (o *SchedulerService) preparation(
 	ctx context.Context, config SchedulerConfiguration, profile serving.Profile,
 ) (servingstate.PrepareSpec, error) {
-	if err := native.ValidateRuntimeImage(profile.Condition.RuntimeImage); err != nil {
-		return servingstate.PrepareSpec{}, err
-	}
 	if profile.RuntimeMetadata == nil {
 		return servingstate.PrepareSpec{}, errors.New("verified physical allocation unavailable")
 	}

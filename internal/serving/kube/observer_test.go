@@ -80,17 +80,15 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	if spec, err = sourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
 		t.Fatalf("applied routing not restored: %+v %v", spec.Routing, err)
 	}
-	for _, imageID := range []string{
-		profile.Condition.RuntimeImage,
-		"docker-pullable://" + profile.Condition.RuntimeImage,
-		"containerd://" + profile.Condition.RuntimeImage,
-		"sha256:" + strings.Repeat("a", 64),
-		"containerd://sha256:" + strings.Repeat("a", 64),
-	} {
+	for _, imageID := range []string{"", "opaque-runtime-image", "containerd://sha256:rebuilt"} {
 		actual := pod.DeepCopy()
+		actual.Spec.Containers[0].Image = "registry/native:measured"
+		actual.Spec.InitContainers[2].Image = "registry/native:measured"
 		actual.Status.ContainerStatuses[0].ImageID = imageID
-		if _, err = sourceSpec(actual, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil {
-			t.Fatalf("matching runtime image ID %q rejected: %v", imageID, err)
+		measured := profile
+		measured.Condition.RuntimeImage = "registry/native:measured"
+		if _, err = sourceSpec(actual, node, &measured, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil {
+			t.Fatalf("runtime image observation %q gated a measured tag: %v", imageID, err)
 		}
 	}
 	cases := []struct {
@@ -110,16 +108,6 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 		}},
 		{"applied routing names two Workloads", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
 			p.Annotations[servingstate.ServingRoutingAnnotation] = `{"tight":1,"relaxed":1}`
-		}},
-		{"image evidence missing", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) { p.Status.ContainerStatuses[0].ImageID = "" }},
-		{"runtime image mismatch", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
-			p.Status.ContainerStatuses[0].ImageID = "containerd://sha256:" + strings.Repeat("b", 64)
-		}},
-		{"runtime image opaque", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
-			p.Status.ContainerStatuses[0].ImageID = "opaque-runtime-image"
-		}},
-		{"runtime requested image mismatch", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
-			p.Spec.Containers[0].Image = "registry/native@sha256:" + strings.Repeat("b", 64)
 		}},
 		{"artifact read only", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
 			p.Spec.Containers[0].VolumeMounts[0].ReadOnly = false
@@ -866,22 +854,20 @@ func TestObserverMeasuredImageStillRequiresPhysicalSafety(t *testing.T) {
 	if _, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, ""); err != nil {
 		t.Fatal("measured executor rejected", err)
 	}
-	for _, name := range []string{"missing worker image", "missing materializer image", "Node", "GPU allocation"} {
+	for _, name := range []string{"materializer failed", "Node", "GPU allocation"} {
 		t.Run(name, func(t *testing.T) {
 			p, n := pod.DeepCopy(), node.DeepCopy()
 			pr := cloneCatalogProfile(profile)
 			switch name {
-			case "missing worker image":
-				p.Status.ContainerStatuses[0].ImageID = ""
-			case "missing materializer image":
-				p.Status.InitContainerStatuses[2].ImageID = ""
+			case "materializer failed":
+				p.Status.InitContainerStatuses[2].State.Terminated.ExitCode = 1
 			case "Node":
 				n.UID = testReplacementUID
 			case "GPU allocation":
 				pr.RuntimeMetadata.GPUUUID = "GPU-measured"
 			}
 			if _, err := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{class}, ""); err == nil {
-				t.Fatal("missing container identity or physical safety mismatch accepted")
+				t.Fatal("failed preparation or physical safety mismatch accepted")
 			}
 		})
 	}

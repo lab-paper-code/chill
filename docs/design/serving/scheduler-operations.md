@@ -10,8 +10,10 @@ tier: same Node and exact model/execution-path/power condition, same Node and
 operation, same device class and operation, then
 `settings.defaultOperationCost.{prepare,remove,power}` (`{seconds,joules}`,
 whole-wall). Equal completion times use the smaller cost ID. Historical profile
-bodies resolve model/path/runtime-image/runtime-version identities; profile ID,
-CPU tokens and memory headroom alone do not split equivalent measured conditions.
+bodies resolve model/path/measured-runtime-image-string/observed-runtime-version
+conditions. Image strings use plain equality, including tags; no imageID or digest
+validation gates execution. Profile ID, CPU tokens and memory headroom alone do
+not split equivalent measured conditions.
 Exact prepare/remove requires the same Node and profile condition; exact power
 requires the same Node, from/to modes and loaded states. Physical instance count is part of loaded-state
 matching. Only existing rank-0 cells decide operation energy. Transferred
