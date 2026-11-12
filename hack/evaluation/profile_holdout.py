@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""C1(a): raw profiling holdouts, shared Go derivation/replay, diagnostic reports only."""
+"""C1(a): offline profiling holdouts using shared Go derivation; report only."""
 import argparse
 from bisect import bisect_right
 from collections import Counter
@@ -18,12 +18,6 @@ ACTIVE_SCHEMA = 'chill.dacs.io/profiling-raw-measurement.v1alpha11'
 IDLE_SCHEMA = 'chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha8'
 
 
-def quantiles(values, percentile):
-    values = sorted(values)
-    def rank(p):
-        return values[max(0, math.ceil(p * len(values) / 100) - 1)] if values else None
-    return {'p50': statistics.median(values) if values else None,
-            'p95': rank(95), 'p99': rank(99), 'slo': rank(percentile)}
 
 
 def interval(values, independent_trials, confidence):
@@ -146,7 +140,7 @@ def training_trials(runs, fold, indices):
     for draw, index in enumerate(indices):
         raw = runs[index]
         phases = [p for p in raw['runtime']['phases'] if not (fold['kind'] == 'phase' and p['id'] == fold['id'])]
-        # Bootstrap copies keep physical samples intact; distinct sampler trial IDs
+        # Bootstrap copies keep physical samples intact; distinct trial IDs
         # represent multiplicity of whole-trial draws, never request resampling.
         trial_id = raw['podUID'] + (f'#draw{draw}' if counts[index] > 1 else '')
         native = [dict(sample, trialID=trial_id) for phase in phases for sample in phase['nativeSamples']]
@@ -186,24 +180,6 @@ def idle_observations(raws):
     return result
 
 
-def test_phases(runs, fold):
-    return [(i, phase) for i in fold['testTrials'] for phase in runs[i]['runtime']['phases']
-            if phase['kind'] == 'utilization' and (fold['kind'] != 'phase' or phase['id'] == fold['id'])]
-
-
-def replay_input(raw, phase):
-    measurement = raw['runConfig']['measurement']
-    operating = measurement['operatingPoints']
-    first = phase['nativeSamples'][0]
-    idle = first.get('precedingIdleNanos')
-    if idle is not None:
-        # Both timestamps are measurement-node native facts. Never subtract clocks
-        # from load-node arrivals and measurement-node native spans.
-        formation = evidence_io.timestamp_ns(first['startedAt']) - evidence_io.timestamp_ns(first['earliestEnqueuedAt'])
-        idle = max(0, idle - formation)
-    return {'arrivals': [r['arrivalAt'] for r in phase['requests']], 'initialIdleNanos': idle,
-            'percentile': measurement['sloPercentile'], 'targetNanos': measurement['sloTargetLatencyNanos'],
-            'lifetimeSeconds': operating['requestLifetimeSeconds'], 'marginMS': operating['deliveryMarginMilliseconds']}
 
 
 class GoBridge:
@@ -219,65 +195,42 @@ class GoBridge:
         self.process.stdin.flush()
         line = self.process.stdout.readline()
         if not line:
-            raise ValueError('Go derivation/replay bridge exited without a result')
+            raise ValueError('Go derivation bridge exited without a result')
         result = json.loads(line)
         if 'error' in result:
-            raise ValueError('Go derivation/replay: ' + result['error'])
+            raise ValueError('Go derivation: ' + result['error'])
         return result
 
     def __exit__(self, *_):
         self.process.stdin.close()
         self.process.stdout.close()
         if self.process.wait() != 0:
-            raise ValueError('Go derivation/replay bridge failed')
+            raise ValueError('Go derivation bridge failed')
 
 
-def evaluate_fold(runs, idle, bridge, fold, train_indices, seed):
-    tests = test_phases(runs, fold)
-    result = bridge.call({'trials': training_trials(runs, fold, train_indices), 'idle': idle_observations(idle),
-                          'tests': [replay_input(runs[i], p) for i, p in tests], 'seed': seed})
-    result['testPhases'] = tests
-    return result
+def evaluate_fold(runs, idle, bridge, fold, train_indices):
+    return bridge.call({'trials': training_trials(runs, fold, train_indices),
+                        'idle': idle_observations(idle)})
 
 
-def phase_metrics(runs, evaluated, selected, powers):
+def phase_metrics(runs, evaluated, selected, powers, fold):
     result = {}
-    for phase_id in dict.fromkeys(p['id'] for _, p in evaluated['testPhases']):
-        measured, predicted, service, predicted_service, watts, rates = [], [], [], [], [], []
-        raw_client_latency = []
-        outcomes, invalid, support = [], [], []
-        for trial_index in selected:
-            for (index, phase), trace in zip(evaluated['testPhases'], evaluated['traces']):
-                if index != trial_index or phase['id'] != phase_id:
-                    continue
-                # Model arrival clock is the retained arrivalAt. Add same-load-node
-                # send delay to monotonic sent-to-completed latency, preserving the
-                # producer's scheduled-to-completed population without clock mixing.
-                measured.extend(r['latencyMs'] + (evidence_io.timestamp_ns(r['sentAt']) -
-                                evidence_io.timestamp_ns(r['arrivalAt'])) / 1e6 for r in phase['requests'])
-                raw_client_latency.extend(r['latencyMs'] for r in phase['requests'])
-                predicted.extend(v / 1e6 for values in (trace['latencyNanos'] or {}).values() for v in values)
-                service.extend(s['serviceDurationNanos'] / 1e6 for s in phase['nativeSamples'])
-                predicted_service.extend(v / 1e6 for v in (trace['batchServiceNanos'] or []))
-                watts.append(powers[(runs[index]['podUID'], phase_id)])
-                rates.append(phase['completedInputs'] / ((evidence_io.timestamp_ns(phase['measurementEndedAt']) -
-                                                        evidence_io.timestamp_ns(phase['measurementStartedAt'])) / 1e9))
-                outcomes.append(trace['outcomes'])
-                invalid.extend(trace['invalidReasons'] or [])
-                support.append(trace['conditionalService'])
-        percentile = runs[0]['runConfig']['measurement']['sloPercentile']
+    phases = [p for p in runs[0]['runtime']['phases']
+              if fold['kind'] != 'phase' or p['id'] == fold['id']]
+    for phase in phases:
+        phase_id = phase['id']
+        watts, rates = [], []
+        for index in selected:
+            actual = next(p for p in runs[index]['runtime']['phases'] if p['id'] == phase_id)
+            watts.append(powers[(runs[index]['podUID'], phase_id)])
+            seconds = (evidence_io.timestamp_ns(actual['measurementEndedAt']) -
+                       evidence_io.timestamp_ns(actual['measurementStartedAt'])) / 1e9
+            rates.append(actual['completedInputs'] / seconds)
         profile = evaluated['profile']
-        result[phase_id] = {'id': phase_id, 'latencyMS': {'measured': quantiles(measured, percentile),
-                                  'measuredSentToCompleted': quantiles(raw_client_latency, percentile),
-                                  'predicted': quantiles(predicted, percentile), 'measuredN': len(measured), 'predictedN': len(predicted)},
-                            'serviceMS': {'measured': quantiles(service, percentile),
-                                  'predicted': quantiles(predicted_service, percentile), 'measuredN': len(service), 'predictedN': len(predicted_service)},
-                            'power': {'measuredWatts': statistics.mean(watts), 'completedRatePerSecond': statistics.mean(rates),
-                                      'predictedWatts': profile['idleWatts'] + profile['energyPerInputJoules'] * statistics.mean(rates)},
-                            'outcomesByTrial': outcomes, 'invalidReasons': invalid, 'conditionalServiceByTrial': support}
-        if invalid:
-            for metric in ('latencyMS', 'serviceMS'):
-                result[phase_id][metric]['predicted'] = dict.fromkeys(('p50', 'p95', 'p99', 'slo'))
+        rate = statistics.mean(rates)
+        result[phase_id] = {'id': phase_id, 'kind': phase['kind'],
+                           'power': {'measuredWatts': statistics.mean(watts), 'completedRatePerSecond': rate,
+                                     'predictedWatts': profile['idleWatts'] + profile['energyPerInputJoules'] * rate}}
     return result
 
 
@@ -346,65 +299,50 @@ def analyze(runs, idle, bridge, repetitions, seed, confidence, uncertainty, roll
                 raise ValueError('idle evidence must share active execution, node and runtime/artifact image conditions')
     all_fold = {'kind': 'all', 'id': None}
     full = bridge.call({'trials': training_trials(runs, all_fold, list(range(len(runs)))),
-                        'idle': idle_observations(idle), 'tests': [], 'seed': seed})
+                        'idle': idle_observations(idle)})
     powers = {(trial['trialID'], phase['id']): phase['meanWallWatts']
               for trial in full['trials'] for phase in trial['phasePower']}
-    report = {'schema': 'profile-holdout-report.v1', 'confidenceLevel': confidence, 'bootstrapReplicates': repetitions,
-              'seed': seed, 'sloPercentile': runs[0]['runConfig']['measurement']['sloPercentile'],
-              'bootstrapUnit': 'independent physical trial; no request or batch resampling',
-              'latencyOrigin': 'arrivalAt to completion: monotonic latencyMs + same-load-node sentAt-arrivalAt',
-              'replayModel': 'single ready fixed-B instance; native policy/admission and conditional service sampler; finite trace drains',
+    report = {'schema': 'profile-holdout-report.v2', 'confidenceLevel': confidence, 'bootstrapReplicates': repetitions,
+              'seed': seed, 'bootstrapUnit': 'independent physical trial; no request or batch resampling',
+              'analysisBoundary': 'offline task outside CHILL; existing exported derivation APIs only',
+              'replayExecuted': False,
+              'retainedMetrics': ['phase power vs idle + EPI * completed rate',
+                                  'saturation cycle vs S + B * d', 'post-load power stabilization'],
+              'removedMetrics': ['request latency distribution prediction', 'batch service distribution prediction'],
+              'removedMetricsReason': 'existing product exports do not expose full request-latency and batch-service replay populations',
               'powerRateBasis': 'completed inputs / measurement-node wall-clock phase seconds, matching Go EPI integration',
               'limitations': ['One trial cannot identify between-trial uncertainty; its CI is null.',
-                              'Replay success distributions exclude rejected/expired/unfinished requests; outcomes are retained.',
-                              'Fixed-batch trace starts empty; measured native preceding-idle anchor supplies initial idle.',
-                              'No transport fit: configured delivery margin is retained.',
                               'Stabilization stays in band only through the recorded suffix, not indefinitely.'],
               'folds': [], 'postLoadPower': []}
     for fold_index, fold in enumerate(folds(runs)):
         if fold['kind'] == 'phase' and len(runs[0]['runtime']['phases']) == 3:
-            percentile = runs[0]['runConfig']['measurement']['sloPercentile']
-            heldout = [p for _, p in test_phases(runs, fold)]
+            measured = statistics.mean(powers[(runs[i]['podUID'], fold['id'])] for i in fold['testTrials'])
             report['folds'].append({'kind': fold['kind'], 'id': fold['id'], 'profile': None,
                 'trainingTrialIDs': [runs[i]['podUID'] for i in fold['trainTrials']],
                 'heldoutTrialIDs': [runs[i]['podUID'] for i in fold['testTrials']],
                 'unavailableReason': 'excluding the only utilization phase leaves no EPI training population',
-                'phases': [{'id': fold['id'], 'latencyMS': {
-                    'measuredSentToCompleted': quantiles([r['latencyMs'] for p in heldout for r in p['requests']], percentile)},
-                    'serviceMS': {'measured': quantiles([s['serviceDurationNanos'] / 1e6 for p in heldout
-                                                       for s in p['nativeSamples']], percentile)}}]})
+                'phases': [{'id': fold['id'], 'power': {'measuredWatts': measured, 'predictedWatts': None}}]})
             continue
-        evaluated = evaluate_fold(runs, idle, bridge, fold, fold['trainTrials'], seed)
-        center = phase_metrics(runs, evaluated, fold['testTrials'], powers)
+        evaluated = evaluate_fold(runs, idle, bridge, fold, fold['trainTrials'])
+        center = phase_metrics(runs, evaluated, fold['testTrials'], powers, fold)
         boot = {phase_id: [] for phase_id in center}
         bootstrap_profiles = []
         train_draws = bootstrap_indices(fold['trainTrials'], repetitions, seed + fold_index * 3)
         test_draws = train_draws if fold['kind'] == 'phase' else bootstrap_indices(
             fold['testTrials'], repetitions, seed + fold_index * 3 + 1)
         idle_draws = bootstrap_indices(list(range(len(idle))), repetitions, seed + fold_index * 3 + 2)
-        for draw, (train, test, idle_indices) in enumerate(zip(train_draws, test_draws, idle_draws)):
+        for train, test, idle_indices in zip(train_draws, test_draws, idle_draws):
             # Idle draws also represent whole independent idle trials.
             resampled_idle = [copy.deepcopy(idle[i]) for i in idle_indices]
             for i, raw in enumerate(resampled_idle):
                 raw['podUID'] += f'#draw{i}'
-            replicate = evaluate_fold(runs, resampled_idle, bridge, fold, train, seed + draw + 1)
+            replicate = evaluate_fold(runs, resampled_idle, bridge, fold, train)
             bootstrap_profiles.append({key: replicate['profile'][key] for key in
                                        ('idleWatts', 'energyPerInputJoules', 'operationalDispatchNanos')})
-            values = phase_metrics(runs, replicate, test, powers)
+            values = phase_metrics(runs, replicate, test, powers, fold)
             for phase_id, value in values.items():
                 boot[phase_id].append(value)
         for phase_id, phase in center.items():
-            for metric in ('latencyMS', 'serviceMS'):
-                item = phase[metric]
-                item['predictedCI'], item['measuredCI'], item['measuredWithinPredictedCI'] = {}, {}, {}
-                for q in ('p50', 'p95', 'p99', 'slo'):
-                    ci = interval([v[metric]['predicted'][q] for v in boot[phase_id]], len(fold['trainTrials']), confidence)
-                    item['predictedCI'][q] = ci
-                    item['measuredCI'][q] = interval([v[metric]['measured'][q] for v in boot[phase_id]], len(fold['testTrials']), confidence)
-                    item['measuredWithinPredictedCI'][q] = ci[0] <= item['measured'][q] <= ci[1] if ci else None
-            phase['latencyMS']['measuredSentToCompletedCI'] = {
-                q: interval([v['latencyMS']['measuredSentToCompleted'][q] for v in boot[phase_id]],
-                            len(fold['testTrials']), confidence) for q in ('p50', 'p95', 'p99', 'slo')}
             power = phase['power']
             power['predictedCIWatts'] = interval([v['power']['predictedWatts'] for v in boot[phase_id]], len(fold['trainTrials']), confidence)
             power['measuredCIWatts'] = interval([v['power']['measuredWatts'] for v in boot[phase_id]], len(fold['testTrials']), confidence)

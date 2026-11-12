@@ -171,22 +171,24 @@ python3 hack/evaluation/profile_holdout.py \
 runtime 종료 이후 표본을 사용하며, 관측이 부족하면 정착 시간은 null과 사유로 남긴다.
 모델이 계속 상주한 무부하 구간을 충분히 기록해야 최종 loaded-idle을 해석할 수 있다.
 
-Python은 raw field 투영·trial bootstrap·표시만 담당한다. Go bridge가
-`derivation.MeasureIdle`, `IncrementalWorkTrial`, `MeasurePhasePower`,
-`SaturationDispatchOccupancy`, `firstfloor.NewServiceDistribution`과
-`serving.ReplayFeedbackTrace`의 실제 native batch/admission 재생을 사용한다.
-phase 제외 후에도 남은 native ServiceSamples의 실제 service/preceding-idle 쌍을 보존한다.
-EPI와 유휴 W는 trial별 추정치의 산술평균이다. d는 적격 포화 배치 쌍의 signed
-residual 평균이며 재생에 전달할 operational d만 0 이상으로 clamp한다.
-재생은 실제 `arrivalAt` 배열을 한 번 공급하고 고정 B로 drain한다. 지연 출발점도
-`arrivalAt`으로 맞추기 위해 raw monotonic `latencyMs`에 같은 load-node의
-`sentAt-arrivalAt`을 더한다. 서로 다른 호스트 시각을 빼지 않는다. 초기 native 유휴는
-첫 held-out sample의 preceding-idle과 native enqueue/run 시각으로 복원하며, 큐는
-비어 있는 시작을 가정한다. configured delivery margin 외 경로 보정은 하지 않는다.
+evaluation은 CHILL 시스템 밖의 작업이다. `hack/evaluation/profile_holdout.py`와
+Go bridge는 보존한 raw만 읽으며 제품에 evaluation 전용 export나 trace 수집 경로를
+추가하지 않는다. Python은 raw field 투영·trial bootstrap·표시를 맡는다.
+Go bridge는 기존 공개 derivation API인 `MeasureIdle`, `IncrementalWorkTrial`,
+`MeasurePhasePower`, `SaturationDispatchOccupancy`를 재사용한다.
+phase 제외 후에도 남은 native ServiceSamples의 실제 service/preceding-idle 쌍을
+보존한다. EPI와 유휴 W는 trial별 추정치의 산술평균이다. d는 적격 포화 배치 쌍의
+signed residual 평균이며 operational d만 0 이상으로 clamp한다.
 
-보고서에는 요청 지연·batch service의 p50(median), p95/p99/SLO 분위수(nearest-rank),
-완료/거절/만료/미완료 population, conditional sampler support, phase 전력,
-포화 cycle 대조, 원시 post-load 표본과 rolling mean이 남는다. 신뢰구간은 독립 trial
+`profile-holdout-report.v2`는 다음 세 비교만 보고한다.
+- phase별 실측 노드 W와 `유휴 W + EPI × completed input rate`
+- 포화 배치 쌍의 실측 cycle과 `앞 배치의 실제 S + B × d`
+- 부하 중단 뒤 원시 전력 표본·rolling mean과 안정화 시간
+
+기존 serving 공개 API는 전체 요청 지연·batch service 재생 표본을 반환하지 않는다.
+요청 지연·batch service의 예측분포, p50/p95/p99/SLO 분위수 대조와 관련 CI는
+도구에서 제거했다. `removedMetrics`와 사유를 보고하며 스케줄러 재생은 실행하지 않는다.
+신뢰구간은 독립 trial
 전체를 복원추출한다. phase holdout은 같은 physical trial의 training·held-out 단계를
 같은 trial draw로 함께 뽑는다. trial holdout의 training·held-out과 idle trial은
 각각 독립적으로 뽑는다. 요청이나 batch를 독립 표본처럼 재추출하지 않는다.

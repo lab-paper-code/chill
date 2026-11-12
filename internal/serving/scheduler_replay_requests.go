@@ -800,9 +800,6 @@ func (s *schedulerReplayState) startChosenBatch(i *schedulerReplayInstance, choi
 		s.out.reasons = append(s.out.reasons, "MissingConditionalServiceSupport:"+i.config.ID)
 		return false
 	}
-	if s.batchServiceTrace != nil {
-		*s.batchServiceTrace = append(*s.batchServiceTrace, durationNanos)
-	}
 	duration := float64(durationNanos)
 	// Trace gap selects S; arrivals/queue already supplied the gap.
 	// Retain the current occupancy model without treating it as native S.

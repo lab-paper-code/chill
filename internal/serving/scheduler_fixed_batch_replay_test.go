@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestFeedbackTraceUsesFiniteActualArrivalsAndFixedBatch(t *testing.T) {
+func TestSchedulerFixedBatchWaitsForPartialBatch(t *testing.T) {
 	settings, snapshot := capacityFixture()
 	settings.ObservationWindow, settings.ComparisonPeriod = 102*time.Millisecond, 102*time.Millisecond
 	settings.DefaultDispatchOccupancyNanos = 0
@@ -24,19 +24,13 @@ func TestFeedbackTraceUsesFiniteActualArrivalsAndFixedBatch(t *testing.T) {
 	candidate := SchedulerCandidate{ID: "keep", Keep: true, Instances: snapshot.Instances,
 		Routing: map[string]map[string]int32{snapshot.Workloads[0].UID: {snapshot.Instances[0].ID: 1}}}
 	snapshot.Routing = candidate.Routing
-	trace, err := ReplayFeedbackTrace(context.Background(), settings, snapshot, candidate, 3)
-	if err != nil || len(trace.InvalidReasons) != 0 {
-		t.Fatalf("trace failed: %+v %v", trace, err)
-	}
-	if len(trace.BatchServiceNanos) != 2 || trace.BatchServiceNanos[0] != 10e6 || trace.BatchServiceNanos[1] != 10e6 {
-		t.Fatalf("fixed physical batches not retained: %+v", trace.BatchServiceNanos)
-	}
-	latency := trace.LatencyNanos[snapshot.Workloads[0].Identity()]
-	if len(latency) != 4 || latency[0] != 10e6 || latency[3] != 11e6 {
-		t.Fatalf("actual gaps or finite drain changed: %v", latency)
-	}
 	estimate, err := EvaluateFeedbackCandidate(context.Background(), settings, snapshot, candidate, 3)
-	if err != nil || len(estimate.Workloads) != 1 || estimate.Workloads[0].SuccessQuantileNanos == nil || *estimate.Workloads[0].SuccessQuantileNanos != latency[3] {
-		t.Fatalf("diagnostic changed admission replay: %+v %v", estimate, err)
+	if err != nil || len(estimate.InvalidReasons) != 0 || len(estimate.Workloads) != 1 {
+		t.Fatalf("fixed-batch replay failed: %+v %v", estimate, err)
+	}
+	score := estimate.Workloads[0]
+	if score.Population != 4 || score.OnTime != 4 || score.Unfinished != 0 ||
+		score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 11e6 {
+		t.Fatalf("partial batch must await its next actual arrival and drain: %+v", score)
 	}
 }

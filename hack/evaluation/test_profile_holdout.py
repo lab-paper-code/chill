@@ -1,4 +1,4 @@
-"""Synthetic raw evidence exercises C1(a), including the real Go replay bridge."""
+"""Synthetic raw evidence exercises C1(a), including the real Go derivation bridge."""
 import copy
 import datetime as dt
 import os
@@ -78,7 +78,7 @@ class HoldoutTests(unittest.TestCase):
         self.assertEqual(len(draws), 10)
         self.assertTrue(all(len(draw) == 3 and set(draw) <= {0, 1, 2} for draw in draws))
         self.assertIsNone(analysis.interval([1, 2], independent_trials=1, confidence=.95))
-        self.assertEqual(analysis.quantiles([1, 2, 3, 4], 97), {'p50': 2.5, 'p95': 4, 'p99': 4, 'slo': 4})
+        self.assertEqual(analysis.interval([1, 2, 3, 4], independent_trials=2, confidence=.95), [1, 4])
 
     def test_power_stabilization_uses_entire_observed_suffix(self):
         samples = [{'observedAt': stamp(i), 'watts': v}
@@ -89,7 +89,7 @@ class HoldoutTests(unittest.TestCase):
         self.assertEqual(result['observedThrough'], stamp(8))
         self.assertIsNone(analysis.stabilization(samples[:2], stamp(0), 0, 2, 2)['stabilizationSeconds'])
 
-    def test_invalid_raw_fails_before_replay(self):
+    def test_invalid_raw_fails_before_derivation(self):
         bad = raw_fixture('a')
         bad['runtime']['phases'][2]['requests'].pop()
         with self.assertRaisesRegex(ValueError, 'request count'):
@@ -139,7 +139,7 @@ class HoldoutTests(unittest.TestCase):
         self.assertEqual(bootstrap.call_count, 2 * 2 + 3 * 3)
 
     @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
-    def test_synthetic_raw_real_derivation_and_scheduler(self):
+    def test_synthetic_raw_real_derivation_without_product_replay(self):
         runs = [raw_fixture('a'), raw_fixture('b'), raw_fixture('c')]
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
             report = analysis.analyze(runs, [idle_fixture()], bridge, 12, 17, .95, 0, 2, 2, {})
@@ -150,14 +150,18 @@ class HoldoutTests(unittest.TestCase):
         self.assertAlmostEqual(first['profile']['energyPerInputJoules'], 5)
         self.assertAlmostEqual(first['profile']['dispatchOccupancyNanosPerInput'], 1_000_000)
         self.assertEqual(len(first['profile']['serviceSamples']), 36)
-        self.assertEqual(first['phases'][0]['latencyMS']['measured']['slo'], 12)
-        self.assertEqual(first['phases'][0]['serviceMS']['predicted']['p50'], 10)
+        self.assertEqual(report['schema'], 'profile-holdout-report.v2')
+        self.assertFalse(report['replayExecuted'])
+        self.assertEqual(len(report['retainedMetrics']), 3)
+        self.assertEqual(len(report['removedMetrics']), 2)
+        self.assertNotIn('traces', first)
+        self.assertNotIn('latencyMS', first['phases'][0])
+        self.assertNotIn('serviceMS', first['phases'][0])
         self.assertEqual(first['phases'][0]['power']['measuredWatts'], 14)
         self.assertEqual(first['phases'][0]['power']['predictedWatts'], 14)
-        self.assertIsNotNone(first['phases'][0]['latencyMS']['predictedCI']['p95'])
+        self.assertEqual(first['phases'][0]['power']['predictedCIWatts'], [14, 14])
         self.assertEqual(len(first['phasePower']), 12)
-        self.assertEqual(first['phases'][0]['latencyMS']['measuredSentToCompleted']['slo'], 12)
-        self.assertIsNone(report['folds'][2]['phases'][0]['latencyMS']['measuredCI']['p95'])
+        self.assertIsNone(report['folds'][2]['phases'][0]['power']['measuredCIWatts'])
         self.assertAlmostEqual(first['saturation'][0]['measuredCycleMS'], 12)
         self.assertAlmostEqual(first['saturation'][0]['predictedCycleMS'], 12)
         self.assertEqual(report['postLoadPower'][0]['reason'], 'no post-load samples')
@@ -168,7 +172,7 @@ class HoldoutTests(unittest.TestCase):
                     sample['serviceDurationNanos'] = 20_000_000
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
             fold = analysis.folds(changed)[2]
-            one = analysis.evaluate_fold(changed, [idle_fixture()], bridge, fold, [1, 2], 3)
+            one = analysis.evaluate_fold(changed, [idle_fixture()], bridge, fold, [1, 2])
         self.assertEqual(one['profile']['serviceSamples'][0]['serviceDurationNanos'], 10_000_000)
 
     @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
@@ -177,7 +181,7 @@ class HoldoutTests(unittest.TestCase):
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
             report = analysis.analyze([raw], [idle_fixture()], bridge, 3, 1, .95, 0, 2, 2, {})
         self.assertEqual(len(report['folds']), 2)
-        self.assertIsNone(report['folds'][0]['phases'][0]['latencyMS']['predictedCI']['p95'])
+        self.assertIsNone(report['folds'][0]['phases'][0]['power']['predictedCIWatts'])
         raw['runtime']['phases'].pop()
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
             report = analysis.analyze([raw], [idle_fixture()], bridge, 3, 1, .95, 0, 2, 2, {})
@@ -187,16 +191,19 @@ class HoldoutTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get('C1_PROFILE_CLI'), 'set C1_PROFILE_CLI to built Go bridge')
     def test_phase_poison_is_excluded_and_trial_variance_reaches_ci(self):
         runs = [raw_fixture('a', 10), raw_fixture('b', 11), raw_fixture('c', 12)]
+        for index, raw in enumerate(runs):
+            for sample in raw['metrics']['samples']:
+                sample['watts'] += index
         with analysis.GoBridge(os.environ['C1_PROFILE_CLI']) as bridge:
             report = analysis.analyze(runs, [idle_fixture()], bridge, 30, 13, .95, 0, 2, 2, {})
             fold = analysis.folds(runs)[0]
-            before = analysis.evaluate_fold(runs, [idle_fixture()], bridge, fold, [0, 1, 2], 3)
+            before = analysis.evaluate_fold(runs, [idle_fixture()], bridge, fold, [0, 1, 2])
             for raw in runs:
                 for sample in raw['runtime']['phases'][2]['nativeSamples']:
                     sample['serviceDurationNanos'] = 50_000_000
-            after = analysis.evaluate_fold(runs, [idle_fixture()], bridge, fold, [0, 1, 2], 3)
+            after = analysis.evaluate_fold(runs, [idle_fixture()], bridge, fold, [0, 1, 2])
         self.assertEqual(before['profile'], after['profile'])
-        low, high = report['folds'][0]['phases'][0]['serviceMS']['predictedCI']['p50']
+        low, high = report['folds'][0]['phases'][0]['power']['predictedCIWatts']
         self.assertLess(low, high)
 
 
