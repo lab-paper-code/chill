@@ -165,9 +165,11 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 	}
 	latencies := make([]float64, 0, runtime.InferenceCount)
 	var samples []profilingrun.NativeServiceSample
+	var completedInputs int
 	for _, repetition := range runtime.Phases {
 		latencies = append(latencies, repetition.LatencyMilliseconds...)
 		samples = append(samples, repetition.NativeSamples...)
+		completedInputs += repetition.CompletedInputs
 	}
 	latency, err := summarizeLatency(latencies)
 	if err != nil {
@@ -176,7 +178,7 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 	if runtime.BatchSize < 1 {
 		return EvidencePassport{}, errors.New("verified runtime evidence contains an invalid batch size")
 	}
-	throughputItems := float64(runtime.BatchSize) * 1000 / latency.Mean
+	throughputItems := float64(completedInputs) / runtime.MeasurementElapsedSeconds
 	watts := summarizeWatts(snapshot.Measurement.Metrics.Samples)
 	thermal := summarizeThermal(snapshot.Measurement.Metrics)
 	workload := summarizeWorkload(snapshot.Measurement.Workload)
@@ -210,9 +212,8 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 				ElapsedSeconds: runtime.MeasurementElapsedSeconds,
 				CompletedCalls: runtime.InferenceCount,
 				CompletedItems: runtime.InferenceCount * runtime.BatchSize,
-				// Keep the runtime contract's batch/mean-latency definition, but
-				// derive it again from the retained raw samples instead of trusting
-				// the producer's summary field.
+				// Use completed inputs and the full monotonic measurement window;
+				// parallel request latency does not determine measured throughput.
 				ThroughputItems: throughputItems,
 				Latency:         latency,
 				NativeSamples:   samples,

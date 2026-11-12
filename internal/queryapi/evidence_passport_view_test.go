@@ -88,7 +88,7 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 	}
 	runtime := got.Measurement.Runtime
 	if runtime.CompletedCalls != 3 || runtime.CompletedItems != 12 || runtime.Latency.Count != 3 ||
-		runtime.ThroughputItems != 2000 || runtime.Latency.Mean != 2 || runtime.Latency.P50 != 2 ||
+		runtime.ThroughputItems != 12.0/90.001 || runtime.Latency.Mean != 2 || runtime.Latency.P50 != 2 ||
 		runtime.Latency.P95 != 3 || runtime.Latency.P99 != 3 {
 		t.Fatalf("runtime facts = %#v", runtime)
 	}
@@ -190,6 +190,32 @@ func TestBuildEvidencePassportRepresentsNoSuccessfulPowerSamples(t *testing.T) {
 	}
 	if passport.Measurement.Power.Watts != nil || passport.Measurement.Power.Failures != 1 {
 		t.Fatalf("power facts = %#v", passport.Measurement.Power)
+	}
+}
+
+func TestBuildEvidencePassportUsesMeasuredPhaseThroughput(t *testing.T) {
+	t.Parallel()
+	run, execution := passportFixture()
+	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
+	runtime := profilingrun.RuntimeResult{
+		BatchSize: 4, InferenceCount: 250,
+		MeasurementStartedAt:      started.Format(time.RFC3339Nano),
+		MeasurementEndedAt:        started.Add(10 * time.Second).Format(time.RFC3339Nano),
+		MeasurementElapsedSeconds: 10, ThroughputItemsPerSecond: 25,
+		Phases: []profilingrun.Phase{
+			{CompletedInputs: 400, MeasurementElapsedSeconds: 1, LatencyMilliseconds: []float64{160}},
+			{CompletedInputs: 600, MeasurementElapsedSeconds: 2, LatencyMilliseconds: []float64{160}},
+		},
+	}
+	passport, err := BuildEvidencePassport(EvidencePassportSnapshot{
+		Run: *run, Execution: execution,
+		Measurement: profilerevidence.RawMeasurement{Runtime: runtime},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := passport.Measurement.Runtime; got.ThroughputItems != 100 || got.Latency.Mean != 160 {
+		t.Fatalf("runtime facts = %#v, want measured throughput 100 and latency 160", got)
 	}
 }
 
