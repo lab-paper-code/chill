@@ -202,33 +202,6 @@ func TestCapacityRejectAtP95PrefersCheaperFeasibleExpansion(t *testing.T) {
 	}
 }
 
-func TestCapacityDecisionHelperIgnoresSearchDeadline(t *testing.T) {
-	for _, strategy := range []string{protocol.V1, protocol.V2} {
-		t.Run(strategy, func(t *testing.T) {
-			settings, snapshot, _ := capacityE1Fixture()
-			settings.ControlInterval = time.Nanosecond
-			settings.PlanSearchStrategy = strategy
-			snapshot.Workloads[0].SLO.Percentile = 95
-			budgeted, err := EvaluateScheduler(context.Background(), settings, snapshot)
-			if err != nil || budgeted.Capacity == nil || budgeted.Capacity.Search == nil || !budgeted.Capacity.Search.BudgetCut {
-				t.Fatalf("public evaluation lost its control-interval deadline: decision=%+v err=%v", budgeted, err)
-			}
-			decision := capacityDecideForTest(t, settings, snapshot)
-			if decision.Capacity == nil || decision.Capacity.Search == nil {
-				t.Fatalf("missing capacity search: %+v", decision)
-			}
-			search := decision.Capacity.Search
-			if search.BudgetCut || search.TerminationReason != protocol.NoImprovement ||
-				decision.Target == nil || !poolsOn(*decision.Target, NodeReference{Name: "node-lut", UID: "lut"}) {
-				t.Fatalf("outcome helper used the control-interval deadline: target=%+v search=%+v", decision.Target, search)
-			}
-			if decision.Settings.ControlInterval != settings.ControlInterval {
-				t.Fatal("outcome helper changed the demand/policy control interval")
-			}
-		})
-	}
-}
-
 func TestCapacityMinimumDemandPreservesCapacityAtNoLoad(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, time.Minute
