@@ -7,7 +7,7 @@ import (
 )
 
 func TestCapacityV2FinalistsDistinctAndOrdered(t *testing.T) {
-	tab := &protocol.Table{ByPlan: [][]int{{0, 1, 2}}, EntryOf: []int{0, 1, 2}, KeyParts: []string{"n=a", "n=b", "n=c"}}
+	tab := &protocol.Table{ByPlan: [][]int{{0, 1, 2}}, Placement: []string{"a", "b", "c"}, KeyParts: []string{"n=a", "n=b", "n=c"}}
 	f := newV2Finalists(tab, 0, 2)
 	key := newV2Key(tab, 0)
 	for _, q := range []int{2, 1, 1, 0, 2} {
@@ -20,7 +20,7 @@ func TestCapacityV2FinalistsDistinctAndOrdered(t *testing.T) {
 }
 
 func TestCapacityV2FinalistsCollapseCapVariants(t *testing.T) {
-	tab := &protocol.Table{ByPlan: [][]int{{0, 1, 2, 3}}, EntryOf: []int{0, 1, 1, 2},
+	tab := &protocol.Table{ByPlan: [][]int{{0, 1, 2, 3}}, Placement: []string{"keep", "caps", "caps", "other"},
 		KeyParts: []string{"keep", "cap1", "cap2", "other"}}
 	f := newV2Finalists(tab, 0, 2)
 	key := newV2Key(tab, 0)
@@ -30,6 +30,22 @@ func TestCapacityV2FinalistsCollapseCapVariants(t *testing.T) {
 	}
 	if f.used != 2 || f.ordered[0].key.Choice[0] != 2 || f.ordered[1].key.Choice[0] != 3 {
 		t.Fatalf("cap variants crowded out distinct placement: %+v %+v", f.ordered[0].key, f.ordered[1].key)
+	}
+}
+
+func TestCapacityV2FinalistsKeepAndCapsShareSlot(t *testing.T) {
+	tab := &protocol.Table{ByPlan: [][]int{{0, 1, 2}}, EntryOf: []int{0, 1, 2},
+		Options: []string{"profile", "profile", "other"}, Modes: []string{"m", "m", "m"},
+		Placement: []string{"profile", "profile", "other"},
+		KeyParts:  []string{"keep", "cap", "other"}}
+	f := newV2Finalists(tab, 0, 2)
+	key := newV2Key(tab, 0)
+	for _, q := range []int{0, 1, 2} {
+		key.Choice[0], key.Joules = q, float64(q)
+		f.add(key, "keep")
+	}
+	if f.used != 2 || f.ordered[0].key.Choice[0] != 0 || f.ordered[1].key.Choice[0] != 2 {
+		t.Fatalf("keep and cap policy occupied both slots: %+v %+v", f.ordered[0].key, f.ordered[1].key)
 	}
 }
 

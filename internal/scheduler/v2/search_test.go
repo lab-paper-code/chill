@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"sort"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 type finiteState struct {
 	table      *protocol.Table
 	workloads  []protocol.Workload
+	arrivals   [][]float64
 	priority   []int
 	choice     []int
 	result     protocol.Rank
@@ -54,20 +56,32 @@ func (s *finiteState) Delta(n, q int) protocol.Rank {
 			retainedService += tab.RoutingRateServiceNanos[tab.ByPlan[node][0]][w]
 		}
 		excess := 0.0
-		if workload.Rate > 0 || workload.Queued > 0 {
+		if len(s.arrivals[w]) > 0 || workload.Queued > 0 {
 			if rate <= 0 {
 				excess, r.Searchable = math.Inf(1), false
 			} else {
-				pre, post := min(r.Route, tab.Period), max(tab.Period-r.Route, 0)
-				backlog := max(0, float64(workload.Queued)+(workload.Rate-retained)*pre)
-				hPost := workload.TotalNanos + 1e9*(backlog+max(workload.Rate-rate, 0)*post)/rate + service/rate
-				preMass, postMass := float64(workload.Queued)+workload.Rate*pre, workload.Rate*post
+				pre := min(r.Route, tab.Period)
+				preCount := sort.Search(len(s.arrivals[w]), func(i int) bool { return s.arrivals[w][i] >= pre*1e9 })
+				preMass, postMass := float64(workload.Queued+preCount), float64(len(s.arrivals[w])-preCount)
+				preLast, postLast := 0.0, pre
+				if preCount > 0 {
+					preLast = min(pre, s.arrivals[w][preCount-1]/1e9)
+				}
+				if len(s.arrivals[w]) > preCount {
+					postLast = s.arrivals[w][len(s.arrivals[w])-1] / 1e9
+				} else if r.Route == 0 {
+					postLast = 0
+				}
+				backlog := max(0, preMass-retained*preLast)
+				atRoute := max(0, preMass-retained*pre)
+				postBacklog := max(0, atRoute+postMass-rate*max(0, postLast-pre))
+				hPost := workload.TotalNanos + 1e9*max(0, postBacklog-1)/rate + service/rate
 				if r.Route == 0 {
 					preMass, postMass = 0, preMass+postMass
 				}
-				hPre := workload.TotalNanos + 1e9*r.Route + 1e9*backlog/rate + service/rate
+				hPre := workload.TotalNanos + 1e9*r.Route + 1e9*max(0, backlog-1)/rate + service/rate
 				if retained > 0 {
-					hPre = workload.TotalNanos + 1e9*backlog/retained + retainedService/retained
+					hPre = workload.TotalNanos + 1e9*max(0, backlog-1)/retained + retainedService/retained
 				}
 				h := hPost
 				if preMass > 0 {
@@ -123,6 +137,7 @@ func finiteProblem(nodes int, workloads []protocol.Workload, rates, services [][
 			tab.Options = append(tab.Options, "option")
 			tab.Modes = append(tab.Modes, "mode")
 			tab.PlanKeys = append(tab.PlanKeys, fmt.Sprintf("p%d", j))
+			tab.Placement = append(tab.Placement, fmt.Sprintf("p%d", j))
 			tab.KeyParts = append(tab.KeyParts, fmt.Sprintf("n%d=p%d|", n, j))
 			tab.Keep = append(tab.Keep, j == 0)
 			tab.Searchable = append(tab.Searchable, true)
@@ -139,8 +154,14 @@ func finiteProblem(nodes int, workloads []protocol.Workload, rates, services [][
 		}
 	}
 	tab.Energy = func(q int, _, _ float64) float64 { return energies[tab.Index[q]] }
+	arrivals := make([][]float64, len(workloads))
+	for w, workload := range workloads {
+		for j := range int(math.Ceil(workload.Rate * tab.Period)) {
+			arrivals[w] = append(arrivals[w], float64(j)/workload.Rate*1e9)
+		}
+	}
 	p.NewState = func(choice []int) protocol.State {
-		return &finiteState{table: tab, workloads: workloads, priority: priority, percentile: 100, choice: slices.Clone(choice),
+		return &finiteState{table: tab, workloads: workloads, arrivals: arrivals, priority: priority, percentile: 100, choice: slices.Clone(choice),
 			result: newV2Key(tab, len(workloads)), raw: make([]float64, len(workloads))}
 	}
 	return p

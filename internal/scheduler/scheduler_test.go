@@ -80,7 +80,7 @@ func TestPublicV1WorkerOrderAndDeadline(t *testing.T) {
 
 func TestRootOwnsV2FallbackAndNativeResult(t *testing.T) {
 	p := protocol.Problem{Context: context.Background(), Workers: 1, Deadline: time.Now().Add(-time.Second), Plans: [][]protocol.Plan{{{Eligible: true}}}}
-	p.Table = &protocol.Table{ByPlan: [][]int{{0}}, Index: []int{0}, Options: []string{"keep"}, Modes: []string{"mode"}, PlanKeys: []string{"keep"}, KeyParts: []string{"n=keep"}, NodeUID: []string{"n"}, Count: [][]int{{}}, RoutingRate: [][]float64{{}}, Keep: []bool{true}, Searchable: []bool{true}}
+	p.Table = &protocol.Table{ByPlan: [][]int{{0}}, Index: []int{0}, Options: []string{"keep"}, Modes: []string{"mode"}, Placement: []string{"keep"}, PlanKeys: []string{"keep"}, KeyParts: []string{"n=keep"}, NodeUID: []string{"n"}, Count: [][]int{{}}, RoutingRate: [][]float64{{}}, Keep: []bool{true}, Searchable: []bool{true}}
 	p.NewState = func(choice []int) protocol.State {
 		return &oneNodeState{choice: slices.Clone(choice), result: make([]int, len(choice)), table: p.Table}
 	}

@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"fmt"
 	"math/rand/v2"
 	"slices"
 	"testing"
@@ -49,10 +50,6 @@ func TestCapacityV2CoreBudgetAndDeadline(t *testing.T) {
 	got, stats := v2.Candidates(problem, problem.Table, 10, 1, 4, time.Time{})
 	if len(got) == 0 || !stats.Exhausted || stats.Deadline || stats.SurrogateEvaluated != 10 {
 		t.Fatalf("evaluation budget: finalists=%d stats=%+v", len(got), stats)
-	}
-	got, stats = v2.Candidates(problem, problem.Table, 1, 1, 4, time.Time{})
-	if len(got) != 1 || got[0].Start != "empty" || !stats.Exhausted || stats.Deadline || stats.SurrogateEvaluated != 1 || len(stats.SearchSteps) != 1 || stats.SearchSteps[0].Start != "empty" || stats.SearchSteps[0].K != 0 {
-		t.Fatalf("last start lost the remaining single evaluation: finalists=%+v stats=%+v", got, stats)
 	}
 	got, stats = v2.Candidates(problem, problem.Table, 500000, 1, 4, time.Now().Add(-time.Second))
 	if len(got) != 0 || !stats.Deadline || stats.Exhausted || stats.SurrogateEvaluated != 0 {
@@ -112,5 +109,61 @@ func TestCapacityExactFeedbackWorkloadPriority(t *testing.T) {
 		if a.better(&b) != (strategy == SLOPriorityWorkload) {
 			t.Fatalf("strategy=%s A=%v B=%v", strategy, a.excesses, b.excesses)
 		}
+	}
+}
+func TestCapacityV2TinyBudgetPreservesFeasibleKeep(t *testing.T) {
+	p := capacityThreeNodeSwap()
+	p.settings.PlanSearchStrategy, p.settings.PlanSearchEvaluations = "v2", 1
+	p.settings.ComparisonPeriod, p.periodSeconds = time.Second, 1
+	p.ws[0].d.SLO.TargetLatency = 500 * time.Millisecond
+	p.resolveCapacity()
+	for n := range 2 {
+		empty := p.plan(n, p.snapshot.Nodes[n].PowerMode, p.plans[n][0].instances, nil)
+		if empty == nil {
+			t.Fatal("production empty plan missing")
+		}
+		p.plans[n] = []*capacityPlan{p.plans[n][0], empty}
+	}
+	// The third node is fixed, so the empty start retains a real route while
+	// removing enough supply to violate the SLO (rather than NoRoute).
+	p.plans[2] = p.plans[2][:1]
+	keep := p.evaluate([]int{0, 0, 0}, 0)
+	if !keep.feasible {
+		t.Fatalf("keep must meet SLO: %+v", keep)
+	}
+	got, err := p.search(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.feasible || !got.keep {
+		t.Fatalf("tiny budget replaced feasible keep: %+v", got)
+	}
+}
+func TestCapacityFinalistsKeepAndCapsSharePhysicalPlacement(t *testing.T) {
+	p := capacityTwinSwap(100, 0)
+	same := *p.plans[0][0]
+	same.keep, same.record.Key = false, "cap-policy"
+	same.instances = slices.Clone(same.instances)
+	same.instances[0].MaxBatch++
+	i := same.instances[0]
+	same.option = fmt.Sprintf("%q/%v/%d/%q/%q", i.Profile.ID, i.Allocation, i.MaxWait, i.WorkloadUID, same.mode)
+	p.plans[0] = append(p.plans[0], &same)
+	problem := p.scalarProblem(p.planTable(), time.Time{})
+	tab := problem.Table
+	// Confirm production normalization, not the search grouping's keep entry.
+	if tab.Placement[0] != tab.Placement[2] {
+		t.Fatalf("keep/cap physical identity differs: placement=%v", tab.Placement)
+	}
+	candidates, _ := v2.Candidates(problem, tab, 0, 2, 0, time.Time{})
+	seen := map[string]bool{}
+	for _, c := range candidates {
+		if c.Start != "keep" {
+			continue
+		} // Endpoints are intentionally retained outside K.
+		key := tab.Placement[tab.ByPlan[0][c.Choice[0]]]
+		if seen[key] {
+			t.Fatalf("physical placement repeated in shortlist: %+v", candidates)
+		}
+		seen[key] = true
 	}
 }

@@ -43,7 +43,8 @@ func (f *v2Finalists) add(key protocol.Rank, start string) {
 	for i := range f.used {
 		same := true
 		for n, q := range key.Choice {
-			if key.Table.EntryOf[q] != key.Table.EntryOf[f.ordered[i].key.Choice[n]] {
+			old := f.ordered[i].key.Choice[n]
+			if key.Table.Placement[q] != key.Table.Placement[old] {
 				same = false
 				break
 			}
@@ -174,7 +175,7 @@ func (c *v2Search) recordStep(key protocol.Rank, previous []int, phase string, e
 }
 
 // Candidates runs deterministic keep, empty and optional price-guided starts.
-// Each start receives remaining evaluations / remaining starts; unused shares
+// Each start receives ceil(remaining evaluations / remaining starts); unused shares
 // carry forward. The deadline is shared. Endpoints remain outside K even when
 // a start exhausts its share.
 // active<=0 includes every searchable plan, including every cap variant.
@@ -232,7 +233,8 @@ func Candidates(p protocol.Problem, t *protocol.Table, evaluations, finalists, a
 			break
 		}
 		if evaluations > 0 {
-			share := (evaluations - c.stats.SurrogateEvaluated) / (len(starts) - i)
+			remaining, startsLeft := evaluations-c.stats.SurrogateEvaluated, len(starts)-i
+			share := (remaining + startsLeft - 1) / startsLeft
 			if share == 0 {
 				exhausted = true
 				continue

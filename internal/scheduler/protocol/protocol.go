@@ -53,6 +53,7 @@ type Table struct {
 	EntryOf, Index           []int
 	NodeUID, KeyParts        []string
 	Options, Modes, PlanKeys []string
+	Placement                []string // physical option identity without batch cap; shortlist only
 	// Additive surrogate profile-throughput sums, indexed [plan][workload].
 	// These heuristic inputs are independent of routing weights and tested-rate capacity witnesses.
 	RoutingRate, RetainedRoutingRate, RoutingRateServiceNanos [][]float64

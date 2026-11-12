@@ -1,6 +1,9 @@
 package serving
 
 import (
+	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
@@ -12,13 +15,27 @@ func (p *capacityPlanner) scalarProblem(t *planTable, deadline time.Time) protoc
 	table := &protocol.Table{ByPlan: t.byPlan, Index: t.index, RoutingRate: t.routingRate, RoutingRateServiceNanos: t.routingRateServiceNanos, RetainedRoutingRate: t.retainedRoutingRate,
 		Count: t.count, Keep: t.keep, Searchable: t.searchable, KeyParts: t.keyParts, Compared: p.compared,
 		Mid: t.mid, After: t.after, TPre: t.tPre, Period: p.periodSeconds, Energy: t.energy, EnergyLowerBound: t.energyLowerBound, Pruned: t.pruned,
-		NodeUID: make([]string, len(p.plans)), Options: make([]string, len(t.index)), Modes: make([]string, len(t.index)), PlanKeys: make([]string, len(t.index)), Nonnegative: t.nonnegative}
+		NodeUID: make([]string, len(p.plans)), Options: make([]string, len(t.index)), Modes: make([]string, len(t.index)), PlanKeys: make([]string, len(t.index)), Placement: make([]string, len(t.index)), Nonnegative: t.nonnegative}
 	for n := range p.plans {
 		table.NodeUID[n] = p.snapshot.Nodes[n].Node.UID
 	}
 	for q, n := range t.node {
 		plan := p.plans[n][t.index[q]]
 		table.Options[q], table.Modes[q], table.PlanKeys[q] = plan.option, plan.mode, plan.record.Key
+		if len(plan.instances) > 0 {
+			parts := make([]string, len(plan.instances))
+			for j, i := range plan.instances {
+				profile := i.ProfileID
+				if i.Profile != nil {
+					profile = i.Profile.ID
+				}
+				parts[j] = fmt.Sprintf("%q/%v/%d/%q/%q", profile, i.Allocation, i.MaxWait, i.WorkloadUID, plan.mode)
+			}
+			slices.Sort(parts)
+			table.Placement[q] = strings.Join(parts, ";")
+		} else {
+			table.Placement[q] = fmt.Sprintf("%q/%q", plan.option, plan.mode)
+		}
 	}
 	problem.Table = table
 	problem.NewState = func(choice []int) protocol.State {
