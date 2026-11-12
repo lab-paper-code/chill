@@ -239,3 +239,14 @@ control379와 같은 E5(Reject·Delay). 판정:
 | G1 | 완료. 완료·미실행 증거로 상태 갱신, span anchor 분리, idle gap은 증명된 구간의 최대 조건부 분위수. IC 19:57:50·PLC 20:04:35 회귀 | `7d70ef87`, `e3bb518a` |
 | A1 | 완료. 허용 예측·하위 이유·deferred 전환·transport 구간 기록, observation `v1alpha6`. main 실측 수용 별도 | `5fbb0c8b` |
 | F1·F2 | 보류(사용자 결정) | |
+
+## 9. control380 결과와 후속 수정 (2026-11-12)
+
+판정 원문: `ops/pools-deploy/intent/decision-fidelity-20261112/control380-verdict.md`. 요청 경로(60초 이후 IC non-on-time 0, route 왕복·maxBatchSize flip 0, exchange−native >500ms 0)는 수용한다. 제어 경로 결함 두 건을 원문으로 확정했다.
+
+| 단위 | 원인(원문) | 수정 |
+|---|---|---|
+| F380-A 승인 폐기 | Reject/excess 평가 71/72 폐기. 연속 snapshot 104쌍에서 기존 제거 필드 외에 바뀌는 값은 G1이 추가한 `nativeSpanAt`·`lastServiceEndAgeUpperNanos`뿐(각 57쌍). 승인 비교가 이 시계 파생 필드를 몰랐다 | 시계·트래픽 파생 필드를 `SchedulerInstance` 옆에서 한 번 정의하고, 분류되지 않은 새 필드를 reflection 테스트로 막는다. `AdmissionIdleUnknown`은 admission 권한 상태이므로 비교에 남긴다 |
+| F380-B window 상한 | `capacityWindow` 60s × 20 = 1,200s, ≈43.6 req/s로 행 수가 고정 상한 32,768을 넘었다. 123/178 tick이 log 경로로 떨어져 window p50 649ms(상한 안 13ms) | 고정 상한 삭제. 보유량은 rolling 시간 span으로 제한. `windowBudgetFallbacks`는 `v1alpha6` 저장 계약 때문에 0으로 남기고 다음 계약 변경 때 삭제 |
+
+열린 항목: 요청마다 새 TLS 연결(측정 계약)로 인한 gateway handshake CPU ≈0.2 core, 클러스터 evaluate p50 6.3–6.5s, profile bundle S3 timeout.
