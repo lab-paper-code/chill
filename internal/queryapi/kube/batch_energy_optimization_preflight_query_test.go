@@ -193,7 +193,7 @@ func batchEnergyOptimizationPreflightQueryPlan(t *testing.T) profilederivation.C
 		Name: "mobilenet-rknn-curve", LogicalModel: "mobilenet-v2-050",
 		DeviceClass: "orangepi-5-plus-16g",
 		NodeUID:     "node-uid", RuntimeFamily: "rknnlite", Backend: "not-applicable",
-		RuntimeImage: "registry.example/chill/runtime:v1", PowerMode: "fixed",
+		RuntimeImage: "registry.example/chill/runtime@sha256:" + strings.Repeat("a", 64), PowerMode: "fixed",
 		MetricSource: profilederivation.CurveMetricSourceContract{
 			SourceKind: "prometheus", NodeName: "orangepi", Endpoint: "http://metrics",
 			PowerMetric: "power_watts",

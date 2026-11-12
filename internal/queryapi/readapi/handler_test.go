@@ -527,7 +527,7 @@ func preflightPlan(t *testing.T) profilederivation.CurvePlan {
 	plan, err := profilederivation.NewCurvePlan(profilederivation.CurvePlanSpec{
 		Name: "mobilenet-curve", LogicalModel: "mobilenet-v2", DeviceClass: "orangepi-5-plus",
 		NodeUID: "node-uid", RuntimeFamily: "rknnlite", Backend: "not-applicable",
-		RuntimeImage: "registry.example/chill/runtime:v1", PowerMode: "fixed",
+		RuntimeImage: "registry.example/chill/runtime@sha256:" + strings.Repeat("a", 64), PowerMode: "fixed",
 		MetricSource: profilederivation.CurveMetricSourceContract{
 			SourceKind: "prometheus", NodeName: "orangepi", Endpoint: "http://metrics",
 			PowerMetric: "power_watts",
