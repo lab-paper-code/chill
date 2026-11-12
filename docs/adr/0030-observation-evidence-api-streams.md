@@ -4,6 +4,8 @@
 
 Accepted (2026-10-30) — 문서 계약 채택. 구현·승인 배포·리허설 완료 주장이 아니다.
 
+2026-11-12 A1은 요청별 판단·전송 기록을 위해 observation만 `v1alpha6`으로 한 번 전환한다([측정 계약](../design/serving/scheduler-runtime-measurement.md#a1-요청별-판단전송-근거), ADR 0019). 아래 `v1alpha5` 유지 결정은 당시 stream 추가의 범위다. 과학 원시·기존 publication은 보존하며 현재 reader의 이중 버전·변환은 추가하지 않는다.
+
 ## Context
 
 [evaluation 증거 API 계획](../plans/2026-10-28-e5-evidence-api.md) §1~6은 CHILL 내부 사실을 CHILL API로 수집하도록 바꾼다. 기존 ObservationLog의 요청·판단·정의·관리 기록에 컨테이너 자원과 Pod/observer issue 기록을 추가해야 한다. #213의 보관된 관측은 `serving/observations.v1alpha5/`에 있고, 새 API로 그 실험도 다시 읽어야 한다.

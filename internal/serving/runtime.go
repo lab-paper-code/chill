@@ -57,6 +57,7 @@ type Receipt struct {
 	ServerTiming         RequestTimings
 	Policy               AdmissionPolicy
 	Rejection            *Error
+	admissionWaits       []AdmissionWait
 }
 type callResult struct {
 	result BackendResult
@@ -81,6 +82,10 @@ type Call struct {
 	enqueuedAt, queueEndedAt                     time.Time
 	deferred                                     bool
 	admissionState                               string
+	admissionWaits                               []AdmissionWait
+	admissionWaitIdentities                      map[string]admissionWaitIdentity
+	admissionPrediction                          *AdmissionPrediction
+	deferredNanos                                *int64
 	admissionComplete                            bool
 	admissionNoExecution                         bool
 	backendContext                               context.Context
@@ -102,14 +107,19 @@ type runtimeInstance struct {
 	admissionCalls             []*Call
 	admissionAssignments       []firstfloor.RequestState
 	admissionArrivals          map[string]admissionArrival
+	admissionUnobserved        int
 	admissionUnknown           bool
+	admissionUnknownReason     string
 	admissionNormal            int
+	admissionDeferred          int
 	admissionCompleted         map[admissionRequestKey]admissionCompletion
 	admissionSourceIdleUnknown bool
 }
 type routeEntry struct {
-	instance *runtimeInstance
-	path     *ModelPath
+	instance          *runtimeInstance
+	path              *ModelPath
+	admissionEstimate AdmissionEstimate
+	admissionReason   string
 }
 
 // inputRoute distributes a Workload's samples; the raw contract is common to
@@ -300,6 +310,10 @@ func (r *Runtime) eventAt(c *Call, kind, outcome, code string, now time.Time) er
 
 func requestEvent(c *Call, kind, outcome, code string, now time.Time) RequestEvent {
 	e := RequestEvent{RequestID: c.receipt.ID, WorkloadName: c.receipt.Name, WorkloadUID: c.receipt.UID, Definition: c.identity, Kind: kind, At: now.UTC(), ReceivedAt: c.receipt.ReceivedAt, ElapsedNanos: now.Sub(c.receipt.ReceivedAt).Nanoseconds(), Assignment: c.assignment, Outcome: outcome, Error: code}
+	e.AdmissionPrediction, e.AdmissionWaits, e.DeferredNanos = c.admissionPrediction, c.admissionWaits, c.deferredNanos
+	if len(c.receipt.admissionWaits) > 0 {
+		e.AdmissionWaits = c.receipt.admissionWaits
+	}
 	if !c.receipt.Deadline.IsZero() {
 		e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
 	}
@@ -414,6 +428,8 @@ func (r *Runtime) Accept(receipt *Receipt, input *InferenceInput) (*Call, error)
 		return nil, failure("WorkloadChanged", "registration changed before acceptance")
 	}
 	if w.stopped {
+		now := time.Now()
+		receipt.admissionWaits = append(receipt.admissionWaits, AdmissionWait{At: now.UTC(), ElapsedNanos: int64(now.Sub(receipt.ReceivedAt)), State: AdmissionStopped, Reason: AdmissionStopped, Detail: w.reason})
 		return nil, failure(w.reason, "new requests are stopped: %s", w.reason)
 	}
 	if r.observationErrLocked() != nil {
@@ -575,9 +591,13 @@ func (r *Runtime) removeQueuedLocked(c *Call) {
 		c.queueEndedAt = time.Now()
 	}
 	if index := slices.Index(w.queue, c); index >= 0 {
-		if r.admissionPrepared && !c.deferred {
+		if r.admissionPrepared {
 			for _, entry := range w.route.entries {
-				entry.instance.admissionNormal--
+				if c.deferred {
+					entry.instance.admissionDeferred--
+				} else {
+					entry.instance.admissionNormal--
+				}
 			}
 		}
 		w.queue = slices.Delete(w.queue, index, index+1)
@@ -623,11 +643,14 @@ func (r *Runtime) beginAdmissionLocked(now time.Time) {
 	// single global call scan rather than one scan per candidate and executor.
 	for _, c := range r.calls {
 		i := c.instance
-		if i == nil || c.backendDone || i.admissionUnknown {
+		if i == nil || c.backendDone {
 			continue
 		}
 		if _, found := i.admissionObserved[admissionRequestKey{c.receipt.ID, c.receipt.UID, c.identity}]; !found {
-			i.admissionCalls = append(i.admissionCalls, c)
+			i.admissionUnobserved++
+			if !i.admissionUnknown {
+				i.admissionCalls = append(i.admissionCalls, c)
+			}
 		}
 	}
 	for _, i := range r.instances {
@@ -637,14 +660,17 @@ func (r *Runtime) beginAdmissionLocked(now time.Time) {
 	}
 	for _, w := range r.workloads {
 		w.admissionBlocked = false
-		normal := 0
+		normal, deferred := 0, 0
 		for _, c := range w.queue {
-			if !c.deferred {
+			if c.deferred {
+				deferred++
+			} else {
 				normal++
 			}
 		}
 		for _, entry := range w.route.entries {
 			entry.instance.admissionNormal += normal
+			entry.instance.admissionDeferred += deferred
 		}
 	}
 }
@@ -660,9 +686,11 @@ func (i *runtimeInstance) indexAdmissionSnapshot() {
 	i.admissionAssignments = i.admissionAssignments[:0]
 	clear(i.admissionObserved)
 	clear(i.admissionArrivals)
-	i.admissionNormal = 0
-	i.admissionUnknown = i.State.Native == nil || i.Profile == nil || !admissionInstanceAvailable(i)
-	if i.admissionUnknown {
+	i.admissionUnobserved = 0
+	i.admissionNormal, i.admissionDeferred = 0, 0
+	i.admissionUnknownReason = admissionUnavailableReason(i)
+	i.admissionUnknown = i.admissionUnknownReason != ""
+	if i.State.Native == nil {
 		return
 	}
 	native := i.State.Native
@@ -671,6 +699,9 @@ func (i *runtimeInstance) indexAdmissionSnapshot() {
 	}
 	for _, q := range native.Requests {
 		i.admissionObserved[admissionRequestKey{q.Context.RequestID, q.Context.WorkloadUID, q.Context.Definition}] = struct{}{}
+	}
+	if i.admissionUnknown {
+		return
 	}
 	if i.admissionArrivals == nil {
 		i.admissionArrivals = make(map[string]admissionArrival, len(native.ArrivalAgesMS))
@@ -713,8 +744,20 @@ func (i *runtimeInstance) prepareAdmissionAssignments(now time.Time) {
 	}
 	policy := i.State.Native.Metadata.Policy
 	policy.Batches = i.admissionBatches
-	i.admissionUnknown = policy.FixedBatchSize == 0 && (i.State.AdmissionIdleUnknown || i.State.ObservedAt.IsZero() || policy.ProfileID != i.Profile.ID ||
-		!admissionExecutorKnown(AdmissionInput{Policy: policy, Observed: i.State.Native.Requests, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.State.Native.LastServiceEndAgeNanos, LastServiceEndAgeUpperNanos: i.State.LastServiceEndAgeUpperNanos}))
+	i.admissionUnknownReason = ""
+	if policy.FixedBatchSize == 0 {
+		switch {
+		case i.State.AdmissionIdleUnknown:
+			i.admissionUnknownReason = AdmissionResidualUnsupported
+		case i.State.ObservedAt.IsZero():
+			i.admissionUnknownReason = AdmissionMissingObservedAt
+		case policy.ProfileID != i.Profile.ID:
+			i.admissionUnknownReason = AdmissionProfileMismatch
+		default:
+			i.admissionUnknownReason = admissionExecutorUnknownReason(AdmissionInput{Policy: policy, Observed: i.State.Native.Requests, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.State.Native.LastServiceEndAgeNanos, LastServiceEndAgeUpperNanos: i.State.LastServiceEndAgeUpperNanos})
+		}
+	}
+	i.admissionUnknown = i.admissionUnknownReason != ""
 }
 
 func (r *Runtime) endAdmissionLocked() {
@@ -789,15 +832,18 @@ func (r *Runtime) chooseLocked(route inputRoute, c *Call, now time.Time) admissi
 }
 
 func (r *Runtime) admissionMaskLocked(route inputRoute, c *Call, now time.Time) admissionChoice {
-	choice := admissionChoice{state: "NoCapacity", blocked: true}
+	choice := admissionChoice{state: AdmissionNoCapacity, blocked: true}
 	unknown, known := false, false
 	for index, entry := range route.entries {
 		i := entry.instance
 		route.available[index] = false
+		route.entries[index].admissionEstimate = AdmissionEstimate{}
+		route.entries[index].admissionReason = admissionUnavailableReason(i)
 		if !admissionInstanceAvailable(i) {
 			continue
 		}
 		if i.admissionUnknown {
+			route.entries[index].admissionReason = i.admissionUnknownReason
 			unknown = true
 			continue
 		}
@@ -806,6 +852,8 @@ func (r *Runtime) admissionMaskLocked(route inputRoute, c *Call, now time.Time) 
 			continue
 		}
 		estimate := r.estimateLocked(i, c, now)
+		route.entries[index].admissionEstimate = estimate
+		route.entries[index].admissionReason = estimate.UnknownReason
 		if estimate.FixedBatch {
 			route.available[index] = true
 			if c.deferred && choice.entry == nil {
@@ -940,7 +988,13 @@ func (r *Runtime) dispatchLocked() {
 				}
 				choice := r.chooseLocked(w.route, c, now)
 				c.admissionState = choice.state
+				r.recordAdmissionWaitLocked(c, w.route, choice, now)
 				if choice.blocked {
+					for _, pending := range w.queue {
+						if pending != c {
+							r.recordAdmissionWaitLocked(pending, w.route, choice, now)
+						}
+					}
 					w.admissionBlocked = true
 					break
 				}
@@ -949,8 +1003,14 @@ func (r *Runtime) dispatchLocked() {
 						if c.definition.Admission.Policy == AdmissionPolicyDelay {
 							for _, entry := range w.route.entries {
 								entry.instance.admissionNormal--
+								entry.instance.admissionDeferred++
 							}
 							c.deferred = true
+							elapsed := int64(now.Sub(c.receipt.ReceivedAt))
+							c.deferredNanos = &elapsed
+							for _, entry := range w.route.entries {
+								r.recordAdmissionCandidateWait(c, entry.instance, phaseDeferred, CodeDeadlineInfeasible, now)
+							}
 						} else {
 							r.finishQueuedLocked(c, admissionRejection(c, choice, now))
 							continue
@@ -967,6 +1027,7 @@ func (r *Runtime) dispatchLocked() {
 
 func (r *Runtime) assignLocked(c *Call, entry *routeEntry, assignedAt time.Time) {
 	i := entry.instance
+	r.recordAdmissionPredictionLocked(c, entry, assignedAt)
 	c.receipt.ServerTiming.Record(ServerAssigned, assignedAt.Sub(c.receipt.ReceivedAt))
 	c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: assignedAt.UTC(), ProfileBody: i.Profile}
 	// Reserve physical ownership before FIFO admission; native execution starts
@@ -976,6 +1037,7 @@ func (r *Runtime) assignLocked(c *Call, entry *routeEntry, assignedAt time.Time)
 	c.instance, c.phase = i, phaseAssigned
 	i.outstanding++
 	if r.admissionPrepared {
+		i.admissionUnobserved++
 		i.admissionCalls = append(i.admissionCalls, c)
 		i.admissionArrivals[c.receipt.UID] = i.admissionArrivals[c.receipt.UID].accepted(assignedAt)
 		q := admissionCallState(c, assignedAt)

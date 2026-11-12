@@ -44,6 +44,19 @@ Executor admission 오류는 `code`·`stage=executor`·`policy`·`remainingSLONa
 
 `executorWaitNanos`는 native enqueue부터 running 또는 큐 안 종료까지의 monotonic span이다. receipt부터의 `queueMS`와 다르며 아직 enqueue하지 않은 요청에는 없다. native 최종 기한은 HTTP 408 `RequestTimeout`으로 전달하고, active batch의 timeout 응답은 `executionComplete=false`로 물리 점유를 유지한다. SLO admission 거절은 timeout으로 분류하지 않는다.
 
+### A1 요청별 판단·전송 근거
+
+요청 `assigned`/`final`은 requestID로 허용 당시 `admissionPrediction`을 연결한다. 선택된 물리 instance/container·Node·profile, 원래 `observedAt`·native `at`·completion 보정 `nativeSpanAt`, projection의 `snapshotAgeNanos`와 물리 probe의 `observedAgeNanos`(anchor 미상은 null), 실제 ACK policy, 미관측 assignment 수, outstanding/capacity·normal/deferred 큐 수와 running batch/IPC 필드를 동결한다. prediction은 **판단 이후 완료까지의 예상 duration**이며 receipt 이후 elapsed와 혼합하지 않는다. fixed-batch 예외는 `fixedBatch=true`이고 예측을 만들지 않는다.
+
+`admissionWaits`는 candidate eligibility/queue class가 바뀔 때 시각과 입력 identity를 보존한다. 실제 실패한 검사만 `PreIPCRunning`, `ProfileMismatch`, `MissingPolicyOrBatch`, `ResidualUnsupported`, `MissingObservedAt`, `NoCapacity`, `AdmissionStopped`로 남긴다. native 입력/support 범위 밖과 최종 수명/SLO 불가능을 구분하며, 더 좁은 사유가 없는 code path에는 하위 이유를 만들지 않는다. workload 차단으로 projection을 건너뛴 나머지 대기 요청에도 같은 차단 근거를 연결한다. gateway `deferredNanos`와 native `nativeDeferredAt`은 각각 normal→deferred 최초 전이이며 서로 다른 로컬 clock이다.
+
+gateway `serverTiming.workerHTTP*`는 기존 전체 body-read exchange 안의 GetConn/GotConn, connect start/done, request write, first byte 경계를 `httptrace`로 기록한다. connect는 acquire 안에 겹치므로 더하지 않는다. native `nativeHTTP`는 handler-entry UTC anchor와 같은 native monotonic clock의 received/decode/enqueue/finished/response-write-start offset이다. response-write-start는 JSON encoding과 첫 write 직전이며 write 완료·delivery는 측정하지 않는다. gateway exchange와 native elapsed의 차이를 두 로컬 duration의 차이로만 다룬다. handler-entry 이전, 네트워크, response encoding/write와 client read 중 미분리 비용은 residual로 남기고 host간 UTC를 단방향 latency로 해석하지 않는다. sender elapsed·completion reserve·admission 동작은 바꾸지 않는다.
+
+offline `hack/evaluation/{raw,request_analysis,judgment}.py`는 client cohort와 final을 requestID로 결합하고 native supplement를 별도 출처로 보존한다. 기존 stage `judge`가 `request-analysis.json`에 요청별 `requestAnalysis`와 `nonOnTimeBreakdown`을 쓰고 compact `judgment.json`에는 breakdown만 남긴다. 직접 기록·결손·중첩을 구분하며 native supplement로 HTTP outcome/SLO 판정을 덮지 않는다. 비-on-time의 관측된 대기 이유와 transport 구간은 원인 귀속 근거이고, 서로 겹치는 항목을 배타적 인과 비율로 더하지 않는다.
+
+이 단위는 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)에 따라 observation 저장 버전만 `v1alpha5→v1alpha6`으로 한 번 전환한다. 로컬 `<directory>/v1alpha6/`와 archive `serving/observations.v1alpha6/`의 writer·reader·raw API·fetch 소비자를 함께 바꾼다. old reader/변환은 추가하지 않으며 과학 원시 archive·기존 publication은 수정/삭제/재게시하지 않는다. 이 기록 추가는 F1/F2 대표성 판정이나 live 수용 완료를 뜻하지 않는다.
+
+
 ## 같은 firstfloor fixed-batch 경로
 
 기존 ProfilingRun/frozen RunConfig/artifact preparation/observer coordinator와 `runtime/ortcpu/runner.py`의 input/warmup/window/output 반복을 재사용한다. profiling mode가 같은 IPC/runner에서 fixed K를 순차 실행하며 fake latency/energy는 필요 없다. Serving policy는 validated measured profile로 만든다.

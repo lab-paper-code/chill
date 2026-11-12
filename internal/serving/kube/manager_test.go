@@ -632,7 +632,7 @@ func TestManagerRestoreMissingDefinitionAdmissionFailsBeforeStatusWrite(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(config.Directory, "v1alpha5", "definitions.jsonl"), append(body, '\n'), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(config.Directory, "v1alpha6", "definitions.jsonl"), append(body, '\n'), 0600); err != nil {
 		t.Fatal(err)
 	}
 	log, err := observation.NewObservationLog(config)

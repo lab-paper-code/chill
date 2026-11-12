@@ -40,7 +40,7 @@ func TestAsyncWriterFailureKeepsInferenceHTTP503(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A real mkdir conflict fails the asynchronous worker after admission.
-	blocked := filepath.Join(directory, "v1alpha5", time.Now().UTC().Format("20060102T15"))
+	blocked := filepath.Join(directory, "v1alpha6", time.Now().UTC().Format("20060102T15"))
 	if err := os.WriteFile(blocked, nil, 0600); err != nil {
 		t.Fatal(err)
 	}

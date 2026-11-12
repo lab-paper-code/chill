@@ -100,7 +100,7 @@ func TestResourcesHandshakeReplacementAndRestart(t *testing.T) {
 	if err := log.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
-	files, err := filepath.Glob(filepath.Join(directory, "v1alpha5", "*", "resources.*.jsonl"))
+	files, err := filepath.Glob(filepath.Join(directory, "v1alpha6", "*", "resources.*.jsonl"))
 	if err != nil || len(files) != 1 {
 		t.Fatalf("node batch files=%v err=%v", files, err)
 	}
@@ -146,7 +146,7 @@ func TestProcessResourcesDirectorySamplingAndIdentity(t *testing.T) {
 	if err := log.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
-	files, err := filepath.Glob(filepath.Join(directory, "v1alpha5", "*", "resources.*.jsonl"))
+	files, err := filepath.Glob(filepath.Join(directory, "v1alpha6", "*", "resources.*.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}

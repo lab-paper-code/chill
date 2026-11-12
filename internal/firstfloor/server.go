@@ -18,6 +18,24 @@ type handler struct {
 	admission chan struct{}
 }
 
+// httpTimingWriter owns handler-only boundaries. Scheduler progress receives
+// immutable copies, so a canceled handler never races with active native work.
+type httpTimingWriter struct {
+	http.ResponseWriter
+	entered time.Time
+	timing  HTTPRequestTiming
+}
+
+func (w *httpTimingWriter) responseTiming(progress *HTTPRequestTiming) *HTTPRequestTiming {
+	timing := w.timing
+	if progress != nil {
+		timing = *progress
+	}
+	start := time.Since(w.entered).Nanoseconds()
+	timing.ResponseWriteStartNanos = &start
+	return &timing
+}
+
 func NewHandler(s *Scheduler) http.Handler {
 	return &handler{s, make(chan struct{}, s.config.Load().MaxQueueRequests)}
 }
@@ -78,11 +96,14 @@ func prepareInputs(names []string, inputs []Field, size int) ([][]byte, int, err
 	return data, total, nil
 }
 func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	entered := time.Now()
 	cfg := h.scheduler.config.Load()
 	base := "/v2/models/" + cfg.Model
 	if req.Method == http.MethodGet && h.serveStatus(w, req, base) {
 		return
 	}
+	timed := &httpTimingWriter{ResponseWriter: w, entered: entered, timing: HTTPRequestTiming{HandlerEnteredAt: entered.UTC()}}
+	w = timed
 	if req.URL.Path != base+"/infer" && req.URL.Path != base+"/profile" {
 		writeError(w, http.StatusNotFound, errors.New("unknown path or model"))
 		return
@@ -97,6 +118,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	received := time.Now()
+	receivedNanos := received.Sub(entered).Nanoseconds()
+	timed.timing.ReceivedNanos = &receivedNanos
 	select {
 	case h.admission <- struct{}{}:
 		defer func() { <-h.admission }()
@@ -104,7 +127,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeNativeFailure(w, http.StatusTooManyRequests, ErrorResponse{Error: ErrQueueFull.Error(), Code: CodeQueueFull, Stage: AdmissionStageExecutor, NotAdmitted: true, ExecutionComplete: true})
 		return
 	}
-	req.Body = http.MaxBytesReader(w, req.Body, int64(cfg.MaxRequestBytes))
+	// Preserve net/http's original writer hooks for oversized request bodies.
+	req.Body = http.MaxBytesReader(timed.ResponseWriter, req.Body, int64(cfg.MaxRequestBytes))
 	defer func() {
 		if err := req.Body.Close(); err != nil {
 			slog.Warn("close request body", "error", err)
@@ -112,7 +136,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}()
 	decoder := json.NewDecoder(req.Body)
 	decoder.DisallowUnknownFields()
-	r := &request{received: received}
+	r := &request{received: received, handlerEntered: entered, httpTiming: &timed.timing}
 	if req.URL.Path == base+"/profile" {
 		if !prepareProfile(w, req.Context(), decoder, cfg, r) {
 			return
@@ -152,7 +176,15 @@ func (h *handler) serveStatus(w http.ResponseWriter, req *http.Request, base str
 	}
 	return true
 }
-func decodeRequest(decoder *json.Decoder, v any) error {
+func decodeRequest(w http.ResponseWriter, decoder *json.Decoder, v any) error {
+	if timed, ok := w.(*httpTimingWriter); ok {
+		start := time.Since(timed.entered).Nanoseconds()
+		timed.timing.DecodeStartNanos = &start
+		defer func() {
+			done := time.Since(timed.entered).Nanoseconds()
+			timed.timing.DecodeDoneNanos = &done
+		}()
+	}
 	if e := decoder.Decode(v); e != nil {
 		return e
 	}
@@ -170,7 +202,7 @@ func prepareProfile(w http.ResponseWriter, ctx context.Context, decoder *json.De
 		return false
 	}
 	var p ProfileRequest
-	if e := decodeRequest(decoder, &p); e != nil {
+	if e := decodeRequest(w, decoder, &p); e != nil {
 		bodyError(w, ctx, e)
 		return false
 	}
@@ -200,7 +232,7 @@ func prepareInference(w http.ResponseWriter, ctx context.Context, decoder *json.
 		return false
 	}
 	var inference Request
-	if e := decodeRequest(decoder, &inference); e != nil {
+	if e := decodeRequest(w, decoder, &inference); e != nil {
 		bodyError(w, ctx, e)
 		return false
 	}
@@ -288,6 +320,12 @@ func bodyError(w http.ResponseWriter, ctx context.Context, e error) {
 	writeError(w, status, e)
 }
 func writeJSON(w http.ResponseWriter, v any) {
+	if timed, ok := w.(*httpTimingWriter); ok {
+		if response, ok := v.(Response); ok {
+			response.Progress.NativeHTTP = timed.responseTiming(response.Progress.NativeHTTP)
+			v = response
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Warn("write JSON response", "error", err)
@@ -314,6 +352,15 @@ func writeFailure(w http.ResponseWriter, status int, e error, complete bool, p *
 	writeNativeFailure(w, status, failure)
 }
 func writeNativeFailure(w http.ResponseWriter, status int, failure ErrorResponse) {
+	if timed, ok := w.(*httpTimingWriter); ok {
+		if failure.Progress != nil {
+			p := *failure.Progress
+			p.NativeHTTP = timed.responseTiming(p.NativeHTTP)
+			failure.Progress = &p
+		} else {
+			failure.NativeHTTP = timed.responseTiming(nil)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(failure); err != nil {

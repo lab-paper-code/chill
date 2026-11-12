@@ -82,17 +82,58 @@ type Response struct {
 	Progress          Progress `json:"progress"`
 	ExecutionComplete bool     `json:"executionComplete"`
 }
+
+// HTTPRequestTiming records native-local monotonic offsets from handler entry.
+// HandlerEnteredAt is a UTC correlation anchor, not a cross-host latency clock.
+// ReceivedNanos marks the unchanged NativeElapsedMS origin (after readiness).
+// ResponseWriteStartNanos precedes JSON encoding and the first response write;
+// it does not measure encoding, socket write completion, or delivery.
+type HTTPRequestTiming struct {
+	HandlerEnteredAt        time.Time `json:"handlerEnteredAt"`
+	ReceivedNanos           *int64    `json:"receivedNanos,omitempty"`
+	DecodeStartNanos        *int64    `json:"decodeStartNanos,omitempty"`
+	DecodeDoneNanos         *int64    `json:"decodeDoneNanos,omitempty"`
+	EnqueueNanos            *int64    `json:"enqueueNanos,omitempty"`
+	FinishedNanos           *int64    `json:"finishedNanos,omitempty"`
+	ResponseWriteStartNanos *int64    `json:"responseWriteStartNanos,omitempty"`
+}
+
+// Merge fills missing boundaries from the same native handler observation.
+// Existing observations, including zero offsets, always keep their first value.
+// Boundary pointers are immutable once published in progress or a response.
+func (t *HTTPRequestTiming) Merge(other HTTPRequestTiming) {
+	if !t.HandlerEnteredAt.Equal(other.HandlerEnteredAt) {
+		return
+	}
+	for _, field := range [...]struct {
+		target **int64
+		source *int64
+	}{
+		{&t.ReceivedNanos, other.ReceivedNanos},
+		{&t.DecodeStartNanos, other.DecodeStartNanos},
+		{&t.DecodeDoneNanos, other.DecodeDoneNanos},
+		{&t.EnqueueNanos, other.EnqueueNanos},
+		{&t.FinishedNanos, other.FinishedNanos},
+		{&t.ResponseWriteStartNanos, other.ResponseWriteStartNanos},
+	} {
+		if *field.target == nil {
+			*field.target = field.source
+		}
+	}
+}
+
 type ErrorResponse struct {
-	Error             string    `json:"error"`
-	FailureReason     string    `json:"failureReason,omitempty"`
-	ExecutionComplete bool      `json:"executionComplete"`
-	Progress          *Progress `json:"progress,omitempty"`
-	Code              string    `json:"code,omitempty"`
-	Stage             string    `json:"stage,omitempty"`
-	Policy            string    `json:"policy,omitempty"`
-	RemainingSLONanos *int64    `json:"remainingSLONanos,omitempty"`
-	ExecutorWaitNanos *int64    `json:"executorWaitNanos,omitempty"`
-	NotAdmitted       bool      `json:"notAdmitted,omitempty"`
+	Error             string             `json:"error"`
+	FailureReason     string             `json:"failureReason,omitempty"`
+	ExecutionComplete bool               `json:"executionComplete"`
+	Progress          *Progress          `json:"progress,omitempty"`
+	Code              string             `json:"code,omitempty"`
+	Stage             string             `json:"stage,omitempty"`
+	Policy            string             `json:"policy,omitempty"`
+	RemainingSLONanos *int64             `json:"remainingSLONanos,omitempty"`
+	ExecutorWaitNanos *int64             `json:"executorWaitNanos,omitempty"`
+	NotAdmitted       bool               `json:"notAdmitted,omitempty"`
+	NativeHTTP        *HTTPRequestTiming `json:"nativeHTTP,omitempty"`
 }
 type BatchProfile struct {
 	Size           int                  `json:"size"`
@@ -147,27 +188,29 @@ type Config struct {
 	Policy              Policy            `json:"policy"`
 }
 type Progress struct {
-	RequestID         string         `json:"requestID"`
-	WorkloadUID       string         `json:"workloadUID"`
-	Definition        string         `json:"definition"`
-	Phase             string         `json:"phase"`
-	At                time.Time      `json:"at"`
-	BatchID           uint64         `json:"batchID,omitempty"`
-	BatchSize         int            `json:"batchSize,omitempty"`
-	ProfileID         string         `json:"profileID,omitempty"`
-	DecisionID        string         `json:"decisionID,omitempty"`
-	QueueMS           float64        `json:"queueMS"`
-	ExecutorWaitNanos *int64         `json:"executorWaitNanos,omitempty"`
-	ServiceMS         float64        `json:"serviceMS"`
-	BackendMS         float64        `json:"backendMS"`
-	PreprocessMS      float64        `json:"preprocessMS"`
-	PostprocessMS     float64        `json:"postprocessMS"`
-	FirstTokenMS      float64        `json:"firstTokenMS,omitempty"` // generative paths only
-	Units             int            `json:"units,omitempty"`        // successful requests only
-	NativeElapsedMS   float64        `json:"nativeElapsedMS"`
-	ExecutionComplete bool           `json:"executionComplete"`
-	Outcome           string         `json:"outcome,omitempty"`
-	ServiceSample     *ServiceSample `json:"serviceSample,omitempty"`
+	RequestID         string             `json:"requestID"`
+	WorkloadUID       string             `json:"workloadUID"`
+	Definition        string             `json:"definition"`
+	Phase             string             `json:"phase"`
+	At                time.Time          `json:"at"`
+	BatchID           uint64             `json:"batchID,omitempty"`
+	BatchSize         int                `json:"batchSize,omitempty"`
+	ProfileID         string             `json:"profileID,omitempty"`
+	DecisionID        string             `json:"decisionID,omitempty"`
+	QueueMS           float64            `json:"queueMS"`
+	ExecutorWaitNanos *int64             `json:"executorWaitNanos,omitempty"`
+	ServiceMS         float64            `json:"serviceMS"`
+	BackendMS         float64            `json:"backendMS"`
+	PreprocessMS      float64            `json:"preprocessMS"`
+	PostprocessMS     float64            `json:"postprocessMS"`
+	FirstTokenMS      float64            `json:"firstTokenMS,omitempty"` // generative paths only
+	Units             int                `json:"units,omitempty"`        // successful requests only
+	NativeElapsedMS   float64            `json:"nativeElapsedMS"`
+	ExecutionComplete bool               `json:"executionComplete"`
+	Outcome           string             `json:"outcome,omitempty"`
+	ServiceSample     *ServiceSample     `json:"serviceSample,omitempty"`
+	NativeHTTP        *HTTPRequestTiming `json:"nativeHTTP,omitempty"`
+	NativeDeferredAt  *time.Time         `json:"nativeDeferredAt,omitempty"`
 }
 type RuntimeMetadata struct {
 	Runtime        string   `json:"runtime"`

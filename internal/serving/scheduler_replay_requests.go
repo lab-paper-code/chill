@@ -419,7 +419,7 @@ func (s *schedulerReplayState) chooseAdmission(ctx context.Context, r *scheduler
 	if known {
 		return -1, CodeDeadlineInfeasible
 	}
-	return -1, "NoCapacity"
+	return -1, AdmissionNoCapacity
 }
 
 func (s *schedulerReplayState) estimateAdmission(i *schedulerReplayInstance, r *schedulerReplayRequest) AdmissionEstimate {

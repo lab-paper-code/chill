@@ -146,16 +146,184 @@ def request_class(row, final, timing, target_ns):
     return 'incomplete', None, None
 
 
-def request_metrics(rows, finals, target_ns, offered, duration_ns, start_ns):
+ADMISSION_WAIT_REASONS = (
+    'PreIPCRunning', 'ProfileMismatch', 'MissingPolicyOrBatch', 'ResidualUnsupported',
+    'MissingObservedAt', 'NoCapacity', 'AdmissionStopped', 'DeadlineInfeasible')
+DIAGNOSTIC_FIELDS = (
+    'admissionPrediction', 'admissionWaits', 'deferredNanos', 'nativeDeferredAt',
+    'nativeHTTP', 'serverTiming', 'gatewayWaitNanos', 'executorWaitNanos',
+    'nativeElapsedMS', 'nativeOutcome', 'nativeError', 'error', 'rejection')
+
+
+def transport_accounting(facts):
+    """Subtract only same-clock offsets; native spans overlap gateway exchange."""
+    timing = facts['serverTiming']
+    gateway = {item['stage']: item.get('elapsedNanos') for item in timing
+               if isinstance(item, dict) and isinstance(item.get('stage'), str)} if isinstance(timing, list) else {}
+    def span(offsets, left, right):
+        a, b = offsets.get(left), offsets.get(right)
+        return b - a if type(a) is int and type(b) is int and 0 <= a <= b else None
+    stages = ('workerHTTPStart', 'workerHTTPGetConn', 'workerHTTPGotConn',
+              'workerHTTPWroteRequest', 'workerHTTPFirstResponseByte', 'workerHTTPDone')
+    segments = {left + 'To' + right[0].upper() + right[1:]: span(gateway, left, right)
+                for left, right in zip(stages, stages[1:])}
+    total = span(gateway, stages[0], stages[-1])
+    offsets = [gateway.get(stage) for stage in stages]
+    present = [value for value in offsets if type(value) is int]
+    valid = (total is not None and
+             all(value is None or type(value) is int and offsets[0] <= value <= offsets[-1] for value in offsets) and
+             all(a <= b for a, b in zip(present, present[1:])))
+    if not valid:
+        segments = dict.fromkeys(segments)
+    measured = sum(value for value in segments.values() if value is not None)
+    native = facts['nativeHTTP'] if isinstance(facts['nativeHTTP'], dict) else {}
+    elapsed_ms = facts.get('nativeElapsedMS')
+    native_elapsed = elapsed_ms * 1_000_000 if type(elapsed_ms) in (int, float) and math.isfinite(elapsed_ms) else None
+    prefix = native.get('receivedNanos')
+    suffix = span(native, 'finishedNanos', 'responseWriteStartNanos')
+    outside = total - native_elapsed if total is not None and native_elapsed is not None else None
+    residual = outside - prefix - suffix if outside is not None and type(prefix) is int and suffix is not None else None
+    return {'gatewayExchangeNanos': total, 'gatewaySegmentsNanos': segments,
+            'gatewayUnmeasuredNanos': total - measured if total is not None else None,
+            'exchangeOutsideNativeNanos': outside,
+            'outsideNativeUnmeasuredNanos': residual,
+            'connectDiagnosticNanos': span(gateway, 'workerHTTPConnectStart', 'workerHTTPConnectDone'),
+            'nativeSegmentsNanos': {
+                'decode': span(native, 'decodeStartNanos', 'decodeDoneNanos'),
+                'decodeToEnqueue': span(native, 'decodeDoneNanos', 'enqueueNanos'),
+                'handlerEntryToReceived': native.get('receivedNanos'),
+                'enqueueToFinished': span(native, 'enqueueNanos', 'finishedNanos'),
+                'finishedToResponseWriteStart': span(native, 'finishedNanos', 'responseWriteStartNanos')},
+            'meaning': 'Gateway segments are exclusive same-clock spans. Connect overlaps acquisition. Native spans use a separate local clock and overlap gateway exchange; response-write completion and one-way network latency are unmeasured.'}
+
+
+def request_diagnostics(final, native_records):
+    """Retain source facts; supplements never replace HTTP outcome or completion."""
+    final = final or {}
+    facts = {key: final.get(key) for key in DIAGNOSTIC_FIELDS}
+    sources = {key: 'final' if facts[key] is not None else 'missing' for key in facts}
+    for key in ('nativeDeferredAt', 'nativeHTTP'):
+        values = [record['row'][key] for record in native_records if record['row'].get(key) is not None]
+        if facts[key] is not None:
+            values.insert(0, facts[key])
+        if not values:
+            continue
+        if key == 'nativeHTTP' and all(isinstance(value, dict) for value in values):
+            merged, conflict = {}, False
+            for value in values:
+                for field, reached in value.items():
+                    if reached is not None:
+                        conflict |= field in merged and merged[field] != reached
+                        merged.setdefault(field, reached)
+            if not conflict:
+                facts[key] = merged
+                if sources[key] == 'missing':
+                    sources[key] = 'nativeSupplement'
+                elif merged != final[key]:
+                    sources[key] = 'final+nativeSupplement'
+                continue
+        elif all(value == values[0] for value in values):
+            facts[key] = values[0]
+            if sources[key] == 'missing':
+                sources[key] = 'nativeSupplement'
+            continue
+        facts[key], sources[key] = None, 'conflictingNativeSupplements'
+    facts['fieldSources'] = sources
+    facts['nativeSupplements'] = [
+        {'ref': record['ref'], **{key: record['row'].get(key) for key in DIAGNOSTIC_FIELDS},
+         'nativeOutcome': record['row'].get('nativeOutcome')} for record in native_records]
+    facts['transportAccounting'] = transport_accounting(facts)
+    return facts
+
+
+def non_on_time_breakdown(requests, missing_rows):
+    """Counts overlap. Observed waits and timings do not prove a failure cause."""
+    selected = [row for row in requests if row['outcomeClass'] != 'onTime']
+    reasons = dict.fromkeys(ADMISSION_WAIT_REASONS, 0)
+    reasons.update(unknown=0, missing=missing_rows, none=0)
+    missing = {key: missing_rows for key in DIAGNOSTIC_FIELDS}
+    sources = {}
+    durations = {}
+    states = {}
+    predictions = {'withinRemainingSLO': 0, 'exceedsRemainingSLO': 0, 'unknown': missing_rows}
+    rejections, native_outcomes, errors = {}, {}, {}
+    for row in selected:
+        facts = row['facts']
+        for key in missing:
+            if facts[key] is None:
+                missing[key] += 1
+        waits = facts['admissionWaits']
+        observed = {wait.get('reason') for wait in waits if isinstance(wait, dict)} if isinstance(waits, list) else set()
+        if not observed:
+            reasons['none' if waits == [] else 'missing'] += 1
+        for reason in observed:
+            reasons[reason if reason in ADMISSION_WAIT_REASONS else 'unknown'] += 1
+        for state in {wait.get('state', 'unknown') for wait in waits if isinstance(wait, dict)} if isinstance(waits, list) else ():
+            states[state] = states.get(state, 0) + 1
+        prediction = facts['admissionPrediction']
+        predicted = prediction.get('predictedCompletionNanos') if isinstance(prediction, dict) else None
+        remaining = prediction.get('remainingSLONanos') if isinstance(prediction, dict) else None
+        if type(predicted) is int and type(remaining) is int:
+            predictions['withinRemainingSLO' if predicted <= remaining else 'exceedsRemainingSLO'] += 1
+            durations.setdefault('predictedCompletionNanos', []).append(predicted)
+            durations.setdefault('remainingSLONanos', []).append(remaining)
+        else:
+            predictions['unknown'] += 1
+        rejection = facts['rejection']
+        if isinstance(rejection, dict):
+            key = '/'.join(str(rejection.get(field, 'unknown')) for field in ('stage', 'policy', 'code'))
+            rejections[key] = rejections.get(key, 0) + 1
+        for field, counts in (('nativeOutcome', native_outcomes), ('error', errors)):
+            value = facts[field]
+            if isinstance(value, str) and value:
+                counts[value] = counts.get(value, 0) + 1
+        for key, source in facts['fieldSources'].items():
+            counts = sources.setdefault(key, {})
+            counts[source] = counts.get(source, 0) + 1
+        for key in ('deferredNanos', 'gatewayWaitNanos', 'executorWaitNanos'):
+            value = facts[key]
+            if type(value) is int and value >= 0:
+                durations.setdefault(key, []).append(value)
+        for key in ('nativeHTTP', 'serverTiming'):
+            value = facts[key]
+            if isinstance(value, dict):
+                for field, elapsed in value.items():
+                    if field.endswith(('Nanos', 'NS')) and type(elapsed) is int and elapsed >= 0:
+                        durations.setdefault(key + '.' + field, []).append(elapsed)
+        accounting = facts['transportAccounting']
+        for key in ('gatewayExchangeNanos', 'gatewayUnmeasuredNanos', 'connectDiagnosticNanos',
+                    'exchangeOutsideNativeNanos', 'outsideNativeUnmeasuredNanos'):
+            if accounting[key] is not None:
+                durations.setdefault(key, []).append(accounting[key])
+        for group in ('gatewaySegmentsNanos', 'nativeSegmentsNanos'):
+            for key, value in accounting[group].items():
+                if value is not None:
+                    durations.setdefault(group + '.' + key, []).append(value)
+    return {'requests': len(selected) + missing_rows,
+            'directFacts': {'admissionWaitReasons': reasons, 'missingFields': missing,
+                            'admissionWaitStates': states, 'admissionPrediction': predictions,
+                            'rejections': rejections, 'nativeOutcomes': native_outcomes, 'errors': errors,
+                            'fieldSources': sources, 'timingNS': {key: stats(values) for key, values in sorted(durations.items())}},
+            'meaning': 'Wait reasons and recorded timings are overlapping direct observations, not exclusive root causes. Missing evidence remains unknown. Native supplements never change HTTP/client classifications. Connect/native spans overlap gateway segments and must not be summed; residual retains unmeasured transport/write/read costs.'}
+
+
+def request_metrics(rows, finals, target_ns, offered, duration_ns, start_ns, native_records=None, received_at_ns=None):
     """Reduce an arrival cohort, including its drain completions."""
     classes = dict.fromkeys(('onTime', 'late', 'rejected', 'timeout', 'failed', 'incomplete'), 0)
     causes = dict.fromkeys(('serverFinalDeadline', 'clientSocket'), 0)
     waits = {'gateway': [], 'executor': []}
     groups = {}
+    requests = []
+    native_records, received_at_ns = native_records or {}, received_at_ns or {}
     for row in rows:
-        final = finals.get(row.get('requestID'))
-        timing = request_timing(row, final, None, start_ns)
+        rid = row.get('requestID')
+        final = finals.get(rid)
+        timing = request_timing(row, final, received_at_ns.get(rid), start_ns)
         outcome, cause, metadata = request_class(row, final, timing, target_ns)
+        requests.append({'requestID': rid, 'requestIndex': row.get('requestIndex'),
+                         'outcomeClass': outcome, 'timeoutCause': cause,
+                         'timing': timing,
+                         'facts': request_diagnostics(final, native_records.get(rid, []))})
         classes[outcome] += 1
         if cause:
             causes[cause] += 1
@@ -172,6 +340,8 @@ def request_metrics(rows, finals, target_ns, offered, duration_ns, start_ns):
                     group[stage].append(value)
     classes['incomplete'] += offered - len(rows)
     return {'outcomeClasses': classes, 'timeoutCauses': causes,
+            'requestAnalysis': requests,
+            'nonOnTimeBreakdown': non_on_time_breakdown(requests, offered - len(rows)),
             'onTimeSuccessRate': classes['onTime'] / offered if offered else None,
             'loadLengthSeconds': duration_ns / 1e9,
             'goodputRequestsPerSecond': classes['onTime'] / (duration_ns / 1e9) if duration_ns else None,

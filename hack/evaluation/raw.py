@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PRIVATE_OPERATIONAL_ONLY: read archived v1alpha5 facts, never live APIs.
+"""PRIVATE_OPERATIONAL_ONLY: read archived v1alpha6 facts, never live APIs.
 
 RequestRow follows internal/serving/observation_log*.go.
 HTTP finals are returned verbatim; late native records never amend them. All refs
@@ -197,7 +197,7 @@ def _digest(row):
 
 def _new_request():
     return {'rows': 0, 'kinds': Counter(), 'refs': {}, 'finals': {},
-            'received': {}, 'nativeOutcomes': Counter(), 'nativeRefs': {}}
+            'received': {}, 'nativeOutcomes': Counter(), 'nativeRefs': {}, 'nativeRecords': []}
 
 
 def _population(index, start, end, errors):
@@ -297,6 +297,7 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *
         request['kinds'][kind] += 1
         request['refs'].setdefault(kind, ref)
         if kind == 'native':
+            request['nativeRecords'].append({'row': row, 'ref': ref})
             outcome = row.get('nativeOutcome')
             if outcome is not None and not isinstance(outcome, str):
                 _error(uid_errors[uid], 'nativeOutcome is not a string', ref)
@@ -395,6 +396,8 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *
                    'completenessMeaning': 'complete covers archive provenance, parsing and absence of overlapping observation gaps; missing HTTP finals remain separate unsettled evidence.',
                    'timingMeaning': 'HTTP final fields are unmodified; native supplements are separate physical facts, never replacements.'}
         results[uid] = {'finals': finals, 'finalRefs': final_refs, 'summary': summary,
+                        'nativeRecords': {rid: request['nativeRecords'] for rid, request in groups[uid].items()
+                                          if request['nativeRecords']},
                         'identities': [{'workloadUID': uid, 'definitionID': value} for value in sorted(identities[uid], key=lambda value: value or '')],
                         'receivedAtNS': received_at_ns, 'sources': sources, 'errors': own_errors}
     _REQUEST_CACHE = key, wanted, results, sources, errors, index.get('_observedAbsences', []), gaps

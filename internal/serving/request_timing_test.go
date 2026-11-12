@@ -106,3 +106,59 @@ func TestRequestTimingAssignedZeroDoesNotUseUTCBackfill(t *testing.T) {
 		t.Fatalf("exact assignment zero replaced by UTC difference: %+v", row)
 	}
 }
+
+func TestRequestTimingsHTTPExclusiveAccountingAndResidual(t *testing.T) {
+	for _, missingWrite := range []bool{false, true} {
+		var timing RequestTimings
+		for _, point := range []struct {
+			stage ServerStage
+			at    time.Duration
+		}{
+			{ServerWorkerHTTPStart, 10},
+			{ServerWorkerHTTPGetConn, 12},
+			{ServerWorkerHTTPConnectStart, 14},
+			{ServerWorkerHTTPConnectDone, 20},
+			{ServerWorkerHTTPGotConn, 24},
+			{ServerWorkerHTTPWroteRequest, 30},
+			{ServerWorkerHTTPFirstResponseByte, 80},
+			{ServerWorkerHTTPDone, 100},
+		} {
+			if missingWrite && point.stage == ServerWorkerHTTPWroteRequest {
+				continue
+			}
+			timing.Record(point.stage, point.at)
+		}
+		body, err := json.Marshal(timing)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded RequestTimings
+		if err := json.Unmarshal(body, &decoded); err != nil || decoded != timing {
+			t.Fatalf("HTTP stages above uint32 mask lost in JSON: %s, %v", body, err)
+		}
+		// Connect is nested inside acquire, never an additional exclusive piece.
+		var measured time.Duration
+		for _, pair := range [][2]ServerStage{
+			{ServerWorkerHTTPGetConn, ServerWorkerHTTPGotConn},
+			{ServerWorkerHTTPGotConn, ServerWorkerHTTPWroteRequest},
+			{ServerWorkerHTTPWroteRequest, ServerWorkerHTTPFirstResponseByte},
+			{ServerWorkerHTTPFirstResponseByte, ServerWorkerHTTPDone},
+		} {
+			start, hasStart := decoded.Elapsed(pair[0])
+			end, hasEnd := decoded.Elapsed(pair[1])
+			if hasStart && hasEnd {
+				measured += end - start
+			}
+		}
+		start, _ := decoded.Elapsed(ServerWorkerHTTPStart)
+		end, _ := decoded.Elapsed(ServerWorkerHTTPDone)
+		unmeasuredResidual := end - start - measured
+		expectedResidual := time.Duration(2)
+		if missingWrite {
+			expectedResidual = 58
+		}
+		if unmeasuredResidual != expectedResidual || measured+unmeasuredResidual != end-start {
+			t.Fatalf("exchange pieces overlap or hide residual: measured=%d residual=%d span=%d", measured, unmeasuredResidual, end-start)
+		}
+	}
+}

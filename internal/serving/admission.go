@@ -31,6 +31,8 @@ type AdmissionEstimate struct {
 	Completion     time.Duration
 	OutsideSupport bool
 	Known          bool
+	// UnknownReason identifies the actual failed input/support check.
+	UnknownReason string
 	// Infeasible proves a final-lifetime miss with otherwise known inputs.
 	// Completion is zero when lifetime expires before any batch can be selected.
 	Infeasible bool
@@ -50,41 +52,50 @@ type admissionScratch struct {
 // Executor-level failures do not depend on a candidate's percentile. Check
 // these once per dispatch, including whether any running service can survive.
 func admissionExecutorKnown(in AdmissionInput) bool {
+	return admissionExecutorUnknownReason(in) == ""
+}
+
+func admissionExecutorUnknownReason(in AdmissionInput) string {
 	if in.Policy.FixedBatchSize > 0 {
-		return true
+		return ""
 	}
 	if in.SnapshotAge < 0 || !admissionPolicyKnown(in.Policy, in.LastServiceEndAgeNanos) {
-		return false
+		return AdmissionMissingPolicyOrBatch
 	}
 	if upper := in.LastServiceEndAgeUpperNanos; upper != nil && (in.LastServiceEndAgeNanos == nil || *upper < *in.LastServiceEndAgeNanos) {
-		return false
+		return AdmissionResidualUnsupported
 	}
 	for _, q := range in.Observed {
 		if q.Phase == phaseFinished || q.Phase == phaseReturning || admissionLifetimeExpired(q) {
 			continue
 		}
 		if !admissionRequestKnown(q) {
-			return false
+			return AdmissionMissingPolicyOrBatch
 		}
 	}
 	running, batch, ok := admissionRunningBatch(in.Policy, in.Observed)
 	if !ok {
-		return false
+		for _, q := range in.Observed {
+			if q.Phase == phaseRunning && q.ExchangeElapsedNanos == nil {
+				return AdmissionPreIPCRunning
+			}
+		}
+		return AdmissionMissingPolicyOrBatch
 	}
 	if running == nil {
 		if !admissionIdleSupported(in.Policy, in.LastServiceEndAgeNanos) {
-			return false
+			return AdmissionResidualUnsupported
 		}
 	} else if !batch.Distribution.SupportsResidual(running.PrecedingIdleNanos, *running.ExchangeElapsedNanos) ||
 		in.RunningGapUpperNanos != nil && (running.PrecedingIdleNanos == nil || *in.RunningGapUpperNanos < *running.PrecedingIdleNanos) {
-		return false
+		return AdmissionResidualUnsupported
 	}
 	for _, q := range in.Assignments {
 		if !admissionLifetimeExpired(q) && !admissionRequestKnown(q) {
-			return false
+			return AdmissionMissingPolicyOrBatch
 		}
 	}
-	return true
+	return ""
 }
 
 func admissionPolicyKnown(p firstfloor.Policy, idle *int64) bool {
@@ -175,8 +186,8 @@ func admissionRunningResidual(p firstfloor.Policy, states []firstfloor.RequestSt
 // Missing state or empirical support leaves admission unknown, never unchecked.
 func EstimateAdmission(in AdmissionInput) AdmissionEstimate {
 	var scratch admissionScratch
-	if !admissionExecutorKnown(in) {
-		return AdmissionEstimate{}
+	if reason := admissionExecutorUnknownReason(in); reason != "" {
+		return AdmissionEstimate{UnknownReason: reason}
 	}
 	return projectAdmission(in, &scratch)
 }
@@ -188,7 +199,7 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 	if in.Policy.FixedBatchSize > 0 {
 		return AdmissionEstimate{FixedBatch: true}
 	}
-	unknown := AdmissionEstimate{}
+	unknown := AdmissionEstimate{UnknownReason: AdmissionMissingPolicyOrBatch}
 	if !admissionRequestKnown(in.Candidate) {
 		return unknown
 	}
@@ -212,7 +223,7 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 	}
 	activeRemaining, outsideSupport, ok := admissionRunningResidual(in.Policy, states, in.Candidate.Context.SLO.Percentile, in.RunningGapUpperNanos, &scratch.quantiles)
 	if !ok {
-		return unknown
+		return AdmissionEstimate{UnknownReason: AdmissionResidualUnsupported}
 	}
 	age, clock := int64(in.SnapshotAge), int64(0)
 	inserted := false
@@ -274,9 +285,9 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 			clock += step
 			continue
 		}
-		service, candidate, outside, valid := admissionProjectBatch(in, states, choice, idle, upper, &scratch.quantiles)
+		service, candidate, outside, valid, reason := admissionProjectBatch(in, states, choice, idle, upper, &scratch.quantiles)
 		if !valid {
-			return unknown
+			return AdmissionEstimate{UnknownReason: reason}
 		}
 		outsideSupport = outsideSupport || outside
 		if candidate {
@@ -288,7 +299,7 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 		}
 		activeRemaining = service
 	}
-	return unknown
+	return AdmissionEstimate{}
 }
 
 func (s *admissionScratch) reset(size int) {
@@ -411,14 +422,14 @@ func admissionTransition(states []firstfloor.RequestState, choice firstfloor.Bat
 	return slices.Delete(states, index, index+1), true
 }
 
-func admissionProjectBatch(in AdmissionInput, states []firstfloor.RequestState, choice firstfloor.BatchChoice, idle, upper *int64, quantiles *firstfloor.QuantileCache) (int64, bool, bool, bool) {
+func admissionProjectBatch(in AdmissionInput, states []firstfloor.RequestState, choice firstfloor.BatchChoice, idle, upper *int64, quantiles *firstfloor.QuantileCache) (int64, bool, bool, bool, string) {
 	b := admissionBatch(in.Policy, choice.Size)
 	if b == nil || choice.Size <= 0 {
-		return 0, false, false, false
+		return 0, false, false, false, AdmissionMissingPolicyOrBatch
 	}
 	service, support, ok := admissionQuantile(quantiles, b.Distribution, idle, upper, in.Candidate.Context.SLO.Percentile)
 	if !ok {
-		return 0, false, false, false
+		return 0, false, false, false, AdmissionResidualUnsupported
 	}
 	selected, candidate, deferred := 0, false, false
 	for _, q := range states {
@@ -435,7 +446,11 @@ func admissionProjectBatch(in AdmissionInput, states []firstfloor.RequestState, 
 			candidate = candidate || q.Context.RequestID == in.Candidate.Context.RequestID
 		}
 	}
-	return service, candidate, support.OutsideSupport, selected == choice.Size
+	reason := ""
+	if selected != choice.Size {
+		reason = AdmissionMissingPolicyOrBatch
+	}
+	return service, candidate, support.OutsideSupport, selected == choice.Size, reason
 }
 
 func admissionRequestKnown(q firstfloor.RequestState) bool {

@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	observationVersion           = "v1alpha5"
+	observationVersion           = "v1alpha6"
 	observationRequestStream     = "requests"
 	observationSchedulerStream   = "scheduler"
 	observationManagementStream  = "management"

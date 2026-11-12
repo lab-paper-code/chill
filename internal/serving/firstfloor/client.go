@@ -10,9 +10,11 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
@@ -187,7 +189,7 @@ func (c *Client) Probe(ctx context.Context, spec Spec) (serving.ReadyInstance, e
 	return result, nil
 }
 func progress(p native.Progress) serving.BackendProgress {
-	return serving.BackendProgress{RequestID: p.RequestID, WorkloadUID: p.WorkloadUID, Definition: p.Definition, Phase: p.Phase, At: p.At, Outcome: p.Outcome, BatchID: p.BatchID, BatchSize: p.BatchSize, ProfileID: p.ProfileID, DecisionID: p.DecisionID, QueueMS: p.QueueMS, ExecutorWaitNanos: p.ExecutorWaitNanos, ServiceMS: p.ServiceMS, BackendMS: p.BackendMS, PreprocessMS: p.PreprocessMS, PostprocessMS: p.PostprocessMS, FirstTokenMS: p.FirstTokenMS, Units: p.Units, NativeElapsedMS: p.NativeElapsedMS, ExecutionComplete: p.ExecutionComplete, ServiceSample: p.ServiceSample}
+	return serving.BackendProgress{RequestID: p.RequestID, WorkloadUID: p.WorkloadUID, Definition: p.Definition, Phase: p.Phase, At: p.At, Outcome: p.Outcome, BatchID: p.BatchID, BatchSize: p.BatchSize, ProfileID: p.ProfileID, DecisionID: p.DecisionID, QueueMS: p.QueueMS, ExecutorWaitNanos: p.ExecutorWaitNanos, ServiceMS: p.ServiceMS, BackendMS: p.BackendMS, PreprocessMS: p.PreprocessMS, PostprocessMS: p.PostprocessMS, FirstTokenMS: p.FirstTokenMS, Units: p.Units, NativeElapsedMS: p.NativeElapsedMS, ExecutionComplete: p.ExecutionComplete, ServiceSample: p.ServiceSample, NativeHTTP: p.NativeHTTP, NativeDeferredAt: p.NativeDeferredAt}
 }
 func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (serving.BackendResult, error) {
 	if d.Definition == nil || d.Input == nil || d.RequestID == "" || spec.Profile == nil {
@@ -209,11 +211,34 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	if err != nil {
 		return serving.BackendResult{Finished: true}, err
 	}
+	// Hooks can run concurrently, including after Do fails. Keep their mutable
+	// storage separate from the returned value and freeze it under the same lock.
+	var traceMu sync.Mutex
+	var traceTiming serving.RequestTimings
+	var traceClosed bool
+	mark := func(stage serving.ServerStage) {
+		traceMu.Lock()
+		if !traceClosed {
+			traceTiming.Mark(stage, d.ReceivedAt)
+		}
+		traceMu.Unlock()
+	}
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GetConn:              func(string) { mark(serving.ServerWorkerHTTPGetConn) },
+		GotConn:              func(httptrace.GotConnInfo) { mark(serving.ServerWorkerHTTPGotConn) },
+		ConnectStart:         func(string, string) { mark(serving.ServerWorkerHTTPConnectStart) },
+		ConnectDone:          func(string, string, error) { mark(serving.ServerWorkerHTTPConnectDone) },
+		WroteRequest:         func(httptrace.WroteRequestInfo) { mark(serving.ServerWorkerHTTPWroteRequest) },
+		GotFirstResponseByte: func() { mark(serving.ServerWorkerHTTPFirstResponseByte) },
+	})
 	c.Diagnostics.Mark(serving.DiagnosticClientExchange, serving.DiagnosticBegin, d.RequestID, 0)
 	started := time.Now()
 	body, status, err := c.request(ctx, http.MethodPost, modelURL(spec, "infer"), raw, native.MaxFrameBytes)
+	traceMu.Lock()
 	finished := time.Now()
-	result := serving.BackendResult{Body: body, ContentType: "application/json", StatusCode: status, ClientSpan: finished.Sub(started)}
+	traceClosed = true
+	result := serving.BackendResult{Body: body, ContentType: "application/json", StatusCode: status, ClientSpan: finished.Sub(started), ServerTiming: traceTiming}
+	traceMu.Unlock()
 	result.ServerTiming.Record(serving.ServerWorkerHTTPStart, started.Sub(d.ReceivedAt))
 	result.ServerTiming.Record(serving.ServerWorkerHTTPDone, finished.Sub(d.ReceivedAt))
 	c.Diagnostics.Mark(serving.DiagnosticClientExchange, serving.DiagnosticEnd, d.RequestID, int64(result.ClientSpan))
@@ -233,6 +258,10 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	}
 	p := response.Progress
 	if response.ID != d.RequestID || response.ModelName != spec.ModelName || !response.ExecutionComplete || len(response.Outputs) == 0 || !executed(&p, &d, spec.Profile.ID) {
+		if p.NativeHTTP != nil {
+			// Preserve transport observations even when completion proof is rejected.
+			result.Progress = &serving.BackendProgress{RequestID: d.RequestID, WorkloadUID: d.Definition.UID, Definition: d.Definition.Identity(), NativeHTTP: p.NativeHTTP}
+		}
 		return result, errors.New("native response lacks correlated actual completion proof")
 	}
 	result.Finished = true
@@ -241,12 +270,24 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	return result, nil
 }
 
-func nativeFailure(result serving.BackendResult, spec Spec, d serving.Dispatch) (serving.BackendResult, error) {
+func nativeFailure(result serving.BackendResult, spec Spec, d serving.Dispatch) (recorded serving.BackendResult, err error) {
 	status := result.StatusCode
 	var failure native.ErrorResponse
 	if err := decode(result.Body, &failure); err != nil {
 		return result, err
 	}
+	timing := failure.NativeHTTP
+	if timing == nil && failure.Progress != nil {
+		timing = failure.Progress.NativeHTTP
+	}
+	// Decorate only after proof handling, without replacing actual progress or
+	// allocating an extra timing-only record for a correlated native failure.
+	defer func() {
+		if recorded.Progress == nil && timing != nil {
+			// Timing alone is not admission or execution completion proof.
+			recorded.Progress = &serving.BackendProgress{RequestID: d.RequestID, WorkloadUID: d.Definition.UID, Definition: d.Definition.Identity(), NativeHTTP: timing}
+		}
+	}()
 	if status == http.StatusTooManyRequests && failure.Code != serving.CodeQueueFull ||
 		failure.NotAdmitted && failure.Code != serving.CodeQueueFull {
 		return result, errors.New("native queue rejection lacks explicit admission evidence")

@@ -3,59 +3,66 @@ package serving
 import (
 	"math"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 // RequestRow is one request in the requests stream. A final row supersedes the
 // assigned row of the same request. Stage offsets count from ReceivedAt; an
 // unreached stage stays empty.
 type RequestRow struct {
-	Kind               string              `json:"kind"`
-	RequestID          string              `json:"requestID"`
-	WorkloadUID        string              `json:"workloadUID,omitempty"`
-	DefinitionID       string              `json:"definitionID,omitempty"`
-	Node               *NodeReference      `json:"node,omitempty"`
-	Instance           string              `json:"instance,omitempty"`
-	ProfileID          string              `json:"profileID,omitempty"`
-	DecisionID         string              `json:"decisionID,omitempty"`
-	Outcome            string              `json:"outcome,omitempty"`
-	Error              string              `json:"error,omitempty"`
-	Policy             AdmissionPolicy     `json:"admissionPolicy,omitempty"`
-	Rejection          *AdmissionRejection `json:"rejection,omitempty"`
-	GatewayWaitNanos   *int64              `json:"gatewayWaitNanos,omitempty"`
-	ExecutorWaitNanos  *int64              `json:"executorWaitNanos,omitempty"`
-	ExecutionComplete  bool                `json:"executionComplete,omitempty"`
-	ClientSpanNanos    int64               `json:"clientSpanNanos,omitempty"`
-	ReceivedAt         time.Time           `json:"receivedAt"`
-	LifetimeNanos      int64               `json:"lifetimeNanos,omitempty"`
-	CompletionMarginMS *float64            `json:"completionMarginMS,omitempty"`
-	DispatchedAt       *time.Time          `json:"dispatchedAt,omitempty"`
-	ElapsedNanos       *int64              `json:"elapsedNanos,omitempty"`
-	ValidatedNanos     *int64              `json:"validatedNanos,omitempty"`
-	AcceptedNanos      *int64              `json:"acceptedNanos,omitempty"`
-	DispatchedNanos    *int64              `json:"dispatchedNanos,omitempty"`
-	QueuedNanos        *int64              `json:"queuedNanos,omitempty"`
-	RunningNanos       *int64              `json:"runningNanos,omitempty"`
-	ExecutedNanos      *int64              `json:"executedNanos,omitempty"`
-	ExchangeNanos      *int64              `json:"exchangeNanos,omitempty"`
-	ServerTiming       RequestTimings      `json:"serverTiming,omitempty"`
-	BatchID            uint64              `json:"batchID,omitempty"`
+	Kind                string               `json:"kind"`
+	RequestID           string               `json:"requestID"`
+	WorkloadUID         string               `json:"workloadUID,omitempty"`
+	DefinitionID        string               `json:"definitionID,omitempty"`
+	Node                *NodeReference       `json:"node,omitempty"`
+	Instance            string               `json:"instance,omitempty"`
+	ProfileID           string               `json:"profileID,omitempty"`
+	DecisionID          string               `json:"decisionID,omitempty"`
+	Outcome             string               `json:"outcome,omitempty"`
+	Error               string               `json:"error,omitempty"`
+	Policy              AdmissionPolicy      `json:"admissionPolicy,omitempty"`
+	Rejection           *AdmissionRejection  `json:"rejection,omitempty"`
+	AdmissionPrediction *AdmissionPrediction `json:"admissionPrediction,omitempty"`
+	AdmissionWaits      []AdmissionWait      `json:"admissionWaits,omitempty"`
+	DeferredNanos       *int64               `json:"deferredNanos,omitempty"`
+	GatewayWaitNanos    *int64               `json:"gatewayWaitNanos,omitempty"`
+	ExecutorWaitNanos   *int64               `json:"executorWaitNanos,omitempty"`
+	ExecutionComplete   bool                 `json:"executionComplete,omitempty"`
+	ClientSpanNanos     int64                `json:"clientSpanNanos,omitempty"`
+	ReceivedAt          time.Time            `json:"receivedAt"`
+	LifetimeNanos       int64                `json:"lifetimeNanos,omitempty"`
+	CompletionMarginMS  *float64             `json:"completionMarginMS,omitempty"`
+	DispatchedAt        *time.Time           `json:"dispatchedAt,omitempty"`
+	ElapsedNanos        *int64               `json:"elapsedNanos,omitempty"`
+	ValidatedNanos      *int64               `json:"validatedNanos,omitempty"`
+	AcceptedNanos       *int64               `json:"acceptedNanos,omitempty"`
+	DispatchedNanos     *int64               `json:"dispatchedNanos,omitempty"`
+	QueuedNanos         *int64               `json:"queuedNanos,omitempty"`
+	RunningNanos        *int64               `json:"runningNanos,omitempty"`
+	ExecutedNanos       *int64               `json:"executedNanos,omitempty"`
+	ExchangeNanos       *int64               `json:"exchangeNanos,omitempty"`
+	ServerTiming        RequestTimings       `json:"serverTiming,omitempty"`
+	BatchID             uint64               `json:"batchID,omitempty"`
 	// Native timestamps are direct worker-clock progress, never reconstructed
 	// from QueueMS (which also includes ingress and is not actor queue wait).
-	NativeQueuedAt          *time.Time `json:"nativeQueuedAt,omitempty"`
-	NativeRunningAt         *time.Time `json:"nativeRunningAt,omitempty"`
-	NativeFinishedAt        *time.Time `json:"nativeFinishedAt,omitempty"`
-	NativeExecutionComplete bool       `json:"nativeExecutionComplete,omitempty"`
-	NativeOutcome           string     `json:"nativeOutcome,omitempty"`
-	NativeError             string     `json:"nativeError,omitempty"`
-	BatchSize               int        `json:"batchSize,omitempty"`
-	QueueMS                 float64    `json:"queueMS,omitempty"`
-	ServiceMS               float64    `json:"serviceMS,omitempty"`
-	BackendMS               float64    `json:"backendMS,omitempty"`
-	PreprocessMS            float64    `json:"preprocessMS,omitempty"`
-	PostprocessMS           float64    `json:"postprocessMS,omitempty"`
-	FirstTokenMS            float64    `json:"firstTokenMS,omitempty"`
-	Units                   int        `json:"units,omitempty"`
-	NativeElapsedMS         *float64   `json:"nativeElapsedMS,omitempty"`
+	NativeQueuedAt          *time.Time                    `json:"nativeQueuedAt,omitempty"`
+	NativeRunningAt         *time.Time                    `json:"nativeRunningAt,omitempty"`
+	NativeFinishedAt        *time.Time                    `json:"nativeFinishedAt,omitempty"`
+	NativeExecutionComplete bool                          `json:"nativeExecutionComplete,omitempty"`
+	NativeOutcome           string                        `json:"nativeOutcome,omitempty"`
+	NativeError             string                        `json:"nativeError,omitempty"`
+	NativeHTTP              *firstfloor.HTTPRequestTiming `json:"nativeHTTP,omitempty"`
+	NativeDeferredAt        *time.Time                    `json:"nativeDeferredAt,omitempty"`
+	BatchSize               int                           `json:"batchSize,omitempty"`
+	QueueMS                 float64                       `json:"queueMS,omitempty"`
+	ServiceMS               float64                       `json:"serviceMS,omitempty"`
+	BackendMS               float64                       `json:"backendMS,omitempty"`
+	PreprocessMS            float64                       `json:"preprocessMS,omitempty"`
+	PostprocessMS           float64                       `json:"postprocessMS,omitempty"`
+	FirstTokenMS            float64                       `json:"firstTokenMS,omitempty"`
+	Units                   int                           `json:"units,omitempty"`
+	NativeElapsedMS         *float64                      `json:"nativeElapsedMS,omitempty"`
 	// Canonical runner-exchange spans share the native monotonic clock.
 	// A missing preceding idle is unknown/startup, never an observed zero.
 	ServiceDurationNanos int64    `json:"serviceDurationNanos,omitempty"`
@@ -83,6 +90,15 @@ func (r *RequestRow) Fold(e *RequestEvent) {
 }
 
 func (r *RequestRow) foldIdentity(e *RequestEvent) {
+	if e.AdmissionPrediction != nil {
+		r.AdmissionPrediction = e.AdmissionPrediction
+	}
+	if len(e.AdmissionWaits) > 0 {
+		r.AdmissionWaits = e.AdmissionWaits
+	}
+	if e.DeferredNanos != nil {
+		r.DeferredNanos = copyNanos(e.DeferredNanos)
+	}
 	if e.WorkloadUID != "" {
 		r.WorkloadUID = e.WorkloadUID
 	}
@@ -181,6 +197,21 @@ func (r *RequestRow) foldTiming(e *RequestEvent) {
 }
 
 func (r *RequestRow) FoldNative(p *BackendProgress) {
+	if p.NativeHTTP != nil {
+		timing := *p.NativeHTTP
+		if r.NativeHTTP != nil {
+			timing = *r.NativeHTTP
+			timing.Merge(*p.NativeHTTP)
+		}
+		r.NativeHTTP = &timing
+	}
+	if p.NativeDeferredAt != nil {
+		at := *p.NativeDeferredAt
+		r.NativeDeferredAt = &at
+	}
+	if p.Phase == "" && p.NativeHTTP != nil {
+		return // Transport diagnostics alone are not native execution progress.
+	}
 	if p.ExecutorWaitNanos != nil {
 		r.ExecutorWaitNanos = copyNanos(p.ExecutorWaitNanos)
 	}

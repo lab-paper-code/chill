@@ -77,7 +77,7 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
         loss = collection_loss(offered, len(rows), drained)
         hits = sum(value <= workload['slo']['targetLatencyNanos'] for value in completed)
         metrics = analysis.request_metrics(usable, indexed['finals'], workload['slo']['targetLatencyNanos'],
-                                           offered, duration_ns, start)
+                                           offered, duration_ns, start, indexed.get('nativeRecords'), indexed.get('receivedAtNS'))
         required = math.ceil(offered * workload['slo']['percentile'] / 100)
         qstatus = quality['generatorQuality']['status']
         identities = indexed['identities']
@@ -111,7 +111,8 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
                 part_gaps = raw.overlapping_gaps(gaps, part_start + base, min(part_start + stop, window_end))
             part_metrics = analysis.request_metrics(
                 part_usable, indexed['finals'],
-                workload['slo']['targetLatencyNanos'], planned, max(0, min(stop, duration_ns) - base), start)
+                workload['slo']['targetLatencyNanos'], planned, max(0, min(stop, duration_ns) - base), start,
+                indexed.get('nativeRecords'), indexed.get('receivedAtNS'))
             substages.append({'id': part['id'], 'durationSeconds': part['seconds'], 'rate': part['rates'][name], 'offered': planned,
                               **part_metrics, 'completedLatencyNS': analysis.stats(latencies),
                               'deadlineSuccess': successes, 'requiredSuccessfulRank': rank,
@@ -210,6 +211,15 @@ def judge(binding, folder):
               'limitations': bound['limitations'], 'judgmentCriteria': ['independent SLO, load fidelity, energy, injection and drain facts']}
     resources = folder / 'producer-resources.json'
     result['cgroups'] = evidence_io.load(resources) if resources.exists() else {'rows': [], 'meaning': 'No generator offered in this window'}
+    # Keep per-request diagnostic evidence out of the compact verdict artifact.
+    request_analysis = {'stage': phase['stage'], 'at': result['at'],
+                        'requests': {name: {'requestAnalysis': row.pop('requestAnalysis'),
+                                            'nonOnTimeBreakdown': row['nonOnTimeBreakdown']}
+                                     for name, row in results.items()}}
+    for row in results.values():
+        for substage in row.get('substages', []):
+            substage.pop('requestAnalysis', None)
+    evidence_io.save(folder / 'request-analysis.json', request_analysis)
     evidence_io.save(folder / 'judgment.json', result)
     return result
 

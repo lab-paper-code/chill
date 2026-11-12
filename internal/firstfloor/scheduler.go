@@ -22,16 +22,19 @@ var ErrUnavailable = errors.New("runner is unavailable")
 var ErrDeadlineInfeasible = errors.New("request cannot complete within its SLO")
 
 type request struct {
-	ctx         context.Context
-	context     RequestContext
-	received    time.Time
-	data        [][]byte
-	bytes       int
-	result      chan result
-	profile     *ProfileRequest
-	lifetime    time.Time
-	enqueued    time.Time
-	queueExited time.Time
+	ctx            context.Context
+	context        RequestContext
+	received       time.Time
+	data           [][]byte
+	bytes          int
+	result         chan result
+	profile        *ProfileRequest
+	lifetime       time.Time
+	enqueued       time.Time
+	queueExited    time.Time
+	handlerEntered time.Time
+	httpTiming     *HTTPRequestTiming
+	deferredAt     time.Time
 }
 type result struct {
 	response Response
@@ -258,6 +261,22 @@ func (s *Scheduler) run(ctx context.Context) {
 
 func (a *schedulerActor) progress(r *request, phase string, now time.Time, o runnerOutput, complete bool) Progress {
 	p := Progress{RequestID: r.context.RequestID, WorkloadUID: r.context.WorkloadUID, Definition: r.context.Definition, Phase: phase, At: now.UTC(), ExecutionComplete: complete, NativeElapsedMS: milliseconds(now.Sub(r.received))}
+	if r.httpTiming != nil {
+		timing := *r.httpTiming
+		if !r.enqueued.IsZero() {
+			enqueue := r.enqueued.Sub(r.handlerEntered).Nanoseconds()
+			timing.EnqueueNanos = &enqueue
+		}
+		if phase == phaseFinished {
+			finished := now.Sub(r.handlerEntered).Nanoseconds()
+			timing.FinishedNanos = &finished
+		}
+		p.NativeHTTP = &timing
+	}
+	if !r.deferredAt.IsZero() {
+		at := r.deferredAt.UTC()
+		p.NativeDeferredAt = &at
+	}
 	if !r.enqueued.IsZero() {
 		exit := r.queueExited
 		if exit.IsZero() {
@@ -471,6 +490,9 @@ func (a *schedulerActor) startBatch(ctx context.Context, next time.Time) time.Ti
 				a.queue[len(a.queue)-1] = nil
 				a.queue = a.queue[:len(a.queue)-1]
 				if choice.Reason == ReasonDeadlineDefer {
+					if r.deferredAt.IsZero() {
+						r.deferredAt = now
+					}
 					a.deferred = append(a.deferred, r)
 					emitProgress(a.progress(r, phaseDeferred, now, runnerOutput{}, false))
 				} else {

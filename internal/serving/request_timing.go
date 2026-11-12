@@ -40,6 +40,12 @@ const (
 	ServerResponseWriteDone
 	ServerResponseFlushStart
 	ServerResponseFlushDone
+	ServerWorkerHTTPGetConn
+	ServerWorkerHTTPGotConn
+	ServerWorkerHTTPConnectStart
+	ServerWorkerHTTPConnectDone
+	ServerWorkerHTTPWroteRequest
+	ServerWorkerHTTPFirstResponseByte
 	serverStageCount
 )
 
@@ -74,6 +80,12 @@ var serverStageNames = [serverStageCount]string{
 	"responseWriteDone",
 	"responseFlushStart",
 	"responseFlushDone",
+	"workerHTTPGetConn",
+	"workerHTTPGotConn",
+	"workerHTTPConnectStart",
+	"workerHTTPConnectDone",
+	"workerHTTPWroteRequest",
+	"workerHTTPFirstResponseByte",
 }
 
 // RequestTimings owns its offsets. Copies never share mutable backing storage.
@@ -81,16 +93,16 @@ var serverStageNames = [serverStageCount]string{
 // Each owner records locally; merging uses the caller's existing synchronization.
 type RequestTimings struct {
 	offsets [serverStageCount]int64
-	present uint32
+	present uint64
 }
 
 // Record keeps the first observation of a reached stage.
 func (t *RequestTimings) Record(stage ServerStage, elapsed time.Duration) {
-	if stage >= serverStageCount || t.present&(uint32(1)<<stage) != 0 {
+	if stage >= serverStageCount || t.present&(uint64(1)<<stage) != 0 {
 		return
 	}
 	t.offsets[stage] = int64(elapsed)
-	t.present |= uint32(1) << stage
+	t.present |= uint64(1) << stage
 }
 
 // Mark uses the original receipt time, including its monotonic clock reading.
@@ -108,7 +120,7 @@ func (t *RequestTimings) Merge(other RequestTimings) {
 		return
 	}
 	for stage := ServerStage(0); stage < serverStageCount; stage++ {
-		if missing&(uint32(1)<<stage) != 0 {
+		if missing&(uint64(1)<<stage) != 0 {
 			t.offsets[stage] = other.offsets[stage]
 		}
 	}
@@ -116,7 +128,7 @@ func (t *RequestTimings) Merge(other RequestTimings) {
 }
 
 func (t RequestTimings) Elapsed(stage ServerStage) (time.Duration, bool) {
-	if stage >= serverStageCount || t.present&(uint32(1)<<stage) == 0 {
+	if stage >= serverStageCount || t.present&(uint64(1)<<stage) == 0 {
 		return 0, false
 	}
 	return time.Duration(t.offsets[stage]), true
@@ -128,7 +140,7 @@ func (t RequestTimings) IsZero() bool { return t.present == 0 }
 func (t RequestTimings) MarshalJSON() ([]byte, error) {
 	capacity := 2
 	for stage, name := range serverStageNames {
-		if t.present&(uint32(1)<<stage) != 0 {
+		if t.present&(uint64(1)<<stage) != 0 {
 			// Object punctuation, field names, comma, and at most 20 integer bytes.
 			capacity += len(name) + 49
 		}
@@ -136,7 +148,7 @@ func (t RequestTimings) MarshalJSON() ([]byte, error) {
 	body := make([]byte, 0, capacity)
 	body = append(body, '[')
 	for stage, name := range serverStageNames {
-		if t.present&(uint32(1)<<stage) == 0 {
+		if t.present&(uint64(1)<<stage) == 0 {
 			continue
 		}
 		if len(body) > 1 {

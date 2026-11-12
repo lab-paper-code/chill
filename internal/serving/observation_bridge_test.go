@@ -48,7 +48,7 @@ func TestCapacityBridgeCatalogProjectionDoesNotMutateLiveProfiles(t *testing.T) 
 	if err := log.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	paths, err := filepath.Glob(filepath.Join(config.Directory, "v1alpha5", "*", "scheduler.*.jsonl"))
+	paths, err := filepath.Glob(filepath.Join(config.Directory, "v1alpha6", "*", "scheduler.*.jsonl"))
 	if err != nil || len(paths) != 1 {
 		t.Fatalf("scheduler evidence paths: %v, %v", paths, err)
 	}
