@@ -205,7 +205,7 @@ func (p *Phase) UnmarshalJSON(payload []byte) error {
 			return fmt.Errorf("phase.%s is required", name)
 		}
 	}
-	if decoded.Kind == "saturation" {
+	if decoded.Kind == phaseKindSaturation {
 		for _, name := range []string{"arrivalRatePerSecond", "utilization", "arrivalSeed", "issueLagMs"} {
 			if _, present := fields[name]; present {
 				return fmt.Errorf("saturation must omit %s", name)
@@ -603,7 +603,7 @@ func validateNativeSamples(config RunConfig, trialID string, phases []Phase) err
 	seen := make(map[uint64]struct{})
 	var callIndex uint64
 	for _, phase := range phases {
-		if phase.Kind != "saturation" && phase.ArrivalSeed != trialID+"/"+phase.ID {
+		if phase.Kind != phaseKindSaturation && phase.ArrivalSeed != trialID+"/"+phase.ID {
 			return errors.New("Poisson arrival seed differs from Run and phase identity")
 		}
 		knownGapCalls := 0

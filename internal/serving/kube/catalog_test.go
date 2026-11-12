@@ -64,7 +64,7 @@ func catalogServiceSamples(durations ...int64) []firstfloor.ServiceSample {
 }
 
 func TestCatalogKeysObservedRuntimeVersionAndProvider(t *testing.T) {
-	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	catalog, source, _, _ := catalogEvidenceFixture(t)
 	view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
 	if err != nil || len(view.Profiles) != 1 {
 		t.Fatalf("catalog=%+v error=%v", view, err)
@@ -211,7 +211,7 @@ func (s *catalogTestObjects) OpenLocation(context.Context, evidencestore.ObjectL
 }
 
 func TestCatalogLatestFailureDoesNotHideHistoryOrReviveSuccess(t *testing.T) {
-	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	catalog, source, _, _ := catalogEvidenceFixture(t)
 	ctx := context.Background()
 	before, err := catalog.Refresh(ctx, []string{source.Namespace})
 	if err != nil || len(before.CurrentProfiles()) != 1 {

@@ -10,6 +10,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
+const phaseKindSaturation = "saturation"
+
 // SupplySizing is the immutable result of sizing saturation from this Run's
 // sparse service population. It is not an operator-selected service bound.
 type SupplySizing struct {
@@ -47,7 +49,7 @@ func validatePhases(config RunConfig, phases []Phase, sizing SupplySizing, start
 		if index == 0 {
 			want = "sparse"
 		} else if index == 1 {
-			want = "saturation"
+			want = phaseKindSaturation
 		}
 		if phase.Kind != want {
 			return 0, errors.New("operating-point phase sequence is invalid")
@@ -82,20 +84,11 @@ func validatePhases(config RunConfig, phases []Phase, sizing SupplySizing, start
 			}
 			seenRequests[request.RequestID] = true
 		}
-		switch phase.Kind {
-		case "saturation":
-			if phase.Workers != sizing.Workers || phase.ArrivalRatePerSecond != 0 || phase.Utilization != 0 {
-				return 0, errors.New("saturation supply differs from sparse-derived K")
-			}
+		if err := validatePhaseLoad(config, phase, index, sizing.Workers, saturationRate); err != nil {
+			return 0, err
+		}
+		if phase.Kind == phaseKindSaturation {
 			saturationRate = float64(phase.CompletedInputs) / phase.MeasurementElapsedSeconds
-		case "utilization":
-			if phase.Utilization != points.Utilizations[index-2] || phase.ArrivalRatePerSecond != phase.Utilization*saturationRate || phase.Workers != 0 {
-				return 0, errors.New("utilization phase differs from measured saturation throughput")
-			}
-		case "sparse":
-			if phase.ArrivalRatePerSecond != 1000/points.SparseMeanGapMilliseconds || phase.Utilization != 0 || phase.Workers != 0 {
-				return 0, errors.New("sparse arrival rate differs from frozen mean gap")
-			}
 		}
 		for _, latency := range phase.LatencyMilliseconds {
 			if !finitePositive(latency) {
@@ -108,6 +101,27 @@ func validatePhases(config RunConfig, phases []Phase, sizing SupplySizing, start
 		calls += len(phase.NativeSamples)
 	}
 	return calls, nil
+}
+
+func validatePhaseLoad(config RunConfig, phase Phase, index, workers int, saturationRate float64) error {
+	points := config.Measurement.OperatingPoints
+	switch phase.Kind {
+	case phaseKindSaturation:
+		if phase.Workers != workers || phase.ArrivalRatePerSecond != 0 || phase.Utilization != 0 {
+			return errors.New("saturation supply differs from sparse-derived K")
+		}
+	case "utilization":
+		if phase.Utilization != points.Utilizations[index-2] ||
+			phase.ArrivalRatePerSecond != phase.Utilization*saturationRate || phase.Workers != 0 {
+			return errors.New("utilization phase differs from measured saturation throughput")
+		}
+	case "sparse":
+		if phase.ArrivalRatePerSecond != 1000/points.SparseMeanGapMilliseconds ||
+			phase.Utilization != 0 || phase.Workers != 0 {
+			return errors.New("sparse arrival rate differs from frozen mean gap")
+		}
+	}
+	return nil
 }
 
 func validateSupplySizing(config RunConfig, sparse Phase, sizing SupplySizing) error {
@@ -156,7 +170,7 @@ func validateIssueEvidence(phase Phase) error {
 		!phase.OfferingEndedAt.After(phase.OfferingStartedAt) || phase.DrainEndedAt.Before(phase.OfferingEndedAt) {
 		return errors.New("phase schedule, send count, rate or offering/drain boundaries are invalid")
 	}
-	if phase.Kind == "saturation" {
+	if phase.Kind == phaseKindSaturation {
 		if phase.IssueLag != nil || phase.ArrivalSeed != "" {
 			return errors.New("saturation must omit Poisson seed and issue lag")
 		}
@@ -201,19 +215,8 @@ func validatePhaseRequests(phase Phase, batch int, start, end time.Time) error {
 	for index := range phase.Requests {
 		request := &phase.Requests[index]
 		progress := &request.Response.Progress
-		if request.RequestID == "" || request.RecordID == "" || request.Response.ID != request.RequestID ||
-			progress.RequestID != request.RequestID || progress.BatchID == 0 || progress.BatchSize != batch ||
-			!request.Response.ExecutionComplete || !progress.ExecutionComplete || progress.Units < 1 || !finitePositive(progress.NativeElapsedMS) ||
-			request.ScheduledAt.IsZero() || request.DispatchedAt.Before(request.ScheduledAt) || !request.CompletedAt.After(request.DispatchedAt) ||
-			request.ScheduledAt.Before(previousScheduled) || !finitePositive(request.LatencyMilliseconds) {
-			return errors.New("request identity, completion or load-node timing is invalid")
-		}
-		if request.ScheduledAt.Before(phase.OfferingStartedAt) || request.ScheduledAt.After(phase.OfferingEndedAt) ||
-			request.CompletedAt.After(phase.DrainEndedAt) {
-			return errors.New("request offering/drain coverage is invalid")
-		}
-		if progress.NativeElapsedMS > float64(request.CompletedAt.Sub(request.DispatchedAt))/float64(time.Millisecond) {
-			return errors.New("native request span exceeds dispatched client span")
+		if err := validatePhaseRequest(phase, request, batch, previousScheduled); err != nil {
+			return err
 		}
 		previousScheduled = request.ScheduledAt
 		if request.CompletedAt.After(lastCompleted) {
@@ -232,6 +235,10 @@ func validatePhaseRequests(phase Phase, batch int, start, end time.Time) error {
 	if !previousScheduled.Equal(phase.OfferingEndedAt) || !lastCompleted.Equal(phase.DrainEndedAt) {
 		return errors.New("offering and drain ends must match the last scheduled arrival and response")
 	}
+	return validatePhaseSamples(phase, batch, start, end, requests)
+}
+
+func validatePhaseSamples(phase Phase, batch int, start, end time.Time, requests map[string]*PhaseRequest) error {
 	for sampleIndex, sample := range phase.NativeSamples {
 		if len(sample.RequestIDs) != batch || len(sample.RecordIDs) != batch || len(sample.Units) != batch ||
 			sample.StartedAt.IsZero() || !sample.FinishedAt.After(sample.StartedAt) || sample.EarliestEnqueuedAt.IsZero() ||
@@ -258,6 +265,27 @@ func validatePhaseRequests(phase Phase, batch int, start, end time.Time) error {
 	}
 	if len(requests) != 0 {
 		return errors.New("completed requests have no physical batch sample")
+	}
+	return nil
+}
+
+func validatePhaseRequest(phase Phase, request *PhaseRequest, batch int, previousScheduled time.Time) error {
+	progress := &request.Response.Progress
+	if request.RequestID == "" || request.RecordID == "" || request.Response.ID != request.RequestID ||
+		progress.RequestID != request.RequestID || progress.BatchID == 0 || progress.BatchSize != batch ||
+		!request.Response.ExecutionComplete || !progress.ExecutionComplete ||
+		progress.Units < 1 || !finitePositive(progress.NativeElapsedMS) ||
+		request.ScheduledAt.IsZero() || request.DispatchedAt.Before(request.ScheduledAt) ||
+		!request.CompletedAt.After(request.DispatchedAt) ||
+		request.ScheduledAt.Before(previousScheduled) || !finitePositive(request.LatencyMilliseconds) {
+		return errors.New("request identity, completion or load-node timing is invalid")
+	}
+	if request.ScheduledAt.Before(phase.OfferingStartedAt) || request.ScheduledAt.After(phase.OfferingEndedAt) ||
+		request.CompletedAt.After(phase.DrainEndedAt) {
+		return errors.New("request offering/drain coverage is invalid")
+	}
+	if progress.NativeElapsedMS > float64(request.CompletedAt.Sub(request.DispatchedAt))/float64(time.Millisecond) {
+		return errors.New("native request span exceeds dispatched client span")
 	}
 	return nil
 }

@@ -90,24 +90,7 @@ func (r *RunReconciler) reconcileMeasurementLoad(ctx context.Context, run *api.P
 	job := &batchv1.Job{}
 	key := client.ObjectKey{Namespace: run.Namespace, Name: measurementLoadJobName(worker)}
 	if err := r.jobReader.Get(ctx, key, job); err == nil {
-		if job.Spec.Template.Spec.NodeName != config.LoadOriginNode {
-			return false, fmt.Errorf("%w: load Job Node differs from frozen gateway origin", errMeasurementLoadFailed)
-		}
-		if !metav1.IsControlledBy(job, run) {
-			return false, fmt.Errorf("%w: load Job belongs to another owner", errMeasurementLoadFailed)
-		}
-		for _, condition := range job.Status.Conditions {
-			if condition.Status != corev1.ConditionTrue {
-				continue
-			}
-			if condition.Type == batchv1.JobFailed {
-				return false, fmt.Errorf("%w: %s: %s", errMeasurementLoadFailed, condition.Reason, condition.Message)
-			}
-			if condition.Type == batchv1.JobComplete {
-				return true, nil
-			}
-		}
-		return false, nil
+		return measurementLoadOutcome(job, run, config.LoadOriginNode)
 	} else if !apierrors.IsNotFound(err) {
 		return false, err
 	}
@@ -162,6 +145,27 @@ func (r *RunReconciler) reconcileMeasurementLoad(ctx context.Context, run *api.P
 			return false, err
 		}
 		return false, nil
+	}
+	return false, nil
+}
+
+func measurementLoadOutcome(job *batchv1.Job, run *api.ProfilingRun, originNode string) (bool, error) {
+	if job.Spec.Template.Spec.NodeName != originNode {
+		return false, fmt.Errorf("%w: load Job Node differs from frozen gateway origin", errMeasurementLoadFailed)
+	}
+	if !metav1.IsControlledBy(job, run) {
+		return false, fmt.Errorf("%w: load Job belongs to another owner", errMeasurementLoadFailed)
+	}
+	for _, condition := range job.Status.Conditions {
+		if condition.Status != corev1.ConditionTrue {
+			continue
+		}
+		if condition.Type == batchv1.JobFailed {
+			return false, fmt.Errorf("%w: %s: %s", errMeasurementLoadFailed, condition.Reason, condition.Message)
+		}
+		if condition.Type == batchv1.JobComplete {
+			return true, nil
+		}
 	}
 	return false, nil
 }

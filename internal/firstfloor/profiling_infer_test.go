@@ -34,7 +34,7 @@ func postFixedInference(h http.Handler, values ...string) []*httptest.ResponseRe
 	for i, value := range values {
 		go func(i int, value string) {
 			id := fmt.Sprintf("input-%d", i)
-			replies[i] = postJSON(h, "/v2/models/synthetic/infer", Request{
+			replies[i] = postJSON(h, Request{
 				ID: id, Context: RequestContext{RequestID: id, WorkloadUID: "physical-trial", Definition: "fixed/1", AdmissionPolicy: AdmissionReject,
 					ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 1}}, Inputs: rawInputs(value)})
 			done <- i
@@ -114,21 +114,7 @@ func TestProfilingInferWithoutBundleUsesFixedBatchHTTP(t *testing.T) {
 			if result.err != nil || result.status != http.StatusOK || !result.response.ExecutionComplete || result.response.ID != ids[i] {
 				t.Fatalf("fixed profiling inference failed: %+v", result)
 			}
-			wantValue := []string{"a", "b+c"}[i]
-			if !reflect.DeepEqual(result.response.Outputs, echoOutputs(wantValue)) || result.response.Progress.Units != i+1 {
-				t.Fatalf("per-request output or units lost: %+v", result.response)
-			}
-			p := result.response.Progress
-			if p.BatchID == 0 || p.BatchSize != 2 || p.ServiceSample == nil || p.ServiceSample.ServiceDurationNanos <= 0 || p.ServiceSample.TrialID != "physical-trial" {
-				t.Fatalf("physical batch identity or service sample lost: %+v", p)
-			}
-			if !reflect.DeepEqual(p.BatchRequestIDs, ids) || p.BatchStartedAt == nil || p.BatchFinishedAt == nil || p.BatchStartedAt.Location() != time.UTC || p.BatchFinishedAt.Location() != time.UTC || !p.BatchFinishedAt.After(*p.BatchStartedAt) {
-				t.Fatalf("batch membership or UTC exchange anchors lost: %+v", p)
-			}
-			serviceMS := milliseconds(time.Duration(p.ServiceSample.ServiceDurationNanos))
-			if p.ServiceMS != serviceMS || p.PreprocessMS+p.BackendMS+p.PostprocessMS > serviceMS || p.NativeElapsedMS < serviceMS {
-				t.Fatalf("batch stage spans must nest inside native request: %+v", p)
-			}
+			assertProfilingBatchResponse(t, result.response, ids, i)
 			replies = append(replies, result.response)
 		}
 		if replies[0].Progress.BatchID != replies[1].Progress.BatchID || !reflect.DeepEqual(replies[0].Progress.ServiceSample, replies[1].Progress.ServiceSample) || replies[0].Progress.BatchID <= lastBatch {
@@ -152,6 +138,29 @@ func TestProfilingInferWithoutBundleUsesFixedBatchHTTP(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("deleted profile endpoint returned %d", response.StatusCode)
+	}
+}
+
+func assertProfilingBatchResponse(t *testing.T, response profilingHTTPResponse, ids []string, index int) {
+	t.Helper()
+	wantValue := []string{"a", "b+c"}[index]
+	if !reflect.DeepEqual(response.Outputs, echoOutputs(wantValue)) || response.Progress.Units != index+1 {
+		t.Fatalf("per-request output or units lost: %+v", response)
+	}
+	p := response.Progress
+	if p.BatchID == 0 || p.BatchSize != 2 || p.ServiceSample == nil ||
+		p.ServiceSample.ServiceDurationNanos <= 0 || p.ServiceSample.TrialID != "physical-trial" {
+		t.Fatalf("physical batch identity or service sample lost: %+v", p)
+	}
+	if !reflect.DeepEqual(p.BatchRequestIDs, ids) || p.BatchStartedAt == nil || p.BatchFinishedAt == nil ||
+		p.BatchStartedAt.Location() != time.UTC || p.BatchFinishedAt.Location() != time.UTC ||
+		!p.BatchFinishedAt.After(*p.BatchStartedAt) {
+		t.Fatalf("batch membership or UTC exchange anchors lost: %+v", p)
+	}
+	serviceMS := milliseconds(time.Duration(p.ServiceSample.ServiceDurationNanos))
+	if p.ServiceMS != serviceMS || p.PreprocessMS+p.BackendMS+p.PostprocessMS > serviceMS ||
+		p.NativeElapsedMS < serviceMS {
+		t.Fatalf("batch stage spans must nest inside native request: %+v", p)
 	}
 }
 

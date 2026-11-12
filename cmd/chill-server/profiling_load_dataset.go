@@ -11,7 +11,9 @@ import (
 	gateway "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 )
 
-func (d *profilingLoadDriver) recordInputs(ctx context.Context, record profilingRecord) (gateway.PreparedNativeInputs, error) {
+func (d *profilingLoadDriver) recordInputs(
+	ctx context.Context, record profilingRecord,
+) (gateway.PreparedNativeInputs, error) {
 	d.cache.Lock()
 	defer d.cache.Unlock()
 	if err := ctx.Err(); err != nil {

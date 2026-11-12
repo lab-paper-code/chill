@@ -427,7 +427,7 @@ func TestCoverageConditionIdentitySurvivesSameConditionPreflight(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, reason := range view.BatchPlan.Reasons {
-		if reason.Code == "VariantConditionChanged" {
+		if reason.Code == batchPlanReasonVariantConditionChanged {
 			t.Fatal("unchanged frozen condition reported a changed variant")
 		}
 	}

@@ -4,6 +4,8 @@ import (
 	"errors"
 )
 
+const phaseKindUtilization = "utilization"
+
 // measureOperatingPoints integrates each physical phase separately. Gaps between
 // phases and the saturation/sparse populations never enter incremental energy.
 func measureOperatingPoints(trial Trial) (float64, float64, float64, []PhasePower, []float64, error) {
@@ -21,7 +23,7 @@ func measureOperatingPoints(trial Trial) (float64, float64, float64, []PhasePowe
 		measured.TrialID = trial.TrialID
 		power = append(power, measured)
 		switch phase.Kind {
-		case "utilization":
+		case phaseKindUtilization:
 			joules += measured.WallJoules
 			seconds += phase.WindowEnd.Sub(phase.WindowStart).Seconds()
 			items += float64(phase.CompletedItems)

@@ -32,7 +32,7 @@ func (c failingCatalogList) List(context.Context, client.ObjectList, ...client.L
 }
 
 func TestCatalogMeasurementFactsReuseLoadedRaw(t *testing.T) {
-	fixture, source, objects, _ := catalogEvidenceFixture(t, 4096)
+	fixture, source, objects, _ := catalogEvidenceFixture(t)
 	counted := &countedCatalogObjects{objects: objects}
 	catalog, err := NewCatalog(fixture.store, counted, fixture.maxObjectBytes)
 	if err != nil {

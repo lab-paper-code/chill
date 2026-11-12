@@ -51,7 +51,7 @@ func TestReplacementSelectionPreservesOriginalsAndReportsSpecDifferences(t *test
 }
 
 func TestCatalogReplacementPendingPreservesExistingPublicPopulation(t *testing.T) {
-	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	catalog, source, _, _ := catalogEvidenceFixture(t)
 	ctx := context.Background()
 	view, err := catalog.Refresh(ctx, []string{source.Namespace})
 	if err != nil || len(view.Profiles) != 1 {
@@ -83,7 +83,7 @@ func TestCatalogReplacementPendingPreservesExistingPublicPopulation(t *testing.T
 }
 
 func TestCatalogReplacementStillRequiresNormalVerifiedEvidence(t *testing.T) {
-	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	catalog, source, _, _ := catalogEvidenceFixture(t)
 	ctx := context.Background()
 	replacement := &edge.BatchEnergyOptimization{}
 	if err := catalog.store.client.Get(ctx, source, replacement); err != nil {
@@ -131,7 +131,7 @@ func TestCatalogReplacementMissingOriginalIsDiagnosticButEvidenceStillRequired(t
 func TestOperatorReplacementDiagnosticsDoNotRejectVerifiedProfile(t *testing.T) {
 	for _, target := range []string{"missing", "self", "different-spec"} {
 		t.Run(target, func(t *testing.T) {
-			catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+			catalog, source, _, _ := catalogEvidenceFixture(t)
 			ctx := context.Background()
 			replacement := &edge.BatchEnergyOptimization{}
 			if err := catalog.store.client.Get(ctx, source, replacement); err != nil {
@@ -170,7 +170,7 @@ func TestOperatorReplacementDiagnosticsDoNotRejectVerifiedProfile(t *testing.T) 
 }
 
 func TestCatalogReplacementDoesNotReviveOlderConditionProfiles(t *testing.T) {
-	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	catalog, source, _, _ := catalogEvidenceFixture(t)
 	ctx := context.Background()
 	view, err := catalog.Refresh(ctx, []string{source.Namespace})
 	if err != nil || len(view.Profiles) != 1 {

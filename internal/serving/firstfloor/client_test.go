@@ -16,6 +16,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
+const nativeTestRequestID = "request"
+
 func TestNativeCompletionRequiresContainedMonotonicSpans(t *testing.T) {
 	definition := &serving.Definition{UID: "uid", Generation: 1, Model: serving.Model{UID: "model", Generation: 1}, SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}}
 	for _, tc := range []struct {
@@ -28,14 +30,14 @@ func TestNativeCompletionRequiresContainedMonotonicSpans(t *testing.T) {
 		{"service exceeds elapsed", 3, 5, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: definition.Identity(), Phase: "finished", At: time.Now().UTC(), BatchID: 7, BatchSize: 1, ProfileID: "profile", QueueMS: 2, ServiceMS: 4, BackendMS: tc.backend, NativeElapsedMS: tc.elapsed, ExecutionComplete: true}
+			p := native.Progress{RequestID: nativeTestRequestID, WorkloadUID: "uid", Definition: definition.Identity(), Phase: "finished", At: time.Now().UTC(), BatchID: 7, BatchSize: 1, ProfileID: "profile", QueueMS: 2, ServiceMS: 4, BackendMS: tc.backend, NativeElapsedMS: tc.elapsed, ExecutionComplete: true}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if err := json.NewEncoder(w).Encode(native.Response{ModelName: "model", ID: "request", ExecutionComplete: true, Outputs: []native.Field{{Name: "answer", Data: [][]byte{[]byte("yes")}}}, Progress: p}); err != nil {
+				if err := json.NewEncoder(w).Encode(native.Response{ModelName: "model", ID: nativeTestRequestID, ExecutionComplete: true, Outputs: []native.Field{{Name: "answer", Data: [][]byte{[]byte("yes")}}}, Progress: p}); err != nil {
 					t.Error(err)
 				}
 			}))
 			defer server.Close()
-			result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(), Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}}, serving.Dispatch{RequestID: "request", Definition: definition, ReceivedAt: time.Now(), Input: &serving.InferenceInput{}})
+			result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(), Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}}, serving.Dispatch{RequestID: nativeTestRequestID, Definition: definition, ReceivedAt: time.Now(), Input: &serving.InferenceInput{}})
 			if tc.valid {
 				if err != nil || !result.Finished {
 					t.Fatalf("valid nested spans lost completion: %+v %v", result, err)
@@ -56,7 +58,7 @@ func TestNativeCompletionRequiresContainedMonotonicSpans(t *testing.T) {
 }
 func TestNativeTransportFailureDoesNotCompletePhysicalExecution(t *testing.T) {
 	client := &Client{HTTPClient: &http.Client{Transport: failingTransport{}}}
-	result, err := client.Execute(context.Background(), Spec{Endpoint: "http://native", ModelName: "model", Profile: &serving.Profile{ID: "profile"}}, serving.Dispatch{RequestID: "request", Definition: &serving.Definition{UID: "uid"}, Input: &serving.InferenceInput{}})
+	result, err := client.Execute(context.Background(), Spec{Endpoint: "http://native", ModelName: "model", Profile: &serving.Profile{ID: "profile"}}, serving.Dispatch{RequestID: nativeTestRequestID, Definition: &serving.Definition{UID: "uid"}, Input: &serving.InferenceInput{}})
 	if err == nil || result.Finished {
 		t.Fatal("HTTP transport failure became physical completion proof")
 	}
@@ -68,10 +70,10 @@ func (failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, errors.New("connection lost after write")
 }
 func TestProgressUsesDirectIdentityAndExplicitFinish(t *testing.T) {
-	p := native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: "uid/1/model/1", Phase: "finished", At: time.Now().UTC(), ExecutionComplete: true, BatchSize: 4}
+	p := native.Progress{RequestID: nativeTestRequestID, WorkloadUID: "uid", Definition: "uid/1/model/1", Phase: "finished", At: time.Now().UTC(), ExecutionComplete: true, BatchSize: 4}
 	raw, _ := json.Marshal(p)
 	observed, err := ParseProgress(append([]byte("2026-10-08T12:00:00Z CHILL_PROGRESS "), raw...))
-	if err != nil || observed.RequestID != "request" || !observed.ExecutionComplete {
+	if err != nil || observed.RequestID != nativeTestRequestID || !observed.ExecutionComplete {
 		t.Fatalf("direct native identity lost: %+v %v", observed, err)
 	}
 	p.ExecutionComplete = false
@@ -97,7 +99,7 @@ func TestRejectedProgressRetainsDiagnosticIdentity(t *testing.T) {
 	}
 }
 func TestDeferredProgressRemainsQueuedWithoutCompletion(t *testing.T) {
-	p := native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: "uid/1/model/1",
+	p := native.Progress{RequestID: nativeTestRequestID, WorkloadUID: "uid", Definition: "uid/1/model/1",
 		Phase: "deferred", At: time.Now().UTC(), QueueMS: 25, NativeElapsedMS: 25}
 	raw, err := json.Marshal(p)
 	if err != nil {
@@ -166,7 +168,7 @@ func TestActorRejectionsRequireCorrelatedNoExecutionProof(t *testing.T) {
 		} {
 			t.Run(code+"/"+tc.name, func(t *testing.T) {
 				wait, remaining := int64(20*time.Millisecond), -int64(time.Millisecond)
-				p := &native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: definition.Identity(),
+				p := &native.Progress{RequestID: nativeTestRequestID, WorkloadUID: "uid", Definition: definition.Identity(),
 					Phase: "finished", At: time.Now().UTC(), ProfileID: "profile", Outcome: native.OutcomeDeadlineDrop,
 					QueueMS: 20, NativeElapsedMS: 20, ExecutorWaitNanos: &wait, ExecutionComplete: true}
 				f := native.ErrorResponse{Error: "executor rejected request", Code: code, Stage: serving.AdmissionStageExecutor,
@@ -268,7 +270,7 @@ func executeNativeFailure(t *testing.T, definition *serving.Definition, status i
 	defer server.Close()
 	return (&Client{HTTPClient: server.Client()}).Execute(context.Background(),
 		Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}},
-		serving.Dispatch{RequestID: "request", Definition: definition, Input: &serving.InferenceInput{}})
+		serving.Dispatch{RequestID: nativeTestRequestID, Definition: definition, Input: &serving.InferenceInput{}})
 }
 
 func TestModuleFailuresBecomeFinishedRequestOutcomes(t *testing.T) {
@@ -284,7 +286,7 @@ func TestModuleFailuresBecomeFinishedRequestOutcomes(t *testing.T) {
 		{http.StatusUnprocessableEntity, native.OutcomeBatchError, "", ""},
 	} {
 		t.Run(tc.outcome+"/"+http.StatusText(tc.status), func(t *testing.T) {
-			p := &native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: definition.Identity(), Phase: "finished", At: time.Now().UTC(),
+			p := &native.Progress{RequestID: nativeTestRequestID, WorkloadUID: "uid", Definition: definition.Identity(), Phase: "finished", At: time.Now().UTC(),
 				ProfileID: "profile", Outcome: tc.outcome, BatchID: 3, BatchSize: 2, QueueMS: 1, ServiceMS: 6, PreprocessMS: 2, BackendMS: 3, PostprocessMS: 1, NativeElapsedMS: 8, ExecutionComplete: true}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var request native.Request
@@ -299,7 +301,7 @@ func TestModuleFailuresBecomeFinishedRequestOutcomes(t *testing.T) {
 			defer server.Close()
 			result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(),
 				Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}},
-				serving.Dispatch{RequestID: "request", Definition: definition, Input: &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "text", Datatype: "BYTES", Data: []byte("hello")}}}})
+				serving.Dispatch{RequestID: nativeTestRequestID, Definition: definition, Input: &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "text", Datatype: "BYTES", Data: []byte("hello")}}}})
 			var domain *serving.Error
 			if tc.code == "" {
 				if errors.As(err, &domain) || result.Finished {
@@ -321,7 +323,7 @@ func TestMismatchedNativeCompletionRemainsUnknown(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(), Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}}, serving.Dispatch{RequestID: "request", Definition: &serving.Definition{UID: "uid"}, Input: &serving.InferenceInput{}})
+	result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(), Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}}, serving.Dispatch{RequestID: nativeTestRequestID, Definition: &serving.Definition{UID: "uid"}, Input: &serving.InferenceInput{}})
 	if err == nil || result.Finished || !strings.Contains(err.Error(), "completion proof") {
 		t.Fatal("mismatched response freed physical ownership", result, err)
 	}
@@ -343,14 +345,14 @@ func TestNativeDispatchPreservesOriginalLifetimeSenderElapsedAndMargin(t *testin
 		result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(),
 			Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}},
 			serving.Dispatch{
-				RequestID: "request", Definition: &serving.Definition{UID: "uid", SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}, Admission: serving.Admission{Policy: policy}},
+				RequestID: nativeTestRequestID, Definition: &serving.Definition{UID: "uid", SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}, Admission: serving.Admission{Policy: policy}},
 				Input: &serving.InferenceInput{}, ReceivedAt: received, Deadline: received.Add(2 * time.Second),
 				Elapsed: 250 * time.Millisecond, CompletionMarginMS: 29,
 			})
 		request := <-seen
 		if request.Context.LifetimeMS != 2000 || request.Context.SenderElapsedMS != 250 ||
 			request.Context.CompletionMarginMS != 29 || request.Context.SLO.TargetMS != 1000 ||
-			request.Context.RequestID != "request" || request.Context.WorkloadUID != "uid" ||
+			request.Context.RequestID != nativeTestRequestID || request.Context.WorkloadUID != "uid" ||
 			request.Context.AdmissionPolicy != string(policy) {
 			t.Fatalf("native transport changed frozen lifetime/SLO/m/policy: %+v", request.Context)
 		}

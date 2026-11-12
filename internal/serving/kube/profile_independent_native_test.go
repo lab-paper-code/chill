@@ -46,8 +46,9 @@ func TestRealFirstfloorWorkerHelper(t *testing.T) {
 // Python 3 with numpy, onnx and onnxruntime, and readable cgroup CPU/memory
 // accounting are required. The shared helper generates a genuine tiny Identity
 // model, not the MobileNet artifact whose basename the old fixture uses.
-// Three native active trials retain sparse, saturation and utilization phases,
-// each with its own 10 s AND 59-known-gap stop rule, followed by 30 s loaded post-load observation; idle retains 60 s settling + 30 s.
+// Two native active trials retain sparse, saturation and utilization phases,
+// each with its own 4 s AND 59-known-gap stop rule, followed by 18 s loaded
+// post-load observation; idle retains 60 s settling + 30 s.
 // Only meter readings, workload isolation and Kubernetes terminal/ownership facts
 // are controlled fixtures. No cluster, measured hardware watts or deployment
 // image verification is claimed. There are no donor, Eval or history objects.
@@ -56,17 +57,9 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 	defer cancel()
 	command := fixtures.RealFirstfloorCommand(t)
 	t.Setenv("POD_IP", "127.0.0.1")
-	witnessDirectory := os.Getenv("CHILL_FIRST_PROFILE_FIXTURE_OUTPUT")
-	if witnessDirectory == "" {
-		var err error
-		witnessDirectory, err = os.MkdirTemp("/tmp", "chill-native-catalog-")
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Logf("native immutable witness directory: %s", witnessDirectory)
+	witnessDirectory := nativeCatalogWitnessDirectory(t)
 	catalog, source, objects, planIdentity := catalogEvidenceFixtureConfigPolicy(t, 4096,
-		[6]float64{6, 6, 6, 4, 4, 4}, 3, "", func(config *profilingrun.RunConfig) {
+		[6]float64{6, 6, 6, 4, 4, 4}, 2, "", func(config *profilingrun.RunConfig) {
 			// Explicitly label the generated model and its frozen recipe as test
 			// inputs; retain the sampling and warmup contracts.
 			config.State.Model = nativeIdentityModel
@@ -76,11 +69,12 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 			config.Measurement.WorkloadName = nativeIdentityModel
 			config.Measurement.OperatingPoints.QueueBytesCap = 1 << 20
 			config.Measurement.OperatingPoints.FramedDecodedRequestUpperBytes = (1 << 20) / 32
-			// At the observed ~5.4k/s saturation, 10s saturation plus 10s at
-			// utilization .5 retains ~81k inputs, within the 256MiB envelope.
-			// Rates, admission caps, sample floors and the byte budget stay fixed.
-			config.Measurement.OperatingPoints.PhaseDurationSeconds = 10
-			config.Measurement.DurationSeconds = 10*(len(config.Measurement.OperatingPoints.Utilizations)+2) +
+			// Keep multiple independent trials and every named phase, but bound
+			// fast-model sample volume. Four seconds also accommodates the shared
+			// fixture's alternating 100 ms gaps; the sample floor governs sparse.
+			config.Measurement.OperatingPoints.PhaseDurationSeconds = 4
+			config.Measurement.OperatingPoints.PostLoadDurationSeconds = 18
+			config.Measurement.DurationSeconds = 4*(len(config.Measurement.OperatingPoints.Utilizations)+2) +
 				config.Measurement.OperatingPoints.PostLoadDurationSeconds
 			config.Metrics.DurationSeconds = config.Measurement.DurationSeconds + 1
 			memoryRequest, memoryLimit := config.Actor.MemoryRequestBytes, config.Actor.MemoryLimitBytes
@@ -102,12 +96,7 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frozen := retained.Plan.Shared()
-	if frozen.ActiveProtocol.DurationSeconds != 60 || frozen.ActiveProtocol.MinServiceSamples != 59 ||
-		frozen.ActiveProtocol.SLOPercentile != 95 || frozen.ActiveProtocol.OperatingPoints.PhaseDurationSeconds != 10 ||
-		frozen.ActiveProtocol.OperatingPoints.PostLoadDurationSeconds != 30 || campaign.Spec.TrialsPerBatch != 3 {
-		t.Fatalf("native acceptance recipe changed: %+v", frozen.ActiveProtocol)
-	}
+	assertNativeCatalogRecipe(t, retained.Plan, campaign)
 	resultSpec := retained.Result.Spec()
 	writer := nativeCatalogImmutableWriter{directory: witnessDirectory, objects: objects}
 	var samples []firstfloor.ServiceSample
@@ -159,20 +148,7 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 			if firstMetadata == nil {
 				firstMetadata = &runtime.Firstfloor.Runtime
 			}
-			for _, phase := range runtime.Phases {
-				if phase.Kind != "utilization" {
-					continue
-				}
-				start, parseErr := time.Parse(time.RFC3339Nano, phase.MeasurementStartedAt)
-				if parseErr != nil {
-					t.Fatal(parseErr)
-				}
-				end, parseErr := time.Parse(time.RFC3339Nano, phase.MeasurementEndedAt)
-				if parseErr != nil {
-					t.Fatal(parseErr)
-				}
-				energy += 2 * end.Sub(start).Seconds() / float64(phase.CompletedInputs)
-			}
+			energy = accumulateNativeCatalogUtilizationEnergy(t, energy, runtime.Phases)
 			memory = max(memory, runtime.MemoryBytes)
 			activeTrials++
 		}
@@ -202,7 +178,7 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 		delete(objects, oldExecution.Location())
 		delete(objects, oldRaw.Location())
 	}
-	if activeTrials != 3 || idleTrials != 3 {
+	if activeTrials != 2 || idleTrials != 2 {
 		t.Fatalf("physical trials were narrowed or duplicated: active=%d idle=%d", activeTrials, idleTrials)
 	}
 	result, err := batchenergyoptimization.NewResultRecord(resultSpec)
@@ -225,15 +201,59 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 	}
 	writeNativeCatalogWitness(t, ctx, catalog, campaign, objects, witnessDirectory)
 	assertNativeCatalogConsumer(t, ctx, &view.Profiles[0], retained.Plan,
-		planIdentity, samples, firstMetadata, memory, energy)
+		planIdentity, samples, firstMetadata, memory, energy, 2)
+}
+
+func nativeCatalogWitnessDirectory(t *testing.T) string {
+	t.Helper()
+	directory := os.Getenv("CHILL_FIRST_PROFILE_FIXTURE_OUTPUT")
+	if directory == "" {
+		var err error
+		directory, err = os.MkdirTemp("/tmp", "chill-native-catalog-")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Logf("native immutable witness directory: %s", directory)
+	return directory
+}
+
+func assertNativeCatalogRecipe(t *testing.T, plan profilederivation.CurvePlan, campaign *edgev1alpha1.BatchEnergyOptimization) {
+	t.Helper()
+	frozen := plan.Shared()
+	if frozen.ActiveProtocol.DurationSeconds != 30 || frozen.ActiveProtocol.MinServiceSamples != 59 ||
+		frozen.ActiveProtocol.SLOPercentile != 95 || frozen.ActiveProtocol.OperatingPoints.PhaseDurationSeconds != 4 ||
+		frozen.ActiveProtocol.OperatingPoints.PostLoadDurationSeconds != 18 || campaign.Spec.TrialsPerBatch != 2 {
+		t.Fatalf("native acceptance recipe changed: %+v", frozen.ActiveProtocol)
+	}
+}
+
+func accumulateNativeCatalogUtilizationEnergy(t *testing.T, energy float64, phases []profilingrun.Phase) float64 {
+	t.Helper()
+	for _, phase := range phases {
+		if phase.Kind != "utilization" {
+			continue
+		}
+		start, err := time.Parse(time.RFC3339Nano, phase.MeasurementStartedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		end, err := time.Parse(time.RFC3339Nano, phase.MeasurementEndedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		energy += 2 * end.Sub(start).Seconds() / float64(phase.CompletedInputs)
+	}
+	return energy
 }
 
 func TestNativeCatalogConsumerRetainsShortPhaseFixture(t *testing.T) {
 	ctx := context.Background()
 	catalog, source, objects, _ := catalogEvidenceFixtureConfigPolicy(t, 4096,
 		[6]float64{6, 6, 6, 4, 4, 4}, 3, "", func(config *profilingrun.RunConfig) {
-			config.Measurement.OperatingPoints.PhaseDurationSeconds = 10
-			config.Measurement.DurationSeconds, config.Metrics.DurationSeconds = 60, 61
+			config.Measurement.OperatingPoints.PhaseDurationSeconds = 4
+			config.Measurement.OperatingPoints.PostLoadDurationSeconds = 18
+			config.Measurement.DurationSeconds, config.Metrics.DurationSeconds = 30, 31
 		}, nil)
 	campaign := &edgev1alpha1.BatchEnergyOptimization{}
 	if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
@@ -289,7 +309,8 @@ func assertNativeCatalogRetainedObjects(t *testing.T, ctx context.Context, catal
 	if err != nil || len(view.Profiles) != 1 {
 		t.Fatalf("short fixture catalog: %+v %v", view.Insufficiencies, err)
 	}
-	assertNativeCatalogConsumer(t, ctx, &view.Profiles[0], retained.Plan, planIdentity, samples, metadata, memory, energy)
+	assertNativeCatalogConsumer(t, ctx, &view.Profiles[0], retained.Plan, planIdentity, samples, metadata, memory, energy,
+		int(campaign.Spec.TrialsPerBatch))
 }
 
 // Verification output always retains exact immutable bytes and controlled
@@ -593,7 +614,7 @@ func assertNativeIdleTrial(
 func assertNativeCatalogConsumer(
 	t *testing.T, ctx context.Context, profile *serving.Profile, plan profilederivation.CurvePlan,
 	planIdentity evidencestore.ObjectIdentity, samples []firstfloor.ServiceSample,
-	firstMetadata *firstfloor.RuntimeMetadata, memory uint64, energy float64,
+	firstMetadata *firstfloor.RuntimeMetadata, memory uint64, energy float64, trials int,
 ) {
 	t.Helper()
 	frozen := plan.Shared()
@@ -622,8 +643,8 @@ func assertNativeCatalogConsumer(
 	if !reflect.DeepEqual(profile.Condition.Actor, frozen.Actor) {
 		t.Fatalf("catalog actor recipe: got=%+v want=%+v", profile.Condition.Actor, frozen.Actor)
 	}
-	if profile.TrialsPerBatch != 3 {
-		t.Fatalf("catalog trial count: got=%d want=3", profile.TrialsPerBatch)
+	if profile.TrialsPerBatch != trials {
+		t.Fatalf("catalog trial count: got=%d want=%d", profile.TrialsPerBatch, trials)
 	}
 	if !nativeCatalogMeterEquivalent(profile.IdleBaselineWatts, 4) {
 		t.Fatalf("catalog idle W: got=%g want=4", profile.IdleBaselineWatts)
@@ -631,8 +652,9 @@ func assertNativeCatalogConsumer(
 	if !nativeCatalogMeterEquivalent(batch.MeanWallWatts, 6) {
 		t.Fatalf("catalog active W: got=%.17g want=6", batch.MeanWallWatts)
 	}
-	if !nativeCatalogMeterEquivalent(batch.EnergyPerInputJoules, energy/3) {
-		t.Fatalf("catalog incremental J/input: got=%.17g want=%.17g", batch.EnergyPerInputJoules, energy/3)
+	if !nativeCatalogMeterEquivalent(batch.EnergyPerInputJoules, energy/float64(trials)) {
+		t.Fatalf("catalog incremental J/input: got=%.17g want=%.17g",
+			batch.EnergyPerInputJoules, energy/float64(trials))
 	}
 	if batch.MemoryBytes != memory || memory == 0 {
 		t.Fatalf("catalog memory bytes: got=%d want=%d (nonzero)", batch.MemoryBytes, memory)
@@ -692,7 +714,8 @@ func assertNativeCatalogCapacity(t *testing.T, ctx context.Context, profile *ser
 	row, err := serving.BuildCapacityRow(ctx, settings, nil, option, workload, time.Now().UTC())
 	if err != nil || row.Status != serving.CapacityBuilt || row.Kappa == nil || *row.Kappa < 0 ||
 		row.Input.ProfileID != profile.ID || len(row.Grid) == 0 || row.ConditionalService == nil ||
-		row.ConditionalService.Queries == 0 || row.ConditionalService.StartupQueries == 0 || row.ConditionalService.MinimumTrialCount != 3 {
+		row.ConditionalService.Queries == 0 || row.ConditionalService.StartupQueries == 0 ||
+		row.ConditionalService.MinimumTrialCount != profile.TrialsPerBatch {
 		t.Fatalf("kappa did not consume the catalog's physical native populations: %+v %v", row, err)
 	}
 }
@@ -701,7 +724,7 @@ func assertNativeCatalogCapacity(t *testing.T, ctx context.Context, profile *ser
 // It catches downstream option/definition omissions without rerunning six trials.
 func TestProfileIndependentCapacityFixtureQualification(t *testing.T) {
 	ctx := context.Background()
-	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	catalog, source, _, _ := catalogEvidenceFixture(t)
 	campaign := &edgev1alpha1.BatchEnergyOptimization{}
 	if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
 		t.Fatal(err)

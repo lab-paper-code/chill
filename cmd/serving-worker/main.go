@@ -29,7 +29,8 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.configPath, "config", "", "Path to the complete serving configuration snapshot.")
 	flags.StringVar(&o.bindAddress, "bind-address", "127.0.0.1:8080", "Local HTTP listener address.")
 	flags.StringVar(&o.nodeName, "node-name", os.Getenv("NODE_NAME"), "Assigned Node name; defaults to NODE_NAME.")
-	flags.BoolVar(&o.sizeSaturation, "size-saturation", false, "Read saturation sizing inputs from stdin and write the sizing result as JSON.")
+	flags.BoolVar(&o.sizeSaturation, "size-saturation", false,
+		"Read saturation sizing inputs from stdin and write the sizing result as JSON.")
 }
 
 func (o options) validate() error {

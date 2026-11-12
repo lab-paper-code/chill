@@ -22,17 +22,9 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, config SchedulerControllerConfig, timing *observation.SchedulerControlObservation, demand bool) (serving.SchedulerSnapshot, error) {
 	var window observation.LoadWindow
 	if demand {
-		windowStarted := time.Now()
 		var err error
-		window, err = c.observationLog.LoadWindowTimed(ctx, now.Add(-config.Settings.ObservationWindow), now, timing)
-		if timing != nil {
-			timing.Window += time.Since(windowStarted)
-		}
+		window, err = c.captureLoadWindow(ctx, now, config, timing)
 		if err != nil {
-			return serving.SchedulerSnapshot{}, err
-		}
-		start := serving.LaterTime(window.From, c.observationLog.Started())
-		if err := schedulerRequestCoverageError(window.Coverage.Gaps, start, now); err != nil {
 			return serving.SchedulerSnapshot{}, err
 		}
 	}
@@ -137,10 +129,43 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 	bindProfileMeters(&s, config.Meters)
 	// Placement inventory excludes terminal Pods. Return proof must instead
 	// establish exact serving-Pod absence, including Failed/Succeeded Pods.
+	if err := c.releaseCapturedScopes(ctx, now, nodes.Items, physicalStates, timing); err != nil {
+		return s, err
+	}
+	if err := ctx.Err(); err != nil {
+		return s, err
+	}
+	return s, nil
+}
+
+func (c *SchedulerController) captureLoadWindow(
+	ctx context.Context, now time.Time, config SchedulerControllerConfig,
+	timing *observation.SchedulerControlObservation,
+) (observation.LoadWindow, error) {
+	windowStarted := time.Now()
+	window, err := c.observationLog.LoadWindowTimed(ctx, now.Add(-config.Settings.ObservationWindow), now, timing)
+	if timing != nil {
+		timing.Window += time.Since(windowStarted)
+	}
+	if err != nil {
+		return observation.LoadWindow{}, err
+	}
+	start := serving.LaterTime(window.From, c.observationLog.Started())
+	if err := schedulerRequestCoverageError(window.Coverage.Gaps, start, now); err != nil {
+		return observation.LoadWindow{}, err
+	}
+	return window, nil
+}
+
+func (c *SchedulerController) releaseCapturedScopes(
+	ctx context.Context, now time.Time, nodes []core.Node, physical []serving.InstanceState,
+	timing *observation.SchedulerControlObservation,
+) error {
 	c.mu.Lock()
 	returning := false
 	for _, run := range c.runs {
-		if run.reserved && run.result != nil && run.action.Status != servingstate.NativeOperationRunning && run.action.Status != servingstate.NativeOperationCancel {
+		if run.reserved && run.result != nil &&
+			run.action.Status != servingstate.NativeOperationRunning && run.action.Status != servingstate.NativeOperationCancel {
 			if _, eligible := c.observedReturnParent(run, now); eligible {
 				returning = true
 				break
@@ -148,26 +173,24 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 		}
 	}
 	c.mu.Unlock()
-	if returning {
-		listStarted := time.Now()
-		exact, err := c.kube.CoreV1().Pods(c.observer.config.Namespace).List(ctx, meta.ListOptions{})
-		if timing != nil {
-			elapsed := time.Since(listStarted)
-			timing.RefreshList += elapsed
-			timing.RefreshPods += elapsed
-		}
-		if err != nil {
-			return s, err
-		}
-		if err := ctx.Err(); err != nil {
-			return s, err
-		}
-		c.releaseObservedScopes(nodes.Items, exact.Items, physicalStates, now)
+	if !returning {
+		return nil
+	}
+	listStarted := time.Now()
+	exact, err := c.kube.CoreV1().Pods(c.observer.config.Namespace).List(ctx, meta.ListOptions{})
+	if timing != nil {
+		elapsed := time.Since(listStarted)
+		timing.RefreshList += elapsed
+		timing.RefreshPods += elapsed
+	}
+	if err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
-		return s, err
+		return err
 	}
-	return s, nil
+	c.releaseObservedScopes(nodes, exact.Items, physical, now)
+	return nil
 }
 
 // Function ports do not carry admission policy. All accepted values do.

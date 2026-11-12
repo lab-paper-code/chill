@@ -68,7 +68,7 @@ func TestSaturationDispatchUsesActualBackloggedBatchService(t *testing.T) {
 	}
 	// Keep every phase's power while using only the utilization input count.
 	ladder := phase
-	ladder.ID, ladder.Kind, ladder.NativeSamples = "utilization", "utilization", nil
+	ladder.ID, ladder.Kind, ladder.NativeSamples = phaseKindUtilization, phaseKindUtilization, nil
 	trial := Trial{Batch: 2, CompletedCalls: 4, CompletedItems: 8, LatencyMilliseconds: []float64{1, 1, 1, 1},
 		WindowStart: start, WindowEnd: start.Add(time.Second), Samples: phase.Samples, Phases: []OperatingPointPhase{phase, ladder}}
 	energy, err := IncrementalWorkTrial(trial, IdleBaseline{ModelLoadedIdleMeanWallWatts: 10})

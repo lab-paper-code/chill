@@ -42,10 +42,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+const catalogCUDADevice = "cuda"
+
 // Reuse the real retained-evidence fixture: the first reference must finish
 // verification successfully before the second reference's UID failure wins.
 func TestCampaignReaderTrialIdentityPrecedesRepeatedRunName(t *testing.T) {
-	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	catalog, source, _, _ := catalogEvidenceFixture(t)
 	ctx := context.Background()
 	cr := &edgev1alpha1.BatchEnergyOptimization{}
 	if err := catalog.store.client.Get(ctx, source, cr); err != nil {
@@ -113,7 +115,7 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 func TestCatalogIdleTrialsKeepPhysicalBindingWithoutHistoricalSourceRebinding(t *testing.T) {
 	for _, foreignNode := range []bool{false, true} {
 		t.Run(fmt.Sprintf("foreign-node-%t", foreignNode), func(t *testing.T) {
-			catalog, source, objects, _ := catalogEvidenceFixture(t, 4096)
+			catalog, source, objects, _ := catalogEvidenceFixture(t)
 			ctx := context.Background()
 			campaign := &edgev1alpha1.BatchEnergyOptimization{}
 			if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
@@ -219,7 +221,7 @@ func TestIdleTrialUsesVerifiedRuntimeAccessGPUWithoutActorRebinding(t *testing.T
 				for _, native := range []*profilingrun.FirstfloorRuntimeEvidence{active.Firstfloor, idle.Firstfloor} {
 					if native != nil {
 						native.Runtime.Runtime = profilingrun.FirstfloorORTCUDABackend
-						native.Runtime.Device, native.Runtime.GPUUUID = "cuda", referenceGPU
+						native.Runtime.Device, native.Runtime.GPUUUID = catalogCUDADevice, referenceGPU
 						native.Runtime.Providers, native.Runtime.AvailableProviders = []string{provider}, []string{provider}
 					}
 				}
@@ -723,7 +725,7 @@ func assertCatalogRawProfile(t *testing.T, profile serving.Profile) {
 }
 
 func TestRetainedCatalogUsesActualGapServicePairs(t *testing.T) {
-	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	catalog, source, _, _ := catalogEvidenceFixture(t)
 	view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
 	if err != nil || len(view.Profiles) != 1 {
 		t.Fatalf("retained admission failed: %+v %v", view, err)
@@ -835,7 +837,7 @@ func TestCatalogSelectedConfidenceChangesNegativeEnergyDecision(t *testing.T) {
 }
 
 func TestCatalogUsesRetainedExecutionPowerModeAfterRunSpecChange(t *testing.T) {
-	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	catalog, source, _, _ := catalogEvidenceFixture(t)
 	run := &edgev1alpha1.ProfilingRun{}
 	ctx := context.Background()
 	if err := catalog.store.client.Get(ctx, types.NamespacedName{Namespace: source.Namespace, Name: "trial-0"}, run); err != nil {
@@ -866,8 +868,8 @@ func (objects catalogEvidenceObjects) OpenLocation(_ context.Context, location e
 	return io.NopCloser(bytes.NewReader(payload)), nil
 }
 
-func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
-	return catalogEvidenceFixtureWithPower(t, memory, [6]float64{6, 6, 6, 4, 4, 4})
+func catalogEvidenceFixture(t *testing.T) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
+	return catalogEvidenceFixtureWithPower(t, 4096, [6]float64{6, 6, 6, 4, 4, 4})
 }
 
 func catalogEvidenceFixtureWithPower(t *testing.T, memory uint64, trialWatts [6]float64) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
@@ -1120,7 +1122,7 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 			CgroupCPUMax: measuredTwoCoreCPUMax, CPUSet: "0-3"}}
 	native.Runtime.WarmupIterations = config.Actor.WarmupIterations
 	if config.State.Backend == profilingrun.FirstfloorORTCUDABackend {
-		native.Runtime.Runtime, native.Runtime.Device = config.State.Backend, "cuda"
+		native.Runtime.Runtime, native.Runtime.Device = config.State.Backend, catalogCUDADevice
 		native.Runtime.GPUUUID = config.Delivery.RuntimeAccess.GPUUUID
 	}
 	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
@@ -1166,7 +1168,7 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 
 func TestCatalogRetainsAdmittedFactsWithCallerOwnedViews(t *testing.T) {
 	const callerMutation = "caller-mutated"
-	catalog, source, objects, plan := catalogEvidenceFixture(t, 4096)
+	catalog, source, objects, plan := catalogEvidenceFixture(t)
 	ctx := context.Background()
 	view, err := catalog.Refresh(ctx, []string{source.Namespace})
 	if err != nil || len(view.Profiles) != 1 {
@@ -1210,7 +1212,7 @@ func TestCatalogInvalidatesChangedPendingRemovedAndRecreatedSources(t *testing.T
 	const pendingSource = "pending"
 	for _, change := range []string{"version", pendingSource, "unselected", "deleted", recreatedSource} {
 		t.Run(change, func(t *testing.T) {
-			catalog, source, objects, _ := catalogEvidenceFixture(t, 4096)
+			catalog, source, objects, _ := catalogEvidenceFixture(t)
 			ctx := context.Background()
 			view, err := catalog.Refresh(ctx, []string{source.Namespace})
 			if err != nil || len(view.Profiles) != 1 {

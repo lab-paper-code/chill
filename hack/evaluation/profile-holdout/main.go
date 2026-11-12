@@ -169,22 +169,9 @@ func analyze(input request) (result, error) {
 		if err != nil {
 			return out, err
 		}
-		row := energyTrial{EnergyTrial: derived}
-		for k := range derived.PhasePower {
-			observation := supplied.Phases[k]
-			if observation.ScheduledInputs <= 0 || observation.OfferingSeconds <= 0 ||
-				math.IsNaN(observation.OfferingSeconds) || math.IsInf(observation.OfferingSeconds, 0) {
-				return out, fmt.Errorf("positive offering exposure and scheduled inputs required")
-			}
-			offering := observation.OperatingPointPhase
-			offering.WindowStart, offering.WindowEnd = observation.OfferingStartedAt, observation.OfferingEndedAt
-			power, err := derivation.MeasurePhasePower(offering)
-			if err != nil {
-				return out, err
-			}
-			power.TrialID = trial.TrialID
-			rate := float64(observation.ScheduledInputs) / observation.OfferingSeconds
-			row.PhasePower = append(row.PhasePower, phasePower{PhasePower: power, ScheduledRatePerSecond: &rate})
+		row, err := measureOfferingPower(supplied, derived)
+		if err != nil {
+			return out, err
 		}
 		out.Trials = append(out.Trials, row)
 		energy[j] = derived.IncrementalWorkJoulesPerItem
@@ -227,7 +214,7 @@ func analyze(input request) (result, error) {
 		}
 		support[supplied.Batch] = append(support[supplied.Batch], supplied)
 	}
-	var supportBatches []int
+	supportBatches := make([]int, 0, len(support))
 	for batch := range support {
 		supportBatches = append(supportBatches, batch)
 	}
@@ -265,10 +252,30 @@ func analyze(input request) (result, error) {
 	return out, nil
 }
 
-func predictLatency(training profile, batches []serving.BatchProfile, heldout heldoutPhase, settings serving.SchedulerSettings) (latencyPrediction, error) {
-	out := latencyPrediction{TrialID: heldout.TrialID, PhaseID: heldout.PhaseID}
+func measureOfferingPower(supplied trial, derived derivation.EnergyTrial) (energyTrial, error) {
+	row := energyTrial{EnergyTrial: derived}
+	for k := range derived.PhasePower {
+		observation := supplied.Phases[k]
+		if observation.ScheduledInputs <= 0 || observation.OfferingSeconds <= 0 ||
+			math.IsNaN(observation.OfferingSeconds) || math.IsInf(observation.OfferingSeconds, 0) {
+			return row, fmt.Errorf("positive offering exposure and scheduled inputs required")
+		}
+		offering := observation.OperatingPointPhase
+		offering.WindowStart, offering.WindowEnd = observation.OfferingStartedAt, observation.OfferingEndedAt
+		power, err := derivation.MeasurePhasePower(offering)
+		if err != nil {
+			return row, err
+		}
+		power.TrialID = supplied.TrialID
+		rate := float64(observation.ScheduledInputs) / observation.OfferingSeconds
+		row.PhasePower = append(row.PhasePower, phasePower{PhasePower: power, ScheduledRatePerSecond: &rate})
+	}
+	return row, nil
+}
+
+func heldoutArrivalBounds(heldout heldoutPhase) (start, last time.Time, err error) {
 	if heldout.TrialID == "" || heldout.PhaseID == "" || len(heldout.Arrivals) == 0 {
-		return out, fmt.Errorf("heldout trialID, phaseID and client scheduledAt arrivals required")
+		return start, last, fmt.Errorf("heldout trialID, phaseID and client scheduledAt arrivals required")
 	}
 	if heldout.SLOPercentile <= 0 || heldout.SLOPercentile > 100 || math.IsNaN(heldout.SLOPercentile) ||
 		math.IsInf(heldout.SLOPercentile, 0) || heldout.SLOTargetLatency <= 0 ||
@@ -277,15 +284,15 @@ func predictLatency(training profile, batches []serving.BatchProfile, heldout he
 		heldout.RequestLifetimeSeconds >= float64(math.MaxInt64)/float64(time.Second) ||
 		heldout.DeliveryMarginMilliseconds < 0 || math.IsNaN(heldout.DeliveryMarginMilliseconds) ||
 		math.IsInf(heldout.DeliveryMarginMilliseconds, 0) || len(heldout.Arrivals) > math.MaxInt32 {
-		return out, fmt.Errorf("heldout SLO, positive request lifetime and nonnegative delivery margin required")
+		return start, last, fmt.Errorf("heldout SLO, positive request lifetime and nonnegative delivery margin required")
 	}
 	if heldout.NativeSlots <= 0 {
-		return out, fmt.Errorf("heldout positive recorded nativeSlots required")
+		return start, last, fmt.Errorf("heldout positive recorded nativeSlots required")
 	}
-	start, last := heldout.Arrivals[0], heldout.Arrivals[0]
+	start, last = heldout.Arrivals[0], heldout.Arrivals[0]
 	for _, scheduledAt := range heldout.Arrivals {
 		if scheduledAt.IsZero() {
-			return out, fmt.Errorf("heldout client scheduledAt must be nonzero")
+			return start, last, fmt.Errorf("heldout client scheduledAt must be nonzero")
 		}
 		if scheduledAt.Before(start) {
 			start = scheduledAt
@@ -293,6 +300,15 @@ func predictLatency(training profile, batches []serving.BatchProfile, heldout he
 		if scheduledAt.After(last) {
 			last = scheduledAt
 		}
+	}
+	return start, last, nil
+}
+
+func predictLatency(training profile, batches []serving.BatchProfile, heldout heldoutPhase, settings serving.SchedulerSettings) (latencyPrediction, error) {
+	out := latencyPrediction{TrialID: heldout.TrialID, PhaseID: heldout.PhaseID}
+	start, last, err := heldoutArrivalBounds(heldout)
+	if err != nil {
+		return out, err
 	}
 	if err := settings.Validate(); err != nil {
 		return out, fmt.Errorf("frozen schedulerSettings: %w", err)

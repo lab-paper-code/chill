@@ -43,7 +43,8 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		"Failed measurement Job retention in seconds (1..604800).")
 	flags.Float64Var(&o.measurementMemoryFraction, "measurement-memory-fraction", 0,
 		"Required fraction of Node allocatable memory available to the measurement runtime (0 < fraction < 1).")
-	flags.StringVar(&o.measurementLoadServiceAccount, "load-generator-service-account", "", "ServiceAccount for profiling load Jobs.")
+	flags.StringVar(&o.measurementLoadServiceAccount, "load-generator-service-account", "",
+		"ServiceAccount for profiling load Jobs.")
 	flags.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "The address the health probes bind to.")
 	flags.StringVar(&o.systemName, "system-name", "", "ChillSystem name that owns this Profiler instance.")
 	flags.StringVar(

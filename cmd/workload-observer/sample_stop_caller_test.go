@@ -236,13 +236,16 @@ func sampleStopRuntimeRecord(
 		maximum = max(maximum, sample.ServiceDurationNanos)
 	}
 	workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap,
-		points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds), float64(maximum)/1e9)
+		points.FramedDecodedRequestUpperBytes, float64(points.RequestLifetimeSeconds),
+		float64(points.DeliveryMarginMilliseconds), float64(maximum)/1e9)
 	postDuration := time.Duration(points.PostLoadDurationSeconds) * time.Second
-	fixtures.ApplyActivePhases(&result, fixtures.PhaseOptions{StartedAt: started, Duration: (ended.Sub(started) - postDuration) / time.Duration(phaseCount),
+	fixtures.ApplyActivePhases(&result, fixtures.PhaseOptions{
+		StartedAt: started, Duration: (ended.Sub(started) - postDuration) / time.Duration(phaseCount),
 		PostLoadDuration: postDuration,
 		Batch:            config.Measurement.Batch, Samples: count, Workers: workers, Utilizations: points.Utilizations,
 		SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds, PodUID: podUID, SupplySizing: sizing})
-	result.MeasurementEndedAt, result.MeasurementElapsedSeconds = ended.Format(time.RFC3339Nano), ended.Sub(started).Seconds()
+	result.MeasurementEndedAt = ended.Format(time.RFC3339Nano)
+	result.MeasurementElapsedSeconds = ended.Sub(started).Seconds()
 	result.PostLoad.StartedAt = native[len(native)-1].FinishedAt.Format(time.RFC3339Nano)
 	result.PostLoad.EndedAt = ended.Format(time.RFC3339Nano)
 	result.PostLoad.DurationSecondsMonotonic = ended.Sub(native[len(native)-1].FinishedAt).Seconds()
@@ -261,13 +264,16 @@ func sampleStopRuntimeRecord(
 				sample.RequestIDs[member] = request.RequestID
 				request.RecordID = sample.RecordIDs[member]
 				request.ScheduledAt, request.DispatchedAt = sample.StartedAt, sample.StartedAt
-				request.CompletedAt = request.ScheduledAt.Add(time.Duration(sample.NativeRequestMilliseconds * float64(time.Millisecond)))
+				request.CompletedAt = request.ScheduledAt.Add(
+					time.Duration(sample.NativeRequestMilliseconds * float64(time.Millisecond)))
 				request.LatencyMilliseconds = sample.NativeRequestMilliseconds
 				progress := &request.Response.Progress
 				progress.At, progress.BatchID = sample.FinishedAt, sample.BatchID
 				progress.ServiceMS, progress.NativeElapsedMS = sample.RunnerServiceMilliseconds, sample.NativeRequestMilliseconds
 				zero, finish := int64(0), sample.ServiceDurationNanos
-				progress.NativeHTTP = &firstfloor.HTTPRequestTiming{HandlerEnteredAt: sample.StartedAt, ReceivedNanos: &zero, EnqueueNanos: &zero, FinishedNanos: &finish}
+				progress.NativeHTTP = &firstfloor.HTTPRequestTiming{
+					HandlerEnteredAt: sample.StartedAt, ReceivedNanos: &zero, EnqueueNanos: &zero, FinishedNanos: &finish,
+				}
 			}
 		}
 		phase.OfferingStartedAt = start
@@ -278,7 +284,8 @@ func sampleStopRuntimeRecord(
 	}
 	saturation := &result.Phases[1]
 	for index := 2; index < len(result.Phases); index++ {
-		result.Phases[index].ArrivalRatePerSecond = result.Phases[index].Utilization * float64(saturation.CompletedInputs) / saturation.MeasurementElapsedSeconds
+		result.Phases[index].ArrivalRatePerSecond = result.Phases[index].Utilization *
+			float64(saturation.CompletedInputs) / saturation.MeasurementElapsedSeconds
 	}
 	return result
 }

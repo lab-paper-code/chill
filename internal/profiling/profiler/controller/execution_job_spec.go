@@ -137,7 +137,7 @@ func buildExecutionJob(
 						metricObserverContainer(prepared, runConfig, plan),
 						workloadObserverContainer(prepared, runConfig, selectorLabelKeys, options, plan),
 					},
-					Volumes: append(executionVolumes(prepared.RunConfig, plan), runtimeProjection.Volumes...),
+					Volumes: append(executionVolumes(plan), runtimeProjection.Volumes...),
 				},
 			},
 		},
@@ -300,7 +300,7 @@ func workloadObserverContainer(
 	}
 }
 
-func executionVolumes(config profilingrun.RunConfig, plan profiler.ExecutionPlan) []corev1.Volume {
+func executionVolumes(plan profiler.ExecutionPlan) []corev1.Volume {
 	emptyDir := corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
 	volumes := []corev1.Volume{
 		{Name: modelVolumeName, VolumeSource: emptyDir},

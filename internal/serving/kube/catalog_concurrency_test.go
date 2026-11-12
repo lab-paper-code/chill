@@ -48,7 +48,7 @@ func (s *delayedCatalogObjects) OpenLocation(ctx context.Context, location evide
 }
 
 func TestCatalogCompletedTrialsMatchSerialAndBoundIO(t *testing.T) {
-	catalog, source, objects, _ := catalogEvidenceFixture(t, 4096)
+	catalog, source, objects, _ := catalogEvidenceFixture(t)
 	ctx := context.Background()
 	measurement := &edge.BatchEnergyOptimization{}
 	if err := catalog.store.client.Get(ctx, source, measurement); err != nil {
@@ -113,7 +113,7 @@ func TestCatalogCompletedTrialsMatchSerialAndBoundIO(t *testing.T) {
 func TestCatalogParallelFailuresPreserveOrderedDiagnostics(t *testing.T) {
 	for _, corruption := range []string{"strict execution", "strict raw"} {
 		t.Run(corruption, func(t *testing.T) {
-			catalog, source, objects, _ := catalogEvidenceFixture(t, 4096)
+			catalog, source, objects, _ := catalogEvidenceFixture(t)
 			for _, trial := range []string{"trial-0", "trial-1"} {
 				location := evidencestore.ObjectLocation{Store: "evidence", Key: trial + "-execution"}
 				if corruption == "strict raw" {
@@ -143,7 +143,7 @@ func TestCatalogParallelFailuresPreserveOrderedDiagnostics(t *testing.T) {
 }
 
 func TestCatalogParallelCancellationCannotPublishPartialView(t *testing.T) {
-	catalog, source, objects, _ := catalogEvidenceFixture(t, 4096)
+	catalog, source, objects, _ := catalogEvidenceFixture(t)
 	var err error
 	catalog.loader, err = profilerevidence.NewLoader(&delayedCatalogObjects{objects: objects}, catalog.maxObjectBytes)
 	if err != nil {

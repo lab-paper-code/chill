@@ -257,7 +257,8 @@ popen = subprocess.Popen
 
 def local_worker(command, *args, **kwargs):
     if command[0] == "/opt/chill/bin/serving-worker":
-        command = [executable, "-test.run=^TestRealFirstfloorWorkerHelper$", "-test.paniconexit0=false", "--"] + command[1:]
+        command = [executable, "-test.run=^TestRealFirstfloorWorkerHelper$",
+                   "-test.paniconexit0=false", "--"] + command[1:]
         environment = dict(os.environ if kwargs.get("env") is None else kwargs["env"])
         environment["CHILL_REAL_FIRSTFLOOR_HELPER"] = "1"
         kwargs["env"] = environment

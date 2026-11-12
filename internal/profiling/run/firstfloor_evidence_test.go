@@ -369,8 +369,8 @@ func TestCompactBatchMembershipUsesSampleRequestIDsOnce(t *testing.T) {
 		})
 	}
 	cloned := phase.NativeSamples[0].Clone()
-	cloned.RequestIDs[0] = "changed"
-	if phase.NativeSamples[0].RequestIDs[0] == "changed" {
+	cloned.RequestIDs[0] = mutatedInputName
+	if phase.NativeSamples[0].RequestIDs[0] == mutatedInputName {
 		t.Fatal("sample clone shares request membership")
 	}
 }

@@ -24,7 +24,7 @@ import (
 
 func TestIdleRejectsInferenceBetweenEmptySnapshots(t *testing.T) {
 	node := serving.NodeReference{Name: "node", UID: "uid"}
-	before := servingstate.OperationState{Node: node, PowerMode: "fixed", Pods: []workloadobserver.Pod{{UID: "pod"}}, States: []string{"profile:[0]::1024:1"}, Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 3, CompletedRequests: 3, Executions: 2}}}
+	before := servingstate.OperationState{Node: node, PowerMode: resetFixedMode, Pods: []workloadobserver.Pod{{UID: "pod"}}, States: []string{"profile:[0]::1024:1"}, Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 3, CompletedRequests: 3, Executions: 2}}}
 	after := before
 	after.Native = map[string]native.State{"physical": {Ready: true, AcceptedRequests: 4, CompletedRequests: 4, Executions: 3}}
 	if err := servingops.StableIdle(before, before); err != nil {
@@ -33,7 +33,7 @@ func TestIdleRejectsInferenceBetweenEmptySnapshots(t *testing.T) {
 	if err := servingops.StableIdle(before, after); err == nil {
 		t.Fatal("empty queues hid actual inference inside idle window")
 	}
-	unloaded := servingstate.OperationState{Node: node, PowerMode: "fixed", Native: map[string]native.State{}}
+	unloaded := servingstate.OperationState{Node: node, PowerMode: resetFixedMode, Native: map[string]native.State{}}
 	if err := servingops.StableIdle(unloaded, unloaded); err != nil {
 		t.Fatal("actual unloaded idle rejected", err)
 	}
@@ -62,8 +62,8 @@ func TestOperationCostUsesActualSingleStateEffectAndWholeWallWindow(t *testing.T
 		}},
 	}
 	record.Result.Operation = record.Request.Operation
-	record.Result.Before.PowerMode = "fixed"
-	record.Result.Actual.PowerMode = "fixed"
+	record.Result.Before.PowerMode = resetFixedMode
+	record.Result.Actual.PowerMode = resetFixedMode
 	if err := record.Judge(nil, nil); err != nil || record.Verdict != servingstate.MeasurementAccepted || record.WallJoules == nil || *record.WallJoules != joules {
 		t.Fatalf("invalid current-contract operation fixture: %+v, %v", record, err)
 	}
@@ -206,7 +206,7 @@ func timingMeasurementFixture() servingops.OperationMeasurement {
 			Timing:   &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "empirical fixture"},
 			Coverage: powerwindow.Policy{MaximumGap: 3 * time.Second}},
 		Result: servingstate.OperationResult{Operation: operation, Status: servingstate.NativeOperationComplete, StartedAt: start, EndedAt: start.Add(time.Second),
-			Before: servingstate.OperationState{PowerMode: "fixed", States: []string{"old"}}, Actual: servingstate.OperationState{PowerMode: "fixed"}},
+			Before: servingstate.OperationState{PowerMode: resetFixedMode, States: []string{"old"}}, Actual: servingstate.OperationState{PowerMode: resetFixedMode}},
 	}
 	for i, watts := range []float64{0, 2, 0, 2} {
 		record.Power.Samples = append(record.Power.Samples, metricobserver.Sample{ObservedAt: start.Add(time.Duration(i-1) * time.Second), Watts: watts})
@@ -278,7 +278,7 @@ func TestMeasurementReadersRequireEmpiricalTiming(t *testing.T) {
 			record := timingMeasurementFixture()
 			if kind == servingstate.OperationIdle {
 				record.Request.Operation.Kind, record.Result.Operation.Kind = kind, kind
-				record.Result.Before, record.Result.Actual = servingstate.OperationState{PowerMode: "fixed"}, servingstate.OperationState{PowerMode: "fixed"}
+				record.Result.Before, record.Result.Actual = servingstate.OperationState{PowerMode: resetFixedMode}, servingstate.OperationState{PowerMode: resetFixedMode}
 				record.StateObservations = []servingstate.OperationState{record.Result.Before, record.Result.Actual}
 			}
 			if err := record.Judge(nil, nil); err != nil || record.Verdict != servingstate.MeasurementAccepted {

@@ -241,7 +241,7 @@ func TestCapacityRowWithoutOccupancyUsesConfiguredDefault(t *testing.T) {
 		t.Fatalf("default d did not produce capacity: %+v", row)
 	}
 	d := row.Input.DispatchOccupancy
-	if d == nil || d.PerRequest != time.Millisecond || d.Provenance.Source != "default" || d.Provenance.Value != int64(time.Millisecond) {
+	if d == nil || d.PerRequest != time.Millisecond || d.Provenance.Source != occupancySourceDefault || d.Provenance.Value != int64(time.Millisecond) {
 		t.Fatalf("missing default provenance: %+v", d)
 	}
 	s.DefaultDispatchOccupancyNanos = 0
@@ -303,7 +303,7 @@ func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
 				t.Fatalf("nonmatching measured entry beat legacy DOM: %+v", got)
 			}
 			got = ResolveDispatchOccupancy(s, []DispatchOccupancy{mismatch}, i)
-			if got.Provenance.Source != "default" || got.PerRequest != 2*time.Millisecond {
+			if got.Provenance.Source != occupancySourceDefault || got.PerRequest != 2*time.Millisecond {
 				t.Fatalf("nonmatching measured entry blocked configured fallback: %+v", got)
 			}
 		})
@@ -314,7 +314,7 @@ func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
 	profile.ID, profile.Condition.Artifact.ExecutionPath = "another-profile", "another-path"
 	other.Profile, other.MaxBatch = &profile, 8
 	got := ResolveDispatchOccupancy(s, []DispatchOccupancy{dom}, other)
-	if got.PerRequest != 2*time.Millisecond || got.Provenance.Source != "default" {
+	if got.PerRequest != 2*time.Millisecond || got.Provenance.Source != occupancySourceDefault {
 		t.Fatalf("legacy DOM borrowed a different profile/batch: %+v", got)
 	}
 	for _, change := range []func(*DispatchOccupancy){
@@ -325,7 +325,7 @@ func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
 		mismatch := dom
 		change(&mismatch)
 		got := ResolveDispatchOccupancy(s, []DispatchOccupancy{mismatch}, i)
-		if got.Provenance.Source != "default" {
+		if got.Provenance.Source != occupancySourceDefault {
 			t.Fatalf("inexact DOM remained applicable: %+v", got)
 		}
 	}

@@ -88,8 +88,10 @@ func ActivePhases[P any](options PhaseOptions) []P {
 			latencies[call] = latency
 			samples[call] = map[string]any{
 				"batchID": batchID, "batchSize": options.Batch, "requestIDs": ids, "recordIDs": records, "units": units,
-				"serviceDurationNanos": pair.ServiceDurationNanos, "precedingIdleNanos": pair.PrecedingIdleNanos, "trialID": pair.TrialID,
-				"runnerServiceMs": serviceMS, "preprocessMs": .1, "backendCallMs": backendMS, "postprocessMs": .1, "nativeRequestMs": nativeMS,
+				"serviceDurationNanos": pair.ServiceDurationNanos,
+				"precedingIdleNanos":   pair.PrecedingIdleNanos, "trialID": pair.TrialID,
+				"runnerServiceMs": serviceMS, "preprocessMs": .1, "backendCallMs": backendMS,
+				"postprocessMs": .1, "nativeRequestMs": nativeMS,
 				"startedAt": started, "finishedAt": finished, "latestEnqueuedAt": arrival.Add(100 * time.Microsecond),
 				"earliestEnqueuedAt": arrival.Add(100 * time.Microsecond),
 			}
@@ -100,9 +102,13 @@ func ActivePhases[P any](options PhaseOptions) []P {
 					"progress": map[string]any{"requestID": id, "phase": "complete", "at": finished,
 						"batchID": batchID, "batchSize": options.Batch, "executionComplete": true,
 						"outcome": "success", "units": 1, "serviceMS": serviceMS, "nativeElapsedMS": nativeMS,
-						"nativeHTTP": &firstfloor.HTTPRequestTiming{HandlerEnteredAt: arrival, ReceivedNanos: &received, EnqueueNanos: &enqueue, FinishedNanos: &finish}}}
+						"nativeHTTP": &firstfloor.HTTPRequestTiming{
+							HandlerEnteredAt: arrival, ReceivedNanos: &received,
+							EnqueueNanos: &enqueue, FinishedNanos: &finish,
+						}}}
 				requests = append(requests, map[string]any{"requestID": id, "recordID": records[member], "scheduledAt": arrival,
-					"dispatchedAt": arrival, "completedAt": arrival.Add(time.Duration(latency * float64(time.Millisecond))), "latencyMs": latency, "response": response})
+					"dispatchedAt": arrival, "completedAt": arrival.Add(time.Duration(latency * float64(time.Millisecond))),
+					"latencyMs": latency, "response": response})
 			}
 		}
 		phases[index] = map[string]any{"id": fmt.Sprintf("%s-%d", kind, index), "kind": kind,
@@ -121,14 +127,17 @@ func ActivePhases[P any](options PhaseOptions) []P {
 		issueElapsed := issueEnd.Sub(start).Seconds()
 		phases[index]["achievedArrivalRatePerSecond"] = float64(len(requests)) / issueElapsed
 		phases[index]["issueElapsedSecondsMonotonic"] = issueElapsed
-		phases[index]["offeringStartedAt"], phases[index]["offeringEndedAt"], phases[index]["drainEndedAt"] = start, issueEnd, drainEnd
+		phases[index]["offeringStartedAt"] = start
+		phases[index]["offeringEndedAt"], phases[index]["drainEndedAt"] = issueEnd, drainEnd
 		phases[index]["scheduledInputs"], phases[index]["sentInputs"] = len(requests), len(requests)
 		if kind == "saturation" {
 			delete(phases[index], "arrivalRatePerSecond")
 			delete(phases[index], "utilization")
 		} else {
 			phases[index]["arrivalSeed"] = options.PodUID + "/" + phases[index]["id"].(string)
-			phases[index]["issueLagMs"] = map[string]any{"count": len(requests), "min": 0, "mean": 0, "p50": 0, "p95": 0, "p99": 0, "max": 0}
+			phases[index]["issueLagMs"] = map[string]any{
+				"count": len(requests), "min": 0, "mean": 0, "p50": 0, "p95": 0, "p99": 0, "max": 0,
+			}
 		}
 	}
 	encoded, err := json.Marshal(phases)
@@ -148,7 +157,9 @@ func ApplyActivePhases[R any](result *R, options PhaseOptions) {
 	loadDuration := options.Duration * time.Duration(len(phases))
 	duration := loadDuration + options.PostLoadDuration
 	calls := options.Samples * len(phases)
-	counters := map[string]any{"acceptedRequests": calls * options.Batch, "completedRequests": calls * options.Batch, "executions": calls}
+	counters := map[string]any{
+		"acceptedRequests": calls * options.Batch, "completedRequests": calls * options.Batch, "executions": calls,
+	}
 	payload, err := json.Marshal(map[string]any{
 		"phases": phases, "inferenceCount": options.Samples * len(phases),
 		"supplySizing": options.SupplySizing,
@@ -172,12 +183,16 @@ func ApplyActivePhases[R any](result *R, options PhaseOptions) {
 
 // PhaseSupply uses the production sizing formula with the fixture's observed
 // sparse maximum service time.
-func PhaseSupply(batch, maxQueueRequests int, queueBytesCap, requestBytes int64, lifetimeSeconds, marginMilliseconds float64, observedMaximum ...float64) (int, map[string]any) {
+func PhaseSupply(
+	batch, maxQueueRequests int, queueBytesCap, requestBytes int64, lifetimeSeconds, marginMilliseconds float64,
+	observedMaximum ...float64,
+) (int, map[string]any) {
 	service := .0007
 	if len(observedMaximum) > 0 {
 		service = observedMaximum[0]
 	}
-	workers, bound, err := firstfloor.SaturationWorkers(batch, maxQueueRequests, queueBytesCap, requestBytes, lifetimeSeconds, marginMilliseconds, service)
+	workers, bound, err := firstfloor.SaturationWorkers(batch, maxQueueRequests, queueBytesCap, requestBytes,
+		lifetimeSeconds, marginMilliseconds, service)
 	if err != nil {
 		panic(err)
 	}

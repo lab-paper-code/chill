@@ -167,7 +167,8 @@ func (d *profilingLoadDriver) reserveResultBudget(bytes int64) error {
 	for {
 		used := d.budgetBytes.Load()
 		if bytes > d.plan.MaxResultBytes-used {
-			return fmt.Errorf("%w: %d bytes exceeds frozen limit %d", errProfilingResultBudget, used+bytes, d.plan.MaxResultBytes)
+			return fmt.Errorf("%w: %d bytes exceeds frozen limit %d",
+				errProfilingResultBudget, used+bytes, d.plan.MaxResultBytes)
 		}
 		if d.budgetBytes.CompareAndSwap(used, used+bytes) {
 			return nil

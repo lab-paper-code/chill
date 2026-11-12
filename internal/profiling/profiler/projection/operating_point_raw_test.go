@@ -1,14 +1,15 @@
 package projection
 
 import (
+	"math"
+	"testing"
+	"time"
+
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"math"
-	"testing"
-	"time"
 )
 
 func TestSyntheticRawOperatingPointsKeepAllServiceAndLadderEnergy(t *testing.T) {

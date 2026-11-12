@@ -31,7 +31,9 @@ func profilingReadStoredPhase(t testing.TB, driver *profilingLoadDriver, phase p
 	return phase
 }
 
-func profilingTestRunPhase(t testing.TB, driver *profilingLoadDriver, ctx context.Context, spec profilingrun.Phase) (profilingrun.Phase, error) {
+func profilingTestRunPhase(
+	t testing.TB, driver *profilingLoadDriver, ctx context.Context, spec profilingrun.Phase,
+) (profilingrun.Phase, error) {
 	t.Helper()
 	phase, err := driver.runPhase(ctx, spec)
 	if err == nil {
@@ -51,10 +53,15 @@ func profilingTestCollector(t testing.TB, plan profilingLoadPlan) (*profilingPha
 	if err := driver.updatePhase(profilingrun.Phase{ID: "proof"}); err != nil {
 		t.Fatal(err)
 	}
-	return &profilingPhaseCollector{plan: plan, store: store, groups: make(map[uint64]*profilingBatchGroup), requests: make(map[string]bool), completed: make(map[uint64]bool), checkBudget: driver.checkResultBudget}, driver
+	return &profilingPhaseCollector{
+		plan: plan, store: store, groups: make(map[uint64]*profilingBatchGroup),
+		requests: make(map[string]bool), completed: make(map[uint64]bool), checkBudget: driver.checkResultBudget,
+	}, driver
 }
 
-func profilingTestFinishCollector(t testing.TB, collector *profilingPhaseCollector, driver *profilingLoadDriver) ([]profilingrun.PhaseRequest, []profilingrun.NativeServiceSample, []float64, error) {
+func profilingTestFinishCollector(
+	t testing.TB, collector *profilingPhaseCollector, driver *profilingLoadDriver,
+) ([]profilingrun.PhaseRequest, []profilingrun.NativeServiceSample, []float64, error) {
 	t.Helper()
 	if err := collector.finish(); err != nil {
 		return nil, nil, nil, err
@@ -78,7 +85,9 @@ func TestProfilingLoadWritesOutputsToDataVolumeAndReleasesBatchProof(t *testing.
 		t.Fatal("finished batch proof or output rows remain in memory")
 	}
 	info, err := collector.store.requests.file.Stat()
-	if err != nil || info.Size() < 140000 || filepath.Dir(collector.store.requests.file.Name()) != driver.evidenceDir || filepath.Dir(driver.evidenceDir) != driver.dataDir {
+	if err != nil || info.Size() < 140000 ||
+		filepath.Dir(collector.store.requests.file.Name()) != driver.evidenceDir ||
+		filepath.Dir(driver.evidenceDir) != driver.dataDir {
 		t.Fatalf("outputs not streamed to data volume: info=%v err=%v", info, err)
 	}
 	if err := collector.finish(); err != nil {
@@ -88,7 +97,11 @@ func TestProfilingLoadWritesOutputsToDataVolumeAndReleasesBatchProof(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	resultInfo, err := file.Stat()
 	if err != nil {
 		t.Fatal(err)
@@ -185,8 +198,25 @@ func TestProfilingLoadAllowsNonmultipleSaturationWorkers(t *testing.T) {
 				for _, member := range pair {
 					zero, finished := int64(0), finish.Sub(member.entered).Nanoseconds()
 					service := finish.Sub(start).Nanoseconds()
-					progress := native.Progress{RequestID: member.request.ID, WorkloadUID: "pod", Definition: "definition", Phase: "finished", At: finish, BatchID: batch, BatchSize: 2, BatchRequestIDs: ids, BatchStartedAt: &start, BatchFinishedAt: &finish, ServiceSample: &native.ServiceSample{ServiceDurationNanos: service, PrecedingIdleNanos: &zero, TrialID: "pod"}, BackendMS: float64(service) / 1e6, ServiceMS: float64(service) / 1e6, Units: 1, NativeElapsedMS: float64(finished) / 1e6, ExecutionComplete: true, NativeHTTP: &native.HTTPRequestTiming{HandlerEnteredAt: member.entered, ReceivedNanos: &zero, EnqueueNanos: &zero, FinishedNanos: &finished}}
-					member.response <- native.Response{ID: member.request.ID, ModelName: "classifier", Outputs: []native.Field{{Name: "class", Data: [][]byte{{3}}}}, Progress: progress, ExecutionComplete: true}
+					progress := native.Progress{
+						RequestID: member.request.ID, WorkloadUID: "pod", Definition: "definition", Phase: "finished",
+						At: finish, BatchID: batch, BatchSize: 2, BatchRequestIDs: ids,
+						BatchStartedAt: &start, BatchFinishedAt: &finish,
+						ServiceSample: &native.ServiceSample{
+							ServiceDurationNanos: service, PrecedingIdleNanos: &zero, TrialID: "pod",
+						},
+						BackendMS: float64(service) / 1e6, ServiceMS: float64(service) / 1e6,
+						Units: 1, NativeElapsedMS: float64(finished) / 1e6, ExecutionComplete: true,
+						NativeHTTP: &native.HTTPRequestTiming{
+							HandlerEnteredAt: member.entered,
+							ReceivedNanos:    &zero, EnqueueNanos: &zero, FinishedNanos: &finished,
+						},
+					}
+					member.response <- native.Response{
+						ID: member.request.ID, ModelName: "classifier",
+						Outputs:  []native.Field{{Name: "class", Data: [][]byte{{3}}}},
+						Progress: progress, ExecutionComplete: true,
+					}
 				}
 			}()
 		}
@@ -199,7 +229,7 @@ func TestProfilingLoadAllowsNonmultipleSaturationWorkers(t *testing.T) {
 	}))
 	defer server.Close()
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/measurement/supply" {
+		if r.URL.Path == profilingSupplyPath {
 			_, _ = io.Copy(io.Discard, r.Body)
 			_, _ = io.WriteString(w, `{"workers": 5}`)
 			return

@@ -51,7 +51,7 @@ func TestRecordedJobUsesAuthoritativeReaderNotCache(t *testing.T) {
 				t.Fatal(err)
 			}
 			condition := findRunCondition(actual.Status.Conditions, edge.ProfilingRunConditionExecutionComplete)
-			want := "ExecutionLost"
+			want := executionReasonLost
 			if present {
 				want = "LoadRunning"
 			}
@@ -84,7 +84,8 @@ func TestRecordedJobTransientReaderErrorDoesNotPublishLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, condition := range actual.Status.Conditions {
-		if condition.Type == edge.ProfilingRunConditionExecutionComplete && condition.Status == metav1.ConditionFalse && condition.Reason == "ExecutionLost" {
+		if condition.Type == edge.ProfilingRunConditionExecutionComplete &&
+			condition.Status == metav1.ConditionFalse && condition.Reason == executionReasonLost {
 			t.Fatal("transport failure published execution loss")
 		}
 	}

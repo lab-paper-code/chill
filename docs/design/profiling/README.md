@@ -144,6 +144,18 @@ scheduled/sent/completed counts, load-node offering/drain UTC boundaries and
 remain separate. Active raw/runtime v1alpha14 and RunConfig v1alpha22 remain the
 single current contract, without old-field readers.
 
+Load-plan validation separates identity/budgets, frozen operating points, dataset
+fields and native endpoints in that order. Native response validation checks
+completion identity, service-pair membership and nested timing before retaining
+compact proof. Poisson arrival production and FIFO dispatch have separate named
+steps; both still charge the same frozen result-byte budget.
+
+`make test-native` uses two independent active and two loaded-idle trials for its
+local Identity-model integration fixture. Active phases retain the 59-known-gap
+floor with 4-second elapsed floors and an 18-second post-load window (30-second
+frozen active duration). Idle still settles for 60 seconds and observes for 30.
+This bounded software-path fixture does not change campaign measurement defaults.
+
 Public ProfilingRun specs carry no frozen Workload UID/SLO/N body. Owner
 references remain lookup hints; the executable resolver authenticates the root,
 Node grant and immutable CurvePlan. No fake owner, unadmitted root or unplanned

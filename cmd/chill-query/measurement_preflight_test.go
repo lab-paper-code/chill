@@ -127,7 +127,8 @@ func measurementPreflightTestPlan(t *testing.T) derivation.CurvePlan {
 		WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
 		OperatingPoints: &derivation.OperatingPointsContract{
 			Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000, PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30,
-			RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768,
+			RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100,
+			FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768,
 		},
 	}
 	idle := active

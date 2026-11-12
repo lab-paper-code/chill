@@ -81,10 +81,18 @@ func TestDefectELostCreateRetainsOwnUnknownResponsibility(t *testing.T) {
 	if slices.Contains(parent.scope.Nodes, independent.Node) || c.authorize(servingstate.Operation{Kind: servingstate.OperationPrepare, Node: independent.Node}) != nil {
 		t.Fatal("unknown own creation prevented a proved independent node from returning")
 	}
+	assertLostCreationSurvivesReset(t, c, uid, old.Node, independent.Node, observed.Nodes)
+}
+
+func assertLostCreationSurvivesReset(
+	t *testing.T, c *SchedulerController, uid string, old, independent serving.NodeReference,
+	nodes []serving.SchedulerNode,
+) {
+	t.Helper()
 	// The native Create failure above must survive a change of reservation
 	// owner even if the original receipts leave the action-view ledger.
-	var resetNodes []serving.NodeReference
-	for _, node := range observed.Nodes {
+	resetNodes := make([]serving.NodeReference, 0, len(nodes))
+	for _, node := range nodes {
 		resetNodes = append(resetNodes, node.Node)
 	}
 	for _, status := range []string{servingstate.NativeOperationPartial, servingstate.NativeOperationComplete} {
@@ -109,10 +117,10 @@ func TestDefectELostCreateRetainsOwnUnknownResponsibility(t *testing.T) {
 		}
 		c.mu.Unlock()
 		handoffSnapshot(t, c)
-		if c.authorize(servingstate.Operation{Node: old.Node}) == nil {
+		if c.authorize(servingstate.Operation{Node: old}) == nil {
 			t.Errorf("%s reset returned a Node with an unresolved native Create", status)
 		}
-		if err := c.authorize(servingstate.Operation{Node: independent.Node}); err != nil {
+		if err := c.authorize(servingstate.Operation{Node: independent}); err != nil {
 			t.Errorf("%s reset retained an independently settled Node: %v", status, err)
 		}
 	}

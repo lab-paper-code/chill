@@ -9,6 +9,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
+const mutatedInputName = "changed"
+
 func firstfloorFrozenConfig(backend string) RunConfig {
 	config := validRunConfig()
 	config.State.RuntimeFamily = FirstfloorRuntimeFamily
@@ -46,7 +48,7 @@ func TestActorRecipeSeparatesCapabilitiesFromMeasuredWarmup(t *testing.T) {
 		t.Fatalf("runner did not receive exactly the measured warmup domain: %s", command)
 	}
 	config.Measurement.WarmupBatchSizes[1] = 2
-	config.State.Preprocessor.Inputs[0] = "changed"
+	config.State.Preprocessor.Inputs[0] = mutatedInputName
 	if actor.WarmupBatchSizes[1] != 4 || actor.Inputs[0] != "image" {
 		t.Fatal("frozen actor recipe aliases mutable preparation inputs")
 	}

@@ -163,6 +163,22 @@ func (e *OccupancyEstimator) Add(row RequestRow) {
 			r.completeFinals++
 		}
 	}
+	r.mergeIdentityAndTiming(&row, &raw)
+	if row.Kind == RequestRowFinal {
+		r.finals++
+		r.execution = row.ExecutionComplete
+		r.success = row.Outcome == outcomeCompleted && row.Error == ""
+	}
+	r.nativeExecution = r.nativeExecution || row.NativeExecutionComplete
+	if row.NativeOutcome == outcomeCompleted {
+		r.nativeSuccess = true
+	}
+	if row.NativeError != "" || row.NativeOutcome != "" && row.NativeOutcome != outcomeCompleted {
+		r.invalid = true
+	}
+}
+
+func (r *occupancyRequest) mergeIdentityAndTiming(row *RequestRow, raw *occupancyRequest) {
 	merge := func(dst *string, value string) {
 		if value != "" {
 			if *dst != "" && *dst != value {
@@ -208,18 +224,6 @@ func (e *OccupancyEstimator) Add(row RequestRow) {
 			r.invalid = true
 		}
 		r.serviceNanos = row.ServiceDurationNanos
-	}
-	if row.Kind == RequestRowFinal {
-		r.finals++
-		r.execution = row.ExecutionComplete
-		r.success = row.Outcome == outcomeCompleted && row.Error == ""
-	}
-	r.nativeExecution = r.nativeExecution || row.NativeExecutionComplete
-	if row.NativeOutcome == outcomeCompleted {
-		r.nativeSuccess = true
-	}
-	if row.NativeError != "" || row.NativeOutcome != "" && row.NativeOutcome != outcomeCompleted {
-		r.invalid = true
 	}
 }
 

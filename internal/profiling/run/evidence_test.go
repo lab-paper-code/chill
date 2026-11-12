@@ -105,6 +105,57 @@ func TestValidateRuntimeRejectsInvalidPhaseEvidence(t *testing.T) {
 	}
 }
 
+func TestPhaseRequestValidationKeepsErrorOrder(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*Phase)
+		want   string
+	}{
+		{
+			name: "identity before offering",
+			mutate: func(phase *Phase) {
+				phase.Requests[0].RequestID = ""
+				phase.Requests[0].CompletedAt = phase.DrainEndedAt.Add(time.Second)
+			},
+			want: "request identity, completion or load-node timing is invalid",
+		},
+		{
+			name: "offering before native boundaries",
+			mutate: func(phase *Phase) {
+				phase.Requests[0].CompletedAt = phase.DrainEndedAt.Add(time.Second)
+				phase.Requests[0].Response.Progress.NativeHTTP = nil
+			},
+			want: "request offering/drain coverage is invalid",
+		},
+		{
+			name: "native boundaries before batch membership",
+			mutate: func(phase *Phase) {
+				phase.Requests[0].Response.Progress.NativeHTTP = nil
+			},
+			want: "native request receive/queue/finish boundaries are incomplete",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := firstfloorRunConfig()
+			phase := firstfloorResult(config).Phases[0]
+			start, err := time.Parse(time.RFC3339Nano, phase.MeasurementStartedAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			end, err := time.Parse(time.RFC3339Nano, phase.MeasurementEndedAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			phase.NativeSamples[0].RequestIDs = nil
+			test.mutate(&phase)
+			err = validatePhaseRequests(phase, config.Measurement.Batch, start, end)
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func validRuntimeResult(config RunConfig) RuntimeResult {
 	targetDuration := float64(config.Measurement.DurationSeconds)
 	count := config.Measurement.MinServiceSamples + 1

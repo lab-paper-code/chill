@@ -60,6 +60,8 @@ const BatchEnergyOptimizationPreflightAPIVersion = "console.chill.dacs.io/v1alph
 
 const MeasurementConditionExact = "exact"
 
+const batchPlanReasonVariantConditionChanged = "VariantConditionChanged"
+
 // BatchEnergyOptimizationPreflight is the bounded read model for one campaign that has
 // not been applied. The plan is republished as the canonical JSON the campaign
 // would have recorded, so what a preflight shows and what a campaign records
@@ -187,7 +189,7 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 			result.VariantID = &selectedID
 		} else {
 			result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
-				Code: "VariantConditionChanged",
+				Code: batchPlanReasonVariantConditionChanged,
 				Message: "The selected variant is not confirmed for the current frozen condition; " +
 					"previous batch exclusions are invalid.",
 			})

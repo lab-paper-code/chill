@@ -13,7 +13,8 @@ import (
 	"testing"
 )
 
-const sizingInput = `{"batch":2,"maxQueueRequests":64,"maxQueueBytes":2048,"framedDecodedRequestUpperBytes":256,"requestLifetimeSeconds":2.25,"deliveryMarginMilliseconds":250,"maxBatchServiceSeconds":0.125}`
+const sizingInput = `{"batch":2,"maxQueueRequests":64,"maxQueueBytes":2048,"framedDecodedRequestUpperBytes":256,` +
+	`"requestLifetimeSeconds":2.25,"deliveryMarginMilliseconds":250,"maxBatchServiceSeconds":0.125}`
 
 func TestSizeSaturationCLIWithoutConfigurationOrServer(t *testing.T) {
 	t.Setenv("NODE_NAME", "")
@@ -42,7 +43,10 @@ func TestSizeSaturationCLIWithoutConfigurationOrServer(t *testing.T) {
 	flags := flag.NewFlagSet("serving-worker", flag.ContinueOnError)
 	var opts options
 	opts.bindFlags(flags)
-	if err := flags.Parse([]string{"--size-saturation", "--config=" + filepath.Join(t.TempDir(), "missing.json"), "--bind-address=not-a-listener-address"}); err != nil {
+	if err := flags.Parse([]string{
+		"--size-saturation", "--config=" + filepath.Join(t.TempDir(), "missing.json"),
+		"--bind-address=not-a-listener-address",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := run(context.Background(), opts); err != nil {

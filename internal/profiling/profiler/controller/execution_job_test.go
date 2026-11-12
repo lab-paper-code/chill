@@ -73,21 +73,7 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Spec.TTLSecondsAfterFinished != nil {
-		t.Fatal("measurement Job must retain its Pods until evidence finalization")
-	}
-	if job.Namespace != run.Namespace || job.Spec.Parallelism == nil || *job.Spec.Parallelism != 1 ||
-		job.Spec.Completions == nil || *job.Spec.Completions != 1 ||
-		job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 0 ||
-		job.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever ||
-		job.Spec.Template.Spec.AutomountServiceAccountToken == nil || *job.Spec.Template.Spec.AutomountServiceAccountToken ||
-		job.Spec.Template.Spec.ServiceAccountName != "chill-workload-observer" {
-		t.Fatalf("Job retry or identity boundary drifted: %#v", job.Spec)
-	}
-	if !metav1.IsControlledBy(job, run) ||
-		job.Annotations[executionPolicyAnnotation] == "" {
-		t.Fatalf("Job ownership or execution identity missing: %#v", job.ObjectMeta)
-	}
+	assertExecutionJobIdentityAndRetryBoundary(t, job, run)
 	pod := job.Spec.Template.Spec
 	assertDeliveryTopology(t, pod, prepared.RunConfig)
 	if !slices.Contains(pod.Tolerations, corev1.Toleration{Key: "chill.dacs.io/measurement", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}) {
@@ -150,6 +136,25 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	assertArgument(t, workloads.Args,
 		"--selector-label-keys=app.kubernetes.io/component,app.kubernetes.io/name,edge.dacs.io/workload-role")
 	assertWorkloadObserverCredentialIsolation(t, pod, runtimeContainer, observer, workloads)
+}
+
+func assertExecutionJobIdentityAndRetryBoundary(t *testing.T, job *batchv1.Job, run *edgev1alpha1.ProfilingRun) {
+	t.Helper()
+	if job.Spec.TTLSecondsAfterFinished != nil {
+		t.Fatal("measurement Job must retain its Pods until evidence finalization")
+	}
+	if job.Namespace != run.Namespace || job.Spec.Parallelism == nil || *job.Spec.Parallelism != 1 ||
+		job.Spec.Completions == nil || *job.Spec.Completions != 1 ||
+		job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 0 ||
+		job.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever ||
+		job.Spec.Template.Spec.AutomountServiceAccountToken == nil || *job.Spec.Template.Spec.AutomountServiceAccountToken ||
+		job.Spec.Template.Spec.ServiceAccountName != "chill-workload-observer" {
+		t.Fatalf("Job retry or identity boundary drifted: %#v", job.Spec)
+	}
+	if !metav1.IsControlledBy(job, run) ||
+		job.Annotations[executionPolicyAnnotation] == "" {
+		t.Fatalf("Job ownership or execution identity missing: %#v", job.ObjectMeta)
+	}
 }
 
 func TestExecutionJobsKeepFrozenActorMemoryWithoutNodeLookup(t *testing.T) {

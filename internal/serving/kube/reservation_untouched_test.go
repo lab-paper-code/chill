@@ -17,7 +17,7 @@ import (
 
 // SCH-AC-38: the collision lease is wider than a Node-local prepare's writes.
 func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
-	for _, evidence := range []string{"untouched", "local-prepare", "route-cancel", "stop-cancel", "power-cancel", "unknown", "stale", "unready", "pod-unready", "native-unready", "pending-power", "native-unknown", "restart", "node-replaced", "not-baseline", "sibling", "cancel-sibling", "absent-sibling", "gc"} {
+	for _, evidence := range []string{"untouched", "local-prepare", "route-cancel", "stop-cancel", "power-cancel", unknownPodUID, "stale", "unready", "pod-unready", "native-unready", "pending-power", "native-unknown", "restart", "node-replaced", "not-baseline", "sibling", "cancel-sibling", "absent-sibling", "gc"} {
 		t.Run(evidence, func(t *testing.T) {
 			pod, node, _, _ := observerSourceFixture()
 			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
@@ -30,7 +30,7 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{parent.action.ID: parent}}}
 			c.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: id, PodUID: string(pod.UID), Node: ref}}
 			switch evidence {
-			case "local-prepare", "route-cancel", "stop-cancel", "power-cancel", "unknown":
+			case "local-prepare", "route-cancel", "stop-cancel", "power-cancel", unknownPodUID:
 				kind, effectNode := servingstate.OperationPrepare, serving.NodeReference{Name: "nano", UID: "nano-uid"}
 				switch evidence {
 				case "route-cancel":
@@ -41,7 +41,7 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 				case "power-cancel":
 					kind = servingstate.OperationPower
 					effectNode = ref
-				case "unknown":
+				case unknownPodUID:
 					kind = "future-write"
 				}
 				action := serving.Action{ID: "effect", Kind: kind, Node: effectNode, Status: servingstate.NativeOperationRunning}

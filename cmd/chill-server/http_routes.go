@@ -22,7 +22,8 @@ func privateOrigin(raw string) (*url.URL, error) {
 	}
 	origin, err := url.Parse(raw)
 	if err != nil || strings.TrimSpace(raw) != raw || origin.Opaque != "" ||
-		(origin.Scheme != "http" && origin.Scheme != "https") || origin.Host == "" || origin.Hostname() == "" ||
+		(origin.Scheme != profilingHTTPScheme && origin.Scheme != "https") ||
+		origin.Host == "" || origin.Hostname() == "" ||
 		origin.User != nil || (origin.Path != "" && origin.Path != "/") || origin.RawPath != "" ||
 		origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" {
 		return nil, errors.New(

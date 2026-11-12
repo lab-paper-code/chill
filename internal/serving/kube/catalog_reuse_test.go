@@ -28,7 +28,7 @@ const (
 
 func reuseProfilesFixture(t *testing.T) (serving.Profile, serving.Profile) {
 	t.Helper()
-	catalog, key, _, _ := catalogEvidenceFixture(t, 4096)
+	catalog, key, _, _ := catalogEvidenceFixture(t)
 	view, err := catalog.Refresh(context.Background(), []string{key.Namespace})
 	if err != nil || len(view.Profiles) != 1 {
 		t.Fatalf("verified source unavailable: %+v %v", view, err)
@@ -41,7 +41,7 @@ func reuseProfilesFixture(t *testing.T) (serving.Profile, serving.Profile) {
 	source.Condition.MetricSource.NodeName, source.MetricSource.NodeName = source.NodeName, source.NodeName
 	source.Condition.Backend, source.RuntimeMetadata.Runtime = profilingrun.FirstfloorORTCUDABackend, profilingrun.FirstfloorORTCUDABackend
 	source.RuntimeMetadata.GPUUUID = reuseSourceGPU
-	source.RuntimeMetadata.Device = "cuda"
+	source.RuntimeMetadata.Device = catalogCUDADevice
 	source.RuntimeMetadata.Providers = []string{"CUDAExecutionProvider"}
 	source.RuntimeMetadata.AvailableProviders = []string{"CUDAExecutionProvider", "CPUExecutionProvider"}
 	source.Condition.Actor.Backend, source.Condition.Actor.GPUUUID = profilingrun.FirstfloorORTCUDABackend, reuseSourceGPU
@@ -305,7 +305,7 @@ func TestProfileReuseRequiresCurrentDirectSource(t *testing.T) {
 }
 
 func TestCatalogRefreshReadsReuseAnnotationWithoutIndependentFallback(t *testing.T) {
-	catalog, key, _, _ := catalogEvidenceFixture(t, 4096)
+	catalog, key, _, _ := catalogEvidenceFixture(t)
 	campaign := &edge.BatchEnergyOptimization{}
 	if err := catalog.store.client.Get(context.Background(), key, campaign); err != nil {
 		t.Fatal(err)

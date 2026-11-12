@@ -211,13 +211,13 @@ func actorRequest(t *testing.T, cfg *Config, id, uid string, target float64) *re
 	}
 	return &request{received: time.Now(), context: RequestContext{RequestID: id, WorkloadUID: uid, Definition: uid + "/1", AdmissionPolicy: AdmissionDelay, ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: target}}, data: d, bytes: n}
 }
-func postJSON(h http.Handler, path string, v any) *httptest.ResponseRecorder {
+func postJSON(h http.Handler, v any) *httptest.ResponseRecorder {
 	body, e := json.Marshal(v)
 	if e != nil {
 		panic(e)
 	}
 	recorder := httptest.NewRecorder()
-	h.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)))
+	h.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v2/models/synthetic/infer", bytes.NewReader(body)))
 	return recorder
 }
 func awaitActorState(t *testing.T, s *Scheduler, want func(State) bool) State {
@@ -312,7 +312,7 @@ func TestItemFailureAndBatchErrorHTTP(t *testing.T) {
 	s, _ := startTestActor(t, "serving", "0", nil)
 	h := NewHandler(s)
 	send := func(id, value string) *httptest.ResponseRecorder {
-		return postJSON(h, "/v2/models/synthetic/infer", Request{ID: id, Context: RequestContext{RequestID: id, WorkloadUID: "uid", Definition: "uid/1", AdmissionPolicy: AdmissionDelay, ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 1000}}, Inputs: rawInputs(value)})
+		return postJSON(h, Request{ID: id, Context: RequestContext{RequestID: id, WorkloadUID: "uid", Definition: "uid/1", AdmissionPolicy: AdmissionDelay, ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 1000}}, Inputs: rawInputs(value)})
 	}
 	for _, test := range []struct {
 		value, outcome, reason string
@@ -345,7 +345,7 @@ func TestNativeAllocationFailureHTTPPreservesCategoryAndServing(t *testing.T) {
 			})
 			h := NewHandler(s)
 			send := func(value string) *httptest.ResponseRecorder {
-				return postJSON(h, "/v2/models/synthetic/infer", Request{
+				return postJSON(h, Request{
 					ID: value, Context: RequestContext{RequestID: value, WorkloadUID: "uid", Definition: "uid/1", AdmissionPolicy: AdmissionDelay,
 						ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 1000}}, Inputs: rawInputs(value)})
 			}
@@ -960,7 +960,7 @@ func TestNativeQueueFullAdmissionProofs(t *testing.T) {
 	reply := make(chan result, 1)
 	go func() { reply <- s.submit(ctx, queued) }()
 	awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 1 })
-	actor := postJSON(h, "/v2/models/synthetic/infer", nativeIngressRequest("actor-full"))
+	actor := postJSON(h, nativeIngressRequest("actor-full"))
 	var failure ErrorResponse
 	if actor.Code != http.StatusTooManyRequests || json.Unmarshal(actor.Body.Bytes(), &failure) != nil ||
 		failure.Code != CodeQueueFull || failure.Stage != AdmissionStageExecutor || failure.Policy != AdmissionDelay ||
@@ -972,7 +972,7 @@ func TestNativeQueueFullAdmissionProofs(t *testing.T) {
 	for range cap(h.admission) {
 		h.admission <- struct{}{}
 	}
-	semaphore := postJSON(h, "/v2/models/synthetic/infer", map[string]any{"invalid": true})
+	semaphore := postJSON(h, map[string]any{"invalid": true})
 	failure = ErrorResponse{}
 	if semaphore.Code != http.StatusTooManyRequests || json.Unmarshal(semaphore.Body.Bytes(), &failure) != nil ||
 		failure.Code != CodeQueueFull || failure.Stage != AdmissionStageExecutor || !failure.NotAdmitted ||
@@ -991,7 +991,7 @@ func TestNativeLifetimeTimeoutIsExplicitAndNonpreemptive(t *testing.T) {
 	s, _ := startTestActor(t, modeServing, "200", nil)
 	request := nativeIngressRequest("lifetime")
 	request.Context.LifetimeMS = 30
-	response := postJSON(NewHandler(s), "/v2/models/synthetic/infer", request)
+	response := postJSON(NewHandler(s), request)
 	var failure ErrorResponse
 	if response.Code != http.StatusRequestTimeout || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != CodeRequestTimeout || failure.ExecutionComplete || failure.Progress != nil {
 		t.Fatalf("active lifetime timeout must remain physically incomplete: %d %s", response.Code, response.Body.String())

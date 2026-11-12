@@ -80,13 +80,14 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	if spec, err = sourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
 		t.Fatalf("applied routing not restored: %+v %v", spec.Routing, err)
 	}
+	const measuredImage = "registry/native:measured"
 	for _, imageID := range []string{"", "opaque-runtime-image", "containerd://sha256:rebuilt"} {
 		actual := pod.DeepCopy()
-		actual.Spec.Containers[0].Image = "registry/native:measured"
-		actual.Spec.InitContainers[2].Image = "registry/native:measured"
+		actual.Spec.Containers[0].Image = measuredImage
+		actual.Spec.InitContainers[2].Image = measuredImage
 		actual.Status.ContainerStatuses[0].ImageID = imageID
 		measured := profile
-		measured.Condition.RuntimeImage = "registry/native:measured"
+		measured.Condition.RuntimeImage = measuredImage
 		if _, err = sourceSpec(actual, node, &measured, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil {
 			t.Fatalf("runtime image observation %q gated a measured tag: %v", imageID, err)
 		}

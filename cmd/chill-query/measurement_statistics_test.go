@@ -880,7 +880,8 @@ func statisticsFixture(
 				DurationSeconds:          int32(base.Measurement.DurationSeconds),
 				DurationToleranceSeconds: ptr.To(base.Measurement.DurationToleranceSeconds),
 				Dataset:                  base.Measurement.Dataset.Name,
-				OperatingPoints:          fixtures.OperatingPoints[api.MeasurementOperatingPointsSpec](base.Measurement.OperatingPoints),
+				OperatingPoints: fixtures.OperatingPoints[api.MeasurementOperatingPointsSpec](
+					base.Measurement.OperatingPoints),
 			},
 			IdleProtocol: api.IdleProtocolSpec{
 				SettlingDurationSeconds:  int32(idle.Measurement.SettlingDurationSeconds),
@@ -1280,12 +1281,16 @@ func statisticsTrial(
 			},
 		}
 		points := config.Measurement.OperatingPoints
-		workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests, points.QueueBytesCap, points.FramedDecodedRequestUpperBytes,
+		workers, sizing := fixtures.PhaseSupply(config.Measurement.Batch, config.Actor.MaxQueueRequests,
+			points.QueueBytesCap, points.FramedDecodedRequestUpperBytes,
 			float64(points.RequestLifetimeSeconds), float64(points.DeliveryMarginMilliseconds))
-		fixtures.ApplyActivePhases(&active.Runtime, fixtures.PhaseOptions{StartedAt: start, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
+		fixtures.ApplyActivePhases(&active.Runtime, fixtures.PhaseOptions{
+			StartedAt: start, Duration: time.Duration(points.PhaseDurationSeconds) * time.Second,
 			PostLoadDuration: time.Duration(points.PostLoadDurationSeconds) * time.Second,
 			Batch:            config.Measurement.Batch, Samples: count, Workers: workers, Utilizations: points.Utilizations,
-			SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds, PodUID: name, Latencies: []float64{latency}, SupplySizing: sizing})
+			SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds, PodUID: name,
+			Latencies: []float64{latency}, SupplySizing: sizing,
+		})
 		ff.ExecutionCount = uint64(active.Runtime.InferenceCount)
 		ff.InferenceCount = ff.ExecutionCount * uint64(config.Measurement.Batch)
 		ff.BatchExecutionCounts[fmt.Sprint(config.Measurement.Batch)] = ff.ExecutionCount

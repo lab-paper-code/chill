@@ -23,6 +23,7 @@ import (
 const (
 	evidenceReasonInvalid            = "EvidenceInvalid"
 	evidenceReasonVerificationFailed = "EvidenceVerificationFailed"
+	executionReasonLost              = "ExecutionLost"
 	admissionWait                    = 5 * time.Second
 	runJobCleanupPending             = "Pending"
 	runJobCleanupDone                = "Done"
@@ -86,7 +87,9 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, err
 		}
 		if job == nil {
-			if err := r.publishExecutionOutcome(ctx, run, metav1.ConditionFalse, "ExecutionLost", "recorded measurement Job no longer exists"); err != nil {
+			if err := r.publishExecutionOutcome(
+				ctx, run, metav1.ConditionFalse, executionReasonLost, "recorded measurement Job no longer exists",
+			); err != nil {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{}, r.deleteMeasurementLoad(ctx, run)
@@ -129,6 +132,16 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if run.Status.Job == nil {
 		return ctrl.Result{}, r.ensureMeasurementJob(ctx, req, run, resolved)
 	}
+	return r.reconcileExecution(ctx, req, run, resolved, job)
+}
+
+func (r *RunReconciler) reconcileExecution(
+	ctx context.Context,
+	req ctrl.Request,
+	run *edgev1alpha1.ProfilingRun,
+	resolved ResolvedRun,
+	job *batchv1.Job,
+) (ctrl.Result, error) {
 	snapshot, err := ProjectSnapshot(run, &resolved.Prepared.RunConfig, job)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("project ProfilingRun %s lifecycle: %w", req.NamespacedName, err)
@@ -443,7 +456,7 @@ func (r *RunReconciler) reconcileTerminalRun(ctx context.Context, run *edgev1alp
 		return true, result, err
 	}
 	failed := meta.FindStatusCondition(run.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
-	if failed != nil && failed.Status == metav1.ConditionFalse && failed.Reason == "ExecutionLost" {
+	if failed != nil && failed.Status == metav1.ConditionFalse && failed.Reason == executionReasonLost {
 		return true, ctrl.Result{}, r.deleteMeasurementLoad(ctx, run)
 	}
 	if run.Status.Job != nil && (evidenceIsTerminallyInvalid(run.Status.Conditions) ||

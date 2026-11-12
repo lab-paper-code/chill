@@ -253,15 +253,7 @@ func (i RunConfig) validateSchema() error {
 
 func (i RunConfig) validateMeasurementMode() error {
 	if i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode {
-		if (!isRKNNExecution(i) && i.Measurement.Batch != 1) ||
-			i.Measurement.WarmupIterations != 0 ||
-			i.Measurement.SettlingDurationSeconds < 1 ||
-			i.Measurement.Dataset != nil || i.Measurement.MinServiceSamples != 0 ||
-			i.Measurement.SLOPercentile != 0 || i.Measurement.OperatingPoints != nil ||
-			i.LoadOriginNode != "" || i.LoadOriginGatewayPod != nil {
-			return errors.New("model-loaded idle measurement protocol is invalid")
-		}
-		return nil
+		return i.validateIdleMeasurement()
 	}
 	if i.Measurement.SettlingDurationSeconds != 0 {
 		return errors.New("active measurement cannot contain settlingDurationSeconds")
@@ -291,6 +283,18 @@ func (i RunConfig) validateMeasurementMode() error {
 	if !cleanValue(i.LoadOriginNode) || i.LoadOriginNode == i.TargetNode.Name || i.LoadOriginGatewayPod == nil ||
 		!cleanValue(i.LoadOriginGatewayPod.Namespace) || !cleanValue(i.LoadOriginGatewayPod.Name) || !cleanValue(i.LoadOriginGatewayPod.UID) {
 		return errors.New("active measurement requires the frozen off-node serving gateway origin and Pod identity")
+	}
+	return nil
+}
+
+func (i RunConfig) validateIdleMeasurement() error {
+	if (!isRKNNExecution(i) && i.Measurement.Batch != 1) ||
+		i.Measurement.WarmupIterations != 0 ||
+		i.Measurement.SettlingDurationSeconds < 1 ||
+		i.Measurement.Dataset != nil || i.Measurement.MinServiceSamples != 0 ||
+		i.Measurement.SLOPercentile != 0 || i.Measurement.OperatingPoints != nil ||
+		i.LoadOriginNode != "" || i.LoadOriginGatewayPod != nil {
+		return errors.New("model-loaded idle measurement protocol is invalid")
 	}
 	return nil
 }

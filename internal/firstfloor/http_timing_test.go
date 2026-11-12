@@ -19,7 +19,7 @@ func TestNativeHTTPHandlerTimingAndDeferredPersistence(t *testing.T) {
 	}{{"deferred", "sample", 1, http.StatusOK}, {"failure", "raise", 1000, http.StatusInternalServerError}} {
 		t.Run(tc.id, func(t *testing.T) {
 			before := time.Now()
-			reply := postJSON(h, "/v2/models/synthetic/infer", Request{ID: tc.id,
+			reply := postJSON(h, Request{ID: tc.id,
 				Context: RequestContext{RequestID: tc.id, WorkloadUID: "uid", Definition: "uid/1", AdmissionPolicy: AdmissionDelay,
 					ReceivedAt: before.Add(time.Hour).UTC(), SenderElapsedMS: 10, SLO: SLO{Percentile: 95, TargetMS: tc.target}}, Inputs: rawInputs(tc.input)})
 			after := time.Now()

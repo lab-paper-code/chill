@@ -21,9 +21,27 @@ func profilingProofPair(id string) (profilingrun.PhaseRequest, native.Response) 
 	start := time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC)
 	finish := start.Add(200 * time.Microsecond)
 	zero, enqueue, done := int64(0), int64(100000), int64(700000)
-	p := native.Progress{RequestID: id, WorkloadUID: "pod", Definition: "definition", Phase: "finished", At: finish, BatchID: 7, BatchSize: 2, BatchRequestIDs: []string{"right", "left"}, BatchStartedAt: &start, BatchFinishedAt: &finish, ServiceSample: &native.ServiceSample{ServiceDurationNanos: 200000, PrecedingIdleNanos: &zero, TrialID: "pod"}, BackendMS: .2, ServiceMS: .2, Units: 1, NativeElapsedMS: .7, ExecutionComplete: true, NativeHTTP: &native.HTTPRequestTiming{HandlerEnteredAt: start.Add(-500 * time.Microsecond), ReceivedNanos: &zero, EnqueueNanos: &enqueue, FinishedNanos: &done}}
-	row := profilingrun.PhaseRequest{RequestID: id, RecordID: "record-" + id, ScheduledAt: start.Add(-time.Millisecond), DispatchedAt: start.Add(-time.Millisecond), CompletedAt: start.Add(time.Millisecond), LatencyMilliseconds: 2}
-	return row, native.Response{ID: id, ModelName: "classifier", Outputs: []native.Field{{Name: "class", Data: [][]byte{{3}}}}, Progress: p, ExecutionComplete: true}
+	p := native.Progress{
+		RequestID: id, WorkloadUID: "pod", Definition: "definition", Phase: "finished", At: finish,
+		BatchID: 7, BatchSize: 2, BatchRequestIDs: []string{"right", "left"},
+		BatchStartedAt: &start, BatchFinishedAt: &finish,
+		ServiceSample: &native.ServiceSample{
+			ServiceDurationNanos: 200000, PrecedingIdleNanos: &zero, TrialID: "pod",
+		},
+		BackendMS: .2, ServiceMS: .2, Units: 1, NativeElapsedMS: .7, ExecutionComplete: true,
+		NativeHTTP: &native.HTTPRequestTiming{
+			HandlerEnteredAt: start.Add(-500 * time.Microsecond),
+			ReceivedNanos:    &zero, EnqueueNanos: &enqueue, FinishedNanos: &done,
+		},
+	}
+	row := profilingrun.PhaseRequest{
+		RequestID: id, RecordID: "record-" + id, ScheduledAt: start.Add(-time.Millisecond),
+		DispatchedAt: start.Add(-time.Millisecond), CompletedAt: start.Add(time.Millisecond), LatencyMilliseconds: 2,
+	}
+	return row, native.Response{
+		ID: id, ModelName: "classifier", Outputs: []native.Field{{Name: "class", Data: [][]byte{{3}}}},
+		Progress: p, ExecutionComplete: true,
+	}
 }
 
 func TestProfilingLoadCompactMembershipKeepsNativeOrder(t *testing.T) {
@@ -37,7 +55,9 @@ func TestProfilingLoadCompactMembershipKeepsNativeOrder(t *testing.T) {
 		}
 	}
 	rows, samples, latencies, err := profilingTestFinishCollector(t, collector, driver)
-	if err != nil || len(rows) != 2 || len(samples) != 1 || len(latencies) != 1 || strings.Join(samples[0].RequestIDs, ",") != "right,left" || strings.Join(samples[0].RecordIDs, ",") != "record-right,record-left" {
+	if err != nil || len(rows) != 2 || len(samples) != 1 || len(latencies) != 1 ||
+		strings.Join(samples[0].RequestIDs, ",") != "right,left" ||
+		strings.Join(samples[0].RecordIDs, ",") != "record-right,record-left" {
 		t.Fatalf("compact evidence lost native membership order: samples=%+v err=%v", samples, err)
 	}
 	_, original := profilingProofPair("left")
@@ -63,7 +83,8 @@ func TestProfilingLoadRetainsClientArrivalOrder(t *testing.T) {
 		}
 	}
 	rows, _, _, err := profilingTestFinishCollector(t, collector, driver)
-	if err != nil || len(rows) != 2 || rows[0].RequestID != "left" || rows[1].RequestID != "right" || !rows[0].DispatchedAt.After(rows[1].DispatchedAt) {
+	if err != nil || len(rows) != 2 || rows[0].RequestID != "left" || rows[1].RequestID != "right" ||
+		!rows[0].DispatchedAt.After(rows[1].DispatchedAt) {
 		t.Fatalf("dispatch timing overrode client arrival order: rows=%+v err=%v", rows, err)
 	}
 }
@@ -106,7 +127,9 @@ func TestProfilingLoadUploadsFirstNativeAllocationFailure(t *testing.T) {
 	nativeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.WriteHeader(500)
-		_ = json.NewEncoder(w).Encode(native.ErrorResponse{Error: "BFCArena allocation failed", FailureReason: "MemoryAllocationFailed", ExecutionComplete: true})
+		_ = json.NewEncoder(w).Encode(native.ErrorResponse{
+			Error: "BFCArena allocation failed", FailureReason: profilingAllocationFailed, ExecutionComplete: true,
+		})
 	}))
 	defer nativeServer.Close()
 	plan := profilingTestPlan(nativeServer.URL)
@@ -121,9 +144,9 @@ func TestProfilingLoadUploadsFirstNativeAllocationFailure(t *testing.T) {
 	var uploaded profilingLoadFailure
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/measurement/load":
+		case profilingLoadPath:
 			_ = json.NewEncoder(w).Encode(plan)
-		case "/measurement/phase":
+		case profilingPhasePath:
 			_ = json.NewEncoder(w).Encode(map[string]string{"at": time.Now().UTC().Format(time.RFC3339Nano)})
 		case "/measurement/load-result":
 			mu.Lock()
@@ -144,7 +167,9 @@ func TestProfilingLoadUploadsFirstNativeAllocationFailure(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if uploaded.Status != "Failed" || uploaded.FailureReason != "MemoryAllocationFailed" || uploaded.Message == "" || uploaded.IssueEvidence == nil || uploaded.IssueEvidence.DriverGC == nil || uploaded.IssueEvidence.ArrivalSeed != plan.PodUID+"/sparse" || uploaded.IssueEvidence.SentInputs < 1 {
+	if uploaded.Status != "Failed" || uploaded.FailureReason != profilingAllocationFailed || uploaded.Message == "" ||
+		uploaded.IssueEvidence == nil || uploaded.IssueEvidence.DriverGC == nil ||
+		uploaded.IssueEvidence.ArrivalSeed != plan.PodUID+"/sparse" || uploaded.IssueEvidence.SentInputs < 1 {
 		t.Fatalf("first native allocation failure or driver evidence not uploaded: %+v", uploaded)
 	}
 }
@@ -156,7 +181,8 @@ func TestProfilingLoadDeadlineStopsSchedulerBeforeNextArrival(t *testing.T) {
 	defer cancel()
 	start := time.Now()
 	phase, err := driver.runPhase(ctx, profilingrun.Phase{ID: "sparse", Kind: "sparse", ArrivalRatePerSecond: .000001})
-	if err == nil || time.Since(start) > time.Second || phase.IssueLag.Count != 0 || phase.ScheduledInputs != 0 || phase.SentInputs != 0 || phase.DriverGC == nil {
+	if err == nil || time.Since(start) > time.Second || phase.IssueLag.Count != 0 ||
+		phase.ScheduledInputs != 0 || phase.SentInputs != 0 || phase.DriverGC == nil {
 		t.Fatalf("absolute deadline did not interrupt independent scheduler wait: %+v %v", phase, err)
 	}
 }
@@ -180,15 +206,16 @@ func (f profilingControlTransport) RoundTrip(r *http.Request) (*http.Response, e
 func TestProfilingLoadReadinessLongPollKeepsRootDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	for _, path := range []string{"/measurement/load", "/measurement/phase"} {
+	for _, path := range []string{profilingLoadPath, profilingPhasePath} {
 		method := http.MethodPost
-		if path == "/measurement/load" {
+		if path == profilingLoadPath {
 			method = http.MethodGet
 		}
 		client := &http.Client{Transport: profilingControlTransport(func(r *http.Request) (*http.Response, error) {
 			deadline, exists := r.Context().Deadline()
 			remaining := time.Until(deadline)
-			if !exists || path == "/measurement/load" && remaining < 45*time.Second || path != "/measurement/load" && remaining > 30*time.Second {
+			if !exists || path == profilingLoadPath && remaining < 45*time.Second ||
+				path != profilingLoadPath && remaining > 30*time.Second {
 				t.Errorf("incorrect control deadline for %s: %v", path, remaining)
 			}
 			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil

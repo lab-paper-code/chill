@@ -584,7 +584,7 @@ class PostLoadControlTest(unittest.TestCase):
 
         control.finish_post_load = mock.Mock(side_effect=freeze)
         control.ready.set()
-        payload = json.dumps({"status": "Failed", "error": "failed" + " " * (1 << 18)})
+        payload = json.dumps({"status": "Failed", "error": "failed" + " " * (1 << 18) + "end"}).encode("utf-8")
         decode = json.loads
 
         def decode_after_freeze(value, **kwargs):

@@ -47,10 +47,16 @@ func BenchmarkProfilingLoadNative(b *testing.B) {
 			b.ResetTimer()
 			for iteration := range b.N {
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				phase, err := driver.runPhase(ctx, profilingrun.Phase{ID: fmt.Sprintf("benchmark-%.0f-trial-%d-%d", trial.rate, trial.index, iteration), Kind: "utilization", Utilization: .5, ArrivalRatePerSecond: trial.rate})
+				phase, err := driver.runPhase(ctx, profilingrun.Phase{
+					ID:   fmt.Sprintf("benchmark-%.0f-trial-%d-%d", trial.rate, trial.index, iteration),
+					Kind: "utilization", Utilization: .5, ArrivalRatePerSecond: trial.rate,
+				})
 				cancel()
-				b.Logf("target=%.0f/s trial=%d iteration=%d seed=%q scheduled=%d sent=%d completed=%d offering=%.9fs measurement=%.9fs achieved=%.3f/s lag=%+v GC=%+v error=%v",
-					trial.rate, trial.index, iteration, phase.ArrivalSeed, phase.ScheduledInputs, phase.SentInputs, phase.CompletedInputs, phase.IssueElapsedSeconds, phase.MeasurementElapsedSeconds, phase.AchievedArrivalRatePerSecond, phase.IssueLag, phase.DriverGC, err)
+				b.Logf("target=%.0f/s trial=%d iteration=%d seed=%q scheduled=%d sent=%d completed=%d "+
+					"offering=%.9fs measurement=%.9fs achieved=%.3f/s lag=%+v GC=%+v error=%v",
+					trial.rate, trial.index, iteration, phase.ArrivalSeed, phase.ScheduledInputs, phase.SentInputs,
+					phase.CompletedInputs, phase.IssueElapsedSeconds, phase.MeasurementElapsedSeconds,
+					phase.AchievedArrivalRatePerSecond, phase.IssueLag, phase.DriverGC, err)
 				if err != nil {
 					failures = append(failures, err)
 				}
@@ -112,8 +118,10 @@ func BenchmarkProfilingLoadNative(b *testing.B) {
 			b.ReportMetric(float64(completed), "completed-inputs")
 			// Log resource observations even when a failed trial suppresses the
 			// benchmark result line. Each later trial still runs independently.
-			b.Logf("driver target=%.0f/s trial=%d allocated=%.0fB allocations=%.0f CPU=%.6fs peak-RSS=%.0fB scheduled=%d sent=%d completed=%d lag-p50=%.6fms lag-p95=%.6fms lag-p99=%.6fms lag-max=%.6fms GC=%+v",
-				trial.rate, trial.index, allocated, allocations, cpu, peakRSS, scheduled, sent, completed, p50/float64(b.N), p95/float64(b.N), p99/float64(b.N), maximum, gc)
+			b.Logf("driver target=%.0f/s trial=%d allocated=%.0fB allocations=%.0f CPU=%.6fs peak-RSS=%.0fB "+
+				"scheduled=%d sent=%d completed=%d lag-p50=%.6fms lag-p95=%.6fms lag-p99=%.6fms lag-max=%.6fms GC=%+v",
+				trial.rate, trial.index, allocated, allocations, cpu, peakRSS, scheduled, sent, completed,
+				p50/float64(b.N), p95/float64(b.N), p99/float64(b.N), maximum, gc)
 			for _, err := range failures {
 				b.Error(err)
 			}
@@ -142,7 +150,8 @@ func profilingBenchmarkStubProcess(b testing.TB) string {
 		b.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	command := exec.CommandContext(ctx, executable, "-test.run=^TestProfilingLoadNativeStubProcess$", "-test.paniconexit0=false")
+	command := exec.CommandContext(ctx, executable,
+		"-test.run=^TestProfilingLoadNativeStubProcess$", "-test.paniconexit0=false")
 	command.Env = append(os.Environ(), "CHILL_TEST_PROFILE_STUB_PROCESS=1")
 	output, err := command.StdoutPipe()
 	if err != nil {

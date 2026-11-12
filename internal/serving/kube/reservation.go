@@ -534,33 +534,41 @@ func (c *reservationState) returnResourceNode(owner, id string, pod bool, pods [
 		}
 	}
 	if ref.UID == "" {
-		// Inherited multi-node bounds are uncertainty, not competing exact
-		// observations. Fresh identity evidence above can resolve them.
-		for _, member := range c.runs {
-			if member.owner != owner || member.result == nil {
-				continue
-			}
-			inherited := member.returnInstanceNodes
-			if pod {
-				inherited = member.returnPodNodes
-			}
-			for _, node := range inherited[id] {
+		c.includeInheritedReturnNodes(owner, id, pod, include)
+	}
+	if ref.UID == "" {
+		c.includeReturnFootprintNodes(owner, id, pod, include)
+	}
+	return ref, ref.UID != "" && !ambiguous, conflicts
+}
+
+func (c *reservationState) includeInheritedReturnNodes(owner, id string, pod bool, include func(serving.NodeReference)) {
+	// Inherited multi-node bounds are uncertainty, not competing exact
+	// observations. Fresh identity evidence above can resolve them.
+	for _, member := range c.runs {
+		if member.owner != owner || member.result == nil {
+			continue
+		}
+		inherited := member.returnInstanceNodes
+		if pod {
+			inherited = member.returnPodNodes
+		}
+		for _, node := range inherited[id] {
+			include(node)
+		}
+	}
+}
+
+func (c *reservationState) includeReturnFootprintNodes(owner, id string, pod bool, include func(serving.NodeReference)) {
+	// A multi-node footprint bounds uncertainty without choosing a Node.
+	for _, member := range c.runs {
+		if member.owner == owner && member.result != nil &&
+			(pod && slices.Contains(member.scope.Pods, id) || !pod && slices.Contains(member.scope.Instances, id)) {
+			for _, node := range member.scope.Nodes {
 				include(node)
 			}
 		}
 	}
-	if ref.UID == "" {
-		// A multi-node footprint bounds uncertainty without choosing a Node.
-		for _, member := range c.runs {
-			if member.owner == owner && member.result != nil &&
-				(pod && slices.Contains(member.scope.Pods, id) || !pod && slices.Contains(member.scope.Instances, id)) {
-				for _, node := range member.scope.Nodes {
-					include(node)
-				}
-			}
-		}
-	}
-	return ref, ref.UID != "" && !ambiguous, conflicts
 }
 
 func includeScopedReturnNode(scope resourceScope, id string, pod bool, include func(serving.NodeReference)) {

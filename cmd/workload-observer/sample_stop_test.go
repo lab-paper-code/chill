@@ -309,7 +309,8 @@ func runSampleStopProducer(
 				BatchID: uint64(len(samples) + 1), BatchSize: config.Measurement.Batch,
 				RecordIDs: recordIDs, Units: units, ServiceSample: pair,
 				RunnerServiceMilliseconds: serviceMS, BackendCallMilliseconds: serviceMS, NativeRequestMilliseconds: serviceMS,
-				StartedAt: exchangeStart, FinishedAt: previousEnd, LatestEnqueuedAt: exchangeStart, EarliestEnqueuedAt: exchangeStart,
+				StartedAt: exchangeStart, FinishedAt: previousEnd,
+				LatestEnqueuedAt: exchangeStart, EarliestEnqueuedAt: exchangeStart,
 			})
 		}
 	}
@@ -339,7 +340,8 @@ func sampleStopExecutionPlan(t *testing.T, config profilingrun.RunConfig) profil
 	policy.Name, policy.DeviceClass = "sample-stop-regression", "*"
 	policy.ExecutionPath, policy.WorkloadMode = config.Candidate.ExecutionPath, config.Measurement.WorkloadMode
 	policy.AttemptTimeoutOverheadSeconds = max(policy.AttemptTimeoutOverheadSeconds, 420)
-	policy.ActiveDeadlineOverheadSeconds = max(policy.ActiveDeadlineOverheadSeconds, policy.AttemptTimeoutOverheadSeconds+30)
+	policy.ActiveDeadlineOverheadSeconds = max(
+		policy.ActiveDeadlineOverheadSeconds, policy.AttemptTimeoutOverheadSeconds+30)
 	catalog, err := yaml.Marshal(profiler.ExecutionPolicyCatalog{
 		SchemaVersion: profiler.ExecutionPolicyCatalogSchemaVersion,
 		Policies:      []profiler.ExecutionPolicySpec{policy},

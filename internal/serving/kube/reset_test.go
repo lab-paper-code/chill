@@ -1373,8 +1373,9 @@ func newControl382ResetHarness(t *testing.T) (*resetHarness, []serving.NodeRefer
 	if err := h.api.Create(ctx, class); err != nil {
 		t.Fatal(err)
 	}
-	var refs []serving.NodeReference
-	for index, name := range []string{"orangepi", "genesis2", "genesis3", "jetsono", "jetsonx"} {
+	names := []string{"orangepi", "genesis2", "genesis3", "jetsono", "jetsonx"}
+	refs := make([]serving.NodeReference, 0, len(names))
+	for index, name := range names {
 		node := template.DeepCopy()
 		node.Name, node.UID, node.ResourceVersion = name, types.UID(name+"-uid"), ""
 		if index > 0 {

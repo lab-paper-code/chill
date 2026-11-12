@@ -277,7 +277,7 @@ func TestObserverImagesDoNotInvalidateMeasuredBatches(t *testing.T) {
 		t.Fatalf("image versions invalidated measured batches: %+v", got)
 	}
 	for _, reason := range got.Reasons {
-		if reason.Code == "ImmutableImagesUnconfirmed" || reason.Code == "VariantConditionChanged" {
+		if reason.Code == "ImmutableImagesUnconfirmed" || reason.Code == batchPlanReasonVariantConditionChanged {
 			t.Fatalf("image validity gate survived: %+v", reason)
 		}
 	}
@@ -331,7 +331,7 @@ func TestPreflightKeepsCompletedVariantWithInProgressEvidence(t *testing.T) {
 				t.Fatalf("in-progress plan replaced completed measurement identity: %+v", got)
 			}
 			for _, reason := range got.Reasons {
-				if reason.Code == "VariantConditionChanged" {
+				if reason.Code == batchPlanReasonVariantConditionChanged {
 					t.Fatalf("in-progress plan invalidated completed variant: %+v", got)
 				}
 			}
