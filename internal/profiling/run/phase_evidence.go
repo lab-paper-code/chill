@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"slices"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
@@ -35,6 +34,7 @@ func validatePhases(config RunConfig, phases []Phase, sizing SupplySizing, start
 	}
 	previousEnd := started
 	seenIDs := make(map[string]bool, len(phases))
+	seenRequests := make(map[string]bool)
 	calls := 0
 	var saturationRate float64
 	for index, phase := range phases {
@@ -65,6 +65,15 @@ func validatePhases(config RunConfig, phases []Phase, sizing SupplySizing, start
 		}
 		if phase.CompletedInputs != len(phase.NativeSamples)*config.Measurement.Batch || phase.CompletedInputs != len(phase.Requests) {
 			return 0, errors.New("phase completed-input/request/batch counts disagree")
+		}
+		if err := validateIssueEvidence(phase); err != nil {
+			return 0, err
+		}
+		for _, request := range phase.Requests {
+			if seenRequests[request.RequestID] {
+				return 0, errors.New("request identity is duplicated across phases")
+			}
+			seenRequests[request.RequestID] = true
 		}
 		switch phase.Kind {
 		case "saturation":
@@ -131,15 +140,40 @@ func finitePositive(value float64) bool {
 	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
+func validateIssueEvidence(phase Phase) error {
+	if phase.Kind == "saturation" {
+		if phase.AchievedArrivalRatePerSecond != 0 || phase.IssueElapsedSeconds != 0 || phase.IssueLag != nil || phase.IssueLagToleranceMS != 0 {
+			return errors.New("saturation must omit Poisson issue evidence")
+		}
+		return nil
+	}
+	lag := phase.IssueLag
+	if !finitePositive(phase.IssueElapsedSeconds) || phase.IssueElapsedSeconds > phase.MeasurementElapsedSeconds ||
+		!finitePositive(phase.AchievedArrivalRatePerSecond) ||
+		phase.AchievedArrivalRatePerSecond != float64(phase.CompletedInputs)/phase.IssueElapsedSeconds ||
+		phase.IssueLagToleranceMS != 10 || lag == nil || lag.Count != phase.CompletedInputs || lag.Count < 1 {
+		return errors.New("Poisson issue count, rate, duration or tolerance is invalid")
+	}
+	for _, value := range []float64{lag.Min, lag.Mean, lag.P50, lag.P95, lag.P99, lag.Max} {
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return errors.New("Poisson issue lag must be finite and nonnegative")
+		}
+	}
+	if lag.Max > 10 || lag.Min > lag.P50 || lag.P50 > lag.P95 || lag.P95 > lag.P99 || lag.P99 > lag.Max ||
+		lag.Mean < lag.Min || lag.Mean > lag.Max {
+		return errors.New("Poisson issue lag exceeds schedule tolerance or has unordered statistics")
+	}
+	return nil
+}
+
 func validatePhaseRequests(phase Phase, batch int, start, end time.Time) error {
-	requests := make(map[string]struct{}, len(phase.Requests))
-	byBatch := make(map[uint64][]*PhaseRequest, len(phase.NativeSamples))
+	requests := make(map[string]*PhaseRequest, len(phase.Requests))
 	for index := range phase.Requests {
 		request := &phase.Requests[index]
 		progress := &request.Response.Progress
 		if request.RequestID == "" || request.RecordID == "" || request.Response.ID != request.RequestID ||
 			progress.RequestID != request.RequestID || progress.BatchID == 0 || progress.BatchSize != batch ||
-			!request.Response.ExecutionComplete || !progress.ExecutionComplete || progress.ServiceSample == nil ||
+			!request.Response.ExecutionComplete || !progress.ExecutionComplete || progress.Units < 1 || !finitePositive(progress.NativeElapsedMS) ||
 			request.ArrivalAt.IsZero() || request.SentAt.Before(request.ArrivalAt) || !request.CompletedAt.After(request.SentAt) || !finitePositive(request.LatencyMilliseconds) {
 			return errors.New("request identity, completion or load-node timing is invalid")
 		}
@@ -151,36 +185,33 @@ func validatePhaseRequests(phase Phase, batch int, start, end time.Time) error {
 			*http.ReceivedNanos < 0 || *http.EnqueueNanos < *http.ReceivedNanos || *http.FinishedNanos < *http.EnqueueNanos {
 			return errors.New("native request receive/queue/finish boundaries are incomplete")
 		}
-		requests[request.RequestID] = struct{}{}
-		byBatch[progress.BatchID] = append(byBatch[progress.BatchID], request)
+		requests[request.RequestID] = request
 	}
-	for _, sample := range phase.NativeSamples {
-		members := byBatch[sample.BatchID]
-		if len(members) != batch || sample.StartedAt.IsZero() || !sample.FinishedAt.After(sample.StartedAt) || sample.EarliestEnqueuedAt.IsZero() ||
+	for sampleIndex, sample := range phase.NativeSamples {
+		if len(sample.RequestIDs) != batch || len(sample.RecordIDs) != batch || len(sample.Units) != batch ||
+			sample.StartedAt.IsZero() || !sample.FinishedAt.After(sample.StartedAt) || sample.EarliestEnqueuedAt.IsZero() ||
 			sample.StartedAt.Before(start) || sample.FinishedAt.After(end) ||
 			sample.LatestEnqueuedAt.Before(sample.EarliestEnqueuedAt) || sample.LatestEnqueuedAt.After(sample.StartedAt) {
 			return errors.New("native batch membership or anchors are incomplete")
 		}
-		var recordIDs []string
-		for _, request := range members {
-			progress := &request.Response.Progress
-			if len(progress.BatchRequestIDs) != batch || !slices.Contains(progress.BatchRequestIDs, request.RequestID) ||
-				progress.BatchStartedAt == nil || progress.BatchFinishedAt == nil ||
-				!progress.BatchStartedAt.Equal(sample.StartedAt) || !progress.BatchFinishedAt.Equal(sample.FinishedAt) ||
-				progress.ServiceSample.ServiceDurationNanos != sample.ServiceDurationNanos || progress.ServiceSample.TrialID != sample.TrialID {
-				return errors.New("request batch membership or service differs from batch sample")
+		var maximumLatency float64
+		for index, id := range sample.RequestIDs {
+			request := requests[id]
+			if request == nil || request.Response.Progress.BatchID != sample.BatchID ||
+				sample.RecordIDs[index] != request.RecordID || sample.Units[index] != request.Response.Progress.Units {
+				return errors.New("native sample request membership, record or units disagree")
 			}
-			recordIDs = append(recordIDs, request.RecordID)
+			delete(requests, id)
+			if request.Response.Progress.NativeElapsedMS > request.LatencyMilliseconds {
+				return errors.New("native request span exceeds client latency")
+			}
+			maximumLatency = max(maximumLatency, request.LatencyMilliseconds)
 		}
-		got, want := slices.Clone(recordIDs), slices.Clone(sample.RecordIDs)
-		slices.Sort(got)
-		slices.Sort(want)
-		if !slices.Equal(got, want) {
-			return errors.New("batch record population differs from completed requests")
+		if sampleIndex >= len(phase.LatencyMilliseconds) || phase.LatencyMilliseconds[sampleIndex] != maximumLatency {
+			return errors.New("native batch maximum client latency is missing")
 		}
-		delete(byBatch, sample.BatchID)
 	}
-	if len(byBatch) != 0 {
+	if len(requests) != 0 {
 		return errors.New("completed requests have no physical batch sample")
 	}
 	return nil

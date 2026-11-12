@@ -64,6 +64,8 @@ func TestActiveTrialPreservesInitiallyKnownNativeGap(t *testing.T) {
 	repetition.LatencyMilliseconds = repetition.LatencyMilliseconds[:config.Measurement.MinServiceSamples]
 	repetition.Requests = repetition.Requests[:config.Measurement.MinServiceSamples]
 	repetition.CompletedInputs = config.Measurement.MinServiceSamples
+	repetition.IssueLag.Count = repetition.CompletedInputs
+	repetition.AchievedArrivalRatePerSecond = float64(repetition.CompletedInputs) / repetition.IssueElapsedSeconds
 	result.InferenceCount--
 	result.Firstfloor.ExecutionCount = uint64(result.InferenceCount)
 	result.Firstfloor.InferenceCount = uint64(result.InferenceCount)
@@ -316,5 +318,88 @@ func TestFirstfloorEvidenceRecordsSharedCPUEnvironment(t *testing.T) {
 		if err := validateCPUObservation(quota); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestCompactBatchMembershipUsesSampleRequestIDsOnce(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	makePhase := func() Phase {
+		return fixtures.ActivePhases[Phase](fixtures.PhaseOptions{
+			StartedAt: start, Duration: 30 * time.Second, Batch: 2, Samples: 2, Workers: 4,
+			PodUID: "physical-pod", SparseMeanGapMilliseconds: 1000,
+		})[0]
+	}
+	phase := makePhase()
+	if err := validatePhaseRequests(phase, 2, start, start.Add(30*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Phase)
+	}{
+		{"missing IDs", func(p *Phase) { p.NativeSamples[0].RequestIDs = nil }},
+		{"duplicate IDs", func(p *Phase) { p.NativeSamples[0].RequestIDs[1] = p.NativeSamples[0].RequestIDs[0] }},
+		{"foreign batch", func(p *Phase) { p.NativeSamples[0].RequestIDs[1] = p.NativeSamples[1].RequestIDs[0] }},
+		{"record order", func(p *Phase) { p.NativeSamples[0].RecordIDs[0] = "wrong" }},
+		{"unit order", func(p *Phase) { p.NativeSamples[0].Units[0] = 2 }},
+		{"uncorrelated latency", func(p *Phase) { p.LatencyMilliseconds[0] = 2 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			phase := makePhase()
+			test.mutate(&phase)
+			if err := validatePhaseRequests(phase, 2, start, start.Add(30*time.Second)); err == nil {
+				t.Fatal("incomplete compact membership was accepted")
+			}
+		})
+	}
+	cloned := phase.NativeSamples[0].Clone()
+	cloned.RequestIDs[0] = "changed"
+	if phase.NativeSamples[0].RequestIDs[0] == "changed" {
+		t.Fatal("sample clone shares request membership")
+	}
+}
+
+func TestPoissonIssueEvidenceRejectsIncompleteLateOrNonfiniteSchedules(t *testing.T) {
+	config := firstfloorRunConfig()
+	tests := []struct {
+		name   string
+		mutate func(*Phase)
+	}{
+		{"missing lag", func(p *Phase) { p.IssueLag = nil }},
+		{"count mismatch", func(p *Phase) { p.IssueLag.Count-- }},
+		{"late send", func(p *Phase) { p.IssueLag.Max = 10.001 }},
+		{"nonfinite mean", func(p *Phase) { p.IssueLag.Mean = math.NaN() }},
+		{"infinite tail", func(p *Phase) { p.IssueLag.P99 = math.Inf(1) }},
+		{"negative minimum", func(p *Phase) { p.IssueLag.Min = -1 }},
+		{"unordered percentiles", func(p *Phase) { p.IssueLag.P95, p.IssueLag.P99, p.IssueLag.Max = 2, 1, 3 }},
+		{"wrong tolerance", func(p *Phase) { p.IssueLagToleranceMS = 11 }},
+		{"missing elapsed", func(p *Phase) { p.IssueElapsedSeconds = 0 }},
+		{"elapsed beyond phase", func(p *Phase) { p.IssueElapsedSeconds = p.MeasurementElapsedSeconds + 1 }},
+		{"wrong denominator", func(p *Phase) { p.AchievedArrivalRatePerSecond++ }},
+		{"nonfinite rate", func(p *Phase) { p.AchievedArrivalRatePerSecond = math.Inf(1) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := firstfloorResult(config)
+			test.mutate(&result.Phases[0])
+			if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+				t.Fatal("invalid Poisson issue evidence was accepted")
+			}
+		})
+	}
+	result := firstfloorResult(config)
+	result.Phases[0].IssueLag.Max = 10
+	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
+		t.Fatalf("inclusive 10ms tolerance rejected: %v", err)
+	}
+	result.Phases[1].IssueLag = &IssueLag{}
+	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+		t.Fatal("saturation accepted Poisson issue evidence")
+	}
+	result = firstfloorResult(config)
+	result.SchemaVersion = "chill.dacs.io/batch-characterization.v1alpha11"
+	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+		t.Fatal("retired runtime schema was accepted")
 	}
 }

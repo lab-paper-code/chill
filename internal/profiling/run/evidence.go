@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha11"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha12"
 
 	RKNNLiteCoreMask      = "NPU_CORE_0"
 	RKNNLiteInputLayout   = "NHWC"
@@ -141,38 +141,84 @@ type RKNNDeviceObservation struct {
 	Opened          bool   `json:"opened"`
 }
 type Phase struct {
-	ID                        string                `json:"id"`
-	Kind                      string                `json:"kind"`
-	Utilization               float64               `json:"utilization,omitempty"`
-	ArrivalRatePerSecond      float64               `json:"arrivalRatePerSecond,omitempty"`
-	Workers                   int                   `json:"workers,omitempty"`
-	MeasurementStartedAt      string                `json:"measurementStartedAt"`
-	MeasurementEndedAt        string                `json:"measurementEndedAt"`
-	MeasurementElapsedSeconds float64               `json:"measurementElapsedSecondsMonotonic"`
-	CompletedInputs           int                   `json:"completedInputs"`
-	Requests                  []PhaseRequest        `json:"requests"`
-	LatencyMilliseconds       []float64             `json:"latencyMs"`
-	NativeSamples             []NativeServiceSample `json:"nativeSamples"`
+	ID                           string                `json:"id"`
+	Kind                         string                `json:"kind"`
+	Utilization                  float64               `json:"utilization,omitempty"`
+	ArrivalRatePerSecond         float64               `json:"arrivalRatePerSecond,omitempty"`
+	AchievedArrivalRatePerSecond float64               `json:"achievedArrivalRatePerSecond,omitempty"`
+	IssueElapsedSeconds          float64               `json:"issueElapsedSecondsMonotonic,omitempty"`
+	IssueLag                     *IssueLag             `json:"issueLagMs,omitempty"`
+	IssueLagToleranceMS          float64               `json:"issueLagToleranceMs,omitempty"`
+	Workers                      int                   `json:"workers,omitempty"`
+	MeasurementStartedAt         string                `json:"measurementStartedAt"`
+	MeasurementEndedAt           string                `json:"measurementEndedAt"`
+	MeasurementElapsedSeconds    float64               `json:"measurementElapsedSecondsMonotonic"`
+	CompletedInputs              int                   `json:"completedInputs"`
+	Requests                     []PhaseRequest        `json:"requests"`
+	LatencyMilliseconds          []float64             `json:"latencyMs"`
+	NativeSamples                []NativeServiceSample `json:"nativeSamples"`
+}
+
+type IssueLag struct {
+	Count int     `json:"count"`
+	Min   float64 `json:"min"`
+	Mean  float64 `json:"mean"`
+	P50   float64 `json:"p50"`
+	P95   float64 `json:"p95"`
+	P99   float64 `json:"p99"`
+	Max   float64 `json:"max"`
 }
 
 type PhaseRequest struct {
-	RequestID           string              `json:"requestID"`
-	RecordID            string              `json:"recordID"`
-	ArrivalAt           time.Time           `json:"arrivalAt"`
-	SentAt              time.Time           `json:"sentAt"`
-	CompletedAt         time.Time           `json:"completedAt"`
-	LatencyMilliseconds float64             `json:"latencyMs"`
-	Response            firstfloor.Response `json:"response"`
+	RequestID           string        `json:"requestID"`
+	RecordID            string        `json:"recordID"`
+	ArrivalAt           time.Time     `json:"arrivalAt"`
+	SentAt              time.Time     `json:"sentAt"`
+	CompletedAt         time.Time     `json:"completedAt"`
+	LatencyMilliseconds float64       `json:"latencyMs"`
+	Response            PhaseResponse `json:"response"`
+}
+
+// PhaseResponse retains request evidence without repeating physical batch proof.
+// The native serving response remains firstfloor.Response.
+type PhaseResponse struct {
+	ModelName         string             `json:"model_name"`
+	ID                string             `json:"id"`
+	Outputs           []firstfloor.Field `json:"outputs"`
+	Progress          PhaseProgress      `json:"progress"`
+	ExecutionComplete bool               `json:"executionComplete"`
+}
+
+type PhaseProgress struct {
+	RequestID         string                        `json:"requestID"`
+	WorkloadUID       string                        `json:"workloadUID"`
+	Definition        string                        `json:"definition"`
+	Phase             string                        `json:"phase"`
+	At                time.Time                     `json:"at"`
+	BatchID           uint64                        `json:"batchID,omitempty"`
+	BatchSize         int                           `json:"batchSize,omitempty"`
+	ProfileID         string                        `json:"profileID,omitempty"`
+	DecisionID        string                        `json:"decisionID,omitempty"`
+	QueueMS           float64                       `json:"queueMS"`
+	ExecutorWaitNanos *int64                        `json:"executorWaitNanos,omitempty"`
+	ServiceMS         float64                       `json:"serviceMS"`
+	Units             int                           `json:"units,omitempty"`
+	NativeElapsedMS   float64                       `json:"nativeElapsedMS"`
+	ExecutionComplete bool                          `json:"executionComplete"`
+	Outcome           string                        `json:"outcome,omitempty"`
+	NativeHTTP        *firstfloor.HTTPRequestTiming `json:"nativeHTTP,omitempty"`
+	NativeDeferredAt  *time.Time                    `json:"nativeDeferredAt,omitempty"`
 }
 
 // NativeServiceSample is one actual batch execution, aligned by slice index with
 // the phase's maximum member client latency. Spans overlap and must not be summed.
 // RecordIDs and Units are per request; units are analysis observations.
 type NativeServiceSample struct {
-	BatchID   uint64   `json:"batchID"`
-	BatchSize int      `json:"batchSize"`
-	RecordIDs []string `json:"recordIDs"`
-	Units     []int    `json:"units"`
+	BatchID    uint64   `json:"batchID"`
+	BatchSize  int      `json:"batchSize"`
+	RequestIDs []string `json:"requestIDs"`
+	RecordIDs  []string `json:"recordIDs"`
+	Units      []int    `json:"units"`
 	firstfloor.ServiceSample
 	RunnerServiceMilliseconds float64   `json:"runnerServiceMs"`
 	PreprocessMilliseconds    float64   `json:"preprocessMs"`
@@ -189,6 +235,7 @@ type NativeServiceSample struct {
 // Clone preserves pair/provenance ownership along with aligned request metadata.
 func (s NativeServiceSample) Clone() NativeServiceSample {
 	s.ServiceSample = s.ServiceSample.Clone()
+	s.RequestIDs = slices.Clone(s.RequestIDs)
 	s.RecordIDs, s.Units = slices.Clone(s.RecordIDs), slices.Clone(s.Units)
 	return s
 }
@@ -495,11 +542,11 @@ func validateServicePair(trialID string, sample NativeServiceSample, callIndex u
 // validateNativeSampleRequests checks the per-request record IDs and unit
 // counts and the preprocessing stage spans of one batch execution.
 func validateNativeSampleRequests(config RunConfig, sample NativeServiceSample) error {
-	if len(sample.RecordIDs) != sample.BatchSize || len(sample.Units) != sample.BatchSize {
-		return errors.New("firstfloor native record IDs and units must cover the batch")
+	if len(sample.RequestIDs) != sample.BatchSize || len(sample.RecordIDs) != sample.BatchSize || len(sample.Units) != sample.BatchSize {
+		return errors.New("firstfloor native request IDs, record IDs and units must cover the batch")
 	}
 	for index, recordID := range sample.RecordIDs {
-		if recordID == "" || sample.Units[index] < 1 {
+		if sample.RequestIDs[index] == "" || recordID == "" || sample.Units[index] < 1 {
 			return errors.New("firstfloor native record ID or unit count is invalid")
 		}
 	}

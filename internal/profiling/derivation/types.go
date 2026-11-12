@@ -37,10 +37,11 @@ type Trial struct {
 // NativeServiceSample copies one runtime batch execution unchanged. RecordIDs
 // and Units are per request; units are analysis observations only.
 type NativeServiceSample struct {
-	BatchID   uint64   `json:"batchID"`
-	BatchSize int      `json:"batchSize"`
-	RecordIDs []string `json:"recordIDs"`
-	Units     []int    `json:"units"`
+	BatchID    uint64   `json:"batchID"`
+	BatchSize  int      `json:"batchSize"`
+	RequestIDs []string `json:"requestIDs"`
+	RecordIDs  []string `json:"recordIDs"`
+	Units      []int    `json:"units"`
 	firstfloor.ServiceSample
 	RunnerServiceMilliseconds float64   `json:"runnerServiceMs"`
 	PreprocessMilliseconds    float64   `json:"preprocessMs"`
@@ -56,6 +57,7 @@ type NativeServiceSample struct {
 
 func (s NativeServiceSample) Clone() NativeServiceSample {
 	s.ServiceSample = s.ServiceSample.Clone()
+	s.RequestIDs = slices.Clone(s.RequestIDs)
 	s.RecordIDs, s.Units = slices.Clone(s.RecordIDs), slices.Clone(s.Units)
 	return s
 }

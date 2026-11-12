@@ -55,6 +55,10 @@ def phase_results(plan):
             phase["arrivalRatePerSecond"] = 1
         else:
             phase.update(utilization=.5, arrivalRatePerSecond=.5 * (4 / 30))
+        if kind != "saturation":
+            phase.update(achievedArrivalRatePerSecond=4 / 20, issueElapsedSecondsMonotonic=20,
+                         issueLagToleranceMs=10,
+                         issueLagMs={"count": 4, "min": 0, "mean": 0, "p50": 0, "p95": 0, "p99": 0, "max": 0})
         for offset in range(2):
             batch_id += 1
             ids = [f"{phase_id}-{offset}-{item}" for item in range(2)]
@@ -66,8 +70,8 @@ def phase_results(plan):
                                           "completedAt": "2030-01-01T00:00:00.005000002Z", "latencyMs": 5,
                                           "response": {"id": request_id, "executionComplete": True,
                                                        "progress": {"requestID": request_id, "batchID": batch_id,
-                                                                    "batchRequestIDs": ids, "units": item + 1}}})
-            phase["nativeSamples"].append(dict(pair, batchID=batch_id, batchSize=2,
+                                                                    "batchSize": 2, "nativeElapsedMS": 3, "units": item + 1}}})
+            phase["nativeSamples"].append(dict(pair, batchID=batch_id, batchSize=2, requestIDs=ids,
                                                 recordIDs=["r0", "r1"], units=[1, 2],
                                                 runnerServiceMs=2, preprocessMs=.25, backendCallMs=1,
                                                 postprocessMs=.25, nativeRequestMs=3,
@@ -147,6 +151,41 @@ class ExternalLoadConsumerTest(unittest.TestCase):
             with self.assertRaises(measurement.common.ContractError):
                 measurement.validate_phases(changed, plan, {"workers": 4})
 
+    def test_compact_membership_rejects_missing_duplicate_cross_batch_and_repeated_proof(self):
+        _, plan = self.make_plan()
+        for mutate in (
+                lambda p: p[0]["nativeSamples"][0].pop("requestIDs"),
+                lambda p: p[0]["nativeSamples"][0].update(requestIDs=["sparse-0-0", "sparse-0-0"]),
+                lambda p: p[0]["nativeSamples"][0].update(requestIDs=["sparse-0-0", "sparse-1-0"]),
+                lambda p: p[0]["nativeSamples"][0].update(units=[2, 1]),
+                lambda p: p[0]["requests"][0]["response"]["progress"].update(batchRequestIDs=["sparse-0-0", "sparse-0-1"]),
+                lambda p: p[0]["requests"][0]["response"]["progress"].update(serviceSample={})):
+            with self.subTest(mutate=mutate):
+                phases = phase_results(plan)
+                mutate(phases)
+                with self.assertRaises(measurement.common.ContractError):
+                    measurement.validate_phases(phases, plan, {"workers": 4})
+
+    def test_poisson_issue_evidence_requires_finite_complete_timely_sends(self):
+        _, plan = self.make_plan()
+        for mutate in (
+                lambda p: p[0].pop("issueLagMs"),
+                lambda p: p[0]["issueLagMs"].update(count=3),
+                lambda p: p[0]["issueLagMs"].update(max=10.001),
+                lambda p: p[0]["issueLagMs"].update(mean=float("nan")),
+                lambda p: p[0]["issueLagMs"].update(min=-1),
+                lambda p: p[0]["issueLagMs"].update(p95=2, p99=1, max=3),
+                lambda p: p[0].update(issueElapsedSecondsMonotonic=0),
+                lambda p: p[0].update(issueElapsedSecondsMonotonic=31),
+                lambda p: p[0].update(achievedArrivalRatePerSecond=1),
+                lambda p: p[0].update(issueLagToleranceMs=11),
+                lambda p: p[1].update(issueLagToleranceMs=10)):
+            with self.subTest(mutate=mutate):
+                phases = phase_results(plan)
+                mutate(phases)
+                with self.assertRaises(measurement.common.ContractError):
+                    measurement.validate_phases(phases, plan, {"workers": 4})
+
     def test_sparse_sizing_uses_only_no_backlog_observations_and_shared_go_formula(self):
         _, plan = self.make_plan()
         samples = phase_results(plan)[0]["nativeSamples"]
@@ -169,7 +208,11 @@ class ExternalLoadConsumerTest(unittest.TestCase):
         session = mock.Mock()
         session.counts.return_value = {"acceptedRequests": 0, "completedRequests": 0, "executions": 0}
         control = mock.Mock()
-        control.wait_result.return_value = {"phases": phases, "supplySizing": {"workers": 4}}
+        def upload(process):
+            control.final_observation = control.finalize_measurement()
+            return {"phases": phases, "supplySizing": {"workers": 4}}
+
+        control.wait_result.side_effect = upload
         sampler = mock.Mock()
         sampler.stop.return_value = {"memoryBytes": 123, "memorySource": "observed"}
         with ExitStack() as stack:
@@ -179,7 +222,7 @@ class ExternalLoadConsumerTest(unittest.TestCase):
             stack.enter_context(mock.patch.object(measurement.time, "monotonic", side_effect=[10, 110]))
             result = measurement.execute_active(request, mock.Mock(), session, control, {"availableProviders": ["CPUExecutionProvider"]},
                                                 "amd64", "max 100000", [0], "0", sampler)
-        self.assertEqual(result["schemaVersion"], "chill.dacs.io/batch-characterization.v1alpha11")
+        self.assertEqual(result["schemaVersion"], "chill.dacs.io/batch-characterization.v1alpha12")
         self.assertEqual(result["inferenceCount"], 6)
         self.assertEqual(result["phases"], phases)
         self.assertNotIn("repetitionResults", result)
@@ -190,6 +233,153 @@ class ExternalLoadConsumerTest(unittest.TestCase):
         self.assertEqual([call.args[0] for call in publish.call_args_list],
                          [Path(request[key]) for key in ("workloadWindowStartPath", "measurementStartPath", "measurementEndPath")])
         session.run.assert_not_called()
+
+    def test_last_phase_freezes_sampled_or_kernel_memory_before_upload_decode(self):
+        import http.client
+
+        for sampled in (True, False):
+            with self.subTest(sampled=sampled):
+                request, plan = self.make_plan()
+                phases = phase_results(plan)
+                events = []
+                with mock.patch.dict(os.environ, {"POD_IP": "10.0.0.7"}):
+                    control = measurement.LoadControl(request, ("127.0.0.1", 0))
+                try:
+                    control.phase_windows = [{key: phase[key] for key in
+                                              ("id", "measurementStartedAt", "measurementEndedAt")} for phase in phases]
+                    control.phase_windows[-1].pop("measurementEndedAt")
+                    control.supply_sizing = {"workers": 4, "maxBatchServiceSeconds": .002}
+                    sampler = mock.Mock() if sampled else None
+                    if sampler is not None:
+                        sampler.stop.side_effect = lambda: events.append("memory") or {
+                            "memoryBytes": 123, "memorySource": "sampled"}
+                    session, process = mock.Mock(), mock.Mock()
+                    process.poll.return_value = None
+                    original_wait = control.wait_result
+                    original_loads = json.loads
+
+                    def decode(payload, **kwargs):
+                        if isinstance(payload, bytes) and payload.startswith(b'{"status"'):
+                            self.assertIsNotNone(control.final_observation)
+                            self.assertIn("end", events)
+                            self.assertEqual(events[-1], "cpu")
+                            events.append("decode")
+                        return original_loads(payload, **kwargs)
+
+                    def upload(process):
+                        client = http.client.HTTPConnection("127.0.0.1", control.server.server_port, timeout=2)
+                        try:
+                            client.request("POST", "/measurement/phase",
+                                           json.dumps({"id": "utilization-0", "action": "end"}))
+                            response = client.getresponse()
+                            self.assertEqual(response.status, 200, response.read())
+                            self.assertEqual(events[-3:], ["memory", "end", "cpu"])
+                            body = json.dumps({"status": "Succeeded", "phases": phases,
+                                               "supplySizing": control.supply_sizing})
+                            client.request("POST", "/measurement/load-result", body)
+                            response = client.getresponse()
+                            self.assertEqual(response.status, 200, response.read())
+                        finally:
+                            client.close()
+                        return original_wait(process)
+
+                    def publish(path, body):
+                        if path == Path(request["measurementEndPath"]):
+                            events.append("end")
+
+                    with ExitStack() as stack:
+                        stack.enter_context(mock.patch.object(measurement.common, "wait_for_signal"))
+                        stack.enter_context(mock.patch.object(measurement.common, "publish_immutable", side_effect=publish))
+                        stack.enter_context(mock.patch.object(measurement.common, "now", return_value=phases[-1]["measurementEndedAt"]))
+                        stack.enter_context(mock.patch.object(measurement.common, "cpu_stat", side_effect=lambda: events.append("cpu") or {}))
+                        kernel = stack.enter_context(mock.patch.object(measurement, "memory_peak",
+                                                     side_effect=lambda: events.append("memory") or (123, "kernel")))
+                        stack.enter_context(mock.patch.object(measurement.json, "loads", side_effect=decode))
+                        stack.enter_context(mock.patch.object(control, "wait_result", side_effect=upload))
+                        result = measurement.execute_active(request, process, session, control, {}, "amd64",
+                                                            "max 100000", [0], "0", sampler)
+                    self.assertEqual(result["memoryBytes"], 123)
+                    self.assertEqual(result["measurementEndedAt"], phases[-1]["measurementEndedAt"])
+                    self.assertEqual(events[-1], "decode")
+                    if sampled:
+                        sampler.stop.assert_called_once_with()
+                        kernel.assert_not_called()
+                    else:
+                        kernel.assert_called_once_with()
+                finally:
+                    control.close()
+
+    def test_control_failure_preserves_phase_issue_summary(self):
+        import http.client
+
+        request, _ = self.make_plan()
+        with mock.patch.dict(os.environ, {"POD_IP": "10.0.0.7"}):
+            control = measurement.LoadControl(request, ("127.0.0.1", 0))
+        self.addCleanup(control.close)
+        control.ready.set()
+        issue = {"id": "sparse", "kind": "sparse", "arrivalRatePerSecond": 1,
+                 "issueElapsedSecondsMonotonic": 0, "achievedArrivalRatePerSecond": 0,
+                 "issueLagToleranceMs": 10,
+                 "issueLagMs": {"count": 1, "min": 11, "mean": 11, "p50": 11, "p95": 11, "p99": 11, "max": 11}}
+        client = http.client.HTTPConnection("127.0.0.1", control.server.server_port, timeout=2)
+        try:
+            client.request("POST", "/measurement/load-result", json.dumps(
+                {"status": "Failed", "error": "Poisson issue lag exceeds schedule tolerance 10ms", "issueEvidence": issue}))
+            response = client.getresponse()
+            self.assertEqual(response.status, 200, response.read())
+        finally:
+            client.close()
+        with self.assertRaisesRegex(measurement.ExecutionError, "issueEvidence=") as error:
+            control.wait_result(mock.Mock())
+        self.assertEqual(error.exception.issue_evidence, issue)
+        self.assertEqual(error.exception.failure_reason, "ExecutionFailed")
+
+    def test_control_readiness_and_partial_upload_have_finite_timeouts(self):
+        import http.client
+
+        request, _ = self.make_plan()
+        request["runConfig"]["measurement"]["operatingPoints"]["requestLifetimeSeconds"] = .05
+        with mock.patch.dict(os.environ, {"POD_IP": "10.0.0.7"}):
+            control = measurement.LoadControl(request, ("127.0.0.1", 0))
+        self.addCleanup(control.close)
+        client = http.client.HTTPConnection("127.0.0.1", control.server.server_port, timeout=2)
+        try:
+            with mock.patch.object(control.ready, "wait", return_value=False) as ready:
+                client.request("GET", "/measurement/load")
+                response = client.getresponse()
+                self.assertEqual(response.status, 503, response.read())
+            ready.assert_called_once_with(4)
+            control.ready.set()
+            client.request("POST", "/measurement/load-result", b"{", {"Content-Length": "100"})
+            response = client.getresponse()
+            self.assertEqual(response.status, 400, response.read())
+            self.assertTrue(control.finished.is_set())
+        finally:
+            client.close()
+
+    def test_active_sampled_execution_keeps_frozen_kernel_peak_after_upload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            request = coordination_request(Path(directory))
+            zero = {"acceptedRequests": 0, "completedRequests": 0, "executions": 0}
+            session, process = mock.Mock(), mock.Mock()
+            session.baseline = zero
+            session.counts.return_value = {"acceptedRequests": 4, "completedRequests": 4, "executions": 2}
+            process.poll.return_value = None
+            frozen = {"inferenceCount": 2, "cpuContract": {}, "memoryBytes": 123, "memorySource": "frozen"}
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch.object(measurement, "FirstfloorSession", return_value=session))
+                stack.enter_context(mock.patch.object(measurement, "LoadControl"))
+                stack.enter_context(mock.patch.object(measurement.subprocess, "Popen", return_value=process))
+                stack.enter_context(mock.patch.object(measurement, "wait_ready"))
+                stack.enter_context(mock.patch.object(measurement, "validate_metadata",
+                                                     return_value={"intraOpThreads": 1, "interOpThreads": 1}))
+                stack.enter_context(mock.patch.object(measurement, "execute_active", return_value=frozen))
+                kernel = stack.enter_context(mock.patch.object(measurement, "memory_peak"))
+                result = measurement.execute_sampled(request, Path(directory), request["runConfig"],
+                                                     "amd64", "max 100000", [0], "0", None)
+            self.assertEqual(result["memoryBytes"], 123)
+            self.assertEqual(result["memorySource"], "frozen")
+            kernel.assert_not_called()
 
     def test_idle_counts_cover_settling_and_window_and_native_listener_is_network_bound(self):
         for changed in (None, "acceptedRequests", "completedRequests", "executions"):

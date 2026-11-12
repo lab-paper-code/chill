@@ -63,7 +63,7 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 func TestCompositeMetricSourceRejectsRetiredRawSchemas(t *testing.T) {
 	config := loadRunConfig(t)
 	active := validRaw(t, config)
-	active.SchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha5"
+	active.SchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha11"
 	if err := active.Validate(); err == nil {
 		t.Fatal("retired active raw schema was accepted")
 	}
@@ -878,4 +878,45 @@ func terminalContainers(config profilingrun.RunConfig, completed time.Time) []Co
 		containers = append(containers, container("dataset", config.Measurement.Dataset.Image))
 	}
 	return containers
+}
+
+func TestRawCompactResponseRejectsRepeatedNativeBatchProof(t *testing.T) {
+	raw := validRaw(t, loadRunConfig(t))
+	if raw.SchemaVersion != "chill.dacs.io/profiling-raw-measurement.v1alpha12" ||
+		raw.Runtime.SchemaVersion != "chill.dacs.io/batch-characterization.v1alpha12" {
+		t.Fatal("raw/runtime schema versions disagree with compact membership")
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	phases := wire["runtime"].(map[string]any)["phases"].([]any)
+	phase := phases[0].(map[string]any)
+	sample := phase["nativeSamples"].([]any)[0].(map[string]any)
+	if len(sample["requestIDs"].([]any)) != raw.RunConfig.Measurement.Batch {
+		t.Fatal("batch-level request membership was not retained")
+	}
+	progress := phase["requests"].([]any)[0].(map[string]any)["response"].(map[string]any)["progress"].(map[string]any)
+	for _, field := range []string{"batchRequestIDs", "batchStartedAt", "batchFinishedAt", "serviceSample",
+		"preprocessMS", "backendMS", "postprocessMS", "firstTokenMS"} {
+		t.Run(field, func(t *testing.T) {
+			if _, found := progress[field]; found {
+				t.Fatal("compact progress retained repeated batch proof")
+			}
+			progress[field] = nil
+			defer delete(progress, field)
+			payload, err := json.Marshal(wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded RawMeasurement
+			if err := json.Unmarshal(payload, &decoded); err == nil {
+				t.Fatal("retired per-request batch proof was accepted")
+			}
+		})
+	}
 }

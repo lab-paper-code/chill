@@ -73,11 +73,15 @@ func TestNativeTimingSurvivesEnergyProjectionWithoutReplacingClientLatency(t *te
 
 func TestCurveCopiesRetainedNativeEvidence(t *testing.T) {
 	point := Point{Trials: []EnergyTrial{{ClientLatencyMilliseconds: []float64{10},
-		NativeSamples: []NativeServiceSample{{BatchID: 1, ServiceSample: fixtures.ServiceSample("active", 0, 5000000), RunnerServiceMilliseconds: 5}}}}}
+		NativeSamples: []NativeServiceSample{{BatchID: 1, RequestIDs: []string{"request"}, ServiceSample: fixtures.ServiceSample("active", 0, 5000000), RunnerServiceMilliseconds: 5}}}}}
 	copy := clonePoint(point)
 	copy.Trials[0].ClientLatencyMilliseconds[0] = 100
 	copy.Trials[0].NativeSamples[0].RunnerServiceMilliseconds = 50
+	copy.Trials[0].NativeSamples[0].RequestIDs[0] = "changed"
 	if point.Trials[0].ClientLatencyMilliseconds[0] != 10 || point.Trials[0].NativeSamples[0].RunnerServiceMilliseconds != 5 {
 		t.Fatal("curve projection permits mutation of retained native evidence")
+	}
+	if point.Trials[0].NativeSamples[0].RequestIDs[0] != "request" {
+		t.Fatal("curve projection permits mutation of retained request membership")
 	}
 }

@@ -156,10 +156,18 @@ class LoadControl:
         self.lock = threading.Lock()
         self.phase_windows: list[dict[str, str]] = []
         self.supply_sizing: dict[str, Any] | None = None
+        self.finalize_measurement = None
+        self.final_observation: dict[str, Any] | None = None
+        socket_timeout = self.plan["operatingPoints"]["requestLifetimeSeconds"]
+        ready_timeout = request["observerReadyTimeoutMilliseconds"] / 1000 * (len(request["observerReadyPaths"]) + 3)
         self.phase_ids = ["sparse", "saturation"] + [f"utilization-{index}" for index in range(len(self.plan["operatingPoints"]["utilizations"]))]
         control = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
+            def setup(self) -> None:
+                self.request.settimeout(socket_timeout)
+                super().setup()
+
             def reply(self, status: int, value: dict[str, Any]) -> None:
                 body = json.dumps(value, allow_nan=False, separators=(",", ":")).encode()
                 self.send_response(status)
@@ -172,7 +180,9 @@ class LoadControl:
                 if self.path != "/measurement/load":
                     self.reply(404, {"error": "unknown measurement control path"})
                     return
-                control.ready.wait()
+                if not control.ready.wait(ready_timeout):
+                    self.reply(503, {"error": "measurement control readiness timed out"})
+                    return
                 if control.error is not None:
                     self.reply(503, {"error": str(control.error)})
                 else:
@@ -216,7 +226,13 @@ class LoadControl:
                             elif value["action"] == "end":
                                 if not control.phase_windows or control.phase_windows[-1]["id"] != value["id"] or "measurementEndedAt" in control.phase_windows[-1]:
                                     raise common.ContractError("phase end has no matching active phase")
-                                at = common.now()
+                                if len(control.phase_windows) == len(control.phase_ids):
+                                    if control.finalize_measurement is None:
+                                        raise common.ContractError("measurement finalizer is not ready")
+                                    control.final_observation = control.finalize_measurement()
+                                    at = control.final_observation["endedAt"]
+                                else:
+                                    at = common.now()
                                 control.phase_windows[-1]["measurementEndedAt"] = at
                             else:
                                 raise common.ContractError("phase action must be start or end")
@@ -224,11 +240,21 @@ class LoadControl:
                             return
                         if value.get("status") == "Failed":
                             common.require_fields(value, {"status", "error"} |
-                                                  ({"failureReason"} if "failureReason" in value else set()), "failed load result")
+                                                  ({"failureReason"} if "failureReason" in value else set()) |
+                                                  ({"issueEvidence"} if "issueEvidence" in value else set()), "failed load result")
                             reason = value.get("failureReason", "ExecutionFailed")
                             if reason not in ("ExecutionFailed", "MemoryAllocationFailed"):
                                 raise common.ContractError("unsupported native load failure reason")
                             control.error = ExecutionError(common.require_string(value["error"], "load failure"), reason)
+                            if "issueEvidence" in value:
+                                issue = common.require_object(value["issueEvidence"], "failed issue evidence")
+                                common.require_fields(issue, {"id", "kind", "arrivalRatePerSecond",
+                                                      "issueElapsedSecondsMonotonic", "achievedArrivalRatePerSecond",
+                                                      "issueLagToleranceMs", "issueLagMs"} |
+                                                      ({"utilization"} if "utilization" in issue else set()), "failed issue evidence")
+                                control.error.issue_evidence = issue
+                                control.error.args = (str(control.error) + "; issueEvidence=" +
+                                                      json.dumps(issue, allow_nan=False, separators=(",", ":")),)
                         else:
                             common.require_fields(value, {"status", "phases", "supplySizing"}, "load result")
                             if value["status"] != "Succeeded":
@@ -349,7 +375,8 @@ def validate_phases(phases: Any, plan: dict[str, Any], supply_sizing: dict[str, 
         phase = common.require_object(phase, "load phase")
         required = {"id", "kind", "measurementStartedAt", "measurementEndedAt",
                     "measurementElapsedSecondsMonotonic", "completedInputs", "requests", "nativeSamples", "latencyMs"}
-        common.require_fields(phase, required | ({"workers"} if kind == "saturation" else {"arrivalRatePerSecond"}) |
+        issue_fields = {"achievedArrivalRatePerSecond", "issueElapsedSecondsMonotonic", "issueLagMs", "issueLagToleranceMs"}
+        common.require_fields(phase, required | ({"workers"} if kind == "saturation" else {"arrivalRatePerSecond"} | issue_fields) |
                               ({"utilization"} if kind == "utilization" else set()), "load phase")
         if phase["id"] != phase_id or phase["kind"] != kind:
             raise common.ContractError("load phases differ from frozen order")
@@ -374,6 +401,19 @@ def validate_phases(phases: Any, plan: dict[str, Any], supply_sizing: dict[str, 
         completed = common.require_integer(phase["completedInputs"], "phase completed inputs", 1)
         if completed != len(requests) or completed != len(samples) * plan["batch"]:
             raise common.ContractError("load phase completed inputs do not match fixed-batch membership")
+        if kind != "saturation":
+            issue_elapsed = milliseconds(phase["issueElapsedSecondsMonotonic"], "issue elapsed seconds")
+            achieved_rate = milliseconds(phase["achievedArrivalRatePerSecond"], "achieved arrival rate")
+            lag = common.require_object(phase["issueLagMs"], "issue lag")
+            common.require_fields(lag, {"count", "min", "mean", "p50", "p95", "p99", "max"}, "issue lag")
+            values = {key: milliseconds(lag[key], "issue lag " + key, False)
+                      for key in ("min", "mean", "p50", "p95", "p99", "max")}
+            if (common.require_integer(lag["count"], "issue lag count", 1) != completed or
+                    phase["issueLagToleranceMs"] != 10 or values["max"] > 10 or
+                    issue_elapsed > elapsed or achieved_rate != completed / issue_elapsed or
+                    not values["min"] <= values["p50"] <= values["p95"] <= values["p99"] <= values["max"] or
+                    not values["min"] <= values["mean"] <= values["max"]):
+                raise common.ContractError("Poisson issue evidence disagrees with completed inputs or schedule tolerance")
         rows, groups = {}, {}
         for row in requests:
             row = common.require_object(row, "load request")
@@ -392,8 +432,13 @@ def validate_phases(phases: Any, plan: dict[str, Any], supply_sizing: dict[str, 
             milliseconds(row["latencyMs"], "request latency")
             response = common.require_object(row["response"], "native response")
             progress = common.require_object(response.get("progress"), "native response progress")
+            if {"batchRequestIDs", "batchStartedAt", "batchFinishedAt", "serviceSample",
+                    "preprocessMS", "backendMS", "postprocessMS", "firstTokenMS"}.intersection(progress):
+                raise common.ContractError("retained native progress must omit repeated batch proof")
             if response.get("id") != request_id or response.get("executionComplete") is not True or progress.get("requestID") != request_id:
                 raise common.ContractError("native response identity/completion disagrees with load request")
+            if progress.get("batchSize") != plan["batch"] or milliseconds(progress.get("nativeElapsedMS"), "native elapsed span") > row["latencyMs"]:
+                raise common.ContractError("retained native request batch size or elapsed span is invalid")
             actual_batch_id = common.require_integer(progress.get("batchID"), "native response batch ID", 1)
             common.require_integer(progress.get("units"), "native request units", 1)
             groups.setdefault(actual_batch_id, []).append(row)
@@ -412,8 +457,9 @@ def validate_phases(phases: Any, plan: dict[str, Any], supply_sizing: dict[str, 
             matching = groups.get(batch_id, [])
             if len(matching) != plan["batch"]:
                 raise common.ContractError("load native sample membership is incomplete")
-            ids = common.require_names(matching[0]["response"]["progress"].get("batchRequestIDs"), "native batch request IDs")
-            if len(ids) != plan["batch"] or len(set(ids)) != plan["batch"] or any(item not in rows for item in ids):
+            ids = common.require_names(sample.get("requestIDs"), "native sample request IDs")
+            if (len(ids) != plan["batch"] or len(set(ids)) != plan["batch"] or
+                    set(ids) != {row["requestID"] for row in matching}):
                 raise common.ContractError("load native batch membership is invalid")
             if covered.intersection(ids):
                 raise common.ContractError("load requests belong to multiple native samples")
@@ -596,17 +642,29 @@ def execute_active(request: dict[str, Any], process: subprocess.Popen, session: 
     started_at, started = common.now(), time.monotonic()
     if sampler is not None:
         sampler.start()
+    def finalize_measurement() -> dict[str, Any]:
+        if sampler is not None:
+            memory = sampler.stop()
+        else:
+            peak, source = memory_peak()
+            memory = {"memoryBytes": peak, "memorySource": source}
+        ended_at = common.now()
+        elapsed = time.monotonic() - started
+        common.publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
+        return {"memory": memory, "endedAt": ended_at, "elapsed": elapsed,
+                "processCPU": time.process_time() - process_before, "cpuStat": common.cpu_stat()}
+
+    control.finalize_measurement = finalize_measurement
     record_stage("Execution")
     control.ready.set()
     uploaded = control.wait_result(process)
     phases = uploaded["phases"]
-    elapsed = time.monotonic() - started
+    observation = control.final_observation
+    if observation is None:
+        raise common.ContractError("load result lacks frozen measurement-end observations")
+    elapsed, ended_at, memory = observation["elapsed"], observation["endedAt"], observation["memory"]
+    process_cpu, stat_after = observation["processCPU"], observation["cpuStat"]
     record_stage("ResultValidation")
-    memory = sampler.stop() if sampler is not None else {}
-    ended_at = common.now()
-    common.publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
-    process_cpu = time.process_time() - process_before
-    stat_after = common.cpu_stat()
     latencies = [latency for phase in phases for latency in phase["latencyMs"]]
     completed_inputs = sum(phase["completedInputs"] for phase in phases)
     return {"schemaVersion": common.RESULT_SCHEMA, "status": "Succeeded", "experimentId": request["podUID"],
@@ -686,7 +744,7 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
                                      "deadlinePolicy": deadline_policy(run["state"]["firstfloor"]),
                                      "executionCount": executions, "inferenceCount": executions * measurement["batch"],
                                      "batchExecutionCounts": {str(measurement["batch"]): executions} if executions else {}}
-            if sampler is None:
+            if sampler is None and measurement["workloadMode"] == common.IDLE_WORKLOAD:
                 result["memoryBytes"], result["memorySource"] = memory_peak()
             result["derivedExecutionContract"] = common.derived_contract(run, PROVIDERS[run["state"]["backend"]])
             result["cpuContract"]["ortIntraOpThreads"] = actual["intraOpThreads"]

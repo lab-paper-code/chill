@@ -68,20 +68,12 @@ func TestSlowBatchOneServiceDoesNotTruncateDiscovery(t *testing.T) {
 				for requestIndex := range raw.Runtime.Phases[0].Requests {
 					request := &raw.Runtime.Phases[0].Requests[requestIndex]
 					if request.Response.Progress.BatchID == sample.BatchID {
-						request.Response.Progress.ServiceSample.ServiceDurationNanos = 600000
 						request.Response.Progress.ServiceMS = .6
-						request.Response.Progress.BatchFinishedAt = &sample.FinishedAt
 					}
 				}
 				next := &raw.Runtime.Phases[0].NativeSamples[1]
 				gap := next.StartedAt.Sub(sample.FinishedAt).Nanoseconds()
 				next.PrecedingIdleNanos = &gap
-				for requestIndex := range raw.Runtime.Phases[0].Requests {
-					request := &raw.Runtime.Phases[0].Requests[requestIndex]
-					if request.Response.Progress.BatchID == next.BatchID {
-						request.Response.Progress.ServiceSample.PrecedingIdleNanos = &gap
-					}
-				}
 			}
 			fixture.evidence.active[run.Name] = curveFixtureVerifiedActiveRaw(t, raw)
 		}
