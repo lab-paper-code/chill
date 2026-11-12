@@ -88,6 +88,58 @@ python3 hack/evaluation/prediction_analysis.py report --scheduler "$PAGES" --sta
 Scheduler gap의 원래 `[from,to)` 범위는 보존하고 각 판단·동작 구간과 겹칠 때만 해당 행을 UNKNOWN으로 처리한다. 다른 stage에만 있는 gap은 완전한 stage의 정합 판정에 영향을 주지 않는다. gap 범위 자체가 누락·잘못됐거나 페이지 수집이 불완전하면 전체 coverage는 UNKNOWN이다.
 전환 action의 `dependsOn: null`과 `dependsOn: []`는 모두 빈 의존성이다. 최종 route부터 의존성 체인을 순회할 때 같은 규칙을 적용한다.
 
+C1(b) serving–profile 대조도 judge Job 밖의 진단 보고다.
+`hack/evaluation/profile_comparison.py`는 이미 fetch한 raw request segment와
+저장한 profile catalog JSON(`profiles[]`, batch별 `serviceSamples[]`)만 읽는다.
+profile 값은 이 보고의 참고분포에만 쓰며, D1·에너지 판정·profile 선택을 바꾸지 않는다.
+노드 전력 대조는 위 V1 경로를 그대로 쓴다.
+
+```sh
+CONTROL380=/home/genesis1/.cache/chill-assets/ops/pools-deploy/deployB/control-380-decision-fidelity-20261112
+MEASURED="$CONTROL380/delay/evidence/stages/e5-feedback-excess/stage/artifacts/measured"
+/home/genesis1/.local/bin/python3.11 hack/evaluation/profile_comparison.py \
+  --raw "$MEASURED/obs" --clients "$MEASURED" \
+  --profiles /tmp/df-l1/stored-profiles.json \
+  --idle-bin-edges-ms 0,1,5,20,100,1000 \
+  --out /tmp/control380-profile-comparison.json
+```
+
+`--raw`는 `obs/<hour>/requests.jsonl.gz`가 있는 obs 디렉터리 또는 개별
+request JSONL(.gz)이며 여러 번 지정할 수 있다. `--clients`는 선택 사항이다.
+지정하면 client JSONL 또는 measured 디렉터리의 `*-client.jsonl` requestID로
+출력 배치 cohort를 고른다. 실행 중 유입은 cohort 밖을 포함한 같은 instance의
+관측 요청으로 센다. provisional-inputs를 입력에 섞지 않는다.
+
+final과 늦은 native supplement를 요청별로 합친 뒤 `(instance,batchID)`로
+배치를 중복 제거한다. 같은 배치의 다른 요청이 가진 실행 시각도 합친다.
+receive는 `nativeFinishedAt − nativeElapsedMS`이며, 같은 instance의
+`[nativeRunningAt,nativeFinishedAt)` 안에 들어온 다른 배치 요청을 센다.
+자기 배치 요청은 제외한다. 완료·elapsed가 없는 요청의 receive는 복원하지 않는다.
+따라서 유입 없음은 관측된 완료 근거에 한정되고 인과를 뜻하지 않는다.
+
+출력 `cells[]`는 profile ID·배치 크기·직전 유휴 구간·실행 중 관측 유입 여부별
+serving n/p50/p95와 profile 참고분포 n/p50/p95, p50/p95 비율을 보존한다.
+단위는 ms, p50은 median, p95는 nearest-rank다. 구간은 `[하한,상한)`,
+마지막 상한은 무한대다. 입력 edges는 `idleBinEdgesMS`에 기록되는 분석 매개변수이며
+스케줄러 설정이 아니다. 유휴 누락은 `unknown`으로 남기고 0으로 넣지 않는다.
+`profileIdleBinSupported`는 해당 profile·배치·유휴 구간의 표본 존재만 뜻한다.
+unknown 유휴는 측정된 유휴 구간의 support를 세우지 않는다.
+published ServiceSamples에는 유입 조건이 없으므로 profile 참고분포는
+**유입 여부로 조건화되지 않는다**(`profileIngressConditioning`).
+비율도 이 미조건부 참고분포와의 서술적 비교다.
+해당 유휴 구간 표본이 없으면 profile n=0, 분위수·비율은 null이다.
+실제 serving 이미지 등 나머지 조건의 동등성은 이 profile ID 결합으로 증명하지 않는다.
+
+`marginalByIngress[]`는 유휴 구간을 합쳐 계획 §2.1 표를 확인하는 별도 요약이다.
+위 control380 Delay excess의 genesis2 CUDA 배치 2 결과는 유입 없음
+n=2,292·p50=13.6308845ms, 유입 있음 n=2,647·p50=40.010576ms,
+profile n=4,819·p50=13.965722ms다. 원 prototype은 첫 요청 사본에 running 시각이
+없는 16배치를 제외해 13.639424/40.090535ms를 보고했다. 새 분석기는 같은 배치의
+다른 요청에서 그 시각을 복구하므로 표본 수와 중앙값이 조금 다르다.
+전체 4,939배치 중 4,924배치는 유휴 1ms 미만이지만 profile에는 그 유휴 구간
+표본이 없어 `profileIdleBinSupported=false`다.
+보고에는 pass/fail·자동 profile 배제·보정 계수가 없다.
+
 D44 recovery gaps from each raw-hour inventory are retained verbatim in
 `raw-source-index.json.gaps[]`, with API endpoint/hour provenance. Collection
 `complete` means the inventory and downloads were captured, not gap-free observation.
