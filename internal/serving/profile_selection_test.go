@@ -69,7 +69,7 @@ func TestSelectConditionProfilesSemanticExecutionIdentity(t *testing.T) {
 		{"runtime image", func(c *profilederivation.CurvePlanSpec) {
 			c.RuntimeImage = schedulerTestNewInstance
 			c.Actor.RuntimeImage = schedulerTestNewInstance
-		}, false},
+		}, true},
 		{"observers", func(c *profilederivation.CurvePlanSpec) {
 			c.ActiveProtocol.MetricObserverImage = schedulerTestNewInstance
 			c.IdleProtocol.WorkloadObserverImage = schedulerTestNewInstance
@@ -95,7 +95,7 @@ func TestSelectConditionProfilesSemanticExecutionIdentity(t *testing.T) {
 		{"declared runtime version", func(c *profilederivation.CurvePlanSpec) {
 			c.Actor.RuntimePackages = map[string]string{"onnxruntime": schedulerTestOther}
 		}, false},
-		{"observed runtime version", func(c *profilederivation.CurvePlanSpec) { c.RuntimeVersion = "1.27" }, false},
+		{"observed runtime version", func(c *profilederivation.CurvePlanSpec) { c.RuntimeVersion = "1.27" }, true},
 		{"observed provider", func(c *profilederivation.CurvePlanSpec) { c.RuntimeProvider = "CPUExecutionProvider" }, false},
 		{"memory", func(c *profilederivation.CurvePlanSpec) { c.Actor.MemoryLimitBytes = 1024 }, true},
 		{"power", func(c *profilederivation.CurvePlanSpec) { c.PowerMode = schedulerTestOther }, true},

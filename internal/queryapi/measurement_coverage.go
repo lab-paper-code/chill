@@ -227,7 +227,6 @@ func MeasurementVariantID(condition any) string {
 		if json.Unmarshal(raw, &fields) == nil && fields != nil {
 			delete(fields, "name")
 			delete(fields, "plannedBatchSizes")
-			delete(fields, "runtimeImage")
 			raw, _ = json.Marshal(fields)
 		}
 	}

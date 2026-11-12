@@ -130,8 +130,6 @@ func decodeProfileReuseRequest(raw string) (profileReuseRequest, error) {
 func reuseCondition(condition profilederivation.CurvePlanSpec) profilederivation.CurvePlanSpec {
 	condition = profilederivation.PerformanceCondition(condition)
 	condition.Name, condition.NodeUID = "", ""
-	condition.RuntimeImage = ""
-	condition.RuntimeVersion = ""
 	condition.MetricSource = profilederivation.CurveMetricSourceContract{}
 	condition.Actor.GPUUUID = ""
 	// Retain the selected backend/model command while normalizing its physical GPU.

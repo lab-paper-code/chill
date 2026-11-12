@@ -64,6 +64,29 @@ func TestObserverKeepsServingAcrossRuntimeDeclarationChange(t *testing.T) {
 	}
 }
 
+func TestObserverMeasuredImageMismatchClosesDispatch(t *testing.T) {
+	c, _ := tickReadySubsetController(t, nil)
+	ctx := context.Background()
+	if err := c.observer.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := c.kube.CoreV1().Pods("chill-system").Get(ctx, "a", meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod.Status.ContainerStatuses[0].ImageID = "containerd://sha256:" + strings.Repeat("b", 64)
+	if _, err := c.kube.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, pod, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.observer.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	state := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
+	if state == nil || state.Ready || !strings.Contains(state.Reason, "measured runtime image") {
+		t.Fatalf("different actual runtime image left dispatch enabled: %+v", state)
+	}
+}
+
 // Native B is held by a channel, not a timing window. A must finish its real
 // probe/verification/publication before the assertions inspect the runtime.
 func TestObserverRefreshRetainsReadyUntilProbeOutcome(t *testing.T) {

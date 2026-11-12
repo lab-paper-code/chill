@@ -16,7 +16,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
-	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -70,21 +69,13 @@ func (o *SchedulerService) preparation(
 	if err != nil {
 		return spec, err
 	}
-	spec.Config.RuntimeImage, err = o.observer.CurrentRuntimeImage(ctx, &profile)
-	if err != nil {
-		var declarationError *profilerkube.RuntimeDeclarationError
-		if !errors.As(err, &declarationError) {
-			err = &preparationSourceError{err}
-		}
-		return spec, err
-	}
 	spec.Instance.RuntimeImage = spec.Config.RuntimeImage
 	spec.Instance.RunnerCommand = spec.Config.RunnerCommand
 	spec.Instance.Profile = &profile
 	if accepted := o.Profiles.Load(); accepted != nil {
 		if published, ok := accepted.Preparations[profile.ID]; ok {
 			// Profile identity includes immutable campaign and reuse-policy identity.
-			// Keep fresh Node, queue and runtime checks above; reuse only the object.
+			// Keep fresh Node and queue checks above; reuse only the object.
 			spec.Bundle = published.Bundle
 			return spec, nil
 		}

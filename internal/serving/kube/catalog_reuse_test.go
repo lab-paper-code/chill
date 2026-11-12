@@ -84,6 +84,8 @@ func TestProfileReuseNormalizesPhysicalGPUCommandWithoutDroppingRecipe(t *testin
 		{"backend", func(p *serving.Profile) { p.Condition.Actor.Backend = "rknnlite" }},
 		{"artifact", func(p *serving.Profile) { p.Condition.Actor.ArtifactImage += reuseDifferentSuffix }},
 		{"preprocessor", func(p *serving.Profile) { p.Condition.Actor.PreprocessorPath += reuseDifferentSuffix }},
+		{"runtime image", func(p *serving.Profile) { p.Condition.RuntimeImage += reuseDifferentSuffix }},
+		{"runtime version", func(p *serving.Profile) { p.Condition.RuntimeVersion += reuseDifferentSuffix }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			source, target := reuseProfilesFixture(t)
@@ -188,7 +190,6 @@ func TestProfileReuseKeepsIndependentMeasurementFacts(t *testing.T) {
 
 func TestProfileReuseRetainsCompatibleRuntimeMetadataChanges(t *testing.T) {
 	source, target := reuseProfilesFixture(t)
-	target.Condition.RuntimeVersion = "new-observation"
 	target.RuntimeMetadata.RuntimeVersion, target.RuntimeMetadata.NumpyVersion = "new-runtime", "new-numpy"
 	target.RuntimeMetadata.AvailableProviders = []string{"CUDAExecutionProvider"}
 	target.RuntimeMetadata.WarmupIterations++
@@ -470,16 +471,14 @@ func TestProfileReuseSelectedMinimumsAndIdentity(t *testing.T) {
 	}
 }
 
-func TestProfileReuseIgnoresHistoricalRuntimeImage(t *testing.T) {
+func TestProfileReuseIgnoresCollectionProtocolProvenance(t *testing.T) {
 	source, target := reuseProfilesFixture(t)
-	target.Condition.RuntimeImage += "-new-image"
-	target.Condition.Actor.RuntimeImage = "new-runtime-image"
 	source.Condition.Actor.GPUUUID, target.Condition.Actor.GPUUUID = "GPU-source", reuseTargetGPU
 	target.Condition.ActiveProtocol.SLOPercentile = 95
 	target.Condition.ActiveProtocol.MinServiceSamples = 59
 	target.Condition.ActiveProtocol.WorkloadUID = "other-source-declaration"
 	check := serving.ProfileReuseCheck{MaximumRelativeDifference: .05, MinimumMeasurementSeconds: 30, MinimumTrials: 3}
 	if err := compareReuseProfiles(source, target, &check); err != nil {
-		t.Fatal("historical image blocked otherwise verified reuse", err)
+		t.Fatal("collection protocol provenance blocked otherwise verified reuse", err)
 	}
 }

@@ -443,13 +443,12 @@ func CloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
 	return shared
 }
 
-// PerformanceCondition retains the execution recipe while removing collection
-// procedure and incidental provenance. Batch rows are selected separately.
+// PerformanceCondition retains the execution recipe, including runtime image and
+// version, while removing collection procedure and incidental provenance.
+// Batch rows are selected separately.
 func PerformanceCondition(condition CurvePlanSpec) CurvePlanSpec {
 	condition.Name = ""
 	condition.PlannedBatchSizes = nil
-	condition.RuntimeImage = ""
-	condition.RuntimeVersion = ""
 	condition.RuntimeProvider = ""
 	condition.MetricSource = CurveMetricSourceContract{}
 	condition.Conversion = CurveConversionContract{}
@@ -462,7 +461,6 @@ func PerformanceCondition(condition CurvePlanSpec) CurvePlanSpec {
 	condition.Firstfloor = nil
 	condition.Preprocessor.Name = ""
 	condition.Actor.Preprocessor = ""
-	condition.Actor.RuntimeImage = ""
 	condition.Actor.RuntimePackages = nil
 	condition.Actor.WarmupIterations = 0
 	condition.Actor.WarmupBatchSizes = nil

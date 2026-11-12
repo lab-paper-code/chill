@@ -186,7 +186,7 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 			if !got.SearchMayStopEarly {
 				t.Fatalf("batch selection flags = %#v", got)
 			}
-			if name == "exact" || name == "protocol" || name == "metric source" || name == "mutable image" {
+			if name == "exact" || name == "protocol" || name == "metric source" {
 				if got.ConditionMatch != MeasurementConditionExact || got.VariantID == nil || *got.VariantID != id ||
 					!reflect.DeepEqual(got.MeasuredBatches, []int{1}) || !reflect.DeepEqual(got.MissingBatches, []int{2, 4}) {
 					t.Fatalf("exact batch plan = %#v", got)
@@ -249,10 +249,9 @@ func batchEnergyOptimizationPreflightProtocol(mode string) profilederivation.Cur
 	}
 }
 
-func TestRuntimeAndObserverImagesDoNotInvalidateMeasuredBatches(t *testing.T) {
+func TestObserverImagesDoNotInvalidateMeasuredBatches(t *testing.T) {
 	original := batchEnergyOptimizationPreflightPlan(t)
 	spec := original.Shared()
-	spec.RuntimeImage = "registry.example/runtime:new"
 	spec.ActiveProtocol.MetricObserverImage = "registry.example/metric:new"
 	spec.ActiveProtocol.WorkloadObserverImage = "registry.example/workload:new"
 	spec.IdleProtocol.MetricObserverImage = "registry.example/metric:other"
@@ -273,8 +272,5 @@ func TestRuntimeAndObserverImagesDoNotInvalidateMeasuredBatches(t *testing.T) {
 		if reason.Code == "ImmutableImagesUnconfirmed" || reason.Code == "VariantConditionChanged" {
 			t.Fatalf("image validity gate survived: %+v", reason)
 		}
-	}
-	if original.Shared().RuntimeImage == spec.RuntimeImage {
-		t.Fatal("condition normalization mutated frozen evidence")
 	}
 }

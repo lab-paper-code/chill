@@ -48,73 +48,65 @@ import (
 // Before the fix, the failed pass accepted an empty preparation map and froze
 // its source signature. The healthy pass then skipped materialization forever.
 func TestRefreshRecoversPreparationsAfterTransientMaterialization(t *testing.T) {
-	for _, boundary := range []string{"node", "declaration"} {
-		t.Run(boundary, func(t *testing.T) {
-			fixture := newPreparationCatalogFixture(t)
-			fixture.fail(boundary, true)
-			if err := fixture.service.Refresh(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("expired materialization was not a refresh failure: %v", err)
-			}
-			failed, err := fixture.service.ReadCatalog(context.Background())
-			if err != nil || failed.Accepted != nil || len(failed.Profiles) != 1 {
-				t.Fatalf("failed materialization accepted a partial catalog or lost verified reporting: %+v err=%v", failed, err)
-			}
-			fixture.fail(boundary, false)
-			if err := fixture.service.Refresh(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			healthy := fixture.prepared(t)
-			if healthy.Revision != failed.Revision || healthy.ConfigVersion != failed.ConfigVersion {
-				t.Fatal("recovery changed the measurement or configuration identity")
-			}
-		})
+	fixture := newPreparationCatalogFixture(t)
+	fixture.fail("node", true)
+	if err := fixture.service.Refresh(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired materialization was not a refresh failure: %v", err)
+	}
+	failed, err := fixture.service.ReadCatalog(context.Background())
+	if err != nil || failed.Accepted != nil || len(failed.Profiles) != 1 {
+		t.Fatalf("failed materialization accepted a partial catalog or lost verified reporting: %+v err=%v", failed, err)
+	}
+	fixture.fail("node", false)
+	if err := fixture.service.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	healthy := fixture.prepared(t)
+	if healthy.Revision != failed.Revision || healthy.ConfigVersion != failed.ConfigVersion {
+		t.Fatal("recovery changed the measurement or configuration identity")
 	}
 }
 
 func TestRefreshPreparationFailurePreservesAcceptedCatalog(t *testing.T) {
-	for _, boundary := range []string{"node", "declaration"} {
-		t.Run(boundary, func(t *testing.T) {
-			fixture := newPreparationCatalogFixture(t)
-			ctx := context.Background()
-			if err := fixture.service.Refresh(ctx); err != nil {
-				t.Fatal(err)
-			}
-			before := fixture.prepared(t)
-			accepted := fixture.service.Profiles.Load()
-			configuration := fixture.service.configuration.Load()
-			cm, err := fixture.service.kube.CoreV1().ConfigMaps("serving").Get(ctx, "scheduler", meta.GetOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			// A new config revision forces adoption even on the old sticky path.
-			// Its contents and all measured source identities remain unchanged.
-			cm.ResourceVersion = "2"
-			if _, err := fixture.service.kube.CoreV1().ConfigMaps("serving").Update(ctx, cm, meta.UpdateOptions{}); err != nil {
-				t.Fatal(err)
-			}
-			fixture.fail(boundary, true)
-			if err := fixture.service.Refresh(ctx); !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("failed required read was accepted: %v", err)
-			}
-			after, err := fixture.service.ReadCatalog(ctx)
-			if err != nil || !reflect.DeepEqual(after.Accepted, before.Accepted) ||
-				fixture.service.Profiles.Load() != accepted || fixture.service.configuration.Load() != configuration {
-				t.Fatalf("global preparation failure replaced accepted state: before=%+v after=%+v err=%v", before.Accepted, after.Accepted, err)
-			}
-			fixture.fail(boundary, false)
-			if err := fixture.service.Refresh(ctx); err != nil {
-				t.Fatal(err)
-			}
-			recovered := fixture.prepared(t)
-			if recovered.Accepted.ConfigVersion != cm.ResourceVersion || recovered.Revision != before.Revision {
-				t.Fatal("healthy refresh did not accept the pending revision with unchanged measurements")
-			}
-		})
+	fixture := newPreparationCatalogFixture(t)
+	ctx := context.Background()
+	if err := fixture.service.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := fixture.prepared(t)
+	accepted := fixture.service.Profiles.Load()
+	configuration := fixture.service.configuration.Load()
+	cm, err := fixture.service.kube.CoreV1().ConfigMaps("serving").Get(ctx, "scheduler", meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A new config revision forces adoption even on the old sticky path.
+	// Its contents and all measured source identities remain unchanged.
+	cm.ResourceVersion = "2"
+	if _, err := fixture.service.kube.CoreV1().ConfigMaps("serving").Update(ctx, cm, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	fixture.fail("node", true)
+	if err := fixture.service.Refresh(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("failed required read was accepted: %v", err)
+	}
+	after, err := fixture.service.ReadCatalog(ctx)
+	if err != nil || !reflect.DeepEqual(after.Accepted, before.Accepted) ||
+		fixture.service.Profiles.Load() != accepted || fixture.service.configuration.Load() != configuration {
+		t.Fatalf("global preparation failure replaced accepted state: before=%+v after=%+v err=%v", before.Accepted, after.Accepted, err)
+	}
+	fixture.fail("node", false)
+	if err := fixture.service.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recovered := fixture.prepared(t)
+	if recovered.Accepted.ConfigVersion != cm.ResourceVersion || recovered.Revision != before.Revision {
+		t.Fatal("healthy refresh did not accept the pending revision with unchanged measurements")
 	}
 }
 
 func TestRefreshRecoversPreparationsAfterCompatibilityRestored(t *testing.T) {
-	for _, guard := range []string{"nodeAbsent", "nodeUID", "declaration"} {
+	for _, guard := range []string{"nodeAbsent", "nodeUID"} {
 		t.Run(guard, func(t *testing.T) {
 			fixture := newPreparationCatalogFixture(t)
 			ctx := context.Background()
@@ -133,7 +125,7 @@ func TestRefreshRecoversPreparationsAfterCompatibilityRestored(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-			} else if guard == "nodeUID" {
+			} else {
 				node, err := fixture.service.kube.CoreV1().Nodes().Get(ctx, fixture.profile.NodeName, meta.GetOptions{})
 				if err != nil {
 					t.Fatal(err)
@@ -145,23 +137,6 @@ func TestRefreshRecoversPreparationsAfterCompatibilityRestored(t *testing.T) {
 				restore = func() {
 					node.UID = types.UID(fixture.profile.Condition.NodeUID)
 					if _, err := fixture.service.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
-						t.Fatal(err)
-					}
-				}
-			} else {
-				facts := &core.ConfigMap{}
-				if err := fixture.declarations.Get(ctx, types.NamespacedName{Namespace: "serving", Name: "execution-facts"}, facts); err != nil {
-					t.Fatal(err)
-				}
-				original := facts.Data["execution-facts.yaml"]
-				// The source is readable, but no declaration covers this execution.
-				facts.Data["execution-facts.yaml"] = `{"schemaVersion":"chill.dacs.io/profiler-execution-facts.v1alpha8","metricObserverImage":"registry/runtime:current","declarations":[]}`
-				if err := fixture.declarations.Update(ctx, facts); err != nil {
-					t.Fatal(err)
-				}
-				restore = func() {
-					facts.Data["execution-facts.yaml"] = original
-					if err := fixture.declarations.Update(ctx, facts); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -199,6 +174,15 @@ func TestRefreshRecoversPreparationsAfterCompatibilityRestored(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRefreshPreparationDoesNotReadCurrentDeclaration(t *testing.T) {
+	fixture := newPreparationCatalogFixture(t)
+	fixture.fail("declaration", true)
+	if err := fixture.service.Refresh(context.Background()); err != nil {
+		t.Fatalf("current declaration failure blocked measured preparation: %v", err)
+	}
+	fixture.prepared(t)
 }
 
 func assertUnchangedPreparationKeepsOccupancy(t *testing.T, fixture *preparationCatalogFixture) {
@@ -266,9 +250,9 @@ func (f *preparationCatalogFixture) prepared(t *testing.T) servingkube.CatalogRe
 	}
 	spec, ok := read.Accepted.Preparations[f.profile.ID]
 	if !ok || spec.Instance.Node != (serving.NodeReference{Name: f.profile.NodeName, UID: f.profile.Condition.NodeUID}) ||
-		spec.Config.RuntimeImage != "registry/runtime:current" || spec.Instance.RuntimeImage != spec.Config.RuntimeImage ||
+		spec.Config.RuntimeImage != f.profile.Condition.RuntimeImage || spec.Instance.RuntimeImage != spec.Config.RuntimeImage ||
 		spec.MemoryBytes != uint64(f.profile.Condition.Actor.MemoryLimitBytes) || spec.Bundle.Size == 0 {
-		t.Fatalf("accepted preparation lost current declaration or measured identity/envelope: %+v", spec)
+		t.Fatalf("accepted preparation lost measured image/identity/envelope: %+v", spec)
 	}
 	if read.Accepted.Profiles[0].Condition.Actor.RuntimeImage != f.profile.Condition.Actor.RuntimeImage {
 		t.Fatal("serving declaration rewrote measured runtime provenance")

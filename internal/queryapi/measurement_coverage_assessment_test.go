@@ -106,7 +106,7 @@ func TestUnknownInputContractKeepsUsableStatus(t *testing.T) {
 
 func TestMeasurementVariantIdentityExcludesOnlyRequestGoals(t *testing.T) {
 	base := map[string]any{
-		"name": "first", "plannedBatchSizes": []int{1}, "cpu": "1", "dataset": "uid-one", "protocol": "p",
+		"name": "first", "plannedBatchSizes": []int{1}, "cpu": "1", "dataset": "uid-one", "protocol": "p", "runtimeImage": "measured-image",
 	}
 	id := MeasurementVariantID(base)
 	base["name"] = "second"
@@ -114,6 +114,11 @@ func TestMeasurementVariantIdentityExcludesOnlyRequestGoals(t *testing.T) {
 	if MeasurementVariantID(base) != id {
 		t.Fatal("request goal/name split identical frozen conditions")
 	}
+	base["runtimeImage"] = "different-image"
+	if MeasurementVariantID(base) == id {
+		t.Fatal("different runtime images joined")
+	}
+	base["runtimeImage"] = "measured-image"
 	base["dataset"] = "uid-two"
 	if MeasurementVariantID(base) == id {
 		t.Fatal("different dataset joined")

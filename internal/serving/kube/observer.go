@@ -769,7 +769,7 @@ func (o *Observer) refreshFailure(err error) error {
 	return err
 }
 
-// Desired images select future preparations; they do not invalidate a live runner.
+// Declared images are diagnostics; measured images govern preparations and execution.
 func (o *Observer) recordRuntimeDeclaration(ctx context.Context, pod *corev1.Pod, profile *serving.Profile) {
 	desiredImage, err := o.CurrentRuntimeImage(ctx, profile)
 	o.issue("runtime-declaration/"+string(pod.UID), err)
@@ -907,6 +907,19 @@ func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.Curv
 	status := servingstate.FirstfloorStatus(pod)
 	if runtime.Name != servingstate.FirstfloorContainerName || artifact.Name != "artifact" || preprocessor.Name != "preprocessor" || bundle.Name != profileInitContainerName || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || status.ImageID == "" {
 		return errors.New("actual immutable native runtime image/container unavailable")
+	}
+	// CRI image IDs may carry a transport prefix and/or repository name.
+	// Compare the digest itself with the frozen per-platform image reference.
+	actual := status.ImageID
+	if _, reference, ok := strings.Cut(actual, "://"); ok {
+		actual = reference
+	}
+	if _, digest, ok := strings.Cut(actual, "@"); ok {
+		actual = digest
+	}
+	_, measured, pinned := strings.Cut(condition.RuntimeImage, "@")
+	if runtime.Image != condition.RuntimeImage || !pinned || measured == "" || actual != measured {
+		return errors.New("actual native image does not match measured runtime image")
 	}
 	if !initCompleted(pod, artifact, condition.Artifact.Image) {
 		return errors.New("immutable artifact preparation unconfirmed")
