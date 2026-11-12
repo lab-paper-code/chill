@@ -88,7 +88,10 @@ func TestCampaignReaderTrialIdentityPrecedesRepeatedRunName(t *testing.T) {
 func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 	for _, memory := range []uint64{4096, 0} {
 		t.Run(fmt.Sprint(memory), func(t *testing.T) {
-			catalog, source, _, _ := catalogEvidenceFixture(t, memory)
+			catalog, source, _, _ := catalogEvidenceFixturePolicy(t, 4096, [6]float64{6, 6, 6, 4, 4, 4}, 3, "",
+				func(_ int, active *profilingrun.RuntimeResult, idle *profilingrun.IdleRuntimeResult) {
+					active.MemoryBytes, idle.MemoryBytes = memory, memory
+				})
 			view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
 			if err != nil {
 				t.Fatal(err)
