@@ -12,6 +12,11 @@ func TestOperatingPointsRequireExplicitPhaseAndSupplyInputs(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	short := valid
+	short.PhaseDurationSeconds = 1
+	if err := short.Validate(); err != nil {
+		t.Fatalf("positive phase input acquired an arbitrary duration minimum: %v", err)
+	}
 	if err := (*OperatingPointsContract)(nil).Validate(); err == nil {
 		t.Fatal("accepted absent operating points")
 	}
@@ -21,7 +26,7 @@ func TestOperatingPointsRequireExplicitPhaseAndSupplyInputs(t *testing.T) {
 		func(p *OperatingPointsContract) { p.Utilizations = []float64{1} },
 		func(p *OperatingPointsContract) { p.Utilizations = []float64{math.NaN()} },
 		func(p *OperatingPointsContract) { p.SparseMeanGapMilliseconds = math.Inf(1) },
-		func(p *OperatingPointsContract) { p.PhaseDurationSeconds = 29 },
+		func(p *OperatingPointsContract) { p.PhaseDurationSeconds = 0 },
 		func(p *OperatingPointsContract) { p.PostLoadDurationSeconds = 0 },
 		func(p *OperatingPointsContract) { p.PostLoadDurationSeconds = -1 },
 		func(p *OperatingPointsContract) { p.RequestLifetimeSeconds = 0 },

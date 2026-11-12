@@ -159,7 +159,7 @@ export const advancedFields: [key: keyof Omit<Advanced,"utilizations">, label: s
   ["activeInterval", "전력 기록 간격 · 밀리초", 1],
   ["activeTimeout", "전력 기록 대기 한도 · 밀리초", 1],
   ["sparseMeanGap", "희소 요청 평균 간격 · 밀리초", 0, Number.MAX_VALUE, "any"],
-  ["phaseDuration", "운영점별 측정 시간 · 초", 30],
+  ["phaseDuration", "운영점별 측정 시간 · 초", 1],
   ["postLoadDuration", "부하 종료 후 전력 기록 시간 · 초", 1],
   ["requestLifetime", "요청 수명 · 초", 1],
   ["deliveryMargin", "응답 전달 여유 · 밀리초", 1],

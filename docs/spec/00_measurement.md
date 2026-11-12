@@ -28,6 +28,29 @@
 타일 수). 단위 수는 분석용 관측값으로 보존한다.
 데이터셋의 프로파일링 부분집합과 평가 부하 부분집합은 서로 다른 표본으로 구성한다.
 
+Poisson 단계의 도착 기준은 클라이언트의 예정 시각 `scheduledAt`이다. 클라이언트는
+Serving gateway와 같은 동결 native admission slot을 FIFO로 기다린다. 일시적인
+slot 포화는 단계 실패가 아니다. `dispatchedAt`은 대기 뒤 native HTTP 발행 시각이며,
+요청 지연은 `scheduledAt`부터 `completedAt`까지로 FIFO 대기를 포함한다.
+native Context는 `receivedAt=scheduledAt`, `senderElapsedMS=dispatchedAt−scheduledAt`을
+전달하여 이 대기가 기존 gateway 요청 경과·수명 예산을 소비하게 한다.
+native 응답 경과는 dispatch→완료 안에, 이 구간은 예정 도착→완료 안에 있어야 한다.
+요청은 `scheduledAt` 순서로 보존한다.
+
+포화를 포함한 모든 단계는 `scheduledInputs`, `sentInputs`, `completedInputs`,
+`offeringStartedAt`, `offeringEndedAt`, `drainEndedAt`,
+`issueElapsedSecondsMonotonic`, `achievedArrivalRatePerSecond`를 보존한다.
+포화의 예정 수는 closed-loop로 발행한 클라이언트 수다. 도착률은
+`scheduledInputs / issueElapsedSecondsMonotonic`이며 실패 단계의 진단 도착률에도
+같은 식을 쓴다. offering은 부하 노드에서 시작해 마지막 예정 도착까지이고,
+drain은 마지막 응답 완료까지다. 성공 단계의 세 count는 같아야 한다.
+실패 단계는 부분 관측을 남기므로 drain 종료가 마지막 예정 도착보다 앞설 수 있다.
+예정 도착이 없으면 offering 종료는 시작, 완료 응답이 없으면 drain 종료는 offering 시작이다.
+포화에는 Poisson seed·issue lag·목표 도착률을 두지 않는다.
+이 부하 노드 경계와 측정 노드의 전력 창 `measurementStartedAt/measurementEndedAt`은
+서로 다른 시계 영역이다. sparse·단계별 시간과 표본 하한 및 후행 무부하 구간은 유지한다.
+활성 raw/runtime v1alpha14와 RunConfig v1alpha22 안에서 한 번에 전환하며 구필드 reader는 두지 않는다.
+
 활성 측정은 마지막 부하의 응답을 모두 회수한 뒤 같은 모델 적재 actor를 유지한다.
 필수 측정 입력 `operatingPoints.postLoadDurationSeconds`는 양의 정수 초이며 Run에
 동결한다. 이 구간의 시작·종료, 단조 시계 경과, actor 신원·모델 상주 상태와 전후

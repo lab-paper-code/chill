@@ -260,7 +260,8 @@ func sampleStopRuntimeRecord(
 				request := &phase.Requests[index*config.Measurement.Batch+member]
 				sample.RequestIDs[member] = request.RequestID
 				request.RecordID = sample.RecordIDs[member]
-				request.ArrivalAt, request.SentAt, request.CompletedAt = sample.StartedAt, sample.StartedAt, sample.FinishedAt
+				request.ScheduledAt, request.DispatchedAt = sample.StartedAt, sample.StartedAt
+				request.CompletedAt = request.ScheduledAt.Add(time.Duration(sample.NativeRequestMilliseconds * float64(time.Millisecond)))
 				request.LatencyMilliseconds = sample.NativeRequestMilliseconds
 				progress := &request.Response.Progress
 				progress.At, progress.BatchID = sample.FinishedAt, sample.BatchID
@@ -269,10 +270,11 @@ func sampleStopRuntimeRecord(
 				progress.NativeHTTP = &firstfloor.HTTPRequestTiming{HandlerEnteredAt: sample.StartedAt, ReceivedNanos: &zero, EnqueueNanos: &zero, FinishedNanos: &finish}
 			}
 		}
-		if phase.Kind != "saturation" {
-			phase.IssueElapsedSeconds = phase.Requests[len(phase.Requests)-1].SentAt.Sub(start).Seconds()
-			phase.AchievedArrivalRatePerSecond = float64(phase.SentInputs) / phase.IssueElapsedSeconds
-		}
+		phase.OfferingStartedAt = start
+		phase.OfferingEndedAt = phase.Requests[len(phase.Requests)-1].ScheduledAt
+		phase.DrainEndedAt = phase.Requests[len(phase.Requests)-1].CompletedAt
+		phase.IssueElapsedSeconds = phase.OfferingEndedAt.Sub(phase.OfferingStartedAt).Seconds()
+		phase.AchievedArrivalRatePerSecond = float64(phase.ScheduledInputs) / phase.IssueElapsedSeconds
 	}
 	saturation := &result.Phases[1]
 	for index := 2; index < len(result.Phases); index++ {

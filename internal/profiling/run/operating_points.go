@@ -7,7 +7,7 @@ import (
 
 // Validate checks explicit phase and sizing inputs before freezing a Run.
 func (p *OperatingPointsContract) Validate() error {
-	if p == nil || len(p.Utilizations) == 0 || p.PhaseDurationSeconds < 30 || p.PostLoadDurationSeconds < 1 ||
+	if p == nil || len(p.Utilizations) == 0 || p.PhaseDurationSeconds < 1 || p.PostLoadDurationSeconds < 1 ||
 		p.RequestLifetimeSeconds < 1 || p.DeliveryMarginMilliseconds < 1 || p.FramedDecodedRequestUpperBytes < 1 {
 		return errors.New("active measurement requires explicit operatingPoints phase and supply inputs")
 	}

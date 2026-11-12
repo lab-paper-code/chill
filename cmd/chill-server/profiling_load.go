@@ -77,28 +77,18 @@ type profilingIssueEvidence struct {
 	ID                           string                 `json:"id"`
 	Kind                         string                 `json:"kind"`
 	Utilization                  float64                `json:"utilization,omitempty"`
-	ArrivalRatePerSecond         float64                `json:"arrivalRatePerSecond"`
+	ArrivalRatePerSecond         float64                `json:"arrivalRatePerSecond,omitempty"`
 	AchievedArrivalRatePerSecond float64                `json:"achievedArrivalRatePerSecond"`
 	IssueElapsedSeconds          float64                `json:"issueElapsedSecondsMonotonic"`
-	IssueLag                     *profilingrun.IssueLag `json:"issueLagMs"`
+	IssueLag                     *profilingrun.IssueLag `json:"issueLagMs,omitempty"`
 	ScheduledInputs              int                    `json:"scheduledInputs"`
 	SentInputs                   int                    `json:"sentInputs"`
 	CompletedInputs              int                    `json:"completedInputs"`
-	ArrivalSeed                  string                 `json:"arrivalSeed"`
+	OfferingStartedAt            time.Time              `json:"offeringStartedAt"`
+	OfferingEndedAt              time.Time              `json:"offeringEndedAt"`
+	DrainEndedAt                 time.Time              `json:"drainEndedAt"`
+	ArrivalSeed                  string                 `json:"arrivalSeed,omitempty"`
 	DriverGC                     *profilingrun.DriverGC `json:"driverGC"`
-}
-
-func (e profilingIssueEvidence) MarshalJSON() ([]byte, error) {
-	if e.Kind == "saturation" {
-		return json.Marshal(struct {
-			ID              string                 `json:"id"`
-			Kind            string                 `json:"kind"`
-			CompletedInputs int                    `json:"completedInputs"`
-			DriverGC        *profilingrun.DriverGC `json:"driverGC"`
-		}{e.ID, e.Kind, e.CompletedInputs, e.DriverGC})
-	}
-	type evidence profilingIssueEvidence
-	return json.Marshal(evidence(e))
 }
 
 type profilingLoadFailure struct {
@@ -352,8 +342,8 @@ type profilingLoadDriver struct {
 
 func newProfilingLoadDriver(plan profilingLoadPlan, records []profilingRecord, endpoint string) *profilingLoadDriver {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	// No transport connection limit: waiting behind a pool limit would silently
-	// reshape Poisson input. The scheduler fails explicitly at the frozen cap.
+	// Native admission owns the explicit FIFO. HTTP pooling must not add a
+	// second, unobserved dispatch queue behind those frozen native slots.
 	transport.MaxIdleConnsPerHost = max(plan.MaxQueueRequests, 64)
 	transport.MaxIdleConns = transport.MaxIdleConnsPerHost
 	driver := &profilingLoadDriver{plan: plan, records: records, endpoint: endpoint, inferURL: strings.TrimRight(plan.NativeEndpoint, "/") + plan.InferPath, transport: transport, control: &http.Client{}, native: &gateway.Client{HTTPClient: &http.Client{Transport: transport, Timeout: time.Duration((plan.OperatingPoints.RequestLifetimeSeconds + plan.OperatingPoints.DeliveryMarginMilliseconds/1000) * 1e9)}}, result: profilingLoadResult{Status: "Succeeded", Phases: []profilingrun.Phase{}}}
@@ -463,11 +453,12 @@ func (d *profilingLoadDriver) measuredPhase(ctx context.Context, spec profilingr
 }
 
 type profilingCompletion struct {
-	row      profilingrun.PhaseRequest
-	response native.Response
-	sent     time.Time
-	lag      float64
-	err      error
+	row        profilingrun.PhaseRequest
+	response   native.Response
+	dispatched time.Time
+	completed  time.Time
+	lag        float64
+	err        error
 }
 
 func (d *profilingLoadDriver) send(ctx context.Context, spec profilingrun.Phase, index int, scheduled time.Time, issued, completed func()) profilingCompletion {
@@ -475,7 +466,9 @@ func (d *profilingLoadDriver) send(ctx context.Context, spec profilingrun.Phase,
 	inputs, err := d.recordInputs(ctx, record)
 	if err != nil {
 		issued()
-		completed()
+		if completed != nil {
+			completed()
+		}
 		return profilingCompletion{err: err}
 	}
 	var idBuffer [64]byte
@@ -483,18 +476,20 @@ func (d *profilingLoadDriver) send(ctx context.Context, spec profilingrun.Phase,
 	points := d.plan.OperatingPoints
 	response := profilingResponseBuffers.Get().(*bytes.Buffer)
 	defer profilingResponseBuffers.Put(response)
-	// Actual offering starts before the shared encoder and pooled exchange.
-	// Scheduled arrival time never consumes the native request lifetime.
+	// The gateway's client clock starts at arrival. Admission-slot waiting is
+	// sender elapsed time and belongs to the end-to-end client latency.
 	sent := time.Now()
 	issued()
-	request := native.Request{ID: id, Context: native.RequestContext{RequestID: id, WorkloadUID: d.plan.PodUID, Definition: d.plan.WorkloadResourceVersion, AdmissionPolicy: "Delay", ReceivedAt: sent.UTC(), CompletionMarginMS: points.DeliveryMarginMilliseconds, SLO: native.SLO{Percentile: d.plan.SLOPercentile, TargetMS: float64(d.plan.SLOTargetLatencyNanos) / 1e6}, LifetimeMS: points.RequestLifetimeSeconds * 1000}}
+	request := native.Request{ID: id, Context: native.RequestContext{RequestID: id, WorkloadUID: d.plan.PodUID, Definition: d.plan.WorkloadResourceVersion, AdmissionPolicy: "Delay", ReceivedAt: scheduled.UTC(), SenderElapsedMS: float64(sent.Sub(scheduled)) / 1e6, CompletionMarginMS: points.DeliveryMarginMilliseconds, SLO: native.SLO{Percentile: d.plan.SLOPercentile, TargetMS: float64(d.plan.SLOTargetLatencyNanos) / 1e6}, LifetimeMS: points.RequestLifetimeSeconds * 1000}}
 	status, err := d.native.InferNative(ctx, d.inferURL, request, inputs, response)
 	// HTTP completion releases the outstanding slot before JSON decoding and
 	// native-proof collection, neither of which may reshape Poisson issuance.
-	completed()
+	if completed != nil {
+		completed()
+	}
 	raw := response.Bytes()
 	finished := time.Now()
-	result := profilingCompletion{sent: sent, lag: max(0, float64(sent.Sub(scheduled))/1e6), err: err}
+	result := profilingCompletion{dispatched: sent, completed: finished, lag: max(0, float64(sent.Sub(scheduled))/1e6), err: err}
 	if err != nil {
 		return result
 	}
@@ -511,7 +506,7 @@ func (d *profilingLoadDriver) send(ctx context.Context, spec profilingrun.Phase,
 		result.err = err
 		return result
 	}
-	result.row = profilingrun.PhaseRequest{RequestID: id, RecordID: record.ID, ArrivalAt: scheduled.UTC(), SentAt: sent.UTC(), CompletedAt: finished.UTC(), LatencyMilliseconds: float64(finished.Sub(sent)) / 1e6}
+	result.row = profilingrun.PhaseRequest{RequestID: id, RecordID: record.ID, ScheduledAt: scheduled.UTC(), DispatchedAt: sent.UTC(), CompletedAt: finished.UTC(), LatencyMilliseconds: float64(finished.Sub(scheduled)) / 1e6}
 	return result
 }
 
@@ -535,13 +530,15 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 	start := time.Now()
 	endFloor := start.Add(time.Duration(d.plan.OperatingPoints.PhaseDurationSeconds * 1e9))
 	phase.MeasurementStartedAt = start.UTC().Format(time.RFC3339Nano)
+	phase.OfferingStartedAt = start.UTC()
 	if err := d.updatePhase(phase); err != nil {
 		return phase, err
 	}
 	var firstErr error
-	var outstanding, known atomic.Int64
+	var known atomic.Int64
 	var requests, sending sync.WaitGroup
 	issued, sent := 0, 0
+	var lastScheduled, lastCompleted time.Time
 	sendSpec := profilingrun.Phase{ID: phase.ID}
 	stopping := false
 	recordError := func(err error) {
@@ -565,24 +562,24 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 	complete := func() bool {
 		return !time.Now().Before(endFloor) && known.Load() >= int64(d.plan.MinServiceSamples) && issued%d.plan.Batch == 0
 	}
-	launch := func(scheduled time.Time) {
-		index := issued
-		issued++
-		outstanding.Add(1)
+	launch := func(index int, scheduled time.Time, completed func()) {
 		requests.Add(1)
 		sending.Add(1)
 		go func() {
 			defer requests.Done()
-			result := d.send(ctx, sendSpec, index, scheduled, sending.Done, func() { outstanding.Add(-1) })
+			result := d.send(ctx, sendSpec, index, scheduled, sending.Done, completed)
 			results <- result
 		}()
 	}
 	accept := func(result profilingCompletion) {
-		if !result.sent.IsZero() {
+		if !result.dispatched.IsZero() {
 			sent++
 			if phase.Kind != "saturation" {
 				lags = append(lags, result.lag)
 			}
+		}
+		if result.completed.After(lastCompleted) {
+			lastCompleted = result.completed
 		}
 		if result.err != nil {
 			recordError(result.err)
@@ -606,14 +603,18 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 	if phase.Kind == "saturation" {
 		pending := min(phase.Workers, limit)
 		for range pending {
-			launch(time.Now())
+			lastScheduled = time.Now()
+			launch(issued, lastScheduled, nil)
+			issued++
 		}
 		finishedIssuing := false
 		for pending > 0 {
 			accept(<-results)
 			pending--
 			if !stopping && !complete() && issued < limit {
-				launch(time.Now())
+				lastScheduled = time.Now()
+				launch(issued, lastScheduled, nil)
+				issued++
 				pending++
 			} else if !finishedIssuing {
 				sending.Wait()
@@ -638,6 +639,24 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 			err       error
 		}
 		producerDone := make(chan producerResult, 1)
+		type arrival struct {
+			index     int
+			scheduled time.Time
+		}
+		queue := struct {
+			sync.Mutex
+			items []arrival
+			head  int
+			done  bool
+		}{}
+		wakeDispatcher := make(chan struct{}, 1)
+		notify := func() {
+			select {
+			case wakeDispatcher <- struct{}{}:
+			default:
+			}
+		}
+		slots := make(chan struct{}, d.plan.MaxQueueRequests)
 		go func() {
 			produced := producerResult{}
 			next := start
@@ -673,15 +692,11 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 				}
 				if !now.Before(next) {
 					produced.scheduled++
-					if outstanding.Load() >= int64(d.plan.MaxQueueRequests) {
-						produced.err = errors.New("Poisson offered load exceeds frozen maxQueueRequests outstanding capacity; issuance would block")
-						break
-					}
-					if pool := d.transport.MaxConnsPerHost; pool > 0 && outstanding.Load() >= int64(pool) {
-						produced.err = errors.New("Poisson HTTP connection pool would block issuance on outstanding responses")
-						break
-					}
-					launch(next)
+					queue.Lock()
+					queue.items = append(queue.items, arrival{index: issued, scheduled: next})
+					queue.Unlock()
+					issued++
+					notify()
 					produced.last = next
 					advance()
 					continue
@@ -714,23 +729,82 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 				}
 			}
 		finished:
-			sending.Wait()
-			runtime.ReadMemStats(&memoryAfter)
+			queue.Lock()
+			queue.done = true
+			queue.Unlock()
+			notify()
 			producerDone <- produced
-			requests.Wait()
-			close(results)
+		}()
+		go func() {
+			defer func() {
+				sending.Wait()
+				runtime.ReadMemStats(&memoryAfter)
+				requests.Wait()
+				close(results)
+			}()
+			for {
+				queue.Lock()
+				if queue.head == len(queue.items) {
+					done := queue.done
+					queue.Unlock()
+					if done {
+						return
+					}
+					select {
+					case <-wakeDispatcher:
+					case <-stop:
+						return
+					case <-ctx.Done():
+						return
+					}
+					continue
+				}
+				next := queue.items[queue.head]
+				queue.head++
+				if queue.head == len(queue.items) {
+					queue.items, queue.head = queue.items[:0], 0
+				}
+				queue.Unlock()
+				select {
+				case slots <- struct{}{}:
+				case <-stop:
+					return
+				case <-ctx.Done():
+					return
+				}
+				select {
+				case <-stop:
+					<-slots
+					return
+				case <-ctx.Done():
+					<-slots
+					return
+				default:
+				}
+				launch(next.index, next.scheduled, func() { <-slots })
+				// Preserve FIFO dispatch even when record preparation or a
+				// pre-send allocation is delayed. The arrival clock is separate.
+				sending.Wait()
+			}
 		}()
 		for result := range results {
 			accept(result)
 		}
 		produced := <-producerDone
 		recordError(produced.err)
-		phase.ScheduledInputs, phase.SentInputs = produced.scheduled, sent
+		lastScheduled = produced.last
 		phase.IssueLag = profilingLagSummary(lags)
-		if !produced.last.IsZero() {
-			phase.IssueElapsedSeconds = produced.last.Sub(start).Seconds()
-			phase.AchievedArrivalRatePerSecond = float64(sent) / phase.IssueElapsedSeconds
-		}
+	}
+	phase.ScheduledInputs, phase.SentInputs = issued, sent
+	phase.OfferingEndedAt, phase.DrainEndedAt = lastScheduled.UTC(), lastCompleted.UTC()
+	if lastScheduled.IsZero() {
+		phase.OfferingEndedAt = phase.OfferingStartedAt
+	} else {
+		phase.IssueElapsedSeconds = lastScheduled.Sub(start).Seconds()
+		phase.AchievedArrivalRatePerSecond = float64(phase.ScheduledInputs) / phase.IssueElapsedSeconds
+	}
+	if lastCompleted.IsZero() {
+		phase.DrainEndedAt = phase.OfferingStartedAt
 	}
 	elapsed := time.Since(start).Seconds()
 	phase.MeasurementStartedAt, phase.MeasurementEndedAt = start.UTC().Format(time.RFC3339Nano), start.Add(time.Duration(elapsed*1e9)).UTC().Format(time.RFC3339Nano)
@@ -740,8 +814,8 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 	if firstErr == nil && !complete() {
 		firstErr = errors.New("latency sample budget exhausted before phase duration and known-gap minimum")
 	}
-	if firstErr == nil && phase.Kind != "saturation" && (phase.ScheduledInputs != phase.SentInputs || phase.SentInputs != phase.CompletedInputs) {
-		firstErr = errors.New("Poisson scheduled, sent and completed input counts differ")
+	if firstErr == nil && (phase.ScheduledInputs != phase.SentInputs || phase.SentInputs != phase.CompletedInputs) {
+		firstErr = errors.New("scheduled, dispatched and completed input counts differ")
 	}
 	if firstErr == nil {
 		firstErr = errors.Join(collector.finish(), d.updatePhase(phase))
@@ -752,7 +826,7 @@ func (d *profilingLoadDriver) runPhase(ctx context.Context, phase profilingrun.P
 		if errors.As(firstErr, &typed) {
 			failure.FailureReason = typed.FailureReason
 		}
-		failure.IssueEvidence = &profilingIssueEvidence{ID: phase.ID, Kind: phase.Kind, Utilization: phase.Utilization, ArrivalRatePerSecond: phase.ArrivalRatePerSecond, AchievedArrivalRatePerSecond: phase.AchievedArrivalRatePerSecond, IssueElapsedSeconds: phase.IssueElapsedSeconds, IssueLag: phase.IssueLag, ScheduledInputs: phase.ScheduledInputs, SentInputs: phase.SentInputs, CompletedInputs: phase.CompletedInputs, ArrivalSeed: phase.ArrivalSeed, DriverGC: phase.DriverGC}
+		failure.IssueEvidence = &profilingIssueEvidence{ID: phase.ID, Kind: phase.Kind, Utilization: phase.Utilization, ArrivalRatePerSecond: phase.ArrivalRatePerSecond, AchievedArrivalRatePerSecond: phase.AchievedArrivalRatePerSecond, IssueElapsedSeconds: phase.IssueElapsedSeconds, IssueLag: phase.IssueLag, ScheduledInputs: phase.ScheduledInputs, SentInputs: phase.SentInputs, CompletedInputs: phase.CompletedInputs, OfferingStartedAt: phase.OfferingStartedAt, OfferingEndedAt: phase.OfferingEndedAt, DrainEndedAt: phase.DrainEndedAt, ArrivalSeed: phase.ArrivalSeed, DriverGC: phase.DriverGC}
 		return phase, failure
 	}
 	return phase, nil
@@ -805,7 +879,7 @@ type profilingBatchGroup struct {
 func (c *profilingPhaseCollector) add(row profilingrun.PhaseRequest, response native.Response) (bool, error) {
 	p := response.Progress
 	pair, timing := p.ServiceSample, p.NativeHTTP
-	if response.ID != row.RequestID || response.ModelName != c.plan.Model || !response.ExecutionComplete || len(response.Outputs) == 0 || p.RequestID != row.RequestID || p.WorkloadUID != c.plan.PodUID || p.Definition != c.plan.WorkloadResourceVersion || p.Phase != "finished" || !p.ExecutionComplete || p.BatchID == 0 || p.BatchSize != c.plan.Batch || p.Units < 1 || p.At.IsZero() || !profilingPositive(p.NativeElapsedMS) || p.NativeElapsedMS > row.LatencyMilliseconds {
+	if response.ID != row.RequestID || response.ModelName != c.plan.Model || !response.ExecutionComplete || len(response.Outputs) == 0 || p.RequestID != row.RequestID || p.WorkloadUID != c.plan.PodUID || p.Definition != c.plan.WorkloadResourceVersion || p.Phase != "finished" || !p.ExecutionComplete || p.BatchID == 0 || p.BatchSize != c.plan.Batch || p.Units < 1 || p.At.IsZero() || !profilingPositive(p.NativeElapsedMS) || p.NativeElapsedMS > row.LatencyMilliseconds || p.NativeElapsedMS > float64(row.CompletedAt.Sub(row.DispatchedAt))/1e6 {
 		return false, errors.New("native response lacks correlated actual completion proof or nested client span")
 	}
 	if _, duplicate := c.requests[row.RequestID]; duplicate {
@@ -842,7 +916,7 @@ func (c *profilingPhaseCollector) add(row profilingrun.PhaseRequest, response na
 		c.groups[p.BatchID] = previous
 	}
 	row.Response = profilingrun.PhaseResponse{ModelName: response.ModelName, ID: response.ID, Outputs: response.Outputs, ExecutionComplete: response.ExecutionComplete, Progress: profilingrun.PhaseProgress{RequestID: p.RequestID, WorkloadUID: p.WorkloadUID, Definition: p.Definition, Phase: p.Phase, At: p.At, BatchID: p.BatchID, BatchSize: p.BatchSize, ProfileID: p.ProfileID, DecisionID: p.DecisionID, QueueMS: p.QueueMS, ExecutorWaitNanos: p.ExecutorWaitNanos, ServiceMS: p.ServiceMS, Units: p.Units, NativeElapsedMS: p.NativeElapsedMS, ExecutionComplete: p.ExecutionComplete, Outcome: p.Outcome, NativeHTTP: p.NativeHTTP, NativeDeferredAt: p.NativeDeferredAt}}
-	if err := c.store.requests.append(row, profilingJSONEntry{at: row.SentAt, id: row.RequestID}); err != nil {
+	if err := c.store.requests.append(row, profilingJSONEntry{at: row.ScheduledAt, id: row.RequestID}); err != nil {
 		return false, err
 	}
 	if err := c.checkBudget(); err != nil {

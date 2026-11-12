@@ -49,6 +49,11 @@ def phase_results(plan):
                  "measurementStartedAt": f"2026-11-13T00:{index:02d}:00Z",
                  "measurementEndedAt": f"2026-11-13T00:{index:02d}:30Z",
                  "measurementElapsedSecondsMonotonic": 30, "completedInputs": 4,
+                 "scheduledInputs": 4, "sentInputs": 4,
+                 "offeringStartedAt": f"2030-01-01T00:{index:02d}:00Z",
+                 "offeringEndedAt": f"2030-01-01T00:{index:02d}:20Z",
+                 "drainEndedAt": f"2030-01-01T00:{index:02d}:20.005Z",
+                 "achievedArrivalRatePerSecond": 4 / 20, "issueElapsedSecondsMonotonic": 20,
                  "requests": [], "nativeSamples": [], "latencyMs": [5, 5],
                  "driverGC": {"cycles": 0, "pauseTotalMilliseconds": 0, "maxPauseMilliseconds": 0}}
         if kind == "saturation":
@@ -58,8 +63,7 @@ def phase_results(plan):
         else:
             phase.update(utilization=.5, arrivalRatePerSecond=.5 * (4 / 30))
         if kind != "saturation":
-            phase.update(achievedArrivalRatePerSecond=4 / 20, issueElapsedSecondsMonotonic=20,
-                         scheduledInputs=4, sentInputs=4, arrivalSeed=plan["podUID"] + "/" + phase_id,
+            phase.update(arrivalSeed=plan["podUID"] + "/" + phase_id,
                          issueLagMs={"count": 4, "min": 0, "mean": 0, "p50": 0, "p95": 0, "p99": 0, "max": 0})
         for offset in range(2):
             batch_id += 1
@@ -67,9 +71,9 @@ def phase_results(plan):
             pair = {"serviceDurationNanos": 2_000_000, "precedingIdleNanos": 123, "trialID": plan["podUID"]}
             for item, request_id in enumerate(ids):
                 phase["requests"].append({"requestID": request_id, "recordID": f"r{item}",
-                                          "arrivalAt": "2030-01-01T00:00:00.000000001Z",
-                                          "sentAt": "2030-01-01T00:00:00.000000002Z",
-                                          "completedAt": "2030-01-01T00:00:00.005000002Z", "latencyMs": 5,
+                                          "scheduledAt": f"2030-01-01T00:{index:02d}:{(offset + 1) * 10:02d}.000000000Z",
+                                          "dispatchedAt": f"2030-01-01T00:{index:02d}:{(offset + 1) * 10:02d}.000000000Z",
+                                          "completedAt": f"2030-01-01T00:{index:02d}:{(offset + 1) * 10:02d}.005000000Z", "latencyMs": 5,
                                           "response": {"id": request_id, "executionComplete": True,
                                                        "progress": {"requestID": request_id, "batchID": batch_id,
                                                                     "batchSize": 2, "nativeElapsedMS": 3, "units": item + 1}}})
@@ -187,23 +191,42 @@ class ExternalLoadConsumerTest(unittest.TestCase):
                 lambda p: p[0].update(arrivalSeed="other-pod/sparse"),
                 lambda p: p[0].pop("arrivalSeed"),
                 lambda p: p[0].update(issueLagToleranceMs=10),
-                lambda p: p[1].update(scheduledInputs=0)):
+                lambda p: p[1].update(arrivalSeed=""),
+                lambda p: p[1].pop("scheduledInputs"),
+                lambda p: p[1].pop("offeringStartedAt"),
+                lambda p: p[1].pop("offeringEndedAt"),
+                lambda p: p[1].pop("drainEndedAt"),
+                lambda p: p[0].update(offeringEndedAt=p[0]["offeringStartedAt"]),
+                lambda p: p[0].update(drainEndedAt=p[0]["offeringStartedAt"])):
             with self.subTest(mutate=mutate):
                 phases = phase_results(plan)
                 mutate(phases)
                 with self.assertRaises(measurement.common.ContractError):
                     measurement.validate_phases(phases, plan, {"workers": 4})
 
-    def test_arbitrary_lag_is_diagnostic_and_native_lifetime_uses_actual_receipt(self):
+    def test_native_slot_fifo_wait_increases_client_latency_without_changing_arrivals(self):
         _, plan = self.make_plan()
         phases = phase_results(plan)
         for phase in (phases[0], phases[2]):
-            phase["issueLagMs"].update(min=100000, mean=100000, p50=100000,
-                                       p95=100000, p99=100000, max=100000)
+            rate = phase["achievedArrivalRatePerSecond"]
+            phase["issueLagMs"].update(min=25, mean=25, p50=25, p95=25, p99=25, max=25)
             for row in phase["requests"]:
-                row["arrivalAt"] = "2029-12-31T23:58:20.000000002Z"
+                row["dispatchedAt"] = row["scheduledAt"].replace(".000000000Z", ".025000000Z")
+                row["completedAt"] = row["scheduledAt"].replace(".000000000Z", ".030000000Z")
+                row["latencyMs"] = 30
+            phase["latencyMs"] = [30, 30]
+            phase["drainEndedAt"] = phase["requests"][-1]["completedAt"]
+            self.assertEqual(rate, phase["scheduledInputs"] / phase["issueElapsedSecondsMonotonic"])
         measurement.validate_phases(phases, plan, {"workers": 4})
+        phases[0]["requests"][0]["response"]["progress"]["nativeElapsedMS"] = 6
+        with self.assertRaisesRegex(measurement.common.ContractError, "dispatch-to-completion"):
+            measurement.validate_phases(phases, plan, {"workers": 4})
+
+    def test_native_lifetime_retains_receipt_span_bound(self):
+        _, plan = self.make_plan()
+        phases = phase_results(plan)
         row = phases[0]["requests"][0]
+        row["completedAt"] = phases[0]["drainEndedAt"] = "2030-01-01T00:01:11Z"
         row["latencyMs"] = 61000
         row["response"]["progress"]["nativeElapsedMS"] = 61000
         with self.assertRaisesRegex(measurement.common.ContractError, "request lifetime"):
@@ -334,7 +357,9 @@ class ExternalLoadConsumerTest(unittest.TestCase):
         self.addCleanup(control.close)
         control.ready.set()
         issue = {"id": "sparse", "kind": "sparse", "arrivalRatePerSecond": 1,
-                 "issueElapsedSecondsMonotonic": 1, "achievedArrivalRatePerSecond": 1,
+                 "issueElapsedSecondsMonotonic": 1, "achievedArrivalRatePerSecond": 2,
+                 "offeringStartedAt": "2030-01-01T00:00:00Z", "offeringEndedAt": "2030-01-01T00:00:01Z",
+                 "drainEndedAt": "2030-01-01T00:00:00Z",
                  "scheduledInputs": 2, "sentInputs": 1, "completedInputs": 0,
                  "arrivalSeed": request["podUID"] + "/sparse",
                  "driverGC": {"cycles": 1, "pauseTotalMilliseconds": 11, "maxPauseMilliseconds": 11},
@@ -342,7 +367,7 @@ class ExternalLoadConsumerTest(unittest.TestCase):
         client = http.client.HTTPConnection("127.0.0.1", control.server.server_port, timeout=2)
         try:
             client.request("POST", "/measurement/load-result", json.dumps(
-                {"status": "Failed", "error": "Poisson outstanding cap reached", "issueEvidence": issue}))
+                {"status": "Failed", "error": "measurement attempt deadline exceeded", "issueEvidence": issue}))
             response = client.getresponse()
             self.assertEqual(response.status, 200, response.read())
         finally:
@@ -357,7 +382,7 @@ class ExternalLoadConsumerTest(unittest.TestCase):
         phase = phase_results(plan)[0]
         fields = {"id", "kind", "arrivalRatePerSecond", "issueElapsedSecondsMonotonic",
                   "achievedArrivalRatePerSecond", "scheduledInputs", "sentInputs", "completedInputs",
-                  "arrivalSeed", "issueLagMs", "driverGC"}
+                  "arrivalSeed", "issueLagMs", "driverGC", "offeringStartedAt", "offeringEndedAt", "drainEndedAt"}
         issue = {key: phase[key] for key in fields}
         measurement.validate_failed_issue_evidence(issue, plan)
         for mutate in (
@@ -379,11 +404,19 @@ class ExternalLoadConsumerTest(unittest.TestCase):
             mutate(changed)
             with self.assertRaises(measurement.common.ContractError):
                 measurement.validate_failed_issue_evidence(changed, plan)
-        issue.update(scheduledInputs=1, sentInputs=0, completedInputs=0, achievedArrivalRatePerSecond=0,
-                     issueElapsedSecondsMonotonic=0, issueLagMs=None)
+        issue.update(scheduledInputs=1, sentInputs=0, completedInputs=0, achievedArrivalRatePerSecond=1,
+                     issueElapsedSecondsMonotonic=1, issueLagMs=None, drainEndedAt=issue["offeringStartedAt"])
         measurement.validate_failed_issue_evidence(issue, plan)
+        issue["achievedArrivalRatePerSecond"] = 0
+        with self.assertRaisesRegex(measurement.common.ContractError, "scheduled inputs"):
+            measurement.validate_failed_issue_evidence(issue, plan)
+        issue.update(scheduledInputs=0, achievedArrivalRatePerSecond=0, issueElapsedSecondsMonotonic=0,
+                     offeringEndedAt=issue["offeringStartedAt"])
+        measurement.validate_failed_issue_evidence(issue, plan)
+        saturation = phase_results(plan)[1]
         measurement.validate_failed_issue_evidence(
-            {"id": "saturation", "kind": "saturation", "completedInputs": 0, "driverGC": phase["driverGC"]}, plan)
+            {key: value for key, value in saturation.items()
+             if key in fields - {"arrivalSeed", "issueLagMs", "arrivalRatePerSecond"}}, plan)
 
     def test_control_readiness_and_partial_upload_have_finite_timeouts(self):
         import http.client

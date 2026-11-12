@@ -148,21 +148,24 @@ func finitePositive(value float64) bool {
 }
 
 func validateIssueEvidence(phase Phase) error {
+	if !finitePositive(phase.IssueElapsedSeconds) || phase.IssueElapsedSeconds > phase.MeasurementElapsedSeconds ||
+		!finitePositive(phase.AchievedArrivalRatePerSecond) ||
+		phase.AchievedArrivalRatePerSecond != float64(phase.ScheduledInputs)/phase.IssueElapsedSeconds ||
+		phase.ScheduledInputs != phase.SentInputs || phase.SentInputs != phase.CompletedInputs ||
+		phase.ScheduledInputs < 1 || phase.OfferingStartedAt.IsZero() ||
+		!phase.OfferingEndedAt.After(phase.OfferingStartedAt) || phase.DrainEndedAt.Before(phase.OfferingEndedAt) {
+		return errors.New("phase schedule, send count, rate or offering/drain boundaries are invalid")
+	}
 	if phase.Kind == "saturation" {
-		if phase.AchievedArrivalRatePerSecond != 0 || phase.IssueElapsedSeconds != 0 || phase.IssueLag != nil ||
-			phase.ScheduledInputs != 0 || phase.SentInputs != 0 || phase.ArrivalSeed != "" {
-			return errors.New("saturation must omit Poisson issue evidence")
+		if phase.IssueLag != nil || phase.ArrivalSeed != "" {
+			return errors.New("saturation must omit Poisson seed and issue lag")
 		}
 		return nil
 	}
 	lag := phase.IssueLag
-	if !finitePositive(phase.IssueElapsedSeconds) || phase.IssueElapsedSeconds > phase.MeasurementElapsedSeconds ||
-		!finitePositive(phase.AchievedArrivalRatePerSecond) ||
-		phase.AchievedArrivalRatePerSecond != float64(phase.SentInputs)/phase.IssueElapsedSeconds ||
-		phase.ScheduledInputs != phase.SentInputs || phase.SentInputs != phase.CompletedInputs ||
-		strings.TrimSpace(phase.ArrivalSeed) == "" || strings.TrimSpace(phase.ArrivalSeed) != phase.ArrivalSeed ||
+	if strings.TrimSpace(phase.ArrivalSeed) == "" || strings.TrimSpace(phase.ArrivalSeed) != phase.ArrivalSeed ||
 		lag == nil || lag.Count != phase.SentInputs || lag.Count < 1 {
-		return errors.New("Poisson schedule, send count, rate or offering duration is invalid")
+		return errors.New("Poisson seed or issue lag count is invalid")
 	}
 	for _, value := range []float64{lag.Min, lag.Mean, lag.P50, lag.P95, lag.P99, lag.Max} {
 		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
@@ -194,14 +197,27 @@ func validateDriverGC(gc *DriverGC) error {
 
 func validatePhaseRequests(phase Phase, batch int, start, end time.Time) error {
 	requests := make(map[string]*PhaseRequest, len(phase.Requests))
+	var previousScheduled, lastCompleted time.Time
 	for index := range phase.Requests {
 		request := &phase.Requests[index]
 		progress := &request.Response.Progress
 		if request.RequestID == "" || request.RecordID == "" || request.Response.ID != request.RequestID ||
 			progress.RequestID != request.RequestID || progress.BatchID == 0 || progress.BatchSize != batch ||
 			!request.Response.ExecutionComplete || !progress.ExecutionComplete || progress.Units < 1 || !finitePositive(progress.NativeElapsedMS) ||
-			request.ArrivalAt.IsZero() || request.SentAt.Before(request.ArrivalAt) || !request.CompletedAt.After(request.SentAt) || !finitePositive(request.LatencyMilliseconds) {
+			request.ScheduledAt.IsZero() || request.DispatchedAt.Before(request.ScheduledAt) || !request.CompletedAt.After(request.DispatchedAt) ||
+			request.ScheduledAt.Before(previousScheduled) || !finitePositive(request.LatencyMilliseconds) {
 			return errors.New("request identity, completion or load-node timing is invalid")
+		}
+		if request.ScheduledAt.Before(phase.OfferingStartedAt) || request.ScheduledAt.After(phase.OfferingEndedAt) ||
+			request.CompletedAt.After(phase.DrainEndedAt) {
+			return errors.New("request offering/drain coverage is invalid")
+		}
+		if progress.NativeElapsedMS > float64(request.CompletedAt.Sub(request.DispatchedAt))/float64(time.Millisecond) {
+			return errors.New("native request span exceeds dispatched client span")
+		}
+		previousScheduled = request.ScheduledAt
+		if request.CompletedAt.After(lastCompleted) {
+			lastCompleted = request.CompletedAt
 		}
 		if _, found := requests[request.RequestID]; found {
 			return errors.New("duplicate request identity")
@@ -212,6 +228,9 @@ func validatePhaseRequests(phase Phase, batch int, start, end time.Time) error {
 			return errors.New("native request receive/queue/finish boundaries are incomplete")
 		}
 		requests[request.RequestID] = request
+	}
+	if !previousScheduled.Equal(phase.OfferingEndedAt) || !lastCompleted.Equal(phase.DrainEndedAt) {
+		return errors.New("offering and drain ends must match the last scheduled arrival and response")
 	}
 	for sampleIndex, sample := range phase.NativeSamples {
 		if len(sample.RequestIDs) != batch || len(sample.RecordIDs) != batch || len(sample.Units) != batch ||

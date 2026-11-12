@@ -37,6 +37,14 @@ that request-free interval; final counters/metadata open a new connection.
 The idle actor, window, zero-inference check and runtime observations are
 unchanged. This is neither a timeout increase nor a retry/recovery path.
 
+The local native catalog integration test always retains immutable raw/execution
+objects and `native-catalog-evidence.json` under `/tmp/chill-native-catalog-*`;
+`CHILL_FIRST_PROFILE_FIXTURE_OUTPUT` selects an explicit directory. Replay that
+same directory with `go test ./internal/serving/kube -run
+'^TestNativeCatalogReplayRetainedWitness$' -count=1` and the same environment
+variable. Per-field catalog equivalence failures report actual and expected
+values without weakening the checks or requiring another native measurement.
+
 ## Roles and validation ownership
 
 | Role | Contract |
@@ -113,6 +121,9 @@ SLO percentile and target latency, plus `measurement.operatingPoints`:
 `postLoadDurationSeconds`, `requestLifetimeSeconds`, `deliveryMarginMilliseconds`,
 and `framedDecodedRequestUpperBytes`. `postLoadDurationSeconds` is a required
 positive integer number of seconds, propagated unchanged to the native load plan.
+`phaseDurationSeconds` also accepts any positive integer; the default remains
+30 seconds. Each phase still requires its independent SLO-derived known-gap
+sample floor. There is no separate hard-coded thirty-second phase minimum.
 The selected execution policy freezes the
 computed `queueBytesCap`; this is not a public input. Model, preprocessor and
 dataset must match the measurement selection. The existing 95% confidence
@@ -149,14 +160,16 @@ produces open-loop Poisson arrivals at utilization × that throughput. The
 `chill-server profiling-load` subcommand reuses the gateway's native request
 encoder and pooled HTTP client. It runs in the validated gateway Pod's actual
 `serving-entrypoint` image; the Python load-generator retains only gateway E5 load.
-The producer never serializes Poisson issuance behind a previous response.
-Every scheduled arrival in the offering window must actually be sent; reaching
-the outstanding-response cap fails the phase instead of delaying its issue loop.
-The actual `sentAt` point process is the measurement authority. Scheduled times,
-target rates, issue-lag distributions and producer GC pauses remain diagnostics;
-a single delayed issue or a low Poisson realization does not invalidate a phase.
-Derivation and analyzers use actual sent counts and the offering exposure, never
-the target rate as measured throughput or an inferred arrival process.
+The producer schedules Poisson clients independently of previous responses.
+Clients FIFO-wait for the frozen native admission slots, held until response
+completion, just as serving gateway clients do. Temporary slot saturation does
+not fail the phase or move a scheduled client arrival. Every scheduled client
+must dispatch and complete before successful drain.
+The scheduled `scheduledAt` point process is the arrival authority; `dispatchedAt`
+records native HTTP dispatch after FIFO hold. Client latency includes that hold.
+Target rates, dispatch lag and producer GC pauses remain diagnostics.
+Derivation and analyzers use `scheduledInputs / issueElapsedSecondsMonotonic`,
+including failed-phase diagnostic rates, never native dispatch rate or target rate.
 Every phase runs until both its monotonic duration and known-gap sample floor
 complete. The producer stops offering on a whole-batch issuance boundary and
 drains every issued request. After the final drained phase, the runtime retains
@@ -322,23 +335,38 @@ Each object contains:
 | `completedInputs` | Completed native requests, each carrying one input |
 | `requests` | Every completed request; no failed request is silently omitted |
 | `nativeSamples` | One physical batch per globally unique `batchID` |
-| `latencyMs` | Maximum member sent-to-completed latency, aligned with each batch sample |
-| `issueElapsedSecondsMonotonic` | Offering window through the last covered scheduled arrival, excluding response drain |
-| `achievedArrivalRatePerSecond` | Actually sent inputs divided by offering exposure |
-| `scheduledInputs`, `sentInputs` | Schedule coverage proof; both equal `completedInputs` on success |
-| `arrivalSeed` | Trial/phase seed identity, `podUID/phaseID` |
-| `issueLagMs` | Count, min, mean, p50, p95, p99 and max of actual monotonic send lag; no lag threshold |
+| `latencyMs` | Maximum member scheduled-to-completed client latency, including FIFO hold, aligned with each batch sample |
+| `offeringStartedAt`, `offeringEndedAt` | Load-node UTC offering start and last scheduled arrival, required in every phase |
+| `drainEndedAt` | Load-node UTC last response completion, required in every phase |
+| `issueElapsedSecondsMonotonic` | Offering duration through the last scheduled arrival, excluding response drain, required in every phase |
+| `achievedArrivalRatePerSecond` | `scheduledInputs / issueElapsedSecondsMonotonic`, required in every phase |
+| `scheduledInputs`, `sentInputs` | Required schedule and native dispatch counts; both equal `completedInputs` on success; saturation counts closed-loop issued clients |
+| `arrivalSeed` | Poisson-only trial/phase seed identity, `podUID/phaseID` |
+| `issueLagMs` | Poisson-only count, min, mean, p50, p95, p99 and max of monotonic scheduled-to-dispatch lag; no lag threshold |
 | `driverGC` | Producer GC cycle count and total/maximum stop-the-world pause milliseconds |
 
-Each request contains `requestID`, `recordID`, scheduled `arrivalAt`, actual
-`sentAt`, `completedAt`, `latencyMs`, and native `/infer` response identity, output
-and request-local progress. `sentAt` is the actual call into the shared native
-encoder/exchange and also sets the native request's `receivedAt`; scheduling lag
-does not consume request lifetime. UTC request timestamps belong to the **load
-node**; latency and issue lag use its monotonic clock. The recorded `arrivalSeed`
-is hashed with FNV-1a128; its first/last big-endian 64-bit words seed Go PCG.
-`response.progress.nativeHTTP` retains measurement-node handler entry and
-receive/decode/enqueue/finish offsets. Cross-host subtraction never defines latency.
+Each request contains `requestID`, `recordID`, client arrival `scheduledAt`,
+native HTTP dispatch `dispatchedAt`, `completedAt`, `latencyMs`, and native `/infer`
+response identity, output and request-local progress. Requests are ordered by
+`scheduledAt`. `latencyMs` covers scheduled arrival through response completion;
+native response elapsed must nest within dispatch-to-completion, which nests
+within client latency. `dispatchedAt` is the actual call into the shared native
+encoder/exchange. The native Context keeps `receivedAt=scheduledAt` and
+`senderElapsedMS=dispatchedAt−scheduledAt`, so queue hold consumes the existing
+gateway request elapsed/lifetime budget. UTC client timestamps and offering/drain
+boundaries belong to the **load node**; latency and dispatch lag use its monotonic
+clock. Measurement-node phase boundaries remain separate power fences.
+Stored UTC deltas are not required to equal monotonic latency exactly.
+The recorded `arrivalSeed` is hashed with FNV-1a128; its first/last big-endian
+64-bit words seed Go PCG. `response.progress.nativeHTTP` retains measurement-node
+handler entry and receive/decode/enqueue/finish offsets. Cross-host subtraction
+never defines latency.
+
+Saturation retains the common counts, offering/drain boundaries, offering duration
+and achieved arrival rate, but omits Poisson seed, issue lag and target rate.
+Failed issue summaries retain these common fields as partial observations:
+zero schedules end offering at its start; zero completed responses end drain at
+its start. A failed drain may precede the last scheduled arrival.
 
 Each native sample retains `batchID`, `batchSize`, ordered `requestIDs`,
 per-member `recordIDs` and `units`; `serviceDurationNanos`, nullable
@@ -543,9 +571,10 @@ systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 \
 
 All five phases completed, including three independent 1000/s trials. Each
 retains its `arrivalSeed`; the 1000/s seeds are
-`pod/benchmark-1000-trial-{1,2,3}-0`. The observed arrival process includes the
-reported scheduling/GC gaps. Every scheduled input was sent; no response-driven
-backpressure or count loss occurred.
+`pod/benchmark-1000-trial-{1,2,3}-0`. These historical dispatch observations include
+the reported scheduling/GC gaps. Every scheduled input was sent; no response-driven
+backpressure or count loss occurred. Scheduled client arrivals remain the current
+measurement authority; dispatch lag is retained separately.
 
 The measured peak describes this local fixture within the 512 MiB load-container
 envelope. Its **1.30 KiB/input** serialized result coefficient is diagnostic,

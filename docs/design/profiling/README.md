@@ -135,6 +135,15 @@ distributions. Per-phase whole-node power and saturation dispatch residuals rema
 evidence. Loaded-idle retains the existing settle, empty-queue, zero-inference
 and resident-state protocol. See the worker contract for the immutable inputs.
 
+Scheduled client arrivals (`scheduledAt`) define active request latency and offered
+rates. Clients FIFO-wait for frozen native slots before `dispatchedAt`; temporary
+slot saturation does not invalidate a phase. Queue hold consumes existing Context
+elapsed/lifetime budget. Every phase, including saturation, retains common
+scheduled/sent/completed counts, load-node offering/drain UTC boundaries and
+`scheduledInputs / issueElapsedSecondsMonotonic`; measurement-node power fences
+remain separate. Active raw/runtime v1alpha14 and RunConfig v1alpha22 remain the
+single current contract, without old-field readers.
+
 Public ProfilingRun specs carry no frozen Workload UID/SLO/N body. Owner
 references remain lookup hints; the executable resolver authenticates the root,
 Node grant and immutable CurvePlan. No fake owner, unadmitted root or unplanned

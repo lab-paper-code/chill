@@ -56,9 +56,13 @@ test("direct authoring emits every operating point input without inherited proto
   assert.equal(requestHelpers.view(draft,context).problem("advanced"),"")
   const body=requestHelpers.manifest(draft,context,"ns")
   assert.deepEqual(body.spec.activeProtocol.operatingPoints,operatingPoints)
-  for(const patch of [{utilizations:""},{utilizations:"0, 0.5"},{utilizations:"1"},{utilizations:"0.5,"},{sparseMeanGap:0},{phaseDuration:29},{postLoadDuration:0},{postLoadDuration:1.5},{postLoadDuration:NaN},{requestLifetime:0},{deliveryMargin:0},{framedDecodedRequestUpperBytes:0}]) {
+  for(const patch of [{utilizations:""},{utilizations:"0, 0.5"},{utilizations:"1"},{utilizations:"0.5,"},{sparseMeanGap:0},{phaseDuration:0},{postLoadDuration:0},{postLoadDuration:1.5},{postLoadDuration:NaN},{requestLifetime:0},{deliveryMargin:0},{framedDecodedRequestUpperBytes:0}]) {
     assert.notEqual(requestHelpers.view({...draft,protocol:{values:{...values,...patch},from:null}},context).problem("advanced"),"",JSON.stringify(patch))
   }
+  const duration=values.utilizations.split(",").length+2+values.postLoadDuration
+  const short={...draft,protocol:{values:{...values,phaseDuration:1,activeDuration:duration,activeWindow:duration+1},from:null}}
+  assert.equal(requestHelpers.view(short,context).problem("advanced"),"")
+  assert.equal(requestHelpers.manifest(short,context,"ns").spec.activeProtocol.operatingPoints?.phaseDurationSeconds,1)
 })
 
 test("request and profile defaults freeze operating point inputs, while old requests require author input",()=>{

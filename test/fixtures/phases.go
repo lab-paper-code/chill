@@ -101,8 +101,8 @@ func ActivePhases[P any](options PhaseOptions) []P {
 						"batchID": batchID, "batchSize": options.Batch, "executionComplete": true,
 						"outcome": "success", "units": 1, "serviceMS": serviceMS, "nativeElapsedMS": nativeMS,
 						"nativeHTTP": &firstfloor.HTTPRequestTiming{HandlerEnteredAt: arrival, ReceivedNanos: &received, EnqueueNanos: &enqueue, FinishedNanos: &finish}}}
-				requests = append(requests, map[string]any{"requestID": id, "recordID": records[member], "arrivalAt": arrival,
-					"sentAt": arrival, "completedAt": arrival.Add(time.Duration(latency * float64(time.Millisecond))), "latencyMs": latency, "response": response})
+				requests = append(requests, map[string]any{"requestID": id, "recordID": records[member], "scheduledAt": arrival,
+					"dispatchedAt": arrival, "completedAt": arrival.Add(time.Duration(latency * float64(time.Millisecond))), "latencyMs": latency, "response": response})
 			}
 		}
 		phases[index] = map[string]any{"id": fmt.Sprintf("%s-%d", kind, index), "kind": kind,
@@ -111,12 +111,22 @@ func ActivePhases[P any](options PhaseOptions) []P {
 			"measurementElapsedSecondsMonotonic": options.Duration.Seconds(), "completedInputs": len(requests),
 			"requests": requests, "latencyMs": latencies, "nativeSamples": samples,
 			"driverGC": map[string]any{"cycles": 0, "pauseTotalMilliseconds": 0, "maxPauseMilliseconds": 0}}
-		if kind != "saturation" {
-			issueElapsed := requests[len(requests)-1]["arrivalAt"].(time.Time).Sub(start).Seconds()
-			phases[index]["achievedArrivalRatePerSecond"] = float64(len(requests)) / issueElapsed
-			phases[index]["issueElapsedSecondsMonotonic"] = issueElapsed
-			phases[index]["scheduledInputs"] = len(requests)
-			phases[index]["sentInputs"] = len(requests)
+		issueEnd := requests[len(requests)-1]["scheduledAt"].(time.Time)
+		drainEnd := requests[0]["completedAt"].(time.Time)
+		for _, request := range requests[1:] {
+			if completed := request["completedAt"].(time.Time); completed.After(drainEnd) {
+				drainEnd = completed
+			}
+		}
+		issueElapsed := issueEnd.Sub(start).Seconds()
+		phases[index]["achievedArrivalRatePerSecond"] = float64(len(requests)) / issueElapsed
+		phases[index]["issueElapsedSecondsMonotonic"] = issueElapsed
+		phases[index]["offeringStartedAt"], phases[index]["offeringEndedAt"], phases[index]["drainEndedAt"] = start, issueEnd, drainEnd
+		phases[index]["scheduledInputs"], phases[index]["sentInputs"] = len(requests), len(requests)
+		if kind == "saturation" {
+			delete(phases[index], "arrivalRatePerSecond")
+			delete(phases[index], "utilization")
+		} else {
 			phases[index]["arrivalSeed"] = options.PodUID + "/" + phases[index]["id"].(string)
 			phases[index]["issueLagMs"] = map[string]any{"count": len(requests), "min": 0, "mean": 0, "p50": 0, "p95": 0, "p99": 0, "max": 0}
 		}

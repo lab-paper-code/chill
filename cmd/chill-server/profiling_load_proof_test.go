@@ -22,7 +22,7 @@ func profilingProofPair(id string) (profilingrun.PhaseRequest, native.Response) 
 	finish := start.Add(200 * time.Microsecond)
 	zero, enqueue, done := int64(0), int64(100000), int64(700000)
 	p := native.Progress{RequestID: id, WorkloadUID: "pod", Definition: "definition", Phase: "finished", At: finish, BatchID: 7, BatchSize: 2, BatchRequestIDs: []string{"right", "left"}, BatchStartedAt: &start, BatchFinishedAt: &finish, ServiceSample: &native.ServiceSample{ServiceDurationNanos: 200000, PrecedingIdleNanos: &zero, TrialID: "pod"}, BackendMS: .2, ServiceMS: .2, Units: 1, NativeElapsedMS: .7, ExecutionComplete: true, NativeHTTP: &native.HTTPRequestTiming{HandlerEnteredAt: start.Add(-500 * time.Microsecond), ReceivedNanos: &zero, EnqueueNanos: &enqueue, FinishedNanos: &done}}
-	row := profilingrun.PhaseRequest{RequestID: id, RecordID: "record-" + id, ArrivalAt: start.Add(-time.Millisecond), SentAt: start.Add(-time.Millisecond), CompletedAt: start.Add(time.Millisecond), LatencyMilliseconds: 2}
+	row := profilingrun.PhaseRequest{RequestID: id, RecordID: "record-" + id, ScheduledAt: start.Add(-time.Millisecond), DispatchedAt: start.Add(-time.Millisecond), CompletedAt: start.Add(time.Millisecond), LatencyMilliseconds: 2}
 	return row, native.Response{ID: id, ModelName: "classifier", Outputs: []native.Field{{Name: "class", Data: [][]byte{{3}}}}, Progress: p, ExecutionComplete: true}
 }
 
@@ -46,30 +46,30 @@ func TestProfilingLoadCompactMembershipKeepsNativeOrder(t *testing.T) {
 	}
 }
 
-func TestProfilingLoadRetainsActualSendOrder(t *testing.T) {
+func TestProfilingLoadRetainsClientArrivalOrder(t *testing.T) {
 	plan := profilingTestPlan("http://native")
 	plan.Batch = 2
 	collector, driver := profilingTestCollector(t, plan)
 	for _, id := range []string{"left", "right"} {
 		row, response := profilingProofPair(id)
 		if id == "left" {
-			row.SentAt = row.SentAt.Add(100 * time.Microsecond)
+			row.DispatchedAt = row.DispatchedAt.Add(100 * time.Microsecond)
 		} else {
-			row.ArrivalAt = row.ArrivalAt.Add(50 * time.Microsecond)
-			row.SentAt = row.ArrivalAt
+			row.ScheduledAt = row.ScheduledAt.Add(50 * time.Microsecond)
+			row.DispatchedAt = row.ScheduledAt
 		}
 		if _, err := collector.add(row, response); err != nil {
 			t.Fatal(err)
 		}
 	}
 	rows, _, _, err := profilingTestFinishCollector(t, collector, driver)
-	if err != nil || len(rows) != 2 || rows[0].RequestID != "right" || rows[1].RequestID != "left" || !rows[0].ArrivalAt.After(rows[1].ArrivalAt) {
-		t.Fatalf("diagnostic schedule overrode actual send order: rows=%+v err=%v", rows, err)
+	if err != nil || len(rows) != 2 || rows[0].RequestID != "left" || rows[1].RequestID != "right" || !rows[0].DispatchedAt.After(rows[1].DispatchedAt) {
+		t.Fatalf("dispatch timing overrode client arrival order: rows=%+v err=%v", rows, err)
 	}
 }
 
 func TestProfilingLoadValidatesFullProofBeforeCompaction(t *testing.T) {
-	for _, corrupt := range []string{"membership", "timing", "identity", "disagreement", "incomplete"} {
+	for _, corrupt := range []string{"membership", "timing", "dispatch span", "identity", "disagreement", "incomplete"} {
 		t.Run(corrupt, func(t *testing.T) {
 			plan := profilingTestPlan("http://native")
 			plan.Batch = 2
@@ -80,6 +80,8 @@ func TestProfilingLoadValidatesFullProofBeforeCompaction(t *testing.T) {
 				response.Progress.BatchRequestIDs = []string{"left", "left"}
 			case "timing":
 				response.Progress.BackendMS = 10
+			case "dispatch span":
+				row.DispatchedAt = row.CompletedAt.Add(-100 * time.Microsecond)
 			case "identity":
 				response.Progress.WorkloadUID = "other-pod"
 			}

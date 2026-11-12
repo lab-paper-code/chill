@@ -179,13 +179,21 @@ class RunnerTest(unittest.TestCase):
 
     def test_operating_points_are_frozen_and_never_accept_a_guessed_service_bound(self) -> None:
         for changes in ({"utilizations": []}, {"utilizations": [0]}, {"utilizations": [1]},
-                        {"sparseMeanGapMilliseconds": 0}, {"phaseDurationSeconds": 29}, {"postLoadDurationSeconds": 0},
+                        {"sparseMeanGapMilliseconds": 0}, {"phaseDurationSeconds": 0}, {"postLoadDurationSeconds": 0},
+                        {"phaseDurationSeconds": True}, {"phaseDurationSeconds": 1.5},
                         {"postLoadDurationSeconds": True}, {"postLoadDurationSeconds": 1.5},
                         {"requestLifetimeSeconds": True}, {"maxBatchServiceSeconds": 1}):
             request = valid_request(Path("/model"))
             request["runConfig"]["measurement"]["operatingPoints"].update(changes)
             with self.subTest(changes=changes), self.assertRaises(runner.ContractError):
                 validate(request)
+
+    def test_positive_phase_duration_keeps_the_statistical_sample_floor(self) -> None:
+        request = valid_request(Path("/model"))
+        request["runConfig"]["measurement"]["operatingPoints"]["phaseDurationSeconds"] = 1
+        request["runConfig"]["measurement"]["durationSeconds"] = 33
+        validate(request)
+        self.assertEqual(request["runConfig"]["measurement"]["minServiceSamples"], 59)
 
     def test_active_reader_accepts_no_pacing_and_rejects_old_schema_and_donor_fields(self) -> None:
         valid = valid_request(Path("/model"))

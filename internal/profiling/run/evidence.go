@@ -165,12 +165,15 @@ type Phase struct {
 	Kind                         string  `json:"kind"`
 	Utilization                  float64 `json:"utilization,omitempty"`
 	ArrivalRatePerSecond         float64 `json:"arrivalRatePerSecond,omitempty"`
-	AchievedArrivalRatePerSecond float64 `json:"achievedArrivalRatePerSecond,omitempty"`
+	AchievedArrivalRatePerSecond float64 `json:"achievedArrivalRatePerSecond"`
 	// IssueElapsedSeconds ends at the last scheduled arrival and excludes response drain.
-	IssueElapsedSeconds       float64               `json:"issueElapsedSecondsMonotonic,omitempty"`
+	IssueElapsedSeconds       float64               `json:"issueElapsedSecondsMonotonic"`
+	OfferingStartedAt         time.Time             `json:"offeringStartedAt"`
+	OfferingEndedAt           time.Time             `json:"offeringEndedAt"`
+	DrainEndedAt              time.Time             `json:"drainEndedAt"`
 	IssueLag                  *IssueLag             `json:"issueLagMs,omitempty"`
-	ScheduledInputs           int                   `json:"scheduledInputs,omitempty"`
-	SentInputs                int                   `json:"sentInputs,omitempty"`
+	ScheduledInputs           int                   `json:"scheduledInputs"`
+	SentInputs                int                   `json:"sentInputs"`
 	ArrivalSeed               string                `json:"arrivalSeed,omitempty"`
 	DriverGC                  *DriverGC             `json:"driverGC"`
 	Workers                   int                   `json:"workers,omitempty"`
@@ -192,13 +195,18 @@ func (p *Phase) UnmarshalJSON(payload []byte) error {
 	if err := decoder.Decode(&decoded); err != nil {
 		return err
 	}
-	if decoded.Kind == "saturation" {
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(payload, &fields); err != nil {
-			return err
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return err
+	}
+	for _, name := range []string{"scheduledInputs", "sentInputs", "completedInputs", "offeringStartedAt",
+		"offeringEndedAt", "drainEndedAt", "issueElapsedSecondsMonotonic", "achievedArrivalRatePerSecond"} {
+		if len(fields[name]) == 0 || string(fields[name]) == "null" {
+			return fmt.Errorf("phase.%s is required", name)
 		}
-		for _, name := range []string{"scheduledInputs", "sentInputs", "arrivalSeed", "issueLagMs",
-			"issueElapsedSecondsMonotonic", "achievedArrivalRatePerSecond"} {
+	}
+	if decoded.Kind == "saturation" {
+		for _, name := range []string{"arrivalRatePerSecond", "utilization", "arrivalSeed", "issueLagMs"} {
 			if _, present := fields[name]; present {
 				return fmt.Errorf("saturation must omit %s", name)
 			}
@@ -251,8 +259,8 @@ func (g *DriverGC) UnmarshalJSON(payload []byte) error {
 type PhaseRequest struct {
 	RequestID           string        `json:"requestID"`
 	RecordID            string        `json:"recordID"`
-	ArrivalAt           time.Time     `json:"arrivalAt"`
-	SentAt              time.Time     `json:"sentAt"`
+	ScheduledAt         time.Time     `json:"scheduledAt"`
+	DispatchedAt        time.Time     `json:"dispatchedAt"`
 	CompletedAt         time.Time     `json:"completedAt"`
 	LatencyMilliseconds float64       `json:"latencyMs"`
 	Response            PhaseResponse `json:"response"`

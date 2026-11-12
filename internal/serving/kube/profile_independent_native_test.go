@@ -27,7 +27,10 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	"github.com/lab-paper-code/chill/test/fixtures"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 const (
@@ -44,7 +47,7 @@ func TestRealFirstfloorWorkerHelper(t *testing.T) {
 // accounting are required. The shared helper generates a genuine tiny Identity
 // model, not the MobileNet artifact whose basename the old fixture uses.
 // Three native active trials retain sparse, saturation and utilization phases,
-// each with its own 30 s AND 59-known-gap stop rule, followed by 30 s loaded post-load observation; idle retains 60 s settling + 30 s.
+// each with its own 10 s AND 59-known-gap stop rule, followed by 30 s loaded post-load observation; idle retains 60 s settling + 30 s.
 // Only meter readings, workload isolation and Kubernetes terminal/ownership facts
 // are controlled fixtures. No cluster, measured hardware watts or deployment
 // image verification is claimed. There are no donor, Eval or history objects.
@@ -53,10 +56,19 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 	defer cancel()
 	command := fixtures.RealFirstfloorCommand(t)
 	t.Setenv("POD_IP", "127.0.0.1")
+	witnessDirectory := os.Getenv("CHILL_FIRST_PROFILE_FIXTURE_OUTPUT")
+	if witnessDirectory == "" {
+		var err error
+		witnessDirectory, err = os.MkdirTemp("/tmp", "chill-native-catalog-")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Logf("native immutable witness directory: %s", witnessDirectory)
 	catalog, source, objects, planIdentity := catalogEvidenceFixtureConfigPolicy(t, 4096,
 		[6]float64{6, 6, 6, 4, 4, 4}, 3, "", func(config *profilingrun.RunConfig) {
 			// Explicitly label the generated model and its frozen recipe as test
-			// inputs; retain the existing sampling, warmup and duration contracts.
+			// inputs; retain the sampling and warmup contracts.
 			config.State.Model = nativeIdentityModel
 			config.Candidate.Inputs.ModelSpec.Name = config.State.Model
 			config.State.Preprocessor.Name = nativeIdentityModel
@@ -64,6 +76,13 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 			config.Measurement.WorkloadName = nativeIdentityModel
 			config.Measurement.OperatingPoints.QueueBytesCap = 1 << 20
 			config.Measurement.OperatingPoints.FramedDecodedRequestUpperBytes = (1 << 20) / 32
+			// At the observed ~5.4k/s saturation, 10s saturation plus 10s at
+			// utilization .5 retains ~81k inputs, within the 256MiB envelope.
+			// Rates, admission caps, sample floors and the byte budget stay fixed.
+			config.Measurement.OperatingPoints.PhaseDurationSeconds = 10
+			config.Measurement.DurationSeconds = 10*(len(config.Measurement.OperatingPoints.Utilizations)+2) +
+				config.Measurement.OperatingPoints.PostLoadDurationSeconds
+			config.Metrics.DurationSeconds = config.Measurement.DurationSeconds + 1
 			memoryRequest, memoryLimit := config.Actor.MemoryRequestBytes, config.Actor.MemoryLimitBytes
 			config.Actor = config.ActorConfig()
 			config.Actor.MemoryRequestBytes, config.Actor.MemoryLimitBytes = memoryRequest, memoryLimit
@@ -84,12 +103,13 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	frozen := retained.Plan.Shared()
-	if frozen.ActiveProtocol.DurationSeconds != 120 || frozen.ActiveProtocol.MinServiceSamples != 59 ||
-		frozen.ActiveProtocol.SLOPercentile != 95 || frozen.ActiveProtocol.OperatingPoints.PostLoadDurationSeconds != 30 || campaign.Spec.TrialsPerBatch != 3 {
+	if frozen.ActiveProtocol.DurationSeconds != 60 || frozen.ActiveProtocol.MinServiceSamples != 59 ||
+		frozen.ActiveProtocol.SLOPercentile != 95 || frozen.ActiveProtocol.OperatingPoints.PhaseDurationSeconds != 10 ||
+		frozen.ActiveProtocol.OperatingPoints.PostLoadDurationSeconds != 30 || campaign.Spec.TrialsPerBatch != 3 {
 		t.Fatalf("native acceptance recipe changed: %+v", frozen.ActiveProtocol)
 	}
 	resultSpec := retained.Result.Spec()
-	writer := nativeCatalogImmutableWriter{directory: t.TempDir(), objects: objects}
+	writer := nativeCatalogImmutableWriter{directory: witnessDirectory, objects: objects}
 	var samples []firstfloor.ServiceSample
 	var firstMetadata *firstfloor.RuntimeMetadata
 	var memory uint64
@@ -203,38 +223,90 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 	if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
 		t.Fatalf("strict catalog did not admit real committed trials: %+v %v", view.Insufficiencies, err)
 	}
-	writeNativeCatalogWitness(t, ctx, catalog, campaign, objects)
+	writeNativeCatalogWitness(t, ctx, catalog, campaign, objects, witnessDirectory)
 	assertNativeCatalogConsumer(t, ctx, &view.Profiles[0], retained.Plan,
 		planIdentity, samples, firstMetadata, memory, energy)
 }
 
-// Optional verification output retains the exact immutable bytes and the same
-// controlled Kubernetes identities, so a downstream fixture failure needs no
-// mechanical remeasurement. It is not a production store or an alternate reader.
+func TestNativeCatalogConsumerRetainsShortPhaseFixture(t *testing.T) {
+	ctx := context.Background()
+	catalog, source, objects, _ := catalogEvidenceFixtureConfigPolicy(t, 4096,
+		[6]float64{6, 6, 6, 4, 4, 4}, 3, "", func(config *profilingrun.RunConfig) {
+			config.Measurement.OperatingPoints.PhaseDurationSeconds = 10
+			config.Measurement.DurationSeconds, config.Metrics.DurationSeconds = 60, 61
+		}, nil)
+	campaign := &edgev1alpha1.BatchEnergyOptimization{}
+	if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
+		t.Fatal(err)
+	}
+	assertNativeCatalogRetainedObjects(t, ctx, catalog, campaign, objects)
+}
+
+func assertNativeCatalogRetainedObjects(t *testing.T, ctx context.Context, catalog *Catalog, campaign *edgev1alpha1.BatchEnergyOptimization, objects catalogEvidenceObjects) {
+	t.Helper()
+	retained, err := catalog.evidence.Read(ctx, campaign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planIdentity := storedObjectIdentity(retained.Result.Spec().CurvePlan)
+	var samples []firstfloor.ServiceSample
+	var metadata *firstfloor.RuntimeMetadata
+	var memory uint64
+	var energy float64
+	for _, reference := range retained.Result.Spec().CompletedTrials {
+		var execution profilerevidence.ExecutionEvidence
+		if err := json.Unmarshal(objects[storedObjectIdentity(reference.Evidence).Location()], &execution); err != nil {
+			t.Fatal(err)
+		}
+		if reference.Measurement.WorkloadMode == batchenergyoptimization.WorkloadModeIdle {
+			var raw profilerevidence.IdleRawMeasurement
+			if err := json.Unmarshal(objects[execution.RawMeasurement.Location()], &raw); err != nil {
+				t.Fatal(err)
+			}
+			memory = max(memory, raw.Runtime.MemoryBytes)
+			continue
+		}
+		var raw profilerevidence.RawMeasurement
+		if err := json.Unmarshal(objects[execution.RawMeasurement.Location()], &raw); err != nil {
+			t.Fatal(err)
+		}
+		if metadata == nil {
+			metadata = &raw.Runtime.Firstfloor.Runtime
+		}
+		memory = max(memory, raw.Runtime.MemoryBytes)
+		for _, phase := range raw.Runtime.Phases {
+			for _, sample := range phase.NativeSamples {
+				samples = append(samples, sample.ServiceSample.Clone())
+			}
+			if phase.Kind == "utilization" {
+				start, _ := time.Parse(time.RFC3339Nano, phase.MeasurementStartedAt)
+				end, _ := time.Parse(time.RFC3339Nano, phase.MeasurementEndedAt)
+				energy += 2 * end.Sub(start).Seconds() / float64(phase.CompletedInputs)
+			}
+		}
+	}
+	view, err := catalog.Refresh(ctx, []string{campaign.Namespace})
+	if err != nil || len(view.Profiles) != 1 {
+		t.Fatalf("short fixture catalog: %+v %v", view.Insufficiencies, err)
+	}
+	assertNativeCatalogConsumer(t, ctx, &view.Profiles[0], retained.Plan, planIdentity, samples, metadata, memory, energy)
+}
+
+// Verification output always retains exact immutable bytes and controlled
+// Kubernetes identities under /tmp (or the explicit output directory).
+// A downstream fixture failure can replay these facts without remeasurement.
 func writeNativeCatalogWitness(
 	t *testing.T, ctx context.Context, catalog *Catalog,
-	campaign *edgev1alpha1.BatchEnergyOptimization, objects catalogEvidenceObjects,
+	campaign *edgev1alpha1.BatchEnergyOptimization, objects catalogEvidenceObjects, directory string,
 ) {
 	t.Helper()
-	directory := os.Getenv("CHILL_FIRST_PROFILE_FIXTURE_OUTPUT")
-	if directory == "" {
-		return
-	}
 	runs := &edgev1alpha1.ProfilingRunList{}
 	if err := catalog.store.client.List(ctx, runs); err != nil {
 		t.Fatal(err)
 	}
-	type object struct {
-		Location evidencestore.ObjectLocation `json:"location"`
-		Payload  json.RawMessage              `json:"payload"`
-	}
-	snapshot := struct {
-		Campaign *edgev1alpha1.BatchEnergyOptimization `json:"campaign"`
-		Runs     []edgev1alpha1.ProfilingRun           `json:"runs"`
-		Objects  []object                              `json:"objects"`
-	}{Campaign: campaign, Runs: runs.Items}
+	snapshot := nativeCatalogWitness{Campaign: campaign, Runs: runs.Items}
 	for location, payload := range objects {
-		snapshot.Objects = append(snapshot.Objects, object{Location: location, Payload: payload})
+		snapshot.Objects = append(snapshot.Objects, nativeCatalogWitnessObject{Location: location, Payload: payload})
 	}
 	payload, err := json.Marshal(snapshot)
 	if err != nil {
@@ -248,6 +320,54 @@ func writeNativeCatalogWitness(
 		t.Fatal(err)
 	}
 	t.Logf("retained exact native immutable evidence: %s (%d bytes)", path, len(payload))
+}
+
+type nativeCatalogWitnessObject struct {
+	Location evidencestore.ObjectLocation `json:"location"`
+	Payload  json.RawMessage              `json:"payload"`
+}
+
+type nativeCatalogWitness struct {
+	Campaign *edgev1alpha1.BatchEnergyOptimization `json:"campaign"`
+	Runs     []edgev1alpha1.ProfilingRun           `json:"runs"`
+	Objects  []nativeCatalogWitnessObject          `json:"objects"`
+}
+
+func TestNativeCatalogReplayRetainedWitness(t *testing.T) {
+	directory := os.Getenv("CHILL_FIRST_PROFILE_FIXTURE_OUTPUT")
+	if directory == "" {
+		t.Skip("set CHILL_FIRST_PROFILE_FIXTURE_OUTPUT to a retained native witness")
+	}
+	payload, err := os.ReadFile(filepath.Join(directory, "native-catalog-evidence.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot nativeCatalogWitness
+	if err := json.Unmarshal(payload, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Campaign == nil {
+		t.Fatal("native witness has no campaign")
+	}
+	objects := make(catalogEvidenceObjects, len(snapshot.Objects))
+	for _, object := range snapshot.Objects {
+		objects[object.Location] = object.Payload
+	}
+	scheme := runtime.NewScheme()
+	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	apiObjects := []client.Object{snapshot.Campaign}
+	for index := range snapshot.Runs {
+		apiObjects = append(apiObjects, &snapshot.Runs[index])
+	}
+	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&edgev1alpha1.BatchEnergyOptimization{}).WithObjects(apiObjects...).Build()}
+	catalog, err := NewCatalog(store, objects, nativeCatalogMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNativeCatalogRetainedObjects(t, context.Background(), catalog, snapshot.Campaign, objects)
 }
 
 func commitNativeCatalogTrial(
@@ -482,14 +602,58 @@ func assertNativeCatalogConsumer(
 	}
 	batch := profile.Batches[0]
 	// The admitted raw facts are also the actual scheduler/conditional input.
-	if batch.ServiceDistribution == nil || !reflect.DeepEqual(batch.ServiceSamples, samples) ||
-		!reflect.DeepEqual(profile.RuntimeMetadata, firstMetadata) || profile.Evidence[0] != planIdentity ||
-		!reflect.DeepEqual(profile.Condition.Actor, frozen.Actor) || profile.TrialsPerBatch != 3 ||
-		profile.IdleBaselineWatts != 4 || math.Abs(batch.MeanWallWatts-6) > 1e-9 ||
-		math.Abs(batch.EnergyPerInputJoules-energy/3) > 1e-9 || batch.MemoryBytes != memory || memory == 0 {
-		t.Fatal("catalog changed native service pairs, recipe, runtime observations or J/idle-W/memory")
+	if batch.ServiceDistribution == nil {
+		t.Fatal("catalog lost native service distribution")
+	}
+	if !reflect.DeepEqual(batch.ServiceSamples, samples) {
+		for index := range min(len(batch.ServiceSamples), len(samples)) {
+			if !reflect.DeepEqual(batch.ServiceSamples[index], samples[index]) {
+				t.Fatalf("catalog service pair %d: got=%+v want=%+v", index, batch.ServiceSamples[index], samples[index])
+			}
+		}
+		t.Fatalf("catalog service population: got=%d want=%d", len(batch.ServiceSamples), len(samples))
+	}
+	if !reflect.DeepEqual(profile.RuntimeMetadata, firstMetadata) {
+		t.Fatalf("catalog runtime observations: got=%+v want=%+v", profile.RuntimeMetadata, firstMetadata)
+	}
+	if len(profile.Evidence) == 0 || profile.Evidence[0] != planIdentity {
+		t.Fatalf("catalog plan identity: got=%+v want=%+v", profile.Evidence, planIdentity)
+	}
+	if !reflect.DeepEqual(profile.Condition.Actor, frozen.Actor) {
+		t.Fatalf("catalog actor recipe: got=%+v want=%+v", profile.Condition.Actor, frozen.Actor)
+	}
+	if profile.TrialsPerBatch != 3 {
+		t.Fatalf("catalog trial count: got=%d want=3", profile.TrialsPerBatch)
+	}
+	if !nativeCatalogMeterEquivalent(profile.IdleBaselineWatts, 4) {
+		t.Fatalf("catalog idle W: got=%g want=4", profile.IdleBaselineWatts)
+	}
+	if !nativeCatalogMeterEquivalent(batch.MeanWallWatts, 6) {
+		t.Fatalf("catalog active W: got=%.17g want=6", batch.MeanWallWatts)
+	}
+	if !nativeCatalogMeterEquivalent(batch.EnergyPerInputJoules, energy/3) {
+		t.Fatalf("catalog incremental J/input: got=%.17g want=%.17g", batch.EnergyPerInputJoules, energy/3)
+	}
+	if batch.MemoryBytes != memory || memory == 0 {
+		t.Fatalf("catalog memory bytes: got=%d want=%d (nonzero)", batch.MemoryBytes, memory)
 	}
 	assertNativeCatalogCapacity(t, ctx, profile, plan)
+}
+
+func nativeCatalogMeterEquivalent(got, want float64) bool {
+	// Unequal wall-clock sample gaps accumulate float64 integration roundoff.
+	return math.Abs(got-want) <= 1e-9
+}
+
+func TestNativeCatalogMeterEquivalenceRetainsIntegrationPrecision(t *testing.T) {
+	if !nativeCatalogMeterEquivalent(3.9999999999999987, 4) {
+		t.Fatal("rejected constant idle power after native timestamp integration")
+	}
+	for _, got := range []float64{4.000001, math.NaN(), math.Inf(1)} {
+		if nativeCatalogMeterEquivalent(got, 4) {
+			t.Fatalf("accepted different or non-finite idle power: %.17g", got)
+		}
+	}
 }
 
 func assertNativeCatalogCapacity(t *testing.T, ctx context.Context, profile *serving.Profile, plan profilederivation.CurvePlan) {

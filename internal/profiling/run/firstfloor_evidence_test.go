@@ -68,7 +68,10 @@ func TestActiveTrialPreservesInitiallyKnownNativeGap(t *testing.T) {
 	repetition.IssueLag.Count = repetition.CompletedInputs
 	repetition.ScheduledInputs = repetition.CompletedInputs
 	repetition.SentInputs = repetition.CompletedInputs
-	repetition.AchievedArrivalRatePerSecond = float64(repetition.CompletedInputs) / repetition.IssueElapsedSeconds
+	repetition.OfferingEndedAt = repetition.Requests[len(repetition.Requests)-1].ScheduledAt
+	repetition.DrainEndedAt = repetition.Requests[len(repetition.Requests)-1].CompletedAt
+	repetition.IssueElapsedSeconds = repetition.OfferingEndedAt.Sub(repetition.OfferingStartedAt).Seconds()
+	repetition.AchievedArrivalRatePerSecond = float64(repetition.ScheduledInputs) / repetition.IssueElapsedSeconds
 	result.InferenceCount--
 	result.Firstfloor.ExecutionCount = uint64(result.InferenceCount)
 	result.Firstfloor.InferenceCount = uint64(result.InferenceCount)
@@ -404,11 +407,8 @@ func TestPoissonIssueEvidenceRejectsIncompleteOrNonfiniteSchedules(t *testing.T)
 	}
 	result := firstfloorResult(config)
 	result.Phases[0].IssueLag.Max = 100000
-	for index := range result.Phases[0].Requests {
-		result.Phases[0].Requests[index].ArrivalAt = result.Phases[0].Requests[index].SentAt.Add(-100 * time.Second)
-	}
 	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
-		t.Fatalf("diagnostic lag must not reject actual sends: %v", err)
+		t.Fatalf("diagnostic lag must not reject scheduled arrivals: %v", err)
 	}
 	result.Phases[1].IssueLag = &IssueLag{}
 	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
@@ -421,14 +421,40 @@ func TestPoissonIssueEvidenceRejectsIncompleteOrNonfiniteSchedules(t *testing.T)
 	}
 }
 
-func TestNativeRequestLifetimeUsesReceiptSpanRatherThanScheduledArrival(t *testing.T) {
+func TestNativeSlotFIFOWaitIncludesClientLatency(t *testing.T) {
+	config := firstfloorRunConfig()
+	result := firstfloorResult(config)
+	phase := &result.Phases[0]
+	request := &phase.Requests[0]
+	originalLatency, rate := request.LatencyMilliseconds, phase.AchievedArrivalRatePerSecond
+	wait := 25 * time.Millisecond
+	request.DispatchedAt = request.DispatchedAt.Add(wait)
+	request.CompletedAt = request.CompletedAt.Add(wait)
+	request.LatencyMilliseconds = float64(request.CompletedAt.Sub(request.ScheduledAt)) / float64(time.Millisecond)
+	phase.LatencyMilliseconds[0] = request.LatencyMilliseconds
+	if request.LatencyMilliseconds != originalLatency+25 {
+		t.Fatal("FIFO hold was omitted from client latency")
+	}
+	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
+		t.Fatalf("FIFO native-slot wait invalidated phase: %v", err)
+	}
+	if phase.AchievedArrivalRatePerSecond != rate || rate != float64(phase.ScheduledInputs)/phase.IssueElapsedSeconds {
+		t.Fatal("dispatch wait changed scheduled arrival rate")
+	}
+	request.Response.Progress.NativeElapsedMS = originalLatency + 1
+	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+		t.Fatal("native span outside dispatch-to-completion was accepted")
+	}
+}
+
+func TestNativeRequestLifetimeRetainsReceiptSpanBound(t *testing.T) {
 	config := firstfloorRunConfig()
 	result := firstfloorResult(config)
 	phase := &result.Phases[0]
 	request := &phase.Requests[0]
 	span := float64(config.Measurement.OperatingPoints.RequestLifetimeSeconds)*1000 + 1
 	request.LatencyMilliseconds = span
-	request.CompletedAt = request.SentAt.Add(time.Duration(span * float64(time.Millisecond)))
+	request.CompletedAt = request.ScheduledAt.Add(time.Duration(span * float64(time.Millisecond)))
 	request.Response.Progress.NativeElapsedMS = span
 	phase.LatencyMilliseconds[0] = span
 	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
@@ -473,17 +499,48 @@ func TestDriverGCRequiresFiniteConsistentObservationsInEveryPhase(t *testing.T) 
 	}
 }
 
-func TestCurrentPhaseJSONRejectsToleranceAndSaturationScheduleFields(t *testing.T) {
-	for _, payload := range []string{
-		`{"kind":"sparse","issueLagToleranceMs":10}`,
-		`{"kind":"saturation","scheduledInputs":0}`,
-		`{"kind":"saturation","sentInputs":0}`,
-		`{"kind":"saturation","arrivalSeed":""}`,
-		`{"kind":"saturation","issueLagMs":null}`,
-	} {
-		var phase Phase
-		if err := json.Unmarshal([]byte(payload), &phase); err == nil {
-			t.Fatalf("accepted retired or misplaced phase field: %s", payload)
+func TestCurrentPhaseJSONRequiresCommonOfferingEvidence(t *testing.T) {
+	for _, kind := range []int{0, 1} {
+		phase := firstfloorResult(firstfloorRunConfig()).Phases[kind]
+		payload, err := json.Marshal(phase)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(payload, &fields); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"scheduledInputs", "sentInputs", "completedInputs", "offeringStartedAt",
+			"offeringEndedAt", "drainEndedAt", "issueElapsedSecondsMonotonic", "achievedArrivalRatePerSecond"} {
+			changed := make(map[string]json.RawMessage, len(fields))
+			for key, value := range fields {
+				if key != name {
+					changed[key] = value
+				}
+			}
+			encoded, err := json.Marshal(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded Phase
+			if err := json.Unmarshal(encoded, &decoded); err == nil {
+				t.Fatalf("phase %s accepted missing %s", phase.Kind, name)
+			}
+		}
+		for _, name := range []string{"issueLagToleranceMs", "arrivalSeed", "issueLagMs"} {
+			if kind == 0 && name != "issueLagToleranceMs" {
+				continue
+			}
+			fields[name] = json.RawMessage("null")
+			encoded, err := json.Marshal(fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded Phase
+			if err := json.Unmarshal(encoded, &decoded); err == nil {
+				t.Fatalf("phase %s accepted misplaced %s", phase.Kind, name)
+			}
+			delete(fields, name)
 		}
 	}
 }

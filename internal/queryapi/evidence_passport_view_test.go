@@ -69,8 +69,9 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 			phase.NativeSamples[0].RecordIDs[member] = record
 			phase.Requests[member].RecordID = record
 			phase.Requests[member].LatencyMilliseconds = latency
-			phase.Requests[member].CompletedAt = phase.Requests[member].SentAt.Add(time.Duration(latency) * time.Millisecond)
+			phase.Requests[member].CompletedAt = phase.Requests[member].ScheduledAt.Add(time.Duration(latency) * time.Millisecond)
 		}
+		phase.DrainEndedAt = phase.Requests[len(phase.Requests)-1].CompletedAt
 	}
 
 	got, err := BuildEvidencePassport(EvidencePassportSnapshot{

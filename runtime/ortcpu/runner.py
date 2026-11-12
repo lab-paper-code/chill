@@ -449,7 +449,7 @@ def validate_request(
             value = points[field]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ContractError("operatingPoints." + field + " must be finite and positive")
-        require_integer(points["phaseDurationSeconds"], "operatingPoints.phaseDurationSeconds", 30)
+        require_integer(points["phaseDurationSeconds"], "operatingPoints.phaseDurationSeconds", 1)
         for field in ("postLoadDurationSeconds", "requestLifetimeSeconds", "deliveryMarginMilliseconds", "framedDecodedRequestUpperBytes"):
             require_integer(points[field], "operatingPoints." + field, 1)
         queue_cap = require_integer(points["queueBytesCap"], "operatingPoints.queueBytesCap", 1)
