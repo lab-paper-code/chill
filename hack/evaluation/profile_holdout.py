@@ -14,7 +14,7 @@ import subprocess
 import evidence_io
 from profile_comparison import number
 
-ACTIVE_SCHEMA = 'chill.dacs.io/profiling-raw-measurement.v1alpha11'
+ACTIVE_SCHEMA = 'chill.dacs.io/profiling-raw-measurement.v1alpha13'
 IDLE_SCHEMA = 'chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha8'
 
 
@@ -55,14 +55,14 @@ def validate_runs(runs):
     reference = None
     for raw in runs:
         if raw.get('schemaVersion') != ACTIVE_SCHEMA:
-            raise ValueError('active raw v1alpha11 required')
+            raise ValueError('active raw v1alpha13 required')
         trial = raw['podUID']
         if not trial or trial in seen:
             raise ValueError('missing or duplicate physical trial ID')
         seen.add(trial)
         config, runtime = raw['runConfig'], raw['runtime']
-        if runtime.get('schemaVersion') != 'chill.dacs.io/batch-characterization.v1alpha11':
-            raise ValueError('runtime v1alpha11 required')
+        if runtime.get('schemaVersion') != 'chill.dacs.io/batch-characterization.v1alpha13':
+            raise ValueError('runtime v1alpha13 required')
         measurement = config['measurement']
         batch = measurement['batch']
         if type(batch) is not int or batch < 1:
@@ -102,6 +102,36 @@ def validate_runs(runs):
             if len(phase['latencyMs']) != len(native):
                 raise ValueError('batch latency count must match native samples')
             number(phase['measurementElapsedSecondsMonotonic'], 'phase monotonic duration', positive=True)
+            gc = phase['driverGC']
+            cycles = gc['cycles']
+            total = number(gc['pauseTotalMilliseconds'], 'driver GC total pause')
+            maximum = number(gc['maxPauseMilliseconds'], 'driver GC maximum pause')
+            if (type(cycles) is not int or not 0 <= cycles <= 2**32 - 1 or
+                    not 0 <= maximum <= total or (cycles == 0 and total != 0)):
+                raise ValueError('driverGC cycles and pauses disagree')
+            if phase['kind'] == 'saturation':
+                if any(key in phase for key in ('scheduledInputs', 'sentInputs', 'arrivalSeed', 'issueLagMs',
+                                               'issueElapsedSecondsMonotonic', 'achievedArrivalRatePerSecond')):
+                    raise ValueError('saturation must omit Poisson issue evidence')
+            if phase['kind'] != 'saturation':
+                sent = phase['sentInputs']
+                if (type(sent) is not int or phase['scheduledInputs'] != sent or
+                        sent != phase['completedInputs']):
+                    raise ValueError('scheduled, sent and completed input counts must agree')
+                exposure = number(phase['issueElapsedSecondsMonotonic'], 'offering window', positive=True)
+                if exposure > phase['measurementElapsedSecondsMonotonic']:
+                    raise ValueError('offering window cannot include response drain')
+                if phase['arrivalSeed'] != f"{trial}/{phase['id']}":
+                    raise ValueError('arrivalSeed must identify physical trial/phase')
+                if not math.isclose(number(phase['achievedArrivalRatePerSecond'], 'sent rate', positive=True),
+                                    sent / exposure, rel_tol=1e-12):
+                    raise ValueError('achieved rate must equal sent inputs / offering window')
+                lag = phase['issueLagMs']
+                values = [number(lag[key], 'issue lag') for key in ('min', 'p50', 'p95', 'p99', 'max')]
+                mean = number(lag['mean'], 'mean issue lag')
+                if (lag['count'] != sent or values[0] < 0 or values != sorted(values) or
+                        not values[0] <= mean <= values[-1]):
+                    raise ValueError('issue lag counts or statistics disagree')
             for sample in native:
                 if sample['batchID'] in batch_ids or sample['trialID'] != trial or sample['batchSize'] != batch:
                     raise ValueError('native sample identity mismatch or duplicate batch ID')
@@ -121,6 +151,9 @@ def validate_runs(runs):
                 request_ids.add(request['requestID'])
                 for key in ('arrivalAt', 'sentAt', 'completedAt'):
                     evidence_io.timestamp_ns(request[key])
+                if not (evidence_io.timestamp_ns(request['arrivalAt']) <= evidence_io.timestamp_ns(request['sentAt'])
+                        < evidence_io.timestamp_ns(request['completedAt'])):
+                    raise ValueError('request schedule, actual send and completion must be ordered')
                 number(request['latencyMs'], 'request latency', positive=True)
 
 
@@ -151,7 +184,9 @@ def training_trials(runs, fold, indices):
             projected.append({'id': phase['id'], 'kind': phase['kind'],
                               'windowStart': phase['measurementStartedAt'], 'windowEnd': phase['measurementEndedAt'],
                               'completedItems': phase['completedInputs'], 'samples': raw['metrics']['samples'],
-                              'nativeSamples': native[offset:offset + count]})
+                              'nativeSamples': native[offset:offset + count],
+                              **({key: phase[key] for key in ('sentInputs', 'issueElapsedSecondsMonotonic')}
+                                 if phase['kind'] != 'saturation' else {})})
             offset += count
         result.append({'trialID': trial_id, 'batch': raw['runConfig']['measurement']['batch'],
                        'windowStart': phases[0]['measurementStartedAt'], 'windowEnd': phases[-1]['measurementEndedAt'],
@@ -222,15 +257,15 @@ def phase_metrics(runs, evaluated, selected, powers, fold):
         watts, rates = [], []
         for index in selected:
             actual = next(p for p in runs[index]['runtime']['phases'] if p['id'] == phase_id)
+            if phase['kind'] != 'saturation':
+                rates.append(actual['sentInputs'] / actual['issueElapsedSecondsMonotonic'])
             watts.append(powers[(runs[index]['podUID'], phase_id)])
-            seconds = (evidence_io.timestamp_ns(actual['measurementEndedAt']) -
-                       evidence_io.timestamp_ns(actual['measurementStartedAt'])) / 1e9
-            rates.append(actual['completedInputs'] / seconds)
         profile = evaluated['profile']
-        rate = statistics.mean(rates)
+        rate = statistics.mean(rates) if rates else None
         result[phase_id] = {'id': phase_id, 'kind': phase['kind'],
-                           'power': {'measuredWatts': statistics.mean(watts), 'completedRatePerSecond': rate,
-                                     'predictedWatts': profile['idleWatts'] + profile['energyPerInputJoules'] * rate}}
+                           'power': {'measuredWatts': statistics.mean(watts), 'sentRatePerSecond': rate,
+                                     'predictedWatts': (profile['idleWatts'] + profile['energyPerInputJoules'] * rate
+                                                        if rate is not None else None)}}
     return result
 
 
@@ -302,15 +337,15 @@ def analyze(runs, idle, bridge, repetitions, seed, confidence, uncertainty, roll
                         'idle': idle_observations(idle)})
     powers = {(trial['trialID'], phase['id']): phase['meanWallWatts']
               for trial in full['trials'] for phase in trial['phasePower']}
-    report = {'schema': 'profile-holdout-report.v2', 'confidenceLevel': confidence, 'bootstrapReplicates': repetitions,
+    report = {'schema': 'profile-holdout-report.v3', 'confidenceLevel': confidence, 'bootstrapReplicates': repetitions,
               'seed': seed, 'bootstrapUnit': 'independent physical trial; no request or batch resampling',
               'analysisBoundary': 'offline task outside CHILL; existing exported derivation APIs only',
               'replayExecuted': False,
-              'retainedMetrics': ['phase power vs idle + EPI * completed rate',
+              'retainedMetrics': ['phase power vs idle + EPI * sent rate',
                                   'saturation cycle vs S + B * d', 'post-load power stabilization'],
               'removedMetrics': ['request latency distribution prediction', 'batch service distribution prediction'],
               'removedMetricsReason': 'existing product exports do not expose full request-latency and batch-service replay populations',
-              'powerRateBasis': 'completed inputs / measurement-node wall-clock phase seconds, matching Go EPI integration',
+              'powerRateBasis': 'sentInputs / issueElapsedSecondsMonotonic; last scheduled arrival, response drain excluded; saturation has no Poisson rate',
               'limitations': ['One trial cannot identify between-trial uncertainty; its CI is null.',
                               'Stabilization stays in band only through the recorded suffix, not indefinitely.'],
               'folds': [], 'postLoadPower': []}
@@ -346,7 +381,8 @@ def analyze(runs, idle, bridge, repetitions, seed, confidence, uncertainty, roll
             power = phase['power']
             power['predictedCIWatts'] = interval([v['power']['predictedWatts'] for v in boot[phase_id]], len(fold['trainTrials']), confidence)
             power['measuredCIWatts'] = interval([v['power']['measuredWatts'] for v in boot[phase_id]], len(fold['testTrials']), confidence)
-            power['errorWatts'] = power['predictedWatts'] - power['measuredWatts']
+            power['errorWatts'] = (power['predictedWatts'] - power['measuredWatts']
+                                   if power['predictedWatts'] is not None else None)
             ci = power['predictedCIWatts']
             power['measuredWithinPredictedCI'] = ci[0] <= power['measuredWatts'] <= ci[1] if ci else None
         saturation = copy.deepcopy(full.get('saturation') or [])
@@ -362,13 +398,14 @@ def analyze(runs, idle, bridge, repetitions, seed, confidence, uncertainty, roll
         phase_power = []
         for trial in full['trials']:
             for phase in trial['phasePower']:
-                seconds = (evidence_io.timestamp_ns(phase['windowEnd']) - evidence_io.timestamp_ns(phase['windowStart'])) / 1e9
-                rate = phase['completedItems'] / seconds
-                watts = evaluated['profile']['idleWatts'] + evaluated['profile']['energyPerInputJoules'] * rate
-                ci = interval([p['idleWatts'] + p['energyPerInputJoules'] * rate for p in bootstrap_profiles],
-                              len(fold['trainTrials']), confidence)
-                phase_power.append(dict(phase, completedRatePerSecond=rate, predictedWatts=watts,
-                                        errorWatts=watts - phase['meanWallWatts'], predictedCIWatts=ci,
+                rate = phase['sentRatePerSecond']
+                watts = (evaluated['profile']['idleWatts'] + evaluated['profile']['energyPerInputJoules'] * rate
+                         if rate is not None else None)
+                ci = (interval([p['idleWatts'] + p['energyPerInputJoules'] * rate for p in bootstrap_profiles],
+                               len(fold['trainTrials']), confidence) if rate is not None else None)
+                phase_power.append(dict(phase, predictedWatts=watts,
+                                        errorWatts=watts - phase['meanWallWatts'] if watts is not None else None,
+                                        predictedCIWatts=ci,
                                         measuredWithinPredictedCI=ci[0] <= phase['meanWallWatts'] <= ci[1] if ci else None,
                                         isTrainingEvidence=trial['trialID'] in [runs[i]['podUID'] for i in fold['trainTrials']]
                                         and not (fold['kind'] == 'phase' and phase['id'] == fold['id'])))

@@ -15,8 +15,30 @@ import (
 )
 
 type request struct {
-	Trials []derivation.Trial           `json:"trials"`
+	Trials []trial                      `json:"trials"`
 	Idle   []derivation.IdleObservation `json:"idle"`
+}
+
+// Offering exposure is load-node monotonic time, separate from power windows.
+type phase struct {
+	derivation.OperatingPointPhase
+	SentInputs   int     `json:"sentInputs"`
+	IssueSeconds float64 `json:"issueElapsedSecondsMonotonic"`
+}
+
+type trial struct {
+	derivation.Trial
+	Phases []phase `json:"phases"`
+}
+
+type phasePower struct {
+	derivation.PhasePower
+	SentRatePerSecond *float64 `json:"sentRatePerSecond"`
+}
+
+type energyTrial struct {
+	derivation.EnergyTrial
+	PhasePower []phasePower `json:"phasePower"`
 }
 
 type profile struct {
@@ -29,9 +51,9 @@ type profile struct {
 }
 
 type result struct {
-	Profile    profile                  `json:"profile"`
-	Trials     []derivation.EnergyTrial `json:"trials"`
-	Saturation []map[string]any         `json:"saturation"`
+	Profile    profile          `json:"profile"`
+	Trials     []energyTrial    `json:"trials"`
+	Saturation []map[string]any `json:"saturation"`
 }
 
 func main() {
@@ -77,7 +99,11 @@ func analyze(input request) (result, error) {
 	baseline := derivation.IdleBaseline{ModelLoadedIdleMeanWallWatts: out.Profile.IdleWatts}
 	energy := make([]float64, len(input.Trials))
 	var occupancy []float64
-	for j, trial := range input.Trials {
+	for j, supplied := range input.Trials {
+		trial := supplied.Trial
+		for _, phase := range supplied.Phases {
+			trial.Phases = append(trial.Phases, phase.OperatingPointPhase)
+		}
 		if trial.Batch != out.Profile.Batch {
 			return out, fmt.Errorf("one fixed batch required")
 		}
@@ -85,7 +111,21 @@ func analyze(input request) (result, error) {
 		if err != nil {
 			return out, err
 		}
-		out.Trials = append(out.Trials, derived)
+		row := energyTrial{EnergyTrial: derived}
+		for k, power := range derived.PhasePower {
+			observation := supplied.Phases[k]
+			var rate *float64
+			if observation.Kind != "saturation" {
+				if observation.SentInputs != observation.CompletedItems || observation.SentInputs <= 0 ||
+					observation.IssueSeconds <= 0 || math.IsNaN(observation.IssueSeconds) || math.IsInf(observation.IssueSeconds, 0) {
+					return out, fmt.Errorf("positive offering exposure and complete sent inputs required")
+				}
+				actual := float64(observation.SentInputs) / observation.IssueSeconds
+				rate = &actual
+			}
+			row.PhasePower = append(row.PhasePower, phasePower{PhasePower: power, SentRatePerSecond: rate})
+		}
+		out.Trials = append(out.Trials, row)
 		energy[j] = derived.IncrementalWorkJoulesPerItem
 		occupancy = append(occupancy, derived.DispatchOccupancyNanosPerInput...)
 		for _, sample := range derived.NativeSamples {

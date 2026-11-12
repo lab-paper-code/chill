@@ -26,7 +26,7 @@ def raw_fixture(trial, service_ms=10):
             records = [f'{trial}-{batch_id}-{member}' for member in range(batch)]
             service = service_ms / 1000
             gap = None if batch_id == 1 else (2_000_000 if kind == 'saturation' else 990_000_000)
-            native.append({'batchID': batch_id, 'batchSize': batch, 'recordIDs': records,
+            native.append({'batchID': batch_id, 'batchSize': batch, 'recordIDs': records, 'requestIDs': records,
                            'units': [1, 1], 'trialID': trial, 'serviceDurationNanos': service_ms * 1_000_000,
                            'precedingIdleNanos': gap, 'runnerServiceMs': service_ms,
                            'backendCallMs': service_ms, 'nativeRequestMs': service_ms + 1,
@@ -42,13 +42,22 @@ def raw_fixture(trial, service_ms=10):
                        'arrivalRatePerSecond': .8, 'measurementStartedAt': stamp(start),
                        'measurementEndedAt': stamp(start + 10),
                        'measurementElapsedSecondsMonotonic': 10, 'completedInputs': 8,
+                       'driverGC': {'cycles': 0, 'pauseTotalMilliseconds': 0, 'maxPauseMilliseconds': 0},
                        'latencyMs': [service_ms + 2] * 4, 'nativeSamples': native, 'requests': requests})
-    return {'schemaVersion': 'chill.dacs.io/profiling-raw-measurement.v1alpha11', 'podUID': trial,
+        if kind != 'saturation':
+            exposure = 3.999
+            phases[-1].update(scheduledInputs=8, sentInputs=8, arrivalSeed=f'{trial}/p{index}',
+                              issueElapsedSecondsMonotonic=exposure, achievedArrivalRatePerSecond=8 / exposure,
+                              issueLagMs=dict(count=8, min=0, mean=0, p50=0, p95=0, p99=0, max=0))
+        else:
+            phases[-1].pop('arrivalRatePerSecond')
+            phases[-1]['workers'] = 4
+    return {'schemaVersion': 'chill.dacs.io/profiling-raw-measurement.v1alpha13', 'podUID': trial,
             'runConfig': {'schemaVersion': 'chill.dacs.io/profiling-run-config.v1alpha21',
                           'measurement': {'batch': batch, 'sloPercentile': 97, 'sloTargetLatencyNanos': 1_000_000_000,
                                           'operatingPoints': {'requestLifetimeSeconds': 60,
                                                               'deliveryMarginMilliseconds': 0}}},
-            'runtime': {'schemaVersion': 'chill.dacs.io/batch-characterization.v1alpha11',
+            'runtime': {'schemaVersion': 'chill.dacs.io/batch-characterization.v1alpha13',
                         'measurementStartedAt': stamp(0), 'measurementEndedAt': stamp(40), 'phases': phases},
             'metrics': {'samples': [{'observedAt': stamp(i), 'watts': 14} for i in range(41)]}}
 
@@ -96,10 +105,40 @@ class HoldoutTests(unittest.TestCase):
             analysis.validate_runs([bad])
         bad = raw_fixture('a')
         bad['schemaVersion'] = 'old'
-        with self.assertRaisesRegex(ValueError, 'v1alpha11'):
+        with self.assertRaisesRegex(ValueError, 'v1alpha13'):
             analysis.validate_runs([bad])
         with self.assertRaisesRegex(ValueError, 'duplicate'):
             analysis.validate_runs([raw_fixture('a'), raw_fixture('a')])
+
+    def test_poisson_coverage_seeds_and_gc_are_required(self):
+        for field, value, message in (
+                ('sentInputs', 7, 'counts'), ('scheduledInputs', 9, 'counts'),
+                ('arrivalSeed', 'other/p0', 'arrivalSeed'),
+                ('issueElapsedSecondsMonotonic', 11, 'drain'),
+                ('achievedArrivalRatePerSecond', .8, 'achieved rate'),
+                ('driverGC', {'cycles': 0, 'pauseTotalMilliseconds': 1, 'maxPauseMilliseconds': 1}, 'driverGC')):
+            with self.subTest(field=field):
+                raw = raw_fixture('a')
+                raw['runtime']['phases'][0][field] = value
+                with self.assertRaisesRegex(ValueError, message):
+                    analysis.validate_runs([raw])
+        runs = [raw_fixture('a'), raw_fixture('b')]
+        analysis.validate_runs(runs)
+        seeds = [p['arrivalSeed'] for raw in runs for p in raw['runtime']['phases'] if p['kind'] != 'saturation']
+        self.assertEqual(len(seeds), len(set(seeds)))
+
+    def test_arrival_rate_ignores_schedule_lag_target_and_drain(self):
+        raw = raw_fixture('a')
+        phase = raw['runtime']['phases'][2]
+        for request in phase['requests']:
+            request['sentAt'] = stamp(25)
+            request['completedAt'] = stamp(26)
+        phase['arrivalRatePerSecond'] = 100
+        phase['measurementElapsedSecondsMonotonic'] = 100
+        analysis.validate_runs([raw])
+        metrics = analysis.phase_metrics([raw], {'profile': {'idleWatts': 10, 'energyPerInputJoules': 5}},
+                                         [0], {('a', 'p2'): 14}, {'kind': 'phase', 'id': 'p2'})
+        self.assertAlmostEqual(metrics['p2']['power']['sentRatePerSecond'], 8 / 3.999)
 
     def test_artifact_image_changes_cannot_share_active_or_idle_evidence(self):
         active = raw_fixture('a')
@@ -150,7 +189,7 @@ class HoldoutTests(unittest.TestCase):
         self.assertAlmostEqual(first['profile']['energyPerInputJoules'], 5)
         self.assertAlmostEqual(first['profile']['dispatchOccupancyNanosPerInput'], 1_000_000)
         self.assertEqual(len(first['profile']['serviceSamples']), 36)
-        self.assertEqual(report['schema'], 'profile-holdout-report.v2')
+        self.assertEqual(report['schema'], 'profile-holdout-report.v3')
         self.assertFalse(report['replayExecuted'])
         self.assertEqual(len(report['retainedMetrics']), 3)
         self.assertEqual(len(report['removedMetrics']), 2)
@@ -158,8 +197,14 @@ class HoldoutTests(unittest.TestCase):
         self.assertNotIn('latencyMS', first['phases'][0])
         self.assertNotIn('serviceMS', first['phases'][0])
         self.assertEqual(first['phases'][0]['power']['measuredWatts'], 14)
-        self.assertEqual(first['phases'][0]['power']['predictedWatts'], 14)
-        self.assertEqual(first['phases'][0]['power']['predictedCIWatts'], [14, 14])
+        expected = 10 + 5 * 8 / 3.999
+        self.assertAlmostEqual(first['phases'][0]['power']['sentRatePerSecond'], 8 / 3.999)
+        self.assertAlmostEqual(first['phases'][0]['power']['predictedWatts'], expected)
+        for bound in first['phases'][0]['power']['predictedCIWatts']:
+            self.assertAlmostEqual(bound, expected)
+        self.assertAlmostEqual(first['phasePower'][0]['sentRatePerSecond'], 8 / 3.999)
+        self.assertIsNone(first['phasePower'][1]['sentRatePerSecond'])
+        self.assertIsNone(first['phasePower'][1]['predictedWatts'])
         self.assertEqual(len(first['phasePower']), 12)
         self.assertIsNone(report['folds'][2]['phases'][0]['power']['measuredCIWatts'])
         self.assertAlmostEqual(first['saturation'][0]['measuredCycleMS'], 12)

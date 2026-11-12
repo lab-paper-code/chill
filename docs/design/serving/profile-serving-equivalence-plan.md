@@ -101,12 +101,12 @@ profile 원시 trial의 단계별 시간(전처리·추론·후처리·IPC 잔�
 |---|---|---|---|
 | B1 reset 예약 반환 | B | (a) 수동 remove에도 `bindTerminatedPodRemoval`을 적용한다. (b) scope 계산에서 Pod 표시 ID(`ID==PodUID`, executor 미생성)를 executor 책임으로 만들지 않는다. (c) reset 인계 때 identity→Node 근거를 보존한다. (d) 기존 fresh-return 경로로, 전력 요청을 시작하지 않았고 Pod 부재·writer 종료·전력 non-pending이 확인된 노드는 반환한다. reset 결과는 `partial`로 유지한다 | 회귀: PodUID-only failed-start → 5노드 reset → lower-power 실패 → fresh 관측 → 예약 반환 → 측정 승인 |
 | B2 분석기 null | B | `prediction_analysis.py`의 두 의존성 읽기에서 JSON `null`을 빈 의존성으로 읽는다 | 회귀: `null`, `[]`, 실제 의존성 체인이 같은 결과 |
-| I1 실행 이미지 조건 | R2 | profile 선택·노드 간 재사용·operation-cost/idle·DOM 조건은 측정 Run이 기록한 image 문자열을 그대로 비교한다. 태그와 digest reference를 모두 허용하며 pinning·imageID·SHA·digest 검증은 없다. serving 준비는 측정 이미지 문자열로 시작하며 현재 선언 이미지로 덮어쓰지 않는다. 실제 동작의 일치는 C1의 serving batch service 대 profile 및 노드 전력 대 예측 대조로 보고한다. runtime gate나 자동 profile 배제는 두지 않는다 | 회귀: 태그 image가 RunConfig·CurvePlan·declaration·preparation·observer 경로를 통과한다. 선언 변경 뒤에도 준비 Pod는 측정 이미지 문자열을 쓴다. 실제 imageID가 달라도 observer가 Ready를 차단하지 않는다. 다른 이미지 문자열의 측정 조건은 섞지 않는다 |
+| I1 실행 이미지 조건 | R2 | serving은 측정 이미지 문자열로 준비한다(모든 reference 형식 허용). 선택·재사용·operation-cost/idle·DOM은 image 문자열을 비교한다. digest/pin 검증과 observer image gate는 없다 | 선언 변경 뒤에도 측정 이미지로 준비한다. 다른 image 문자열의 조건은 섞지 않는다. imageID 차이로 Ready를 차단하지 않는다 |
 | N1 측정용 native 실행 | R1 | profiling mode의 native가 serving 요청 경로(`/infer`, 대기열, 고정 배치 정책, IPC)로 동작한다. 고정 배치 정책은 실행시간 분포를 쓰지 않으므로 profile bundle 없이 시작한다. `/profile` endpoint와 그 요청 형식을 지운다 | 회귀: profiling mode가 profile 없이 고정 배치 B로 `/infer` 요청을 실행하고, 배치마다 service·직전 유휴 간격·단계별 시간을 남긴다. serving mode 검증은 그대로다 |
-| L1 측정 부하 | R1 | 다른 노드의 부하 Job이 측정 노드의 native `/infer`로 요청을 보낸다. 단계: (1) 설정한 평균 간격의 드문 Poisson 도착에서 실제 무적체 배치 B 실행시간 최댓값을 얻는다. (2) 그 관측값으로 기존 K 식을 계산하고 동시 요청 K로 포화 처리량 μ_B를 측정한다. (3) 설정 목록의 이용률 × μ_B로 Poisson 도착을 보낸다. K의 출처는 `run.sparse.maxObservedSeconds`이며 추정값·기존 profile을 쓰지 않는다. 단계별 노드 전력 구간과 평균 전력, 기존 분위수 규칙의 최소 표본 수를 남긴다. 부하 Job 생성·종료·수집은 dispatch occupancy 측정의 부하 Job 패턴을 재사용한다 | 원시 evidence에 단계·도착 시각·배치 표본·전력 구간이 남는다. 측정 노드에 부하 프로세스가 없다 |
+| L1 측정 부하 | R1 | gateway 노드의 Job에서 `chill-server` 부명령이 gateway의 native client로 `/infer`를 호출한다. Job CPU limit은 없다. 드문 Poisson 도착의 무적체 최대 service로 기존 K 식을 계산하고, K 포화 처리량 μ_B에 설정 이용률을 곱해 Poisson 단계를 보낸다. 실제 `sentAt`이 도착 기준이다. offering window는 마지막 예정 도착까지이며 응답 drain을 제외한다. trial/phase별 seed, scheduled/sent count, issue lag, driverGC를 남긴다 | Poisson 발행 품질은 scheduled≠sent 또는 미완료 응답 때문에 발행이 막힌 경우에만 실패한다. lag·GC·낮은 실현 도착률은 진단이다. 측정 노드에는 부하 프로세스가 없다 |
 | E1 유휴·증분 에너지 | R3 | 유휴 정착 시간은 이미 측정 입력이다. 값은 파일럿의 부하 중단 뒤 노드 전력 시계열로 정한다. 유휴 구간의 무추론·상태 유지 확인은 기존 `StableIdle` 검증(`internal/serving/operations/measurement.go:368-425`)을 재사용한다. 증분 에너지는 같은 Run의 이용률 단계에서 `(활성 J − 유휴 W × 시간) / 처리 입력 수`로 계산하고, 단계별 노드 평균 전력을 함께 남긴다 | 계산 회귀. 단계별 전력이 evidence에 남는다 |
 | O1 `d` 기준 | R5 | `d`를 포화 배치 쌍의 시작 간격에서 **앞 배치의 실제 실행시간**을 뺀 값으로 계산한다. 새 측정의 포화 단계도 같은 계산으로 `d`를 남긴다 | 회귀: 실제 실행시간이 profile 평균과 다른 배치 쌍에서 `cycle = S + B×d`가 성립한다 |
-| C1 대조 분석 | R4 | 평가 분석기 두 갈래. (a) 측정 원시 자료: 단계·trial 일부를 떼어 두고 나머지로 만든 profile로 스케줄러 재생을 돌려, 떼어 둔 이용률 단계의 실측 요청 지연·배치 실행시간 분포를 재현하는지, 단계별 실측 노드 전력이 `유휴 + EPI × 요청률`과 맞는지, 포화 단계에서 `cycle = S + B×d`가 맞는지 보고한다. (b) serving 기록: 같은 조건(profile ID, 배치 크기, 직전 유휴 간격 구간, 실행 중 유입 여부)의 profile 표본과 대조한다. 노드 전력은 판단 구간별 예측과 실측을 대조한다(기존 V1). 결과는 보고만 하고 자동으로 profile을 배제하지 않는다 | 합성 회귀. control380 원문에 (b)를 적용하면 §2.1의 표가 재현된다 |
+| C1 대조 분석 | R4 | CHILL 시스템 밖 `hack/evaluation` 도구로 가져온 evidence를 오프라인 분석한다. 제품 export를 추가하지 않는다. (a) phase/trial holdout의 전력 대 `idle + EPI × sent rate`, 포화 `cycle` 대 `S + B×d`, 부하 중단 뒤 전력 안정화를 보고한다. rate는 `sentInputs / offering window`다. 요청 지연·service 분포 재생은 기존 export에 전체 재생 모집단이 없어 제거했다. (b) serving/profile의 같은 조건별 service 분포와 판단별 예측·실측 전력을 대조한다 | 합성 회귀와 Go bridge 통합. trial bootstrap 신뢰구간. (b)로 §2.1을 재현한다. 보고만 하며 자동 profile 배제는 없다 |
 | T1 파일럿 | 전체 | 운영(main). 배포 뒤 대표 사례 5개를 새 방식으로 측정한다: genesis2 IC CUDA(배치 1·2), jetson-nano PLC CUDA, jetsono PLC, lattepanda IC CPU(대조군). 부하 중단 뒤 노드 전력을 충분히 길게 기록한다. C1(a) 결과를 advisor가 판정한다 | C1(a) 보고. 재현되지 않으면 원인과 고칠 단위를 계획에 추가하고 X1·P1을 미룬다 |
 | X1 기존 profile 삭제 | R1·R2 | 운영(main). 파일럿 통과 뒤. serving 정지 → 기존 profile 원시 evidence 보관 → 공식 측정 DELETE API로 campaign·evidence 삭제. DELETE는 해당 profile을 참조하는 serving Pod가 있으면 거절하므로 serving을 먼저 멈춘다 | 카탈로그의 현재 profile 0개, 보관 위치 기록 |
 | P1 재측정 | 전체 | 운영(main). E5 후보 범위(IC·PLC·Smol × 노드 × 선언 전력모드 × 배치)를 새 방식으로 측정한다. dispatch occupancy와 전환 비용 측정은 profile이 있어야 시작하므로 그 뒤에 한다 | 후보 범위의 profile이 모두 공개되거나, 실패가 사유와 함께 기록된다 |
@@ -142,10 +142,10 @@ flowchart LR
 - 각 단위의 회귀 통과, 전체 게이트.
 
 **파일럿(T1)**
-- 떼어 둔 이용률 단계에서, 스케줄러 재생의 요청 지연 분포와 배치 실행시간 분포가 실측과 맞는지. 비교는 측정 자체의 trial 간 변동과 같은 방법(trial 단위 bootstrap)으로 한 신뢰구간 안에 드는지로 본다. 새 허용치는 두지 않는다.
-- 단계별 실측 노드 전력과 `유휴 + EPI × 요청률`의 차이.
-- 포화 단계 `cycle = S + B×d`.
+- 떼어 둔 이용률 단계의 실측 노드 전력과 `idle + EPI × sentInputs / offering window`를 trial bootstrap 신뢰구간과 함께 보고한다.
+- 포화 단계 `cycle = S + B×d`. 포화 단계는 Poisson rate가 없어 전력률 예측에서 제외한다.
 - 부하 중단 뒤 노드 전력이 안정되는 시간(유휴 정착 시간 입력의 근거).
+- C1(a)는 요청 지연·service 분포 재생을 하지 않는다. 기존 export에 전체 재생 모집단이 없으며 제품 경계를 늘리지 않는다.
 
 **serving(E5 수용 실측)**
 - 같은 조건 대조(C1)의 serving/profile 실행시간 비를 보고한다. genesis2 IC CUDA 배치 1·2, jetson-nano PLC, jetsono PLC를 포함한다.
