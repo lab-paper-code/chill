@@ -41,7 +41,7 @@ func TestCapacityEveryProfileVariantRetained(t *testing.T) {
 	}
 }
 
-func TestCapacityDeltaFrozen130And190ms(t *testing.T) {
+func TestCapacityDeltaRetainedServiceOrdersPreparationQueue(t *testing.T) {
 	p := capacityDeltaTiny([]float64{50}, 10)
 	p.periodSeconds, p.ws[0].queued, p.ws[0].totalNanos = 1, 2, 20e6
 	p.ws[0].d.SLO.TargetLatency = 100 * time.Millisecond
@@ -62,12 +62,37 @@ func TestCapacityDeltaFrozen130And190ms(t *testing.T) {
 	problem := p.scalarProblem(tab, time.Time{})
 	a := capacityDeltaSaved(capacityRank(s.delta(0, tab.byPlan[0][1]), problem.Table))
 	b := capacityDeltaSaved(capacityRank(s.delta(0, tab.byPlan[0][2]), problem.Table))
-	if math.Abs(a.Excesses[0]-.3) > 1e-14 || math.Abs(b.Excesses[0]-.9) > 1e-14 || !a.Better(&b) || b.Better(&a) {
-		t.Fatalf("frozen h130/h190 ordering: A=%+v B=%+v", a, b)
+	if math.Abs(a.Excesses[0]-1.4) > 1e-14 || math.Abs(b.Excesses[0]-1.6) > 1e-14 || !a.Better(&b) || b.Better(&a) {
+		t.Fatalf("retained 240ms/260ms ordering: A=%+v B=%+v", a, b)
 	}
 	s.apply(0, tab.byPlan[0][2])
 	if !slices.Equal(s.choice, []int{tab.byPlan[0][2]}) || s.sums[0].routingRate != 25 || s.sums[0].serviceNanos != 25*40e6 {
 		t.Fatalf("apply lost frozen sums: %+v", s.sums)
+	}
+}
+
+func TestCapacityDeltaPreparationUsesConfiguredQuantile(t *testing.T) {
+	p := capacityDeltaTiny([]float64{50}, 10)
+	p.periodSeconds = 1
+	p.ws[0].d.SLO.TargetLatency = 100 * time.Millisecond
+	base := p.plans[0][0]
+	next := *base
+	next.keep, next.preMax = false, .01
+	target, retained := base.items[0][0], base.items[0][0]
+	target.serviceNanos = 20e6
+	retained.serviceNanos = 150e6
+	next.items, next.retained = [][]capacityItem{{target}}, [][]capacityItem{{retained}}
+	p.plans[0] = append(p.plans[0], &next)
+	tab := p.planTable()
+	s := newSearchState(p, tab, []int{tab.byPlan[0][0]})
+	for _, tc := range []struct {
+		percentile float64
+		feasible   bool
+	}{{95, true}, {100, false}} {
+		p.ws[0].d.SLO.Percentile = tc.percentile
+		if got := s.delta(0, tab.byPlan[0][1]); got.feasible != tc.feasible {
+			t.Fatalf("p%g preparation population quantile: feasible=%t excess=%v", tc.percentile, got.feasible, got.excesses)
+		}
 	}
 }
 

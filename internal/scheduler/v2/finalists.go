@@ -10,7 +10,7 @@ import (
 type CoreStats struct {
 	SurrogateEvaluated int
 	Deadline           bool
-	Exhausted          bool
+	Exhausted          bool // At least one start reached its evaluation share.
 	steps              int
 	SearchSteps        []protocol.Step
 	DualBound          float64
@@ -40,18 +40,31 @@ func newV2Finalists(t *protocol.Table, workloads, size int) v2Finalists {
 }
 
 func (f *v2Finalists) add(key protocol.Rank, start string) {
+	for i := range f.used {
+		same := true
+		for n, q := range key.Choice {
+			if key.Table.EntryOf[q] != key.Table.EntryOf[f.ordered[i].key.Choice[n]] {
+				same = false
+				break
+			}
+		}
+		if same {
+			if !key.Better(&f.ordered[i].key) {
+				return
+			}
+			slot := f.ordered[i]
+			copy(f.ordered[i:f.used-1], f.ordered[i+1:f.used])
+			f.used--
+			f.ordered[f.used] = slot
+			break
+		}
+	}
 	if f.used == len(f.ordered) && !key.Better(&f.ordered[f.used-1].key) {
 		return
 	}
 	at := 0
 	for at < f.used && !key.Better(&f.ordered[at].key) {
-		if slices.Equal(key.Choice, f.ordered[at].key.Choice) {
-			return
-		}
 		at++
-	}
-	if at < f.used && slices.Equal(key.Choice, f.ordered[at].key.Choice) {
-		return
 	}
 	last := min(f.used, len(f.ordered)-1)
 	slot := f.ordered[last]
@@ -161,8 +174,9 @@ func (c *v2Search) recordStep(key protocol.Rank, previous []int, phase string, e
 }
 
 // Candidates runs deterministic keep, empty and optional price-guided starts.
-// Endpoints are retained outside K,
-// including a partially searched endpoint when either budget expires.
+// Each start receives remaining evaluations / remaining starts; unused shares
+// carry forward. The deadline is shared. Endpoints remain outside K even when
+// a start exhausts its share.
 // active<=0 includes every searchable plan, including every cap variant.
 // evaluations<=0 disables the evaluation limit for exhaustive harness runs.
 func Candidates(p protocol.Problem, t *protocol.Table, evaluations, finalists, active int, deadline time.Time) ([]protocol.Candidate, CoreStats) {
@@ -211,9 +225,19 @@ func Candidates(p protocol.Problem, t *protocol.Table, evaluations, finalists, a
 		}
 	}
 	endpoints := make([]v2Finalist, 0, len(starts))
-	for _, start := range starts {
+	exhausted := false
+	for i, start := range starts {
+		c.stats.Exhausted = false
 		if c.expired() {
 			break
+		}
+		if evaluations > 0 {
+			share := (evaluations - c.stats.SurrogateEvaluated) / (len(starts) - i)
+			if share == 0 {
+				exhausted = true
+				continue
+			}
+			c.limit = c.stats.SurrogateEvaluated + share
 		}
 		c.Start = start.name
 		c.s.reset(start.Choice)
@@ -230,7 +254,9 @@ func Candidates(p protocol.Problem, t *protocol.Table, evaluations, finalists, a
 		endpoint := v2Finalist{key: newV2Key(t, len(p.Workloads)), Start: c.Start}
 		c.current.CopyInto(&endpoint.key)
 		endpoints = append(endpoints, endpoint)
+		exhausted = exhausted || c.stats.Exhausted || evaluations > 0 && c.stats.SurrogateEvaluated == c.limit
 	}
+	c.stats.Exhausted = exhausted
 	all := append([]*v2Finalist(nil), c.finalists.ordered[:c.finalists.used]...)
 	for i := range endpoints {
 		if !slices.ContainsFunc(all, func(f *v2Finalist) bool { return slices.Equal(f.key.Choice, endpoints[i].key.Choice) }) {

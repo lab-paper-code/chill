@@ -51,8 +51,8 @@ func TestCapacityV2CoreBudgetAndDeadline(t *testing.T) {
 		t.Fatalf("evaluation budget: finalists=%d stats=%+v", len(got), stats)
 	}
 	got, stats = v2.Candidates(problem, problem.Table, 1, 1, 4, time.Time{})
-	if len(got) != 1 || !slices.Equal(got[0].Choice, make([]int, len(p.plans))) || !stats.Exhausted || stats.Deadline || stats.SurrogateEvaluated != 1 || len(stats.SearchSteps) != 1 || stats.SearchSteps[0].Start != capacitySearchStartKeep || stats.SearchSteps[0].K != 0 {
-		t.Fatalf("origin-only budget lost endpoint: finalists=%+v stats=%+v", got, stats)
+	if len(got) != 1 || got[0].Start != "empty" || !stats.Exhausted || stats.Deadline || stats.SurrogateEvaluated != 1 || len(stats.SearchSteps) != 1 || stats.SearchSteps[0].Start != "empty" || stats.SearchSteps[0].K != 0 {
+		t.Fatalf("last start lost the remaining single evaluation: finalists=%+v stats=%+v", got, stats)
 	}
 	got, stats = v2.Candidates(problem, problem.Table, 500000, 1, 4, time.Now().Add(-time.Second))
 	if len(got) != 0 || !stats.Deadline || stats.Exhausted || stats.SurrogateEvaluated != 0 {

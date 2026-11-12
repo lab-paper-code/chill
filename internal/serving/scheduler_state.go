@@ -19,6 +19,7 @@ type orderKey struct {
 
 type searchSum struct {
 	routingRate, retainedRoutingRate, serviceNanos                     float64
+	retainedServiceNanos                                               float64
 	energyRate, weight, weightedEnergy, retainedWeight, retainedEnergy float64
 	count, pending                                                     int
 }
@@ -67,6 +68,7 @@ func (s *searchState) addPlan(sum *searchSum, q, w int, sign float64) {
 	sum.routingRate += sign * t.routingRate[q][w]
 	sum.retainedRoutingRate += sign * t.retainedRoutingRate[q][w]
 	sum.serviceNanos += sign * t.routingRateServiceNanos[q][w]
+	sum.retainedServiceNanos += sign * t.retainedRoutingRateServiceNanos[q][w]
 	sum.energyRate += sign * t.energyRate[q][w]
 	sum.weight += sign * t.weight[q][w]
 	sum.weightedEnergy += sign * t.weightedEnergy[q][w]
@@ -118,7 +120,7 @@ func (s *searchState) delta(n, q int) orderKey {
 		count := sum.count + sum.pending
 		key.bounded = key.bounded && count <= p.settings.MaxReplicas && (p.settings.Controls.Replicas || count == ws.current)
 		key.countExcess += max(0, count-p.settings.MaxReplicas)
-		excess, eligible := capacityHeuristic(ws, sum.routingRate, sum.retainedRoutingRate, sum.serviceNanos, key.route, p.periodSeconds)
+		excess, eligible := capacityHeuristic(ws, sum.routingRate, sum.retainedRoutingRate, sum.serviceNanos, sum.retainedServiceNanos, key.route, p.periodSeconds)
 		key.excesses[t.excessIndex[w]], key.satisfied[w] = excess, excess == 0 && eligible
 		key.demand[w], key.supply[w] = ws.rate, sum.routingRate
 		key.feasible = key.feasible && key.satisfied[w]
@@ -147,16 +149,41 @@ func (s *searchState) delta(n, q int) orderKey {
 	return key
 }
 
-// capacityHeuristic is an optimistic fluid search score, not predicted E2E.
-func capacityHeuristic(w capacityWorkload, mu, retained, service, route, period float64) (float64, bool) {
+// capacityHeuristic scores the configured quantile of an optimistic two-phase
+// fluid cohort, not predicted E2E. Retained executors serve preparation arrivals;
+// target executors serve arrivals after the route. Only arrivals inside H count.
+// With no retained supply, preparation arrivals wait for the route and target.
+func capacityHeuristic(w capacityWorkload, mu, retained, service, retainedService, route, period float64) (float64, bool) {
 	if w.rate == 0 && w.queued == 0 {
 		return 0, true
 	}
 	if mu <= 0 {
 		return math.Inf(1), false
 	}
-	backlog := max(0, float64(w.queued)+(w.rate-retained)*route)
-	backlog += max(w.rate-mu, 0) * max(period-route, 0)
-	h := w.totalNanos + 1e9*route + 1e9*backlog/mu + service/mu
+	pre, post := min(route, period), max(period-route, 0)
+	backlog := max(0, float64(w.queued)+(w.rate-retained)*pre)
+	hPost := w.totalNanos + 1e9*(backlog+max(w.rate-mu, 0)*post)/mu + service/mu
+	preMass, postMass := float64(w.queued)+w.rate*pre, w.rate*post
+	if route == 0 {
+		preMass, postMass = 0, preMass+postMass
+	}
+	hPre := w.totalNanos + 1e9*route + 1e9*backlog/mu + service/mu
+	if retained > 0 {
+		hPre = w.totalNanos + 1e9*backlog/retained + retainedService/retained
+	}
+	h := hPost
+	if preMass > 0 {
+		h = hPre
+		if postMass > 0 {
+			low, high, mass := hPre, hPost, preMass
+			if hPost < hPre {
+				low, high, mass = hPost, hPre, postMass
+			}
+			h = low
+			if mass < (preMass+postMass)*w.d.SLO.Percentile/100 {
+				h = high
+			}
+		}
+	}
 	return max(0, h/float64(w.d.SLO.TargetLatency)-1), true
 }

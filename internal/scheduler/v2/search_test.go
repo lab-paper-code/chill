@@ -15,12 +15,13 @@ import (
 // replay. Engine tests exercise candidate reachability and rank preservation;
 // the serving consumer tests own production Delta and exact outcome arithmetic.
 type finiteState struct {
-	table     *protocol.Table
-	workloads []protocol.Workload
-	priority  []int
-	choice    []int
-	result    protocol.Rank
-	raw       []float64
+	table      *protocol.Table
+	workloads  []protocol.Workload
+	priority   []int
+	choice     []int
+	result     protocol.Rank
+	raw        []float64
+	percentile float64
 }
 
 func (s *finiteState) Choice() []int      { return s.choice }
@@ -45,20 +46,43 @@ func (s *finiteState) Delta(n, q int) protocol.Rank {
 		}
 	}
 	for w, workload := range s.workloads {
-		rate, retained, service := 0.0, 0.0, 0.0
-		for _, plan := range r.Choice {
+		rate, retained, service, retainedService := 0.0, 0.0, 0.0, 0.0
+		for node, plan := range r.Choice {
 			rate += tab.RoutingRate[plan][w]
 			retained += tab.RetainedRoutingRate[plan][w]
 			service += tab.RoutingRateServiceNanos[plan][w]
+			retainedService += tab.RoutingRateServiceNanos[tab.ByPlan[node][0]][w]
 		}
 		excess := 0.0
 		if workload.Rate > 0 || workload.Queued > 0 {
 			if rate <= 0 {
 				excess, r.Searchable = math.Inf(1), false
 			} else {
-				backlog := max(0, float64(workload.Queued)+(workload.Rate-retained)*r.Route)
-				backlog += max(workload.Rate-rate, 0) * max(tab.Period-r.Route, 0)
-				h := workload.TotalNanos + 1e9*r.Route + 1e9*backlog/rate + service/rate
+				pre, post := min(r.Route, tab.Period), max(tab.Period-r.Route, 0)
+				backlog := max(0, float64(workload.Queued)+(workload.Rate-retained)*pre)
+				hPost := workload.TotalNanos + 1e9*(backlog+max(workload.Rate-rate, 0)*post)/rate + service/rate
+				preMass, postMass := float64(workload.Queued)+workload.Rate*pre, workload.Rate*post
+				if r.Route == 0 {
+					preMass, postMass = 0, preMass+postMass
+				}
+				hPre := workload.TotalNanos + 1e9*r.Route + 1e9*backlog/rate + service/rate
+				if retained > 0 {
+					hPre = workload.TotalNanos + 1e9*backlog/retained + retainedService/retained
+				}
+				h := hPost
+				if preMass > 0 {
+					h = hPre
+					if postMass > 0 {
+						low, high, mass := hPre, hPost, preMass
+						if hPost < hPre {
+							low, high, mass = hPost, hPre, postMass
+						}
+						h = low
+						if mass < (preMass+postMass)*s.percentile/100 {
+							h = high
+						}
+					}
+				}
 				excess = max(0, h/workload.TargetNanos-1)
 			}
 		}
@@ -116,7 +140,7 @@ func finiteProblem(nodes int, workloads []protocol.Workload, rates, services [][
 	}
 	tab.Energy = func(q int, _, _ float64) float64 { return energies[tab.Index[q]] }
 	p.NewState = func(choice []int) protocol.State {
-		return &finiteState{table: tab, workloads: workloads, priority: priority, choice: slices.Clone(choice),
+		return &finiteState{table: tab, workloads: workloads, priority: priority, percentile: 100, choice: slices.Clone(choice),
 			result: newV2Key(tab, len(workloads)), raw: make([]float64, len(workloads))}
 	}
 	return p
@@ -179,7 +203,7 @@ func TestCandidatesMatchSmallFiniteProducts(t *testing.T) {
 					t.Fatalf("finite optimum lost: got=%v want=%v stats=%+v", got, want, stats)
 				}
 				if nodes == 1 {
-					wantPlan := map[string]int{"all-infeasible": 2, "feasible-energy": 1, "worst-first": 2, "workload-first": 1}[trial.name]
+					wantPlan := map[string]int{"all-infeasible": 0, "feasible-energy": 1, "worst-first": 2, "workload-first": 1}[trial.name]
 					if want[0] != wantPlan {
 						t.Fatalf("wrong semantic oracle: got=%v want=%d", want, wantPlan)
 					}
@@ -222,6 +246,25 @@ func TestCandidatesKeepEvaluationBudget(t *testing.T) {
 	_, stats := Candidates(p, p.Table, 5, 4, 0, time.Time{})
 	if !stats.Exhausted || stats.SurrogateEvaluated != 5 {
 		t.Fatalf("evaluation budget changed: %+v", stats)
+	}
+}
+
+func TestCandidatesShareBudgetAcrossStarts(t *testing.T) {
+	p := finiteProblem(3, []protocol.Workload{{Rate: 10, Queued: 2, TargetNanos: 100e6}},
+		[][]float64{{5}, {0}, {50}}, [][]float64{{80e6}, {0}, {20e6}}, []float64{1, 0, 3}, 0, nil)
+	for _, plans := range p.Table.ByPlan {
+		p.Table.Count[plans[1]][0] = 0
+	}
+	got, stats := Candidates(p, p.Table, 6, 1, 0, time.Time{})
+	starts := map[string]bool{}
+	for _, step := range stats.SearchSteps {
+		starts[step.Start] = true
+	}
+	if !starts["keep"] || !starts["empty"] || stats.SurrogateEvaluated != 6 || !stats.Exhausted {
+		t.Fatalf("start starved: candidates=%+v stats=%+v", got, stats)
+	}
+	if !slices.ContainsFunc(got, func(c protocol.Candidate) bool { return c.Start == "empty" }) {
+		t.Fatalf("empty endpoint lost outside K: %+v", got)
 	}
 }
 

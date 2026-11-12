@@ -7,6 +7,7 @@ type planTable struct {
 	byPlan                                                    [][]int
 	node, index                                               []int
 	routingRate, routingRateServiceNanos, retainedRoutingRate [][]float64
+	retainedRoutingRateServiceNanos                           [][]float64
 	weightRet, energyWeightRet                                [][]float64
 	energyRate, weight, weightedEnergy                        [][]float64
 	count                                                     [][]int
@@ -40,6 +41,7 @@ func (p *capacityPlanner) planTable() *planTable {
 func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorkload) int {
 	q, k := len(t.index), len(ws)
 	routingRate, service, retainedRate := make([]float64, k), make([]float64, k), make([]float64, k)
+	retainedService := make([]float64, k)
 	weightRet, energyWeightRet := make([]float64, k), make([]float64, k)
 	energyRate, weight, weightedEnergy := make([]float64, k), make([]float64, k), make([]float64, k)
 	count := make([]int, k)
@@ -67,6 +69,7 @@ func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorklo
 		if w < len(plan.retained) {
 			for _, item := range plan.retained[w] {
 				retainedRate[w] += item.throughput
+				retainedService[w] += item.throughput * item.serviceNanos
 				weightRet[w] += float64(item.weight)
 				energyWeightRet[w] += item.e * float64(item.weight)
 				nonnegative = nonnegative && item.e >= 0
@@ -75,6 +78,7 @@ func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorklo
 	}
 	t.node, t.index = append(t.node, n), append(t.index, j)
 	t.routingRate, t.routingRateServiceNanos, t.retainedRoutingRate = append(t.routingRate, routingRate), append(t.routingRateServiceNanos, service), append(t.retainedRoutingRate, retainedRate)
+	t.retainedRoutingRateServiceNanos = append(t.retainedRoutingRateServiceNanos, retainedService)
 	t.energyRate, t.weight, t.weightedEnergy = append(t.energyRate, energyRate), append(t.weight, weight), append(t.weightedEnergy, weightedEnergy)
 	t.weightRet, t.energyWeightRet = append(t.weightRet, weightRet), append(t.energyWeightRet, energyWeightRet)
 	t.count, t.others, t.nonnegative = append(t.count, count), append(t.others, plan.others), append(t.nonnegative, nonnegative)
