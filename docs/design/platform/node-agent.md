@@ -67,7 +67,7 @@ actuation은 chart `nodeAgent.actuation.enabled`로 켜며 ChillSystem `spec.nod
 | label `chill.dacs.io/power-mode` | 3.3절의 writer 하나 | DeviceClass 모드 이름. 없으면 원하는 모드 없음 |
 | annotation `chill.dacs.io/power-mode-requested-at` | 요청 label과 같은 writer·patch | RFC 3339 요청 시각(writer 시계), 기한의 기준 |
 | label `chill.dacs.io/power-mode.state` | agent | `pending`, `success`, `failed` |
-| annotation `chill.dacs.io/power-mode-generation` | agent | 0부터 시작, 관측한 모드 변경마다 +1 |
+| annotation `chill.dacs.io/power-mode-generation` | agent | 0부터 시작, 관측값 변경·적용 뒤 read-back 무효화마다 +1 |
 | annotation `edge.dacs.io/power-actuator` | agent | `PowerModeActuator` JSON 독립 read-back |
 | annotation `chill.dacs.io/power-mode-boot` | agent | 마지막으로 본 `status.nodeInfo.bootID` |
 | annotation `chill.dacs.io/power-mode-transition` | agent | `{powerMode, requestedAt, generation, applyStartedAt, verifiedAt, settlingStartedAt, readyAt, failure}`(Node 시계). `requestedAt`이 처리한 요청을 식별하며 state는 현재 요청의 기록에만 붙는다 |
@@ -79,13 +79,14 @@ actuation은 chart `nodeAgent.actuation.enabled`로 켜며 ChillSystem `spec.nod
 - 매 pass의 시각은 host read 뒤에 읽어 `applyStartedAt` → `verifiedAt` → `settlingStartedAt` → `readyAt` 순서를 지킨다.
 - 10초 read-back에서 actuator annotation이나 bootID가 달라지면 read-back·bootID·generation +1을 한 patch로 쓴다. 수동 모드 변경, 재부팅, 적용 중 멈춤을 센다. 메모리가 아니라 Node annotation과 비교하므로 agent 재시작은 세지 않는다. 10초 안에 바뀌었다 돌아온 모드는 보지 못한다.
 - host read 실패 시 read-back은 유지하고 bootID만 비교한다. bootID가 바뀌었으면 한 번 세고 낡은 read-back을 지운다. 단, 아래 재부팅 요청의 `pending`은 먼저 목표 판독을 기다린다.
+- `Host.Apply`가 오류를 반환하면 별도의 read-back timeout으로 적용 뒤 host를 다시 읽는다. 실제 관측값과 generation을 갱신해 `failed` transition과 같은 patch에 게시한다. 읽기도 실패하면 낡은 actuator annotation을 지우고 unknown 전환의 generation 및 두 오류를 함께 기록한다. 이후 독립 read가 실제 모드를 복구할 수 있으나 원래 실패를 success로 바꾸거나 Apply를 자동 재시도하지 않는다.
 - NVIDIA는 요청 label이 없으면 `fixed`다. 이때 동적 graphics/SM MHz 변화는 read-back만 갱신하고 generation을 올리지 않는다. 요청한 잠금 모드의 read-back 변경과 bootID 변경은 센다.
 - agent는 손으로 바뀐 모드를 원하는 모드로 되돌리지 않는다(Q1). generation과 실제 read-back만 갱신한다. 되돌려도 측정 무효 판정은 같고 변경만 두 번 생긴다.
 - writer는 같은 모드라도 `failed`이거나 `success` 기록의 generation이 현재와 다르면 새 요청 시각을 쓴다. agent는 새 요청으로 처리해 적용하거나 이미 목표면 현재 generation으로 `success`를 쓴다. BEO·MLIB는 host가 떠난 `success`를 재요청하고 `failed`는 전환 실패로 닫는다.
 - **재부팅 모드:** orin-nano 7W 진입·이탈(`values.yaml:280-283`, nvpmodel `Reboot required`)은 fence 뒤 `--force`로 기록하고 Node를 재시작한다(`jetson/nvpmodel.go:159-170`). Node의 label·`pending`은 남는다. 새 agent가 목표 read-back과 바뀐 bootID를 함께 확인해 generation을 한 번 올리고 verified·settling·success를 쓴다.
 - 재부팅 뒤 host를 읽지 못하면 `pending`을 유지하고 Node에 쓰지 않는다. 다음 성공 read에서 bootID와 read-back을 함께 한 번 센다. `applyStartedAt + maxActuationDurationSeconds`까지 못 읽으면 bootID를 세고 `failed`다. 이름은 목표여도 gating mask가 다르면 읽기 오류이므로 같은 기한에 실패한다. `holdsTarget`은 반복 재시작을 막는다.
 - **기한:** agent는 위 재부팅 뒤 읽기 실패 `pending`에만 기한을 쓴다. writer는 요청 시각부터 policy `maxActuationDurationSeconds`(live 900 s, 재부팅 약 75 s 포함) 안에 `success`와 목표 read-back을 못 보면 실패한다(계획기 action `failed`, Profiler는 deadline 실패). 적용을 시작하지 않은 노드도 같다. 늦은 적용도 generation을 올려 겹친 측정을 무효화한다. 재시도는 같은 label에 새 요청 시각을 쓴다.
-- capture와 serving source 확인은 실제 read-back으로 모드를 판정하며 `Fixed` class는 class 사실을 쓴다. instance의 native/profile 상태가 없으면 그 노드만 `InstanceUnavailable`로 배치·전력 변경에서 빼고 다른 노드의 판단을 계속한다.
+- capture와 serving source 확인은 실제 read-back으로 모드를 판정한다. agent generation이 있는데 actuator read-back이 없거나 해석 불가하면 unknown이며 어떤 모드와도 일치하지 않는다. agent 관측이 없는 `Fixed` class와 요청 없는 NVIDIA의 확인된 기본 정책은 기존 class 사실을 따른다. instance의 native/profile 상태가 없으면 그 노드만 `InstanceUnavailable`로 배치·전력 변경에서 빼고 다른 노드의 판단을 계속한다.
 
 ### 3.3 요청 writer와 admission
 

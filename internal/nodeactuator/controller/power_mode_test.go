@@ -3,12 +3,14 @@ package controller
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,6 +26,7 @@ type powerModeHost struct {
 	applyErr error
 	applied  []int32
 	clock    func() time.Time
+	onApply  func()
 }
 
 // Observe stamps the read with the shared clock, as the Jetson adapter does
@@ -38,6 +41,9 @@ func (h *powerModeHost) Observe(context.Context, nodeactuator.Request) (nodeactu
 }
 
 func (h *powerModeHost) Apply(_ context.Context, _ nodeactuator.Request, target nodeactuator.Target) error {
+	if h.onApply != nil {
+		h.onApply()
+	}
 	if h.applyErr != nil {
 		return h.applyErr
 	}
@@ -381,4 +387,74 @@ func TestPowerModeFailedReadCountsOnlyABoot(t *testing.T) {
 	f.reboot()
 	f.reconcile()
 	f.expect(metadata.PowerModeSuccess, 1)
+}
+
+func TestPowerModeApplyFailurePublishesPostApplyMode(t *testing.T) {
+	for _, unreadable := range []bool{false, true} {
+		name := "changed-mode"
+		if unreadable {
+			name = "unreadable"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newPowerModeFixture(t, map[string]string{metadata.PowerMode: "7W"})
+			class := &edgev1alpha1.DeviceClass{}
+			if err := f.client.Get(context.Background(), client.ObjectKey{Name: "jetson-orin-nano"}, class); err != nil {
+				t.Fatal(err)
+			}
+			// Unknown read-back must not become the class's Fixed fallback.
+			class.Spec.PowerModes = append(class.Spec.PowerModes, edgev1alpha1.PowerMode{
+				Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed},
+			})
+			if err := f.client.Update(context.Background(), class); err != nil {
+				t.Fatal(err)
+			}
+			if err := metadata.RequestPowerMode(context.Background(), f.client, f.node(), "7W", f.tick()); err != nil {
+				t.Fatal(err)
+			}
+			f.reconcile()
+			f.expect(metadata.PowerModePending, 0)
+			applyCalls := 0
+			f.host.applyErr = errors.New("nvpmodel changed mode before failing")
+			f.host.onApply = func() {
+				applyCalls++
+				f.host.id = 2
+				if unreadable {
+					f.host.readErr = errors.New("post-apply host unreadable")
+				}
+			}
+			f.reconcile()
+			node := f.node()
+			generation, found, err := metadata.NodePowerModeGeneration(node)
+			if err != nil || !found || generation != 1 || node.Labels[metadata.PowerModeState] != metadata.PowerModeFailed {
+				t.Errorf("failed apply did not publish a new observation generation: labels=%v annotations=%v err=%v", node.Labels, node.Annotations, err)
+			}
+			transition, _, err := metadata.NodePowerModeTransition(node)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if transition.Generation != generation || !strings.Contains(transition.Failure, f.host.applyErr.Error()) ||
+				transition.VerifiedAt != nil || transition.ReadyAt != nil {
+				t.Errorf("failed request has stale generation or fabricated success: %+v", transition)
+			}
+			wantMode := "25W"
+			if unreadable {
+				wantMode = ""
+				if _, exists := node.Annotations[metadata.PowerActuator]; exists || !strings.Contains(transition.Failure, f.host.readErr.Error()) {
+					t.Errorf("unreadable post-Apply host kept an actuator or hid its read failure: %v", node.Annotations)
+				}
+			}
+			if mode := servingstate.ReadBackMode(node, class); mode != wantMode {
+				t.Errorf("measurement consumer sees mode %q, want %q after failed Apply", mode, wantMode)
+			}
+			// A later independent read can recover actual mode, but cannot
+			// convert the failed request to success or automatically reapply.
+			f.host.readErr = nil
+			f.reconcile()
+			node = f.node()
+			if mode := servingstate.ReadBackMode(node, class); mode != "25W" ||
+				node.Labels[metadata.PowerModeState] != metadata.PowerModeFailed || applyCalls != 1 {
+				t.Errorf("read-back recovery changed the failed request or retried Apply: mode=%q state=%s applies=%d", mode, node.Labels[metadata.PowerModeState], applyCalls)
+			}
+		})
+	}
 }

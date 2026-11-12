@@ -159,6 +159,13 @@ func publishReadBack(
 		value := string(raw)
 		readBack = &value
 	}
+	return publishActuatorReadBack(node, observation.Target.Kind, readBack, annotations)
+}
+
+// A nil actuator invalidates read-back after a write whose effect is unknown.
+// Ordinary read failures still preserve the previous observation above.
+func publishActuatorReadBack(node *corev1.Node, kind string, readBack *string, annotations map[string]*string) (int64, error) {
+	boot := node.Status.NodeInfo.BootID
 	generation, published, err := metadata.NodePowerModeGeneration(node)
 	if err != nil {
 		return 0, err
@@ -167,7 +174,7 @@ func publishReadBack(
 		sameAnnotation(node, metadata.PowerModeBoot, &boot) {
 		return generation, nil
 	}
-	clockOnly := observation.Target.Kind == nodeactuator.ActuatorKindNvidiaLockedGPUClock &&
+	clockOnly := kind == nodeactuator.ActuatorKindNvidiaLockedGPUClock &&
 		node.Labels[metadata.PowerMode] == "" && sameAnnotation(node, metadata.PowerModeBoot, &boot)
 	if published && !clockOnly {
 		generation++
@@ -274,8 +281,23 @@ func (r *PowerModeReconciler) drive(
 		r.fail(labels, annotations, transition, fmt.Sprintf("host power mode changed to generation %d without reaching %s", generation, desired))
 		return ctrl.Result{}, nil
 	}
-	if err := r.Host.Apply(ctx, request, request.Target); err != nil {
-		r.fail(labels, annotations, transition, err.Error())
+	if applyErr := r.Host.Apply(ctx, request, request.Target); applyErr != nil {
+		// Apply can change the host before failing. Publish an independent
+		// post-write observation, never the read taken before that write.
+		request.Deadline = r.Now().Add(r.Timeout)
+		observed, readErr := r.Host.Observe(ctx, request)
+		var postGeneration int64
+		var publishErr error
+		if readErr != nil {
+			postGeneration, publishErr = publishActuatorReadBack(node, request.Target.Kind, nil, annotations)
+		} else {
+			postGeneration, publishErr = publishReadBack(node, observed, nil, annotations)
+		}
+		if publishErr != nil {
+			return ctrl.Result{}, publishErr
+		}
+		transition.Generation = postGeneration
+		r.fail(labels, annotations, transition, errors.Join(applyErr, readErr).Error())
 		return ctrl.Result{}, nil
 	}
 	if clockTarget {

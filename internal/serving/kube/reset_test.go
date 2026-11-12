@@ -1534,6 +1534,11 @@ func TestPartialResetWaitsForCurrentPowerRequestTerminalRecord(t *testing.T) {
 				PowerMode: lowMode, RequestedAt: previousStamp, Generation: 1,
 				ApplyStartedAt: &previous, VerifiedAt: &previous, ReadyAt: &previous,
 			})
+			readBack, err := json.Marshal(class.Spec.PowerModes[0].Actuator)
+			if err != nil {
+				t.Fatal(err)
+			}
+			node.Annotations[chillmeta.PowerActuator] = string(readBack)
 			if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
 				t.Fatal(err)
 			}

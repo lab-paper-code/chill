@@ -25,14 +25,17 @@ func NodeClass(n *core.Node, classes []edge.DeviceClass) *edge.DeviceClass {
 
 // ReadBackMode is the mode the Node is in now: the mode whose actuator the
 // actuation agent read back from the host, or the Fixed mode of a Node without
-// a read-back. A requested mode still pending, or several matching modes,
-// leave it unknown.
+// agent observations. Pending, unknown agent read-back, or several matching
+// modes leave it unknown.
 func ReadBackMode(n *core.Node, class *edge.DeviceClass) string {
 	if class == nil || n.Labels[chillmeta.PowerModeState] == chillmeta.PowerModePending {
 		return ""
 	}
 	var actuator edge.PowerModeActuator
 	readsBack := chillmeta.NodeReadBack(n, &actuator) == nil
+	if _, published := n.Annotations[chillmeta.PowerModeGeneration]; published && !readsBack {
+		return ""
+	}
 	// With no mode request, a discrete GPU remains under the installation's
 	// default policy. Its instantaneous MHz is still published, but is not a
 	// declared locked-mode identity.
