@@ -162,9 +162,12 @@ func interceptNativeFeedbackCalls(t *testing.T, c *SchedulerController, ctx cont
 		}
 		seen <- request
 		<-releaseContext.Done()
+		// Runner.infer measures the actual IPC span even when backend time is zero.
+		// Batch identity alone does not prove that the running batch reached IPC.
 		progress := native.Progress{RequestID: request.ID, WorkloadUID: request.Context.WorkloadUID,
 			Definition: request.Context.Definition, Phase: "finished", At: time.Now(), BatchID: 1,
-			BatchSize: 1, ProfileID: ready.Profile.ID, ExecutionComplete: true, Outcome: "completed", NativeElapsedMS: 1}
+			BatchSize: 1, ProfileID: ready.Profile.ID, ExecutionComplete: true, Outcome: "completed", NativeElapsedMS: 1, ServiceMS: 1,
+			ServiceSample: &native.ServiceSample{ServiceDurationNanos: int64(time.Millisecond), TrialID: "feedback"}}
 		if err := json.NewEncoder(w).Encode(native.Response{ModelName: ready.Profile.Condition.Actor.Model,
 			ID: request.ID, ExecutionComplete: true, Progress: progress,
 			Outputs: []native.Field{{Name: "output", Data: [][]byte{[]byte("result")}}}}); err != nil {

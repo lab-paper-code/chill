@@ -108,6 +108,19 @@ func TestAdmissionCompletionUsesMaximumQuantileOverPossibleGap(t *testing.T) {
 	}
 }
 
+func TestAdmissionCompletionUsesIPCSampleWithZeroBackendSpan(t *testing.T) {
+	r, i, _, c := admissionReviewCompletion(t, phaseRunning)
+	c.progress.BackendMS = 0
+	c.progress.ServiceMS = 1
+	c.progress.ServiceSample = &firstfloor.ServiceSample{ServiceDurationNanos: int64(time.Millisecond), TrialID: "physical"}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.completeAdmissionLocked(c)
+	if i.State.AdmissionIdleUnknown || len(i.State.Native.Requests) != 0 || i.State.Native.LastServiceEndAgeNanos == nil {
+		t.Fatal("measured IPC completion with zero backend time stalled admission")
+	}
+}
+
 func TestAdmissionCompletedExchangeRequiresIPCExecutionEvidence(t *testing.T) {
 	for _, ipcStarted := range []bool{false, true} {
 		r, i, _, c := admissionReviewCompletion(t, phaseRunning)
