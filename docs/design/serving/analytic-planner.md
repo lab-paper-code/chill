@@ -135,7 +135,7 @@ v2는 adapter가 만든 노드·option·모드별 계획표를 Tick마다 전처
 
 현재 keep의 정확 SLO가 충족되면, keep에 없는 비-exact operation 셀이 있는 finalist는 요청 replay 전에 `EnergyUndecidable`로 제외한다. whole-wall 동작 J의 미지 계수가 남으므로 replay 결과·교체 회수·최소 이득으로 선택될 수 없다. 후보별 누락 셀과 공유 참조를 그대로 남기고 `undecidableCandidates[].replaySkipped: true`로 replay 생략을 구분한다. idle 또는 duration 항만 다른 후보와 SLO 복구 후보는 기존 replay를 유지한다. `exactEvaluated`는 keep seed와 이 사전 판정을 포함한 정확 후보 판정 수이며 native replay 횟수가 아니다.
 
-정확 worker는 노드별 `TPre` 최댓값 내림차순의 공유 큐에서 다음 후보를 가져간다. 같은 값은 원래 finalist 순서를 따른다. 결과 저장·관측·후처리·최종 비교는 keep seed 다음의 원래 후보 순서로 수행하므로 worker 완료 순서가 선택을 바꾸지 않는다.
+정확 worker는 노드별 `TPre` 최댓값 내림차순의 공유 큐에서 다음 후보를 가져간다. 같은 값은 원래 finalist 순서를 따른다. 결과 저장·관측·후처리·최종 비교는 keep seed 다음의 원래 후보 순서로 수행하므로 worker 완료 순서가 선택을 바꾸지 않는다. 관측에는 해당 replay를 수행한 실제 worker ID를 전달하며 keep seed는 slot 0을 쓴다. context가 취소되면 keep seed도 관측·admission·후처리 전에 중단한다.
 
 native `ChooseBatch`는 normal 요청의 동일한 stable EDF compatible prefix를 한 호출에서 지연 생성해 batch profile 사이에 재사용한다. 각 profile의 요청별 percentile·completion margin·남은 마감 검사는 그대로 수행한다. deferred FIFO와 fixed-batch 선택은 바꾸지 않는다.
 

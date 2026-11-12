@@ -200,6 +200,11 @@ func TestFunnelDispatchSharesPendingWork(t *testing.T) {
 	if got := <-done; got == nil || got.choice[0] != 1 {
 		t.Fatalf("shared queue changed result: %+v", got)
 	}
+	blockedSlot := exact.slots[slices.Index(exact.observed, 1)]
+	otherSlot := exact.slots[slices.Index(exact.observed, 3)]
+	if blockedSlot == otherSlot {
+		t.Fatalf("simultaneous replays reported the same worker: observed=%v slots=%v", exact.observed, exact.slots)
+	}
 }
 
 func TestFunnelParallelCancellation(t *testing.T) {

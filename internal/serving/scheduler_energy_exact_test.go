@@ -198,6 +198,7 @@ func TestCapacityEnergyUndecidableSkipsReplayWithoutChangingSelection(t *testing
 				for _, skip := range []bool{false, true} {
 					s, snap := schedulerFixture()
 					s.PlanSearchStrategy, s.PlanPostFilterFinalists = protocol.V2, postfilter
+					s.PlanSearchEvaluations, s.PlanExactFinalists = 1000, 1
 					s.ComparisonPeriod = 600 * time.Second
 					snap.Instances[0].Profile.IdleBaselineWatts = 1000
 					node := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 1})
@@ -213,58 +214,51 @@ func TestCapacityEnergyUndecidableSkipsReplayWithoutChangingSelection(t *testing
 					}
 					capacityLoad(s, &snap, snap.Workloads[0], rate)
 					p := capacityPlannerForTest(t, s, snap)
-					choice := make([]int, len(p.plans))
-					for n, plans := range p.plans {
-						for j, plan := range plans {
-							if !plan.record.Eligible || plan.keep {
-								continue
-							}
-							if p.snapshot.Nodes[n].Node == node && slices.ContainsFunc(plan.instances, func(i SchedulerInstance) bool { return i.Profile.ID == wanted.Profile.ID }) ||
-								p.snapshot.Nodes[n].Node != node && len(plan.instances) == 0 {
-								choice[n] = j
-								break
-							}
-						}
-					}
-					if !p.hasUnsharedMissingOperation(choice) {
-						t.Fatalf("fixture lacks an unshared missing operation: %v", choice)
-					}
 					e := newCapacityExact(p)
 					var exact protocol.Exact[capacityResult] = fullReplayCapacityExact{e}
 					if skip {
 						exact = e
 					}
-					keepChoice := make([]int, len(p.plans))
-					seed := exact.Evaluate(keepChoice)
-					exact.SeedKeep(seed)
+					outcome, err := (v2.Engine[capacityResult]{}).Search(p.scalarProblem(p.planTable(), time.Time{}), exact)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !outcome.Found || outcome.Diagnostics.Fallback != "" {
+						t.Fatalf("fixture did not select through the seeded funnel: %+v", outcome)
+					}
 					if p.currentKeep().feasible == recovery {
 						t.Fatal("fixture keep feasibility does not match recovery case")
 					}
-					stats := v2.FunnelStats{}
-					best := v2.Funnel(p.searchProblem(time.Time{}), exact, []protocol.Candidate{{Choice: keepChoice}, {Choice: choice}}, &stats, nil)
-					if best == nil {
-						t.Fatal("fixture lost keep and recovery candidates")
-					}
+					e.record(outcome.Diagnostics)
+					best := outcome.Value
 					if !postfilter {
-						filtered := p.minimumGain(p.payback(*best))
-						best = &filtered
+						best = p.minimumGain(p.payback(best))
 					}
-					e.record(protocol.Diagnostics{Strategy: protocol.V2, ExactEvaluated: stats.Exact, Evaluated: stats.Exact})
-					if err := p.testDecisionRates(*best); err != nil {
+					if err := p.testDecisionRates(best); err != nil {
 						t.Fatal(err)
 					}
-					decisions = append(decisions, p.decide(SchedulerDecision{Keep: p.keep, Settings: s}, *best))
+					decision := SchedulerDecision{
+						At: p.snapshot.At, Settings: s, Keep: p.keep,
+						Search:     schedulerSearchPopulation(p.ctx, s, p.snapshot),
+						Workloads:  schedulerWorkloadStates(s, p.snapshot),
+						References: slices.Clone(p.snapshot.References),
+					}
+					decision.Reasons = appendUnique(decision.Reasons, schedulerReplayInitialScope(p.snapshot).evidence...)
+					fixSchedulerWorkloads(&decision, p.snapshot)
+					decision = p.decide(decision, best)
+					markFixedEstimates(&decision)
+					search := decision.Capacity.Search
+					search.StartedAt, search.FinishedAt = time.Time{}, time.Time{}
+					search.Duration, search.SurrogateElapsed, search.ExactElapsed = 0, 0, 0
+					for i := range search.Steps {
+						search.Steps[i].Duration = 0
+					}
+					decisions = append(decisions, decision)
 					count := 0
 					p.feedbackCache.Range(func(_, _ any) bool { count++; return true })
 					counts = append(counts, count)
 				}
 				before, after := decisions[0], decisions[1]
-				if before.Status != after.Status || !reflect.DeepEqual(before.Keep, after.Keep) || !reflect.DeepEqual(before.Target, after.Target) || !reflect.DeepEqual(before.Reasons, after.Reasons) {
-					t.Fatalf("preflight changed selection: before=%+v after=%+v", before, after)
-				}
-				if !reflect.DeepEqual(before.Capacity.MissingCells, after.Capacity.MissingCells) || !reflect.DeepEqual(before.Capacity.EnergyComparison, after.Capacity.EnergyComparison) {
-					t.Fatal("preflight changed missing-cell projection")
-				}
 				marked := 0
 				for i := range after.Capacity.UndecidableCandidates {
 					candidate := &after.Capacity.UndecidableCandidates[i]
@@ -276,13 +270,13 @@ func TestCapacityEnergyUndecidableSkipsReplayWithoutChangingSelection(t *testing
 						candidate.ReplaySkipped = false
 					}
 				}
-				if marked != 1 && !recovery || marked != 0 && recovery {
+				if marked == 0 && !recovery || marked != 0 && recovery {
 					t.Fatalf("recovery=%t skipped markers=%d", recovery, marked)
 				}
-				if !reflect.DeepEqual(before.Capacity, after.Capacity) {
-					t.Fatal("preflight changed capacity record beyond replaySkipped marker")
+				if !reflect.DeepEqual(before, after) {
+					t.Fatalf("preflight changed full decision beyond timing and replaySkipped: before=%+v after=%+v", before, after)
 				}
-				want := counts[0] - 1
+				want := counts[0] - marked
 				if recovery {
 					want = counts[0]
 				}

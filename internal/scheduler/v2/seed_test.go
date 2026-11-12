@@ -1,6 +1,7 @@
 package v2
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -10,11 +11,15 @@ import (
 
 type seedAdmissionExact struct {
 	finiteExact
-	admitted map[int]bool
-	observed []int
+	admitted   map[int]bool
+	observed   []int
+	admissions int
 }
 
-func (e *seedAdmissionExact) Admits(r finiteExactResult) bool { return e.admitted[r.choice[0]] }
+func (e *seedAdmissionExact) Admits(r finiteExactResult) bool {
+	e.admissions++
+	return e.admitted[r.choice[0]]
+}
 func (e *seedAdmissionExact) Observe(r finiteExactResult, _ int) {
 	e.observed = append(e.observed, r.choice[0])
 }
@@ -62,5 +67,42 @@ func TestFunnelNonAdmittedKeepSeedRetainsFallback(t *testing.T) {
 	}
 	if !got.Found || got.Value.choice[0] != 1 || got.Diagnostics.Fallback != "exactK1" {
 		t.Fatalf("non-admitted seed blocked fallback: %+v", got)
+	}
+}
+
+type cancellingSeedExact struct {
+	*seedAdmissionExact
+	cancel context.CancelFunc
+}
+
+func (e cancellingSeedExact) Evaluate(choice []int) finiteExactResult {
+	e.cancel()
+	return e.seedAdmissionExact.Evaluate(choice)
+}
+
+func TestFunnelCancelledKeepSeedDoesNotReduce(t *testing.T) {
+	for _, duringReplay := range []bool{false, true} {
+		t.Run(fmt.Sprint("duringReplay=", duringReplay), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			exact := &seedAdmissionExact{
+				finiteExact: finiteExact{results: []finiteExactResult{{joules: 30}, {joules: 20}}},
+				admitted:    map[int]bool{0: true, 1: true},
+			}
+			var port protocol.Exact[finiteExactResult] = exact
+			var candidates []protocol.Candidate
+			if duringReplay {
+				port = cancellingSeedExact{exact, cancel}
+				candidates = []protocol.Candidate{{Choice: []int{1}}}
+			} else {
+				cancel()
+			}
+			seed := finiteExactResult{choice: []int{0}, joules: 30}
+			stats := FunnelStats{}
+			got := Funnel(protocol.Problem{Context: ctx, Workers: 1, PostFilter: true}, port, candidates, &stats, &seed)
+			if got != nil || stats != (FunnelStats{}) || len(exact.observed) != 0 || exact.admissions != 0 || exact.filtered != 0 {
+				t.Fatalf("cancelled seed reduced: result=%+v stats=%+v observed=%v admissions=%d filters=%d", got, stats, exact.observed, exact.admissions, exact.filtered)
+			}
+		})
 	}
 }

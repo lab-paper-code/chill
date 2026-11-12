@@ -38,6 +38,7 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 	results := make([]struct {
 		value     R
 		evaluated bool
+		worker    int
 	}, len(candidates))
 	// Long transitions dominate replay cost. Dispatch them first, retaining
 	// candidate rank for all result storage, observations and reduction.
@@ -57,7 +58,7 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 	slices.SortStableFunc(jobs, func(a, b job) int { return cmp.Compare(b.pre, a.pre) })
 	workers := min(max(p.Workers, 1), len(candidates))
 	var next atomic.Int64
-	evaluate := func() {
+	evaluate := func(worker int) {
 		for {
 			index := int(next.Add(1)) - 1
 			if index >= len(jobs) {
@@ -70,18 +71,19 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 			if exact.Bounded(candidates[i].Choice) {
 				results[i].value = exact.Evaluate(slices.Clone(candidates[i].Choice))
 				results[i].evaluated = true
+				results[i].worker = worker
 			}
 		}
 	}
 	if workers == 1 {
-		evaluate()
+		evaluate(0)
 	} else {
 		var wg sync.WaitGroup
-		for range workers {
+		for worker := range workers {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				evaluate()
+				evaluate(worker)
 			}()
 		}
 		wg.Wait()
@@ -119,6 +121,9 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 			}
 		}
 	}
+	if p.Context != nil && p.Context.Err() != nil {
+		return nil
+	}
 	if seed != nil {
 		// Keep participates first with the same admission and postfilter rules.
 		// Reuse its exact seed result rather than replaying it for selection.
@@ -129,7 +134,7 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 			return nil
 		}
 		if results[i].evaluated {
-			reduce(&results[i].value, candidate, i%workers)
+			reduce(&results[i].value, candidate, results[i].worker)
 		}
 	}
 	if p.Context != nil && p.Context.Err() != nil {

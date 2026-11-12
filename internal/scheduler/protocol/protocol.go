@@ -113,7 +113,7 @@ type Diagnostics struct {
 }
 
 // Exact keeps native result storage in the CHILL adapter. Engines retain R directly.
-// Observe uses a stable worker slot; v2's keep seed uses slot zero.
+// Observe receives the actual replay worker slot; v2's keep seed uses slot zero.
 // V1 origins and postfilter probes are not observed.
 // Evaluate and Bounded may run concurrently; each evaluation owns its choice.
 // v2 reduces Observe, admission, postfilters and ranking in candidate order.
