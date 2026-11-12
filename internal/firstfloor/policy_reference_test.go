@@ -35,7 +35,7 @@ func TestConditionalNativeQuantilePreservesTrialWeightsAndTiedRecords(t *testing
 		want string
 	}{
 		{nil, OutcomeDeadlineDrop},
-		{new(int64), "available_energy"},
+		{new(int64), ReasonAvailableEnergy},
 		{func() *int64 { g := int64(10 * time.Millisecond); return &g }(), OutcomeDeadlineDrop},
 	} {
 		choice := ChooseBatch(p, []RequestState{q}, tc.gap)

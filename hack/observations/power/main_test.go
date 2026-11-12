@@ -100,6 +100,12 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(original, got) {
 		t.Fatalf("override mutated recorded policy: %+v, %v", original, err)
 	}
+	assertHistoricalPowerBaseline(t, obs, meters, from, to, snapshot, got)
+	assertPowerWindowsDecodeOnce(t, obs, meters, from, to)
+}
+
+func assertHistoricalPowerBaseline(t *testing.T, obs string, meters []observation.OperatingPowerMeter, from, to time.Time, snapshot serving.SchedulerSnapshot, got observation.OperatingPowerWindow) {
+	t.Helper()
 	// Put the membership baseline before the support-hour union. Both readers
 	// must retain the original fetched-history behavior, including its energy.
 	older := from.Add(-time.Minute).UTC().Truncate(time.Hour).Add(-time.Hour)
@@ -136,6 +142,10 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(historical, got) {
 		t.Fatalf("older membership baseline changed power: %+v, want %+v, error %v", historical, got, err)
 	}
+}
+
+func assertPowerWindowsDecodeOnce(t *testing.T, obs string, meters []observation.OperatingPowerMeter, from, to time.Time) {
+	t.Helper()
 	// Overlapping and distant windows share one local archive decode pass.
 	distant := from.UTC().Truncate(time.Hour).Add(3*time.Hour + 10*time.Second)
 	windows := []powerWindow{

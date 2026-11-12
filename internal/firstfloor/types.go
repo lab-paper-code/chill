@@ -22,17 +22,20 @@ const (
 )
 
 const (
-	DeadlineDrop           = "drop"
-	DeadlineKeep           = "keep"
-	DeadlineDefer          = "defer"
-	AdmissionReject        = "Reject"
-	AdmissionDelay         = "Delay"
-	CodeQueueFull          = "QueueFull"
-	CodeDeadlineInfeasible = "DeadlineInfeasible"
-	CodeRequestTimeout     = "RequestTimeout"
-	AdmissionStageExecutor = "executor"
-	OutcomeDeadlineDrop    = "deadline_drop"
-	ReasonDeadlineDefer    = "deadline_defer"
+	DeadlineDrop                    = "drop"
+	DeadlineKeep                    = "keep"
+	DeadlineDefer                   = "defer"
+	AdmissionReject                 = "Reject"
+	AdmissionDelay                  = "Delay"
+	CodeQueueFull                   = "QueueFull"
+	CodeDeadlineInfeasible          = "DeadlineInfeasible"
+	CodeRequestTimeout              = "RequestTimeout"
+	AdmissionStageExecutor          = "executor"
+	OutcomeDeadlineDrop             = "deadline_drop"
+	ReasonDeadlineDefer             = "deadline_defer"
+	ReasonMaximumThroughput         = "maximum_throughput"
+	ReasonAvailableEnergy           = "available_energy"
+	ReasonMissingConditionalSupport = "missing_conditional_support"
 	// FailureMemoryAllocation denotes a native allocator rejection, not kernel OOMKilled.
 	FailureMemoryAllocation = "MemoryAllocationFailed"
 	// OutcomePreprocessFailed ends one request whose sample the module rejected (HTTP 422).

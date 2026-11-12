@@ -157,7 +157,7 @@ func TestCapacityFinalistsKeepAndCapsSharePhysicalPlacement(t *testing.T) {
 	candidates, _ := v2.Candidates(problem, tab, 0, 2, 0, time.Time{})
 	seen := map[string]bool{}
 	for _, c := range candidates {
-		if c.Start != "keep" {
+		if c.Start != capacitySearchStartKeep {
 			continue
 		} // Endpoints are intentionally retained outside K.
 		key := tab.Placement[tab.ByPlan[0][c.Choice[0]]]

@@ -32,6 +32,8 @@ type schedulerEnergyTime struct {
 	sources    map[string]bool
 }
 
+const schedulerEnergyTimeMin = "min"
+
 // combineEnergyTimes folds measured constants and zero-duration dependency
 // actions. Action hashes never become part of a duration expression.
 func combineEnergyTimes(kind string, times []schedulerEnergyTime) schedulerEnergyTime {
@@ -40,10 +42,10 @@ func combineEnergyTimes(kind string, times []schedulerEnergyTime) schedulerEnerg
 		return out
 	}
 	constant, haveConstant := 0.0, false
-	var expressions []string
+	expressions := make([]string, 0, len(times))
 	for _, term := range times {
 		if len(term.sources) == 0 {
-			if !haveConstant || kind == "max" && term.value > constant || kind == "min" && term.value < constant {
+			if !haveConstant || kind == "max" && term.value > constant || kind == schedulerEnergyTimeMin && term.value < constant {
 				constant = term.value
 			}
 			haveConstant = true
@@ -57,10 +59,10 @@ func combineEnergyTimes(kind string, times []schedulerEnergyTime) schedulerEnerg
 			out.sources[key] = true
 		}
 	}
-	if len(expressions) == 0 || kind == "min" && haveConstant && constant == 0 {
+	if len(expressions) == 0 || kind == schedulerEnergyTimeMin && haveConstant && constant == 0 {
 		return schedulerEnergyTime{expression: fmt.Sprint(constant), value: constant}
 	}
-	if haveConstant && (constant != 0 || kind == "min") {
+	if haveConstant && (constant != 0 || kind == schedulerEnergyTimeMin) {
 		expressions = append(expressions, fmt.Sprint(constant))
 	}
 	slices.Sort(expressions)
@@ -152,7 +154,7 @@ func (p *capacityPlanner) bridgeEnergyTimes(res capacityResult, operations map[s
 				candidates = append(candidates, starts[id])
 			}
 		}
-		delays[n] = combineEnergyTimes("min", candidates)
+		delays[n] = combineEnergyTimes(schedulerEnergyTimeMin, candidates)
 	}
 	return ends, delays, route
 }
@@ -262,19 +264,19 @@ func (p *capacityPlanner) missingEnergyCells(reference, candidate capacityResult
 				continue
 			}
 			plan := p.plans[n][j]
-			seconds := map[string]float64{"before": 0, "mid": 0, "after": 0}
+			seconds := map[string]float64{schedulerEnergyPhaseBefore: 0, schedulerEnergyPhaseMid: 0, schedulerEnergyPhaseAfter: 0}
 			if plan.keep {
-				seconds["before"] = res.period
+				seconds[schedulerEnergyPhaseBefore] = res.period
 			} else {
-				seconds["mid"] = max(0, min(res.route, res.period)-plan.preMean)
-				seconds["after"] = max(0, res.period-res.route-plan.postMean)
+				seconds[schedulerEnergyPhaseMid] = max(0, min(res.route, res.period)-plan.preMean)
+				seconds[schedulerEnergyPhaseAfter] = max(0, res.period-res.route-plan.postMean)
 				if res.bridge != nil {
 					delay := res.bridge.delays[n]
-					seconds["before"] = min(delay, res.period)
-					seconds["mid"] -= min(delay, seconds["mid"])
+					seconds[schedulerEnergyPhaseBefore] = min(delay, res.period)
+					seconds[schedulerEnergyPhaseMid] -= min(delay, seconds[schedulerEnergyPhaseMid])
 				}
 			}
-			for _, phase := range []string{"before", "mid", "after"} {
+			for _, phase := range []string{schedulerEnergyPhaseBefore, schedulerEnergyPhaseMid, schedulerEnergyPhaseAfter} {
 				idle, ok := plan.record.IdleCosts[phase]
 				if !ok || idle.Source == operationSourceExact {
 					continue
@@ -337,65 +339,15 @@ func (p *capacityPlanner) energyTimingLaws(res capacityResult, operations map[st
 	if len(operations) == 0 {
 		return nil
 	}
-	preLaws, postLaws := make([]string, len(res.choice)), make([]string, len(res.choice))
-	hasPost := make([]bool, len(res.choice))
-	var routes []string
-	fixedRoute := 0.0
-	hasPre := false
-	for n, j := range res.choice {
-		plan := p.plans[n][j]
-		var pre, post []string
-		for key, operation := range operations {
-			if operation.cell.Node != plan.record.Node {
-				continue
-			}
-			if operation.pre > 0 {
-				pre = append(pre, fmt.Sprintf("%s*%d", key, operation.pre))
-				hasPre = true
-			}
-			if operation.post > 0 {
-				post = append(post, fmt.Sprintf("%s*%d", key, operation.post))
-			}
-		}
-		slices.Sort(pre)
-		slices.Sort(post)
-		hasPost[n] = len(post) > 0
-		preLaws[n] = fmt.Sprintf("%g:%v", plan.preMean, pre)
-		postLaws[n] = fmt.Sprintf("%g:%v", plan.postMean, post)
-		if !plan.keep {
-			if len(pre) > 0 {
-				routes = append(routes, fmt.Sprintf("%g:%v", plan.preMax, pre))
-			} else {
-				fixedRoute = max(fixedRoute, plan.preMax)
-			}
-		}
-	}
-	if fixedRoute > 0 {
-		routes = append(routes, fmt.Sprint(fixedRoute))
-	}
-	slices.Sort(routes)
-	routes = slices.Compact(routes)
-	routeTime := fmt.Sprintf("route(max(%v)):%g", routes, res.route)
+	preLaws, postLaws, hasPost, routeTime, hasPre := p.energyDurationLaws(res, operations)
 	var bridgeTimes map[string]schedulerEnergyTime
 	var bridgeDelays []schedulerEnergyTime
 	var bridgeRoute schedulerEnergyTime
-	var bridgeRequests map[string]float64
-	requestDelta := 0.0
 	if res.bridge != nil {
 		bridgeTimes, bridgeDelays, bridgeRoute = p.bridgeEnergyTimes(res, operations)
 		routeTime = bridgeRoute.expression
-		if hasPre {
-			bridgeRequests, requestDelta = p.bridgeRequestTimingCoefficients(res)
-		}
-	} else if hasPre {
-		initial, final := p.requestPowerTerms(res)
-		before, after := 0.0, 0.0
-		for _, node := range p.snapshot.Nodes {
-			before += initial[node.Node.UID].watts
-			after += final[node.Node.UID].watts
-		}
-		requestDelta = before - after
 	}
+	bridgeRequests, requestDelta := p.energyRequestTimingDelta(res, hasPre)
 	route := fmt.Sprintf("min(%g,%s)", res.period, routeTime)
 	laws := make(map[string]string, len(operations))
 	for key, operation := range operations {
@@ -405,22 +357,7 @@ func (p *capacityPlanner) energyTimingLaws(res capacityResult, operations map[st
 			routeDepends = bridgeRoute.sources[key]
 		}
 		add := func(expression string, plan *capacityPlan, phase string, sign float64) {
-			watts := plan.mid
-			switch phase {
-			case "before":
-				watts = plan.before
-			case "after":
-				watts = plan.after
-			}
-			idle := plan.record.IdleCosts[phase]
-			if idle.Source != operationSourceExact {
-				// Missing watts remain a symbol for their target cell, including
-				// when the provisional numeric value is zero.
-				expression += fmt.Sprintf("*idle(%s:%s:%v)", plan.record.Node.UID, idle.PowerMode, idle.State)
-				terms[expression] += sign
-			} else {
-				terms[expression] += sign * watts
-			}
+			addEnergyIdleTerm(terms, expression, plan, phase, sign)
 		}
 		for n, j := range res.choice {
 			plan := p.plans[n][j]
@@ -429,10 +366,10 @@ func (p *capacityPlanner) energyTimingLaws(res capacityResult, operations map[st
 			}
 			own := operation.cell.Node == plan.record.Node
 			if routeDepends {
-				add(route, plan, "mid", 1)
+				add(route, plan, schedulerEnergyPhaseMid, 1)
 			}
 			if own && operation.pre > 0 {
-				add(fmt.Sprintf("min(%g,pre(%s))", res.period, preLaws[n]), plan, "mid", -1)
+				add(fmt.Sprintf("min(%g,pre(%s))", res.period, preLaws[n]), plan, schedulerEnergyPhaseMid, -1)
 			}
 			if routeDepends || own && operation.post > 0 {
 				after := route
@@ -441,15 +378,15 @@ func (p *capacityPlanner) energyTimingLaws(res capacityResult, operations map[st
 				}
 				// With no post duration this shares the route expression, so
 				// equal mid/after powers cancel before comparing laws.
-				add(after, plan, "after", -1)
+				add(after, plan, schedulerEnergyPhaseAfter, -1)
 			}
 			if res.bridge != nil {
 				delay := bridgeDelays[n]
 				if delay.sources[key] {
-					add(fmt.Sprintf("min(%g,%s)", res.period, delay.expression), plan, "before", 1)
+					add(fmt.Sprintf("min(%g,%s)", res.period, delay.expression), plan, schedulerEnergyPhaseBefore, 1)
 				}
 				if delay.expression != "0" && (delay.sources[key] || routeDepends || own && operation.pre > 0) {
-					add(fmt.Sprintf("bridge-mid(%s,%s,%s)", route, delay.expression, preLaws[n]), plan, "mid", -1)
+					add(fmt.Sprintf("bridge-mid(%s,%s,%s)", route, delay.expression, preLaws[n]), plan, schedulerEnergyPhaseMid, -1)
 				}
 			}
 		}
@@ -622,4 +559,83 @@ func (p *capacityPlanner) bridgePhaseRequestPower(res capacityResult, node int, 
 		out.watts /= end - start
 	}
 	return out
+}
+
+func (p *capacityPlanner) energyDurationLaws(res capacityResult, operations map[string]schedulerMissingOperation) ([]string, []string, []bool, string, bool) {
+	preLaws, postLaws := make([]string, len(res.choice)), make([]string, len(res.choice))
+	hasPost := make([]bool, len(res.choice))
+	var routes []string
+	fixedRoute := 0.0
+	hasPre := false
+	for n, j := range res.choice {
+		plan := p.plans[n][j]
+		var pre, post []string
+		for key, operation := range operations {
+			if operation.cell.Node != plan.record.Node {
+				continue
+			}
+			if operation.pre > 0 {
+				pre = append(pre, fmt.Sprintf("%s*%d", key, operation.pre))
+				hasPre = true
+			}
+			if operation.post > 0 {
+				post = append(post, fmt.Sprintf("%s*%d", key, operation.post))
+			}
+		}
+		slices.Sort(pre)
+		slices.Sort(post)
+		hasPost[n] = len(post) > 0
+		preLaws[n] = fmt.Sprintf("%g:%v", plan.preMean, pre)
+		postLaws[n] = fmt.Sprintf("%g:%v", plan.postMean, post)
+		if !plan.keep {
+			if len(pre) > 0 {
+				routes = append(routes, fmt.Sprintf("%g:%v", plan.preMax, pre))
+			} else {
+				fixedRoute = max(fixedRoute, plan.preMax)
+			}
+		}
+	}
+	if fixedRoute > 0 {
+		routes = append(routes, fmt.Sprint(fixedRoute))
+	}
+	slices.Sort(routes)
+	routes = slices.Compact(routes)
+	routeTime := fmt.Sprintf("route(max(%v)):%g", routes, res.route)
+	return preLaws, postLaws, hasPost, routeTime, hasPre
+}
+
+func (p *capacityPlanner) energyRequestTimingDelta(res capacityResult, hasPre bool) (map[string]float64, float64) {
+	if res.bridge != nil {
+		if hasPre {
+			return p.bridgeRequestTimingCoefficients(res)
+		}
+	} else if hasPre {
+		initial, final := p.requestPowerTerms(res)
+		before, after := 0.0, 0.0
+		for _, node := range p.snapshot.Nodes {
+			before += initial[node.Node.UID].watts
+			after += final[node.Node.UID].watts
+		}
+		return nil, before - after
+	}
+	return nil, 0
+}
+
+func addEnergyIdleTerm(terms map[string]float64, expression string, plan *capacityPlan, phase string, sign float64) {
+	watts := plan.mid
+	switch phase {
+	case schedulerEnergyPhaseBefore:
+		watts = plan.before
+	case schedulerEnergyPhaseAfter:
+		watts = plan.after
+	}
+	idle := plan.record.IdleCosts[phase]
+	if idle.Source != operationSourceExact {
+		// Missing watts remain a symbol for their target cell, including
+		// when the provisional numeric value is zero.
+		expression += fmt.Sprintf("*idle(%s:%s:%v)", plan.record.Node.UID, idle.PowerMode, idle.State)
+		terms[expression] += sign
+	} else {
+		terms[expression] += sign * watts
+	}
 }

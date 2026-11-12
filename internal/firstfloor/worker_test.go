@@ -551,7 +551,7 @@ func TestLateQueueMaximumThroughput(t *testing.T) {
 				queue[i].ElapsedMS = 1100
 				queue[i].Phase = phaseDeferred
 			}
-			if c := ChooseBatch(p, queue, nil); c.Size != tc.want || c.WaitMS != 0 || c.Reason != "maximum_throughput" {
+			if c := ChooseBatch(p, queue, nil); c.Size != tc.want || c.WaitMS != 0 || c.Reason != ReasonMaximumThroughput {
 				t.Fatalf("late queue must minimize service cost per item: want size %d, got %+v", tc.want, c)
 			}
 		})
@@ -929,7 +929,7 @@ func TestNativeBundleRejectsDurationOnlyProfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	queue := []RequestState{testState("w", 100, 0), testState("w", 100, 0)}
-	if choice := ChooseBatch(loaded.Policy, queue, nil); choice.Size != 2 || choice.Reason != "available_energy" {
+	if choice := ChooseBatch(loaded.Policy, queue, nil); choice.Size != 2 || choice.Reason != ReasonAvailableEnergy {
 		t.Fatalf("paired bundle must hydrate a usable conditional native policy: %+v", choice)
 	}
 }

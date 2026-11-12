@@ -89,7 +89,11 @@ func TestObservationEnergyTermsRoundTrip(t *testing.T) {
 	if zero["joules"] != float64(0) {
 		t.Fatalf("selected zero prediction lost: %s", encoded)
 	}
-	unselected := plans[1].(map[string]any)
+	assertUnselectedEnergyTerms(t, plans[1].(map[string]any), encoded)
+}
+
+func assertUnselectedEnergyTerms(t *testing.T, unselected map[string]any, encoded []byte) {
+	t.Helper()
 	idle := unselected["idleCosts"].(map[string]any)["before"].(map[string]any)
 	for _, field := range []string{"powerMode", "state", "requestWatts", "requestReferences"} {
 		if _, present := idle[field]; present {

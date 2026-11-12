@@ -31,15 +31,16 @@ func funnelEvaluate[R any](exact protocol.Exact[R], choice []int, stats *FunnelS
 	return &res
 }
 
-// Funnel selects on native exact results and optional CHILL postfilters.
-func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []protocol.Candidate, stats *FunnelStats, seed *R) *R {
+type funnelResult[R any] struct {
+	value     R
+	evaluated bool
+	worker    int
+}
+
+func funnelReplay[R any](p protocol.Problem, exact protocol.Exact[R], candidates []protocol.Candidate) []funnelResult[R] {
 	// Replays borrow only immutable problem state. Reduce in candidate order so
 	// completion order cannot change ties, postfilters or observer diagnostics.
-	results := make([]struct {
-		value     R
-		evaluated bool
-		worker    int
-	}, len(candidates))
+	results := make([]funnelResult[R], len(candidates))
 	// Long transitions dominate replay cost. Dispatch them first, retaining
 	// candidate rank for all result storage, observations and reduction.
 	type job struct {
@@ -88,6 +89,12 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 		}
 		wg.Wait()
 	}
+	return results
+}
+
+// Funnel selects on native exact results and optional CHILL postfilters.
+func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []protocol.Candidate, stats *FunnelStats, seed *R) *R {
+	results := funnelReplay(p, exact, candidates)
 	var rawBest, filteredBest, selected *R
 	var rawFiltered R
 	var rawGap, filteredGap float64

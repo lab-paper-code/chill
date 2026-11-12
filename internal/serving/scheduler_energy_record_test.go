@@ -9,18 +9,18 @@ import (
 func TestSchedulerEnergyRecordScopesPredictionsAndDeduplicatesCells(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	settings.ComparisonPeriod = 600 * time.Second
-	snapshot.Nodes[0].PowerMode = "eco"
-	snapshot.Instances[0].Profile.Condition.PowerMode = "eco"
-	snapshot.Instances[0].IdleScope = "unknown"
-	node := poolsAddNode(&snapshot, "cheap", map[string]float64{"fixed": 1})
-	snapshot.Nodes[len(snapshot.Nodes)-1].PowerMode = "fixed"
-	wanted := poolsInstance(snapshot.Instances[0], "cheap", node, "fixed", "w1")
+	snapshot.Nodes[0].PowerMode = schedulerTestEcoMode
+	snapshot.Instances[0].Profile.Condition.PowerMode = schedulerTestEcoMode
+	snapshot.Instances[0].IdleScope = energyTestUnknownIdle
+	node := poolsAddNode(&snapshot, "cheap", map[string]float64{energyTestFixedMode: 1})
+	snapshot.Nodes[len(snapshot.Nodes)-1].PowerMode = energyTestFixedMode
+	wanted := poolsInstance(snapshot.Instances[0], "cheap", node, energyTestFixedMode, "w1")
 	wanted.IdleScope = schedulerNodeWallScope
 	wanted.Profile.IdleBaselineWatts = 1
 	wanted.Profile.Batches = append([]BatchProfile(nil), wanted.Profile.Batches...)
 	wanted.Profile.Batches[0].EnergyPerInputJoules = .01
 	snapshot.Options = append(snapshot.Options, poolsOption(wanted))
-	snapshot.Costs = append(snapshot.Costs, poolsCost("prepare", node, "unloaded", schedulerState(wanted), "fixed"), poolsCost("remove", snapshot.Instances[0].Node, schedulerState(snapshot.Instances[0]), "unloaded", "eco"))
+	snapshot.Costs = append(snapshot.Costs, poolsCost("prepare", node, "unloaded", schedulerState(wanted), energyTestFixedMode), poolsCost("remove", snapshot.Instances[0].Node, schedulerState(snapshot.Instances[0]), "unloaded", schedulerTestEcoMode))
 	capacityLoad(settings, &snapshot, snapshot.Workloads[0], 10)
 	decision := capacityDecideForTest(t, settings, snapshot)
 	raw, err := json.Marshal(decision.Capacity)
@@ -64,7 +64,7 @@ func TestSchedulerEnergyRecordScopesPredictionsAndDeduplicatesCells(t *testing.T
 	for _, value := range record["plans"].([]any) {
 		plan := value.(map[string]any)
 		uid := plan["node"].(map[string]any)["uid"].(string)
-		if plan["key"] == "keep" || plan["key"] == selected[uid] {
+		if plan["key"] == capacitySearchStartKeep || plan["key"] == selected[uid] {
 			continue
 		}
 		stripped++

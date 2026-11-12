@@ -16,7 +16,7 @@ func TestChooseBatchMissingConditionalSupportExecutesWithoutRejection(t *testing
 	for _, admission := range []string{AdmissionReject, AdmissionDelay} {
 		request := RequestState{Context: RequestContext{RequestID: "request", WorkloadUID: "workload", Definition: "frozen", AdmissionPolicy: admission, SLO: SLO{Percentile: 95, TargetMS: 1}}, Phase: phaseQueued, ElapsedMS: 2}
 		unknown := ChooseBatch(policy, []RequestState{request}, nil)
-		if unknown.Size != 1 || unknown.RequestID != request.Context.RequestID || unknown.Reason != "missing_conditional_support" {
+		if unknown.Size != 1 || unknown.RequestID != request.Context.RequestID || unknown.Reason != ReasonMissingConditionalSupport {
 			t.Fatalf("%s rejected or deferred on absent startup evidence: %+v", admission, unknown)
 		}
 		known := ChooseBatch(policy, []RequestState{request}, &gap)

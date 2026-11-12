@@ -209,7 +209,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	beforeSources.PowerMode, beforeSources.State = m0, schedulerEnergyState(current)
 	keep.before = before
 	keep.beforeBound = schedulerBaselineUncertainty(p.snapshot.Baselines, beforeSources, len(current))
-	keep.record.IdleCosts = map[string]IdlePowerProvenance{"before": beforeSources, "mid": beforeSources, "after": beforeSources}
+	keep.record.IdleCosts = map[string]IdlePowerProvenance{schedulerEnergyPhaseBefore: beforeSources, schedulerEnergyPhaseMid: beforeSources, schedulerEnergyPhaseAfter: beforeSources}
 	for _, instance := range p.pending {
 		if instance.Node != node.Node {
 			continue
@@ -280,7 +280,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 				if plan.record.IdleCosts == nil {
 					plan.record.IdleCosts = map[string]IdlePowerProvenance{}
 				}
-				plan.record.IdleCosts["before"] = keep.record.IdleCosts["before"]
+				plan.record.IdleCosts[schedulerEnergyPhaseBefore] = keep.record.IdleCosts[schedulerEnergyPhaseBefore]
 				plans = append(plans, plan)
 			}
 			return
@@ -499,9 +499,9 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	plan.midBound = schedulerBaselineUncertainty(p.snapshot.Baselines, midSources, len(mid))
 	plan.afterBound = schedulerBaselineUncertainty(p.snapshot.Baselines, afterSources, len(plan.instances))
 	plan.record.IdleCosts = map[string]IdlePowerProvenance{
-		"before": beforeSources,
-		"mid":    midSources,
-		"after":  afterSources,
+		schedulerEnergyPhaseBefore: beforeSources,
+		schedulerEnergyPhaseMid:    midSources,
+		schedulerEnergyPhaseAfter:  afterSources,
 	}
 	plan.record.Eligible = true
 	return plan

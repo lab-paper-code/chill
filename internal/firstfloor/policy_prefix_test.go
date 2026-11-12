@@ -54,7 +54,28 @@ func originalPrefixChoose(p Policy, requests []RequestState, gapDecision, gapUpp
 	r := requests[head]
 	choice := BatchChoice{RequestID: r.Context.RequestID, WorkloadUID: r.Context.WorkloadUID, Definition: r.Context.Definition}
 	count := compatibleCount(requests, head)
-	var available, throughput BatchProfile
+	available, throughput := originalPrefixProfiles(p, requests, head, count, gapDecision, &costs)
+	if available.Size == 0 {
+		if r.Phase != phaseDeferred {
+			choice.Reason = OutcomeDeadlineDrop
+			if mode == DeadlineDefer {
+				choice.Reason = ReasonDeadlineDefer
+			}
+			return choice
+		}
+		choice.Size, choice.Reason = throughput.Size, ReasonMaximumThroughput
+		return choice
+	}
+	choice.Size, choice.Reason = available.Size, ReasonAvailableEnergy
+	if math.IsInf(costs.cost(available, r.Context.SLO.Percentile, gapDecision), 1) {
+		choice.Reason = ReasonMissingConditionalSupport
+		return choice
+	}
+	return energyGainWait(p, requests, head, count, available, choice, gapDecision, &costs)
+}
+
+func originalPrefixProfiles(p Policy, requests []RequestState, head, count int, gapDecision *int64, costs *serviceCosts) (available, throughput BatchProfile) {
+	r := requests[head]
 	perItemCost := math.Inf(1)
 	for _, b := range p.Batches {
 		if b.Size < 1 || b.Size > count || !allowedBatch(p, b.Size) {
@@ -64,27 +85,11 @@ func originalPrefixChoose(p Policy, requests []RequestState, gapDecision, gapUpp
 		if throughput.Size == 0 || cost < perItemCost || cost == perItemCost && b.Size > throughput.Size {
 			throughput, perItemCost = b, cost
 		}
-		if r.Phase != phaseDeferred && (math.IsInf(cost, 1) || originalPrefixFeasible(requests, head, b, gapDecision, &costs)) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
+		if r.Phase != phaseDeferred && (math.IsInf(cost, 1) || originalPrefixFeasible(requests, head, b, gapDecision, costs)) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
 			available = b
 		}
 	}
-	if available.Size == 0 {
-		if r.Phase != phaseDeferred {
-			choice.Reason = OutcomeDeadlineDrop
-			if mode == DeadlineDefer {
-				choice.Reason = ReasonDeadlineDefer
-			}
-			return choice
-		}
-		choice.Size, choice.Reason = throughput.Size, "maximum_throughput"
-		return choice
-	}
-	choice.Size, choice.Reason = available.Size, "available_energy"
-	if math.IsInf(costs.cost(available, r.Context.SLO.Percentile, gapDecision), 1) {
-		choice.Reason = "missing_conditional_support"
-		return choice
-	}
-	return energyGainWait(p, requests, head, count, available, choice, gapDecision, &costs)
+	return available, throughput
 }
 
 func originalPrefixFeasible(requests []RequestState, head int, b BatchProfile, gap *int64, costs *serviceCosts) bool {

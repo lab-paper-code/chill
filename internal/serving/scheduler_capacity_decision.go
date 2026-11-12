@@ -11,6 +11,12 @@ import (
 	"time"
 )
 
+const (
+	schedulerEnergyPhaseBefore = "before"
+	schedulerEnergyPhaseMid    = "mid"
+	schedulerEnergyPhaseAfter  = "after"
+)
+
 // decide turns the chosen plan set into the decision: keep, a route-only
 // target, or a target whose actions come from schedulerPlan.
 func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult) SchedulerDecision {
@@ -35,114 +41,8 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	search := p.searched
 	record := &SchedulerCapacity{Period: time.Duration(best.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search, GainUncertaintyJoules: best.gainUncertainty}
 	record.TransitionReserves = best.reserves
-	cellIndexes := map[string]int{}
-	cellRefs := func(cells []SchedulerMissingEnergyCell) []int {
-		var refs []int
-		for _, cell := range cells {
-			raw, _ := json.Marshal(cell)
-			key := string(raw)
-			index, exists := cellIndexes[key]
-			if !exists {
-				index = len(record.MissingCells)
-				cellIndexes[key] = index
-				record.MissingCells = append(record.MissingCells, cell)
-			}
-			if !slices.Contains(refs, index) {
-				refs = append(refs, index)
-			}
-		}
-		slices.Sort(refs)
-		return refs
-	}
-	record.EnergyComparison.Status = "decidable"
-	record.EnergyComparison.MissingCellRefs = cellRefs(best.missingCells)
-	for _, candidate := range p.undecidable {
-		record.UndecidableCandidates = append(record.UndecidableCandidates, SchedulerUndecidableCandidateRecord{
-			Key: candidate.Key, MissingCellRefs: cellRefs(candidate.MissingCells), Excluded: candidate.Excluded, ReplaySkipped: candidate.ReplaySkipped,
-		})
-	}
-	if len(best.missingCells) > 0 {
-		record.EnergyComparison.Status = "undecidable"
-	}
-	if best.keep {
-		if !slices.Contains(p.compared, true) {
-			record.EnergyComparison.Status = "not-applicable"
-		}
-		for _, candidate := range p.undecidable {
-			if candidate.Excluded {
-				record.EnergyComparison.Status = "undecidable"
-				for _, ref := range cellRefs(candidate.MissingCells) {
-					if !slices.Contains(record.EnergyComparison.MissingCellRefs, ref) {
-						record.EnergyComparison.MissingCellRefs = append(record.EnergyComparison.MissingCellRefs, ref)
-					}
-				}
-			}
-		}
-	}
-	slices.Sort(record.EnergyComparison.MissingCellRefs)
-	_, beforePower := p.requestPowerTerms(keepResult)
-	midPower, afterPower := p.requestPowerTerms(best)
-	for n, plans := range p.plans {
-		uid := p.snapshot.Nodes[n].Node.UID
-		for j, plan := range plans {
-			projected := plan.record
-			projected.IdleCosts = maps.Clone(plan.record.IdleCosts)
-			selected := j == 0 || j == best.choice[n]
-			for phase, idle := range projected.IdleCosts {
-				idle.RequestWatts, idle.RequestReferences = nil, nil
-				if !selected {
-					idle.PowerMode, idle.State = "", nil
-				} else {
-					power := beforePower[uid]
-					if j == best.choice[n] {
-						switch phase {
-						case "mid":
-							power = midPower[uid]
-						case "after":
-							power = afterPower[uid]
-						}
-						if best.bridge != nil && phase != "after" {
-							start, end := 0.0, min(best.route, best.period)
-							if !plan.keep {
-								delay := min(best.bridge.delays[n], best.period)
-								if phase == "before" {
-									end = delay
-								} else {
-									start = min(delay+plan.preMean, best.period)
-								}
-							}
-							if phase == "mid" || !plan.keep {
-								power = p.bridgePhaseRequestPower(best, n, start, max(start, end))
-							}
-						}
-					}
-					watts := power.watts
-					idle.RequestWatts, idle.RequestReferences = &watts, power.references
-				}
-				projected.IdleCosts[phase] = idle
-			}
-			if selected && len(projected.ActionCosts) > 0 {
-				projected.ActionCosts = slices.Clone(projected.ActionCosts)
-				candidate := SchedulerCandidate{Nodes: slices.Clone(p.keep.Nodes), Routing: p.keep.Routing}
-				candidate.Nodes[n].PowerMode = plan.mode
-				for _, instance := range p.snapshot.Instances {
-					if instance.Node != plan.record.Node {
-						candidate.Instances = append(candidate.Instances, instance)
-					}
-				}
-				candidate.Instances = append(candidate.Instances, plan.instances...)
-				for _, action := range schedulerPlan(p.settings, p.snapshot, candidate) {
-					for k := range projected.ActionCosts {
-						if projected.ActionCosts[k].Action == action.ID {
-							seconds, _, joules := actionOperationCost(p.settings, p.snapshot.Costs, action)
-							projected.ActionCosts[k].Seconds, projected.ActionCosts[k].Joules = &seconds, &joules
-						}
-					}
-				}
-			}
-			record.Plans = append(record.Plans, projected)
-		}
-	}
+	p.recordEnergyComparison(best, record)
+	p.recordNodePlans(best, keepResult, record)
 	for w, ws := range p.ws {
 		tests, keepTests := []SchedulerFeedbackRate{}, []SchedulerFeedbackRate{}
 		if w < len(p.selectedRates) {
@@ -216,6 +116,54 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	}
 	decision.Target, decision.Status = &target, target.Status
 	return decision
+}
+
+func (p *capacityPlanner) recordEnergyComparison(best capacityResult, record *SchedulerCapacity) {
+	cellIndexes := map[string]int{}
+	cellRefs := func(cells []SchedulerMissingEnergyCell) []int {
+		var refs []int
+		for _, cell := range cells {
+			raw, _ := json.Marshal(cell)
+			key := string(raw)
+			index, exists := cellIndexes[key]
+			if !exists {
+				index = len(record.MissingCells)
+				cellIndexes[key] = index
+				record.MissingCells = append(record.MissingCells, cell)
+			}
+			if !slices.Contains(refs, index) {
+				refs = append(refs, index)
+			}
+		}
+		slices.Sort(refs)
+		return refs
+	}
+	record.EnergyComparison.Status = "decidable"
+	record.EnergyComparison.MissingCellRefs = cellRefs(best.missingCells)
+	for _, candidate := range p.undecidable {
+		record.UndecidableCandidates = append(record.UndecidableCandidates, SchedulerUndecidableCandidateRecord{
+			Key: candidate.Key, MissingCellRefs: cellRefs(candidate.MissingCells), Excluded: candidate.Excluded, ReplaySkipped: candidate.ReplaySkipped,
+		})
+	}
+	if len(best.missingCells) > 0 {
+		record.EnergyComparison.Status = "undecidable"
+	}
+	if best.keep {
+		if !slices.Contains(p.compared, true) {
+			record.EnergyComparison.Status = "not-applicable"
+		}
+		for _, candidate := range p.undecidable {
+			if candidate.Excluded {
+				record.EnergyComparison.Status = "undecidable"
+				for _, ref := range cellRefs(candidate.MissingCells) {
+					if !slices.Contains(record.EnergyComparison.MissingCellRefs, ref) {
+						record.EnergyComparison.MissingCellRefs = append(record.EnergyComparison.MissingCellRefs, ref)
+					}
+				}
+			}
+		}
+	}
+	slices.Sort(record.EnergyComparison.MissingCellRefs)
 }
 
 // sameRouting reports whether the controlled Workloads keep their current routes.
@@ -296,4 +244,70 @@ func (p *capacityPlanner) testDecisionRates(best capacityResult) error {
 	}
 	p.selectedRates, err = test(p.candidate(best))
 	return err
+}
+
+func (p *capacityPlanner) recordNodePlans(best, keepResult capacityResult, record *SchedulerCapacity) {
+	_, beforePower := p.requestPowerTerms(keepResult)
+	midPower, afterPower := p.requestPowerTerms(best)
+	for n, plans := range p.plans {
+		uid := p.snapshot.Nodes[n].Node.UID
+		for j, plan := range plans {
+			projected := plan.record
+			projected.IdleCosts = maps.Clone(plan.record.IdleCosts)
+			selected := j == 0 || j == best.choice[n]
+			for phase, idle := range projected.IdleCosts {
+				idle.RequestWatts, idle.RequestReferences = nil, nil
+				if !selected {
+					idle.PowerMode, idle.State = "", nil
+				} else {
+					power := beforePower[uid]
+					if j == best.choice[n] {
+						switch phase {
+						case schedulerEnergyPhaseMid:
+							power = midPower[uid]
+						case schedulerEnergyPhaseAfter:
+							power = afterPower[uid]
+						}
+						if best.bridge != nil && phase != schedulerEnergyPhaseAfter {
+							start, end := 0.0, min(best.route, best.period)
+							if !plan.keep {
+								delay := min(best.bridge.delays[n], best.period)
+								if phase == schedulerEnergyPhaseBefore {
+									end = delay
+								} else {
+									start = min(delay+plan.preMean, best.period)
+								}
+							}
+							if phase == schedulerEnergyPhaseMid || !plan.keep {
+								power = p.bridgePhaseRequestPower(best, n, start, max(start, end))
+							}
+						}
+					}
+					watts := power.watts
+					idle.RequestWatts, idle.RequestReferences = &watts, power.references
+				}
+				projected.IdleCosts[phase] = idle
+			}
+			if selected && len(projected.ActionCosts) > 0 {
+				projected.ActionCosts = slices.Clone(projected.ActionCosts)
+				candidate := SchedulerCandidate{Nodes: slices.Clone(p.keep.Nodes), Routing: p.keep.Routing}
+				candidate.Nodes[n].PowerMode = plan.mode
+				for _, instance := range p.snapshot.Instances {
+					if instance.Node != plan.record.Node {
+						candidate.Instances = append(candidate.Instances, instance)
+					}
+				}
+				candidate.Instances = append(candidate.Instances, plan.instances...)
+				for _, action := range schedulerPlan(p.settings, p.snapshot, candidate) {
+					for k := range projected.ActionCosts {
+						if projected.ActionCosts[k].Action == action.ID {
+							seconds, _, joules := actionOperationCost(p.settings, p.snapshot.Costs, action)
+							projected.ActionCosts[k].Seconds, projected.ActionCosts[k].Joules = &seconds, &joules
+						}
+					}
+				}
+			}
+			record.Plans = append(record.Plans, projected)
+		}
+	}
 }

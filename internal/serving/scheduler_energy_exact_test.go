@@ -11,14 +11,20 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
-	"github.com/lab-paper-code/chill/internal/scheduler/v2"
+	v2 "github.com/lab-paper-code/chill/internal/scheduler/v2"
+)
+
+const (
+	energyTestGPUMode     = "GPU_1500"
+	energyTestFixedMode   = "fixed"
+	energyTestUnknownIdle = "unknown"
 )
 
 func TestIdleSingleInstanceUsesItsProfileBase(t *testing.T) {
 	s, snap := schedulerFixture()
-	snap.Nodes[0].PowerMode = "GPU_1500"
-	snap.Baselines[0].Watts, snap.Baselines[0].PowerMode = 53.14, "fixed"
-	snap.Instances[0].Profile.Condition.PowerMode = "GPU_1500"
+	snap.Nodes[0].PowerMode = energyTestGPUMode
+	snap.Baselines[0].Watts, snap.Baselines[0].PowerMode = 53.14, energyTestFixedMode
+	snap.Instances[0].Profile.Condition.PowerMode = energyTestGPUMode
 	snap.Instances[0].Profile.IdleBaselineWatts = 118.44
 	snap.Instances[0].Profile.Batches[0].EnergyPerInputJoules = 8.77
 	s.MinimumDemand = map[string]float64{"w1": 1}
@@ -28,12 +34,12 @@ func TestIdleSingleInstanceUsesItsProfileBase(t *testing.T) {
 		t.Fatalf("serving W=%g, want profile base + request increment=%g", got.joules, 118.44+8.77)
 	}
 	d := p.decide(SchedulerDecision{Keep: p.keep, Settings: s}, p.evaluateCurrentKeep(p.periodSeconds))
-	if idle := p.plans[0][0].record.IdleCosts["before"]; idle.RequestWatts != nil || idle.PowerMode != "GPU_1500" || len(idle.State) == 0 {
+	if idle := p.plans[0][0].record.IdleCosts[schedulerEnergyPhaseBefore]; idle.RequestWatts != nil || idle.PowerMode != energyTestGPUMode || len(idle.State) == 0 {
 		t.Fatalf("decision projection changed planner metadata: %+v", idle)
 	}
 	for _, plan := range d.Capacity.Plans {
-		if plan.Key == "keep" && plan.Node.UID == snap.Nodes[0].Node.UID {
-			if watts := plan.IdleCosts["before"].RequestWatts; watts == nil || math.Abs(*watts-8.77) > 1e-8 {
+		if plan.Key == capacitySearchStartKeep && plan.Node.UID == snap.Nodes[0].Node.UID {
+			if watts := plan.IdleCosts[schedulerEnergyPhaseBefore].RequestWatts; watts == nil || math.Abs(*watts-8.77) > 1e-8 {
 				t.Fatalf("request W absent from decision: %+v", plan.IdleCosts)
 			}
 		}
@@ -43,19 +49,19 @@ func TestIdleSingleInstanceUsesItsProfileBase(t *testing.T) {
 func TestCapacityOtherModeIdleCannotDecideEnergyMove(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ComparisonPeriod = 600 * time.Second
-	snap.Nodes[0].PowerMode = "eco"
-	snap.Instances[0].Profile.Condition.PowerMode = "eco"
-	snap.Instances[0].IdleScope = "unknown"
+	snap.Nodes[0].PowerMode = schedulerTestEcoMode
+	snap.Instances[0].Profile.Condition.PowerMode = schedulerTestEcoMode
+	snap.Instances[0].IdleScope = energyTestUnknownIdle
 	snap.Baselines[0].Watts = 1000
-	n := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 1})
-	snap.Nodes[len(snap.Nodes)-1].PowerMode = "fixed"
-	wanted := poolsInstance(snap.Instances[0], "new", n, "fixed", "w1")
+	n := poolsAddNode(&snap, "n2", map[string]float64{energyTestFixedMode: 1})
+	snap.Nodes[len(snap.Nodes)-1].PowerMode = energyTestFixedMode
+	wanted := poolsInstance(snap.Instances[0], "new", n, energyTestFixedMode, "w1")
 	wanted.IdleScope = schedulerNodeWallScope
 	wanted.Profile.IdleBaselineWatts = 1
 	wanted.Profile.Batches = append([]BatchProfile(nil), wanted.Profile.Batches...)
 	wanted.Profile.Batches[0].EnergyPerInputJoules = .01
 	snap.Options = append(snap.Options, poolsOption(wanted))
-	snap.Costs = append(snap.Costs, poolsCost("prepare", n, "unloaded", schedulerState(wanted), "fixed"), poolsCost("remove", snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", "eco"))
+	snap.Costs = append(snap.Costs, poolsCost("prepare", n, "unloaded", schedulerState(wanted), energyTestFixedMode), poolsCost("remove", snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", schedulerTestEcoMode))
 	capacityLoad(s, &snap, snap.Workloads[0], 10)
 	d := capacityDecideForTest(t, s, snap)
 	if d.Target == nil || !poolsOn(*d.Target, snap.Nodes[0].Node) {
@@ -68,7 +74,7 @@ func TestCapacityOtherModeIdleCannotDecideEnergyMove(t *testing.T) {
 	if !slices.ContainsFunc(d.Capacity.UndecidableCandidates, func(candidate SchedulerUndecidableCandidateRecord) bool {
 		return candidate.Excluded && slices.ContainsFunc(candidate.MissingCellRefs, func(ref int) bool {
 			cell := d.Capacity.MissingCells[ref]
-			return cell.Node == snap.Nodes[0].Node && cell.Kind == "" && cell.PowerMode == "eco"
+			return cell.Node == snap.Nodes[0].Node && cell.Kind == "" && cell.PowerMode == schedulerTestEcoMode
 		})
 	}) {
 		t.Fatalf("other-mode idle target cell not recorded: %+v", d.Capacity.UndecidableCandidates)
@@ -81,12 +87,12 @@ func TestCapacityTransferredPrepareOnlyBlocksEnergyMove(t *testing.T) {
 			s, snap := schedulerFixture()
 			s.ComparisonPeriod = 600 * time.Second
 			snap.Instances[0].Profile.IdleBaselineWatts = 1000
-			n := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 1})
-			wanted := poolsInstance(snap.Instances[0], "new", n, "fixed", "w1")
+			n := poolsAddNode(&snap, "n2", map[string]float64{energyTestFixedMode: 1})
+			wanted := poolsInstance(snap.Instances[0], "new", n, energyTestFixedMode, "w1")
 			wanted.Profile.IdleBaselineWatts = 1
 			snap.Options = append(snap.Options, poolsOption(wanted))
-			transferred := poolsCost("prepare", n, "unloaded", "different-profile", "fixed")
-			snap.Costs = append(snap.Costs, transferred, poolsCost("remove", snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", "fixed"))
+			transferred := poolsCost("prepare", n, "unloaded", "different-profile", energyTestFixedMode)
+			snap.Costs = append(snap.Costs, transferred, poolsCost("remove", snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", energyTestFixedMode))
 			rate := 10.0
 			if recovery {
 				rate = 150
@@ -111,13 +117,13 @@ func TestCapacityIdenticalUnknownIdleCancelsForRouteChange(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ComparisonPeriod = 600 * time.Second
 	old := snap.Instances[0]
-	old.Profile.Condition.PowerMode = "eco"
-	old.IdleScope = "unknown"
+	old.Profile.Condition.PowerMode = schedulerTestEcoMode
+	old.IdleScope = energyTestUnknownIdle
 	snap.Instances[0] = old
-	snap.Nodes[0].PowerMode = "eco"
-	n := poolsAddNode(&snap, "ready-cheap", map[string]float64{"fixed": 10})
-	snap.Nodes[len(snap.Nodes)-1].PowerMode = "fixed"
-	cheap := poolsInstance(old, "ready-cheap", n, "fixed", "w1")
+	snap.Nodes[0].PowerMode = schedulerTestEcoMode
+	n := poolsAddNode(&snap, "ready-cheap", map[string]float64{energyTestFixedMode: 10})
+	snap.Nodes[len(snap.Nodes)-1].PowerMode = energyTestFixedMode
+	cheap := poolsInstance(old, "ready-cheap", n, energyTestFixedMode, "w1")
 	cheap.Profile.Batches = append([]BatchProfile(nil), cheap.Profile.Batches...)
 	cheap.Profile.Batches[0].EnergyPerInputJoules = .01
 	cheap.IdleScope = schedulerNodeWallScope
@@ -133,8 +139,8 @@ func TestCapacityIdenticalUnknownIdleCancelsForRouteChange(t *testing.T) {
 		t.Fatalf("identical terms did not cancel: %+v", d.Capacity.EnergyComparison)
 	}
 	for _, plan := range d.Capacity.Plans {
-		if plan.Node == n && plan.Key == "keep" {
-			watts := plan.IdleCosts["after"].RequestWatts
+		if plan.Node == n && plan.Key == capacitySearchStartKeep {
+			watts := plan.IdleCosts[schedulerEnergyPhaseAfter].RequestWatts
 			if watts == nil || *watts <= 0 {
 				t.Fatal("decidable route change omitted per-node request watts")
 			}
@@ -167,14 +173,14 @@ func TestCapacityBridgeRecordsPhaseRequestPower(t *testing.T) {
 		}
 	}
 	for _, plan := range decision.Capacity.Plans {
-		if plan.Node != bridge.Node || plan.Key == "keep" || plan.IdleCosts["mid"].RequestWatts == nil {
+		if plan.Node != bridge.Node || plan.Key == capacitySearchStartKeep || plan.IdleCosts[schedulerEnergyPhaseMid].RequestWatts == nil {
 			continue
 		}
-		mid := plan.IdleCosts["mid"]
+		mid := plan.IdleCosts[schedulerEnergyPhaseMid]
 		if math.Abs(*mid.RequestWatts-rate) > 1e-8 || !slices.Contains(mid.RequestReferences, bridge.Profile.ID) {
 			t.Fatalf("bridge phase lost routed request power: %+v, demand=%g", mid, rate)
 		}
-		if before := plan.IdleCosts["before"]; before.RequestWatts == nil || *before.RequestWatts != 0 {
+		if before := plan.IdleCosts[schedulerEnergyPhaseBefore]; before.RequestWatts == nil || *before.RequestWatts != 0 {
 			t.Fatalf("unloaded bridge node received pre-prepare request power: %+v", before)
 		}
 		return
@@ -201,13 +207,13 @@ func TestCapacityEnergyUndecidableSkipsReplayWithoutChangingSelection(t *testing
 					s.PlanSearchEvaluations, s.PlanExactFinalists = 1000, 1
 					s.ComparisonPeriod = 600 * time.Second
 					snap.Instances[0].Profile.IdleBaselineWatts = 1000
-					node := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 1})
-					wanted := poolsInstance(snap.Instances[0], "new", node, "fixed", "w1")
+					node := poolsAddNode(&snap, "n2", map[string]float64{energyTestFixedMode: 1})
+					wanted := poolsInstance(snap.Instances[0], "new", node, energyTestFixedMode, "w1")
 					wanted.Profile.IdleBaselineWatts = 1
 					snap.Options = append(snap.Options, poolsOption(wanted))
 					snap.Costs = append(snap.Costs,
-						poolsCost("prepare", node, "unloaded", "different-profile", "fixed"),
-						poolsCost("remove", snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", "fixed"))
+						poolsCost("prepare", node, "unloaded", "different-profile", energyTestFixedMode),
+						poolsCost("remove", snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", energyTestFixedMode))
 					rate := 10.0
 					if recovery {
 						rate = 150

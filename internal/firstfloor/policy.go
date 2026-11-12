@@ -233,12 +233,12 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision, gapUpper *int64
 			}
 			return choice
 		}
-		choice.Size, choice.Reason = throughput.Size, "maximum_throughput"
+		choice.Size, choice.Reason = throughput.Size, ReasonMaximumThroughput
 		return choice
 	}
-	choice.Size, choice.Reason = available.Size, "available_energy"
+	choice.Size, choice.Reason = available.Size, ReasonAvailableEnergy
 	if math.IsInf(costs.cost(available, r.Context.SLO.Percentile, gapDecision), 1) {
-		choice.Reason = "missing_conditional_support"
+		choice.Reason = ReasonMissingConditionalSupport
 		return choice
 	}
 	return energyGainWait(p, requests, head, count, available, choice, gapDecision, &costs)
