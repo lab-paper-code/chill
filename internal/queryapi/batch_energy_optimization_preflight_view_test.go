@@ -303,3 +303,30 @@ func TestPreflightMatchesMeasuredRuntimeVersionOnlyWhenPlanFixesIt(t *testing.T)
 		})
 	}
 }
+
+func TestPreflightKeepsCompletedVariantWithInProgressEvidence(t *testing.T) {
+	plan := batchEnergyOptimizationPreflightPlan(t)
+	measured := plan.Shared()
+	measured.RuntimeVersion = "measured-version"
+	measuredID := MeasurementVariantID(measured)
+	completed := MeasurementPreflightEvidence{Condition: measured, Batches: []int{1}}
+	pending := MeasurementPreflightEvidence{Condition: plan.Shared(), Batches: []int{2}, InProgress: true}
+	for _, selected := range []string{"", measuredID} {
+		for _, evidence := range [][]MeasurementPreflightEvidence{{completed, pending}, {pending, completed}} {
+			got := BuildMeasurementBatchPlan(BatchEnergyOptimizationPreflightSnapshot{
+				Plan: plan, VariantID: selected, RequestsComplete: true, ExactEvidence: evidence,
+			})
+			if got.VariantID == nil || *got.VariantID != measuredID ||
+				!reflect.DeepEqual(got.MeasuredBatches, []int{1}) ||
+				!reflect.DeepEqual(got.InProgressBatches, []int{2}) ||
+				!reflect.DeepEqual(got.MissingBatches, []int{4}) {
+				t.Fatalf("in-progress plan replaced completed measurement identity: %+v", got)
+			}
+			for _, reason := range got.Reasons {
+				if reason.Code == "VariantConditionChanged" {
+					t.Fatalf("in-progress plan invalidated completed variant: %+v", got)
+				}
+			}
+		}
+	}
+}

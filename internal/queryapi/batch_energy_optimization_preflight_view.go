@@ -139,6 +139,7 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 	condition := snapshot.Plan.Shared()
 	id := MeasurementVariantID(condition)
 	selectedID := ""
+	selectedComplete := false
 	for _, evidence := range snapshot.ExactEvidence {
 		measured := evidence.Condition
 		if condition.RuntimeVersion == "" {
@@ -147,8 +148,10 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 		}
 		if MeasurementVariantID(measured) == id {
 			evidenceID := MeasurementVariantID(evidence.Condition)
-			if snapshot.VariantID == "" || snapshot.VariantID == evidenceID {
+			if (snapshot.VariantID == "" || snapshot.VariantID == evidenceID) &&
+				(!evidence.InProgress || !selectedComplete) {
 				selectedID = evidenceID
+				selectedComplete = !evidence.InProgress
 			}
 			result.ConditionMatch = MeasurementConditionExact
 			for _, batch := range evidence.Batches {
