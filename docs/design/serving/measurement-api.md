@@ -19,7 +19,7 @@ mapping; its intent/result types come from the measurement owner without aliases
 ## 1. 측정 원칙
 
 - operation 비용은 준비, 유휴, 해제와 빈 노드 전력모드 변경을 순서 있는 요청 하나로 측정한다. 동작별 불변 기록은 요청과 실제 physical identity를 가리킨다.
-- 디스패치 점유 d는 인접한 고정 배치의 native 실행 시작 간격에서 profile 평균 실행시간을 뺀 signed ns/request다. 관측·채택 연결 키는 Node UID·모델·전력모드·실행 경로·배치·profileID이며 runtime image는 기록·표시만 한다.
+- 디스패치 점유 d는 인접한 고정 배치의 native 실행 시작 간격에서 profile 평균 실행시간을 뺀 signed ns/request다. 관측·채택 연결 키는 Node UID·모델·전력모드·실행 경로·배치·profileID다. DOM은 기록된 runtime image도 profile의 측정 이미지와 같아야 하며, profile identity는 측정 이미지와 runtime version을 보존한다.
 - 같은 노드는 요청 순서대로, 다른 노드는 병렬 측정한다. admission이 CPU·가용 자원·profile을 확인하고 거절 사유를 기록한다.
 - 대표 한 건의 조건 생성→실행→원시 기록→계획기 선택→실물 반환을 확인한 뒤 대량 실행한다. profile/runtime/측정 계약 변경에는 영향받는 d·비용·baseline 목록을 남긴다.
 
@@ -408,8 +408,8 @@ minute drift do not establish universal stationarity or scheduler admission.
 
 ## 4. 계획기의 d 수집
 
-- `CostEvidence.Refresh`는 `serving/dispatch-occupancy/`를 prefix 목록/불변 identity cache로 읽는다. `Accepted`이면서 기록의 `profileID`가 현재 catalog의 검증된 공유 실행 profile인 근거만 (Node UID, mode, runtime image, model)별 최신 `measuredAt` 선택에 참여한다. 과거 quota/thread 제어 profile의 d는 tuple이 같아도 새 κ 입력이 되지 않는다. 동률은 key 순(`latestBy` 규칙)이며 원 기록은 보존한다.
-- Scheduler selection is **rolling measured B median meeting configured `minimumPairs` > legacy Accepted DOM > configured default**. Measured matches exact Node UID/model/power mode/execution path/batch/profile ID; runtime image remains historical evidence. Legacy DOM retains Node UID/mode/model wildcard matching across profiles/batches.
+- `CostEvidence.Refresh`는 `serving/dispatch-occupancy/`를 prefix 목록/불변 identity cache로 읽는다. Accepted 기록의 (Node UID, mode, model, runtime image, profile ID, execution path, batch)별 최신 `measuredAt`를 유지한다. 다른 profile·이미지·batch의 새 기록이 정확히 맞는 기록을 가리지 않는다. 동률은 key 순(`latestBy` 규칙)이며 원 기록은 보존한다.
+- Scheduler selection is **rolling measured B median meeting configured `minimumPairs` > exact Accepted DOM > configured default**. Both measured B and DOM match exact Node UID/model/power mode/execution path/batch/profile ID. DOM additionally requires the recorded runtime image to match the profile. The immutable profile identity retains its image/version; mismatched or incomplete DOM identities are excluded, never borrowed across profiles or batches.
 - The sole default authority is scalar `settings.defaultDispatchOccupancyNanos` (sample 2,000,000), shared by every batch. Public settings GET/PUT and canonical PATCH validation retain this value; `dispatchOccupancy` cannot shadow it. Only measured B supplies batch-specific values. That separate block explicitly configures `minimumPairs` (100), `aggregationWindowSeconds` (120), `refreshIntervalSeconds` (60), `scanTimeoutSeconds` (30), and `maximumRequests` (250,000), alongside burst policy. These are sample choices, not Go policy defaults or universal precision guarantees.
 - One asynchronous worker scans/reduces outside Tick and writer locks. Selected request IDs are capped before estimator allocation; scans do not overlap. Idle cooldown is at least total scan+reduction time, and errors/timeouts/cap overflow discard partial/stale measured output in favor of DOM/default. Tick reads only the atomic published cache.
 - The public occupancy GET uses the same `aggregationWindowSeconds` cap (sample120) as rolling aggregation. Over-limit requests return `400 InvalidQuery` before scanning. Longer historical analysis uses raw observation export and offline reduction; extending a manual serving-process GET is not the offline path.
@@ -880,10 +880,10 @@ fingerprint다. `variant.requestIds`가 두 identity를 연결하며 같은 조�
 셀 상태·대표값·배치 집계에 사용한다. 최신이 failed/partial이면 그대로 표시하며 과거 성공으로 대체하지 않는다.
 `batchProgress={basis,target,measured,criteriaMet,missing,inProgress,unknown}`은 현재 측정의 batch 정수 배열이다.
 대표값 `{variantId,batch,incrementalJoulesPerItem,p95Milliseconds}`도 같은 실제 batch에 한정한다.
-이미지 버전은 profile 유효 조건이 아니다. runtime·artifact·preprocessor·observer 이미지의
-당시 원문은 보존하되 variant fingerprint와 preflight 기측정 배치 비교에서 제외한다.
-CPU quota/affinity는 현재 선택 키가 아니다. 과거 측정은 `history`와 기존 profile/raw 단건 조회에 남고,
-공개 profile 기록과 셀의 현재 선택은 분리한다. 현재/이전 이미지 선택 분기는 없다.
+runtime image digest와 관측 runtime version은 variant fingerprint와 측정 identity에 포함한다.
+artifact·preprocessor 이미지도 실행 조건이며 observer 이미지는 수집 provenance다.
+preflight는 계획이 고정한 이미지와 실행 조건을 비교한다. 아직 관측하지 않은 계획의 runtime version은 측정 후 채워진 version과 비교하지 않는다.
+CPU quota/affinity는 현재 선택 키가 아니다. 공개 profile 기록과 셀의 현재 선택은 분리하며 과거 측정은 `history`와 기존 profile/raw 단건 조회에 남는다.
 시각은 검증된 Complete profile의 raw 실행 완료 시각, 없으면 현재 generation terminal BEO의
 `MeasurementComplete` condition LastTransitionTime이며 둘 다 없으면 zero다. 생성 시각을 대신 쓰지 않는다.
 `chill.dacs.io/replaces-batch-energy-optimization`의 같은 namespace 대상은 최신 선택보다 먼저 제외한다.
