@@ -70,7 +70,21 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 저장 계약 변경과 작업용 객체 정리는 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md), 과거 과학 기록 보존은 [ADR 0032 Consequences](../../adr/0032-experiment-execution-boundary.md#consequences), 게시 정정은 [실험 SRS EXP-14](../../spec/experiments/SRS.md#3-요구사항)를 따른다.
 additive optional 필드(예: stage `progress`·`lastProgressAt`·`loadJobs`, `collectionLoss`)는 버전을 올리지 않는다.
 
-`tables.py`의 Prediction consistency 절은 stage ID만 담은 노드·동작·수용 기준 행을 출력한다. 기존 scheduler capture는 stage 직전 판단부터 keep/선택 plan의 v1alpha7 항·`keep.status`·에너지 비교/누락 셀 참조·실제 action 완료를 보존한다. 직전 판단이 없으면 선두 구간은 UNKNOWN이다. phase는 DAG의 pre 작업·최종 route·post 작업 완료를 함께 확인하며, route 뒤 제거 대기처럼 실제 적재 상태와 routing에 맞는 항이 없으면 UNKNOWN으로 남긴다. exact `actionCosts`만 예측 초/J에 사용하고, 실행 중에는 J/예측 초를 operation W로 별도 표시한다. 실측 J는 동일 노드의 전체 meter 에너지다. `prediction-power.json`은 기존 power API 결과를 구간별로 재사용하며 모든 호출은 공유 수집 deadline 안에서 수행하고 `archive-collection.json.powerQueries`에 호출 수를 남긴다. 노드별 구간 J 오차의 절댓값 합은 keep SLO 충족·에너지 비교 decidable·전환 ΔJ>0일 때만 ΔJ와 비교하며, keep·SLO 복구는 별도로 보고한다.
+V1 예측 정합은 judge Job 밖에서 오프라인으로 계산한다. Q1의 compact 비교 노드 수집·기존 표는 유지하며, V1을 위한 추가 scheduler/power 서버 조회·게시 KPI는 없다. 입력은 campaign이 이미 보존한 hydrated `scheduler-observations/*.json.gz`와 fetch한 raw `obs/<hour>/{catalog,scheduler}.jsonl.gz`다. 분석기는 직전 판단을 파일에서 찾고 stage로 자른 구간·동작 구간을 중복 제거한다. power CLI는 raw를 한 번 decode하고 구간마다 기존 `ReduceOperatingPower`를 호출한다. Python은 기존 `meter_energy`와 동결 binding의 meter/coverage 정책으로 결과를 투영한다.
+
+`$STAGES`는 `[{"id":"workload","from":"2026-11-12T02:34:30Z","to":"2026-11-12T02:49:30Z"}]` 형태다. `$PAGES`는 기존 hydrated 페이지 디렉터리, `$BINDING`은 해당 stage의 동결 binding, `$SETTINGS`/`$STATE`는 같은 실행의 accepted meter 설정/실제 Node snapshot이다. 이미 fetch했다면 첫 명령은 생략한다.
+
+```sh
+hack/observations/fetch.sh "$FROM_HOUR" "$TO_HOUR" "$OUT"
+python3 hack/evaluation/prediction_analysis.py windows --scheduler "$PAGES" --stages "$STAGES" --out "$OUT/windows.json"
+systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 env GOTOOLCHAIN=go1.26.4 GOFLAGS=-p=1 \
+  go run ./hack/observations/power --dir "$OUT/obs" --settings "$SETTINGS" --state "$STATE" \
+  --windows "$OUT/windows.json" > "$OUT/power-windows.json"
+python3 hack/evaluation/prediction_analysis.py report --scheduler "$PAGES" --stages "$STAGES" \
+  --binding "$BINDING" --power "$OUT/power-windows.json" --out "$OUT/prediction-analysis.json" --table "$OUT/prediction-tables.txt"
+```
+
+미리 빌드한 power 실행 파일이 있으면 `prediction_analysis.py run --scheduler "$PAGES" --stages "$STAGES" --binding "$BINDING" --out "$OUT" --power-cli /absolute/path/to/power --raw "$OUT/obs" --settings "$SETTINGS" --state "$STATE" --table "$OUT/prediction-tables.txt"`가 windows 작성·CLI 한 번 호출·결합을 수행한다. 직전 판단·meter·coverage·실제 phase가 불명확하면 UNKNOWN이며, route 뒤 post 제거 대기를 after로 취급하지 않는다. 예측 초/J는 exact `actionCosts`만 사용한다. 노드별 구간 J 오차 절댓값 합의 §6 판정은 keep SLO 충족·에너지 비교 decidable·전환 ΔJ>0일 때만 적용하고 keep·SLO 복구는 별도로 보고한다. v1alpha6에는 예측 항이 없어 정합 검증은 UNKNOWN이며 power 구간 적분만 검증할 수 있다.
 
 D44 recovery gaps from each raw-hour inventory are retained verbatim in
 `raw-source-index.json.gaps[]`, with API endpoint/hour provenance. Collection

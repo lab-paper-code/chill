@@ -282,11 +282,6 @@ def judge(binding, folder):
     observations = evidence_io.load(decisions_path) if decisions_path.exists() else {}
     declared_nodes = config['collection']['powerMeasurement']['nodes']
     result['energyBoundary'] = energy_boundary(power, observations, declared_nodes)
-    import prediction_analysis
-    windows_path = folder / 'prediction-power.json'
-    result['predictionAnalysis'] = prediction_analysis.analyze(
-        phase['stage']['id'], phase['startUTC'], phase['endUTC'], observations,
-        evidence_io.load(windows_path) if windows_path.exists() else [power])
     resources = folder / 'producer-resources.json'
     result['cgroups'] = evidence_io.load(resources) if resources.exists() else {'rows': [], 'meaning': 'No generator offered in this window'}
     # Keep per-request diagnostic evidence out of the compact verdict artifact.

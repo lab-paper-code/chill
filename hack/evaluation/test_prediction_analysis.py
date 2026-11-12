@@ -121,57 +121,6 @@ class PredictionTests(unittest.TestCase):
         result = analysis.analyze('stage', stamp(2), stamp(6), observations, powers)
         self.assertEqual(result['acceptance'][0]['absoluteErrorJoules'], 24)
 
-    def test_archive_retains_only_selected_terms_and_reuses_power_windows(self):
-        import os
-        import tempfile
-        import urllib.parse
-        from pathlib import Path
-        from types import SimpleNamespace
-        from unittest.mock import patch
-        import archive
-        import evidence_io
-        import tables
-        observations = fixture()
-        decision = observations['events'][0]['decision']
-        decision['capacity']['plans'].append({'node': NODE, 'key': 'unused', 'idleCosts': {'before': {'watts': 999}}})
-        decision['capacity']['workloads'] = ['unused bulk']
-        measurement = {'nodes': [NODE], 'series': 'watts', 'meters': [
-            {'id': 'meter', 'sourceIdentity': '{"metric":"watts"}'}]}
-        calls = []
-        def api(method, path, **kwargs):
-            query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
-            calls.append(path)
-            if '/scheduler?' in path:
-                self.assertNotIn('view', query)
-                self.assertEqual(query['limit'], ['1'])
-                return {**observations, 'coverage': {'gaps': []}}
-            start, end = query['from'][0], query['to'][0]
-            return {'from': start, 'to': end, 'nodes': [{
-                'node': NODE, 'meter': 'meter', 'sourceIdentity': {'metric': 'watts'},
-                'meterJoules': (analysis.ns(end) - analysis.ns(start)) / 1e9 * 13,
-                'meterComplete': True, 'samples': 10, 'gapSeconds': 0, 'gapFraction': 0, 'maximumSampleGapSeconds': 1}]}
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            folder = root / 'stage'
-            folder.mkdir()
-            config = root / 'environment.json'
-            evidence_io.save(config, {'paths': {'campaign': str(root)}})
-            with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(config)), patch.object(archive, '_collect_streams'):
-                archive.collect(folder, {'startUTC': stamp(1), 'endUTC': stamp(6), 'drainedUTC': stamp(6)},
-                    {'powerMeasurement': measurement, 'energyCoverage': {'maxGapFraction': .1, 'maxSingleGapSeconds': 2}},
-                    SimpleNamespace(api=api), 3)
-            captured = evidence_io.load(folder / 'scheduler-decisions.json')
-            self.assertEqual(len(captured['events'][0]['decision']['capacity']['plans']), 1)
-            self.assertNotIn('workloads', captured['events'][0]['decision']['capacity'])
-            # Stage/drain and decision windows coincide: one meter API call.
-            self.assertEqual(sum('/power?' in call for call in calls), 1)
-            result = analysis.analyze('stage', stamp(1), stamp(6), captured, evidence_io.load(folder / 'prediction-power.json'))
-            text = tables.render(root, evaluation={'schema': 'e5-summary.v5', 'status': 'MEASURED_DESCRIPTIVE',
-                'stages': [{'id': 'stage', 'kpis': {'requests': {}, 'power': power(stamp(1), stamp(6)),
-                                                 'predictionAnalysis': result}}]})
-            self.assertIn('\"predictedWatts\": 12', text)
-            self.assertIn('idle-before', text)
-            self.assertIn('\"kind\": \"keep\"', text)
 
 
 if __name__ == '__main__':

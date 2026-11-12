@@ -65,13 +65,5 @@ def render(root, repository=None, *, evaluation=None):
                 stage['id'], row['scope'], ','.join(node['name'] + '@' + node['uid'] for node in row['nodes']),
                 'UNKNOWN' if row['joules'] is None else row['joules'],
                 'UNKNOWN' if row['averageWatts'] is None else row['averageWatts'], row['status'], '; '.join(row['reasons']))))
-    lines.append('Prediction consistency (v1alpha7): stage | row kind | prediction / measured / error / coverage')
-    for stage in evaluation.get('stages', []):
-        prediction = stage['kpis'].get('predictionAnalysis') or {}
-        if not prediction:
-            lines.append(stage['id'] + ' | UNKNOWN | v1alpha7 prediction analysis unavailable')
-        for kind in ('nodes', 'actions', 'acceptance'):
-            for row in prediction.get(kind, []):
-                lines.append(stage['id'] + ' | ' + kind + ' | ' + json.dumps(row, sort_keys=True))
     lines.append('SLO denominator: the complete frozen planned population, not successful responses. Meter energy includes every declared node, whether serving or idle.')
     return '\n'.join(lines) + '\n'

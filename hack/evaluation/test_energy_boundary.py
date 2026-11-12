@@ -39,7 +39,7 @@ class EnergyBoundaryTests(unittest.TestCase):
             evidence_io.save(root / 'binding.json', {'schema': 'e5-binding.v4',
                 'config': {'workloads': [], 'evaluation': {}, 'collection': {'powerMeasurement': {'nodes': declared or NODES}}},
                 'limitations': []})
-            evidence_io.save(root / 'phase.json', {'stage': {'id': 'workload'}, 'startUTC': START, 'endUTC': END})
+            evidence_io.save(root / 'phase.json', {'stage': {}, 'startUTC': START, 'endUTC': END})
             evidence_io.save(root / 'power.json', measured)
             evidence_io.save(root / 'power-drain-inclusive.json', measured)
             evidence_io.save(root / 'scheduler-decisions.json', {'from': START, 'to': END, 'events': events,
@@ -106,7 +106,7 @@ class EnergyBoundaryTests(unittest.TestCase):
         self.assertIsNotNone(result, text)
         self.assertTrue(all(row['joules'] == 0 and row['averageWatts'] == 0 and row['status'] == 'MEASURED'
                             for row in result['rows']))
-        self.assertNotIn('UNKNOWN', text.split('Prediction consistency (v1alpha7):')[0])
+        self.assertNotIn('UNKNOWN', text)
 
     def test_recreated_node_is_missing_by_uid(self):
         other = {**NODES[0], 'uid': 'new-worker'}
@@ -150,7 +150,7 @@ class EnergyBoundaryTests(unittest.TestCase):
     def test_collected_decision_pages_reach_stage_report(self):
         self.collected_decision_pages_reach_stage_report()
 
-    def test_shared_collection_timeout_prevents_additional_api_calls(self):
+    def test_raw_collection_timeout_does_not_prevent_decision_capture(self):
         self.collected_decision_pages_reach_stage_report(raw_exhausted=True)
 
     def collected_decision_pages_reach_stage_report(self, raw_exhausted=False):
@@ -181,9 +181,7 @@ class EnergyBoundaryTests(unittest.TestCase):
                     return window
                 self.assertTrue(path.startswith('/api/v1/observations/scheduler?'), path)
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
-                if query.get('order') == ['desc']:
-                    return {'events': [], 'coverage': {'gaps': []}}
-                self.assertEqual(query['filter'], ['decision-action'])
+                self.assertEqual(query['filter'], ['decision'])
                 self.assertEqual(query['from'], [START])
                 self.assertEqual(query['to'], [END])
                 index = 1 if query.get('cursor') else 0
@@ -200,9 +198,6 @@ class EnergyBoundaryTests(unittest.TestCase):
                 raw_index = evidence_io.load(folder / 'raw-source-index.json')
                 self.assertFalse(raw_index['complete'])
                 self.assertIn('raw deadline exhausted', raw_index['errors'])
-                self.assertFalse(evidence_io.load(folder / 'scheduler-decisions.json')['complete'])
-                self.assertEqual(evidence_io.load(folder / 'archive-collection.json')['powerQueries'], 0)
-                return
             decisions = evidence_io.load(folder / 'scheduler-decisions.json')
             result = judgment.energy_boundary(evidence_io.load(folder / 'power.json'), decisions, NODES)
             self.assertEqual(result['comparedSetStatus'], 'VARYING')

@@ -100,6 +100,148 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(original, got) {
 		t.Fatalf("override mutated recorded policy: %+v, %v", original, err)
 	}
+	// Put the membership baseline before the support-hour union. Both readers
+	// must retain the original fetched-history behavior, including its energy.
+	older := from.Add(-time.Minute).UTC().Truncate(time.Hour).Add(-time.Hour)
+	schedulers, err := filepath.Glob(filepath.Join(obs, "*", "scheduler.jsonl.gz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range schedulers {
+		var remaining bytes.Buffer
+		if err := eachLine(name, func(raw []byte) error {
+			var row struct {
+				Snapshot *json.RawMessage `json:"snapshot"`
+			}
+			if err := json.Unmarshal(raw, &row); err != nil {
+				return err
+			}
+			if row.Snapshot == nil {
+				remaining.Write(raw)
+				remaining.WriteByte('\n')
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		writeGzip(t, name, remaining.Bytes())
+	}
+	snapshot.At = older.Add(59 * time.Minute)
+	baseline, err := json.Marshal(observation.SchedulerObservation{At: snapshot.At, Snapshot: &snapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeGzip(t, filepath.Join(obs, older.Format("20060102T15"), "scheduler.jsonl.gz"), append(baseline, '\n'))
+	historical, err := run(obs, meters, from, to, 0)
+	if err != nil || !reflect.DeepEqual(historical, got) {
+		t.Fatalf("older membership baseline changed power: %+v, want %+v, error %v", historical, got, err)
+	}
+	// Overlapping and distant windows share one local archive decode pass.
+	distant := from.UTC().Truncate(time.Hour).Add(3*time.Hour + 10*time.Second)
+	windows := []powerWindow{
+		{ID: "later", From: distant, To: distant.Add(time.Second)},
+		{ID: "full", From: from, To: to},
+		{ID: "overlap", From: from.Add(time.Second), To: to.Add(-time.Second)},
+		{ID: "repeat", From: from, To: to},
+	}
+	for _, at := range []time.Time{distant.Add(-time.Minute), distant.Add(time.Second + time.Minute)} {
+		writeGzip(t, filepath.Join(obs, at.UTC().Truncate(time.Hour).Format("20060102T15"), "scheduler.jsonl.gz"), nil)
+	}
+	expected := map[string]bool{}
+	for _, stream := range []string{"catalog", "scheduler"} {
+		names, err := filepath.Glob(filepath.Join(obs, "*", stream+".jsonl.gz"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range names {
+			expected[name] = true
+		}
+	}
+	for _, gap := range []time.Duration{0, 500 * time.Millisecond} {
+		calls := map[string]int{}
+		decoded := map[string]int{}
+		readLines := func(name string, visit func([]byte) error) error {
+			calls[name]++
+			return eachLine(name, func(raw []byte) error {
+				decoded[name]++
+				return visit(raw)
+			})
+		}
+		results, err := runWindows(obs, meters, windows, gap, readLines)
+		if err != nil || len(results) != len(windows) {
+			t.Fatalf("windows: %+v, %v", results, err)
+		}
+		if len(calls) != len(expected) {
+			t.Fatalf("segment reads = %v, want %v", calls, expected)
+		}
+		for name := range expected {
+			if calls[name] != 1 {
+				t.Fatalf("segment %s read %d times, want once", name, calls[name])
+			}
+			// Count actual decoded lines, not just reader construction. This
+			// catches rereading a segment through a retained reader callback.
+			lines := 0
+			if err := eachLine(name, func([]byte) error {
+				lines++
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if decoded[name] != lines {
+				t.Fatalf("segment %s decoded %d lines, want %d", name, decoded[name], lines)
+			}
+		}
+		for i, window := range windows {
+			single, err := run(obs, meters, window.From, window.To, gap)
+			if err != nil || results[i].ID != window.ID || !reflect.DeepEqual(results[i].Power, single) {
+				t.Fatalf("window %q gap %v: %+v, want %+v, error %v", window.ID, gap, results[i], single, err)
+			}
+		}
+	}
+}
+
+func TestReadWindows(t *testing.T) {
+	valid := `[{"id":"w0","from":"2026-11-12T10:00:00.123456789Z","to":"2026-11-12T10:00:01Z"}]`
+	name := filepath.Join(t.TempDir(), "windows.json")
+	for _, test := range []struct {
+		name      string
+		raw       string
+		hasBounds bool
+		wantError bool
+	}{
+		{name: "valid", raw: valid},
+		{name: "bounds conflict", raw: valid, hasBounds: true, wantError: true},
+		{name: "empty", raw: `[]`, wantError: true},
+		{name: "null", raw: `null`, wantError: true},
+		{name: "object", raw: `{}`, wantError: true},
+		{name: "malformed", raw: `[`, wantError: true},
+		{name: "trailing value", raw: valid + `[]`, wantError: true},
+		{name: "unknown field", raw: strings.Replace(valid, `"id"`, `"other"`, 1), wantError: true},
+		{name: "missing ID", raw: strings.Replace(valid, `"w0"`, `""`, 1), wantError: true},
+		{name: "blank ID", raw: strings.Replace(valid, `"w0"`, `" "`, 1), wantError: true},
+		{name: "duplicate ID", raw: valid[:len(valid)-1] + "," + valid[1:], wantError: true},
+		{name: "missing from", raw: `[{"id":"w0","to":"2026-11-12T10:00:01Z"}]`, wantError: true},
+		{name: "missing to", raw: `[{"id":"w0","from":"2026-11-12T10:00:00Z"}]`, wantError: true},
+		{name: "invalid time", raw: strings.Replace(valid, "2026-11-12T10:00:01Z", "tomorrow", 1), wantError: true},
+		{name: "reversed", raw: strings.Replace(valid, "2026-11-12T10:00:01Z", "2026-11-12T09:00:00Z", 1), wantError: true},
+		{name: "zero interval", raw: strings.Replace(valid, "2026-11-12T10:00:01Z", "2026-11-12T10:00:00.123456789Z", 1), wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.WriteFile(name, []byte(test.raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			windows, err := readWindows(name, test.hasBounds)
+			if (err != nil) != test.wantError {
+				t.Fatalf("windows = %+v, error = %v, want error %v", windows, err, test.wantError)
+			}
+			if !test.wantError && (len(windows) != 1 || windows[0].ID != "w0" || windows[0].From.Nanosecond() != 123456789) {
+				t.Fatalf("parsed windows = %+v", windows)
+			}
+		})
+	}
+	if _, err := readWindows(filepath.Join(t.TempDir(), "absent.json"), false); err == nil {
+		t.Fatal("missing windows file accepted")
+	}
 }
 
 func derivedTestMeters(t *testing.T, node serving.NodeReference, source metricobserver.SourceIdentity) []observation.OperatingPowerMeter {

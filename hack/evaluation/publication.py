@@ -83,7 +83,6 @@ def publish(context):
                   'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,
                   'power':power,'powerDrainInclusive':judgment.get('powerDrainInclusive'),'limitations':bound['limitations']}
             kpis['energyBoundary'] = judgment.get('energyBoundary')
-            kpis['predictionAnalysis'] = judgment.get('predictionAnalysis')
             kpis.update(judgment_rules.publication_measurements(bound,power))
             stages.append({'id':sid,'from':phase['startUTC'],'to':phase['endUTC'],'kpis':kpis})
     generated=input_snapshot.now();start=min((stage['from'] for stage in stages),default=generated if prepare_failed else context.snapshot['preparedAt']);end=max((stage['to'] for stage in stages),default=generated)

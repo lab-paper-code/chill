@@ -1,68 +1,37 @@
-"""Regressions for realistic stage capture and conservative prediction verdicts."""
+"""Offline hydrated-page regressions; no scheduler or power HTTP calls."""
 import copy
+import gzip
 import json
-import os
 from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-import urllib.parse
 
-import archive
-import evidence_io
-import judgment
 import prediction_analysis as analysis
 from test_prediction_analysis import fixture, power, stamp, NODE
 
 
 class PredictionReviewTests(unittest.TestCase):
-    def capture(self, events, start=2, end=6, prior=None, elapsed_per_call=0, budget=300):
-        calls, clock = [], [0.0]
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            folder = root / 'stage'
-            folder.mkdir()
-            env = root / 'env.json'
-            evidence_io.save(env, {'paths': {'campaign': str(root)}})
-            def api(method, path, timeout):
-                query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
-                calls.append((path, timeout, clock[0]))
-                clock[0] += elapsed_per_call
-                if '/scheduler?' in path:
-                    if query.get('order') == ['desc']:
-                        return {'events': [prior] if prior else [], 'coverage': {'gaps': []}}
-                    first, last = analysis.ns(query['from'][0]), analysis.ns(query['to'][0])
-                    selected = [e for e in ([prior] if prior else []) + events if first <= analysis.ns(e['at']) < last]
-                    index = int(query.get('cursor', ['0'])[0])
-                    return {'events': selected[index:index + 1], 'nextCursor': str(index + 1) if index + 1 < len(selected) else '', 'coverage': {'gaps': []}}
-                first, last = query['from'][0], query['to'][0]
-                return {'from': first, 'to': last, 'nodes': [{
-                    'node': NODE, 'meter': 'meter', 'sourceIdentity': {'metric': 'watts'},
-                    'meterJoules': (analysis.ns(last) - analysis.ns(first)) / 1e9 * 13,
-                    'meterComplete': True, 'samples': 10, 'gapSeconds': 0, 'gapFraction': 0, 'maximumSampleGapSeconds': 1}]}
-            measurement = {'nodes': [NODE], 'series': 'watts', 'meters': [{'id': 'meter', 'sourceIdentity': '{"metric":"watts"}'}]}
-            with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(env)), patch.object(archive, '_collect_streams'), patch.object(
-                    archive.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(archive.time, 'time_ns', return_value=analysis.ns(stamp(end)) + 180_000_000_000):
-                manifest = archive.collect(folder, {'startUTC': stamp(start), 'endUTC': stamp(end), 'drainedUTC': stamp(end)},
-                    {'powerMeasurement': measurement, 'energyCoverage': {'maxGapFraction': .1, 'maxSingleGapSeconds': 2}}, SimpleNamespace(api=api), budget)
-            return evidence_io.load(folder / 'scheduler-decisions.json'), evidence_io.load(folder / 'prediction-power.json'), calls, manifest
+    def archive(self, root, observations):
+        path = root / 'scheduler-observations'
+        path.mkdir(exist_ok=True)
+        with gzip.open(path / '0000.json.gz', 'wt') as output:
+            json.dump({'events': observations['events'], 'coverage': {'gaps': []}}, output)
+        return analysis.load_observations(path)
 
-    def test_judge_passes_only_id_from_realistic_stage_object(self):
-        stage = {'id': 'workload', 'seconds': 4, 'parts': [{'id': 'load', 'seconds': 4}],
+    def test_report_keeps_only_stage_id_from_realistic_stage_object(self):
+        stage = {'id': 'workload', 'from': stamp(2), 'to': stamp(6),
                  'traces': {'model': {'offsetsNS': list(range(20000)), 'offered': 20000}}}
-        bound = {'config': {'workloads': [], 'evaluation': {}, 'collection': {'powerMeasurement': {'nodes': [NODE]}}}, 'limitations': []}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            evidence_io.save(root / 'phase.json', {'stage': stage, 'startUTC': stamp(2), 'endUTC': stamp(6)})
-            for name in ('power', 'power-drain-inclusive'):
-                evidence_io.save(root / (name + '.json'), power(stamp(2), stamp(6)))
-            evidence_io.save(root / 'scheduler-decisions.json', fixture())
-            with patch.object(evidence_io, 'load_binding', return_value=bound), patch.object(evidence_io, 'module', return_value=SimpleNamespace(iter_request_indexes=lambda *a, **k: {})), patch.object(judgment, 'reduce_requests', return_value={}):
-                result = judgment.judge(root / 'binding.json', root)
-            prediction = result['predictionAnalysis']
-            self.assertEqual(prediction['nodes'][0]['stage'], 'workload')
-            self.assertLess(len(json.dumps(prediction)), 4000)
+            path = root / 'stages.json'
+            path.write_text(json.dumps([stage]))
+            stages = analysis.load_stages(path)
+            observations = self.archive(root, fixture())
+            result = analysis.offline_report(stages, observations, [power(stamp(2), stamp(6))])
+            self.assertEqual(result['stages'][0]['predictionAnalysis']['nodes'][0]['stage'], 'workload')
+            self.assertNotIn('traces', json.dumps(result))
+            self.assertLess(len(json.dumps(result)), 4000)
 
     def test_bridge_and_post_remove_wait_use_only_matching_phase(self):
         observations = fixture(True)
@@ -86,35 +55,42 @@ class PredictionReviewTests(unittest.TestCase):
             self.assertIsNone(analysis.phase(decision, plan, analysis.ns(stamp(at)), actual)[0])
         self.assertEqual(analysis.phase(decision, plan, analysis.ns(stamp(8)), actual)[0], 'after')
 
-    def test_slo_recovery_and_undecidable_transitions_have_no_energy_verdict(self):
+    def test_hydration_preserves_energy_eligibility_and_selected_terms_only(self):
         for status, comparison, kind in [('Overload', 'decidable', 'slo-recovery'), ('Feasible', 'undecidable', 'transition')]:
             observations = fixture(True)
             decision = observations['events'][0]['decision']
             decision['keep']['status'] = status
             decision['capacity']['energyComparison'] = {'status': comparison, 'missingCellRefs': [0]}
             decision['capacity']['missingCells'] = [{'node': NODE, 'phase': 'after', 'required': 'exact idle'}]
-            captured, powers, _, _ = self.capture(observations['events'], start=1)
+            decision['capacity']['plans'].append({'node': NODE, 'key': 'unused', 'idleCosts': {'before': {'watts': 999}}})
+            observations['events'][0]['snapshot'] = {'options': ['unneeded large catalog']}
+            with tempfile.TemporaryDirectory() as directory:
+                captured = self.archive(Path(directory), observations)
             frozen = captured['events'][0]['decision']
             self.assertEqual(frozen['keep']['status'], status)
             self.assertEqual(frozen['capacity']['energyComparison'], decision['capacity']['energyComparison'])
             self.assertEqual(frozen['capacity']['missingCells'], decision['capacity']['missingCells'])
-            result = analysis.analyze('stage', stamp(1), stamp(6), captured, powers)
+            self.assertEqual(len(frozen['capacity']['plans']), 1)
+            self.assertNotIn('snapshot', captured['events'][0])
+            result = analysis.analyze('stage', stamp(1), stamp(6), captured, [])
             self.assertEqual(result['acceptance'][0]['kind'], kind)
             self.assertEqual(result['acceptance'][0]['verdict'], 'NOT_APPLICABLE')
 
-    def test_capture_predecessor_or_report_unknown_leading_interval(self):
+    def test_hydrated_predecessor_or_unknown_leading_interval(self):
         prior = fixture()['events'][0]
         later = copy.deepcopy(prior)
         later['at'] = later['decision']['at'] = stamp(4)
-        captured, powers, _, _ = self.capture([later], prior=prior)
-        result = analysis.analyze('stage', stamp(2), stamp(6), captured, powers)
-        self.assertEqual([(row['from'], row['to']) for row in result['nodes']], [(stamp(2), stamp(4)), (stamp(4), stamp(6))])
-        self.assertEqual(result['nodes'][0]['decisionAt'], stamp(1))
-        captured, powers, _, _ = self.capture([later])
-        result = analysis.analyze('stage', stamp(2), stamp(6), captured, powers)
-        self.assertEqual(result['nodes'][0]['from'], stamp(2))
-        self.assertEqual(result['nodes'][0]['to'], stamp(4))
-        self.assertEqual(result['nodes'][0]['status'], 'UNKNOWN')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            captured = self.archive(root, {'events': [prior, later]})
+            result = analysis.analyze('stage', stamp(2), stamp(6), captured, [])
+            self.assertEqual([(row['from'], row['to']) for row in result['nodes']], [(stamp(2), stamp(4)), (stamp(4), stamp(6))])
+            self.assertEqual(result['nodes'][0]['decisionAt'], stamp(1))
+            captured = self.archive(root, {'events': [later]})
+            result = analysis.analyze('stage', stamp(2), stamp(6), captured, [])
+            self.assertEqual(result['nodes'][0]['from'], stamp(2))
+            self.assertEqual(result['nodes'][0]['to'], stamp(4))
+            self.assertEqual(result['nodes'][0]['status'], 'UNKNOWN')
 
     def test_action_seconds_do_not_fall_back_without_exact_cost(self):
         observations = fixture(True)
@@ -124,19 +100,41 @@ class PredictionReviewTests(unittest.TestCase):
         result = analysis.analyze('stage', stamp(2), stamp(6), observations, [])
         self.assertIsNone(result['actions'][0]['predictedSeconds'])
 
-    def test_ninety_decisions_dedupe_windows_and_share_deadline(self):
-        events = []
+    def test_ninety_decisions_use_one_cli_and_no_server_queries(self):
+        observations = {'events': [], 'complete': True, 'errors': []}
+        base = analysis.ns(stamp(0))
         for index in range(90):
             event = copy.deepcopy(fixture()['events'][0])
-            event['at'] = event['decision']['at'] = analysis.stamp(analysis.ns(stamp(0)) + index * 1_000_000_000)
-            events.append(event)
-        # Helper's stage end is RFC3339 seconds; 90-second stage crosses a minute.
-        with patch(__name__ + '.stamp', side_effect=lambda second: analysis.stamp(analysis.ns('2026-11-12T00:00:00Z') + second * 1_000_000_000)):
-            _, _, calls, manifest = self.capture(events, start=0, end=90, elapsed_per_call=.01)
-            power_calls = [row for row in calls if '/power?' in row[0]]
-            self.assertEqual(len(power_calls), 91)
-            self.assertEqual(len({row[0] for row in power_calls}), 91)
-            self.assertEqual(manifest['powerQueries'], 91)
-            self.assertTrue(all(timeout <= 300 - elapsed for _, timeout, elapsed in calls))
-            _, _, limited, _ = self.capture(events, start=0, end=90, elapsed_per_call=1, budget=3)
-            self.assertLessEqual(len(limited), 3)
+            event['at'] = event['decision']['at'] = analysis.stamp(base + index * 1_000_000_000)
+            observations['events'].append(event)
+        stages = [{'id': 'stage', 'from': stamp(0), 'to': analysis.stamp(base + 90_000_000_000)}]
+        stages.append(dict(stages[0], id='same-interval'))
+        measurement = {'nodes': [NODE], 'series': 'watts', 'meters': [{'id': 'meter', 'sourceIdentity': '{"metric":"watts"}'}]}
+        collection = {'powerMeasurement': measurement, 'energyCoverage': {'maxGapFraction': .1, 'maxSingleGapSeconds': 2}}
+        def cli(command, stdout, check):
+            windows = json.loads(Path(command[command.index('--windows') + 1]).read_text())
+            result = []
+            for row in windows:
+                result.append({'id': row['id'], 'power': {'from': row['from'], 'to': row['to'], 'nodes': [{
+                    'node': NODE, 'meter': 'meter', 'sourceIdentity': {'metric': 'watts'}, 'meterComplete': True,
+                    'meterJoules': 13, 'samples': 2, 'gapSeconds': 0, 'gapFraction': 0, 'maximumSampleGapSeconds': 1}]}})
+            json.dump({'windows': result}, stdout)
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(analysis.subprocess, 'run', side_effect=cli) as invoked, patch('urllib.request.urlopen', side_effect=AssertionError('offline analysis must not query servers')):
+                result = analysis.run_offline(stages, observations, collection, Path(directory), 'power-cli', 'raw', 'settings.json', 'state.json')
+            self.assertEqual(invoked.call_count, 1)
+            windows = json.loads((Path(directory) / 'prediction-windows.json').read_text())
+            self.assertEqual(len(windows), 90)
+            self.assertEqual(len(result['stages'][0]['predictionAnalysis']['nodes']), 90)
+            self.assertEqual(result['stages'][0]['predictionAnalysis']['nodes'][0]['measuredWatts'], 13)
+
+    def test_incomplete_hydrated_coverage_remains_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            observations = self.archive(root, fixture())
+            path = root / 'scheduler-observations' / '0000.json.gz'
+            with gzip.open(path, 'wt') as output:
+                json.dump({'events': fixture()['events'], 'coverage': {'gaps': [{'reason': 'missing'}]}}, output)
+            observations = analysis.load_observations(path.parent)
+        result = analysis.analyze('stage', stamp(2), stamp(6), observations, [power(stamp(2), stamp(6))])
+        self.assertEqual(result['nodes'][0]['status'], 'UNKNOWN')
