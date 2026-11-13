@@ -28,7 +28,7 @@ export function useMeasurementDocumentSubmission({body,namespace,plans,refetchPl
   const name=body?.metadata.name??""
   const answer=pre.data?.data as MeasurementPreflight|undefined
   const admitted=dry.isSuccess&&(dry.data?.data as MeasurementMutation|null)?.request==="NOT_SUBMITTED"
-  const issue=!body?"먼저 요청 문서를 검토하세요.":body.metadata.namespace!==namespace?"선택한 네임스페이스에서 문서를 다시 검토하세요.":validate?.()||""
+  const issue=!body?"문서 검토 필요":body.metadata.namespace!==namespace?"다른 작업 영역의 문서":validate?.()||""
   const canSubmit=!issue
   const pending=dry.isPending||pre.isPending
   function invalidate() {
@@ -44,7 +44,7 @@ export function useMeasurementDocumentSubmission({body,namespace,plans,refetchPl
     if(unknown||pending||send.isPending)return
     if(!checkInput())return
     if(verdict?.state==="unsupported"){setError(verdict.reason);return}
-    if(verdict?.state==="unknown"&&!showUnknown){setError("지원 미확인 조합을 검사하려면 명시 검사 항목을 선택하세요.");return}
+    if(verdict?.state==="unknown"&&!showUnknown){setError("미확인 조합 검사 선택 필요");return}
     setError("")
     dry.mutate({path:`${listPath}?dryRun=All`,method:"POST",body})
     pre.mutate({path:`${listPath}/preflight${variantId?`?${new URLSearchParams({variantId})}`:""}`,method:"POST",body})
@@ -60,7 +60,7 @@ export function useMeasurementDocumentSubmission({body,namespace,plans,refetchPl
   }
   const found=checked?plans.find(plan=>plan.metadata.namespace===namespace&&plan.metadata.name===name):undefined
   function lookup() {
-    void refetchPlans().then(result=>{setChecked(!result.error);if(result.error)setError("목록 조회 실패: 다시 확인하세요.")})
+    void refetchPlans().then(result=>{setChecked(!result.error);if(result.error)setError("목록 조회 실패")})
   }
   return {dry,pre,send,error,setError,unknown,checked,showUnknown,setShowUnknown,stage,setStage,answer,admitted,canSubmit,pending,invalidate,verify,submit,found,lookup}
 }

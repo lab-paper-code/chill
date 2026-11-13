@@ -88,7 +88,7 @@ function Conditions({ run }: { run: ProfilingRun }) {
   return (
     <Section title="조건" card>
       <Fields columns={3} items={[
-        { label: "측정 요청", value: parent && <Link className="hover:underline" href={`/measurements/requests/${encodeURIComponent(parent.name)}?uid=${encodeURIComponent(parent.uid)}`}>{parent.name}</Link>, reason: "연결된 요청 없음" },
+        { label: "측정 요청", value: parent && <Link className="text-primary hover:underline" href={`/measurements/requests/${encodeURIComponent(parent.name)}?uid=${encodeURIComponent(parent.uid)}`}>{parent.name}</Link>, reason: "연결된 요청 없음" },
         { label: "모델", value: spec.candidate?.modelSpec },
         { label: "장치 종류", value: spec.candidate && deviceClassLabel(spec.candidate.deviceClass) },
         { label: "장치", value: spec.targetNode },

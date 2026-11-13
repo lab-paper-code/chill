@@ -23,7 +23,7 @@ const missingBatch = (r: BatchRow) => r.state === "measured" ? "결과 기록 �
 const batchColumns: Column<BatchRow>[] = [
   { key: "batch", header: "배치", unit: "건", cell: r => <Hint text={BATCH_STATES[r.state].label}><StatusDot status={BATCH_STATES[r.state]} label={String(r.batch)} showLabel /></Hint> },
   { key: "latency", header: "지연 p95", unit: "ms", numeric: true, cell: r => r.result?.p95Milliseconds == null ? null : msNumber(r.result.p95Milliseconds), missing: missingBatch },
-  { key: "energy", header: "건당 에너지", unit: "J", numeric: true, cell: r => r.result?.incrementalJoulesPerItem == null ? null : formatNumber(r.result.incrementalJoulesPerItem, 3), missing: missingBatch },
+  { key: "energy", header: "추가 에너지", unit: "J/건", numeric: true, cell: r => r.result?.incrementalJoulesPerItem == null ? null : formatNumber(r.result.incrementalJoulesPerItem, 3), missing: missingBatch },
 ]
 
 export function CellDrawer({ cell, namespace, returnTo, onClose }: { cell: Cell; namespace: string; returnTo: string; onClose: () => void }) {

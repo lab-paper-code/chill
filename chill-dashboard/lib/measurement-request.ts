@@ -64,9 +64,7 @@ export function requestInputs(model:string,artifact:string,preprocessor:string,d
   const priorDataset=history.map(entry=>context.datasets.find(item=>item.metadata.name===entry.dataset&&compatible(item))).find(Boolean)
   const explicitDataset=context.datasets.find(item=>item.metadata.name===dataset)
   const selected=explicitDataset&&(!inherited.dataset||compatible(explicitDataset)&&history.some(entry=>entry.dataset===dataset&&entry.preprocessor===pre?.metadata.name))?explicitDataset:priorDataset??(datasets.length===1?datasets[0]:undefined)
-  const contract=pre?.spec.input.fields.map(field=>`${field.name} (${field.format}, 최대 ${field.maxBytes} B)`).join(", ")
-  const warning=!pre?"모델과 실행 경로에 연결된 전처리기 입력 형식 미확인, 카탈로그의 전처리기 연결 확인 후 직접 선택":!candidates.includes(pre)?"선택한 전처리기가 이 모델과 실행 경로에 연결되지 않음, 카탈로그 연결 확인 필요":selected&&!compatible(selected)?`데이터셋이 전처리기 입력 조건과 불일치: ${datasetGap(selected.spec,pre.spec)}`:!selected?datasets.length>1?`입력 조건 ${contract}에 맞는 데이터셋 여러 개, 직접 선택 필요`:`입력 조건 ${contract}과 필드 집합이 같은 유일한 데이터셋 없음, 직접 선택 필요 (직접 선택 시 추가 필드 허용)`:""
-  return {preprocessor:pre?.metadata.name??"",dataset:selected?.metadata.name??"",warning}
+  return {preprocessor:pre?.metadata.name??"",dataset:selected?.metadata.name??""}
 }
 
 export type RequestRejectionGuidance={target:string;fields:string[];message:string;constraints:[string,string][]}

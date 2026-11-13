@@ -178,11 +178,12 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
             rowKey={f => f.runId || `${f.batch}-${f.code}`}
             pageSize={0}
             columns={[
-              { key: "run", header: "연결 회차", cell: f => (f.runName ? <Link className="hover:underline" href={`/measurements/runs/${encodeURIComponent(f.runName)}?uid=${encodeURIComponent(f.runId)}`}>{f.runName}</Link> : null), missingReason: "연결된 회차 없음", width: "24rem" },
+              { key: "run", header: "연결 회차", cell: f => (f.runName ? <Link className="text-primary hover:underline" href={`/measurements/runs/${encodeURIComponent(f.runName)}?uid=${encodeURIComponent(f.runId)}`}>{f.runName}</Link> : null), missingReason: "연결된 회차 없음", width: "24rem" },
               { key: "batch", header: "배치", unit: "건", numeric: true, cell: f => f.batch },
               { key: "code", header: "분류", cell: f => f.label },
               { key: "exit", header: "종료 코드", numeric: true, cell: f => f.exitCode, missingReason: "종료 코드 없음" },
-              { key: "line", header: "첫 오류", cell: f => f.firstErrorLine?.slice((f.firstErrorTime ?? "").length).trim() },
+              // The summary carries the first error line only for some failures; otherwise the linked run detail holds the log.
+              ...(failures.some(f => f.firstErrorLine) ? [{ key: "line", header: "첫 오류", cell: (f: MeasurementFailure) => f.firstErrorLine?.slice((f.firstErrorTime ?? "").length).trim(), missing: (f: MeasurementFailure) => f.runName ? "연결 회차에서 확인" : "기록 없음" }] : []),
             ] satisfies Column<MeasurementFailure>[]}
             empty={<EmptyState title="실패 기록 없음" compact />}
           />

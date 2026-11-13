@@ -19,6 +19,11 @@ const LEGEND: { tone: StatusTone; label: string }[] = [
   { tone: "idle", label: "미측정, 미확인" },
 ]
 
+/** Long power mode labels ("MODE_10W_DESKTOP") wrap at spaces and underscores instead of being cut. */
+export function Wrapping({ text }: { text: string }) {
+  return <span className="whitespace-normal">{text.split("_").flatMap((part, index) => index ? [<wbr key={index} />, `_${part}`] : [part])}</span>
+}
+
 export function CoverageMatrix({ rows, cells, status, onOpen, empty }: {
   rows: MatrixGroup[]; cells: Cell[]; status: string | null
   onOpen: (id: string) => void; empty: React.ReactNode
@@ -35,7 +40,7 @@ export function CoverageMatrix({ rows, cells, status, onOpen, empty }: {
         label: deviceClassLabel(group.deviceClass),
         rows: group.modes.map(row => ({
           key: row.mode,
-          label: powerModeLabel(row.mode),
+          label: <Wrapping text={powerModeLabel(row.mode)} />,
           cells: Object.fromEntries([...row.cells].map(([path, cell]) => [path, <CellButton key={path} cell={cell} dim={!!status && coverageMeasurementStatus(cell) !== status} onOpen={onOpen} />])),
         })),
       }))}

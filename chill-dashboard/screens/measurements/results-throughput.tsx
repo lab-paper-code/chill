@@ -33,7 +33,7 @@ const columns: Column<Profile>[] = [
   { width: "28%", key: "condition", header: "장치와 조건", cell: p => `${p.nodeName} / ${powerModeLabel(p.condition.powerMode)} / ${executionPathLabel(p.condition.artifact.executionPath)}` },
   { width: "9%", key: "batch", header: "대표 배치", unit: "건", numeric: true, cell: p => representative(p)?.batch, missingReason: "배치 결과 없음" },
   { width: "9%", key: "latency", header: "지연 p95", unit: "ms", numeric: true, cell: p => { const v = representative(p)?.p95Milliseconds; return v == null ? null : msNumber(v) }, missingReason: "지연 기록 없음" },
-  { width: "12%", key: "energy", header: "건당 에너지", unit: "J", numeric: true, cell: p => { const v = representative(p)?.incrementalJoulesPerItem; return v == null ? null : formatNumber(v, 3) }, missingReason: "에너지 기록 없음" },
+  { width: "12%", key: "energy", header: "추가 에너지", unit: "J/건", numeric: true, cell: p => { const v = representative(p)?.incrementalJoulesPerItem; return v == null ? null : formatNumber(v, 3) }, missingReason: "에너지 기록 없음" },
   { width: "10%", key: "use", header: "사용 여부", cell: p => <Usage profile={p} />, missingReason: "사용 여부 미확인" },
   { key: "quality", header: "품질", cell: p => <Quality profile={p} /> },
 ]
@@ -45,8 +45,8 @@ const batchTables = [
     { key: "samples", header: "표본", unit: "건", numeric: true, cell: r => r.latencySampleCount == null ? null : formatNumber(r.latencySampleCount) },
   ]),
   batchTable("에너지", [
-    { key: "total", header: "총", unit: "J/건", numeric: true, cell: r => r.totalJoulesPerItem == null ? null : formatNumber(r.totalJoulesPerItem, 3) },
     { key: "extra", header: "추가", unit: "J/건", numeric: true, cell: r => r.incrementalJoulesPerItem == null ? null : formatNumber(r.incrementalJoulesPerItem, 3) },
+    { key: "total", header: "총", unit: "J/건", numeric: true, cell: r => r.totalJoulesPerItem == null ? null : formatNumber(r.totalJoulesPerItem, 3) },
   ]),
   batchTable("전력과 오차", [
     { key: "active", header: "실행 전력", unit: "W", numeric: true, cell: r => r.activeWatts == null ? null : wattsNumber(r.activeWatts) },
