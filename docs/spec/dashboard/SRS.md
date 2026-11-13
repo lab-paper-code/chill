@@ -53,8 +53,8 @@ ChillServer가 검증할 수 있는 사용자 신원을 전달해야 한다.
   딥링크에서 복원하되 localStorage, IndexedDB, cookie, URL, 로그와 다운로드에는 저장하지 않아야 한다.
   key는 버전+system 단위로 분리하고 namespace 이동으로 재로그인하지 않아야 한다.
   **‘이 탭에서 토큰 지우기’**와 신원 변경과 확정 401/WS 4401 때 저장 토큰, 메모리와 진행 요청과
-  Query cache와 socket을 같은 인증 epoch로 정리해야 한다. 이 탭 삭제는 bearer 자체나 다른 탭의 폐기가 아니다.
-  403/4403와 인증 서비스 장애는 만료가 아니며 storage 거부는 메모리 전용과 유지 불가 안내를 제공해야 한다.
+  Query cache와 socket을 같은 인증 epoch로 정리해야 한다. bearer 자체나 다른 탭은 폐기하지 않아야 한다.
+  403/4403와 인증 서비스 장애를 만료로 처리하지 않아야 하며 storage 거부는 메모리 전용과 유지 불가 안내를 제공해야 한다.
   앱이 여는 모든 새 창은 opener를 제거해야 한다. 복제 탭/세션 복원이 storage를 복원할 수 있으므로
   탭 닫기를 안전 삭제 보장으로 표현하지 않아야 한다. sessionStorage와 현 unsafe-inline CSP를
   XSS 방어/토큰 보호 보장으로 표현하지 않아야 한다. 서버 credential은 브라우저에 노출하지 않아야 한다.
@@ -425,7 +425,7 @@ ChillServer의 실험 결과 조회로 실험 ID, 단계 경계, 단계별 결�
   **지원 안 함/확인 불가**를 그대로 표시해야 한다. 세부 complete/criteria_met/partial/warning/failed 등은
   서버 사유 행과 공통 도움말 한 곳에서 설명하고 클라이언트 상태/CI/체크 재판정을 제거해야 한다.
   complete는 채택과 목표 batch 충족, criteria_met는 그중 결과 체크리스트 충족으로 분리해야 한다.
-  sourceTimestampAbsent와 노드 전체 전력은 **두 판정의 gate가 아닌 고정 계측 각주**여야 한다.
+  sourceTimestampAbsent와 노드 전체 전력은 **고정 계측 각주**로 표시하고 두 판정의 gate로 쓰지 않아야 한다.
   warning은 실제 catalog 기각과 근거 파손/누락과 선언 충돌과 음수 d 등 문제에만 적용해야 한다.
   superseded/catalog 범위 밖 정상 결과는 complete+현재 스케줄러 미사용 사실, reuse는
   complete 가능과 criteria_met 불가로 표시해야 한다. 과거 유효 결과 뒤 새 실패도 현재 최신 측정으로 표시하고 과거 성공은 이력으로 보존해야 한다.
@@ -730,7 +730,7 @@ ChillServer의 실험 결과 조회로 실험 ID, 단계 경계, 단계별 결�
   1440px 범위 화면에 가로 스크롤이 없고 390px에서는 장치 선택과 평평한 행으로 상태/근거를 읽는다.
   이전 snapshot은 기준 시각/stale/갱신 상태를 함께 표시하며 source 실패를 새 정상값으로 포장하지 않는다.
   RKNN 등 비호환은 resolver 근거로만 제외하고 Unknown은 별도로 남긴다.
-  source 실패/권한 거부/일부 page는 미측정이 아니다. 완료 수와 논문 적격 수는 별개다.
+  source 실패/권한 거부/일부 page를 미측정으로 표시하지 않는다. 완료 수와 논문 적격 수는 별개다.
   정확 variant/Node/reuse와 실패 요청과 후속 포함 셀의 범위 차이, 현재/과거 실패 수를 설명할 수 있다.
 
 ### 조건 목록과 회차 연결

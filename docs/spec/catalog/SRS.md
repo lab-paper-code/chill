@@ -178,7 +178,7 @@ BEO의 trialsPerBatch는 active와 idle 각각 3으로 고정한다. 같은 acto
 finalized result가 없는 실패 BEO에서도 기존 Run의 controller owner apiVersion/kind/name/UID와
   기록된 batch/workload mode/attempt를 공개 조회로 연결할 수 있어야 한다. 같은 namespace와
   정확 BEO UID로 소유를 판정하며 이름 유사성과 label만으로 소유를 확정하거나 회차를 재번호하지 않는다.
-  owner/attempt 부재와 전체 page 미조회는 기록 없음/확인 중으로 구분한다. Passport는 전제가 아니다.
+  owner/attempt 부재와 전체 page 미조회는 기록 없음/확인 중으로 구분한다. Passport를 전제로 요구하지 않는다.
 #### 배치별 증분 에너지 통계
 보존된 BEO completed active/idle trial과 frozen curve plan에서 배치별 증분 J/item 평균,
   독립 active/idle Run 수, 기존 공유 idle 불확실성을 포함한 CI의 실제 level/half-width와 추정 방법,
@@ -192,7 +192,7 @@ finalized result가 없는 실패 BEO에서도 기존 Run의 controller owner ap
 OperationCostMeasurement list/detail은 CR이 가리킨 정확 단계의 실제 operation identity,
   실제 시간(ns), 전체 Node 벽에너지(J)와 원 판정과 사유와 출처를 제공해야 한다.
   수용된 0과 미관측/null, 실패 단계의 실제 시간과 에너지 수용을 구별하고 계획 idle 시간과 최신 다른
-  operation의 값으로 채우지 않는다. 개별 단계 수용은 전체 순서 성공이 아니다.
+  operation의 값으로 채우지 않는다. 개별 단계 수용과 전체 순서 성공을 구별한다.
 #### 실험 예정 부하와 시간 출처
 실험 게시자는 기록된 frozen schedule에서 workload별 α(무차원)와 예정 substage offset,
   기록된 해당 producer 시작에 고정한 시각과 출처를 게시해야 한다. 두 기존 publisher shape에 같은
