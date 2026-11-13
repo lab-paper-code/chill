@@ -183,7 +183,7 @@ function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
   return {
     warmup: active.warmupIterations ?? NaN, activeDuration: active.durationSeconds ?? NaN, activeWindow: active.metricObservation?.durationSeconds ?? NaN,
     activeInterval: active.metricObservation?.intervalMilliseconds ?? NaN, activeTimeout: active.metricObservation?.timeoutMilliseconds ?? NaN,
-    utilizations:active.operatingPoints?.utilizations.join(", ")??"", sparseMeanGap:active.operatingPoints?.sparseMeanGapMilliseconds??NaN,
+    utilizations:active.operatingPoints?.utilizations?.join(", ")??"", sparseMeanGap:active.operatingPoints?.sparseMeanGapMilliseconds??NaN,
     phaseDuration:active.operatingPoints?.phaseDurationSeconds??NaN, postLoadDuration:active.operatingPoints?.postLoadDurationSeconds??NaN,
     requestLifetime:active.operatingPoints?.requestLifetimeSeconds??NaN, deliveryMargin:active.operatingPoints?.deliveryMarginMilliseconds??NaN,
     framedDecodedRequestUpperBytes:active.operatingPoints?.framedDecodedRequestUpperBytes??NaN,
