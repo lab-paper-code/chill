@@ -19,6 +19,7 @@ import (
 	profilerapp "github.com/lab-paper-code/chill/internal/profiling/profiler"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/queryapi/readapi"
@@ -151,6 +152,9 @@ func newCampaignPreflightQuery(
 	}
 	preparer, err := profilerapp.NewPreparer(
 		candidates, nodes, metrics, workloads, actuation, execution,
+		func(ctx context.Context, node string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
+			return profilerkube.ResolveGatewayLoadOrigin(ctx, reader, opts.namespace, opts.systemName, node)
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construct Run preparer: %w", err)

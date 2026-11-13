@@ -26,6 +26,7 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -141,7 +142,11 @@ func inspectConfigured(ctx context.Context, reader client.Reader, namespace, sys
 	if err != nil {
 		return finish("ExecutionResolverFailed")
 	}
-	preparer, err := profiler.NewPreparer(candidates, nodes, metrics, workloads, actuation, execution)
+	preparer, err := profiler.NewPreparer(candidates, nodes, metrics, workloads, actuation, execution,
+		func(ctx context.Context, node string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
+			return profilerkube.ResolveGatewayLoadOrigin(ctx, reader, namespace, system, node)
+		},
+	)
 	if err != nil {
 		return finish("PreparerFailed")
 	}

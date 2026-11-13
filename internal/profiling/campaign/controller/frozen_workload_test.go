@@ -81,11 +81,10 @@ func TestCampaignChildrenRetainFrozenWorkloadAfterIdle(t *testing.T) {
 				t.Fatal(err)
 			}
 			ports := &frozenWorkloadPreparationPorts{config: config, report: payload, workloads: workloads}
-			preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports)
+			preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports, ports.ResolveLoadOrigin)
 			if err != nil {
 				t.Fatal(err)
 			}
-			preparer.ResolveLoadOrigin = ports.ResolveLoadOrigin
 			var frozenProtocol *derivation.CurveProtocolContract
 			prepare := func(child *api.ProfilingRun) run.RunConfig {
 				return prepareFrozenWorkloadChild(t, ctx, preparer, child, frozenProtocol)

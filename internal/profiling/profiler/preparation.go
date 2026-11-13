@@ -144,8 +144,8 @@ type Preparer struct {
 	workloads  WorkloadObservationResolver
 	actuation  ActuationPolicyResolver
 	execution  ExecutionPolicyResolver
-	// ResolveLoadOrigin observes the installation's actual serving gateway.
-	ResolveLoadOrigin func(context.Context, string) (string, profilingrun.LoadOriginGatewayPodContract, error)
+	// resolveLoadOrigin observes the installation's actual serving gateway.
+	resolveLoadOrigin func(context.Context, string) (string, profilingrun.LoadOriginGatewayPodContract, error)
 }
 
 func NewPreparer(
@@ -155,13 +155,15 @@ func NewPreparer(
 	workloads WorkloadObservationResolver,
 	actuation ActuationPolicyResolver,
 	execution ExecutionPolicyResolver,
+	resolveLoadOrigin func(context.Context, string) (string, profilingrun.LoadOriginGatewayPodContract, error),
 ) (*Preparer, error) {
 	if candidates == nil || nodes == nil || metrics == nil || workloads == nil ||
-		actuation == nil || execution == nil {
-		return nil, errors.New("candidate, Node, metric, workload, actuation and execution resolvers are required")
+		actuation == nil || execution == nil || resolveLoadOrigin == nil {
+		return nil, errors.New("candidate, Node, metric, workload, actuation, execution and load-origin resolvers are required")
 	}
 	return &Preparer{
 		candidates: candidates, nodes: nodes, metrics: metrics, workloads: workloads, actuation: actuation, execution: execution,
+		resolveLoadOrigin: resolveLoadOrigin,
 	}, nil
 }
 
@@ -247,10 +249,7 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 		return PreparedRun{}, err
 	}
 	if runConfig.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
-		if p.ResolveLoadOrigin == nil {
-			return PreparedRun{}, errors.New("active measurement requires a serving gateway load-origin resolver")
-		}
-		originNode, gateway, err := p.ResolveLoadOrigin(ctx, runConfig.TargetNode.Name)
+		originNode, gateway, err := p.resolveLoadOrigin(ctx, runConfig.TargetNode.Name)
 		if err != nil {
 			return PreparedRun{}, fmt.Errorf("resolve serving gateway load origin: %w", err)
 		}

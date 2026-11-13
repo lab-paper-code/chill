@@ -156,12 +156,13 @@ func authorityResolver(t *testing.T, kube client.Reader, config profilingrun.Run
 	}
 	ports := &authorityPreparationPorts{config: config, report: report, catalog: controllerExecutionPolicyCatalog(t),
 		workloadError: errors.New("live Workload is unavailable after plan freeze")}
-	preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports)
+	preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports,
+		func(context.Context, string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
+			return config.LoadOriginNode, *config.LoadOriginGatewayPod, nil
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
-	}
-	preparer.ResolveLoadOrigin = func(context.Context, string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
-		return config.LoadOriginNode, *config.LoadOriginGatewayPod, nil
 	}
 	resolver, err := NewRunConfigResolver(preparer, ports, kube,
 		func(_ context.Context, uid types.UID) (derivation.CurvePlan, error) {

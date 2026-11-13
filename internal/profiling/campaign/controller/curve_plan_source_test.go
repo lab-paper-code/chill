@@ -196,11 +196,10 @@ func TestCurvePlanSourceFreezesWithoutArchiveAndRecoversWorkloadBeforeChildren(t
 				t.Fatal(err)
 			}
 			ports := &frozenWorkloadPreparationPorts{config: config, report: payload, workloads: workloads}
-			preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports)
+			preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports, ports.ResolveLoadOrigin)
 			if err != nil {
 				t.Fatal(err)
 			}
-			preparer.ResolveLoadOrigin = ports.ResolveLoadOrigin
 			recording := &recordingCurvePlanPreparer{preparer: preparer}
 			store := newFakeCurvePlanStore()
 			options := CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20}

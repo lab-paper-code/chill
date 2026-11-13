@@ -191,14 +191,12 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	}
 	preparer, err := profilerapp.NewPreparer(
 		candidates, nodes, power, workloads, actuationPolicies, executionPolicies,
+		func(ctx context.Context, targetNode string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
+			return profilerkube.ResolveGatewayLoadOrigin(ctx, reader, opts.watchNamespace, opts.systemName, targetNode)
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construct Run preparer: %w", err)
-	}
-	preparer.ResolveLoadOrigin = func(
-		ctx context.Context, targetNode string,
-	) (string, profilingrun.LoadOriginGatewayPodContract, error) {
-		return profilerkube.ResolveGatewayLoadOrigin(ctx, reader, opts.watchNamespace, opts.systemName, targetNode)
 	}
 	curvePlans, err := batchcontroller.NewCurvePlanSource(
 		reader, candidates, preparer, evidence,

@@ -564,12 +564,13 @@ func TestSelectedArtifactProvenanceAndCarrierSpellingReachCurvePlan(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			preparer, err := profiler.NewPreparer(candidates, nodes, metrics, workloads, actuation, execution)
+			preparer, err := profiler.NewPreparer(candidates, nodes, metrics, workloads, actuation, execution,
+				func(ctx context.Context, targetNode string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
+					return ResolveGatewayLoadOrigin(ctx, reader, testSystemNamespace, "first-profile-system", targetNode)
+				},
+			)
 			if err != nil {
 				t.Fatal(err)
-			}
-			preparer.ResolveLoadOrigin = func(ctx context.Context, targetNode string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
-				return ResolveGatewayLoadOrigin(ctx, reader, testSystemNamespace, "first-profile-system", targetNode)
 			}
 			projector, err := campaigncontroller.NewCurvePlanProjector(reader, candidates, preparer)
 			if err != nil {

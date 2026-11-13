@@ -96,11 +96,10 @@ func TestInspectPrejobFailureUsesActualFrozenChildPreparation(t *testing.T) {
 				if defect == "api" {
 					reader = prejobFailReader{Reader: native}
 				}
-				preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports)
+				preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports, ports.ResolveLoadOrigin)
 				if err != nil {
 					t.Fatal(err)
 				}
-				preparer.ResolveLoadOrigin = ports.ResolveLoadOrigin
 				plans, err := NewCurvePlanSource(reader, ports, preparer, store, CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 64 << 20})
 				if err != nil {
 					t.Fatal(err)

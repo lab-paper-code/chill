@@ -496,12 +496,12 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 		resolvers.workloads,
 		resolvers.actuation,
 		resolvers,
+		func(context.Context, string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
+			return "gateway-node", profilingrun.LoadOriginGatewayPodContract{Namespace: "chill-system", Name: "serving-gateway", UID: "gateway-pod-uid"}, nil
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
-	}
-	preparer.ResolveLoadOrigin = func(context.Context, string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
-		return "gateway-node", profilingrun.LoadOriginGatewayPodContract{Namespace: "chill-system", Name: "serving-gateway", UID: "gateway-pod-uid"}, nil
 	}
 	return preparer
 }
