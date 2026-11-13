@@ -114,11 +114,32 @@ type SchedulerObservation struct {
 	// Offset is the original window's append offset.
 	// schedulerLine deliberately does not persist this read-side reference.
 	Offset *int `json:"offset,omitempty"`
-	// TargetKeep is the summary read's decision target keep marker, nil when
-	// the decision has no target. Like Offset it is read-side only.
-	TargetKeep *bool `json:"-"`
+	// Summary holds the summary read's small projections of stored bodies.
+	// Like Offset it is read-side only; full reads leave it nil.
+	Summary *SchedulerSummary `json:"-"`
 	// References carries catalog bodies projected before action payload marshaling.
 	References *SchedulerReferences `json:"-"`
+}
+
+// SchedulerSummary carries values a summary read decodes from stored bodies
+// without decoding the bodies themselves.
+type SchedulerSummary struct {
+	// TargetKeep is nil when the decision has no target.
+	TargetKeep *bool
+	// Expected energies are nil when the stored candidate has none. A keep
+	// target resolves to the keep candidate, as in DecodeSchedulerLine.
+	KeepExpectedJoules, TargetExpectedJoules *float64
+	// ActionWorkloadUID follows the live action projection: the expected
+	// operation's workloadUID, else its prepare owner.
+	ActionWorkloadUID  string
+	ActionWorkloadUIDs []string
+}
+
+// schedulerSummaryCandidate decodes only a candidate's identity and energy.
+type schedulerSummaryCandidate struct {
+	ID             string
+	Keep           bool
+	ExpectedJoules *float64
 }
 
 // schedulerLine is the stored scheduler record. Immutable bodies live in the
@@ -611,7 +632,8 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 			At                time.Time
 			Status            string
 			Reasons           []string
-			Target            *struct{ Keep bool }
+			Keep              schedulerSummaryCandidate
+			Target            *schedulerSummaryCandidate
 			EvaluationElapsed time.Duration                    `json:"evaluationElapsedNanos"`
 			Workloads         []serving.SchedulerWorkloadState `json:"workloads"`
 		}
@@ -628,6 +650,11 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 			Node      serving.NodeReference
 			Phase     string
 			StartedAt time.Time
+			Expected  *struct {
+				WorkloadUID  string
+				WorkloadUIDs []string
+				Prepare      *struct{ Owner *struct{ UID string } }
+			}
 		}
 		Node        *serving.NodeReference
 		Meter       string
@@ -637,11 +664,15 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 	if err := json.Unmarshal(raw, &line); err != nil {
 		return SchedulerObservation{}, err
 	}
-	record := SchedulerObservation{At: line.At, Control: line.Control, Node: line.Node, PowerJoules: line.PowerJoules}
+	record := SchedulerObservation{At: line.At, Control: line.Control, Node: line.Node, PowerJoules: line.PowerJoules, Summary: &SchedulerSummary{}}
 	if d := line.Decision; d != nil {
 		record.Decision = &serving.SchedulerDecision{At: d.At, Status: d.Status, Reasons: d.Reasons, Workloads: d.Workloads, EvaluationElapsed: d.EvaluationElapsed}
-		if d.Target != nil {
-			record.TargetKeep = &d.Target.Keep
+		record.Summary.KeepExpectedJoules = d.Keep.ExpectedJoules
+		if t := d.Target; t != nil {
+			record.Summary.TargetKeep, record.Summary.TargetExpectedJoules = &t.Keep, t.ExpectedJoules
+			if t.ID == d.Keep.ID {
+				record.Summary.TargetExpectedJoules = d.Keep.ExpectedJoules
+			}
 		}
 	}
 	if s := line.Snapshot; s != nil {
@@ -652,6 +683,12 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 	}
 	if a := line.Action; a != nil {
 		record.Action = &SchedulerActionObservation{ID: a.ID, Kind: a.Kind, Node: a.Node, Phase: a.Phase, StartedAt: a.StartedAt}
+		if e := a.Expected; e != nil {
+			record.Summary.ActionWorkloadUID, record.Summary.ActionWorkloadUIDs = e.WorkloadUID, e.WorkloadUIDs
+			if e.WorkloadUID == "" && e.Prepare != nil && e.Prepare.Owner != nil {
+				record.Summary.ActionWorkloadUID = e.Prepare.Owner.UID
+			}
+		}
 	}
 	if line.Meter != "" {
 		record.Power = &metricobserver.Result{}

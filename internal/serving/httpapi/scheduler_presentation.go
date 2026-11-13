@@ -197,15 +197,18 @@ func (e *schedulerReadEvidence) observations(records []observation.SchedulerObse
 }
 
 // History lists carry identity, row labels, reasons, whether the chosen target
-// keeps the current plan, the evaluation time, and workload autonomy states.
-// Unprojected exact-record reads retain the complete journal/catalog payload.
+// keeps the current plan, the keep and target expected energy, the evaluation
+// time, and workload autonomy states. Unprojected exact-record reads retain
+// the complete journal/catalog payload.
 type schedulerHistoryDecision struct {
-	At                time.Time                        `json:"at"`
-	Status            string                           `json:"status"`
-	Reasons           []string                         `json:"reasons,omitempty"`
-	TargetKeep        *bool                            `json:"targetKeep,omitempty"`
-	EvaluationElapsed time.Duration                    `json:"evaluationElapsedNanos,omitempty"`
-	Workloads         []serving.SchedulerWorkloadState `json:"workloads"`
+	At                   time.Time                        `json:"at"`
+	Status               string                           `json:"status"`
+	Reasons              []string                         `json:"reasons,omitempty"`
+	TargetKeep           *bool                            `json:"targetKeep,omitempty"`
+	KeepExpectedJoules   *float64                         `json:"keepExpectedJoules,omitempty"`
+	TargetExpectedJoules *float64                         `json:"targetExpectedJoules,omitempty"`
+	EvaluationElapsed    time.Duration                    `json:"evaluationElapsedNanos,omitempty"`
+	Workloads            []serving.SchedulerWorkloadState `json:"workloads"`
 }
 
 type schedulerHistorySnapshot struct {
@@ -220,11 +223,13 @@ type schedulerHistorySettings struct {
 }
 
 type schedulerHistoryAction struct {
-	ID        string                `json:"id"`
-	Kind      string                `json:"kind"`
-	Node      serving.NodeReference `json:"node"`
-	Phase     string                `json:"phase"`
-	StartedAt time.Time             `json:"startedAt"`
+	ID           string                `json:"id"`
+	Kind         string                `json:"kind"`
+	Node         serving.NodeReference `json:"node"`
+	Phase        string                `json:"phase"`
+	StartedAt    time.Time             `json:"startedAt"`
+	WorkloadUID  string                `json:"workloadUID,omitempty"`
+	WorkloadUIDs []string              `json:"workloadUIDs,omitempty"`
 }
 
 type schedulerHistoryPower struct {
@@ -248,8 +253,14 @@ func schedulerHistoryObservations(records []observation.SchedulerObservation) []
 	result := make([]schedulerHistoryObservation, len(records))
 	for i, record := range records {
 		row := schedulerHistoryObservation{At: record.At, Offset: record.Offset, Control: record.Control, Node: record.Node, PowerJoules: record.PowerJoules}
+		var summary observation.SchedulerSummary
+		if record.Summary != nil {
+			summary = *record.Summary
+		}
 		if d := record.Decision; d != nil {
-			row.Decision = &schedulerHistoryDecision{At: d.At, Status: d.Status, Reasons: d.Reasons, TargetKeep: record.TargetKeep, EvaluationElapsed: d.EvaluationElapsed, Workloads: d.Workloads}
+			row.Decision = &schedulerHistoryDecision{At: d.At, Status: d.Status, Reasons: d.Reasons, TargetKeep: summary.TargetKeep,
+				KeepExpectedJoules: summary.KeepExpectedJoules, TargetExpectedJoules: summary.TargetExpectedJoules,
+				EvaluationElapsed: d.EvaluationElapsed, Workloads: d.Workloads}
 		}
 		if s := record.Snapshot; s != nil {
 			row.Snapshot = &schedulerHistorySnapshot{s.At}
@@ -258,7 +269,7 @@ func schedulerHistoryObservations(records []observation.SchedulerObservation) []
 			row.Settings = &schedulerHistorySettings{s.ActorUsername, s.ActorUID, s.AppliedAt, s.Error}
 		}
 		if a := record.Action; a != nil {
-			row.Action = &schedulerHistoryAction{a.ID, a.Kind, a.Node, a.Phase, a.StartedAt}
+			row.Action = &schedulerHistoryAction{a.ID, a.Kind, a.Node, a.Phase, a.StartedAt, summary.ActionWorkloadUID, summary.ActionWorkloadUIDs}
 		}
 		if p := record.Power; p != nil {
 			row.Power = &schedulerHistoryPower{p.StartedAt}

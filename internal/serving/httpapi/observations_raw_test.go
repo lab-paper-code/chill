@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -310,17 +311,19 @@ func TestSchedulerHistoryDecisionChangeFilterPagesOnlyChangedDecisions(t *testin
 func TestSchedulerHistorySummaryCarriesDecisionReasonsTargetKeepAndEvaluationTime(t *testing.T) {
 	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
 	from := time.Now().UTC().Add(-time.Second)
-	keep := serving.SchedulerCandidate{ID: "keep", Keep: true}
+	keepJoules, planJoules := 120.5, 80.25
+	keep := serving.SchedulerCandidate{ID: "keep", Keep: true, ExpectedJoules: &keepJoules}
 	for i, decision := range []serving.SchedulerDecision{
 		{Status: serving.SchedulerStatusKeep, Keep: keep, Target: &serving.SchedulerCandidate{ID: "keep", Keep: true}, Reasons: []string{"TransitionGainWithinUncertainty"}, EvaluationElapsed: 1250 * time.Millisecond},
-		{Status: "Feasible", Keep: keep, Target: &serving.SchedulerCandidate{ID: "plan-a"}, Reasons: []string{"IdleInstanceRemoved", "ReservedScope:w"}, EvaluationElapsed: 7},
-		{Status: "Pending", Keep: keep, Reasons: []string{"PartialObservationWindow"}},
+		{Status: "Feasible", Keep: keep, Target: &serving.SchedulerCandidate{ID: "plan-a", ExpectedJoules: &planJoules}, Reasons: []string{"IdleInstanceRemoved", "ReservedScope:w"}, EvaluationElapsed: 7},
+		{Status: "Pending", Reasons: []string{"PartialObservationWindow"}},
 	} {
 		if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: from.Add(time.Duration(i) * time.Second), Decision: &decision}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	response := rawHTTPRequest(h, "/api/v1/observations/scheduler?from="+from.Format(time.RFC3339Nano)+"&to="+from.Add(time.Minute).Format(time.RFC3339Nano)+"&limit=10&view=summary")
+	window := "/api/v1/observations/scheduler?from=" + from.Format(time.RFC3339Nano) + "&to=" + from.Add(time.Minute).Format(time.RFC3339Nano) + "&limit=10"
+	response := rawHTTPRequest(h, window+"&view=summary")
 	var page struct {
 		Events []struct {
 			Decision map[string]json.RawMessage
@@ -329,14 +332,63 @@ func TestSchedulerHistorySummaryCarriesDecisionReasonsTargetKeepAndEvaluationTim
 	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) != 3 {
 		t.Fatalf("summary: status=%d body=%s err=%v", response.Code, response.Body, err)
 	}
-	for i, want := range []struct{ reasons, targetKeep, elapsed string }{
-		{`["TransitionGainWithinUncertainty"]`, `true`, `1250000000`},
-		{`["IdleInstanceRemoved","ReservedScope:w"]`, `false`, `7`},
-		{`["PartialObservationWindow"]`, ``, ``},
+	var full struct {
+		Events []observation.SchedulerObservation
+	}
+	if err := json.Unmarshal(rawHTTPRequest(h, window).Body.Bytes(), &full); err != nil || len(full.Events) != 3 {
+		t.Fatalf("full read: %v", err)
+	}
+	for i, want := range []struct{ reasons, targetKeep, elapsed, keepJoules, targetJoules string }{
+		{`["TransitionGainWithinUncertainty"]`, `true`, `1250000000`, `120.5`, `120.5`},
+		{`["IdleInstanceRemoved","ReservedScope:w"]`, `false`, `7`, `120.5`, `80.25`},
+		{`["PartialObservationWindow"]`, ``, ``, ``, ``},
 	} {
 		decision := page.Events[i].Decision
 		if string(decision["reasons"]) != want.reasons || string(decision["targetKeep"]) != want.targetKeep || string(decision["evaluationElapsedNanos"]) != want.elapsed {
 			t.Fatalf("decision %d lost its reasons, target identity or evaluation time: %s", i, response.Body)
+		}
+		if string(decision["keepExpectedJoules"]) != want.keepJoules || string(decision["targetExpectedJoules"]) != want.targetJoules {
+			t.Fatalf("decision %d expected energy: %s", i, response.Body)
+		}
+		stored := full.Events[i].Decision
+		if stored.Keep.ExpectedJoules != nil && fmt.Sprint(*stored.Keep.ExpectedJoules) != want.keepJoules ||
+			stored.Target != nil && stored.Target.ExpectedJoules != nil && fmt.Sprint(*stored.Target.ExpectedJoules) != want.targetJoules {
+			t.Fatalf("decision %d summary differs from the stored record: %+v", i, stored)
+		}
+	}
+}
+
+func TestSchedulerHistorySummaryCarriesActionWorkload(t *testing.T) {
+	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
+	from := time.Now().UTC().Add(-time.Second)
+	evidence := strings.Repeat("x", 64<<10)
+	for i, expected := range []string{
+		`{"workloadUID":"w","target":{"reasons":["` + evidence + `"]}}`,
+		`{"prepare":{"owner":{"name":"svc","uid":"owner"}}}`,
+		`{"workloadUIDs":["a","b"]}`,
+		``,
+	} {
+		action := &observation.SchedulerActionObservation{ID: "a" + strconv.Itoa(i), Kind: "prepare", Phase: "running", StartedAt: from}
+		if expected != "" {
+			action.Expected = json.RawMessage(expected)
+		}
+		if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: from.Add(time.Duration(i) * time.Second), Action: action}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response := rawHTTPRequest(h, "/api/v1/observations/scheduler?from="+from.Format(time.RFC3339Nano)+"&to="+from.Add(time.Minute).Format(time.RFC3339Nano)+"&limit=10&view=summary")
+	var page struct {
+		Events []struct {
+			Action map[string]json.RawMessage
+		}
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) != 4 || response.Body.Len() > 4096 {
+		t.Fatalf("summary: status=%d bytes=%d err=%v", response.Code, response.Body.Len(), err)
+	}
+	for i, want := range []struct{ uid, uids string }{{`"w"`, ``}, {`"owner"`, ``}, {``, `["a","b"]`}, {``, ``}} {
+		action := page.Events[i].Action
+		if string(action["workloadUID"]) != want.uid || string(action["workloadUIDs"]) != want.uids {
+			t.Fatalf("action %d workload: %s", i, response.Body)
 		}
 	}
 }
@@ -419,10 +471,15 @@ func TestSchedulerHistorySummaryBoundsPayloadAndPreservesRecordIdentity(t *testi
 	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
 	from := time.Now().UTC()
 	to := from.Add(time.Minute)
+	keepJoules, planJoules := 12.5, 7.25
+	candidate := func(id string, joules *float64) serving.SchedulerCandidate {
+		return serving.SchedulerCandidate{ID: id, Keep: id == "keep", ExpectedJoules: joules, Reasons: []string{strings.Repeat("large candidate evidence", 30000)}}
+	}
+	plan := candidate("plan", &planJoules)
 	for i := range 3 {
 		if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{
 			At:       from.Add(time.Duration(i) * time.Second),
-			Decision: &serving.SchedulerDecision{At: from, Status: "Keep"},
+			Decision: &serving.SchedulerDecision{At: from, Status: "Keep", Keep: candidate("keep", &keepJoules), Target: &plan},
 			Snapshot: &serving.SchedulerSnapshot{At: from, Reasons: []string{strings.Repeat("large retained evidence", 30000)}},
 		}); err != nil {
 			t.Fatal(err)
@@ -436,8 +493,9 @@ func TestSchedulerHistorySummaryBoundsPayloadAndPreservesRecordIdentity(t *testi
 			At       time.Time
 			Offset   int
 			Decision struct {
-				At     time.Time
-				Status string
+				At                                       time.Time
+				Status                                   string
+				KeepExpectedJoules, TargetExpectedJoules *float64
 			}
 			Snapshot json.RawMessage
 		}
@@ -449,7 +507,9 @@ func TestSchedulerHistorySummaryBoundsPayloadAndPreservesRecordIdentity(t *testi
 	if response.Body.Len() > 4096 || len(page.Events) != 2 || page.Events[0].Offset != 2 || page.Events[1].Offset != 1 || page.NextCursor != "2" {
 		t.Fatalf("summary payload or pagination: bytes=%d page=%+v", response.Body.Len(), page)
 	}
-	if page.Events[0].Decision.Status != "Keep" || !page.Events[0].Decision.At.Equal(from) || strings.Contains(string(page.Events[0].Snapshot), "reasons") {
+	if page.Events[0].Decision.Status != "Keep" || !page.Events[0].Decision.At.Equal(from) || strings.Contains(string(page.Events[0].Snapshot), "reasons") ||
+		strings.Contains(response.Body.String(), "candidate evidence") || page.Events[0].Decision.KeepExpectedJoules == nil || *page.Events[0].Decision.KeepExpectedJoules != keepJoules ||
+		page.Events[0].Decision.TargetExpectedJoules == nil || *page.Events[0].Decision.TargetExpectedJoules != planJoules {
 		t.Fatalf("summary lost identity or included detail: %+v", page.Events[0])
 	}
 	detail := rawHTTPRequest(h, base+"&limit=1&cursor=2&view=compact")
