@@ -385,8 +385,6 @@ deps:
       - firstfloor
       - batch-energy-optimization-core
       - profiler-app
-      - profiler-controller
-      - profiler-evidence
       - query-api
       - serving-core
       - serving-state

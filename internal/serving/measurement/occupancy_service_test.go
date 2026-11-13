@@ -249,7 +249,7 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 			service := &Service{
 				client:  native,
 				kube:    kube,
-				objects: storage.store,
+				objects: storage,
 				opts: Config{
 					ServingNamespace:  "serving",
 					ProfileNamespaces: []string{"allowed"},

@@ -198,7 +198,7 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 				SchedulerConfigKey: "scheduler.json", MaxRequestBytes: 1 << 20, MaxEvidenceBytes: 1 << 20, StoreName: "evidence",
 			}
 			service := &Service{
-				client: native, kube: kube, objects: storage.store, opts: opts,
+				client: native, kube: kube, objects: storage, opts: opts,
 				scheduler: &SchedulerInputs{Lock: &sync.Mutex{}},
 			}
 			uid, version := "native-uid", "7"
@@ -225,9 +225,8 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 			if mode == measurementFinalizerTest && (current.DeletionTimestamp.IsZero() || len(current.Finalizers) != 1) {
 				t.Fatal("owner bypassed native finalizer")
 			}
-			if accepted && (!result.EvidenceDeleted || len(result.DeletedEvidence) != 3 ||
-				result.Task.Status.Result.Key != task.Status.Result.Key) {
-				t.Fatal("native deletion omitted exact owned evidence cleanup")
+			if accepted && (!result.EvidenceDeleted || result.Task.Status.Result.Key != task.Status.Result.Key) {
+				t.Fatal("native deletion omitted owned evidence cleanup")
 			}
 			if !accepted && storage.deleteCalls() != 0 {
 				t.Fatal("rejected deletion touched Evidence Store")

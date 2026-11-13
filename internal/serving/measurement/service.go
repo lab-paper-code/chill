@@ -37,8 +37,8 @@ const (
 	measurementRequestDeletionRequested = "DeletionRequested"
 )
 
-// The measurement service removes only source-proven, unreferenced measurement
-// evidence before requesting native deletion. Native GC/finalizers stay native.
+// The measurement service removes every object under the measurement's owned
+// prefixes before requesting native deletion. Native GC/finalizers stay native.
 type QueryBearerContextKey struct{}
 
 type Service struct {
@@ -73,6 +73,7 @@ type SchedulerInputs struct {
 
 type Objects interface {
 	evidencestore.LocationReader
+	evidencestore.Lister
 	Delete(context.Context, evidencestore.ObjectLocation) error
 }
 
@@ -193,9 +194,14 @@ func (o *Service) Delete(
 		resource := schema.GroupResource{Group: api.GroupVersion.Group, Resource: "batchenergyoptimizations"}
 		return result, apierrors.NewConflict(resource, name, errors.New("native UID or resourceVersion changed"))
 	}
-	if task.Status.Phase == string(api.MeasurementPhaseMeasuring) {
-		return result, &serving.Error{Code: "MeasurementInUse", Message: "an active measurement cannot be deleted"}
+	// The campaign reconciler stops writing the plan, result and Runs only once
+	// it records a current terminal status; Pending and Measuring are not.
+	if !measurementTerminal(task) {
+		return result, measurementInUse("only a current terminal measurement can be deleted; " +
+			"cancellation and recoverable failure interruption are unsupported")
 	}
+	// The serving observer attributes a live instance by its profile annotation;
+	// deleting the bundle under it breaks attribution and restart.
 	pods, err := o.kube.CoreV1().Pods(o.opts.ServingNamespace).List(ctx, meta.ListOptions{})
 	if err != nil {
 		return result, err
@@ -207,25 +213,34 @@ func (o *Service) Delete(
 			return result, measurementInUse("a physical serving Pod still references the measurement")
 		}
 	}
-	locations, err := o.measurementEvidence(ctx, task)
+	if o.objects == nil {
+		return result, &serving.Error{
+			Code:    "MeasurementEvidenceUnavailable",
+			Message: "Evidence Store access is required for deletion",
+		}
+	}
+	prefixes, err := o.measurementPrefixes(ctx, task)
 	if err != nil {
 		return result, err
 	}
-	if err := o.checkSharedEvidence(ctx, task, locations); err != nil {
-		return result, err
+	incomplete := &serving.Error{
+		Code: "MeasurementEvidenceDeletionIncomplete",
+		Message: "evidence cleanup stopped; some owned objects may already be deleted, " +
+			"the native measurement is retained, and retry with its UID/resourceVersion is required",
 	}
-	result.DeletedEvidence = make([]MeasurementEvidenceLocation, 0, len(locations))
-	for _, location := range locations {
-		if err := o.objects.Delete(ctx, location); err != nil {
-			return result, &serving.Error{
-				Code: "MeasurementEvidenceDeletionIncomplete",
-				Message: "evidence cleanup stopped; some owned objects may already be deleted, " +
-					"the native measurement is retained, and retry with its UID/resourceVersion is required",
-			}
+	for _, prefix := range prefixes {
+		objects, err := o.objects.List(ctx, prefix)
+		if err != nil {
+			return result, incomplete
 		}
-		result.DeletedEvidence = append(result.DeletedEvidence, MeasurementEvidenceLocation{
-			Store: location.Store, Key: location.Key,
-		})
+		for _, object := range objects {
+			if err := o.objects.Delete(ctx, object.Location()); err != nil {
+				return result, incomplete
+			}
+			result.DeletedEvidence = append(result.DeletedEvidence, MeasurementEvidenceLocation{
+				Store: object.Store, Key: object.Key,
+			})
+		}
 	}
 	result.EvidenceDeleted = true
 	policy := meta.DeletePropagationBackground
