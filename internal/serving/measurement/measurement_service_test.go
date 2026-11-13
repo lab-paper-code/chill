@@ -195,11 +195,11 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 			storage := deletionStore(t, nil)
 			opts := Config{
 				ServingNamespace: "serving", ProfileNamespaces: []string{"allowed"}, SchedulerConfigMap: "scheduler",
-				SchedulerConfigKey: "scheduler.json", MaxRequestBytes: 1 << 20, MaxEvidenceBytes: 1 << 20, StoreName: "evidence",
+				SchedulerConfigKey: "scheduler.json", MaxRequestBytes: 1 << 20, StoreName: "evidence",
 			}
 			service := &Service{
 				client: native, kube: kube, objects: storage, opts: opts,
-				scheduler: &SchedulerInputs{Lock: &sync.Mutex{}},
+				scheduler: &SchedulerInputs{Lock: &sync.Mutex{}, RefreshLock: &sync.Mutex{}},
 			}
 			uid, version := "native-uid", "7"
 			if mode == "stale version" {

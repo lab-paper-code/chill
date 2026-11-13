@@ -21,8 +21,8 @@ import (
 // Refresh serializes source preparation separately from Tick and user mutations.
 // Only complete, still-current inputs may replace the accepted configuration.
 func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
-	o.refreshLock.Lock()
-	defer o.refreshLock.Unlock()
+	o.RefreshLock.Lock()
+	defer o.RefreshLock.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}

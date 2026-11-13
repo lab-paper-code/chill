@@ -1,10 +1,8 @@
 package measurement
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
 	"slices"
 	"strings"
 	"sync"
@@ -12,8 +10,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
-	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	batch "k8s.io/api/batch/v1"
@@ -41,16 +37,6 @@ func deletionStore(_ *testing.T, initial map[string][]byte) *deletionStorage {
 		storage.objects[key] = append([]byte(nil), value...)
 	}
 	return storage
-}
-
-func (s *deletionStorage) OpenLocation(_ context.Context, location evidencestore.ObjectLocation) (io.ReadCloser, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	payload, ok := s.objects[location.Key]
-	if !ok {
-		return nil, evidencestore.ErrNotFound
-	}
-	return io.NopCloser(bytes.NewReader(payload)), nil
 }
 
 func (s *deletionStorage) List(_ context.Context, prefix string) ([]evidencestore.ObjectIdentity, error) {
@@ -102,48 +88,6 @@ func terminalDeletionTask() *api.BatchEnergyOptimization {
 	}
 }
 
-func TestMeasurementTerminalKnownFailureReasons(t *testing.T) {
-	for _, reason := range []string{
-		"EnergyObjectivePolicyMismatch", "InvalidCampaignRun",
-		profiler.ResolutionReasonInvalidRunSpec, profiler.ResolutionReasonActuationPolicyInvalid,
-		string(campaign.FailureClassFatalFailure),
-		string(campaign.FailureClassUnknownFailure),
-	} {
-		for _, mode := range []string{
-			"current failure", "stale status generation", "stale condition generation",
-			"unversioned task", "different outcome", "true condition", "active phase",
-		} {
-			t.Run(reason+"/"+mode, func(t *testing.T) {
-				task := terminalDeletionTask()
-				task.Status.Phase = measurementPhaseFailed
-				task.Status.Outcome = reason
-				task.Status.Result = nil
-				task.Status.Conditions[0].Status = meta.ConditionFalse
-				task.Status.Conditions[0].Reason = task.Status.Outcome
-				switch mode {
-				case "stale status generation":
-					task.Status.ObservedGeneration = 0
-				case "stale condition generation":
-					task.Status.Conditions[0].ObservedGeneration = 0
-				case "unversioned task":
-					task.Generation = 0
-					task.Status.ObservedGeneration = 0
-					task.Status.Conditions[0].ObservedGeneration = 0
-				case "different outcome":
-					task.Status.Outcome = "DifferentOutcome"
-				case "true condition":
-					task.Status.Conditions[0].Status = meta.ConditionTrue
-				case "active phase":
-					task.Status.Phase = "Pending"
-				}
-				if got, want := measurementTerminal(task), mode == "current failure"; got != want {
-					t.Fatalf("measurementTerminal() = %v, want %v", got, want)
-				}
-			})
-		}
-	}
-}
-
 func ownedDeletionRun(task *api.BatchEnergyOptimization) (*api.ProfilingRun, *batch.Job) {
 	run := &api.ProfilingRun{
 		ObjectMeta: meta.ObjectMeta{
@@ -175,7 +119,20 @@ func ownedDeletionRun(task *api.BatchEnergyOptimization) (*api.ProfilingRun, *ba
 func deletionService(native client.Client, storage *deletionStorage) *Service {
 	return &Service{
 		client: native, kube: kubefake.NewSimpleClientset(), objects: storage,
-		opts: Config{ServingNamespace: "allowed", StoreName: "evidence", MaxEvidenceBytes: 1 << 20},
+		scheduler: &SchedulerInputs{Lock: &sync.Mutex{}, RefreshLock: &sync.Mutex{}},
+		opts:      Config{ServingNamespace: "allowed", StoreName: "evidence"},
+	}
+}
+
+// loadedProfiles makes the scheduler snapshot publish profiles, preparing those
+// named in prepared.
+func loadedProfiles(service *Service, profiles []serving.Profile, prepared ...string) {
+	preparations := map[string]servingstate.PrepareSpec{}
+	for _, id := range prepared {
+		preparations[id] = servingstate.PrepareSpec{}
+	}
+	service.scheduler.LoadProfiles = func() (string, []serving.Profile, map[string]servingstate.PrepareSpec, bool) {
+		return "1", profiles, preparations, true
 	}
 }
 
@@ -201,22 +158,38 @@ func TestMeasurementDeleteRemovesOwnedPrefixesWhateverTheStoredFormat(t *testing
 				"batch-energy-optimizations/native-uid/result.json",
 				"batch-energy-optimizations/native-uid/result.shared-cpu.json",
 				"serving/profiles/allowed/task/native-uid/bundle.json",
+				"serving/profile-reuse/allowed/task/native-uid/0123.json",
 			}
 			foreign := []string{
 				"profiling-runs/run-uid-2/raw.json",
 				"batch-energy-optimizations/native-uid-2/result.json",
 				"serving/profiles/allowed/task/native-uid-2/bundle.json",
+				"serving/profile-reuse/allowed/other/other-uid/0123.json",
 				"global/artifact.onnx",
 			}
+			// A Run of another measurement, still in flight, neither blocks
+			// this deletion nor loses its objects.
+			other := &api.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{
+				Namespace: task.Namespace, Name: "other", UID: "native-uid-2",
+			}}
+			otherRun := &api.ProfilingRun{ObjectMeta: meta.ObjectMeta{
+				Namespace: task.Namespace, Name: "other-run", UID: "run-uid-2",
+				OwnerReferences: []meta.OwnerReference{
+					*meta.NewControllerRef(other, api.GroupVersion.WithKind("BatchEnergyOptimization")),
+				},
+			}}
 			stored := map[string][]byte{}
 			for _, key := range append(owned, foreign...) {
 				stored[key] = []byte(`{"schemaVersion":"chill.dacs.io/result.v1alpha4"}`)
 			}
 			stored["profiling-runs/run-uid/execution.json"] = []byte(execution)
 			storage := deletionStore(t, stored)
-			native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(task, run, job).Build()
-			result, err := deletionService(native, storage).Delete(
-				ctx, task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
+			native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).
+				WithObjects(task, run, job, other, otherRun).Build()
+			service := deletionService(native, storage)
+			// A published profile the scheduler does not prepare cannot start an instance.
+			loadedProfiles(service, []serving.Profile{{ID: "allowed/task/native-uid"}})
+			result, err := service.Delete(ctx, task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
 			if err != nil || !result.EvidenceDeleted || result.Request != measurementRequestDeletionRequested ||
 				len(result.DeletedEvidence) != len(owned) {
 				t.Fatalf("result=%+v err=%v", result, err)
@@ -242,18 +215,25 @@ func TestMeasurementDeleteRefusesWhileSomethingCanStillWriteOrServe(t *testing.T
 	const (
 		notTerminal = "only a current terminal measurement can be deleted; " +
 			"cancellation and recoverable failure interruption are unsupported"
+		runActive  = "an owned Run has not recorded its outcome"
 		jobActive  = "an owned measurement Job remains active"
 		podActive  = "an owned measurement Pod remains active even if its Job is missing"
 		podServing = "a physical serving Pod still references the measurement"
+		prepared   = "the scheduler prepares serving profile %s from this measurement; " +
+			"publish a newer or replacing measurement first"
 	)
+	own, reuse := "allowed/task/native-uid", "allowed/confirmation/confirmation-uid/reuse-0123"
 	for _, tc := range []struct{ mode, reason string }{
 		{"pending", notTerminal},
 		{"measuring", notTerminal},
 		{"stale generation", notTerminal},
 		{"recoverable failure", notTerminal},
+		{"Run without evidence after its Job completed", runActive},
 		{"active Job", jobActive},
 		{"running Pod without Job", podActive},
 		{"serving Pod", podServing},
+		{"prepared profile", strings.Replace(prepared, "%s", own, 1)},
+		{"prepared reuse of this measurement", strings.Replace(prepared, "%s", reuse, 1)},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			ctx := context.Background()
@@ -269,10 +249,12 @@ func TestMeasurementDeleteRefusesWhileSomethingCanStillWriteOrServe(t *testing.T
 			case "stale generation":
 				task.Generation = 2
 			case "recoverable failure":
-				task.Status.Phase = measurementPhaseFailed
+				task.Status.Phase = string(api.MeasurementPhaseFailed)
 				task.Status.Outcome = "CurvePlanResolutionFailed"
 				task.Status.Conditions[0].Status = meta.ConditionFalse
 				task.Status.Conditions[0].Reason = task.Status.Outcome
+			case "Run without evidence after its Job completed":
+				run.Status.Evidence = nil
 			case "active Job":
 				job.Status = batch.JobStatus{Active: 1}
 			case "running Pod without Job":
@@ -298,6 +280,14 @@ func TestMeasurementDeleteRefusesWhileSomethingCanStillWriteOrServe(t *testing.T
 			storage := deletionStore(t, map[string][]byte{"profiling-runs/run-uid/raw.json": []byte("raw")})
 			native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(objects...).Build()
 			service := deletionService(native, storage)
+			switch tc.mode {
+			case "prepared profile":
+				loadedProfiles(service, []serving.Profile{{ID: own}}, own)
+			case "prepared reuse of this measurement":
+				loadedProfiles(service, []serving.Profile{
+					{ID: reuse, Reuse: &serving.ProfileReuseCheck{SourceProfileID: own}},
+				}, reuse)
+			}
 			kube := kubefake.NewSimpleClientset()
 			for _, pod := range pods {
 				if _, err := kube.CoreV1().Pods(pod.Namespace).Create(ctx, pod, meta.CreateOptions{}); err != nil {

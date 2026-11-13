@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,11 +20,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 
-	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -57,7 +53,6 @@ type Config struct {
 	SchedulerConfigMap     string
 	SchedulerConfigKey     string
 	MaxRequestBytes        int64
-	MaxEvidenceBytes       int64
 	StoreName              string
 	LoadGeneratorNamespace string
 }
@@ -65,14 +60,16 @@ type Config struct {
 // SchedulerInputs shares the scheduler's mutation authority and accepted snapshot.
 // DecodePolicy must use the scheduler's full configuration decoder.
 type SchedulerInputs struct {
-	Lock                  *sync.Mutex
+	Lock *sync.Mutex
+	// RefreshLock serializes catalog refresh, which writes profile bundles and
+	// reuse records.
+	RefreshLock           *sync.Mutex
 	LoadProfiles          func() (string, []serving.Profile, map[string]servingstate.PrepareSpec, bool)
 	DecodePolicy          func(string, int64) (*DispatchOccupancyPolicy, error)
 	GatewayRequestTimeout time.Duration
 }
 
 type Objects interface {
-	evidencestore.LocationReader
 	evidencestore.Lister
 	Delete(context.Context, evidencestore.ObjectLocation) error
 }
@@ -181,45 +178,23 @@ func (o *Service) Delete(
 			Message: "native UID and resourceVersion are required",
 		}
 	}
-	if o.scheduler != nil {
-		o.scheduler.Lock.Lock()
-		defer o.scheduler.Lock.Unlock()
-	}
-	task := &api.BatchEnergyOptimization{}
-	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, task); err != nil {
-		return result, err
-	}
-	result.Task = task
-	if string(task.UID) != uid || task.ResourceVersion != version {
-		resource := schema.GroupResource{Group: api.GroupVersion.Group, Resource: "batchenergyoptimizations"}
-		return result, apierrors.NewConflict(resource, name, errors.New("native UID or resourceVersion changed"))
-	}
-	// The campaign reconciler stops writing the plan, result and Runs only once
-	// it records a current terminal status; Pending and Measuring are not.
-	if !measurementTerminal(task) {
-		return result, measurementInUse("only a current terminal measurement can be deleted; " +
-			"cancellation and recoverable failure interruption are unsupported")
-	}
-	// The serving observer attributes a live instance by its profile annotation;
-	// deleting the bundle under it breaks attribution and restart.
-	pods, err := o.kube.CoreV1().Pods(o.opts.ServingNamespace).List(ctx, meta.ListOptions{})
-	if err != nil {
-		return result, err
-	}
-	prefix := namespace + "/" + name + "/"
-	for _, pod := range pods.Items {
-		if strings.HasPrefix(pod.Annotations[servingstate.ServingProfileAnnotation], prefix) &&
-			pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed {
-			return result, measurementInUse("a physical serving Pod still references the measurement")
-		}
-	}
 	if o.objects == nil {
 		return result, &serving.Error{
 			Code:    "MeasurementEvidenceUnavailable",
 			Message: "Evidence Store access is required for deletion",
 		}
 	}
-	prefixes, err := o.measurementPrefixes(ctx, task)
+	if o.scheduler != nil {
+		// Refresh writes profile bundles and reuse records under this
+		// measurement's prefixes. Holding it until the native delete makes the
+		// next refresh read the measurement as deleted.
+		o.scheduler.RefreshLock.Lock()
+		defer o.scheduler.RefreshLock.Unlock()
+	}
+	task, prefixes, err := o.deletionPrefixes(ctx, namespace, name, uid, version)
+	if task != nil {
+		result.Task = task
+	}
 	if err != nil {
 		return result, err
 	}

@@ -27,9 +27,12 @@ import (
 )
 
 const (
-	occupancyQueuedTest        = "queued"
-	occupancyDeletedTest       = "deleted"
-	occupancyLegacyDeletedTest = "legacy deleted"
+	occupancyQueuedTest           = "queued"
+	occupancyDeletedTest          = "deleted"
+	occupancyLegacyDeletedTest    = "legacy deleted"
+	occupancyForeignLocationTest  = "status names another location"
+	occupancyUnreadableRecordTest = "unreadable record"
+	occupancySharedEvidenceTest   = "another task names the key"
 )
 
 func occupancyTestService(t *testing.T) (*Service, occupancyFixture, *int) {
@@ -167,9 +170,11 @@ func TestOccupancyServicePolicyFailsClosed(t *testing.T) {
 }
 
 func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
+	// Deletion is decided by the producer key alone: an unreadable record, a
+	// status pointing elsewhere or another task naming the key does not stop it.
 	for _, mode := range []string{
-		occupancyDeletedTest, "Measuring", "wrong UID", "wrong version", "foreign location", "foreign record",
-		"shared evidence", "active load", "evidence failure", "native failure",
+		occupancyDeletedTest, "Measuring", "wrong UID", "wrong version", occupancyForeignLocationTest,
+		occupancyUnreadableRecordTest, occupancySharedEvidenceTest, "active load", "evidence failure", "native failure",
 		occupancyQueuedTest, occupancyLegacyDeletedTest,
 	} {
 		t.Run(mode, func(t *testing.T) {
@@ -206,10 +211,8 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 				uid = "replacement"
 			case "wrong version":
 				version = "6"
-			case "foreign location":
+			case occupancyForeignLocationTest:
 				task.Status.Result.Key = "batch-energy-optimizations/foreign/result.json"
-			case "foreign record":
-				record.Conditions.Workload = occupancyForeignSelectionTest
 			case occupancyQueuedTest:
 				task.Status.Phase = ""
 				task.Status.Result = nil
@@ -219,6 +222,9 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 				raw, _ = json.Marshal(servingkube.DispatchOccupancyRecord{
 					SchemaVersion: schemaVersion, Node: record.Node, ProfileID: record.ProfileID, Conditions: task.Spec,
 				})
+			}
+			if mode == occupancyUnreadableRecordTest {
+				raw = []byte("not json")
 			}
 			foreign := prefix + "node-uid/foreign.json"
 			storage := deletionStore(t, map[string][]byte{own: raw, foreign: []byte(`{"unrelated":true}`)})
@@ -254,11 +260,11 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 					ServingNamespace:  "serving",
 					ProfileNamespaces: []string{"allowed"},
 					StoreName:         "evidence",
-					MaxEvidenceBytes:  1 << 20,
 				},
 			}
 			result, err := service.DeleteOccupancy(context.Background(), "allowed", task.Name, uid, version)
-			success := mode == occupancyDeletedTest || mode == occupancyQueuedTest || mode == occupancyLegacyDeletedTest
+			success := mode == occupancyDeletedTest || mode == occupancyQueuedTest || mode == occupancyLegacyDeletedTest ||
+				mode == occupancyForeignLocationTest || mode == occupancyUnreadableRecordTest || mode == occupancySharedEvidenceTest
 			if (err == nil) != success {
 				t.Fatalf("delete success=%v got %v", success, err)
 			}
@@ -266,8 +272,9 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 				t.Fatal("foreign evidence removed")
 			}
 			if success {
-				if deletes != 1 || result.Request != measurementRequestDeletionRequested || !result.EvidenceDeleted {
-					t.Fatal("missing native delete receipt")
+				if deletes != 1 || result.Request != measurementRequestDeletionRequested || !result.EvidenceDeleted ||
+					storage.contains(own) {
+					t.Fatal("missing native delete receipt or owned evidence retained")
 				}
 				err := native.Get(context.Background(), client.ObjectKeyFromObject(task), &api.DispatchOccupancyMeasurement{})
 				if !apierrors.IsNotFound(err) {
@@ -290,7 +297,7 @@ func occupancyDeletionClient(
 ) client.Client {
 	t.Helper()
 	builder := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(task)
-	if mode == "shared evidence" {
+	if mode == occupancySharedEvidenceTest {
 		other := task.DeepCopy()
 		other.Name = occupancyForeignSelectionTest
 		other.UID = "other-uid"
