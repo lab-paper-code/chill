@@ -175,17 +175,22 @@ export function activeScene(capture, epoch, options = {}) {
     ]
   }
 
+  // Expected joules of decision k's keep and target candidates (target absent while Pending; a keep target is the keep plan).
+  const energies = k => {
+    const s = Math.floor(decisionAt(k) / 1000), keep = round(sumWatts(s - 60, s, () => true) * 10, 1)
+    return { keep, target: status(k) === 'Feasible' ? round(keep * 0.972, 1) : status(k) === 'Pending' ? undefined : keep }
+  }
   // Full serving.SchedulerDecision for decision k.
   function fullDecision(k, autonomous, settings) {
     const t = decisionAt(k), s = Math.floor(t / 1000), st = status(k)
     const estimate = (svc, factor) => ({ uid: svc.uid, definition: definitionID(svc, t), samples: 400 + Math.round(rand(k, svc.k) * 600), percentile: svc.percentile,
       expectedNanos: Math.round(load(svc, s).p95 * factor * 1e9), targetNanos: svc.target * 1e9, normalizedExceedance: Math.max(0, round(load(svc, s).p95 * factor / svc.target - 1, 4)), predictedOutcomes: {} })
     const instances = services.flatMap(svc => svc.instances.map(inst => ({ id: inst.id, node: ref(inst.node), ownerWorkloadUID: svc.uid, workloadUID: svc.uid, profileID: inst.profileID, ready: true, stopped: false, routable: { [svc.uid]: true } })))
-    const joules = round(sumWatts(s - 60, s, () => true) * 10, 1)
+    const { keep: joules, target: targetJoules } = energies(k)
     const keep = { id: 'keep', keep: true, nodes: [], instances, routing: routing(), actions: [], status: st === 'Overload' ? 'Overload' : 'Feasible', reasons: [],
       slo: services.map(svc => estimate(svc, st === 'Overload' && svc === plc ? 1.25 : 1)), expectedJoules: joules, worstExceedance: st === 'Overload' ? 0.25 : 0 }
     const target = st === 'Feasible' ? { ...keep, id: `candidate-${k}`, keep: false, actions: [{ id: `prepare/${PREPARE_NODE}/${iso(actionStart(Math.floor(k / (CYCLE / DECIDE))))}`, kind: 'prepare',
-      node: ref(PREPARE_NODE), workloadUID: ic.uid, dependsOn: [], expectedSeconds: 90 }], slo: services.map(svc => estimate(svc, svc === ic ? 0.94 : 1)), expectedJoules: round(joules * 0.972, 1) }
+      node: ref(PREPARE_NODE), workloadUID: ic.uid, dependsOn: [], expectedSeconds: 90 }], slo: services.map(svc => estimate(svc, svc === ic ? 0.94 : 1)), expectedJoules: targetJoules }
       : st === 'Pending' ? null : keep
     const loads = services.map(svc => { let received = 0; for (let i = s - 60; i < s; i++) received += load(svc, i).received; const accepted = Math.round(received * svc.success)
       return { uid: svc.uid, received, accepted, computeInputs: accepted, inputsPerSecond: round(accepted / 60, 3), recentComputeInputs: Math.round(accepted / 6) } })
@@ -223,8 +228,9 @@ export function activeScene(capture, epoch, options = {}) {
       let full
       const get = () => full ??= { at, decision: fullDecision(k, autonomous, settings), snapshot: { at: iso(decisionAt(k) - 120), workloads: liveWorkloads(decisionAt(k), autonomous), nodes: liveNodes(decisionAt(k)),
         instances: liveInstances(decisionAt(k)), routing: routing(), reservations: reservations(decisionAt(k)), actions: [action(cycle(decisionAt(k)), decisionAt(k))] } }
+      const energy = energies(k)
       const summaryDecision = { at, status: status(k), workloads: workloadStates(autonomous), ...(reasons(k).length ? { reasons: reasons(k) } : {}),
-        ...(status(k) === 'Pending' ? {} : { targetKeep: status(k) !== 'Feasible' }), evaluationElapsedNanos: evaluation(k) }
+        ...(status(k) === 'Pending' ? {} : { targetKeep: status(k) !== 'Feasible' }), keepExpectedJoules: energy.keep, ...(energy.target !== undefined ? { targetExpectedJoules: energy.target } : {}), evaluationElapsedNanos: evaluation(k) }
       out.push({ at, atN, kind: 'decision', summary: { at, decision: summaryDecision, snapshot: { at: iso(decisionAt(k) - 120) } }, compact: get, full: get })
       const tick = { at: '', control: tickControl(atN, BigInt(evaluation(k)), status(k), targetID(k)) }
       tick.at = tick.control.finishedAt
@@ -236,13 +242,17 @@ export function activeScene(capture, epoch, options = {}) {
       out.push({ at: roundRow.at, atN: roundAt, kind: 'other', summary: roundRow, compact: () => roundRow, full: () => roundRow })
     }
     for (let c = cycle(from - ACTION_RUN); actionStart(c) < to; c++) {
-      const a = action(c, actionStart(c) + ACTION_RUN), base = { id: a.id, kind: 'prepare', node: a.node, instance: `${ic.name}-${PREPARE_NODE}-${hex(c, 4, 5)}`, startedAt: a.startedAt, expectedSeconds: 90, expectedSource: null }
+      // `expected` is the recorded state.Operation; the summary row takes its workload UIDs.
+      const a = action(c, actionStart(c) + ACTION_RUN), instance = `${ic.name}-${PREPARE_NODE}-${hex(c, 4, 5)}`
+      const expected = { id: a.id, kind: 'prepare', node: a.node, instance, policyInstances: null, workloadUID: ic.uid, workloadUIDs: [ic.uid], expectedSeconds: 90, expectedSource: null }
+      const base = { id: a.id, kind: 'prepare', node: a.node, instance, startedAt: a.startedAt, expected, expectedSeconds: 90, expectedSource: null }
       record(actionStart(c), 'action', { at: a.startedAt, action: { ...base, phase: 'running' } })
       record(actionStart(c) + ACTION_RUN, 'action', { at: a.completedAt, action: { ...base, phase: 'complete', completedAt: a.completedAt } })
     }
     for (let n = Math.floor((from - epoch) / PERIOD) - 1; epoch + n * PERIOD < to; n++) for (const row of periodic(n).filter(row => row.kind === 'action')) {
       const a = row.action
-      record(row.at, 'action', { at: iso(row.at), action: { id: a.id, kind: a.kind, node: a.node, phase: 'failed', startedAt: a.startedAt, completedAt: a.completedAt, error: a.result.error, expectedSeconds: a.expectedSeconds, expectedSource: null } })
+      const expected = { id: a.id, kind: a.kind, node: a.node, policyInstances: null, workloadUID: a.workloadUID, workloadUIDs: [a.workloadUID], expectedSeconds: a.expectedSeconds, expectedSource: null }
+      record(row.at, 'action', { at: iso(row.at), action: { id: a.id, kind: a.kind, node: a.node, phase: 'failed', startedAt: a.startedAt, completedAt: a.completedAt, expected, error: a.result.error, expectedSeconds: a.expectedSeconds, expectedSource: null } })
     }
     for (const row of history) record(row.at, 'settings', { at: iso(row.at), settings: row.change })
     const meters = powerMeters()

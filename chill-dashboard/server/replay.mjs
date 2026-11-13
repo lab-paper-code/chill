@@ -13,7 +13,7 @@ import { parseArgs } from 'node:util'
 import { WebSocketServer, WebSocket } from 'ws'
 import { createFront } from './live-proxy.mjs'
 import { loadCapture, nanos, pageOf, shiftTimes } from './replay-capture.mjs'
-import { capturedJournal, queryJournal } from './replay-journal.mjs'
+import { capturedJournal, fmtNanos, queryJournal } from './replay-journal.mjs'
 import { activeScene } from './replay-scene.mjs'
 import { activeMeasurements } from './replay-measure.mjs'
 import { measurementRequests } from './replay-requests.mjs'
@@ -603,6 +603,30 @@ function selfCheck() {
     const pools = read('v1/pools').body
     for (const node of [...(pools?.available ?? []), ...(pools?.measurement ?? [])].map(row => row.node.name).concat((pools?.workloads ?? []).flatMap(w => w.nodes.map(n => n.name)))) if (!nodes.has(node)) fail(`pools: node ${node} not in inventory`)
     for (const node of new Set([...list.map(row => row.spec.state.targetNode), ...runs.map(run => run.spec.targetNode)])) if (!nodes.has(node)) fail(`node ${node} is named by requests or runs but not in inventory`)
+    // Summary decision energies and action workload UIDs equal the exact full record's (internal/serving/observation).
+    const recent = `from=${enc(new Date(now - 4_200_000).toISOString())}&to=${enc(new Date(now).toISOString())}`
+    let summaryRows = 0
+    for (let cursor = ''; cursor !== undefined;) {
+      const page = read(`v1/observations/scheduler?${recent}&view=summary&filter=decision-action&limit=500${cursor ? `&cursor=${cursor}` : ''}`).body
+      for (const row of page?.events ?? []) {
+        const kind = row.decision ? 'decision' : 'action', atN = nanos(row.at)
+        const full = (read(`v1/observations/scheduler?from=${enc(row.at)}&to=${enc(fmtNanos(atN + 1n))}&filter=${kind}`).body?.events ?? []).find(e => kind === 'decision' || e.action?.id === row.action.id)
+        if (!full) { fail(`scheduler ${kind} ${row.at}: no exact record`); continue }
+        summaryRows++
+        const same = (field, want, got) => { if (JSON.stringify(want) !== JSON.stringify(got)) fail(`scheduler ${kind} ${row.at}: summary ${field} ${JSON.stringify(got)} != full ${JSON.stringify(want)}`) }
+        if (kind === 'decision') {
+          const d = full.decision, target = d.target && (d.target.id === d.keep?.id ? d.keep : d.target)
+          same('keepExpectedJoules', d.keep?.expectedJoules ?? undefined, row.decision.keepExpectedJoules)
+          same('targetExpectedJoules', target?.expectedJoules ?? undefined, row.decision.targetExpectedJoules)
+        } else {
+          const e = typeof full.action.expected === 'string' ? JSON.parse(full.action.expected) : full.action.expected
+          same('workloadUID', e ? e.workloadUID || e.prepare?.owner?.uid || undefined : full.action.workloadUID, row.action.workloadUID)
+          same('workloadUIDs', e ? (e.workloadUIDs?.length ? e.workloadUIDs : undefined) : full.action.workloadUIDs, row.action.workloadUIDs)
+        }
+      }
+      cursor = page?.nextCursor
+    }
+    if (!summaryRows) fail('scheduler summary: no decision or action rows to compare')
     // No synthetic decision or event after now, whatever window is asked.
     const ahead = `from=${enc(new Date(now - 120_000).toISOString())}&to=${enc(new Date(now + 86_400_000).toISOString())}`
     for (const row of read(`v1/observations/scheduler?${ahead}&filter=decision&view=summary`).body?.events ?? []) future('scheduler decision', row.at)

@@ -24,7 +24,9 @@ const identity = row => row.action?.id ?? row.node?.uid ?? row.control?.scope ??
 // decision-change: a decision whose target exists and is not the keep plan.
 export const changedDecision = decision => !!decision?.target && !decision.target.keep && decision.target.id !== decision.keep?.id
 
-// schedulerHistoryObservations projection; decision rows carry the optional reasons, targetKeep and evaluationElapsedNanos.
+// schedulerHistoryObservations projection; decision rows carry the optional reasons, targetKeep, keep/target
+// expectedJoules (a keep target takes the keep candidate's value) and evaluationElapsedNanos; action rows the
+// expected operation's workloadUID (else its prepare owner) and workloadUIDs. Summary-form input keeps its own.
 export function summaryRow(row) {
   const out = { at: row.at }
   if (row.control) out.control = row.control
@@ -34,11 +36,19 @@ export function summaryRow(row) {
     if (d.reasons?.length) out.decision.reasons = d.reasons
     if (d.target !== undefined && d.target !== null) out.decision.targetKeep = d.targetKeep ?? (!!d.target.keep || d.target.id === d.keep?.id)
     else if (d.targetKeep !== undefined) out.decision.targetKeep = d.targetKeep
+    const keepJ = d.keep ? d.keep.expectedJoules : d.keepExpectedJoules
+    const targetJ = !d.target ? d.targetExpectedJoules : d.target.id === d.keep?.id ? d.keep.expectedJoules : d.target.expectedJoules
+    if (keepJ != null) out.decision.keepExpectedJoules = keepJ
+    if (targetJ != null) out.decision.targetExpectedJoules = targetJ
     if (d.evaluationElapsedNanos !== undefined) out.decision.evaluationElapsedNanos = d.evaluationElapsedNanos
   }
   if (row.snapshot) out.snapshot = { at: row.snapshot.at }
   if (row.settings) out.settings = { actorUsername: row.settings.actorUsername, actorUID: row.settings.actorUID, ...(row.settings.appliedAt ? { appliedAt: row.settings.appliedAt } : {}), ...(row.settings.error ? { error: row.settings.error } : {}) }
-  if (row.action) out.action = { id: row.action.id, kind: row.action.kind, node: row.action.node, phase: row.action.phase, startedAt: row.action.startedAt }
+  if (row.action) {
+    const a = row.action, e = typeof a.expected === 'string' ? JSON.parse(a.expected) : a.expected
+    const uid = e ? e.workloadUID || e.prepare?.owner?.uid : a.workloadUID, uids = e ? e.workloadUIDs : a.workloadUIDs
+    out.action = { id: a.id, kind: a.kind, node: a.node, phase: a.phase, startedAt: a.startedAt, ...(uid ? { workloadUID: uid } : {}), ...(uids?.length ? { workloadUIDs: uids } : {}) }
+  }
   if (row.power) out.power = { startedAt: row.power.startedAt }
   if (row.node) out.node = row.node
   if (row.powerJoules !== undefined) out.powerJoules = row.powerJoules
