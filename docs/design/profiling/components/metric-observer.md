@@ -1,84 +1,58 @@
 # MetricObserver
 
-> Navigation: [Component contracts](README.md) · [Profiling design index](../README.md)
+[Component contracts](README.md) and [Profiling design index](../README.md)
 
-## Status and purpose
+MetricObserver retains typed power/thermal facts for a bounded window.
+Numeric derivation and scientific interpretation belong to consumers.
 
-Approved for the first edge-metrics-backed profiling path. Records typed facts
-for a bounded measurement window, not scientific accept/reject policy.
-Scientific admission was removed (`788bcf93`); execution/raw evidence and numeric
-derivation remain. Thermal and co-resident facts are observations, not verdicts.
-
-## Responsibility boundary
+## Ownership
 
 | Owner | Contract |
 |---|---|
-| MetricObserver | Validate bounded request; schedule interval reads with per-read timeout; retain every successful typed sample with CHILL receipt time; separate per-metric issues from whole-request failures; return source identity/summaries; stop on duration expiry or cancellation |
-| edge-metrics adapter | Sequential bounded reads of resolved central exact-series power and auxiliary local thermal endpoints; parse frozen configured metrics; enforce exact power labels; reject zero/multiple matches, duplicate/malformed/non-finite/semantically invalid power; preserve power when thermal fails |
-| Profiler | Source resolution, observation policy, Job lifecycle, persistence, retry ownership, scientific numeric derivation |
-| edge-metrics | Sensor access, platform interpretation, exposition, per-metric enablement; observer never changes its configuration |
+| Core | Validate bounded request, schedule reads, retain samples and issues, summarize, stop on timeout/cancellation |
+| edge-metrics adapter | Read frozen exact-series power and auxiliary thermal endpoints with bounded sequential requests |
+| Profiler | Resolve sources/policy, execute Jobs, store evidence and derive numbers |
+| edge-metrics | Sensor access, platform interpretation and exposition |
 
-The power-only exact-series source serves transition-cost observation. It takes
-one frozen metric name and non-empty label map, accepts only identical label sets
-and values, and sends the already-resolved endpoint (including validated hostname
-filter) unchanged. Response filtering never relaxes exact-label validation.
+The core has no Kubernetes, CHILL API, controller-runtime, Profiler or derivation
+dependency. The adapter uses the core, maintained Prometheus parser and HTTP.
 
-## Data and failure contract
+## Sources and failure
 
-A successful tick retains:
+Power source identity includes metric name and exact non-empty label map.
+Zero/multiple matches, additional/missing labels, duplicate/malformed/non-finite
+or semantically invalid power fail the tick. A resolved endpoint and validated
+hostname filter are sent unchanged; response filtering cannot relax identity.
 
-- required wall power in watts;
-- supported-thermal-signal observability;
-- direct current-throttling signal, when exposed;
-- CPU core/package thermal-event counters, when exposed;
-- latched thermal-history signal, when exposed;
-- maximum device temperature as diagnostic context; and
-- typed required/malformed-metric issues.
+Valid wall power is required. Missing/invalid power, request failure or oversized
+response yields no sample. Thermal is auxiliary: its endpoint failure retains
+power, omits thermal and records the failure. Per-metric issues remain distinct
+from endpoint failure.
 
-The first profiling path requires valid power. Missing or invalid power, failed
-power reads, or oversize power responses fail the tick without a sample. Thermal
-is auxiliary: endpoint timeout/read/parse failures retain power, omit only that
-sample's thermal field, and add the thermal failure to `failures`. Partial thermal
-metric issues remain distinct from endpoint failures: optional heterogeneous
-thermal fields preserve their exact presence, never convert missing/invalid
-evidence to healthy state. Power-only makes no thermal claim and rejects
-missing/additional labels.
+Thermal facts preserve current throttling signals, event counters, counter
+resets, latched history and maximum temperature where exposed. Missing and
+unsupported signals stay absent. Temperature/history alone do not prove
+throttling. Power-only observation makes no thermal claim.
 
-Receipt timestamps are used because no trusted source timestamp exists for every
-value. Repeated values remain; no smoothing, discarding, thresholding, or inference.
-Direct signals, counters, counter decreases/resets, temperature, and latched
-history remain raw facts; temperature/history alone do not establish throttling.
-Co-resident workload evidence belongs to WorkloadObserver.
+Samples retain CHILL receipt time because a trusted source timestamp is not
+available for every value. Repeated values remain; no smoothing, discarding,
+threshold inference or energy integration occurs here.
 
-Bounded scheduling, timeouts, cancellation, event limits and summaries remain
-required. After producer completion, a real final power read is retried at the
-configured observation interval within the remaining duration watchdog. One
-success publishes the result; exhausting the watchdog without success still
-fails. Failed attempts remain in `failures`; existing summary counts include
-every retained sample and failure (including auxiliary thermal failures), without
-new stored fields. Job event capacity allows power plus a thermal failure per
-tick. Raw validation binds the exact source and RunConfig. Parsing must preserve
-missing/unsupported signals and reject duplicates/malformed values.
+## End fence and capacity
 
-For profiling sample-count stops, the CLI's end wait and `ObserveUntil.Duration`
-watchdog derive from the frozen producer `AttemptTimeout`, not the nominal
-metric duration or the active trial's minimum elapsed duration. Admission covers
-that entire schedule at the original interval and per-read timeout. This is a
-failure bound, not a predicted successful duration: the sample 30/31-second
-protocol permits 59 two-second calls to finish at 118 seconds with real metric
-support through producer completion and the subsequent successful metric-exit
-fence for WorkloadObserver.
+Observation uses the frozen interval, per-read timeout and event/byte limits.
+After producer completion, a real final power read retries at that interval
+until one succeeds or the original duration watchdog expires. Failed reads
+remain in `failures`; result counts include all retained samples and failures.
+Capacity admits power and auxiliary thermal failures together.
 
-## Dependency and exclusions
+For sample-count stops, start/end waits and the `ObserveUntil` watchdog derive
+from producer `AttemptTimeout`. Admission covers that entire schedule before
+polling or Job creation. This is a failure bound; successful elapsed/sample
+floors can take longer than nominal measurement duration. Runtime failure still
+interrupts both observers.
 
-`Profiler -> internal/metricobserver <- internal/metricobserver/edgemetrics ->
-edge-metrics endpoints`. Core imports no CHILL API, Kubernetes client,
-controller-runtime, Profiler, admission, or derivation package. Adapter imports
-only the core contract, maintained Prometheus exposition parser, and standard
-HTTP transport.
-
-No arbitrary Prometheus queries/metric maps, Node endpoint discovery, monitoring
-configuration mutation, temperature-threshold inference, scientific admission,
-retry policy beyond the bounded final-read watchdog, energy integration, batch
-optimization, co-resident observation, long-term monitoring, scheduler state,
-or control.
+Raw validation binds source, RunConfig and actual window once at finalization.
+Co-resident membership belongs to WorkloadObserver. Discovery, monitoring
+configuration changes, retry policy outside the final-read watchdog,
+optimization, scheduler state and control remain outside this component.

@@ -6,10 +6,8 @@ CodeGraph v1.4.1 is allowed only as a local discovery accelerator. It is not a
 correctness dependency, CI gate, automatic agent configuration, or contributor
 requirement.
 
-Repeated checks found useful discovery for focused entry points and package
-boundaries, but incomplete results for interface dispatch, API-field impact,
-affected tests, and Helm topology. Mandatory verification therefore remains
-outside CodeGraph.
+Use CodeGraph for focused candidate discovery. Interface dispatch, API-field
+impact, affected tests and Helm topology require the authorities below.
 
 | CodeGraph output | Required authority |
 |---|---|

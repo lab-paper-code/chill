@@ -1,122 +1,85 @@
 # WorkloadObserver
 
-> Navigation: [Component contracts](README.md) · [Profiling design index](../README.md)
+[Component contracts](README.md) and [Profiling design index](../README.md)
 
-## Status and purpose
+Whole-node power interpretation needs membership throughout the runtime window.
+The observer records active Pods on the target Node and observation continuity.
+Pod presence does not prove resource usage or constant load.
 
-Implemented; causal Pod-status end-fence success was live-verified by three
-sequential same-RunConfig Runs (historically admitted by `wall-power-v2`).
-Scientific admission was removed (`788bcf93`); current output is bounded workload
-facts, not accept/reject policy. Read-only identity/raw-evidence ownership remains.
+## Execution ownership
 
-Whole-node wall power requires window membership, not merely a terminal Pod list.
-The observer records which Pods were active on the target Node and whether that
-observation continuously covered the exact runtime window. Presence proves no
-CPU, GPU, network, application activity, or stable internal load.
+The measurement Job has artifact/preprocessor init containers and runtime,
+MetricObserver and WorkloadObserver containers. Dataset delivery belongs to the
+off-node active load Job. Kubernetes owns Pod lifecycle.
 
-## Ownership and execution
+Before warmup, target-Node field-selected Pod LIST/WATCH probes capability.
+After warmup, runtime requests a fresh retained session. Acknowledgement requires
+the initial active set and continued watch. Runtime then signals metric start
+and opens the window.
 
-The Job contains artifact init, runtime worker, MetricObserver, WorkloadObserver.
-The workload handoff reader validates the bounded result once; raw composition
-adds RunConfig target/Pod and runtime-window links. Kubernetes owns Pod lifecycle.
-No controller-memory background watch or reconcile-time measurement. The observer
-never mutates/evicts/cordons/taints/reschedules/pauses workloads, changes Node phase,
-reads runtime/power/thermal/application metrics, or decides profile publication.
-
-Before warm-up, field-selected Pod `LIST/WATCH` for `spec.nodeName=<target>`
-probes capability without retaining measurement evidence. After warm-up, runtime
-requests a fresh retained list-watch session; acknowledgement requires initial
-active set and watch continuation. Runtime then emits the separate metric start
-signal and begins inference. Pods gone before that second list do not contaminate
-the window.
-
-| Atomic Job-local path | Meaning |
+| Atomic path | Meaning |
 |---|---|
-| `workload-observer-ready` | Preflight list-watch capability established |
-| `workload-window-start` | Warm-up complete; open retained session |
-| `workload-window-ready` | Retained list-watch continuity established |
+| `workload-observer-ready` | Preflight capability |
+| `workload-window-start` | Open retained session after warmup |
+| `workload-window-ready` | Membership and continuation established |
 | `measurement-end` | Runtime window closed |
-| `runtime-failed` | Stop every wait/watch immediately and exit failed |
-| `workload-result.json` | Atomic bounded result after causal Pod-status end fence |
+| `runtime-failed` | Stop waits/watch and fail |
+| `workload-result.json` | Bounded atomic result after causal end fence |
 
-`runtime-failed` releases the Node within seconds. After measurement-end, keep
-consuming the same watch until the Run Pod reports successful termination of
-`metric-observer`: that helper cannot succeed until it observes measurement-end
-and atomically publishes its result. This Pod status resource-version fence is
-causally post-end; neither discretionary bookmarks nor later lists prove progress.
+After measurement-end, the same watch continues until the Run Pod reports
+successful `metric-observer` termination. That helper publishes its result only
+after observing measurement-end. Bookmarks and later lists do not establish
+this causal progress.
 
-The worker and workload observer establish their frozen attempt contexts before
-preparation. Measurement-end closes a separate stop signal; it does not cancel
-or detach the workload observer's original context. The causal fence and both
-result handoffs consume that context's remaining attempt budget, not independent
-post-runtime waits. Runtime failure and the original deadline still stop draining.
+The original attempt context covers preparation, runtime, watch drain and both
+handoffs. Closing the window does not restart or detach the deadline.
+Runtime failure and original cancellation still stop observation.
 
-Retain material events drained before the fence. Receipt times cannot prove
-whether source transitions preceded runtime end, so ambiguous drain timing remains
-explicit uncertainty, not an ignored event. Missing fence, expired history,
-unresumable watch or result overflow means incomplete coverage. Coverage bounds
-must surround the runtime result's exact timestamps.
+## Retained facts
 
-## Bounded evidence
+Retain target Node name/UID, continuous resourceVersion bounds, coverage times,
+initial/final active sets, material events, Pod identities/owners/phases/images,
+Run Job/Pod self-identity and typed failures. Pending, Running and Unknown Pods
+are conservatively active. Already-terminal Pods are not active co-residents.
 
-Retain target Node name/frozen UID; initial-list and last continuous
-`resourceVersion`; observer coverage bounds; start/end active Pod sets; material
-membership changes; namespace/name/UID, owner identity, phase and requested images;
-Run Job/Pod identities for self-exclusion; typed failures; continuous-window fact.
+Retain material events drained before the fence. Receipt time cannot establish
+whether a source change preceded runtime end; ambiguous timing stays explicit.
+Missing fence, expired history, unresumable watch, failure or overflow makes
+continuity incomplete. Events are never silently truncated.
 
-Pending, Running and Unknown Pods during any part of the window are conservatively
-active. Pods already Succeeded/Failed before the window are audit-only when needed,
-not active co-residents. Overflow is incomplete evidence, never silent truncation.
-Current raw schema requires the bounded workload result; terminal Node workload
-snapshot stays a separate post-run historical fact.
+The handoff boundary checks schema, target/Run identity, bounds, chronology and
+surrounding coverage. Raw composition binds source, target and window;
+finalization validates once. Retained readers decode bounded immutable evidence.
+No terminal Node workload snapshot is added.
 
-The read boundary keeps supported schema, target/Run identities, bounded events,
-valid chronology and surrounding runtime coverage. Representation differences,
-including Pod ordering, image/label representation and same-Pod metadata updates,
-do not require byte-for-byte replay equality. If retained events cannot account
-for physical start/end membership, projection marks the environment Unknown.
-Watch gaps, expired history, overflow, observer failure and ambiguous end drain
-remain explicit incomplete-window facts; they add no measurement STOP or automatic
-scientific rejection. Malformed data and wrong target/window links still fail.
-Concurrent CHILL measurements and external membership changes remain observations.
+Equivalent order/metadata representations need no byte-for-byte replay.
+Unaccounted physical membership projects Unknown. Incomplete observation adds
+no measurement STOP or scientific rejection; malformed data and wrong
+target/window links still fail.
 
-## External environment identity
+## Environment identity
 
-CHILL maintains no external-product selectors/identities. Retain every external
-Pod on the Node without classification by product, namespace, owner or label.
-Profiling Jobs carry one fixed workload-role label; retain only it and standard
-CHILL workload labels needed to identify another CHILL measurement. Report external
-entry, exit, restart or material change without mutating or pausing the workload.
+Retain every external Pod without product-specific selectors. Keep the fixed
+measurement role and standard labels needed to identify concurrent CHILL
+measurements. The observer never changes workloads or Node state.
 
-Stable external set contributes to owner-bound environment identity: controller
-owner kind/name/UID, phase, images, selected labels and replica multiplicity.
-Exclude Pod name/UID for owner-controlled Pods so same-owner replacement between
-trials does not falsely drift identity. Owner UID/image/phase/selected-label/
-replica-count changes do change identity. Unowned Pods remain name/UID-bound,
-failing safe on replacement. Different identities remain individually usable,
-not aggregatable as one environment. Stable membership does not prove constant
-load; repeated trials, idle uncertainty and later isolation policy are separate.
+Owner-bound identity uses controller kind/name/UID, phase, images, selected
+labels and replica multiplicity. Same-owner replacement between trials does not
+drift identity merely through Pod name/UID. Unowned Pods remain name/UID-bound.
+Different environments remain separate; stable membership proves no isolation.
 
-## Permission and recovery boundary
+## Permissions and recovery
 
-`automountServiceAccountToken=false`; dedicated short-lived projected token/CA
-mount only in WorkloadObserver, never runtime, artifact or MetricObserver.
-Helm owns the dedicated ServiceAccount and read-only Pod `get`, `list`, `watch`.
-`get` verifies own Pod/Job identity. Target-Node field selection limits requests,
-not RBAC: cross-namespace co-residents require cluster-wide Pod-read authority.
-Kubernetes returns whole Pods; evidence projects only the bounded fields above.
-Credential and immutable observer OCI image remain isolated from other containers.
+`automountServiceAccountToken=false`; only WorkloadObserver receives its dedicated
+short-lived projected token and CA. Its ServiceAccount has Pod get/list/watch.
+Node field selection limits requests; cross-namespace discovery still requires
+cluster-wide Pod-read authority.
 
-Regular Pods may use in-cluster configuration. KubeEdge may lack Service env vars,
-so Job supplies installation-owned API endpoint when needed. Shared CHILL client
-configuration reuses projected token/CA paths; no credential discovery/persistence.
-No Secret/ConfigMap access, Node mutation, logs, exec, status write or workload write.
+Kubernetes returns whole Pods; evidence projects bounded fields. Installation
+may provide an API endpoint for KubeEdge without Service environment variables.
+There is no Secret/ConfigMap access, Node mutation, log/exec access, status write
+or workload write.
 
-Committed immutable raw evidence permits restart reconstruction without another
-watch. A Job ending before complete evidence commit cannot recover window facts
-from later state. Duplicate reconciles only verify retained results; retry requires
-a new Run identity.
-
-Non-goals: generic audit/arbitrary object watching, process attribution, isolation/
-eviction/scheduling control, idle/repeated-trial orchestration, batch optimization,
-SLO/`DeviceProfile`/scheduler publication, or long-term workload monitoring.
+Committed raw supports reconstruction without another watch. A later snapshot
+cannot recover an uncommitted window. A new execution needs a new Run identity.
+The observer owns no isolation, scheduling, batch or publication policy.

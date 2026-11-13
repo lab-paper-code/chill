@@ -4,7 +4,7 @@ This file is the current regression oracle for code discovery. It does not
 create architecture policy. Update an answer and its evidence in the same
 change when the underlying implementation intentionally changes.
 
-## Q1. How does a ProfilingRun reach reconciliation?
+## How does a ProfilingRun reach reconciliation?
 
 `cmd/profiler/controller_setup.go` constructs the shared dependencies and calls
 `RunReconciler.SetupWithManager`. Registration in
@@ -19,7 +19,7 @@ For(ProfilingRun) + Owns(Job)
 Required evidence: setup source and focused reconciler tests. The event edge is
 `framework-derived`, not a direct Go call.
 
-## Q2. Which implementation resolves a RunConfig?
+## Which implementation resolves a RunConfig?
 
 `RunConfigResolver.Resolve` in
 `internal/profiling/profiler/controller/run_config_resolver.go` resolves production
@@ -31,7 +31,7 @@ Required evidence: `gopls references` on `RunConfigResolver.Resolve` must find t
 composition root, and `gopls definition` on that callback argument must resolve
 the production method. The constructor call determines the callback in use.
 
-## Q3. Where is the Evidence Store adapter boundary?
+## Where is the Evidence Store adapter boundary?
 
 `internal/evidencestore` owns the product-neutral immutable-object contract.
 `internal/evidencestore/s3` imports that core and owns AWS-specific behavior;
@@ -40,7 +40,7 @@ consume the S3 client adapter.
 
 Required evidence: `go list` for actual imports and source for responsibilities.
 
-## Q4. Where is the MetricObserver adapter boundary?
+## Where is the MetricObserver adapter boundary?
 
 `internal/metricobserver` owns the plain observation contract.
 `internal/metricobserver/edgemetrics` imports and implements that contract.
@@ -51,7 +51,7 @@ result types.
 Required evidence: `go list` for actual imports and the MetricObserver ADR for
 allowed direction. Package edges do not prove runtime sampling behavior.
 
-## Q5. Where is the exact RunConfig recovered after controller restart?
+## Where is the exact RunConfig recovered after controller restart?
 
 `resolvedRunFromJob` in
 `internal/profiling/profiler/controller/run_record.go` decodes and validates the
@@ -63,7 +63,7 @@ Required evidence: `gopls references`, direct source, focused controller tests,
 and the generated ProfilingRun CRD. CodeGraph impact and affected-test results
 are explicitly insufficient.
 
-## Q6. What does enabling the Profiler add to the Helm render?
+## What does enabling the Profiler add to the Helm render?
 
 Compared with the default profile, `profiler.enabled=true` plus the review-only
 synthetic transition-observer Node adds:
@@ -96,7 +96,7 @@ namespace, followed by a resource-set comparison. The optional
 `make deployment-graph-check` command verifies the review view without
 replacing that evidence.
 
-## Q7. How does a BatchEnergyOptimization search advance?
+## How does a BatchEnergyOptimization search advance?
 
 `cmd/profiler/controller_setup.go` reuses the Profiler's candidate, preparation,
 Job-backed Run record, Evidence Store, and retained-evidence dependencies and calls the

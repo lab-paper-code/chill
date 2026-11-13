@@ -1,215 +1,95 @@
 # CHILL Code Intelligence
 
-## Current decision
-
-CHILL uses separate tools for separate evidence classes. No graph or index is a
-source of truth by itself.
-
-| Need | Mechanism | Authority |
-|---|---|---|
-| Go definitions, references, implementations, and call hierarchy | pinned `gopls` | `gopls` result confirmed in source |
-| Actual Go package dependencies | `go list` | `go list` output |
-| Allowed package dependencies | pinned `go-arch-lint` | reviewed `.go-arch-lint.yml`; enforced in CI |
-| Fast agent discovery | pinned CodeGraph | optional candidate discovery only |
-| Desired Kubernetes topology | validated `helm template` plus pinned KubeDiagrams | rendered manifests are authoritative; diagrams are review views |
-
-CodeGraph is optional, local, absent from CI, and never required for
-contributors. KubeDiagrams is also local and absent from correctness CI. Helm
-rendering remains the deployment-topology authority.
-
-The [external maintainability patterns](external-maintainability-patterns.md)
-reference explains package layout, naming, state ownership, and implementation
-boundaries in Kueue, Volcano, and KEDA, with commit-pinned source examples.
-
-The [CHILL maintainability candidates](maintainability-candidates.md) apply those
-patterns to current source with scoped Before/After proposals and preserved contracts.
-
 ## Evidence rules
 
-| Claim | Required verification |
+| Claim | Mechanism and authority |
 |---|---|
-| Go definition, reference, or implementation | `gopls`, then returned source |
-| Direct function call | source or `gopls` call hierarchy; also check implementations for dynamic dispatch |
-| Actual package edge | `go list` |
-| Allowed package edge | `.go-arch-lint.yml` and the relevant design or ADR |
-| Controller event path | exact `For`, `Owns`, `Watches`, or mapping registration plus focused tests |
-| Behavioral impact or test coverage | source and tests; never an index result alone |
-| Desired deployment resources | `helm template` with recorded release, namespace, values, and `--set` inputs |
-| Live runtime state | an explicitly captured cluster snapshot |
+| Go definitions, references, implementations and call hierarchy | Pinned `gopls`, confirmed in returned source |
+| Direct call | Source/call hierarchy, including dynamic-dispatch implementations |
+| Actual package dependency | `go list` |
+| Allowed dependency | Reviewed `.go-arch-lint.yml` and relevant design/decision |
+| Controller event path | For/Owns/Watches/mapping registration and focused tests |
+| Behavior or test coverage | Current source and tests |
+| Desired deployment resources | Validated Helm render with release, namespace and exact values |
+| Live runtime state | Explicit captured cluster snapshot |
 
-Controller-runtime event delivery is reported as `framework-derived`, not as a
-direct Go call from setup code to `Reconcile`.
+Controller-runtime delivery is `framework-derived`; setup does not directly call
+Reconcile. Indexes locate candidates without establishing correctness.
+The [golden queries](golden-queries.md) are the regression oracle.
+Update their evidence with intentional implementation changes.
 
-The current six regression answers and their mandatory evidence are in
-[golden-queries.md](golden-queries.md).
+## Workflow and commands
 
-## Development workflow
-
-1. Use `gopls`, source search, and direct reads for semantic navigation.
-   CodeGraph may reduce initial discovery work but does not replace these
-   checks.
-2. Verify package direction with `go list`. When an approved boundary changes,
-   update `.go-arch-lint.yml` in the same change.
-3. Verify controller paths from registration source and focused tests.
-4. Verify deployment claims from rendered Helm output, not template-source
-   search or a code index.
-5. Before merge, run the applicable checks below.
+Locate the smallest entry point with source search and `gopls`. Confirm imports
+with `go list`; update architecture policy in an approved boundary change.
+Verify registration and behavior separately. Deployment claims need renders.
 
 | Command | Purpose |
 |---|---|
-| `make code-intelligence-check` | baseline, `gopls`, architecture coverage, architecture gate, and negative fixture |
-| `make gopls-check` | pinned Go semantic regression checks |
-| `make arch-check` | package mapping and allowed-import enforcement |
-| `make arch-graph` | ignored, on-demand package diagram; not a correctness gate |
-| `make codegraph-check` | optional CodeGraph golden-query regression check |
-| `make codegraph-watcher` | optional MCP watcher create/modify/rename/delete check |
-| `make deployment-graph-check` | validated default and Profiler-enabled deployment graphs |
-| `make code-intelligence-review` | required checks plus optional deployment-graph review |
+| `make gopls-check` | Pinned workspace and semantic regressions |
+| `make arch-check` | Package mapping, imports and negative fixture |
+| `make code-intelligence-check` | Baseline, semantic and architecture checks |
+| `make arch-graph` | Ignored on-demand package view |
+| `make codegraph-check` | Optional discovery regression |
+| `make codegraph-watcher` | Optional watcher lifecycle check |
+| `make deployment-graph-check` | Separate default/Profiler render views |
+| `make code-intelligence-review` | Required checks and optional deployment review |
 
-These are local targets. The `AGENTS.md` change workflow requires `make gopls-check`
-for semantic paths covered by the golden queries; `.github/workflows/ci.yaml`
-does not run it. That CI workflow checks generated-artifact drift, architecture,
-lint, tests, and Helm (default and Profiler-enabled renders). This describes
-configured checks, not branch-protection requirements.
-
-Normal build, test, generated-artifact, Helm, and live-environment validation
-remain separate from code-intelligence checks.
+The Makefile pins gopls/Go. `hack/gopls-smoke.sh` hardcodes production resolver,
+setup and recorded-Job recovery queries; it does not parse the Markdown oracle.
+AGENTS.md requires semantic checks for covered changes. CI separately checks
+generated artifacts, architecture, lint, tests and Helm, without running gopls.
+Configured checks do not establish branch protection or observed acceptance.
 
 ## Package architecture contract
 
-- Every in-scope production package maps to exactly one reviewed component.
-- Repository-local `bin/` tool outputs and nested deployment worktrees stay outside the architecture scan; `api/`, `cmd/` and `internal/` retain full production mapping and the negative fixture remains enforced.
-- `modelcompat` and the `evidencestore` root have no Kubernetes imports.
-  `profiling/derivation` has no direct Kubernetes imports; its firstfloor
-  dependency carries Kubernetes value types, so this is not a transitive claim.
-  A CHILL-leaf package need not be Kubernetes-free or side-effect-free.
-- Adapter packages may import their core contracts; core contracts may not
-  import adapters.
-- Scheduler direction is `serving → scheduler → {v1,v2} → protocol`.
-  Serving may also import `scheduler/protocol` for its adapter. The selector
-  imports `protocol`; neither algorithm imports its sibling, selector, Serving,
-  Kubernetes, firstfloor or evidence adapters. `protocol` imports no CHILL package.
-  Each scheduler package maps to its own component, mirrored in
-  `hack/architecture-coverage.sh`; there is no broad `internal/scheduler/**` grant.
-  Numerical evaluation and physical admission stay in Serving behind protocol
-  ports; this extraction does not change runtime or lifecycle policy.
-- `cmd/**` packages are composition roots. Their wiring permissions do not
-  relax internal package rules.
-- Operator and Profiler runtime packages do not import each other.
-- Test files and `test/` packages are measured but are not yet enforced by the
-  architecture gate.
-- `chill-dashboard/` is a CHILL-internal Node web/BFF deployment unit, not a
-  Go package or an invented architecture-lint component. Its API boundary is
-  the fixed HTTPS ChillServer; validate it with its native pnpm checks and browser
-  smoke separately from `go list` and `.go-arch-lint.yml`.
+Each production package in `api/`, `cmd/` and `internal/` maps to one reviewed
+component. Local tools/nested worktrees are excluded. Test files and `test/`
+are outside architecture enforcement.
 
-Detailed direction is encoded in `.go-arch-lint.yml` and grounded in the
-[profiling dependency rule](../profiling/README.md#dependency-rule),
-[MetricObserver ADR](../../adr/0013-metric-observation-boundary.md), and
-[Evidence Store boundary](../profiling/components/evidence-store.md#dependency-direction).
+Adapters import cores, not conversely. Composition-root permissions do not
+relax internal direction. Operator/Profiler runtime packages do not import
+each other.
 
-### Reviewed model and serving boundaries
+`modelcompat` and the `evidencestore` root have no Kubernetes imports.
+Derivation has no direct Kubernetes imports; firstfloor carries Kubernetes
+value projections. `profiling/run` includes projections and a Node grant reader.
+A CHILL-leaf need not be transitively Kubernetes-free.
 
-The following reviewed production boundaries follow the native firstfloor
-cutover. Source imports are authoritative; the command below refreshes the
-import evidence. Component permissions live in `.go-arch-lint.yml`.
+Scheduler direction is `serving → scheduler → {v1,v2} → protocol`.
+Serving also uses protocol ports. Algorithms import neither their sibling,
+selector, Serving, Kubernetes nor evidence adapters. Protocol imports no CHILL
+package. Exact evaluation and physical admission remain in Serving. Each
+scheduler package has its own component. `planSearchStrategy` defaults to `v2`
+and also supports `v1`.
 
-| Package / component | Actual internal/API imports |
-|---|---|
-| `modelcompat` / `model-compat` | None; stdlib-only pure compatibility and tensor/native-setting contracts |
-| `modelcatalog` / `model-catalog` | `api/v1alpha1`, `modelcompat` |
-| `serving` / `serving-core` | `evidencestore`, `firstfloor`, `metricobserver`, `modelcompat`, `profiling/derivation`; scheduler adapter direction below |
-| `serving/httpapi` / `serving-httpapi` | `api/v1alpha1`, `evaluation/service`, `firstfloor`, `serving` and its `application`, `kube`, `live`, `management`, `measurement`, `observation`, `operations`, `state` subpackages |
-| `firstfloor` / `firstfloor` | No CHILL package imports; native executor and `RuntimeContainer` Kubernetes value projection |
-| `serving/firstfloor` / `serving-firstfloor` | `firstfloor`, `serving` |
-| `serving/live` / `serving-live` | No CHILL imports; bounded DTO/hub/metrics and WebSocket transport |
-| `profiling/run` / `profiling-run` | `modelcompat`, native `firstfloor` metadata; also Kubernetes runtime projection and a controller-runtime Node grant reader |
-| `serving/kube` / `serving-kube` | API, platform component helpers, device/model/evidence adapters, metric observation, profiling execution/evidence contracts, power-window integration, transition-cost leaf, node actuation policy contract, serving core and native adapter |
-| `evaluation/service` / `evaluation-service` | `api/v1alpha1`, `evidencestore`, `serving`; evaluation and LoadScenario application operations, advisory preflight, phase/active projections and template assembly |
+Firstfloor is the native leaf. `RuntimeContainer` projects a frozen actor
+without creating resources. Serving operations own preparation/removal/power;
+Kubernetes adapters supply readers/writers. Derivation owns shared dispatch math.
 
-Evaluation application services do not depend on `evaluation/controller` or HTTP
-DTOs. The controller remains the authoritative pool-acquisition and asynchronous
-execution owner; `serving/httpapi` converts application results to HTTP DTOs.
-Collection operations return slices; JSON list envelopes and empty-array
-normalization belong only to the HTTP transport.
-The ChillServer composition root injects the live scheduler settings callback
-(including its existing lock) and publication definitions. Application preflight
-continues to validate settings patches with `serving.ValidateSchedulerSettingsPatch`;
-UID guards, release semantics and frozen execution definitions are unchanged.
+Evaluation service owns application operations without depending on controller
+or HTTP DTOs. Controller owns pool acquisition/asynchronous execution; HTTP
+converts results. Query owns read models/coverage/refresh. Composition roots
+adapt Serving/catalog and campaign-evidence dependencies.
 
-The scheduler component contract is reviewed direction, not a claim that a
-package-import or architecture check has run:
+Dashboard is a Node deployment unit outside Go architecture lint. Its boundary
+is fixed HTTPS ChillServer; native pnpm/browser checks remain separate.
 
-| Package / component | Allowed CHILL imports |
-|---|---|
-| `scheduler/protocol` / `scheduler-protocol` | None; neutral scalar problem/plan/workload, rank/evaluation and state/record ports |
-| `scheduler/v1` / `scheduler-v1` | `scheduler/protocol`; actual keep/empty K2/K3 sweep |
-| `scheduler/v2` / `scheduler-v2` | `scheduler/protocol`; actual cover/polish/combine/priced traversal, budget, finalists and exact funnel |
-| `scheduler` / `scheduler-root` | `scheduler/protocol`, `scheduler/v1`, `scheduler/v2`; global selection and v1 fallback dispatch |
-| `serving` / `serving-core` scheduler adapter | `scheduler`, `scheduler/protocol`; CHILL I/O, exact/incremental numerical evaluation, physical admission and decision/action lowering |
+Exact direction is in [architecture policy](../../../.go-arch-lint.yml).
+See [profiling dependency rule](../profiling/README.md#dependency-rule),
+[Metric Observation Boundary](../../adr/0013-metric-observation-boundary.md)
+and [Evidence Store](../profiling/components/evidence-store.md).
 
-The existing `settings.planSearchStrategy` selects one official implementation
-for all controlled Workloads; `v2` is the default and `v1` is the other
-accepted value. See the [planner boundary](../serving/analytic-planner.md).
+## Optional local discovery
 
-```sh
-go list -f '{{.ImportPath}} {{join .Imports " "}}' \
-  ./internal/modelcompat ./internal/modelcatalog ./internal/serving \
-  ./internal/serving/httpapi ./internal/serving/kube ./internal/serving/firstfloor ./internal/firstfloor \
-  ./internal/scheduler ./internal/scheduler/protocol ./internal/scheduler/v1 ./internal/scheduler/v2
-```
-
-The T5 boundary above was checked with scoped `go list` on 2026-10-28.
-The unused G2 `serving-gateway`, tagged `chill-control`, and standalone
-`chill-router` were removed on 2026-10-30; T5 live and its chart RBAC remain.
-The deferred split design is preserved in ADR 0029, not as an executable path.
-
-The native executor is a CHILL-leaf: it imports neither Serving nor profiling.
-Its `RuntimeContainer` helper projects a frozen Config into a Kubernetes
-Container value without creating resources. Serving reuses its batching policy
-directly for scheduler replay; the SDK adapter joins actual native
-readiness/state to measured profiles. `serving/operations` owns preparation and
-removal orchestration and power-mode requests (`operations_lifecycle.go`,
-`RequestPowerMode`); `serving/kube` supplies Kubernetes readers and writers.
-The transition-cost core may consume firstfloor
-metadata and plain metric observations, not Serving or its Kubernetes adapter.
-Composition roots assemble these owners. No architecture-gate pass is implied
-by this boundary description.
-
-Profiling saturation and dispatch-occupancy construction share
-`firstfloor.SaturationWorkers`, the native queue/bytes/lifetime supply calculation.
-The reviewed `serving-measurement → firstfloor` edge carries that pure calculation;
-it does not import Serving into profiling derivation. Signed dispatch residuals
-are owned by `profiling/derivation.DispatchOccupancyNanos`, reused by Serving.
-
-The named-input projection also imports `modelcompat`:
-`go list -f '{{.ImportPath}} {{join .Imports " "}}' ./internal/profiling/profiler/projection`
-captures that actual edge. `profiler-projection → model-compat` is reviewed in
-`.go-arch-lint.yml`; it reuses the tensor contract, not a Serving runtime.
-
-## Optional CodeGraph contract
-
-CodeGraph is retained because it consistently reduced discovery work for
-focused entry-point and package-boundary questions. It repeatedly missed or
-partially answered interface completeness, API-field impact, affected tests,
-and Helm resource topology.
-
-Therefore:
-
-- use it for candidate entry points, callers, related symbols, source snippets,
-  and scoped package exploration;
-- do not use it to assert complete impact, test coverage, controller event
-  delivery, allowed imports, or deployment resources; and
-- keep mandatory source, `gopls`, `go list`, test, and Helm verification.
-
-Installation, privacy controls, local commands, and rollback are in
-[codegraph.md](codegraph.md).
+CodeGraph is local and optional, absent from correctness CI and contributor
+requirements. Use it for candidate symbols, callers, snippets and exploration.
+Complete impact, interfaces, tests, events, imports and deployment resources
+still need the authorities above. See [CodeGraph](codegraph.md).
 
 ### Optional Graphify setup
 
-Graphify is another local discovery aid, not a replacement for the evidence
-rules above. Install the recorded version and register its project skill and
-OMP guard:
+Recorded project setup:
 
 ```sh
 uv tool install --python 3.12 graphifyy==0.9.97
@@ -217,8 +97,7 @@ graphify install --project --platform agents
 omp plugin install "$(graphify pi guard path)"
 ```
 
-Restart OMP to discover `/skill:graphify`. For local-only code extraction,
-reports without model-generated labels, and a bounded HTML view:
+Restart OMP for `/skill:graphify`. Local code-only extraction and bounded view:
 
 ```sh
 graphify extract . --code-only --max-workers 4
@@ -227,159 +106,21 @@ graphify export html --node-limit 5000
 graphify query "serving" --budget 1000
 ```
 
-The ignored `graphify-out/` directory contains the full `graph.json`,
-`GRAPH_REPORT.md`, and the bounded `graph.html` view. Code-only extraction
-does not analyze document semantics or require an API key; unsupported files
-and missing optional parsers are reported by the extractor. Keep indexes local.
+Keep graphs/reports in ignored `graphify-out/`. Code-only extraction needs no
+API key and does not analyze document semantics. Check freshness; confirm
+findings with source authorities.
 
+## Deployment and maintenance
 
-## Deployment topology contract
+Keep default and Profiler-enabled renders separate. Diagrams are review views.
+See [deployment topology](deployment-topology.md) for commands/isolation/limits.
+Runtime pins belong to [`Makefile`](../../../Makefile) and
+[`firstfloor.Dockerfile`](../../../build/docker/firstfloor.Dockerfile);
+execution/image semantics belong to the
+[worker contract](../profiling/components/measurement-worker.md).
+These sources do not prove published images or hardware qualification.
 
-KubeDiagrams converts the repository's validated Helm renders into portable
-SVG and machine-readable DOT JSON review artifacts. It does not read the chart
-directly and does not replace manifest, test, or live-cluster validation.
-
-Two canonical profiles remain separate:
-
-- default chart values; and
-- `profiler.enabled=true` with the synthetic transition-observer Node declared
-  by the review profile.
-
-The check verifies the exact Profiler-only resource set, Profiler RBAC
-relationships, `ChillSystem` ConfigMap references, and the absence of a
-Helm-owned Profiler Deployment. The Operator remains responsible for that
-operand. Commands, artifacts, metadata, and limitations are in
-[deployment-topology.md](deployment-topology.md).
-
-## Freshness, security, and maintenance
-
-| Artifact | Refresh rule | Stored in Git |
-|---|---|---|
-| `gopls` state | live for LSP; reconnect or reload detached MCP after changes | no |
-| `.go-arch-lint.yml` | same change as an approved boundary decision | yes |
-| package graph image | regenerate from the current commit | no |
-| `.codegraph/` index | watcher plus clean status before relying on it | never |
-| rendered manifests or diagrams | regenerate for every commit and values set | no by default |
-
-- Keep tools pinned and repository-local; do not use `latest` or `curl | sh`.
-- Keep telemetry and runtime fallback downloads disabled for CodeGraph.
-- Do not upload repository indexes from CI.
-- A tool upgrade reruns its golden checks before merge.
-- An intentional source or chart change updates
-  [golden-queries.md](golden-queries.md) in the same change.
-- If CodeGraph freshness or verified discovery quality regresses, remove its
-  MCP entry and run `make codegraph-uninit`. Baseline development is unchanged.
-- If KubeDiagrams output regresses, retain `manifest.yaml` and `resources.txt`
-  as the desired-state evidence and remove only the generated graph view.
-
-## Native runtime and scheduler deployment
-
-`make docker-build-firstfloor` builds `build/docker/firstfloor.Dockerfile`.
-It ships `/opt/chill/bin/serving-worker`, `/opt/chill/bin/serving-entrypoint` (including
-`--materialize-profile` mode), `/measurement-worker`, the persistent firstfloor
-runner and its sibling ORT/RKNNLite helpers, which run on Python 3.8 or newer.
-CPU defaults install NumPy 2.2.6 and ONNX Runtime 1.27.0 and the preprocessor
-module libraries Pillow 12.3.0, transformers 4.50.0, num2words 0.5.14 and
-Jinja2 3.1.6 (`MODULE_PACKAGES`), which need Python 3.10 or newer. `make build`
-includes serving-worker and serving-operation; `make test-runtime` selects the
-firstfloor runtime suite. No published image digest or hardware qualification
-is implied.
-
-Vendor runtime variants are Make targets over the same Dockerfile. Each
-`docker-buildx-firstfloor-*` target pushes `$(FIRSTFLOOR_IMG)-<variant>`;
-`FIRSTFLOOR_OUTPUT=--load` keeps the build local. Pins live in the Makefile
-`FIRSTFLOOR_*` variables and the Dockerfile `l4t-r32` and `l4t-r35` stages.
-
-| Target | DeviceClass | Base | Python | Runtime packages |
-|---|---|---|---|---|
-| `docker-buildx-firstfloor` | all CPU paths, `linux/arm64,linux/amd64` | `python:3.11-slim` | 3.11 | `onnxruntime` 1.27.0 |
-| `docker-buildx-firstfloor-cuda` | `edge-server-rtx-2080-ti-64g` | `nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04` | 3.10 | `onnxruntime-gpu` 1.23.2 |
-| `docker-buildx-firstfloor-l4t-r36` | `jetson-orin-nano-8g` (JetPack 6.1/6.2, L4T r36.4) | `nvcr.io/nvidia/l4t-jetpack:r36.4.0` | 3.10 | `onnxruntime-gpu` 1.24.0 from `pypi.jetson-ai-lab.io/jp6/cu126` |
-| `docker-buildx-firstfloor-l4t-r35` | `jetson-agx-orin-64g`, `jetson-xavier-nx-8g` (JetPack 5.1.2, L4T r35.4.1) | `nvcr.io/nvidia/l4t-jetpack:r35.4.1` with standalone CPython and libstdc++6 13.1 | 3.11 | NVIDIA JetPack 5.1.2 `onnxruntime-gpu` 1.18.0, NumPy 1.26.4 |
-| `docker-buildx-firstfloor-l4t-r32` | `jetson-nano-4g` (JetPack 4.6, L4T r32) | `nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime` (L4T r32.7.1) with Ubuntu 18.04 Python 3.8 | 3.8 | NVIDIA JetPack 4 `onnxruntime-gpu` 1.11.0, NumPy 1.24.4, Pillow 10.4.0 |
-| `docker-buildx-firstfloor-rknn` | `orangepi-5-plus-16g` | `python:3.11-slim` | 3.11 | `onnxruntime` 1.27.0, `rknn-toolkit-lite2` 2.3.2 |
-
-Profiling warms only the selected measurement batch K; initialized-batch
-metadata stays identical across a campaign, and serving still warms every
-configured batch. This avoids larger-batch warmup buffers before a K=1 window. The RKNN
-image also installs Chill's `rknnlite.runner` contract helper beside toolkit-lite2's
-regular package (the vendor wheel does not provide that module), and checks its
-import during the image build.
-
-Version evidence, checked against the official indexes:
-
-- PyPI `onnxruntime-gpu` 1.27.0 depends on `nvidia-*-cu13` (CUDA 13, driver
-  R580 or newer). The RTX nodes report drivers 570.133 and 555.58 (CUDA 12.8 and
-  12.5), so the amd64 image uses CUDA 12.5, whose image requirement
-  `cuda>=12.5` every RTX node meets. The CUDA 12.5 images are Ubuntu 22.04 with
-  Python 3.10, and 1.23.2 is the newest PyPI `onnxruntime-gpu` with a cp310 wheel.
-- `pypi.jetson-ai-lab.io` serves JetPack 6 indexes only (`jp6/cu126`,
-  `cu128`, `cu129`); `jp6/cu126` has `onnxruntime-gpu` 1.24.0 and 1.23.0, both
-  cp310 and linked to CUDA 12 and cuDNN 9, which `l4t-jetpack:r36.4.0` provides.
-- NVIDIA's [Jetson Zoo](https://elinux.org/Jetson_Zoo#ONNX_Runtime) publishes
-  JetPack 5 `onnxruntime-gpu` wheels for Python 3.8 to 3.11, linked to CUDA 11.4,
-  cuDNN 8 and NumPy 1.x: 1.16.0 for JetPack 5.1.1 and 1.17.0 and 1.18.0 for
-  JetPack 5.1.2. SmolVLM's decoder uses `com.microsoft:RotaryEmbedding`, a
-  contrib operator from ONNX Runtime 1.17, so the `l4t-r35` stage installs the
-  checksum-pinned 1.18.0 cp311 wheel, whose CUDA provider carries native sm_53,
-  sm_62, sm_72 and sm_87 code. That wheel needs `GLIBCXX_3.4.29` and at most
-  `GLIBC_2.29`; L4T r35's Ubuntu 20.04 has glibc 2.31 and libstdc++ 10.3
-  (`GLIBCXX_3.4.28`), so the stage installs the checksum-pinned
-  ubuntu-toolchain-r/test focal build of `libstdc++6` 13.1.0 (with its
-  `gcc-13-base`), built against glibc 2.31 and backward compatible with the
-  L4T CUDA, cuDNN and TensorRT libraries. L4T r35 ships Python 3.8, so the
-  stage also installs a checksum-pinned
-  [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
-  CPython 3.11. A host on another r35 revision uses the matching
-  `l4t-jetpack` tag. On `jetson-xavier-nx-8g` (sm_72) this image returns
-  correct mobilenet labels, while its PLC LSTM CUDA scores differ from CPU
-  under ORT 1.16.0 and 1.18.0 alike, and loading SmolVLM fp32 on CUDA exhausts
-  the 8 GB unified memory; the sample PLC and SmolVLM arm64 CUDA paths
-  therefore have no execution policy for that class (heterogeneous workload
-  design 7.1).
-- `jetson-nano-4g` runs L4T r32.6.1 (JetPack 4.6, kernel 4.9.253-tegra), whose
-  last CUDA is 10.2 with cuDNN 8.2. The Jetson Zoo JetPack 4 table ends at
-  `onnxruntime-gpu` 1.11.0, whose cp38 wheel links CUDA 10.2, cuDNN 8 and
-  TensorRT 8 and needs `GLIBC_2.27` and `GLIBCXX_3.4.21`. The node's NVIDIA
-  container runtime mounts only the host driver (`l4t.csv`), so the `l4t-r32`
-  stage starts from the JetPack 4.6.1 TensorRT runtime image, which carries the
-  CUDA 10.2 and cuDNN 8.2 user libraries, and installs Ubuntu 18.04's Python
-  3.8 in a venv and the checksum-pinned wheel. ONNX Runtime 1.11 loads ONNX
-  opsets up to 16, so the PLC autoencoder is exported at opset 16. The
-  mobilenet and PLC modules import there; the SmolVLM module needs transformers
-  on Python 3.9 or newer.
-
-Every CUDA image verifies the masked single GPU's physical UUID through the CUDA
-Driver API in `libcuda.so.1` (`cuInit`, `cuDeviceGetCount`, `cuDeviceGetUuid`,
-present from CUDA 10.2 through 12.x), not `nvidia-smi`, and rejects a missing
-driver or mismatched allocation. Use NVIDIA's device plugin/container
-runtime and the physical GPU UUID inventory. See
-[ONNX Runtime CUDA requirements](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements).
-An image holds one ORT distribution, CPU or GPU. The RKNN image installs the
-Python `rknn-toolkit-lite2`; `librknnrt.so` comes from the host through the
-execution declaration's `host.libraries` mount, matched to the board driver and
-compiled model (both from
-[Rockchip's vendor repository](https://github.com/airockchip/rknn-toolkit2)).
-No deployment falls back to synthetic inference or CPU when its selected
-provider is absent.
-
-Scheduler configuration is explicit and independent of Profiler enablement:
-set `servingEntrypoint.scheduler.configMap` to an existing ConfigMap in the
-serving namespace and `scheduler.key` (default `scheduler.json`) to its JSON
-entry. ChillServer reads it directly using
-`--serving-scheduler-configmap`/`--serving-scheduler-config-key`; settings updates
-require update permission on that exact named ConfigMap. The chart does not
-grant blanket ConfigMap update permission. `config/samples/serving-scheduler.json`
-is a valid controls-off example, not a calibrated deployment. Before enabling
-controls, populate physical CPU/GPU inventory, non-serving reservations, meter
-identities and existing actuator-backed power requests from the actual cluster.
-Profiles and costs come from completed measurements in
-`servingEntrypoint.profileNamespaces`; the chart grants ConfigMap read there for
-power mode transition cost preparations.
-Raw service samples remain in immutable evidence bundles, not ConfigMaps.
-ChillServer creates/removes native Pods and their small config/credential objects.
-Power-mode requests use Node labels; `PowerModeReconciler` in
-`internal/nodeactuator/controller/power_mode.go` is the sole host power mutator
-and publishes independent read-back, generation and transition markers on the Node.
-There is no NodeActuation CRD or actuation Lease. Pool membership uses Node metadata
-and the measurement admission taint.
+Pin tools locally. Keep indexes ignored and CodeGraph telemetry/update checks/
+runtime fallback downloads disabled. Do not upload indexes from CI. Upgrades
+rerun applicable regressions. Intentional source/chart changes update the oracle.
+Visualization regressions leave manifest/resource authority intact.

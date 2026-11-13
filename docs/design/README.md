@@ -1,26 +1,24 @@
 # CHILL Design Documents
 
-Use this directory as a set of domain-specific design collections, not as one
-flat list of equally authoritative files.
+Each collection owns its implementation boundary. Requirements belong in
+[`docs/spec/`](../spec/); durable decisions belong in [`docs/adr/`](../adr/).
+Current source establishes implementation facts.
 
 ## Entry points
 
 | Design area | Start here | Scope |
 |---|---|---|
-| Runtime, artifact, and profiling | [profiling/README.md](profiling/README.md) | Active component contracts and retained measurement facts; completed plans are summaries |
-| Serving | [serving/README.md](serving/README.md) | Active Workload/runtime/κ planner/measurement/operations contracts and qualified evidence |
-| Evaluation | [evaluation/scope.md](evaluation/scope.md) | External-evaluator goals, black-box input boundary, owned EvaluationRun/judgment/publication contracts and decision rights |
-| Serving evidence API | [serving/observability-split.md §17](serving/observability-split.md#17-evaluation-증거-api-2026-10-30) | Raw export, resources/cluster streams, read-only meters and deployment/acceptance boundary (ADR 0030) |
-| Query API | [query-api/README.md](query-api/README.md) | Active query backend and distinct Dashboard/CLI responsibilities; requirements stay in SRS |
-| Dashboard implementation | [dashboard/README.md](dashboard/README.md) | Active web/API/live ownership and acceptance boundary |
-| Code intelligence and architecture analysis | [code-intelligence/README.md](code-intelligence/README.md) | Semantic navigation, package boundaries, optional indexing and Helm topology evidence |
-| Node platform | [platform/README.md](platform/README.md) | Active discovery/actuation agents, Node power generation, resource collection and M5 outcome |
-| Architecture rethink (proposal, not accepted) | [architecture-rethink/README.md](architecture-rethink/README.md) | One approval-pending summary: B1–B3, M0–M5 and unresolved decisions |
+| Runtime, artifact, and profiling | [Profiling](profiling/README.md) | Immutable execution, raw evidence, and numeric derivation |
+| Serving | [Serving](serving/README.md) | Workload, runtime, planner, measurement, and operations |
+| Evaluation | [Evaluation scope](evaluation/scope.md) | External-evaluator inputs, judgment, publication, and decision rights |
+| Experiment execution | [EvaluationRun execution](profiling/experiment-execution.md) | Profiler controllers, harness Jobs, and immutable results |
+| Query API | [Query API](query-api/README.md) | Query ownership and Dashboard/CLI responsibilities |
+| Dashboard | [Dashboard implementation](dashboard/README.md) | Web, BFF, live transport, and display boundaries |
+| Code intelligence | [Code intelligence](code-intelligence/README.md) | Source navigation, package direction, and deployment evidence |
+| Node platform | [Platform](platform/README.md) | Discovery, power actuation, and resource observations |
 
-Architectural decisions that must remain stable across design areas belong in
-[`docs/adr/`](../adr/). Product and system requirements belong in
-[`docs/spec/`](../spec/).
+## Placement
 
-## Placement rule
-
-Profiling implementation boundaries belong in `profiling/plans/`, reusable contracts in `profiling/components/`, fact audits in `profiling/foundations/`. Keep each domain README as a short file/status index, link to authoritative requirements rather than duplicating them, and do not add standalone designs at this directory root.
+Keep domain entry points short. Reusable profiling contracts live in
+`profiling/components/`; runtime compatibility and provenance boundaries live in
+`profiling/foundations/`. Link requirements rather than duplicating them.

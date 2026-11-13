@@ -2,6 +2,6 @@
 
 | Contract | Status |
 |---|---|
-| [Runtime and artifact execution boundary](04-compatibility-execution-boundary.md) | active — consolidated fact-audit, commonality, provenance and compatibility conclusions |
+| [Runtime and artifact execution boundary](04-compatibility-execution-boundary.md) | active — static compatibility, execution, and provenance |
 
-[Foundations](../README.md) · [Profiling index](../../README.md)
+[Foundations](../README.md) and [Profiling index](../../README.md)
