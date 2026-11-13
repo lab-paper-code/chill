@@ -582,7 +582,7 @@ ChillServer의 실험 결과 조회로 실험 ID, 단계 경계, 단계별 결�
 | [조회 성능과 준비시간 수용](#조회-성능과-준비시간-수용) | 웹 중계 성능 검증의 조건과 범위 |
 | [장치와 전력모드 인벤토리](#장치와-전력모드-인벤토리) 전력모드 제어 방식 | [노드 자원과 모델 인스턴스](../README.md#노드-자원과-모델-인스턴스)의 노드 단위 전력모드, [Node Power Actuation Boundary](../../adr/0015-node-power-actuation-boundary.md)와 [Power-Mode Reachability Boundary](../../adr/0017-power-mode-reachability-boundary.md)의 DeviceClass 전력모드 제어 방식과 목표 |
 | [실시간 운영 상태 표시](#실시간-운영-상태-표시) 구성요소 상태 | [시스템 흐름](../README.md#시스템-흐름), [ChillSystem Status Surface](../../adr/0008-chillsystem-status-surface.md)의 시스템 Ready 상태와 이유 |
-| [모델 등록과 관리](#모델-등록과-관리) runtime 계열과 backend, [측정 진행과 실패 조회](#측정-진행과-실패-조회) 실제 실행 장치 | [측정의 단위](../00_measurement.md#측정의-단위)의 firstfloor/backend 실행 경로, [자원 할당과 측정 축](../00_measurement.md#자원-할당과-측정-축)의 요청 및 실제 적용 조건, [Model Artifact Compatibility Boundary](../../adr/0012-model-artifact-compatibility-boundary.md)의 산출물과 실행 경로, [요청과 실제 모델](../../design/serving/scheduler-runtime-measurement.md#요청과-실제-모델)의 실제 provider 기록. ChillServer가 제공할 조회: 각 측정 결과의 실제 backend와 실행 장치 (Evidence Passport runtime은 family, version, provider와 architecture를 제공). |
+| [모델 등록과 관리](#모델-등록과-관리) runtime 계열과 backend, [측정 진행과 실패 조회](#측정-진행과-실패-조회) 실제 실행 장치 | [측정의 단위](../00_measurement.md#측정의-단위)의 firstfloor/backend 실행 경로, [자원 할당과 측정 축](../00_measurement.md#자원-할당과-측정-축)의 요청 및 실제 적용 조건, [Model Artifact Compatibility Boundary](../../adr/0012-model-artifact-compatibility-boundary.md)의 산출물과 실행 경로, [요청과 실제 모델](../../design/serving/scheduler-runtime-measurement.md#요청과-실행기)의 실제 provider 기록. ChillServer가 제공할 조회: 각 측정 결과의 실제 backend와 실행 장치 (Evidence Passport runtime은 family, version, provider와 architecture를 제공). |
 | [정의와 준비 상태 표시](#정의와-준비-상태-표시) 준비 상태와 사유, [동작 오류의 원인과 안내](#동작-오류의-원인과-안내) 오류 코드 | [워크로드 SRS 상태의 의미](../workloads/SRS.md#32-상태의-의미), [입력과 요청 결과](../workloads/SRS.md#6-입력과-요청-결과)의 외부 제공 의미, 사용자 업무 용어의 안내형 화면이라는 사용자 요구 |
 | [측정 조건과 사전 확인](#측정-조건과-사전-확인) 사전 확인 | [측정 설정과 실패](../00_measurement.md#측정-설정과-실패), [Dashboard 설계](../../design/dashboard/README.md)의 읽기 전용 사전 확인 |
 | [프로파일과 원시 근거 탐색](#프로파일과-원시-근거-탐색) 프로파일 조건 | [노드 자원과 모델 인스턴스](../README.md#노드-자원과-모델-인스턴스)의 프로파일 적용 조건, [이기종 워크로드 핵심 결정](../../design/serving/heterogeneous-workloads.md)의 프로파일 조건, [측정 근거가 있는 실행 후보](../workloads/SRS.md#측정-근거가-있는-실행-후보) |
@@ -829,7 +829,7 @@ ChillServer의 실험 결과 조회로 실험 ID, 단계 경계, 단계별 결�
 ### 구조 개편의 반복 감점과 단계별 수용
 
 요구사항: [운영 표에서 근거로 탐색](#운영-표에서-근거로-탐색), [운영 첫 화면의 독립 상태 축](#운영-첫-화면의-독립-상태-축), [실제 서비스 장치 관계](#실제-서비스-장치-관계), [측정 범위와 조합 진행](#측정-범위와-조합-진행), [서버 측정 상태와 품질 표시](#서버-측정-상태와-품질-표시), [서버 집계 커버리지 조회](#서버-집계-커버리지-조회), [정확 조건 목록과 회차 연결](#정확-조건-목록과-회차-연결), [측정 요청 편집과 점검](#측정-요청-편집과-점검), [측정 결과의 수치와 품질](#측정-결과의-수치와-품질), [실패 회차의 원인과 후속 조치](#실패-회차의-원인과-후속-조치), [점유시간과 변경 비용 표시](#점유시간과-변경-비용-표시), [실험 대응 관계와 차이 해석](#실험-대응-관계와-차이-해석), [선택 서비스와 공통 부하 추세](#선택-서비스와-공통-부하-추세), [실험 정의 기반 정책과 SLO](#실험-정의-기반-정책과-slo), [화면 책임 통합과 이전 주소 이동](#화면-책임-통합과-이전-주소-이동), [공통 상태 어휘와 독립 축](#공통-상태-어휘와-독립-축), [상태 셀과 단일 상세 패널](#상태-셀과-단일-상세-패널), [기록 조회 범위와 비교 제한](#기록-조회-범위와-비교-제한), [데이터 표의 폭과 접근성](#데이터-표의-폭과-접근성), [URL 선택 복원과 탐색 맥락](#url-선택-복원과-탐색-맥락), [부재와 오류 상태 구분](#부재와-오류-상태-구분).
-단계는 [설계 §9](../../design/dashboard/README.md#9-삭제통합단계별-수용)의 1 상태, 표와 상세 → 2 운영과 서비스 → 3 측정 → 4 실험 → 5 기록, 설정과 전체 순으로 화면을 대체한다.
+단계는 [설계 §9](../../design/dashboard/README.md#화면과-url-소유권)의 1 상태, 표와 상세 → 2 운영과 서비스 → 3 측정 → 4 실험 → 5 기록, 설정과 전체 순으로 화면을 대체한다.
 문서 확정과 코드 연결, 배포와 동일 과업 재평가를 별도 상태로 기록한다.
 
 | 반복 문제 / 장면 | 성공 판정 |
