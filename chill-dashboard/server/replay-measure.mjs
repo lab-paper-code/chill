@@ -256,8 +256,48 @@ export function activeMeasurements(capture, epoch) {
         filters: Object.fromEntries([...Object.entries(filters).map(([key, facet]) => [key, [...new Set(all.map(row => row.facets[facet]))].sort()]), ['statuses', [...new Set(all.map(row => row.assessment.displayStatus))].sort()]]) }
     },
 
-    beoList(base, t) {
-      return { ...base, items: base.items.map(item => overlaid.has(item.metadata?.name) ? { ...item, status: beoStatus(item, t), ...('assessment' in item ? { assessment: beoAssessment(item, t) } : {}) } : item) }
+    // One BEO list item (plain or summary) with the active-scene status overlay.
+    beoItem(item, t) {
+      return overlaid.has(item.metadata?.name) ? { ...item, status: beoStatus(item, t), ...('assessment' in item ? { assessment: beoAssessment(item, t) } : {}) } : item
+    },
+
+    // Workload supportedInputs from the usable profiles of a model, grouped by execution path.
+    supportedInputs(model, paths) {
+      const groups = new Map()
+      for (const p of profiles.filter(row => row.cell.model.name === model && !row.partial)) {
+        const path = p.cell.executionPath
+        if (!groups.has(path)) groups.set(path, { executionPath: path, artifact: paths.find(row => row.name === path)?.artifact ?? '', profiles: [] })
+        groups.get(path).profiles.push({ id: p.profile, reference: { store: STORE, key: `batch-energy-optimizations/${p.profile.split('/')[2]}/result.json`, size: 11284 },
+          evidence: p.batchFacts.flatMap(f => f.sources), condition: p.condition })
+      }
+      return [...groups.values()]
+    },
+
+    // BatchEnergyOptimizationPreflight for a campaign body (internal/queryapi/batch_energy_optimization_preflight_view.go).
+    preflight(campaign, variantId, t) {
+      const c = campaign?.spec?.state?.candidate ?? {}, node = campaign?.spec?.state?.targetNode ?? ''
+      const id = cellID(c.modelSpec, c.deviceClass, c.executionPath, c.powerMode), cell = cells[id]
+      const head = { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationPreflight', readAt: iso(t), campaign: { namespace: ns, name: campaign?.metadata?.name ?? '', spec: campaign?.spec ?? {} } }
+      const unresolved = reason => ({ ...head, resolves: false, reason, batchPlan: { variantId: null, conditionMatch: 'unknown', plannedBatches: [], measuredBatches: [], inProgressBatches: [], missingBatches: [], searchMayStopEarly: false, reasons: [{ code: 'PlanUnresolved', message: reason }] } })
+      if (!cell) return unresolved(`no catalog support row for ${id}`)
+      if (cell.support.verdict === 'Incompatible') return unresolved(`execution path ${c.executionPath} is not supported on ${c.deviceClass}`)
+      if (!nodeUID[node] || nodeClass[node] !== c.deviceClass) return unresolved(`target Node ${node} is not of DeviceClass ${c.deviceClass}`)
+      const plan = curvePlan(cell, node), planned = [...BATCHES, 16], p = profileByCell[id]
+      const inProgress = runningIDs.includes(id) ? (id === measuringCell ? BATCHES.slice(measuringBatches(t).length, measuringBatches(t).length + 1) : [4]) : []
+      const measured = p ? p.measured : runningIDs.includes(id) ? (id === measuringCell ? measuringBatches(t) : [1, 2]) : []
+      const exact = measured.length > 0 || inProgress.length > 0, variant = hash(JSON.stringify({ ...plan, name: undefined, plannedBatchSizes: undefined }))
+      return { ...head, resolves: true, plan: { schemaVersion: 'chill.dacs.io/curve-plan.v1alpha14', shared: { ...plan, plannedBatchSizes: planned } },
+        batchPlan: { variantId: exact && !variantId ? variant : null, conditionMatch: exact ? 'exact' : 'planned-only', plannedBatches: planned, measuredBatches: measured, inProgressBatches: inProgress,
+          missingBatches: planned.filter(b => !measured.includes(b) && !inProgress.includes(b)), searchMayStopEarly: true,
+          reasons: [{ code: 'AutomaticBatchDiscovery', message: 'The plan bounds automatic batch discovery; completed measurements may cover only a prefix.' },
+            ...(exact ? [{ code: 'DeclarationUIDsNotRetained', message: 'Measured evidence retains declaration names and generations, not their UIDs.' }] : [])] } }
+    },
+
+    // Accepted profile of a BEO by name (profile ID ns/name/uid), with its node and measured batches.
+    beoProfile(name) {
+      const p = profiles.find(row => row.profile.split('/')[1] === name && !row.partial)
+      return p && { id: p.profile, node: p.node, nodeUID: nodeUID[p.node], batches: p.measured, model: p.cell.model.name, path: p.cell.executionPath, powerMode: p.cell.powerMode,
+        runtimeImage: p.condition.runtimeImage, serviceSeconds: batch => perf(p.id, batch).callMs / 1000 }
     },
 
     beoResult(name, t) {
@@ -286,17 +326,12 @@ export function activeMeasurements(capture, epoch) {
         assessment: { ...beoAssessment(item, t), checklist: { criteriaMet: true, version: CHECKLIST, checks: checks(p.rows) } }, resultRows: p.rows }
     },
 
-    // profiling-runs list: synthetic child runs first, then the captured page; filters per readapi ProfilingRunsView.
-    runs(base, q, t) {
+    // profiling-runs: synthetic child runs first (active scene), then the captured runs; filters per readapi ProfilingRunsView.
+    runs(captured, q, t, synthetic = true) {
       const keys = { model: run => run.spec.candidate.modelSpec, deviceClass: run => run.spec.candidate.deviceClass, path: run => run.spec.candidate.executionPath, powerMode: run => run.spec.candidate.powerMode,
         node: run => run.spec.targetNode, parentUID: run => run.ownerReferences?.[0]?.uid, status: run => run.assessment?.displayStatus }
-      const names = new Set(synthRuns(t).map(run => run.name))
-      const all = [...synthRuns(t), ...base.runs.filter(run => !names.has(run.name))]
-      const filtered = all.filter(run => Object.entries(keys).every(([key, get]) => !q.get(key) || get(run) === q.get(key)))
-      const offset = Number(q.get('offset')) || 0, limit = Math.min(200, Number(q.get('limit')) || 50)
-      const filteredQuery = Object.keys(keys).some(key => q.get(key))
-      const total = filteredQuery ? filtered.length : base.page.total + synthRuns(t).length
-      return { ...base, readAt: iso(t), runs: filtered.slice(offset, offset + limit), page: { offset, limit, total, ...(offset + limit < total ? { nextOffset: offset + limit } : {}) } }
+      const own = synthetic ? synthRuns(t) : [], names = new Set(own.map(run => run.name))
+      return [...own, ...captured.filter(run => !names.has(run.name))].filter(run => Object.entries(keys).every(([key, get]) => !q.get(key) || get(run) === q.get(key)))
     },
 
     // Evidence passport for a synthetic child run; undefined for other names.
