@@ -6,8 +6,7 @@ import { formatKst, formatNumber } from "@/lib/format"
 import { decisionStatus } from "@/lib/status-labels"
 import { compareRows, decisionRecordPath, type CompareRow } from "@/lib/scheduler-decisions"
 import type { SchedulerObservation, SchedulerObservationPage } from "@/lib/read-types"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/custom/blocks/DialogBlock"
-import { DataTable, EmptyState, QueryBoundary } from "@/components/kit"
+import { DataTable, Dialog, EmptyState, QueryBoundary } from "@/components/kit"
 
 const find = (page: SchedulerObservationPage | undefined, at: string) => page?.events?.find(row => row.decision?.at === at)
 
@@ -21,17 +20,14 @@ export function DecisionCompare({ open, onOpenChange, picks, names }: { open: bo
   const [first, second] = [...picks].sort((x, y) => Date.parse(x) - Date.parse(y))
   const a = useRecord(first), b = useRecord(second)
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="xl">
-        <DialogHeader><DialogTitle>판단 비교</DialogTitle></DialogHeader>
-        <QueryBoundary query={a} skeleton="table" isEmpty={data => !find(data, first)} empty={<EmptyState compact title="판단 기록 없음" />}>
-          {pageA => (
-            <QueryBoundary query={b} skeleton="table" isEmpty={data => !find(data, second)} empty={<EmptyState compact title="판단 기록 없음" />}>
-              {pageB => <Table a={find(pageA, first)!} b={find(pageB, second)!} names={names} />}
-            </QueryBoundary>
-          )}
-        </QueryBoundary>
-      </DialogContent>
+    <Dialog open={open} onOpenChange={onOpenChange} title="판단 비교" size="xl">
+      <QueryBoundary query={a} skeleton="table" isEmpty={data => !find(data, first)} empty={<EmptyState compact title="판단 기록 없음" />}>
+        {pageA => (
+          <QueryBoundary query={b} skeleton="table" isEmpty={data => !find(data, second)} empty={<EmptyState compact title="판단 기록 없음" />}>
+            {pageB => <Table a={find(pageA, first)!} b={find(pageB, second)!} names={names} />}
+          </QueryBoundary>
+        )}
+      </QueryBoundary>
     </Dialog>
   )
 }

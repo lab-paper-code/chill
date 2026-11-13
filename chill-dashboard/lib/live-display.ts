@@ -50,20 +50,20 @@ export function sloLatency(workload:LiveWorkload,metric:LiveMetric|undefined):nu
 }
 export function reservationReason(reason:string):string {
   const labels=[
-    ["await fresh exact ACK/untouched/absence proof","장치 반환·실행 종료·전력 안정 확인 대기"],
+    ["await fresh exact ACK/untouched/absence proof","장치 반환, 실행 종료, 전력 안정 확인 대기"],
     ["creation-outcome-unknown","생성 결과 확인 대기"],
     ["identity-awaiting-container","동일 실행기 식별 확인 대기"],
-    ["dependency/Ready/handoff proof missing","선행 작업·실행 준비·반환 확인 대기"],
+    ["dependency/Ready/handoff proof missing","선행 작업, 실행 준비, 반환 확인 대기"],
   ]
   const matched=labels.filter(([code])=>reason.includes(code)).map(([,label])=>label)
   return matched.length?[...new Set(matched)].join(" / "):liveReason(reason)
 }
 export function incidentDiagnosis(reason:string|null|undefined) {
   const power=/did not reach power mode (\S+) within (\S+)/.exec(reason??"")
-  if(power)return {reason:"전력모드 전환 시간 초과",mode:power[1],check:"장치 전원·전력모드 제어기 확인"}
-  if(reason?.includes("Pod is not labelled as a serving instance"))return {reason:"서비스 인스턴스가 아닌 파드",check:"파드 역할·측정 작업 확인"}
-  if(reason?.includes("native preparation Pod failed"))return {reason:"실행 준비 파드 실패",check:"실행 준비 파드 종료 사유·서빙 기록 확인"}
-  return {reason:liveReason(reason),check:reason?"장치·변경 원본 확인":"조치 근거 미제공"}
+  if(power)return {reason:"전력모드 전환 시간 초과",mode:power[1],check:"장치 전원, 전력모드 제어기 확인"}
+  if(reason?.includes("Pod is not labelled as a serving instance"))return {reason:"서비스 인스턴스가 아닌 파드",check:"파드 역할, 측정 작업 확인"}
+  if(reason?.includes("native preparation Pod failed"))return {reason:"실행 준비 파드 실패",check:"실행 준비 파드 종료 사유, 서빙 기록 확인"}
+  return {reason:liveReason(reason),check:reason?"장치, 변경 원본 확인":"조치 근거 미제공"}
 }
 export function isMeasurementPrecheck(action:LiveActionEvent):boolean {
   return (action.result?.status??action.status)==="NOT_SUBMITTED"&&!action.result?.error

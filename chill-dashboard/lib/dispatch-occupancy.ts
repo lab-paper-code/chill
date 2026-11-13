@@ -12,11 +12,11 @@ export function occupancyDisplayReason(data:DispatchOccupancyMeasurement) {
       recorded?label(recorded):"",
       ...(data.assessment?.reasons??[]).map(({code,message})=>{
         const summary=label(code||message)
-        return message&&message!==code&&message!==summary?`${summary} · ${message}`:summary
+        return message&&message!==code&&message!==summary?`${summary}, ${message}`:summary
       }),
       ...(data.assessment?.evidence?.reasons??[]).map(label),
     ].filter(Boolean)
-    if(reasons.length)return [...new Set(reasons)].join(" · ")
+    if(reasons.length)return [...new Set(reasons)].join(", ")
     return data.phase==="Failed"?"측정 실패":data.phase==="Insufficient"?"근거 부족":data.assessment?.displayStatus==="problem"?"상세 사유 미제공":data.estimate?"해당 없음":"결과 없음"
   }
   const result=data.d

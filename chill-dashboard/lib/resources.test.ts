@@ -40,7 +40,7 @@ test("measurement, available, excluded and shared instance roles survive the com
   assert.deepEqual(rows.find(row=>row.uid==="shared")?.services.map(row=>row.uid),["w1","w2"])
   assert.deepEqual(rows.find(row=>row.uid==="measure")?.roles,["측정 중"])
   assert.deepEqual(rows.find(row=>row.uid==="available")?.roles,["가용"])
-  assert.deepEqual(rows.find(row=>row.uid==="excluded")?.roles,["제외·기타"])
+  assert.deepEqual(rows.find(row=>row.uid==="excluded")?.roles,["제외, 기타"])
 })
 test("same-name replacement devices never merge their power or readiness",()=>{
   const state={...initialLiveState(),snapshot:{workloads:[],nodes:[node("old","동일 이름"),node("new","동일 이름")],instances:[],routing:{},decision:null,actions:[],reservations:[]},metrics:[{...metric,nodes:{new:{watts:5,observedAt:at}}}]}

@@ -7,7 +7,7 @@ test("device role: exclusion first, then measurement, service, available", () =>
   assert.equal(deviceRole(["서비스 배치", "측정 중"], false)?.label, "측정")
   assert.equal(deviceRole(["서비스 배치"], false)?.label, "서비스")
   assert.equal(deviceRole(["가용"], false)?.label, "가용")
-  assert.equal(deviceRole(["제외·기타"], false), null)
+  assert.equal(deviceRole(["제외, 기타"], false), null)
 })
 
 test("quantities become bytes; anything else is absent", () => {

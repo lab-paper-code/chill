@@ -12,9 +12,8 @@ import { buildCatalogManifest } from "@/lib/catalog-manifest"
 import { servicesUsing, type CatalogResource } from "@/lib/catalog-read"
 import { serviceReadiness } from "@/lib/status-labels"
 import { formatBytes } from "@/lib/format"
-import { buttonClassName, ConfirmDialog, DataTable, EmptyState, Fields, IdText, Page, PageHeader, QueryBoundary, RawDialog, Section, StatusBadge, TimeText, useToast } from "@/components/kit"
+import { buttonClassName, ConfirmDialog, DataTable, Dialog, EmptyState, Fields, IdText, Page, PageHeader, QueryBoundary, RawDialog, Section, StatusBadge, TimeText, useToast } from "@/components/kit"
 import Button from "@/components/custom/blocks/Button"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/custom/blocks/DialogBlock"
 
 const none = <EmptyState title="없음" compact />
 
@@ -88,15 +87,11 @@ export function CatalogDetailScreen({ kind, name }: { kind: CatalogKind; name: s
             </Section>
             <RawDialog open={raw} onOpenChange={setRaw} value={data} filename={`${kind.slice(0, -1)}-${name}`} />
             {users.length > 0 ? (
-              <Dialog open={deleting} onOpenChange={setDeleting}>
-                <DialogContent size="md">
-                  <DialogHeader><DialogTitle>삭제할 수 없음</DialogTitle></DialogHeader>
-                  <div className="grid gap-3">
-                    <div className="text-sm"><span className="text-muted-foreground">대상 </span><span className="font-medium">{name}</span></div>
-                    <UsersTable users={users} compact />
-                  </div>
-                  <DialogFooter><Button variant="outline" onClick={() => setDeleting(false)}>닫기</Button></DialogFooter>
-                </DialogContent>
+              <Dialog open={deleting} onOpenChange={setDeleting} title="삭제할 수 없음" size="md" footer={<Button variant="outline" onClick={() => setDeleting(false)}>닫기</Button>}>
+                <div className="grid gap-3">
+                  <div className="text-sm"><span className="text-muted-foreground">대상 </span><span className="font-medium">{name}</span></div>
+                  <UsersTable users={users} compact />
+                </div>
               </Dialog>
             ) : (
               <ConfirmDialog open={deleting} onOpenChange={setDeleting} title={`${label} 삭제`} target={name} tone="destructive" confirmLabel="삭제" pending={mutation.isPending} onConfirm={remove} />

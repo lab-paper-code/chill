@@ -5,7 +5,7 @@ export class ApiError extends Error {
   requestPath?: string
   originalError?: {name:string;message:string}
   constructor(public status: number, public body: string, public data: unknown, public unknownOutcome = false, public requestID: string | null = null, public workloadUID: string | null = null, public relayTiming: string | null = null, public browserRTT: number | null = null, public retryAfter: number = 2) {
-    super(isCoverageWarming({status,data}) ? "초기화 중" : status ? `HTTP ${status}` : "결과 미확인 · 응답 미수신")
+    super(isCoverageWarming({status,data}) ? "초기화 중" : status ? `HTTP ${status}` : "결과 미확인, 응답 미수신")
     this.name = "ApiError"
   }
 }
@@ -39,7 +39,7 @@ export async function relay(path:string,token:string,signal:AbortSignal,method="
     response = await fetch(`/api/chill/${path}`,{method,signal,cache:"no-store",credentials:"omit",headers:{Authorization:`Bearer ${token}`,...(body === undefined ? {} : {"Content-Type":"application/json"}),...(version ? {"If-Match":version} : {}),...(timeout ? {"X-Chill-Request-Timeout":timeout} : {})},body:body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body)})
     text = await response.text()
   } catch (error) {
-    throw Object.assign(new ApiError(response?.status ?? 0,"응답 본문 미수신 · 원본 상태를 조회한 뒤 명시적으로 재제출하세요",null,method !== "GET" && !path.endsWith("/preflight") && !path.endsWith("?dryRun=All"),response?.headers.get("X-Chill-Request-ID") ?? null,response?.headers.get("X-Chill-Workload-UID") ?? null,response?.headers.get("X-Chill-Relay-Timing") ?? null,performance.now()-started),{requestPath:new URL(path,"https://dashboard.invalid/").pathname,originalError:error instanceof Error?{name:error.name,message:token?error.message.replaceAll(token,"[redacted]"):error.message}:undefined})
+    throw Object.assign(new ApiError(response?.status ?? 0,"응답 본문 미수신, 원본 상태를 조회한 뒤 명시적으로 재제출하세요",null,method !== "GET" && !path.endsWith("/preflight") && !path.endsWith("?dryRun=All"),response?.headers.get("X-Chill-Request-ID") ?? null,response?.headers.get("X-Chill-Workload-UID") ?? null,response?.headers.get("X-Chill-Relay-Timing") ?? null,performance.now()-started),{requestPath:new URL(path,"https://dashboard.invalid/").pathname,originalError:error instanceof Error?{name:error.name,message:token?error.message.replaceAll(token,"[redacted]"):error.message}:undefined})
   }
   const browserRTT = performance.now()-started
   let data:unknown = text

@@ -156,7 +156,7 @@ function DecisionsBody({ range, maxSpan, set }: { range: TimeRangeValue; maxSpan
         }]}
         end={<TimeRange value={range} onChange={setRange} presets={["15m", "1h", "24h"]} custom={{ maxSpanMs: maxSpan }} />}
       />
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,34rem)_minmax(0,1fr)]">
+      <div className="grid items-start gap-6 [@media(min-width:90em)]:grid-cols-[minmax(0,34rem)_minmax(0,1fr)]">
         <QueryBoundary query={list}>
           {() => (
             <DataTable label="판단 기록" rows={rows} rowKey={row => row.decision!.at} columns={columns} pageSize={0}
