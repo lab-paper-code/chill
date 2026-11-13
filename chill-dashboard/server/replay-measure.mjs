@@ -2,6 +2,7 @@
 // captured names (models, device classes, nodes, paths, power modes, requests) and follows the Query
 // wire types in internal/queryapi (coverage, result rows, BEO result, evidence passport, occupancy).
 import { createHash } from 'node:crypto'
+import { MEASUREMENT_NODE } from './replay-scene.mjs'
 
 const STORE = 'chill-evidence-store', BATCHES = [1, 2, 4, 8], TRIALS = 3, CHECKLIST = 'result-checklist.v1'
 const MODELS = ['mobilenet-v2-050', 'plc-lstm-ae', 'smolvlm2-500m-video-instruct']
@@ -71,9 +72,12 @@ export function activeMeasurements(capture, epoch) {
   const spread = interleave(MODELS.map(model => interleave(Object.values(Object.groupBy(pool.filter(cell => cell.model.name === model), cell => cell.deviceClass.name))))).map(cell => cell.id)
   const measuringCell = candidateCell(beoByName[MEASURING])
   const rest = spread.filter(id => id !== measuringCell), free = USABLE - fixed.length
-  const usableIDs = fixed.concat(rest.slice(0, free))
-  const runningIDs = [measuringCell, ...rest.slice(free, free + RUNNING - 1)]
-  const partialIDs = rest.slice(free + RUNNING - 1, free + RUNNING - 1 + INSUFFICIENT)
+  // The device holding the scene's measurement lease runs one measuring request of its own (the lease holder).
+  const leaseCell = rest.find(id => beoByName[cells[id].currentMeasurement.id.split('/')[1]].spec.state.targetNode === MEASUREMENT_NODE)
+  const others = rest.filter(id => id !== leaseCell), extra = RUNNING - 1 - (leaseCell ? 1 : 0)
+  const usableIDs = fixed.concat(others.slice(0, free))
+  const runningIDs = [measuringCell, ...(leaseCell ? [leaseCell] : []), ...others.slice(free, free + extra)]
+  const partialIDs = others.slice(free + extra, free + extra + INSUFFICIENT)
   const completeCell = Object.fromEntries(COMPLETE.map(name => [candidateCell(beoByName[name]), beoByName[name]]))
   const measuredAt = id => seconds(epoch - 3_600_000 * (3 + parseInt(hash(id).slice(0, 4), 16) % 70))
 
@@ -269,6 +273,8 @@ export function activeMeasurements(capture, epoch) {
 
     // Overlaid requests by name; `attach` gives the overlay the request items the caller lists.
     overlays: name => overlay.has(name),
+    // UID of the measuring request that holds the MEASUREMENT_NODE lease (the real lease owner is the request UID).
+    leaseHolder: () => leaseCell && runningRequest(cells[leaseCell]).split('/')[2],
     attach(lookup) { requestItem = lookup },
     // One BEO list item (plain or summary) with the active-scene status overlay.
     beoItem(item, t) {

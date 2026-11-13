@@ -22,8 +22,8 @@ const SERVING = [
 const AUTONOMOUS = ['image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa', 'okdong-ae-anomaly']
 // [idle, busy] watts per device class; unlisted meters keep their captured reading.
 const WATTS = { genesis2: [91, 142], genesis3: [54, 112], jetsono: [31.7, 37.5], 'jetson-nano': [2.4, 6.8], 'orin-nano': [5.5, 8.6], lattepanda: [9.5, 15.2] }
-const PREPARE_NODE = 'orin-nano', MEASUREMENT_NODE = 'lattepanda', FAILED_NODE = 'rasp5', GAP_NODE = 'orangepi', GAP = [1800, 1815]
-const LEASE = '6f0d3b8e-2a41-4c7f-9e15-d8b3a0c47e92'
+export const MEASUREMENT_NODE = 'lattepanda'
+const PREPARE_NODE = 'orin-nano', FAILED_NODE = 'rasp5', GAP_NODE = 'orangepi', GAP = [1800, 1815]
 const EVALUATION = { name: 'evaluation-replay-energy-sweep', uid: '4c1d9e2a-7b35-4f08-9e61-2a8d5c0b3f17', source: 'evaluation-wbs7-shadow-20261108' }
 const BLOCKED = { name: 'evaluation-replay-cleanup-blocked', uid: '9b3e61d4-2f07-4a5c-8e19-c40d7b5a2e68', source: 'eval-e5-control380-fidelity-reject' }
 const PENDING = { name: 'evaluation-replay-pending', uid: 'd28c4f17-6e9a-4b30-a5d2-7f1e09c3b846', source: 'eval-e5-control379-admission-delay' }
@@ -40,9 +40,11 @@ const uuid = (seed, k) => `${hex(seed, k, 8)}-${hex(seed, k + 1, 4)}-4${hex(seed
 const b64 = text => Buffer.from(text, 'utf8').toString('base64')
 const quantile = (sorted, p) => sorted.length ? sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)] : null
 
-// options.profileFor(node, model, path, mode) and options.supportedInputs(model, paths) come from replay-measure.mjs.
+// options.profileFor(node, model, path, mode), options.supportedInputs(model, paths) and options.leaseHolder() come from replay-measure.mjs.
 export function activeScene(capture, epoch, options = {}) {
   const profileFor = options.profileFor ?? (() => undefined), supportedInputs = options.supportedInputs ?? (() => [])
+  // The lease owner is the holding measurement request's UID, as in the captured cluster.
+  const holder = options.leaseHolder?.() ?? ''
   const snapshot = capture.frames.find(frame => frame.type === 'snapshot')
   const firstMetrics = capture.frames.find(frame => frame.type === 'metrics')
   const nodes = Object.fromEntries(snapshot.nodes.map(node => [node.name, node]))
@@ -92,8 +94,8 @@ export function activeScene(capture, epoch, options = {}) {
       startedAt: iso(startedAt), ...(done ? { completedAt: iso(startedAt + ACTION_RUN) } : {}), expectedSeconds: 90, expectedSource: null }
   }
   const actionKey = row => JSON.stringify([row.id, row.node.uid, row.startedAt])
-  const lease = { owner: LEASE, nodes: [ref(MEASUREMENT_NODE)], workloadUIDs: [], podUIDs: [], instances: [], reason: `measurement-lease/${LEASE}: profiling run in progress`,
-    explanation: `${RESERVATION} 제공된 사유: measurement-lease/${LEASE}: profiling run in progress` }
+  const leaseReason = `measurement-lease/${holder}: await fresh exact ACK/untouched/absence proof, terminal siblings and settled power`
+  const lease = { owner: holder, nodes: [ref(MEASUREMENT_NODE)], workloadUIDs: [], podUIDs: [], instances: [], reason: leaseReason, explanation: `${RESERVATION} 제공된 사유: ${leaseReason}` }
   const reservations = t => [lease, ...(running(t) ? [{ owner: `decision/${iso(decisionAt(cycle(t) * (CYCLE / DECIDE)))}`, nodes: [ref(PREPARE_NODE)], workloadUIDs: [ic.uid], podUIDs: [], instances: [],
     reason: '', explanation: RESERVATION }] : [])]
   const workloadStates = autonomous => snapshot.workloads.map(w => !autonomous.includes(w.uid) ? { uid: w.uid, state: 'Disabled', reason: 'AutonomousControlOff' }

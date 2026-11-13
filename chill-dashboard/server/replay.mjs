@@ -31,7 +31,7 @@ const ns = capture.meta.namespace, NS = `v1/namespaces/${ns}/`
 // The prepare action of the first cycle started 40 s before the server did.
 const epoch = startedAt - 40_480
 const measure = activeMeasurements(capture, epoch)
-const active = activeScene(capture, epoch, { profileFor: measure.profileFor, supportedInputs: measure.supportedInputs })
+const active = activeScene(capture, epoch, { profileFor: measure.profileFor, supportedInputs: measure.supportedInputs, leaseHolder: measure.leaseHolder })
 const capturedRecords = capturedJournal(capture)
 const inventoryNodes = parsed => Object.fromEntries(parsed.classes.flatMap(cls => cls.nodes.map(node => [node.name, node.uid])))
 const requests = measurementRequests({ capture, startedAt, ns, nodeUID: inventoryNodes(capture.json('v1/inventory', '?limit=200&offset=0')), measure })
@@ -195,11 +195,11 @@ function get(scene, path, url, now) {
   }
   if (path === 'v1/observations/scheduler') {
     const history = state[scene].history.map(row => ({ at: iso(row.at), settings: row.change }))
-    // Synthetic records never lie in the future: a window reaching past now is cut at now.
+    // No record lies in the future: synthetic windows are cut at now; captured records after now are not yet served.
     const nowN = BigInt(now) * 1_000_000n
     const records = act ? (fromN, toN) => active.journal(fromN, toN < nowN ? toN : nowN, autonomous(scene), state[scene].settings, state[scene].history)
       : () => [...capturedRecords, ...history.map(row => ({ at: row.at, atN: nanos(row.at), kind: 'settings', summary: { at: row.at, settings: { actorUsername: row.settings.actorUsername, actorUID: row.settings.actorUID, appliedAt: row.settings.appliedAt } }, compact: () => row, full: () => row }))]
-        .sort((a, b) => a.atN < b.atN ? -1 : a.atN > b.atN ? 1 : 0)
+        .filter(row => row.atN < nowN).sort((a, b) => a.atN < b.atN ? -1 : a.atN > b.atN ? 1 : 0)
     const result = queryJournal(records, q, now)
     return [result.status, result.body]
   }
@@ -627,6 +627,20 @@ function selfCheck() {
       cursor = page?.nextCursor
     }
     if (!summaryRows) fail('scheduler summary: no decision or action rows to compare')
+    // Every live measurement lease names a listed request (owner UID) or run; in the active scene, one with a running
+    // run, as the device screens resolve it. A captured holder no captured source names at all (deleted before the
+    // list pages were read) is printed as a capture gap, not a failure: the capture holds nothing to resolve it to.
+    const live = scene === 'active' ? active.snapshot(now, autonomous(scene)) : shifted(capture.frames[1])
+    const running = read(`${NS}profiling-runs?status=running&limit=200`).body?.runs ?? []
+    for (const r of live.reservations ?? []) {
+      const lease = r.reason.startsWith('measurement-lease/') ? r.reason.slice('measurement-lease/'.length).split(':', 1)[0] : r.owner.startsWith('measurement-lease/') ? r.owner.slice('measurement-lease/'.length) : null
+      if (lease === null) continue
+      const where = `lease ${lease || '(empty)'} on ${r.nodes.map(n => n.name).join(',')}`
+      const known = list.some(item => item.metadata.uid === lease) || runs.some(run => run.uid === lease)
+      if (!known && scene === 'captured' && lease && !capture.entries.some(e => e.path.startsWith(NS) && capture.rawText(e).includes(lease))) console.warn(`self-check: [captured] ${where}: holder absent from every captured request and run page (capture gap)`)
+      else if (!known) fail(`${where}: no listed request or run`)
+      else if (scene === 'active' && !running.some(run => run.uid === lease || run.ownerReferences.some(o => o.uid === lease))) fail(`${where}: no running run`)
+    }
     // No synthetic decision or event after now, whatever window is asked.
     const ahead = `from=${enc(new Date(now - 120_000).toISOString())}&to=${enc(new Date(now + 86_400_000).toISOString())}`
     for (const row of read(`v1/observations/scheduler?${ahead}&filter=decision&view=summary`).body?.events ?? []) future('scheduler decision', row.at)
