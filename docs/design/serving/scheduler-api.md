@@ -118,7 +118,7 @@ round는 호출 시간과 오류, Tick은 판단 처분을 소유한다. `contro
 
 ## 이력과 compact 조회
 
-scheduler history는 `[from,to)` 사건시각을 필터한다. 기본과 asc는 append 순, desc는 사건시각 내림차순과 append offset 내림차순이다. `filter`는 all, decision-action, decision, decision-change, action, snapshot, settings, power, other다. decision-change는 status가 Keep이 아닌 decision만 선택한다. uid는 명시 Workload 관계만 선택한다.
+scheduler history는 `[from,to)` 사건시각을 필터한다. 기본과 asc는 append 순, desc는 사건시각 내림차순과 append offset 내림차순이다. `filter`는 all, decision-action, decision, decision-change, action, snapshot, settings, power, other다. decision-change는 target이 있고 그 target이 keep 계획이 아닌 decision, 곧 구성을 바꾸는 판단만 선택한다. Keep, Pending과 keep target의 Overload는 제외된다. uid는 명시 Workload 관계만 선택한다.
 
 미지원 값과 중복 key, 빈 UID와 잘못된 문자열은 InvalidQuery다. cursor는 같은 query의 선택 결과 offset이며 `event.offset`은 필터 전 원본 offset이다. 원본 상세는 filter/order/uid 없이 limit1과 원본 offset으로 읽는다.
 

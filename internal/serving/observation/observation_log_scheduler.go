@@ -660,8 +660,11 @@ const (
 )
 
 type schedulerObservationEnvelope struct {
-	At       time.Time
-	Decision *struct{}
+	At time.Time
+	// Decision decodes only the target's keep marker, the decision-change key.
+	Decision *struct {
+		Target *struct{ Keep bool }
+	}
 	Snapshot *struct{}
 	Settings *struct{}
 	Action   *struct{}
@@ -797,13 +800,9 @@ func schedulerObservationMatches(raw []byte, envelope schedulerObservationEnvelo
 			return false, nil
 		}
 	case "decision-change":
-		if kind != schedulerHistoryDecision {
+		// A changed configuration is a selected target other than the keep plan.
+		if kind != schedulerHistoryDecision || envelope.Decision.Target == nil || envelope.Decision.Target.Keep {
 			return false, nil
-		}
-		// Decode the status only here: other filters never validate decision bodies.
-		var record struct{ Decision struct{ Status string } }
-		if err := json.Unmarshal(raw, &record); err != nil || record.Decision.Status == serving.SchedulerStatusKeep {
-			return false, err
 		}
 	default:
 		return false, nil

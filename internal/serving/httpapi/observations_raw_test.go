@@ -254,18 +254,28 @@ func TestSchedulerHistoryDecisionChangeFilterPagesOnlyChangedDecisions(t *testin
 	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
 	from := time.Now().UTC().Add(-time.Second)
 	to := from.Add(time.Minute)
-	for i, status := range []string{serving.SchedulerStatusKeep, "Feasible", serving.SchedulerStatusKeep, serving.SchedulerStatusOverload, serving.SchedulerStatusKeep, "Pending"} {
+	keep := serving.SchedulerCandidate{ID: "keep"}
+	plan := func(id string) *serving.SchedulerCandidate { return &serving.SchedulerCandidate{ID: id} }
+	for i, decision := range []serving.SchedulerDecision{
+		{Status: serving.SchedulerStatusKeep, Keep: keep, Target: plan("keep")},
+		{Status: "Feasible", Keep: keep, Target: plan("plan-a")},
+		{Status: "Pending", Keep: keep},
+		{Status: serving.SchedulerStatusOverload, Keep: keep, Target: plan("keep")},
+		{Status: serving.SchedulerStatusOverload, Keep: keep, Target: plan("plan-b")},
+		{Status: serving.SchedulerStatusKeep, Keep: keep, Target: plan("keep")},
+		{Status: "Feasible", Keep: keep, Target: plan("plan-c")},
+	} {
 		if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{
-			At: from.Add(time.Duration(i) * time.Second), Decision: &serving.SchedulerDecision{Status: status},
+			At: from.Add(time.Duration(i) * time.Second), Decision: &decision,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: from.Add(6 * time.Second), Action: &observation.SchedulerActionObservation{ID: "action"}}); err != nil {
+	if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: from.Add(7 * time.Second), Action: &observation.SchedulerActionObservation{ID: "action"}}); err != nil {
 		t.Fatal(err)
 	}
 	base := "/api/v1/observations/scheduler?from=" + from.Format(time.RFC3339Nano) + "&to=" + to.Format(time.RFC3339Nano) + "&filter=decision-change&limit=2&view=summary"
-	for order, want := range map[string][]int{"asc": {1, 3, 5}, "desc": {5, 3, 1}} {
+	for order, want := range map[string][]int{"asc": {1, 4, 6}, "desc": {6, 4, 1}} {
 		var got []int
 		cursor := ""
 		for page := 0; page == 0 || cursor != ""; page++ {
@@ -281,7 +291,7 @@ func TestSchedulerHistoryDecisionChangeFilterPagesOnlyChangedDecisions(t *testin
 				t.Fatalf("%s decision-change: status=%d body=%s err=%v", order, response.Code, response.Body, err)
 			}
 			for _, event := range result.Events {
-				if event.Decision == nil || event.Decision.Status == serving.SchedulerStatusKeep || event.Offset == nil {
+				if event.Decision == nil || event.Offset == nil {
 					t.Fatalf("%s selected a non-change: %+v", order, event)
 				}
 				got = append(got, *event.Offset)
