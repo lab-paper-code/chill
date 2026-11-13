@@ -94,7 +94,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (query === "power") allowed.push("from","to","bucket","format")
   if (query === "profiles") allowed.push("limit","offset","model","deviceClass","profile","q","node","powerMode","path","status","sort","order")
   if (query === "runs") allowed.push("model","deviceClass","node","path","powerMode","status","group","parentUID","sort","order")
-  allowed.push(...(query === "compatibility" ? ["modelSpec", "executionPath", "deviceClass", "node"] : query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor", "order", "filter", "uid"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))
+  allowed.push(...(query === "compatibility" ? ["modelSpec", "executionPath", "deviceClass", "node"] : query === "observations" ? ["from", "to", "limit", "cursor", "order", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor", "order", "filter", "uid"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))
   for (const key of new Set(params.keys())) {
     const values = params.getAll(key)
     if (!allowed.includes(key) || (values.length > 1 && key !== "definition" && key !== "outcome") || values.length > 32 || values.some(value => /[\x00-\x1f\x7f\ufffd]/.test(value))) throw new RelayFailure("DashboardQueryInvalid", 400)
@@ -136,7 +136,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
       } else if (Buffer.byteLength(value) > (key === "group" ? 16384 : key === "outcome" ? 64 : query === "inputs" && key === "set" ? 512 : 256) || (key !== "q" && !value)) throw new RelayFailure("DashboardQueryInvalid", 400)
     }
   }
-  if (params.has("order") && query !== "schedulerHistory" && !params.has("sort")) throw new RelayFailure("DashboardQueryInvalid", 400)
+  if (params.has("order") && query !== "schedulerHistory" && query !== "observations" && !params.has("sort")) throw new RelayFailure("DashboardQueryInvalid", 400)
   if (query === "uid" && !params.get("uid")) throw new RelayFailure("DashboardQueryInvalid", 400)
   if (query === "compatibility" && allowed.some(key => !params.get(key))) throw new RelayFailure("DashboardQueryInvalid", 400)
   if (query === "event" && params.has("at")) {

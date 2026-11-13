@@ -36,7 +36,7 @@ export function admissionStatus(open: boolean | null | undefined): StatusInfo {
 
 /** SchedulerWorkloadState.state from the scheduler decision summary. */
 const autonomy: Table = {
-  Controlled: { label: "자율 제어", tone: "ok" },
+  Controlled: { label: "켜짐", tone: "ok" },
   Fixed: { label: "고정", tone: "idle" },
   Disabled: { label: "꺼짐", tone: "idle" },
   MeasurementEvidenceMissing: { label: "측정 결과 없음", tone: "warn" },

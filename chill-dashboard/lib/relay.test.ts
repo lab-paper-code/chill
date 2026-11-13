@@ -286,6 +286,8 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
   assert.equal(workload.get("limit"), "7")
   assert.equal(workload.get("from"), from)
   assert.equal(workload.get("to"), to)
+  assert.equal(new URLSearchParams(plan("GET", "v1/observations/workloads/uid", `?${window}&order=desc`).path.split("?")[1]).get("order"), "desc")
+  for (const invalid of ["order=", "order=DESC", "order=desc&order=asc"]) assert.throws(() => plan("GET", "v1/observations/workloads/uid", `?${window}&${invalid}`), /DashboardQueryInvalid/)
 })
 
 test("model compatibility relay permits only the exact GET and four single required selection queries", () => {
