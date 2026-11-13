@@ -42,6 +42,14 @@ const (
 	AdmissionStageExecutor = "executor"
 )
 
+// Observation reads share one invalid-query code and one row order vocabulary.
+const (
+	CodeInvalidQuery          = "InvalidQuery"
+	ObservationOrderAscending = "asc"
+	// ObservationOrderDescending lists rows in the exact reverse of ascending.
+	ObservationOrderDescending = "desc"
+)
+
 type AdmissionPolicy string
 
 const (

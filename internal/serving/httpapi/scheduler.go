@@ -112,7 +112,7 @@ func schedulerObservationSelectionQuery(query url.Values) (observation.Scheduler
 			switch key {
 			case "order":
 				selection.Order = values[0]
-				valid = selection.Order == "asc" || selection.Order == "desc"
+				valid = selection.Order == serving.ObservationOrderAscending || selection.Order == serving.ObservationOrderDescending
 			case "filter":
 				selection.Filter = values[0]
 				switch selection.Filter {
@@ -131,7 +131,7 @@ func schedulerObservationSelectionQuery(query url.Values) (observation.Scheduler
 			}
 		}
 		if !valid {
-			return selection, &serving.Error{Code: "InvalidQuery", Message: "invalid scheduler observation " + key, Field: key}
+			return selection, &serving.Error{Code: serving.CodeInvalidQuery, Message: "invalid scheduler observation " + key, Field: key}
 		}
 	}
 	return selection, nil
@@ -163,7 +163,7 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if err != nil || !from.Before(to) {
-		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "positive RFC3339 observation interval is required"})
+		sendError(w, &serving.Error{Code: serving.CodeInvalidQuery, Message: "positive RFC3339 observation interval is required"})
 		return
 	}
 	if strings.HasSuffix(r.URL.Path, "/load") {
@@ -193,7 +193,7 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if err != nil || limit <= 0 || limit > h.config.MaxQueryEvents || offset < 0 {
-		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "bounded limit and nonnegative cursor are required"})
+		sendError(w, &serving.Error{Code: serving.CodeInvalidQuery, Message: "bounded limit and nonnegative cursor are required"})
 		return
 	}
 	records, nextOffset, gapUntil, coverage, err := h.observationLog.SchedulerObservationPage(r.Context(), from, to, limit, offset, selection)

@@ -12,7 +12,6 @@ import (
 const (
 	MaximumPowerSeriesRange = time.Hour
 	MaximumPowerBuckets     = 900
-	powerSeriesInvalidQuery = "InvalidQuery"
 )
 
 type OperatingPowerSeries struct {
@@ -27,7 +26,7 @@ type OperatingPowerSeries struct {
 // the requested range. Actual observations belong to [from,to), not both sides.
 func PowerBucketCount(from, to time.Time, bucket time.Duration) (int, error) {
 	if from.IsZero() || !from.Before(to) || to.Sub(from) > MaximumPowerSeriesRange || bucket < time.Second || bucket > MaximumPowerSeriesRange {
-		return 0, &serving.Error{Code: powerSeriesInvalidQuery, Message: "power series requires a positive from/to range of at most 1h and bucket between 1s and 1h"}
+		return 0, &serving.Error{Code: serving.CodeInvalidQuery, Message: "power series requires a positive from/to range of at most 1h and bucket between 1s and 1h"}
 	}
 	span := to.Sub(from.UTC().Truncate(bucket))
 	count := int(span / bucket)
@@ -35,7 +34,7 @@ func PowerBucketCount(from, to time.Time, bucket time.Duration) (int, error) {
 		count++
 	}
 	if count > MaximumPowerBuckets {
-		return 0, &serving.Error{Code: powerSeriesInvalidQuery, Message: "power series exceeds 900 buckets"}
+		return 0, &serving.Error{Code: serving.CodeInvalidQuery, Message: "power series exceeds 900 buckets"}
 	}
 	return count, nil
 }
@@ -49,7 +48,7 @@ func (l *ObservationLog) OperatingPowerSeries(ctx context.Context, from, to time
 		return result, err
 	}
 	if limit <= 0 {
-		return result, &serving.Error{Code: powerSeriesInvalidQuery, Message: "positive observation bound is required"}
+		return result, &serving.Error{Code: serving.CodeInvalidQuery, Message: "positive observation bound is required"}
 	}
 	start := from.UTC().Truncate(bucket)
 	reducers := make([]*operatingPowerReducer, count)
@@ -90,7 +89,7 @@ func (l *ObservationLog) OperatingPowerSeries(ctx context.Context, from, to time
 	}
 	whole.matched = mergeOperatingNeighbors(&whole.result, whole.history, whole.matched, limit)
 	if whole.matched > limit {
-		return result, &serving.Error{Code: powerSeriesInvalidQuery, Message: "power series raw observation count exceeds query bound"}
+		return result, &serving.Error{Code: serving.CodeInvalidQuery, Message: "power series raw observation count exceeds query bound"}
 	}
 	result.Buckets = make([]OperatingPowerWindow, count)
 	for i, reducer := range reducers {

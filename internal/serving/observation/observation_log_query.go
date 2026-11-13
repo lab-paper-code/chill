@@ -45,7 +45,7 @@ type ObservationResult struct {
 }
 
 // Query aggregates the whole selected population and pages its request rows.
-// Order "desc" lists rows newest first, the exact reverse of the default
+// Descending order lists rows newest first, the exact reverse of the default
 // ascending order; the cursor counts rows in the chosen order, as in
 // SchedulerObservationPage. Aggregates do not depend on order.
 func (l *ObservationLog) Query(ctx context.Context, uid string, from, to time.Time, definitions, outcomes []string, limit int, cursor, order string) (ObservationResult, error) {
@@ -62,13 +62,13 @@ func (l *ObservationLog) Query(ctx context.Context, uid string, from, to time.Ti
 			"positive monotonic elapsed latency; other outcomes counted separately",
 	}
 	if uid == "" || (!from.IsZero() && !to.IsZero() && !from.Before(to)) || limit < 0 {
-		return result, &serving.Error{Code: "InvalidQuery", Message: "invalid observation query"}
+		return result, &serving.Error{Code: serving.CodeInvalidQuery, Message: "invalid observation query"}
 	}
 	offset := 0
 	if cursor != "" {
 		n, err := strconv.Atoi(cursor)
 		if err != nil || n < 0 {
-			return result, &serving.Error{Code: "InvalidQuery", Message: "invalid observation cursor"}
+			return result, &serving.Error{Code: serving.CodeInvalidQuery, Message: "invalid observation cursor"}
 		}
 		offset = n
 	}
@@ -104,11 +104,11 @@ func (l *ObservationLog) Query(ctx context.Context, uid string, from, to time.Ti
 		}
 		return selected[a].ReceivedAt.Before(selected[b].ReceivedAt)
 	})
-	if order == "desc" {
+	if order == serving.ObservationOrderDescending {
 		slices.Reverse(selected)
 	}
 	if offset > len(selected) {
-		return result, &serving.Error{Code: "InvalidQuery", Message: "observation cursor is out of range"}
+		return result, &serving.Error{Code: serving.CodeInvalidQuery, Message: "observation cursor is out of range"}
 	}
 	end := len(selected)
 	if limit > 0 && limit < end-offset {

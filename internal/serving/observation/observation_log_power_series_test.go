@@ -72,7 +72,7 @@ func TestPowerSeriesAlignedBucketsMatchPeriodEnergy(t *testing.T) {
 			if err != nil || strings.Contains(string(raw), "observedSamples") || strings.Contains(string(raw), "firstObservedAt") {
 				t.Fatalf("legacy period response acquired bucket fields: %s %v", raw, err)
 			}
-			if _, err := log.OperatingPowerSeries(context.Background(), from, to, 5*time.Second, meters, 1); rawErrorCode(err) != powerSeriesInvalidQuery {
+			if _, err := log.OperatingPowerSeries(context.Background(), from, to, 5*time.Second, meters, 1); rawErrorCode(err) != serving.CodeInvalidQuery {
 				t.Fatalf("unbounded raw query: %v", err)
 			}
 		})
@@ -156,7 +156,7 @@ func TestPowerBucketCountLimitsAndOffsetAlignment(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			count, err := PowerBucketCount(test.from, test.to, test.bucket)
 			if test.count == 0 {
-				if rawErrorCode(err) != powerSeriesInvalidQuery {
+				if rawErrorCode(err) != serving.CodeInvalidQuery {
 					t.Fatalf("invalid range accepted: %d %v", count, err)
 				}
 			} else if err != nil || count != test.count {

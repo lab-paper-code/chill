@@ -370,7 +370,7 @@ func (h *Handler) management(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) workloadList(ctx context.Context, view string) (any, error) {
 	if view != "" && view != schedulerSummaryView {
-		return nil, &serving.Error{Code: "InvalidQuery", Message: "view must be summary when provided", Field: "view"}
+		return nil, &serving.Error{Code: serving.CodeInvalidQuery, Message: "view must be summary when provided", Field: "view"}
 	}
 	views, err := h.manager.ListWorkloads(ctx)
 	if err != nil {
@@ -734,12 +734,12 @@ func (h *Handler) observations(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "valid RFC3339 interval and bounded positive event limit are required"})
+		sendError(w, &serving.Error{Code: serving.CodeInvalidQuery, Message: "valid RFC3339 interval and bounded positive event limit are required"})
 		return
 	}
 	order, present := query["order"]
-	if present && (len(order) != 1 || order[0] != "asc" && order[0] != "desc") {
-		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "invalid observation order", Field: "order"})
+	if present && (len(order) != 1 || order[0] != serving.ObservationOrderAscending && order[0] != serving.ObservationOrderDescending) {
+		sendError(w, &serving.Error{Code: serving.CodeInvalidQuery, Message: "invalid observation order", Field: "order"})
 		return
 	}
 	result, err := h.observationLog.Query(r.Context(), r.PathValue("uid"), from, to, query["definition"], query["outcome"], limit, query.Get("cursor"), query.Get("order"))
@@ -791,7 +791,7 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusPreconditionRequired
 	case "NotFound", "WorkloadNotFound", "PoolNotFound":
 		status = http.StatusNotFound
-	case invalidBodyCode, "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidCoverageQuery", "InvalidRequestTimeout", "InvalidClientObservation", "ResourceVersionRequired", "MeasurementPreflightRejected", "OccupancyInfeasible":
+	case invalidBodyCode, "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", serving.CodeInvalidQuery, "InvalidCoverageQuery", "InvalidRequestTimeout", "InvalidClientObservation", "ResourceVersionRequired", "MeasurementPreflightRejected", "OccupancyInfeasible":
 		status = http.StatusBadRequest
 	case "ObservationNotReady", "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "NodeBusy", "NodeServing", "NodeMissing", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse":
 		status = http.StatusConflict

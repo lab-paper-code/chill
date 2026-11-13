@@ -249,10 +249,7 @@ func schedulerHistoryObservations(records []observation.SchedulerObservation) []
 	for i, record := range records {
 		row := schedulerHistoryObservation{At: record.At, Offset: record.Offset, Control: record.Control, Node: record.Node, PowerJoules: record.PowerJoules}
 		if d := record.Decision; d != nil {
-			row.Decision = &schedulerHistoryDecision{At: d.At, Status: d.Status, Reasons: d.Reasons, EvaluationElapsed: d.EvaluationElapsed, Workloads: d.Workloads}
-			if d.Target != nil {
-				row.Decision.TargetKeep = &d.Target.Keep
-			}
+			row.Decision = &schedulerHistoryDecision{At: d.At, Status: d.Status, Reasons: d.Reasons, TargetKeep: record.TargetKeep, EvaluationElapsed: d.EvaluationElapsed, Workloads: d.Workloads}
 		}
 		if s := record.Snapshot; s != nil {
 			row.Snapshot = &schedulerHistorySnapshot{s.At}

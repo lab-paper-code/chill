@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	serving "github.com/lab-paper-code/chill/internal/serving"
 )
 
 func TestEventRecoveryPreservesUTCIdentity(t *testing.T) {
@@ -292,7 +294,7 @@ func TestEventRangeAppendHourAndRowContinuation(t *testing.T) {
 			}
 			hour := observationTestHour.Format(time.RFC3339Nano)
 			for _, bad := range []string{hour + "/", hour + "/-1", hour + "/+1", hour + "/1", hour + "/1/2", hour + "/0/-1", hour + "/0/+1", hour + "/0/999999999999999999999", hour + "/3/0", boundary.Add(24 * time.Hour).Format(time.RFC3339Nano)} {
-				if _, _, _, err := log.EventObservationPage(context.Background(), from, from.Add(3*time.Second), 1, bad); rawErrorCode(err) != powerSeriesInvalidQuery {
+				if _, _, _, err := log.EventObservationPage(context.Background(), from, from.Add(3*time.Second), 1, bad); rawErrorCode(err) != serving.CodeInvalidQuery {
 					t.Fatalf("invalid cursor accepted %q: %v", bad, err)
 				}
 			}

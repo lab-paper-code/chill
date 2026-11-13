@@ -114,6 +114,9 @@ type SchedulerObservation struct {
 	// Offset is the original window's append offset.
 	// schedulerLine deliberately does not persist this read-side reference.
 	Offset *int `json:"offset,omitempty"`
+	// TargetKeep is the summary read's decision target keep marker, nil when
+	// the decision has no target. Like Offset it is read-side only.
+	TargetKeep *bool `json:"-"`
 	// References carries catalog bodies projected before action payload marshaling.
 	References *SchedulerReferences `json:"-"`
 }
@@ -411,7 +414,7 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 func (l *ObservationLog) LoadWindowTimed(ctx context.Context, from, to time.Time, timing *SchedulerControlObservation) (LoadWindow, error) {
 	result := LoadWindow{From: from, To: to, Duration: to.Sub(from), Population: "all ingress receipts; computable demand separately marked after authorization and input validation; stage time [from,to); one request = one input"}
 	if from.IsZero() || !from.Before(to) {
-		return result, &serving.Error{Code: "InvalidQuery", Message: "positive explicit load window is required"}
+		return result, &serving.Error{Code: serving.CodeInvalidQuery, Message: "positive explicit load window is required"}
 	}
 	// Both streams share one capture. Persisted first-report eligibility keeps
 	// client reads at observation-window scale, without a retained-history scan.
@@ -534,14 +537,14 @@ type SchedulerObservationSelection struct {
 // Cursors count selected records; Offset retains the unfiltered append position.
 func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to time.Time, limit, offset int, selection SchedulerObservationSelection) ([]SchedulerObservation, int, *time.Time, serving.ObservationCoverage, error) {
 	if from.IsZero() || !from.Before(to) || limit <= 0 || offset < 0 {
-		return nil, -1, nil, serving.ObservationCoverage{}, &serving.Error{Code: "InvalidQuery", Message: "positive window, bounded limit and nonnegative cursor are required"}
+		return nil, -1, nil, serving.ObservationCoverage{}, &serving.Error{Code: serving.CodeInvalidQuery, Message: "positive window, bounded limit and nonnegative cursor are required"}
 	}
 	read, err := l.prepare(ctx, map[string][2]time.Time{observationSchedulerStream: {from, to}})
 	if err != nil {
 		return nil, -1, nil, serving.ObservationCoverage{}, err
 	}
 	defer read.close()
-	if selection.Order == "desc" {
+	if selection.Order == serving.ObservationOrderDescending {
 		return l.schedulerSelectedPage(read, from, to, limit, offset, selection)
 	}
 	records := make([]SchedulerObservation, 0, limit)
@@ -586,7 +589,7 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 		return nil, -1, nil, serving.ObservationCoverage{}, err
 	}
 	if offset > matched {
-		return nil, -1, nil, serving.ObservationCoverage{}, &serving.Error{Code: "InvalidQuery", Message: "cursor exceeds selected observation count"}
+		return nil, -1, nil, serving.ObservationCoverage{}, &serving.Error{Code: serving.CodeInvalidQuery, Message: "cursor exceeds selected observation count"}
 	}
 	coverage := read.coverage(map[string][2]time.Time{observationSchedulerStream: {from, to}})
 	return records, next, coverage.GapUntil(from), coverage, nil
@@ -638,7 +641,7 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 	if d := line.Decision; d != nil {
 		record.Decision = &serving.SchedulerDecision{At: d.At, Status: d.Status, Reasons: d.Reasons, Workloads: d.Workloads, EvaluationElapsed: d.EvaluationElapsed}
 		if d.Target != nil {
-			record.Decision.Target = &serving.SchedulerCandidate{Keep: d.Target.Keep}
+			record.TargetKeep = &d.Target.Keep
 		}
 	}
 	if s := line.Snapshot; s != nil {
@@ -730,9 +733,9 @@ func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to t
 		return nil, -1, nil, serving.ObservationCoverage{}, err
 	}
 	if offset > len(entries) {
-		return nil, -1, nil, serving.ObservationCoverage{}, &serving.Error{Code: "InvalidQuery", Message: "cursor exceeds selected observation count"}
+		return nil, -1, nil, serving.ObservationCoverage{}, &serving.Error{Code: serving.CodeInvalidQuery, Message: "cursor exceeds selected observation count"}
 	}
-	if selection.Order == "desc" {
+	if selection.Order == serving.ObservationOrderDescending {
 		sort.Slice(entries, func(i, j int) bool {
 			if entries[i].at.Equal(entries[j].at) {
 				return entries[i].offset > entries[j].offset
