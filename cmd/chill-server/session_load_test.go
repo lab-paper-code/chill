@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -318,7 +317,7 @@ func TestSessionLoadSaturationKeepsTwoBatchesOutstanding(t *testing.T) {
 	c := sessionTestConfig(t, fake.server.URL, 4)
 	c.minSamples, c.meterLag, c.levelLimit = 20, 0, time.Minute
 	row := sessionTestLevel(t, c, sessionSaturation, 0)
-	if row.Outstanding != 8 || row.MaxBatchServiceSeconds != .13 || row.EndReason != sessionSamplesReached {
+	if row.Outstanding != 8 || row.EndReason != sessionSamplesReached {
 		t.Fatalf("saturation = %+v", row)
 	}
 	if got := fake.maxOutstanding(sessionSaturation); got != 8 {
@@ -474,27 +473,22 @@ func TestSessionTerminationMessageStaysBounded(t *testing.T) {
 
 func TestSessionCounterRetainsFixedStateOverRequests(t *testing.T) {
 	counter := newSessionCounter()
-	rng := rand.New(rand.NewPCG(1, 2))
-	retained := func(batches int) (int, int) {
-		for id := uint64(counter.batches + 1); counter.batches < batches; id += 2 {
-			idle := int64(1)
-			first := sessionProgress{BatchID: id, BatchSize: 4, ServiceSample: &native.ServiceSample{
-				ServiceDurationNanos: 1e6 + rng.Int64N(1e8), PrecedingIdleNanos: &idle}}
-			second := first
-			second.BatchID++
-			// Two batches answer interleaved, as outstanding batches do.
-			for range 4 {
-				counter.add(first)
-				counter.add(second)
-			}
+	idle := int64(1)
+	for id := uint64(1); counter.batches < 400_000; id += 2 {
+		first := sessionProgress{BatchID: id, BatchSize: 4, ServiceSample: &native.ServiceSample{
+			ServiceDurationNanos: 1e6, PrecedingIdleNanos: &idle}}
+		second := first
+		second.BatchID++
+		// Two batches answer interleaved, as outstanding batches do.
+		for range 4 {
+			counter.add(first)
+			counter.add(second)
 		}
-		return len(counter.open), len(counter.service.Samples())
+		if len(counter.open) != 0 {
+			t.Fatalf("%d completed batches still retained after batch %d", len(counter.open), id)
+		}
 	}
-	openSmall, samplesSmall := retained(20_000)
-	openLarge, samplesLarge := retained(400_000)
-	if counter.inputs != 1_600_000 || openSmall != 0 || openLarge != 0 || samplesLarge > 2*samplesSmall {
-		t.Fatalf("inputs %d: open %d then %d batches, median summary %d then %d samples",
-			counter.inputs, openSmall, openLarge, samplesSmall, samplesLarge)
+	if counter.inputs != 1_600_000 || counter.samples != 400_000 {
+		t.Fatalf("counter = %+v", counter)
 	}
-	t.Logf("median summary retains %d then %d samples", samplesSmall, samplesLarge)
 }

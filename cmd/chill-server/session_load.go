@@ -20,8 +20,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/beorn7/perks/quantile"
-
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	gateway "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 )
@@ -70,25 +68,22 @@ func (c sessionLoadConfig) workloadUID(kind string) string {
 	return c.session + "/" + strconv.Itoa(c.batch) + "/" + kind
 }
 
-// sessionLevel is one row of the level table. Service times exclude a
-// startup execution, which has no preceding idle gap.
+// sessionLevel is one row of the level table.
 type sessionLevel struct {
-	Kind                      string    `json:"kind"`
-	WorkloadUID               string    `json:"workloadUID"`
-	StartedAt                 time.Time `json:"startedAt"`
-	EndedAt                   time.Time `json:"endedAt"`
-	SentInputs                int       `json:"sentInputs"`
-	CompletedInputs           int       `json:"completedInputs"`
-	CompletedBatches          int       `json:"completedBatches"`
-	Outstanding               int       `json:"outstanding,omitempty"`
-	TargetInputsPerSecond     float64   `json:"targetInputsPerSecond,omitempty"`
-	AchievedInputsPerSecond   float64   `json:"achievedInputsPerSecond"`
-	MaxBatchServiceSeconds    float64   `json:"maxBatchServiceSeconds"`
-	MedianBatchServiceSeconds float64   `json:"medianBatchServiceSeconds"`
-	PredictedSeconds          float64   `json:"predictedSeconds,omitempty"`
-	LimitSeconds              float64   `json:"limitSeconds,omitempty"`
-	EndReason                 string    `json:"endReason"`
-	Detail                    string    `json:"detail,omitempty"`
+	Kind                    string    `json:"kind"`
+	WorkloadUID             string    `json:"workloadUID"`
+	StartedAt               time.Time `json:"startedAt"`
+	EndedAt                 time.Time `json:"endedAt"`
+	SentInputs              int       `json:"sentInputs"`
+	CompletedInputs         int       `json:"completedInputs"`
+	CompletedBatches        int       `json:"completedBatches"`
+	Outstanding             int       `json:"outstanding,omitempty"`
+	TargetInputsPerSecond   float64   `json:"targetInputsPerSecond,omitempty"`
+	AchievedInputsPerSecond float64   `json:"achievedInputsPerSecond"`
+	PredictedSeconds        float64   `json:"predictedSeconds,omitempty"`
+	LimitSeconds            float64   `json:"limitSeconds,omitempty"`
+	EndReason               string    `json:"endReason"`
+	Detail                  string    `json:"detail,omitempty"`
 }
 
 func sessionLoadCommand(args []string, terminationPath string, stdout io.Writer) error {
@@ -258,7 +253,7 @@ func (s *sessionLoad) level(parent context.Context, kind string, rate float64) (
 	defer timer.Stop()
 	for {
 		now := time.Now()
-		if l.row.EndReason == "" && l.counter.service.Count() >= c.minSamples && !now.Before(l.windowEnd) {
+		if l.row.EndReason == "" && l.counter.samples >= c.minSamples && !now.Before(l.windowEnd) {
 			l.row.EndReason = sessionSamplesReached
 		}
 		l.issueDue(now)
@@ -435,10 +430,6 @@ func (l *sessionLevelRun) finish() sessionLevel {
 	ended, row := time.Now(), l.row
 	row.EndedAt = ended.UTC()
 	row.CompletedInputs, row.CompletedBatches = l.counter.inputs, l.counter.batches
-	row.MaxBatchServiceSeconds = l.counter.maxService.Seconds()
-	if l.counter.service.Count() > 0 {
-		row.MedianBatchServiceSeconds = l.counter.service.Query(.5)
-	}
 	if span := ended.Sub(l.lagEnd); span > 0 {
 		row.AchievedInputsPerSecond = float64(l.counter.afterLag) / span.Seconds()
 	}
@@ -454,25 +445,19 @@ type sessionProgress struct {
 }
 
 // sessionCounter is a level's whole retained state: batches still awaiting
-// member responses, bounded by the outstanding requests, and running
-// summaries. The median summary has rank error 0.005 and keeps a number of
-// samples logarithmic in the batch count.
+// member responses, bounded by the outstanding requests, and counts.
 type sessionCounter struct {
-	open                      map[uint64]int
-	batches, inputs, afterLag int
-	maxService                time.Duration
-	service                   *quantile.Stream
+	open                               map[uint64]int
+	batches, inputs, afterLag, samples int
 }
 
 func newSessionCounter() sessionCounter {
-	return sessionCounter{
-		open: make(map[uint64]int), service: quantile.NewTargeted(map[float64]float64{.5: .005}),
-	}
+	return sessionCounter{open: make(map[uint64]int)}
 }
 
 // add counts one member response and reports the batch's service time when
-// this response completes the batch. A batch's service enters the summaries
-// once; a startup execution, which has no preceding idle gap, does not.
+// this response completes the batch. A batch counts as a service sample once;
+// a startup execution, which has no preceding idle gap, does not.
 func (c *sessionCounter) add(p sessionProgress) (time.Duration, bool) {
 	c.inputs++
 	service := time.Duration(p.ServiceSample.ServiceDurationNanos)
@@ -480,8 +465,7 @@ func (c *sessionCounter) add(p sessionProgress) (time.Duration, bool) {
 	if !seen {
 		remaining = p.BatchSize
 		if p.ServiceSample.PrecedingIdleNanos != nil {
-			c.maxService = max(c.maxService, service)
-			c.service.Insert(service.Seconds())
+			c.samples++
 		}
 	}
 	if remaining--; remaining > 0 {
