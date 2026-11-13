@@ -124,6 +124,6 @@ scheduler history는 `[from,to)` 사건시각을 필터한다. 기본과 asc는 
 
 full은 원본이다. compact는 profile dictionary와 ref를 제공하고 현재 상태의 options와 arrivals를 null, 정확한 count로 투영한다. raw duration 벡터를 생략해도 durationSampleCount를 유지한다. history dictionary는 원본 profile을 유지하며 compact plan의 생략은 원본 기록을 바꾸지 않는다.
 
-summary의 decision은 `at`, `status`, `reasons`(원본 decision과 같은 문자열, 없으면 생략), `targetKeep`(target이 keep 계획이면 true, 다른 계획이면 false, target이 없으면 생략)과 `workloads`만 담는다. summary의 workloads는 저장 원본 순서와 reason을 유지하고 catalog 재복원으로 바꾸지 않는다. decoded request/client cache는 설정 rolling span을 보유하며 cold scan은 cache lock 밖이다. 과거 문서의 고정 행 수 상한을 적용하지 않는다.
+summary의 decision은 `at`, `status`, `reasons`(원본 decision과 같은 문자열, 없으면 생략), `targetKeep`(target이 keep 계획이면 true, 다른 계획이면 false, target이 없으면 생략), `evaluationElapsedNanos`(원본 decision의 판단 소요 시간, ns, 0이면 생략)와 `workloads`만 담는다. summary의 workloads는 저장 원본 순서와 reason을 유지하고 catalog 재복원으로 바꾸지 않는다. decoded request/client cache는 설정 rolling span을 보유하며 cold scan은 cache lock 밖이다. 과거 문서의 고정 행 수 상한을 적용하지 않는다.
 
 power 조회는 accepted meter 구성을 atomic하게 고정하고 긴 scheduler 잠금을 기다리지 않는다. 실제 source, raw gap과 coverage가 판정 근거다. 오래된 source를 현재 meter로 대입하거나 결손을0으로 표시하지 않는다.

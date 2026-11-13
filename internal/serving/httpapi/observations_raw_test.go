@@ -307,13 +307,13 @@ func TestSchedulerHistoryDecisionChangeFilterPagesOnlyChangedDecisions(t *testin
 	}
 }
 
-func TestSchedulerHistorySummaryCarriesDecisionReasonsAndTargetKeep(t *testing.T) {
+func TestSchedulerHistorySummaryCarriesDecisionReasonsTargetKeepAndEvaluationTime(t *testing.T) {
 	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
 	from := time.Now().UTC().Add(-time.Second)
 	keep := serving.SchedulerCandidate{ID: "keep", Keep: true}
 	for i, decision := range []serving.SchedulerDecision{
-		{Status: serving.SchedulerStatusKeep, Keep: keep, Target: &serving.SchedulerCandidate{ID: "keep", Keep: true}, Reasons: []string{"TransitionGainWithinUncertainty"}},
-		{Status: "Feasible", Keep: keep, Target: &serving.SchedulerCandidate{ID: "plan-a"}, Reasons: []string{"IdleInstanceRemoved", "ReservedScope:w"}},
+		{Status: serving.SchedulerStatusKeep, Keep: keep, Target: &serving.SchedulerCandidate{ID: "keep", Keep: true}, Reasons: []string{"TransitionGainWithinUncertainty"}, EvaluationElapsed: 1250 * time.Millisecond},
+		{Status: "Feasible", Keep: keep, Target: &serving.SchedulerCandidate{ID: "plan-a"}, Reasons: []string{"IdleInstanceRemoved", "ReservedScope:w"}, EvaluationElapsed: 7},
 		{Status: "Pending", Keep: keep, Reasons: []string{"PartialObservationWindow"}},
 	} {
 		if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: from.Add(time.Duration(i) * time.Second), Decision: &decision}); err != nil {
@@ -329,14 +329,14 @@ func TestSchedulerHistorySummaryCarriesDecisionReasonsAndTargetKeep(t *testing.T
 	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) != 3 {
 		t.Fatalf("summary: status=%d body=%s err=%v", response.Code, response.Body, err)
 	}
-	for i, want := range []struct{ reasons, targetKeep string }{
-		{`["TransitionGainWithinUncertainty"]`, `true`},
-		{`["IdleInstanceRemoved","ReservedScope:w"]`, `false`},
-		{`["PartialObservationWindow"]`, ``},
+	for i, want := range []struct{ reasons, targetKeep, elapsed string }{
+		{`["TransitionGainWithinUncertainty"]`, `true`, `1250000000`},
+		{`["IdleInstanceRemoved","ReservedScope:w"]`, `false`, `7`},
+		{`["PartialObservationWindow"]`, ``, ``},
 	} {
 		decision := page.Events[i].Decision
-		if string(decision["reasons"]) != want.reasons || string(decision["targetKeep"]) != want.targetKeep {
-			t.Fatalf("decision %d lost its reasons or target identity: %s", i, response.Body)
+		if string(decision["reasons"]) != want.reasons || string(decision["targetKeep"]) != want.targetKeep || string(decision["evaluationElapsedNanos"]) != want.elapsed {
+			t.Fatalf("decision %d lost its reasons, target identity or evaluation time: %s", i, response.Body)
 		}
 	}
 }
