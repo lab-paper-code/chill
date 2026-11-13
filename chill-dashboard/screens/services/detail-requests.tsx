@@ -119,7 +119,7 @@ function Summary({ result }: { result: ObservationResult }) {
             key={cohort.definition} label={`${result.cohorts.length > 1 ? `정의 ${index + 1} ` : ""}지연 p${cohort.percentile ?? "—"}`}
             value={quantile == null ? null : formatNumber(quantile, 0)} unit="ms" reason="완료된 요청 표본 없음"
             info="완료된 요청만으로 서버가 집계한 분위수"
-            sub={<span className="inline-flex items-center gap-2">{target != null && <>목표 {formatMs(target)}{quantile != null && <HeadroomBar observed={quantile} target={target} />}</>} 표본 {formatNumber(cohort.sampleCount)}</span>}
+            sub={<span className="flex flex-wrap items-center gap-x-2 gap-y-1">{target != null && <><span>목표 {formatMs(target)}</span>{quantile != null && <HeadroomBar observed={quantile} target={target} />}</>}<span>표본 {formatNumber(cohort.sampleCount)}</span></span>}
           />
         )
       })}

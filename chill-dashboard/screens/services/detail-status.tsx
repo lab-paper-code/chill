@@ -117,7 +117,7 @@ function LiveStatus({ name, snapshot, live, locked }: { name: string; snapshot: 
           value={slo?.quantileMs != null ? msNumber(slo.quantileMs) : null}
           reason={!slo ? "관측 없음" : slo.samples === 0 ? "표본 없음" : "표본 부족"}
           status={slo?.met != null ? sloVerdict(slo.met) : undefined}
-          sub={<span className="inline-flex items-center gap-2">{slo?.quantileMs != null && <HeadroomBar observed={slo.quantileMs} target={slo.targetMs} />}목표 {formatMs(targetMs)}</span>}
+          sub={<span className="flex flex-wrap items-center gap-x-2 gap-y-1">{slo?.quantileMs != null && <HeadroomBar observed={slo.quantileMs} target={slo.targetMs} />}<span>목표 {formatMs(targetMs)}</span></span>}
         />
         <StatTile
           label="성공률" unit="%" info="최근 60초 완료와 실패 기준"

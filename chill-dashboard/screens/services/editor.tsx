@@ -13,6 +13,13 @@ import { ApiError } from "@/lib/client-transport"
 import { admissionPolicy, errorCodeLabel } from "@/lib/status-labels"
 import { workloadSpec, type DatasetResource, type ModelResource, type PreprocessorResource, type WorkloadSpec, type WorkloadView } from "@/lib/domain"
 import { datasetGap } from "@/lib/measurement-request"
+import { formatDurationNanos, formatMs, goDurationNanos } from "@/lib/format"
+
+/** A typed Go duration in the shared form ("100ms" reads "100 ms"); text that is not one stays as typed. */
+const readDuration = (text: string, format: (nanos: number) => string) => {
+  const nanos = goDurationNanos(text.trim())
+  return nanos === undefined ? text : format(nanos)
+}
 
 type Draft = { name: string; model: string; preprocessor: string; dataset: string; percentile: string; latency: string; policy: "Reject" | "Delay"; maxQueued: string; lifetime: string }
 type Field = keyof Draft
@@ -60,10 +67,10 @@ const rows: { field: Field; label: string; show: (d: Draft) => string }[] = [
   { field: "preprocessor", label: "전처리기", show: d => d.preprocessor },
   { field: "dataset", label: "데이터셋", show: d => d.dataset || "없음" },
   { field: "percentile", label: "분위수 (%)", show: d => d.percentile },
-  { field: "latency", label: "목표 지연", show: d => d.latency },
+  { field: "latency", label: "목표 지연", show: d => readDuration(d.latency, nanos => formatMs(nanos / 1e6)) },
   { field: "policy", label: "과부하 정책", show: d => admissionPolicy(d.policy) },
   { field: "maxQueued", label: "대기 상한 (건)", show: d => d.maxQueued },
-  { field: "lifetime", label: "요청 최종 기한", show: d => d.lifetime || "기본" },
+  { field: "lifetime", label: "요청 최종 기한", show: d => (d.lifetime ? readDuration(d.lifetime, formatDurationNanos) : "기본") },
 ]
 
 export function ServiceEditorScreen({ name }: { name?: string }) {
@@ -236,7 +243,7 @@ function Editor({ name, catalog, base, reload }: { name?: string; catalog: Catal
         </FormActions>
       </form>
       <ConfirmDialog open={review} onOpenChange={setReview} title={creating ? "서비스 등록" : "서비스 수정"} target={draft.name} changes={creating ? undefined : changes}
-        confirmLabel={creating ? "등록" : "저장"} pending={mutation.isPending} onConfirm={() => void submit()}>
+        confirmLabel={creating ? "등록" : "적용"} pending={mutation.isPending} onConfirm={() => void submit()}>
         {creating && <Fields items={rows.filter(r => r.field !== "name").map(r => ({ label: r.label, value: r.show(draft) }))} />}
       </ConfirmDialog>
     </>
