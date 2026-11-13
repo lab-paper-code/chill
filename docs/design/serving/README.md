@@ -21,6 +21,7 @@
 | [피드백 기반 계획기](analytic-planner.md) | 시간 회계, 후보 평가, 탐색과 에너지 비교 |
 | [인스턴스 전달과 수동 작업](scheduler-operations.md) | Pod-bound Service, 원자 작업과 운영 수용 |
 | [프로파일과 서빙 경로 동등성 확인](profile-serving-equivalence-plan.md) | 대표 측정의 운영 수용 절차 |
+| [프로파일 측정 세션](profile-session.md) | 프로파일의 내용, 서빙 동작으로 하는 측정, 전력 모델 |
 
 ## 초기화와 준비 상태
 
