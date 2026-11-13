@@ -12,7 +12,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/custom/blocks/ToggleG
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/custom/blocks/PopoverBlock"
 import { Label } from "@/components/ui/label"
 import { ConfirmDialog } from "./overlays"
-import { Hint } from "./display"
+import { InfoHint } from "./display"
 
 /** A titled group of form fields (fieldset + legend), on a card. */
 export function FormSection({ title, info, children, className }: { title: string; info?: string; children: React.ReactNode; className?: string }) {
@@ -20,7 +20,7 @@ export function FormSection({ title, info, children, className }: { title: strin
     <fieldset className={cn("min-w-0 rounded-xl border border-border bg-card p-4", className)}>
       <legend className="float-left mb-4 flex w-full items-center gap-1.5 text-sm font-semibold">
         {title}
-        {info && <Hint text={info} focusable><span className="text-xs font-normal text-muted-foreground">?</span></Hint>}
+        {info && <InfoHint text={info} />}
       </legend>
       <div className="clear-left grid gap-4">{children}</div>
     </fieldset>

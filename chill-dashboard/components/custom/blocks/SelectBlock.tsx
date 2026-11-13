@@ -10,6 +10,7 @@
 import { cn } from "@/lib/utils";
 import { AlertCircle, ChevronDown } from "lucide-react";
 import React, { forwardRef, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { ownInvalid } from "./validity";
 
 export type SelectColor = "indigo" | "rose" | "emerald" | "zinc" | string;
 export type SelectVariant = "default" | "filled" | "underlined" | "glow" | "glass" | "liquid-glass";
@@ -88,11 +89,14 @@ function grouped(options: SelectOption[]) {
 }
 
 const SelectBlockImpl = forwardRef<HTMLDivElement, SelectBlockImplProps>((props, ref) => {
-  const { options = [], value, onChange, placeholder = "선택", inputSize = "md", label, helperText, error, icon, disabled = false, className, multiple = false, searchable = false, id, name, required } = props;
+  const { options = [], value, onChange, placeholder = "선택", inputSize = "md", label, helperText, error: errorProp, icon, disabled = false, className, multiple = false, searchable = false, id, name, required } = props;
   const auto = useId();
   const controlId = id ?? `${auto}-control`;
   const iconId = `${auto}-icon`;
   const noteId = `${auto}-note`;
+  // A failed `required` shows "선택 필요" here instead of the browser's bubble; choosing a value clears it.
+  const [ownError, setOwnError] = useState("");
+  const error = errorProp || ownError;
   const note = error || helperText;
   // Name: the visible label, else aria-label, else the visible prefix, else the placeholder.
   const naming = label ? {} : props["aria-label"] ? { "aria-label": props["aria-label"] } : icon ? { "aria-labelledby": iconId } : { "aria-label": placeholder };
@@ -121,7 +125,8 @@ const SelectBlockImpl = forwardRef<HTMLDivElement, SelectBlockImplProps>((props,
           {icon && <span id={iconId} className="shrink-0 text-muted-foreground">{icon}</span>}
           <SingleSelect
             className={control} id={controlId} name={name} required={required} disabled={disabled} naming={naming}
-            options={options} value={typeof value === "string" ? value : ""} onChange={next => onChange?.(next)}
+            options={options} value={typeof value === "string" ? value : ""} onChange={next => { setOwnError(""); onChange?.(next); }}
+            onInvalid={ownInvalid(setOwnError)}
             placeholder={placeholder} describedBy={note ? noteId : undefined} invalid={!!error}
           />
           {chevron}
@@ -140,12 +145,12 @@ SelectBlockImpl.displayName = "SelectBlock";
 function SingleSelect({ options, value, onChange, placeholder, naming, describedBy, invalid, className, ...rest }: {
   options: SelectOption[]; value: string; onChange: (value: string) => void; placeholder: string
   naming: Naming; describedBy?: string; invalid: boolean; className: string
-  id: string; name?: string; required?: boolean; disabled: boolean
+  id: string; name?: string; required?: boolean; disabled: boolean; onInvalid: React.FormEventHandler<HTMLSelectElement>
 }) {
   const known = options.some(option => option.value === value);
   return (
     <select
-      {...rest} {...naming}
+      {...rest} {...naming} data-own-validity=""
       value={known ? value : ""}
       onChange={event => onChange(event.target.value)}
       aria-invalid={invalid || undefined}

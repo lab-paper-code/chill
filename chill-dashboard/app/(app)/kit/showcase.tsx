@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { InputBlock } from "@/components/custom/blocks/InputBlock"
 import {
-  Button, ConfirmDialog, DataTable, DetailDrawer, EmptyState, Feed, Fields, FilterBar, FormActions, FormSection, HeadroomBar, IdText, LeaveGuard, Matrix, MatrixCell, MeterBar,
+  Button, ConfirmDialog, DataTable, DetailDrawer, Dialog, EmptyState, Feed, Fields, FilterBar, FormActions, FormSection, HeadroomBar, IdText, LeaveGuard, Matrix, MatrixCell, MeterBar,
   Page, PageHeader, PageTabs, QueryBoundary, Rail, RawDialog, Section, Select, Sparkline, StatRow, StatTile, StatusBadge, StatusDot, Steps, TimeRange, TimeSeries, TimeText,
   useTimeRangeParam, useToast, type Column, type SeriesPoint,
 } from "@/components/kit"
@@ -67,6 +67,7 @@ export function KitShowcase() {
   const { toast } = useToast()
   const [raw, setRaw] = React.useState(false)
   const [confirm, setConfirm] = React.useState(false)
+  const [compare, setCompare] = React.useState(false)
   const [drawer, setDrawer] = React.useState<ServiceRow | null>(null)
   const [search, setSearch] = React.useState("")
   const [state, setState] = React.useState<string[]>([])
@@ -85,7 +86,7 @@ export function KitShowcase() {
         status={serviceReadiness("Ready")}
         badges={<StatusBadge tone="warn" label="접수 중지" />}
         actions={<><Button disabled disabledReason="권한 없음">배치 변경</Button><Button variant="default" iconLeft={<Pencil />}>수정</Button></>}
-        more={[{ label: "원본 보기", onSelect: () => setRaw(true) }, { label: "복제", disabled: true, disabledReason: "권한 없음", onSelect: () => {} }, { label: "삭제", destructive: true, onSelect: () => setConfirm(true) }]}
+        more={[{ label: "원본 보기", onSelect: () => setRaw(true) }, { label: "비교", onSelect: () => setCompare(true) }, { label: "복제", disabled: true, disabledReason: "권한 없음", onSelect: () => {} }, { label: "삭제", destructive: true, onSelect: () => setConfirm(true) }]}
       />
       <PageTabs param="tab" defaultValue="overview" tabs={[{ value: "overview", label: "현황" }, { value: "requests", label: "요청" }, { value: "definition", label: "정의" }, { value: "test", label: "테스트" }]} />
 
@@ -203,7 +204,7 @@ export function KitShowcase() {
       <form className="grid gap-4" onSubmit={event => { event.preventDefault(); toast({ title: "저장됨", type: "success" }); setDirty(false) }}>
         <div className="grid gap-4 lg:grid-cols-2">
           <FormSection title="이름">
-            <InputBlock label="서비스 이름" required pattern="[a-z0-9-]+" defaultValue="image-classification-tight-slo" onChange={() => setDirty(true)} />
+            <InputBlock label="서비스 이름" required pattern="[a-z0-9\-]+" defaultValue="image-classification-tight-slo" onChange={() => setDirty(true)} />
             <Select label="모델" placeholder="선택" value={picked} onChange={value => { setPicked(value); setDirty(true) }} options={[{ value: "resnet50-int8", label: "resnet50-int8", group: "분류" }, { value: "yolov8n", label: "yolov8n", group: "검출" }, { value: "llava-7b", label: "llava-7b", group: "질의응답" }]} />
             <Select multiple searchable label="결과" placeholder="결과 전체" value={outcomes} onChange={setOutcomes} options={[{ value: "ok", label: "성공" }, { value: "timeout", label: "시간 초과" }, { value: "rejected", label: "거절" }, { value: "error", label: "오류" }]} />
           </FormSection>
@@ -220,6 +221,9 @@ export function KitShowcase() {
       </form>
 
       <RawDialog open={raw} onOpenChange={setRaw} filename="image-classification-tight-slo" value={{ metadata: { name: "image-classification-tight-slo", uid: "5f0c2a9e-41b7-4d3e-9a8f-1c2b3d4e5f60", generation: 7 }, spec: { slo: { percentile: 99.5, targetLatencyNanos: 500000000n }, batchID: 18446744073709551615n } }} />
+      <Dialog open={compare} onOpenChange={setCompare} title="판단 비교" size="lg" footer={<Button variant="outline" onClick={() => setCompare(false)}>닫기</Button>}>
+        <Fields items={[{ label: "A 예상 전력", value: "214.6 W" }, { label: "B 예상 전력", value: "198.2 W" }]} />
+      </Dialog>
       <ConfirmDialog
         open={confirm} onOpenChange={setConfirm} tone="destructive" title="서비스 삭제" target="image-classification-tight-slo"
         changes={[{ label: "접수", before: "허용", after: "중지" }, { label: "인스턴스", before: "3", after: "0" }, { label: "응답 목표 분위수", before: "image-classification-tight-slo-replica-set-7f9c4d", after: "p99.5 500 ms 이하, 대기 상한 64개" }]}

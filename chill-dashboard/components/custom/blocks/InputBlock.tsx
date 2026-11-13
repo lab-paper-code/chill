@@ -21,6 +21,7 @@ import React, {
   useState,
 } from "react";
 import { getThemeStyles } from "./input-theme";
+import { ownInvalid, validityMessage } from "./validity";
 
 // ==========================================
 // DYNAMIC THEME ENGINE
@@ -122,7 +123,7 @@ export const InputBlock = forwardRef<HTMLInputElement, InputBlockProps>(
       inputSize = "md",
       label,
       helperText,
-      error,
+      error: errorProp,
       leftIcon,
       rightIcon,
       disabled = false,
@@ -139,6 +140,10 @@ export const InputBlock = forwardRef<HTMLInputElement, InputBlockProps>(
   ) => {
     const [showPassword, setShowPassword] = useState(false);
     const { theme, style } = getThemeStyles(color);
+    // CHILL patch: a failed native constraint (required, min…) shows its Korean message here instead of
+    // the browser's bubble; it appears on submit or when the user leaves an invalid field, and clears once valid.
+    const [ownError, setOwnError] = useState("");
+    const error = errorProp || ownError;
     const hasError = Boolean(error);
 
     // --- Autocomplete State ---
@@ -148,8 +153,12 @@ export const InputBlock = forwardRef<HTMLInputElement, InputBlockProps>(
     const fieldRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLUListElement>(null);
     const listId = useId();
-    // CHILL patch: the label is tied to the input (for/id) and errors set aria-invalid.
+    // CHILL patch: the label is tied to the input (for/id), errors set aria-invalid, and the error or
+    // helper text below the field is its description.
     const fieldId = useId();
+    const noteId = useId();
+    const describedBy =
+      [props["aria-describedby"], error || helperText ? noteId : undefined].filter(Boolean).join(" ") || undefined;
     const [listOpen, setListOpen] = useState(false);
     const [listUp, setListUp] = useState(false);
     const [activeIndex, setActiveIndex] = useState(-1);
@@ -636,6 +645,17 @@ export const InputBlock = forwardRef<HTMLInputElement, InputBlockProps>(
               rightIcon || isPassword ? "pr-2.5" : "pr-0",
             )}
             {...props}
+            data-own-validity=""
+            onInvalid={ownInvalid(setOwnError, props.onInvalid)}
+            onBlur={(event) => {
+              props.onBlur?.(event);
+              if (event.currentTarget.matches(":user-invalid")) setOwnError(validityMessage(event.currentTarget));
+            }}
+            onInput={(event) => {
+              props.onInput?.(event);
+              if (ownError && event.currentTarget.validity.valid) setOwnError("");
+            }}
+            aria-describedby={describedBy}
             {...(hasSuggestions
               ? {
               role: "combobox",
@@ -667,6 +687,8 @@ export const InputBlock = forwardRef<HTMLInputElement, InputBlockProps>(
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               disabled={disabled}
+              aria-label="입력값 표시"
+              aria-pressed={showPassword}
               className={cn(
                 "shrink-0 pr-4 text-muted-foreground hover:text-muted-foreground transition-colors disabled:opacity-50",
                 variant === "underlined" && "pr-0 pl-3",
@@ -674,9 +696,9 @@ export const InputBlock = forwardRef<HTMLInputElement, InputBlockProps>(
               )}
             >
               {showPassword ? (
-                <EyeOff className={s.icon} />
+                <EyeOff className={s.icon} aria-hidden="true" />
               ) : (
-                <Eye className={s.icon} />
+                <Eye className={s.icon} aria-hidden="true" />
               )}
             </button>
           )}
@@ -770,12 +792,12 @@ export const InputBlock = forwardRef<HTMLInputElement, InputBlockProps>(
         </div>
 
         {error && (
-          <p className="text-xs font-medium text-fail flex items-center gap-1 mt-0.5">
-            <AlertCircle className="w-3.5 h-3.5" /> {error}
+          <p id={noteId} className="text-xs font-medium text-fail flex items-center gap-1 mt-0.5">
+            <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" /> {error}
           </p>
         )}
         {helperText && !error && (
-          <p className="text-xs font-medium text-muted-foreground mt-0.5">
+          <p id={noteId} className="text-xs font-medium text-muted-foreground mt-0.5">
             {helperText}
           </p>
         )}

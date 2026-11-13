@@ -59,8 +59,8 @@ const segmentLabels: Record<string, string> = {
   scenarios: "부하 시나리오", ...catalogKinds, new: "새로 만들기", edit: "수정", kit: "부품",
 }
 
-/** `dynamic` marks a route parameter (a name or an id); the page may replace its label with its title. */
-export type Crumb = { label: string; href: string; dynamic?: boolean }
+/** `titled`: a route parameter (a name or an id) or a final "new"/"edit"; as the last crumb the page title replaces its label. */
+export type Crumb = { label: string; href: string; titled?: boolean }
 // UUIDs and long hex digests are never shown as a location.
 const idLike = (text: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text) || /^(sha256:)?[0-9a-f]{16,}$/i.test(text)
 /** Route params arrive percent-encoded; malformed escapes stay as written. */
@@ -83,9 +83,10 @@ export function breadcrumbs(pathname: string): Crumb[] {
     // `/measurements/runs/x` has no list page of its own; the run belongs to the request list.
     if (href === "/measurements/runs") return
     // Only route words get a label; names (a service called "new") stay as written.
-    const structural = index === 0 || (index === 1 && parts[0] in sectionTabs) || (index === parts.length - 1 && (part === "new" || part === "edit"))
-    if (structural) trail.push({ label: segmentLabels[part] ?? decodeSegment(part), href })
-    else trail.push({ label: idLike(decodeSegment(part)) ? "상세" : decodeSegment(part), href, dynamic: true })
+    const action = index === parts.length - 1 && (part === "new" || part === "edit")
+    const structural = index === 0 || (index === 1 && parts[0] in sectionTabs)
+    if (structural || action) trail.push({ label: segmentLabels[part] ?? decodeSegment(part), href, titled: action || undefined })
+    else trail.push({ label: idLike(decodeSegment(part)) ? "상세" : decodeSegment(part), href, titled: true })
   })
   return trail
 }

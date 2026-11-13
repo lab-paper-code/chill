@@ -1,17 +1,40 @@
 "use client"
 
 import * as React from "react"
-import { Download } from "lucide-react"
+import { AlertCircle, Download } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { stringifySchedulerJSON } from "@/lib/scheduler"
 import { Drawer, DrawerContent, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/custom/blocks/Drawer"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/custom/blocks/DialogBlock"
+import { Dialog as Modal, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/custom/blocks/DialogBlock"
+import { ownInvalid } from "@/components/custom/blocks/validity"
 import Button from "@/components/custom/blocks/Button"
 import { CopyButton } from "@/components/custom/blocks/CopyButtonBlock"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import type { StatusInfo } from "@/lib/status-labels"
 import { StatusBadge } from "./display"
+
+/**
+ * Plain modal for short content that is neither a confirmation nor a row preview (e.g. a comparison
+ * table). Native modal <dialog>: Esc closes it and focus returns to the opener.
+ */
+export function Dialog({ open, onOpenChange, title, size = "md", footer, children }: {
+  open: boolean; onOpenChange: (open: boolean) => void
+  title: string
+  /** Width: sm 24rem, md 32rem, lg 42rem, xl 56rem. */ size?: "sm" | "md" | "lg" | "xl"
+  /** Buttons on the right of the bottom row. */ footer?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <Modal open={open} onOpenChange={onOpenChange}>
+      <DialogContent size={size}>
+        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
+        {children}
+        {footer && <DialogFooter>{footer}</DialogFooter>}
+      </DialogContent>
+    </Modal>
+  )
+}
 
 /** Row preview from the right edge. One at a time; never stacked. */
 export function DetailDrawer({ open, onOpenChange, title, status, actions, footer, children }: {
@@ -57,17 +80,20 @@ type ConfirmProps = {
 }
 export function ConfirmDialog(props: ConfirmProps) {
   return (
-    <Dialog open={props.open} onOpenChange={next => { if (!props.pending) props.onOpenChange(next) }}>
+    <Modal open={props.open} onOpenChange={next => { if (!props.pending) props.onOpenChange(next) }}>
       <DialogContent size="md" hideCloseButton={props.pending}>
         <ConfirmBody {...props} />
       </DialogContent>
-    </Dialog>
+    </Modal>
   )
 }
 // Mounted only while open, so the reason starts empty every time.
 function ConfirmBody({ onOpenChange, title, target, changes, children, confirmLabel = "확인", tone = "default", reason, pending = false, onConfirm }: ConfirmProps) {
   const [text, setText] = React.useState("")
+  // The reason keeps native `required`; its failure shows "입력 필요" below the field, never the browser bubble.
+  const [error, setError] = React.useState("")
   const reasonId = React.useId()
+  const errorId = `${reasonId}-error`
   return (
     <>
         <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
@@ -75,7 +101,13 @@ function ConfirmBody({ onOpenChange, title, target, changes, children, confirmLa
           className="grid gap-4"
           onSubmit={event => {
             event.preventDefault()
-            if (!pending) onConfirm(text.trim())
+            if (pending) return
+            if (reason?.required && !text.trim()) {
+              setError("입력 필요")
+              event.currentTarget.querySelector("textarea")?.focus()
+              return
+            }
+            onConfirm(text.trim())
           }}
         >
           {target && <div className="text-sm [overflow-wrap:anywhere]"><span className="text-muted-foreground">대상 </span><span className="font-medium">{target}</span></div>}
@@ -106,12 +138,17 @@ function ConfirmBody({ onOpenChange, title, target, changes, children, confirmLa
               <Textarea
                 id={reasonId}
                 value={text}
-                onChange={event => setText(event.target.value)}
+                onChange={event => { setText(event.target.value); if (error && event.target.value.trim()) setError("") }}
+                onInvalid={ownInvalid(setError)}
+                data-own-validity=""
                 required={reason.required}
+                aria-invalid={!!error}
+                aria-describedby={error ? errorId : undefined}
                 maxLength={reason.maxLength ?? 500}
                 rows={3}
                 className="user-invalid:border-fail"
               />
+              {error && <p id={errorId} className="flex items-center gap-1 text-xs font-medium text-fail"><AlertCircle className="size-3.5 shrink-0" aria-hidden="true" />{error}</p>}
             </div>
           )}
           <DialogFooter>
@@ -141,15 +178,11 @@ export function RawDialog({ open, onOpenChange, title = "원본 보기", value, 
     URL.revokeObjectURL(url)
   }
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="lg">
-        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
-        <pre tabIndex={0} aria-label={title} className={cn("max-h-[60dvh] overflow-auto rounded-md border border-border bg-muted/50 p-3 font-mono text-xs leading-5 text-foreground")}>{text}</pre>
-        <DialogFooter>
-          <CopyButton value={text} variant="outline" size="sm" label="복사" copiedLabel="복사됨" errorLabel="복사 실패" />
-          <Button size="sm" variant="outline" iconLeft={<Download />} onClick={download}>내려받기</Button>
-        </DialogFooter>
-      </DialogContent>
+    <Dialog open={open} onOpenChange={onOpenChange} title={title} size="lg" footer={<>
+      <CopyButton value={text} variant="outline" size="sm" label="복사" copiedLabel="복사됨" errorLabel="복사 실패" />
+      <Button size="sm" variant="outline" iconLeft={<Download />} onClick={download}>내려받기</Button>
+    </>}>
+      <pre tabIndex={0} aria-label={title} className={cn("max-h-[60dvh] overflow-auto rounded-md border border-border bg-muted/50 p-3 font-mono text-xs leading-5 text-foreground")}>{text}</pre>
     </Dialog>
   )
 }

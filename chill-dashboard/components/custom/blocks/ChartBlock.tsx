@@ -1066,7 +1066,7 @@ function BreakdownList({
               aria-hidden="true"
               className="grid h-4 w-6 shrink-0 place-items-center rounded-[4px] bg-muted text-[9px] font-semibold tracking-wide text-muted-foreground"
             >
-              {slice.code ?? "··"}
+              {slice.code ?? "—"}
             </span>
           )}
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{slice.name}</span>

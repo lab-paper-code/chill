@@ -7,7 +7,7 @@
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { DialogContext, useDialog } from "./dialog-context";
+import { DialogContext, dialogOpener, refocusOpener, useDialog } from "./dialog-context";
 
 export interface DialogProps {
   children: React.ReactNode;
@@ -106,12 +106,15 @@ export function DialogContent({
 }: DialogContentProps) {
   const { open, setOpen, titleId } = useDialog();
   const ref = useRef<HTMLDialogElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    else if (!open && dialog.open) dialog.close();
+    if (open && !dialog.open) {
+      opener.current = dialogOpener();
+      dialog.showModal();
+    } else if (!open && dialog.open) dialog.close();
   }, [open]);
 
   return (
@@ -124,6 +127,7 @@ export function DialogContent({
         setOpen(false);
       }}
       onClose={() => {
+        refocusOpener(opener.current);
         if (open) setOpen(false);
       }}
       className={cn(

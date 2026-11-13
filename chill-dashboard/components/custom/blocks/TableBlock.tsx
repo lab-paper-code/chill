@@ -282,11 +282,11 @@ export const TableContent = forwardRef<
   const scrollRef = useRef<HTMLDivElement>(null);
   const [edge, setEdge] = useState(false);
 
-  // While more table hides past the right edge, a pinned (`sticky`) column
-  // casts a shadow over it.
+  // While more table hides past the right edge, a shadow marks that edge (the soft variant casts it from
+  // its pinned column). CHILL patch: the default variant shows it too, since phones hide the scrollbar.
   useEffect(() => {
     const element = scrollRef.current;
-    if (!soft || !element) return;
+    if (!element) return;
     const update = () => {
       const hidden =
         element.scrollWidth - element.clientWidth - element.scrollLeft > 1;
@@ -301,23 +301,32 @@ export const TableContent = forwardRef<
       element.removeEventListener("scroll", update);
       observer.disconnect();
     };
-  }, [soft]);
+  }, []);
 
   if (!soft) {
     return (
       // CHILL patch: a named, keyboard-scrollable region when the table overflows. `relative` makes it the
       // containing block of screen-reader-only text in cells, which would otherwise widen the whole page.
-      <div className="relative w-full overflow-x-auto" role={label ? "region" : undefined} aria-label={label} tabIndex={label ? 0 : undefined}>
-        <table
-          ref={ref}
+      <div className="relative min-w-0">
+        <div ref={scrollRef} className="relative w-full overflow-x-auto" role={label ? "region" : undefined} aria-label={label} tabIndex={label ? 0 : undefined}>
+          <table
+            ref={ref}
+            className={cn(
+              "w-full caption-bottom border-collapse text-left",
+              className,
+            )}
+            {...props}
+          >
+            {children}
+          </table>
+        </div>
+        <div
+          aria-hidden="true"
           className={cn(
-            "w-full caption-bottom border-collapse text-left",
-            className,
+            "pointer-events-none absolute inset-y-0 right-0 z-[2] w-3 bg-[radial-gradient(farthest-side_at_100%_50%,rgb(0_0_0/0.18),transparent)] transition-opacity",
+            edge ? "opacity-100" : "opacity-0",
           )}
-          {...props}
-        >
-          {children}
-        </table>
+        />
       </div>
     );
   }

@@ -7,6 +7,7 @@
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 import React, { createContext, useContext, useEffect, useId, useRef } from "react";
+import { dialogOpener, refocusOpener } from "./dialog-context";
 
 type DrawerSide = "top" | "bottom" | "left" | "right";
 
@@ -33,13 +34,16 @@ export function Drawer({
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
   const titleId = useId();
 
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    else if (!open && dialog.open) dialog.close();
+    if (open && !dialog.open) {
+      opener.current = dialogOpener();
+      dialog.showModal();
+    } else if (!open && dialog.open) dialog.close();
   }, [open]);
 
   return (
@@ -51,6 +55,7 @@ export function Drawer({
         onOpenChange(false);
       }}
       onClose={() => {
+        refocusOpener(opener.current);
         if (open) onOpenChange(false);
       }}
       // A click on the dialog box itself (not its content) is a click on the backdrop.

@@ -21,6 +21,16 @@ const pinCell = "sticky left-0 z-[1] bg-card shadow-[inset_-1px_0_var(--border)]
 // Default: pinned only on phones, where the table scrolls sideways.
 const phonePinHead = "max-sm:sticky max-sm:left-0 max-sm:z-[1] max-sm:bg-[color-mix(in_oklab,var(--muted)_60%,var(--card))] max-sm:shadow-[inset_-1px_0_var(--border)]"
 const phonePinCell = "max-sm:sticky max-sm:left-0 max-sm:z-[1] max-sm:bg-card max-sm:shadow-[inset_-1px_0_var(--border)] max-sm:group-hover:bg-[color-mix(in_oklab,var(--muted)_50%,var(--card))] max-sm:group-data-[selected=true]:bg-[color-mix(in_oklab,var(--primary)_12%,var(--card))]"
+// Narrow containers (under 30rem, e.g. phones): each row becomes a block of label/value lines
+// (responsive-table guide). The labels are the cells' `data-label`; sortable headers stay as a row of
+// sort buttons, the others are hidden. Container queries, so a narrow column on a desktop stacks too.
+const stackTable = "@max-[30rem]/dt:block @max-[30rem]/dt:min-w-0!"
+const stackHeadRow = "@max-[30rem]/dt:flex @max-[30rem]/dt:flex-wrap @max-[30rem]/dt:gap-x-1 @max-[30rem]/dt:px-2"
+const stackHeadSortable = "@max-[30rem]/dt:block @max-[30rem]/dt:shrink-0 @max-[30rem]/dt:px-1! @max-[30rem]/dt:[&>button]:mx-0"
+const stackHeadPlain = "@max-[30rem]/dt:hidden"
+const stackRow = "@max-[30rem]/dt:block @max-[30rem]/dt:py-2"
+const stackCell = "@max-[30rem]/dt:flex @max-[30rem]/dt:max-w-none @max-[30rem]/dt:items-baseline @max-[30rem]/dt:justify-between @max-[30rem]/dt:gap-3 @max-[30rem]/dt:py-1 @max-[30rem]/dt:px-4! @max-[30rem]/dt:before:shrink-0 @max-[30rem]/dt:before:text-xs @max-[30rem]/dt:before:text-muted-foreground @max-[30rem]/dt:before:content-[attr(data-label)]"
+const stackTitleCell = "@max-[30rem]/dt:block @max-[30rem]/dt:max-w-none @max-[30rem]/dt:py-1 @max-[30rem]/dt:px-4! @max-[30rem]/dt:font-medium"
 
 type Scalar = string | number | bigint | null | undefined
 export type Column<T> = {
@@ -86,8 +96,13 @@ export type DataTableProps<T> = {
   density?: "default" | "compact"
   /** Minimum table width in px before it scrolls sideways; default 104 px per column (0 with compact). */
   minWidth?: number
-  /** Keeps the first column in view while the rest scrolls, at every width (default: phones only). */
+  /** Keeps the first column in view while the rest scrolls, at every width (default: phones, with `narrow="scroll"`). */
   stickyFirst?: boolean
+  /**
+   * Below a 30rem container: "stack" (default) turns each row into label/value lines, the first cell as its
+   * title; "scroll" keeps the columns and scrolls sideways with the first column pinned (default with compact).
+   */
+  narrow?: "stack" | "scroll"
   className?: string
 }
 
@@ -98,7 +113,7 @@ function csvText(value: Scalar) {
 }
 
 /** Sortable, paged table with Avara table markup and TanStack table state. */
-export function DataTable<T extends RowData>({ label, rows, columns, rowKey, title, toolbar, actions, rowHref, onRowClick, selectedKey, rowActions, defaultSort, sort, onSortChange, pageSize = 25, paging, download, empty, busy, density = "default", minWidth, stickyFirst = false, className }: DataTableProps<T>) {
+export function DataTable<T extends RowData>({ label, rows, columns, rowKey, title, toolbar, actions, rowHref, onRowClick, selectedKey, rowActions, defaultSort, sort, onSortChange, pageSize = 25, paging, download, empty, busy, density = "default", minWidth, stickyFirst = false, narrow, className }: DataTableProps<T>) {
   const router = useRouter()
   const id = React.useId()
   const [localSorting, setLocalSorting] = React.useState<SortingState>(defaultSort ? [{ id: defaultSort.key, desc: defaultSort.desc }] : [])
@@ -136,7 +151,9 @@ export function DataTable<T extends RowData>({ label, rows, columns, rowKey, tit
   const clickable = !!rowHref || !!onRowClick
   const compact = density === "compact"
   const width = minWidth ?? (compact ? 0 : Math.max(columns.length * 104, 320))
-  const pinFirst = stickyFirst ? pinCell : compact ? undefined : phonePinCell
+  const stack = (narrow ?? (compact ? "scroll" : "stack")) === "stack"
+  const pinFirst = stickyFirst ? pinCell : compact || stack ? undefined : phonePinCell
+  const pinFirstHead = stickyFirst ? pinHead : compact || stack ? undefined : phonePinHead
   const pad = compact ? "px-2 first:pl-3 last:pr-3" : "first:pl-4 last:pr-4"
   const span = columns.length + (rowActions ? 1 : 0)
   const activate = (row: T) => {
@@ -154,7 +171,7 @@ export function DataTable<T extends RowData>({ label, rows, columns, rowKey, tit
   }
   const pageCount = table.getPageCount()
   return (
-    <Table className={cn("min-w-0", className)} size="md">
+    <Table className={cn("@container/dt min-w-0", className)} size="md">
       {(title || toolbar || actions || download) && (
         <TableHeading title={title} className={cn("gap-2 py-2.5", compact ? "px-3" : "px-4")}>
           {toolbar && <div className="mr-auto flex min-w-0 flex-1 flex-wrap items-center gap-2">{toolbar}</div>}
@@ -162,15 +179,15 @@ export function DataTable<T extends RowData>({ label, rows, columns, rowKey, tit
           {download && <Button size="sm" variant="ghost" iconLeft={<Download />} onClick={exportCsv} disabled={!rows.length}>내려받기</Button>}
         </TableHeading>
       )}
-      <TableContent label={label} className="table-fixed" style={width ? { minWidth: `${width}px` } : undefined}>
+      <TableContent label={label} className={cn("table-fixed", stack && stackTable)} style={width ? { minWidth: `${width}px` } : undefined}>
         <caption className="sr-only">{label}</caption>
         <colgroup>
           {columns.map(column => <col key={column.key} style={column.width ? { width: column.width } : undefined} />)}
           {rowActions && <col style={{ width: "3rem" }} />}
         </colgroup>
-        <TableHeader>
+        <TableHeader className={cn(stack && !columns.some(column => column.sortValue) && stackHeadPlain, stack && "@max-[30rem]/dt:block")}>
           {table.getHeaderGroups().map(group => (
-            <TableRow key={group.id} isHeader>
+            <TableRow key={group.id} isHeader className={cn(stack && stackHeadRow)}>
               {group.headers.map((header, index) => {
                 const column = columns[index]
                 const direction = header.column.getIsSorted()
@@ -181,19 +198,19 @@ export function DataTable<T extends RowData>({ label, rows, columns, rowKey, tit
                     sortable={header.column.getCanSort()}
                     sortDirection={direction || null}
                     onSort={() => header.column.toggleSorting()}
-                    className={cn(pad, "[&>button]:max-w-full", column.numeric && "[&>button]:flex-row-reverse", index === 0 && (stickyFirst ? pinHead : !compact && phonePinHead))}
+                    className={cn(pad, "[&>button]:max-w-full", column.numeric && "[&>button]:flex-row-reverse", index === 0 && pinFirstHead, stack && (header.column.getCanSort() ? stackHeadSortable : stackHeadPlain))}
                   >
                     <Clip>{column.header}{column.unit && <span className="font-normal"> ({column.unit})</span>}</Clip>
                   </TableHead>
                 )
               })}
-              {rowActions && <TableHead className={pad}><span id={`${id}-act`} className="sr-only">동작</span></TableHead>}
+              {rowActions && <TableHead className={cn(pad, stack && stackHeadPlain)}><span id={`${id}-act`} className="sr-only">동작</span></TableHead>}
             </TableRow>
           ))}
         </TableHeader>
-        <TableBody className={cn(busy && "opacity-60 transition-opacity")}>
+        <TableBody className={cn(busy && "opacity-60 transition-opacity", stack && "@max-[30rem]/dt:block")}>
           {visible.length === 0 ? (
-            <tr><td colSpan={span} className="p-0">{empty ?? <EmptyState compact title="항목 없음" />}</td></tr>
+            <tr className={cn(stack && "@max-[30rem]/dt:block")}><td colSpan={span} className={cn("p-0", stack && "@max-[30rem]/dt:block")}>{empty ?? <EmptyState compact title="항목 없음" />}</td></tr>
           ) : visible.map((row, rowIndex) => {
             const key = row.id
             const cellId = `${id}-r${rowIndex}`
@@ -214,13 +231,13 @@ export function DataTable<T extends RowData>({ label, rows, columns, rowKey, tit
                   event.preventDefault()
                   activate(row.original)
                 } : undefined}
-                className={cn(clickable && "cursor-pointer")}
+                className={cn(clickable && "cursor-pointer", stack && stackRow)}
               >
                 {columns.map((column, index) => {
                   const content = column.cell(row.original)
                   const value = content == null || content === "" ? <Missing reason={column.missing?.(row.original) ?? column.missingReason} /> : content
                   return (
-                    <TableCell key={column.key} id={index === 0 ? cellId : undefined} align={column.numeric ? "right" : "left"} className={cn("max-w-0", pad, index === 0 && pinFirst)}>
+                    <TableCell key={column.key} id={index === 0 ? cellId : undefined} data-label={column.unit ? `${column.header} (${column.unit})` : column.header} align={column.numeric ? "right" : "left"} className={cn("max-w-0", pad, index === 0 && pinFirst, stack && (index === 0 ? stackTitleCell : stackCell))}>
                       {index === 0 && rowHref ? (
                         <Link href={rowHref(row.original)} className="block truncate font-medium text-foreground hover:underline">{value}</Link>
                       ) : (
@@ -230,7 +247,7 @@ export function DataTable<T extends RowData>({ label, rows, columns, rowKey, tit
                   )
                 })}
                 {rowActions && (
-                  <TableCell align="right" className={cn("py-0", pad)}>
+                  <TableCell align="right" data-label="동작" className={cn("py-0", pad, stack && stackCell)}>
                     <MoreMenu items={rowActions(row.original)} aria-labelledby={`${id}-act ${cellId}`} triggerClassName="size-7 border-transparent bg-transparent" />
                   </TableCell>
                 )}

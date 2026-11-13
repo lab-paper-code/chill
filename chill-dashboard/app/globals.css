@@ -64,13 +64,14 @@
   --muted: #eef0f3;
   --muted-foreground: #5b6675;
   --border: #e3e6eb;
-  --input: #d3d8df;
+  /* Input boundaries need 3:1 against the card (WCAG 1.4.11). */
+  --input: #868f9c;
   --primary: #1f5fd6;
   --primary-foreground: #ffffff;
   --ok: #1f8a5b;
   --warn: #b7791f;
-  --fail: #d13b2e;
-  --idle: #8a94a3;
+  --fail: #c8372b;
+  --idle: #7a8494;
 
   --chart-1: #1f5fd6;
   --chart-2: #0fa3a3;
@@ -87,7 +88,7 @@
   --muted: #1f252e;
   --muted-foreground: #98a2b3;
   --border: #252c36;
-  --input: #343c48;
+  --input: #636e7e;
   --primary: #6fa0ff;
   --primary-foreground: #0f1318;
   --ok: #4cc38a;
@@ -111,6 +112,11 @@
   }
   html {
     color-scheme: light;
+    /* Focused controls never land under the sticky top bar (h-14) or a sticky FormActions row. */
+    scroll-padding-top: 4rem;
+  }
+  html:has([data-form-actions]) {
+    scroll-padding-bottom: 5rem;
   }
   html.dark {
     color-scheme: dark;
@@ -127,15 +133,41 @@
   ::selection {
     background: color-mix(in oklab, var(--primary) 24%, transparent);
   }
+  /* Scrolling over the backdrop or inside a modal never scrolls the page behind it. */
+  dialog:modal {
+    overscroll-behavior: contain;
+  }
+  dialog::backdrop {
+    overflow: hidden;
+    overscroll-behavior: contain;
+  }
 }
 
+/*
+ * Reduced motion: overlays still fade but no longer slide, zoom or spin fast.
+ * The tw-animate-css enter/exit keyframes read these variables (also under variants such as
+ * `open:animate-in`); unlayered rules win over the utilities.
+ */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  ::before,
-  ::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
+  [class*="animate-in"],
+  [class*="animate-out"] {
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+    --tw-enter-scale: 1;
+    --tw-enter-rotate: 0;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
+    --tw-exit-scale: 1;
+    --tw-exit-rotate: 0;
+  }
+  [class*="animate-spin"] {
+    animation-duration: 3s;
+  }
+  .animate-ping,
+  .animate-bounce {
+    animation: none;
+  }
+  html {
+    scroll-behavior: auto;
   }
 }

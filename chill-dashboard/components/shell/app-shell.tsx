@@ -21,6 +21,7 @@ import { Kbd } from "@/components/custom/blocks/KbdBlock"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/custom/blocks/PopoverBlock"
 import { ThemeSwitcher } from "@/components/custom/blocks/ThemeSwitcherBlock"
 import Button from "@/components/custom/blocks/Button"
+import { koreanValidity } from "@/components/custom/blocks/validity"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Fields, StatusDot, TimeText } from "@/components/kit/display"
 import { usePageTitle } from "@/components/kit/page"
@@ -30,6 +31,8 @@ const icons: Record<NavItem["icon"], React.ElementType> = { overview: LayoutDash
 
 /** Providers, sidebar, top bar and the content column for every signed-in page. */
 export function AppShell({ children }: { children: React.ReactNode }) {
+  // Native validation bubbles of controls outside the kit say Korean text (kit controls show their own message).
+  React.useEffect(koreanValidity, [])
   return (
     <SessionProvider signIn={SignIn}>
       <React.Suspense fallback={null}>
@@ -92,8 +95,8 @@ function AppSidebar() {
 function TopBar() {
   const pathname = usePathname()
   const title = usePageTitle(pathname)
-  // The last crumb of a detail page is a name or id from the URL; the PageHeader title says it better.
-  const crumbs = breadcrumbs(pathname).map((crumb, index, all) => index === all.length - 1 && crumb.dynamic && title ? { ...crumb, label: title } : crumb)
+  // The last crumb of a detail, new or edit page is a name, an id or "새로 만들기"; the PageHeader title says it better.
+  const crumbs = breadcrumbs(pathname).map((crumb, index, all) => index === all.length - 1 && crumb.titled && title ? { ...crumb, label: title } : crumb)
   const [paletteOpen, setPaletteOpen] = React.useState(false)
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

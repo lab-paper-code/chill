@@ -1,9 +1,9 @@
 // The shared kit. Screens import everything from "@/components/kit". See README.md.
 export { Page, PageHeader, PageTabs, Rail, Section, type MoreAction, type RailItem } from "./page"
-export { Feed, Fields, HeadroomBar, Hint, IdText, MeterBar, Missing, StatRow, StatTile, StatusBadge, StatusDot, Steps, TimeText, useNow, type FeedItem, type FieldItem, type StepItem } from "./display"
+export { Feed, Fields, HeadroomBar, Hint, IdText, InfoHint, MeterBar, Missing, StatRow, StatTile, StatusBadge, StatusDot, Steps, TimeText, useNow, type FeedItem, type FieldItem, type StepItem } from "./display"
 export { DataTable, Matrix, MatrixCell, type Column, type DataTableProps, type MatrixColumn, type MatrixGroup, type MatrixRow, type ServerPaging, type SortState } from "./data-table"
 export { EmptyState, NotReady, QueryBoundary, type BoundaryQuery } from "./query"
-export { ConfirmDialog, DetailDrawer, RawDialog, type Change } from "./overlays"
+export { ConfirmDialog, DetailDrawer, Dialog, RawDialog, type Change } from "./overlays"
 export { Sparkline, TimeSeries, type Series, type SeriesPoint } from "./charts"
 export { FilterBar, FormActions, FormSection, LeaveGuard, TIME_PRESETS, TimeRange, resolveTimeRange, useTimeRangeParam, type Choice, type MultiSegment, type Segment, type TimePreset, type TimeRangeValue } from "./forms"
 export { SelectBlock as Select, type SelectOption } from "@/components/custom/blocks/SelectBlock"

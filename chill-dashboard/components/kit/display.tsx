@@ -14,13 +14,35 @@ const toneText: Record<StatusTone, string> = { ok: "text-ok", warn: "text-warn",
 const toneSoft: Record<StatusTone, string> = { ok: "bg-ok-soft", warn: "bg-warn-soft", fail: "bg-fail-soft", progress: "bg-primary-soft", idle: "bg-idle-soft" }
 const toneIcon: Record<StatusTone, React.ElementType> = { ok: CheckCircle2, warn: AlertTriangle, fail: XCircle, progress: CircleDot, idle: CircleDashed }
 
-/** Short hover/focus hint around any content. Nothing is wrapped when `text` is empty. */
+/**
+ * Short hover/focus hint around any content. Nothing is wrapped when `text` is empty.
+ * `focusable` makes the wrapper a tab stop whose description is the hint from the start, so a screen
+ * reader reads it on focus (the visible tooltip opens later and is hidden from assistive tech).
+ */
 export function Hint({ text, children, focusable = false, className }: { text?: React.ReactNode; children: React.ReactNode; focusable?: boolean; className?: string }) {
+  const id = React.useId()
   if (!text) return <>{children}</>
   return (
     <Tooltip>
-      <TooltipTrigger className={className} tabIndex={focusable ? 0 : undefined}>{children}</TooltipTrigger>
-      <TooltipContent className="max-w-xs whitespace-normal">{text}</TooltipContent>
+      <TooltipTrigger className={className} tabIndex={focusable ? 0 : undefined} aria-describedby={focusable ? id : undefined}>{children}</TooltipTrigger>
+      <TooltipContent aria-hidden={focusable || undefined} className="max-w-xs whitespace-normal">{text}</TooltipContent>
+      {focusable && <span id={id} hidden>{text}</span>}
+    </Tooltip>
+  )
+}
+
+/** An "i" button next to a label whose description is a one-sentence definition (hover or focus shows it). */
+export function InfoHint({ text, className }: { text: string; className?: string }) {
+  const id = React.useId()
+  return (
+    <Tooltip>
+      <TooltipTrigger className={cn("inline-flex", className)}>
+        <button type="button" aria-label="설명" aria-describedby={id} className="-m-[5px] grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:text-foreground">
+          <Info className="size-3.5" aria-hidden="true" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent aria-hidden="true" className="max-w-xs whitespace-normal">{text}</TooltipContent>
+      <span id={id} hidden>{text}</span>
     </Tooltip>
   )
 }
@@ -73,7 +95,7 @@ export function StatusBadge({ status, tone, label, reason, className }: { status
   const Icon = toneIcon[resolvedTone]
   return (
     <Hint text={hint} focusable>
-      <span className={cn("inline-flex h-6 max-w-full items-center gap-1 rounded-md px-2 text-xs font-medium", toneSoft[resolvedTone], toneText[resolvedTone], className)}>
+      <span className={cn("inline-flex min-h-6 max-w-full items-center gap-1 rounded-md px-2 text-xs font-medium", toneSoft[resolvedTone], toneText[resolvedTone], className)}>
         <Icon className="size-3.5 shrink-0" aria-hidden="true" />
         <span className="truncate text-foreground">{text}</span>
       </span>
@@ -81,18 +103,19 @@ export function StatusBadge({ status, tone, label, reason, className }: { status
   )
 }
 
-/** Compact state marker for dense cells: icon plus an optional visible label. */
+/** Compact state marker for dense cells: icon plus an optional visible label. A bare `tone` (no label) is decoration only. */
 export function StatusDot({ status, tone, label, showLabel = false, className }: { status?: StatusInfo; tone?: StatusTone; label?: string; showLabel?: boolean; className?: string }) {
   const resolvedTone = status?.tone ?? tone ?? "idle"
   const text = label ?? status?.label ?? DASH
   const Icon = toneIcon[resolvedTone]
+  const named = showLabel || label != null || status != null
   const body = (
     <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)}>
       <Icon className={cn("size-3.5 shrink-0", toneText[resolvedTone])} aria-hidden="true" />
-      {showLabel ? <span className="truncate">{text}</span> : <span className="sr-only">{text}</span>}
+      {showLabel ? <span className="truncate">{text}</span> : named && <span className="sr-only">{text}</span>}
     </span>
   )
-  return showLabel ? body : <Hint text={status?.code ? `${text} (${status.code})` : text}>{body}</Hint>
+  return showLabel || !named ? body : <Hint text={status?.code ? `${text} (${status.code})` : text}>{body}</Hint>
 }
 
 /** Label, value with unit, one secondary value. */
@@ -102,12 +125,16 @@ export function StatTile({ label, value, unit, sub, info, reason, status, href, 
   /** Why the value is absent. */ reason?: string
   status?: StatusInfo; href?: string; className?: string
 }) {
+  // With `href` the label is the link and its ::after covers the card (stretched link), so the info
+  // hint stays a separate control above it instead of being nested inside the link.
   const body = (
     <>
       <div className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
-        <Clip>{label}</Clip>
-        {info && <Hint text={info} focusable><Info className="size-3.5" aria-label="설명" /></Hint>}
-        {status && <StatusDot status={status} className="ml-auto" />}
+        {href
+          ? <Link href={href} className="min-w-0 truncate outline-none after:absolute after:inset-0 after:rounded-xl after:content-['']">{label}</Link>
+          : <Clip>{label}</Clip>}
+        {info && <InfoHint text={info} />}
+        {status && <StatusDot status={status} className="relative z-[1] ml-auto" />}
       </div>
       <div className="mt-1.5 flex min-w-0 items-baseline gap-1">
         <span className="truncate text-2xl font-semibold tabular-nums tracking-tight text-foreground">{value == null || value === "" ? <Missing reason={reason} /> : value}</span>
@@ -116,19 +143,21 @@ export function StatTile({ label, value, unit, sub, info, reason, status, href, 
       {sub != null && <div className="mt-1 text-xs text-muted-foreground tabular-nums"><Clip>{sub}</Clip></div>}
     </>
   )
-  return href ? (
-    <Link href={href} className={cn("block min-w-0 rounded-xl", className)}>
-      <Card interactive className="h-full px-4 py-3.5">{body}</Card>
-    </Link>
-  ) : (
-    <Card className={cn("px-4 py-3.5", className)}>{body}</Card>
+  return (
+    <Card
+      interactive={!!href}
+      // Other controls and tooltip triggers in a linked tile sit above the stretched link so they stay operable.
+      className={cn("relative min-w-0 px-4 py-3.5", href && "has-[a:focus-visible]:outline-2 has-[a:focus-visible]:outline-offset-2 has-[a:focus-visible]:outline-primary [&_:is(button,[tabindex],[aria-describedby]):not(a)]:relative [&_:is(button,[tabindex],[aria-describedby]):not(a)]:z-[1]", className)}
+    >
+      {body}
+    </Card>
   )
 }
 
 const statColumns = { 2: "lg:grid-cols-2", 3: "lg:grid-cols-3", 4: "lg:grid-cols-4", 5: "lg:grid-cols-5", 6: "lg:grid-cols-6" } as const
-/** Grid of tiles: `columns` across on desktops, two across on tablets and phones. */
+/** Grid of tiles: `columns` across on desktops, two across on tablets and phones, where an odd last tile spans the row. */
 export function StatRow({ children, columns = 4, className }: { children: React.ReactNode; columns?: 2 | 3 | 4 | 5 | 6; className?: string }) {
-  return <div className={cn("grid grid-cols-2 gap-3", statColumns[columns], className)}>{children}</div>
+  return <div className={cn("grid grid-cols-2 gap-3 max-lg:[&>:last-child:nth-child(odd)]:col-span-2", statColumns[columns], className)}>{children}</div>
 }
 
 const toneFill: Record<StatusTone, string> = { ok: "bg-ok", warn: "bg-warn", fail: "bg-fail", progress: "bg-primary", idle: "bg-idle" }
@@ -289,7 +318,7 @@ export function Fields({ items, columns = 2, className }: { items: FieldItem[]; 
         <div key={item.label} className="grid min-w-0 grid-cols-[minmax(7rem,40%)_minmax(0,1fr)] items-baseline gap-3 border-b border-border pb-2 sm:block sm:border-0 sm:pb-0">
           <dt className="flex items-center gap-1 text-xs text-muted-foreground">
             {item.label}
-            {item.info && <Hint text={item.info} focusable><Info className="size-3" aria-label="설명" /></Hint>}
+            {item.info && <InfoHint text={item.info} />}
           </dt>
           <dd className="min-w-0 text-sm text-foreground sm:mt-0.5">{item.value == null || item.value === "" ? <Missing reason={item.reason} /> : <Clip>{item.value}</Clip>}</dd>
         </div>

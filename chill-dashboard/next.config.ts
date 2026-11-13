@@ -6,6 +6,9 @@ const scriptSrc = process.env.NODE_ENV === "production" ? "script-src 'self' 'un
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  // Development only. Every corner holds an app control (sidebar 접기, toasts and FormActions, the top bar
+  // at 390 px), so the route indicator is off; compile and runtime errors still open the overlay.
+  devIndicators: false,
   async headers() {
     return [{source:"/:path*",headers:[
       {key:"Referrer-Policy",value:"no-referrer"},

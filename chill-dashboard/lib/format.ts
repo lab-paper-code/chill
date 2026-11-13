@@ -82,11 +82,15 @@ export function formatKst(at: string | number | Date | null | undefined, seconds
   return seconds ? text : text.slice(0, 16)
 }
 
-/** Relative time against `now`: "12초 전", "3분 전", "2시간 전", "4일 전", or "곧" for future times. */
+/**
+ * Relative time against `now`: "방금" within 5 s either side (server and browser clocks drift a little),
+ * then "12초 전", "3분 전", "2시간 전", "4일 전", or "곧" for times further ahead.
+ */
 export function formatRelative(at: string | number | Date | null | undefined, now: number): string {
   const ms = epoch(at)
   if (ms == null) return DASH
   const seconds = Math.floor((now - ms) / 1000)
+  if (Math.abs(now - ms) < 5000) return "방금"
   if (seconds < 0) return "곧"
   if (seconds < 60) return `${seconds}초 전`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`

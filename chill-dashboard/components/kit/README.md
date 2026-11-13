@@ -53,7 +53,7 @@ All imports: `import { … } from "@/components/kit"`.
   <Section title="배치" card>…</Section>
 </Page>
 ```
-Section list pages show `<PageTabs tabs={sectionTabs.scheduler} />` under the header. Breadcrumbs are automatic (top bar, detail/new/edit pages only): route words get their label, the last name or id segment shows the `PageHeader` title, and an id with no header shows "상세".
+Section list pages show `<PageTabs tabs={sectionTabs.scheduler} />` under the header. Breadcrumbs are automatic (top bar, detail/new/edit pages only): route words get their label, and the last crumb shows the `PageHeader` title when it is a name, an id, "새로 만들기" or "수정" (an id with no header shows "상세").
 
 ```tsx
 <Rail label="설정 묶음" value={group} onChange={setGroup} items={[{ value: "targets", label: "대상", count: 2 }, { value: "limits", label: "한도" }]}>
@@ -71,7 +71,8 @@ Section list pages show `<PageTabs tabs={sectionTabs.scheduler} />` under the he
 | `info` | string | One-sentence definition tooltip. |
 | `status` | `StatusInfo` | Small marker in the label row. |
 | `href` | string | Whole tile links. |
-| `StatRow.columns` | `2…6` | Tiles across on desktops (default 4); always two across on tablets and phones. |
+| `StatRow.columns` | `2…6` | Tiles across on desktops (default 4); always two across on tablets and phones, where an odd last tile spans the row. |
+| `href` layout | | The label is the link and its hit area covers the tile; `info` and `status` stay separate controls above it (never nest controls in a link). |
 
 ```tsx
 <StatRow columns={3}><StatTile label="전력" value={formatNumber(w, 1)} unit="W" sub={`전체 풀 ${formatWatts(total)}`} href="/devices" /></StatRow>
@@ -88,7 +89,7 @@ Five tones: `ok`, `warn`, `fail`, `progress` (primary), `idle`. Shape (icon) + c
 | `status` | `StatusInfo` | Preferred: `serviceReadiness(code)`, `actionStatus(code)`, … Unknown code: "—" plus tooltip `코드 X`. |
 | `tone`, `label` | | Direct form. |
 | `reason` | node | Badge tooltip. |
-| `StatusDot.showLabel` | boolean | Icon only (label in tooltip) or icon + text. |
+| `StatusDot.showLabel` | boolean | Icon only (label in tooltip) or icon + text. A `tone` with no `label` and no `status` is decoration and hidden from screen readers. |
 
 Vocabulary in `lib/status-labels.ts`: `serviceReadiness, admissionStatus(bool), autonomyState, autonomyEnabled(bool), actionStatus, measurementStatus, measurementPhaseStatus, evaluationPhase, experimentVerdict, experimentStepStatus, energyStatus, sloVerdict(met), decisionStatus, candidateStatus, schedulerReason, evaluationReason, evaluationPool/Verdict/Execution/Cleanup, loadJobStatus, injectionOutcome`. Add new codes there, not in screens; reuse the existing word for the same concept ("측정 결과 없음", "취소", "확인 후 반환").
 
@@ -104,7 +105,7 @@ Vocabulary in `lib/status-labels.ts`: `serviceReadiness, admissionStatus(bool), 
 ```
 
 ### DataTable
-TanStack table state, Avara table markup. Rows are 40 px, one line per cell; cut text (cells and headers) shows a tooltip. On phones the first column stays in view while the rest scrolls.
+TanStack table state, Avara table markup. Rows are 40 px, one line per cell; cut text (cells and headers) shows a tooltip. Below a 30rem container (phones, narrow columns) rows stack into label/value lines by default (`narrow`); a table that still scrolls sideways shows a shadow on the edge with more columns.
 | Prop | Type | Notes |
 |---|---|---|
 | `label` | string | Accessible name (caption, scroll region). Required. |
@@ -119,9 +120,10 @@ TanStack table state, Avara table markup. Rows are 40 px, one line per cell; cut
 | `download` | `{filename}` | "내려받기": CSV of loaded rows (`csv` or `sortValue` per column). |
 | `title`, `toolbar`, `actions` | node | Heading row (title is an h2, Section size); put a `FilterBar` in `toolbar`. |
 | `empty`, `busy` | | Empty node; dims rows while refetching. |
-| `density` | `"default"|"compact"` | `compact`: tighter cells, no minimum width, no pinned column; use it in dialogs and drawers. |
+| `density` | `"default"|"compact"` | `compact`: tighter cells, no minimum width, no pinned column, `narrow="scroll"`; use it in dialogs and drawers. |
 | `minWidth` | number (px) | Width below which the table scrolls sideways (default 104 px per column, 0 with `compact`). |
-| `stickyFirst` | boolean | Pin the first column at every width (default: phones only). |
+| `narrow` | `"stack"|"scroll"` | Below a 30rem container. `stack` (default): each row is a block, the first cell its title, the others "header (unit) value" lines; sortable headers stay as a row of sort buttons. `scroll`: columns kept, first column pinned, edge shadow. Use `scroll` only when columns must be compared across rows (a matrix-like table). |
+| `stickyFirst` | boolean | Pin the first column at every width (default: phones with `narrow="scroll"`). |
 
 ```tsx
 <DataTable label="서비스" rows={rows} rowKey={r => r.uid} rowHref={r => `/services/${encodeURIComponent(r.name)}?uid=${r.uid}`}
@@ -143,8 +145,10 @@ Rows by columns (e.g. power modes by execution paths) with a pinned row-header c
 ```
 `EmptyState`: `title` (short label), `action?`, `icon?`, `compact?`.
 
-### DetailDrawer
-`open, onOpenChange, title, status?, actions?, footer?, children`. Native modal dialog from the right; Esc and backdrop close it; focus returns to the row.
+### DetailDrawer, Dialog
+`DetailDrawer open, onOpenChange, title, status?, actions?, footer?, children`. Native modal dialog from the right; Esc and backdrop close it; focus returns to the row.
+
+`Dialog open, onOpenChange, title, size?="sm"|"md"|"lg"|"xl", footer?, children`: the same native modal for short content that is neither a confirmation nor a row preview (a comparison table). Esc closes it; focus returns to the opener, also when it was opened from a `more` menu item. Never import `DialogBlock` in screens.
 
 ### ConfirmDialog
 | Prop | Type | Notes |
@@ -168,10 +172,10 @@ Rows by columns (e.g. power modes by execution paths) with a pinned row-header c
 
 ### IdText, TimeText, Fields, Feed, Hint, Missing
 - `IdText value head? tail? copy?`: `5f0c2a9e…5f60` + full value tooltip + copy.
-- `TimeText at mode?="relative"|"absolute" seconds?`: relative ("3분 전", 1 s clock) with KST tooltip, or absolute KST.
+- `TimeText at mode?="relative"|"absolute" seconds?`: relative ("방금" within 5 s either side, "3분 전", 1 s clock) with KST tooltip, or absolute KST.
 - `Fields items={[{label, value, reason?, info?}]} columns?={1|2|3}`: label/value list; a cut value shows a tooltip.
 - `Feed items={[{key, title, status?|tone?, secondary?, at?, meta?, href?}]} empty? label?`: one-line rows (status mark, title, secondary text, relative time on the right); rows with `href` link. For side columns ("최근 변경", "진행 중").
-- `Hint text`: tooltip wrapper. `Missing reason`: the "—" itself. `useNow()`: shared 1 s clock.
+- `Hint text focusable?`: tooltip wrapper; with `focusable` the hint is also the wrapper's description for screen readers. `InfoHint text`: the "i" button (24 px) for a one-sentence definition; `info` props use it. `Missing reason`: the "—" itself. `useNow()`: shared 1 s clock.
 
 ### TimeSeries, Sparkline
 `TimeSeries data={[{t, a: number|null}]} series={[{key:"a", label:"전체 풀", color?:1-6}]} label unit? height? domain?=[from,to] reference?={value,label} digits? legend? x?="time"|"seconds" curve?="linear"|"step" summary?`.
@@ -188,6 +192,7 @@ Rows by columns (e.g. power modes by execution paths) with a pinned row-header c
 - `FormSection title info?`: fieldset card. Inputs: Avara `InputBlock` (`@/components/custom/blocks/InputBlock`) and `Select` from the kit (same as `SelectBlock`) with `label`; shadcn `Checkbox`, `Switch`, `RadioGroup`, `Textarea`, `Label` from `@/components/ui/...`.
 - `FormActions changes?`: sticky bottom row, "변경 n건", buttons on the right ("검토 후 적용").
 - `<LeaveGuard when={dirty} />`: confirms before reload/close and in-app link navigation.
+- Validation: keep native `required`, `min`, `max`, `pattern` on the controls. Kit inputs (`InputBlock`, `Select`, the `ConfirmDialog` reason) never show the browser's bubble: a failed constraint shows a Korean message under the field ("입력 필요", "선택 필요", "최소 1"…) with `aria-invalid` and `aria-describedby`, on submit (focus moves to the first invalid field) or when leaving an invalid field. Any other control's bubble says the same Korean text. Pass `error` for server or cross-field errors. A `pattern` is a `v`-flag regex: escape `-` in a class (`[a-z0-9\-]+`).
 
 ### Select
 `Select` (= `SelectBlock`) `label? aria-label? options={[{value,label,group?}]} value onChange placeholder? helperText? error? icon? disabled? inputSize? multiple? searchable?`.
