@@ -387,3 +387,22 @@ func TestAcceptedSettingsReadWhileServiceIsBusy(t *testing.T) {
 		t.Fatal("settings read waited behind the owner refresh/control lock")
 	}
 }
+
+// A measurement deletion holds the refresh lock through store I/O; the main
+// loop's periodic refresh must return instead of waiting behind it.
+func TestRefreshTickYieldsToHeldRefreshLock(t *testing.T) {
+	service := &SchedulerService{}
+	service.Profiles.Store(&ProfilesView{})
+	service.RefreshLock.Lock()
+	defer service.RefreshLock.Unlock()
+	done := make(chan error, 1)
+	go func() { done <- service.Refresh(context.Background()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("refresh tick waited behind a held refresh lock")
+	}
+}

@@ -8,6 +8,7 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	batch "k8s.io/api/batch/v1"
@@ -60,16 +61,17 @@ func (o *Service) deletionPrefixes(
 		}
 	}
 	// A prepared profile lets the scheduler start an instance whose init
-	// container fetches the bundle deleted here. Refresh prepares only the
-	// current profile of each cell, so a superseded or replaced measurement is
-	// deletable.
+	// container fetches the bundle deleted here. The catalog skips a measurement
+	// carrying the invalid annotation, so the next refresh stops preparing its
+	// profiles; a superseded or replaced measurement is not prepared either.
 	if o.scheduler != nil && o.scheduler.LoadProfiles != nil {
 		if _, profiles, preparations, ok := o.scheduler.LoadProfiles(); ok {
 			id := namespace + "/" + name + "/" + uid
 			for _, profile := range profiles {
 				if _, prepared := preparations[profile.ID]; prepared && derivedProfile(profile, id) {
 					return task, nil, measurementInUse("the scheduler prepares serving profile " + profile.ID +
-						" from this measurement; publish a newer or replacing measurement first")
+						" from this measurement; annotate the measurement with " + profilingrun.InvalidAnnotation +
+						" and retry after the next profile refresh")
 				}
 			}
 		}

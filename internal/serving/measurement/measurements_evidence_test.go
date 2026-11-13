@@ -220,9 +220,10 @@ func TestMeasurementDeleteRefusesWhileSomethingCanStillWriteOrServe(t *testing.T
 		podActive  = "an owned measurement Pod remains active even if its Job is missing"
 		podServing = "a physical serving Pod still references the measurement"
 		prepared   = "the scheduler prepares serving profile %s from this measurement; " +
-			"publish a newer or replacing measurement first"
+			"annotate the measurement with chill.dacs.io/measurement-invalid and retry after the next profile refresh"
 	)
-	own, reuse := "allowed/task/native-uid", "allowed/confirmation/confirmation-uid/reuse-0123"
+	own, confirmed := "allowed/task/native-uid", "allowed/task/native-uid/reuse-0123"
+	reuse := "allowed/confirmation/confirmation-uid/reuse-0123"
 	for _, tc := range []struct{ mode, reason string }{
 		{"pending", notTerminal},
 		{"measuring", notTerminal},
@@ -233,6 +234,7 @@ func TestMeasurementDeleteRefusesWhileSomethingCanStillWriteOrServe(t *testing.T
 		{"running Pod without Job", podActive},
 		{"serving Pod", podServing},
 		{"prepared profile", strings.Replace(prepared, "%s", own, 1)},
+		{"prepared reuse this measurement confirmed", strings.Replace(prepared, "%s", confirmed, 1)},
 		{"prepared reuse of this measurement", strings.Replace(prepared, "%s", reuse, 1)},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
@@ -283,6 +285,10 @@ func TestMeasurementDeleteRefusesWhileSomethingCanStillWriteOrServe(t *testing.T
 			switch tc.mode {
 			case "prepared profile":
 				loadedProfiles(service, []serving.Profile{{ID: own}}, own)
+			case "prepared reuse this measurement confirmed":
+				loadedProfiles(service, []serving.Profile{
+					{ID: confirmed, Reuse: &serving.ProfileReuseCheck{SourceProfileID: "allowed/source/source-uid"}},
+				}, confirmed)
 			case "prepared reuse of this measurement":
 				loadedProfiles(service, []serving.Profile{
 					{ID: reuse, Reuse: &serving.ProfileReuseCheck{SourceProfileID: own}},

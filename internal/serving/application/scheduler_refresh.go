@@ -18,10 +18,26 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// acquireRefresh takes the refresh lock, or reports false so a tick is skipped
+// while a measurement deletion holds it and the caller's loop is not delayed.
+// The first refresh waits because nothing is accepted before it.
+func (o *SchedulerService) acquireRefresh() bool {
+	if o.RefreshLock.TryLock() {
+		return true
+	}
+	if o.Profiles.Load() != nil {
+		return false
+	}
+	o.RefreshLock.Lock()
+	return true
+}
+
 // Refresh serializes source preparation separately from Tick and user mutations.
 // Only complete, still-current inputs may replace the accepted configuration.
 func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
-	o.RefreshLock.Lock()
+	if !o.acquireRefresh() {
+		return nil
+	}
 	defer o.RefreshLock.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
