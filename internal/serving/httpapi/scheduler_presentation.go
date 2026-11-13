@@ -196,12 +196,15 @@ func (e *schedulerReadEvidence) observations(records []observation.SchedulerObse
 	return result
 }
 
-// History lists carry identity, row labels and workload autonomy states.
-// Unprojected exact-record reads retain the complete journal/catalog payload.
+// History lists carry identity, row labels, reasons, whether the chosen target
+// keeps the current plan, and workload autonomy states. Unprojected exact-record
+// reads retain the complete journal/catalog payload.
 type schedulerHistoryDecision struct {
-	At        time.Time                        `json:"at"`
-	Status    string                           `json:"status"`
-	Workloads []serving.SchedulerWorkloadState `json:"workloads"`
+	At         time.Time                        `json:"at"`
+	Status     string                           `json:"status"`
+	Reasons    []string                         `json:"reasons,omitempty"`
+	TargetKeep *bool                            `json:"targetKeep,omitempty"`
+	Workloads  []serving.SchedulerWorkloadState `json:"workloads"`
 }
 
 type schedulerHistorySnapshot struct {
@@ -245,7 +248,10 @@ func schedulerHistoryObservations(records []observation.SchedulerObservation) []
 	for i, record := range records {
 		row := schedulerHistoryObservation{At: record.At, Offset: record.Offset, Control: record.Control, Node: record.Node, PowerJoules: record.PowerJoules}
 		if d := record.Decision; d != nil {
-			row.Decision = &schedulerHistoryDecision{d.At, d.Status, d.Workloads}
+			row.Decision = &schedulerHistoryDecision{At: d.At, Status: d.Status, Reasons: d.Reasons, Workloads: d.Workloads}
+			if d.Target != nil {
+				row.Decision.TargetKeep = &d.Target.Keep
+			}
 		}
 		if s := record.Snapshot; s != nil {
 			row.Snapshot = &schedulerHistorySnapshot{s.At}

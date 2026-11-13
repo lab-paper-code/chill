@@ -607,6 +607,8 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 		Decision *struct {
 			At        time.Time
 			Status    string
+			Reasons   []string
+			Target    *struct{ Keep bool }
 			Workloads []serving.SchedulerWorkloadState `json:"workloads"`
 		}
 		Snapshot *struct{ At time.Time }
@@ -633,7 +635,10 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 	}
 	record := SchedulerObservation{At: line.At, Control: line.Control, Node: line.Node, PowerJoules: line.PowerJoules}
 	if d := line.Decision; d != nil {
-		record.Decision = &serving.SchedulerDecision{At: d.At, Status: d.Status, Workloads: d.Workloads}
+		record.Decision = &serving.SchedulerDecision{At: d.At, Status: d.Status, Reasons: d.Reasons, Workloads: d.Workloads}
+		if d.Target != nil {
+			record.Decision.Target = &serving.SchedulerCandidate{Keep: d.Target.Keep}
+		}
 	}
 	if s := line.Snapshot; s != nil {
 		record.Snapshot = &serving.SchedulerSnapshot{At: s.At}

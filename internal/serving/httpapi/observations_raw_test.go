@@ -307,6 +307,40 @@ func TestSchedulerHistoryDecisionChangeFilterPagesOnlyChangedDecisions(t *testin
 	}
 }
 
+func TestSchedulerHistorySummaryCarriesDecisionReasonsAndTargetKeep(t *testing.T) {
+	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
+	from := time.Now().UTC().Add(-time.Second)
+	keep := serving.SchedulerCandidate{ID: "keep", Keep: true}
+	for i, decision := range []serving.SchedulerDecision{
+		{Status: serving.SchedulerStatusKeep, Keep: keep, Target: &serving.SchedulerCandidate{ID: "keep", Keep: true}, Reasons: []string{"TransitionGainWithinUncertainty"}},
+		{Status: "Feasible", Keep: keep, Target: &serving.SchedulerCandidate{ID: "plan-a"}, Reasons: []string{"IdleInstanceRemoved", "ReservedScope:w"}},
+		{Status: "Pending", Keep: keep, Reasons: []string{"PartialObservationWindow"}},
+	} {
+		if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: from.Add(time.Duration(i) * time.Second), Decision: &decision}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response := rawHTTPRequest(h, "/api/v1/observations/scheduler?from="+from.Format(time.RFC3339Nano)+"&to="+from.Add(time.Minute).Format(time.RFC3339Nano)+"&limit=10&view=summary")
+	var page struct {
+		Events []struct {
+			Decision map[string]json.RawMessage
+		}
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) != 3 {
+		t.Fatalf("summary: status=%d body=%s err=%v", response.Code, response.Body, err)
+	}
+	for i, want := range []struct{ reasons, targetKeep string }{
+		{`["TransitionGainWithinUncertainty"]`, `true`},
+		{`["IdleInstanceRemoved","ReservedScope:w"]`, `false`},
+		{`["PartialObservationWindow"]`, ``},
+	} {
+		decision := page.Events[i].Decision
+		if string(decision["reasons"]) != want.reasons || string(decision["targetKeep"]) != want.targetKeep {
+			t.Fatalf("decision %d lost its reasons or target identity: %s", i, response.Body)
+		}
+	}
+}
+
 func TestSchedulerHistorySummaryBoundsPayloadAndPreservesRecordIdentity(t *testing.T) {
 	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
 	from := time.Now().UTC()
