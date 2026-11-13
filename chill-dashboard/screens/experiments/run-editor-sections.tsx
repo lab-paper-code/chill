@@ -195,7 +195,7 @@ export function CriteriaSection({ spec, edit }: Omit<Props, "context">) {
       <FormSection title="전력 계측">
         <div className="grid gap-4 sm:grid-cols-2">
           <CodecInput id="criteria:gap" label="결손 허용 비율" unit="%" initial={percentText(specValue(spec, [...energy, "maxGapFraction"]))} parse={percent} onValue={value => edit([...energy, "maxGapFraction"], value)} />
-          <CodecInput id="criteria:single" label="단일 공백 허용" unit="s" initial={String(specValue(spec, [...energy, "maxSingleGapSeconds"]) ?? "")} parse={seconds} onValue={value => edit([...energy, "maxSingleGapSeconds"], value)} />
+          <CodecInput id="criteria:single" label="단일 공백 허용" unit="초" initial={String(specValue(spec, [...energy, "maxSingleGapSeconds"]) ?? "")} parse={seconds} onValue={value => edit([...energy, "maxSingleGapSeconds"], value)} />
         </div>
       </FormSection>
     </div>

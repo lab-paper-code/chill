@@ -12,13 +12,13 @@ export function experimentRows(stage:Pick<ExperimentStage,"kpis">):ExperimentRow
     const row=object(value),missing=object(row.missingReasons),base=`kpis.${shape}.${name}`
     const metrics:PublishedMetric[]=[]
     const add=(key:string,label:string,value:unknown,numerator:unknown=null,denominator:unknown=null,reasonKey=key,unit?:string)=>metrics.push({key,label,value,numerator,denominator,population:row.population,reason:missing[reasonKey],source:`${base}.${key}`,unit})
-    add("offered","생성기 offered",row.offered)
+    add("offered","생성기 보낸 요청",row.offered)
     if(shape==="workloads") {
       add("httpSuccess","생성기 HTTP 성공",row.httpSuccess)
-      add("successFraction","HTTP 성공 / offered",row.successFraction,row.successNumerator,row.successDenominator)
-      add("withinSLOFraction","SLO 안 / offered",row.withinSLOFraction,row.withinSLONumerator,row.withinSLODenominator)
+      add("successFraction","HTTP 성공 / 보낸 요청",row.successFraction,row.successNumerator,row.successDenominator)
+      add("withinSLOFraction","목표 안 성공 / 보낸 요청",row.withinSLOFraction,row.withinSLONumerator,row.withinSLODenominator)
     } else {
-      add("deadlineSuccessFraction","기한 안 성공 / offered",row.deadlineSuccessFraction,row.deadlineSuccess??row.successNumerator,row.offered??row.successDenominator)
+      add("deadlineSuccessFraction","기한 내 성공 / 보낸 요청",row.deadlineSuccessFraction,row.deadlineSuccess??row.successNumerator,row.offered??row.successDenominator)
       add("actualGatewayIdentities","생성기 응답의 서버 identity",row.actualGatewayIdentities)
       add("rawPopulation.uniqueRequests","서버 수신 cohort (기록된 고유 요청)",object(row.rawPopulation).uniqueRequests)
       add("rawPopulation.complete","서버 수신 cohort 보존 완전성",object(row.rawPopulation).complete)
@@ -46,7 +46,7 @@ export function resultMetric(row:ExperimentRow,key:"success"|"http"|"p95"):Publi
   const originalKey=key==="success"?(request?"deadlineSuccessFraction":"withinSLOFraction"):key==="http"?"successFraction":request?"completedLatencyNS.p95":"latencyMS.p95"
   const metric=row.metrics.find(metric=>metric.key===originalKey)
   const value=key==="p95"?finite(metric?.value):ratio(metric?.value,metric?.numerator,metric?.denominator)
-  return {...metric,key:originalKey,label:key==="success"?(request?"기한 내 성공 / 보낸 요청":"SLO 내 성공 / 보낸 요청"):key==="http"?"HTTP 성공 / 보낸 요청":"성공 응답 p95",value:value===null?null:key==="p95"&&request?value/1e6:value,rawValue:metric?.value,numerator:metric?.numerator,denominator:metric?.denominator,population:metric?.population,reason:metric?.reason,source:metric?.source??`${row.source}.${originalKey}`,unit:key==="p95"?"ms":"%"}
+  return {...metric,key:originalKey,label:key==="success"?(request?"기한 내 성공 / 보낸 요청":"목표 안 성공 / 보낸 요청"):key==="http"?"HTTP 성공 / 보낸 요청":"성공 응답 p95",value:value===null?null:key==="p95"&&request?value/1e6:value,rawValue:metric?.value,numerator:metric?.numerator,denominator:metric?.denominator,population:metric?.population,reason:metric?.reason,source:metric?.source??`${row.source}.${originalKey}`,unit:key==="p95"?"ms":"%"}
 }
 export function comparisonRows(a:ExperimentStage,b?:ExperimentStage) {
   const left=experimentRows(a),right=b?experimentRows(b):[]

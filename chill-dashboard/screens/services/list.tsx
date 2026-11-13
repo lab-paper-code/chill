@@ -6,10 +6,12 @@ import Link from "next/link"
 import { Button, buttonClassName, DataTable, EmptyState, FilterBar, Page, PageHeader, QueryBoundary, StatusBadge, type Column } from "@/components/kit"
 import { useChillQuery } from "@/lib/client"
 import { type WorkloadSummary } from "@/lib/domain"
-import { statusLabel } from "@/lib/labels"
+import { formatTarget, goDurationNanos } from "@/lib/format"
+import { managementKind, managementPhase } from "@/lib/services-records"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import type { SchedulerSettings } from "@/lib/read-types"
-import { admissionStatus, autonomyEnabled, serviceReadiness } from "@/lib/status-labels"
+import { admissionStatus, autonomyEnabled, errorCodeLabel, serviceReadiness, sloVerdict } from "@/lib/status-labels"
+import { useLive } from "@/lib/use-live"
 
 const statuses = ["all", "ready", "preparing", "blocked"] as const
 type Status = (typeof statuses)[number]
@@ -26,6 +28,9 @@ const activeOperation = (w: WorkloadSummary) => (w.operation && !["Completed", "
 export function ServiceListScreen() {
   const workloads = useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary")
   const settings = useChillQuery<SchedulerSettings>("v1/scheduler/settings", { decoder: parseSchedulerJSON })
+  // Readiness is the registration's state; a missed live latency window is the operating problem 개요 shows, added beside it.
+  const latest = useLive().state.metrics.at(-1)
+  const missed = (uid: string) => latest?.workloads[uid]?.slo?.met === false
   const params = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
@@ -59,9 +64,17 @@ export function ServiceListScreen() {
           const autonomous = settings.data?.autonomousWorkloads ?? []
           const columns: Column<WorkloadSummary>[] = [
             { key: "name", header: "서비스", cell: w => w.desired.metadata.name, sortValue: w => w.desired.metadata.name, width: "16rem" },
-            { key: "status", header: "상태", cell: w => <StatusBadge status={serviceReadiness(w.readiness)} reason={w.reason && w.reason !== w.readiness ? statusLabel(w.reason) : undefined} />, sortValue: w => serviceReadiness(w.readiness).label, width: "8rem" },
+            {
+              key: "status", header: "준비 상태", width: "8rem", sortValue: w => serviceReadiness(w.readiness).label,
+              cell: w => (
+                <span className="inline-flex flex-wrap gap-1">
+                  <StatusBadge status={serviceReadiness(w.readiness)} reason={w.reason && w.reason !== w.readiness ? errorCodeLabel(w.reason) : undefined} />
+                  {missed(w.desired.metadata.uid) && <StatusBadge status={sloVerdict(false)} reason="최근 관측 구간 지연이 목표 초과" />}
+                </span>
+              ),
+            },
             { key: "model", header: "모델", cell: w => w.desired.spec.modelRef.name, sortValue: w => w.desired.spec.modelRef.name, width: "16rem" },
-            { key: "target", header: "목표", cell: w => `p${w.desired.spec.slo.percentile} ${w.desired.spec.slo.targetLatency}`, width: "8rem" },
+            { key: "target", header: "목표", cell: w => formatTarget(w.desired.spec.slo.percentile, goDurationNanos(w.desired.spec.slo.targetLatency)), width: "8rem" },
             { key: "admission", header: "접수", cell: w => <StatusBadge status={admissionStatus(w.admission)} />, sortValue: w => (w.admission ? 1 : 0), width: "8rem" },
             {
               key: "autonomy",
@@ -71,7 +84,7 @@ export function ServiceListScreen() {
               width: "8rem",
             },
             ...(all.some(activeOperation)
-              ? [{ key: "operation", header: "변경 작업", cell: (w: WorkloadSummary) => { const op = activeOperation(w); return op ? `${statusLabel(op.kind)} ${statusLabel(op.phase)}` : null } }]
+              ? [{ key: "operation", header: "변경 작업", cell: (w: WorkloadSummary) => { const op = activeOperation(w); return op ? `${managementKind(op.kind)} ${managementPhase(op.phase)}` : null } }]
               : []),
           ]
           return (
@@ -85,7 +98,7 @@ export function ServiceListScreen() {
               toolbar={
                 <FilterBar
                   search={{ value: search, onChange: v => { setSearch(v); setParam("q", v, "") }, placeholder: "서비스, 모델 검색" }}
-                  segments={[{ label: "상태", value: status, onChange: v => setParam("status", v, "all"), options: statuses.map(s => ({ value: s, label: statusLabels[s], count: all.filter(matches[s]).length })) }]}
+                  segments={[{ label: "준비 상태", value: status, onChange: v => setParam("status", v, "all"), options: statuses.map(s => ({ value: s, label: statusLabels[s], count: all.filter(matches[s]).length })) }]}
                 />
               }
               empty={

@@ -37,7 +37,7 @@ function HistoryBody({ selected, onSelect, name }: { selected: string; onSelect:
         <div className="grid gap-5">
           <DataTable label="설정 변경" rows={rows} rowKey={row => row.at} pageSize={0} onRowClick={row => onSelect(row.at)} selectedKey={selected || undefined}
             columns={[
-              { key: "at", header: "시각", width: "11.5rem", cell: row => <TimeText at={row.at} mode="absolute" /> },
+              { key: "at", header: "시각", width: "11.5rem", cell: row => <TimeText at={row.at} mode="list" /> },
               { key: "actor", header: "변경자", cell: row => row.change.actorUsername || null, missingReason: "기록 없음" },
               { key: "count", header: "항목 수", width: "4.5rem", numeric: true, cell: row => row.rows.length },
             ]} />

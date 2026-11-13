@@ -5,10 +5,10 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { DataTable, EmptyState, Fields, Page, PageHeader, QueryBoundary, RawDialog, Section, StatRow, StatTile, TimeText, type Column } from "@/components/kit"
 import { useChillQuery, useSession } from "@/lib/client"
-import { currentRunCondition, deviceLabel, runSpec } from "@/lib/measurement-coverage"
+import { currentRunCondition, runSpec } from "@/lib/measurement-coverage"
 import { exactRun, runFailure } from "@/lib/measurements"
-import { pathLabel } from "@/lib/measurements-coverage-matrix"
-import { formatNumber } from "@/lib/format"
+import { deviceClassLabel, executionPathLabel, powerModeLabel } from "@/lib/display-labels"
+import { formatNumber, msNumber, wattsNumber } from "@/lib/format"
 import { measurementStatus } from "@/lib/status-labels"
 import type { NativeSample, Passport, ProfilingRun, RunsView } from "@/lib/read-types"
 
@@ -31,6 +31,7 @@ export function MeasurementRunScreen({ name }: { name: string }) {
   const lookup = useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(config.namespace)}/profiling-runs?${new URLSearchParams({ q: name, limit: "200" })}`)
   const run = exactRun(lookup.data?.runs ?? [], config.namespace, name, uid)
   const idle = run ? runSpec(run).measurement?.workloadMode === "idle-model-loaded" : false
+  const request = run?.ownerReferences?.find(owner => owner.kind === "BatchEnergyOptimization")
   const passport = useChillQuery<PassportBody>(`v1/namespaces/${encodeURIComponent(config.namespace)}/profiling-runs/${encodeURIComponent(name)}/evidence-passport`, { enabled: !!run && !idle && !!run.status.evidence })
   const body = passport.data && "measurement" in passport.data ? passport.data : undefined
 
@@ -40,6 +41,7 @@ export function MeasurementRunScreen({ name }: { name: string }) {
         title={name}
         status={run ? measurementStatus(run.assessment?.displayStatus) : undefined}
         more={run ? [{ label: "원본 보기", onSelect: () => setRaw(true) }] : undefined}
+        parents={request ? [{ label: "요청", href: "/measurements/requests" }, { label: request.name, href: `/measurements/requests/${encodeURIComponent(request.name)}?uid=${encodeURIComponent(request.uid)}` }] : undefined}
       />
       <QueryBoundary query={lookup} skeleton="tiles" isEmpty={() => !run} empty={<EmptyState title="회차를 찾을 수 없음" />}>
         {() => run && (
@@ -58,9 +60,9 @@ export function MeasurementRunScreen({ name }: { name: string }) {
                   return (
                     <StatRow columns={4}>
                       <StatTile label="처리량" value={formatNumber(runtime.throughputItemsPerSecond, 1)} unit="건/s" />
-                      <StatTile label="지연 p50" value={formatNumber(runtime.latencyMilliseconds.p50, 2)} unit="ms" />
-                      <StatTile label="지연 p95" value={formatNumber(runtime.latencyMilliseconds.p95, 2)} unit="ms" sub={`p99 ${formatNumber(runtime.latencyMilliseconds.p99, 2)} ms`} />
-                      <StatTile label="평균 전력" value={power.watts ? formatNumber(power.watts.mean, 1) : null} unit="W" reason="전력 기록 없음" />
+                      <StatTile label="지연 p50" value={msNumber(runtime.latencyMilliseconds.p50)} unit="ms" />
+                      <StatTile label="지연 p95" value={msNumber(runtime.latencyMilliseconds.p95)} unit="ms" sub={`p99 ${msNumber(runtime.latencyMilliseconds.p99)} ms`} />
+                      <StatTile label="평균 전력" value={power.watts ? wattsNumber(power.watts.mean) : null} unit="W" reason="전력 기록 없음" />
                     </StatRow>
                   )
                 }}
@@ -88,15 +90,15 @@ function Conditions({ run }: { run: ProfilingRun }) {
       <Fields columns={3} items={[
         { label: "측정 요청", value: parent && <Link className="hover:underline" href={`/measurements/requests/${encodeURIComponent(parent.name)}?uid=${encodeURIComponent(parent.uid)}`}>{parent.name}</Link>, reason: "연결된 요청 없음" },
         { label: "모델", value: spec.candidate?.modelSpec },
-        { label: "장치 종류", value: spec.candidate && deviceLabel(spec.candidate.deviceClass) },
+        { label: "장치 종류", value: spec.candidate && deviceClassLabel(spec.candidate.deviceClass) },
         { label: "장치", value: spec.targetNode },
-        { label: "전력 모드", value: spec.candidate?.powerMode },
-        { label: "실행 경로", value: spec.candidate && pathLabel(spec.candidate.executionPath) },
+        { label: "전력 모드", value: spec.candidate && powerModeLabel(spec.candidate.powerMode) },
+        { label: "실행 경로", value: spec.candidate && executionPathLabel(spec.candidate.executionPath) },
         { label: "배치", value: spec.measurement?.batch == null ? null : `${spec.measurement.batch}건` },
         { label: "방식", value: spec.measurement?.workloadMode === "idle-model-loaded" ? "유휴" : "부하" },
         { label: "반복", value: attempt ? `${attempt}번째` : null, reason: "기록 없음" },
-        { label: "생성", value: <TimeText at={run.creationTimestamp} mode="absolute" /> },
-        { label: "실행 종료", value: ended ? <TimeText at={ended} mode="absolute" /> : null, reason: "아직 끝나지 않음" },
+        { label: "생성", value: <TimeText at={run.creationTimestamp} mode="detail" /> },
+        { label: "실행 종료", value: ended ? <TimeText at={ended} mode="detail" /> : null, reason: "아직 끝나지 않음" },
       ]} />
     </Section>
   )

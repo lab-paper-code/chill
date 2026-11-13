@@ -2,10 +2,6 @@ import type { ExecutionPath, ModelSpec } from "./domain.ts"
 import type { BatchProgress, InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementDisplayStatus, MeasurementPlanSpec, ProfilingRun } from "./read-types.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 
-export function deviceLabel(name:string) {
-  return name.replace(/^edge-server-/,"").replace(/^jetson-agx-orin-/,"AGX Orin ").replace(/^jetson-orin-nano-/,"Orin Nano ").replace(/-/g," ")
-}
-
 export type CoverageModel = InventoryView["models"][number] & {spec:ModelSpec}
 
 // Hide only proven declaration conflicts; a missing runtime declaration remains unknown.
@@ -29,7 +25,6 @@ export function coverageProgress(cell:MeasurementCoverageCell) {
   const variant=coverageVariant(cell)
   return cell.batchProgress??variant?.batchProgress??null
 }
-export const coverageMeasurementStates = {usable:"측정 있음",review:"검토 필요",insufficient:"부족",problem:"문제",running:"진행",unmeasured:"미측정",unknown:"미확인",unsupported:"지원 안 함"}
 export function coverageMeasurementStatus(cell:MeasurementCoverageCell,inventory?:InventoryView):MeasurementDisplayStatus {
   const progress=coverageProgress(cell),status=cell.assessment.displayStatus
   if(!coveragePathVisible(cell,inventory))return "unsupported"

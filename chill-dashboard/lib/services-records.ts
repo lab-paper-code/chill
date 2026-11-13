@@ -1,7 +1,7 @@
 // Display mapping for the service 요청 and 정의 tabs: server outcome and management codes to Korean words.
 import type { RequestRow, WireInteger } from "./read-types.ts"
 import type { StatusInfo } from "./status-labels.ts"
-import { formatNumber } from "./format.ts"
+import { formatMs } from "./format.ts"
 
 const outcome: Record<string, StatusInfo> = {
   completed: { label: "완료", tone: "ok" },
@@ -36,11 +36,8 @@ export function requestError(code: string | null | undefined): string | null {
 
 export const nanosToMs = (value: WireInteger | null | undefined) => (value == null ? null : Number(value) / 1e6)
 
-/** Request and stage times always in ms (one form across the 요청 and 테스트 tabs): two decimals under 10 ms, else one. */
-export function requestMs(nanos: WireInteger | null | undefined): string {
-  const ms = nanosToMs(nanos)
-  return ms == null || !Number.isFinite(ms) ? "—" : `${formatNumber(ms, ms < 10 ? 2 : 1)} ms`
-}
+/** Request and stage times always in ms (one form across the 요청 and 테스트 tabs), by the shared latency rule. */
+export const requestMs = (nanos: WireInteger | null | undefined): string => formatMs(nanosToMs(nanos))
 
 /** The batch stage durations the server measured; null until the execution record arrived. Generative models name the model stage "답 생성". */
 export function requestStages(row: RequestRow, backendLabel = "추론"): { key: string; label: string; ms: number }[] | null {
@@ -63,8 +60,8 @@ export function requestMarks(row: RequestRow): { label: string; nanos: WireInteg
   return marks.filter((mark): mark is [string, WireInteger] => mark[1] !== undefined).map(([label, nanos]) => ({ label, nanos }))
 }
 
-const managementKinds: Record<string, string> = { Update: "수정", Delete: "삭제", ModelUpdate: "모델 변경", PreprocessorUpdate: "전처리기 변경" }
-const managementPhases: Record<string, string> = { Stopping: "중지 중", Draining: "비우는 중", Detaching: "분리 중", Applying: "적용 중", Cleaning: "정리 중", Completed: "완료", Failed: "실패" }
+const managementKinds: Record<string, string> = { Registration: "등록", Update: "수정", Delete: "삭제", ModelUpdate: "모델 변경", PreprocessorUpdate: "전처리기 변경" }
+const managementPhases: Record<string, string> = { Accepted: "접수됨", Stopping: "중지 중", Draining: "비우는 중", Detaching: "분리 중", Applying: "적용 중", Applied: "적용됨", Cleaning: "정리 중", Completed: "완료", Failed: "실패" }
 export const managementKind = (code: string) => managementKinds[code] ?? "—"
 export const managementPhase = (code: string) => managementPhases[code] ?? "—"
 

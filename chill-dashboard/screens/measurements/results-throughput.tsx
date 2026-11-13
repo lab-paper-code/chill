@@ -2,21 +2,20 @@
 
 import * as React from "react"
 import { DataTable, DetailDrawer, EmptyState, FilterBar, Fields, Hint, QueryBoundary, RawDialog, Section, StatusBadge, TimeText, Button, type Column, type Segment } from "@/components/kit"
-import { pathLabel, reasonLabel } from "@/lib/measurements-coverage-matrix"
+import { executionPathLabel, powerModeLabel } from "@/lib/display-labels"
 import { useChillQuery } from "@/lib/client"
-import { formatNumber } from "@/lib/format"
+import { formatNumber, formatWatts, msNumber, wattsNumber } from "@/lib/format"
 import { measurementQuality, measurementSchedulerUsed } from "@/lib/measurement-assessment"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import type { ProfilesView, ResultRow } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { measurementStatus } from "@/lib/status-labels"
+import { coverageReason, measurementStatus } from "@/lib/status-labels"
 import { filterChoice, useUrlState } from "./results-shared"
 
 type Profile = NonNullable<ProfilesView["profiles"]>[number]
 const LIMIT = 25
 const FILTERS = ["model", "node", "status"] as const
 
-const backend = (path: string) => /cuda/.test(path) ? "CUDA" : /rknn/.test(path) ? "NPU" : /cpu/.test(path) ? "CPU" : "—"
 const representative = (profile: Profile): ResultRow | undefined => profile.resultRows?.find(row => row.rowKind === "direct") ?? profile.resultRows?.[0]
 
 function Usage({ profile }: { profile: Profile }) {
@@ -31,9 +30,9 @@ function Quality({ profile }: { profile: Profile }) {
 
 const columns: Column<Profile>[] = [
   { width: "20%", key: "model", header: "모델", cell: p => p.condition.logicalModel },
-  { width: "28%", key: "condition", header: "장치와 조건", cell: p => `${p.nodeName} / ${p.condition.powerMode} / ${backend(p.condition.artifact.executionPath)}` },
+  { width: "28%", key: "condition", header: "장치와 조건", cell: p => `${p.nodeName} / ${powerModeLabel(p.condition.powerMode)} / ${executionPathLabel(p.condition.artifact.executionPath)}` },
   { width: "9%", key: "batch", header: "대표 배치", unit: "건", numeric: true, cell: p => representative(p)?.batch, missingReason: "배치 결과 없음" },
-  { width: "9%", key: "latency", header: "지연", unit: "ms", numeric: true, cell: p => { const v = representative(p)?.p95Milliseconds; return v == null ? null : formatNumber(v, 2) }, missingReason: "지연 기록 없음" },
+  { width: "9%", key: "latency", header: "지연 p95", unit: "ms", numeric: true, cell: p => { const v = representative(p)?.p95Milliseconds; return v == null ? null : msNumber(v) }, missingReason: "지연 기록 없음" },
   { width: "12%", key: "energy", header: "건당 에너지", unit: "J", numeric: true, cell: p => { const v = representative(p)?.incrementalJoulesPerItem; return v == null ? null : formatNumber(v, 3) }, missingReason: "에너지 기록 없음" },
   { width: "10%", key: "use", header: "사용 여부", cell: p => <Usage profile={p} />, missingReason: "사용 여부 미확인" },
   { key: "quality", header: "품질", cell: p => <Quality profile={p} /> },
@@ -42,7 +41,7 @@ const columns: Column<Profile>[] = [
 const batchTable = (title: string, tail: Column<ResultRow>[]) => ({ title, columns: [{ key: "batch", header: "배치", unit: "건", numeric: true, cell: (r: ResultRow) => r.batch }, ...tail] })
 const batchTables = [
   batchTable("지연", [
-    { key: "latency", header: "지연", unit: "ms", numeric: true, cell: r => r.p95Milliseconds == null ? null : formatNumber(r.p95Milliseconds, 2) },
+    { key: "latency", header: "지연 p95", unit: "ms", numeric: true, cell: r => r.p95Milliseconds == null ? null : msNumber(r.p95Milliseconds) },
     { key: "samples", header: "표본", unit: "건", numeric: true, cell: r => r.latencySampleCount == null ? null : formatNumber(r.latencySampleCount) },
   ]),
   batchTable("에너지", [
@@ -50,7 +49,7 @@ const batchTables = [
     { key: "extra", header: "추가", unit: "J/건", numeric: true, cell: r => r.incrementalJoulesPerItem == null ? null : formatNumber(r.incrementalJoulesPerItem, 3) },
   ]),
   batchTable("전력과 오차", [
-    { key: "active", header: "실행 전력", unit: "W", numeric: true, cell: r => r.activeWatts == null ? null : formatNumber(r.activeWatts, 1) },
+    { key: "active", header: "실행 전력", unit: "W", numeric: true, cell: r => r.activeWatts == null ? null : wattsNumber(r.activeWatts) },
     { key: "ci", header: "신뢰 구간 ±", unit: "J/건", numeric: true, cell: r => r.confidence ? formatNumber(r.confidence.halfWidth, 3) : null, missingReason: "신뢰 구간 미제공" },
   ]),
 ]
@@ -119,7 +118,7 @@ export function MeasurementThroughputResults({ lead }: { lead: Segment }) {
 }
 
 function ProfileBody({ profile, raw, setRaw }: { profile: Profile; raw: boolean; setRaw: (open: boolean) => void }) {
-  const reasons = [...new Set((profile.assessment?.reasons ?? []).map(reasonLabel))]
+  const reasons = [...new Set((profile.assessment?.reasons ?? []).map(coverageReason))]
   return (
     <>
       <Fields columns={2} items={[
@@ -129,12 +128,12 @@ function ProfileBody({ profile, raw, setRaw }: { profile: Profile; raw: boolean;
       {reasons.length > 0 && <Fields columns={1} items={[{ label: "사유", value: reasons.join(", ") }]} />}
       <Fields columns={2} items={[
         { label: "장치", value: profile.nodeName },
-        { label: "전력 모드", value: profile.condition.powerMode },
-        { label: "실행 경로", value: <Hint text={profile.condition.artifact.executionPath}>{pathLabel(profile.condition.artifact.executionPath)}</Hint> },
+        { label: "전력 모드", value: powerModeLabel(profile.condition.powerMode) },
+        { label: "실행 경로", value: <Hint text={profile.condition.artifact.executionPath}>{executionPathLabel(profile.condition.artifact.executionPath)}</Hint> },
         { label: "전처리기", value: profile.condition.preprocessor.name, reason: "전처리기 없음" },
         { label: "데이터셋", value: profile.condition.activeProtocol.dataset?.name, reason: "기록 없음" },
-        { label: "유휴 전력", value: profile.idleBaselineWatts == null ? null : `${formatNumber(profile.idleBaselineWatts, 1)} W` },
-        { label: "측정일", value: <TimeText at={profile.measuredAt} mode="absolute" /> },
+        { label: "유휴 전력", value: profile.idleBaselineWatts == null ? null : formatWatts(profile.idleBaselineWatts) },
+        { label: "측정일", value: <TimeText at={profile.measuredAt} mode="detail" /> },
       ]} />
       {batchTables.map(({ title, columns }) => (
         <Section key={title} title={title}>

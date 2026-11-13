@@ -3,7 +3,7 @@ import { isLiveActionActive, type LiveEvent, type LiveMetric, type LiveMetrics, 
 import { belongsToPool, isActionFailure } from "./live-display.ts"
 import { actionKindLabel } from "./scheduler-actions.ts"
 import { decisionStatus, schedulerReason, serviceReadiness, type StatusTone } from "./status-labels.ts"
-import { DASH, formatNumber } from "./format.ts"
+import { formatMs } from "./format.ts"
 import type { ActiveEvaluation } from "./evaluation-active.ts"
 import type { SchedulerObservationSummary } from "./read-types.ts"
 
@@ -50,11 +50,11 @@ export function overviewRows(snapshot: LiveSnapshot, metrics: LiveMetrics[]): Ov
     const series = buckets.map(bucket => bucket?.workloads[workload.uid] ?? null)
     const completed = total(series, "completed"), failed = total(series, "failed")
     const slo = latest?.workloads[workload.uid]?.slo
-    const known = serviceReadiness(workload.readiness.reason), readiness = known.label === DASH ? "준비 안 됨" : known.label
+    const known = serviceReadiness(workload.readiness.reason), readiness = known.code || !workload.readiness.reason ? "준비 안 됨" : known.label
     const changing = snapshot.actions.some(action => action.workloadUID === workload.uid && isLiveActionActive(action))
     const serving = snapshot.instances.some(instance => !instance.stopped && belongsToPool(instance, workload.uid))
     const attention: [string, string, StatusTone] | null =
-      slo?.met === false ? ["목표 초과", `p${slo.percentile} ${formatNumber(slo.quantileMs ?? null)} ms, 목표 ${formatNumber(slo.targetMs)} ms`, "fail"]
+      slo?.met === false ? ["목표 초과", `p${slo.percentile} ${formatMs(slo.quantileMs ?? null)}, 목표 ${formatMs(slo.targetMs)}`, "fail"]
       : failed > 0 && completed === 0 ? [`실패 ${failed}건`, `최근 ${TREND_SECONDS}초 완료 없이 실패만 ${failed}건`, "fail"]
       : workload.admission && !workload.readiness.ready ? [readiness, "접수 중이지만 준비되지 않음", "warn"]
       : null
@@ -77,7 +77,7 @@ export type FeedLine = { key: string; tone: StatusTone; title: string; secondary
 /** A scheduler reason code as its label; empty and unknown codes give nothing. */
 const reasonWord = (code: string) => {
   const reason = schedulerReason(code)
-  return reason.label === DASH ? undefined : reason.label
+  return reason.code || !code ? undefined : reason.label
 }
 
 const actionHref = (action: { id: string; startedAt: string }) =>

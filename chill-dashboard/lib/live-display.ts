@@ -60,7 +60,7 @@ export function reservationReason(reason:string):string {
 }
 export function incidentDiagnosis(reason:string|null|undefined) {
   const power=/did not reach power mode (\S+) within (\S+)/.exec(reason??"")
-  if(power)return {reason:"전력모드 전환 시간 초과",mode:power[1],check:"장치 전원, 전력모드 제어기 확인"}
+  if(power)return {reason:"전력 모드 전환 시간 초과",mode:power[1],check:"장치 전원, 전력 모드 제어기 확인"}
   if(reason?.includes("Pod is not labelled as a serving instance"))return {reason:"서비스 인스턴스가 아닌 파드",check:"파드 역할, 측정 작업 확인"}
   if(reason?.includes("native preparation Pod failed"))return {reason:"실행 준비 파드 실패",check:"실행 준비 파드 종료 사유, 서빙 기록 확인"}
   return {reason:liveReason(reason),check:reason?"장치, 변경 원본 확인":"조치 근거 미제공"}
@@ -73,17 +73,17 @@ export function isActionFailure(action:LiveActionEvent):boolean {
 }
 export function liveReason(reason:string|null|undefined):string {
   if(!reason)return "미제공"
-  if(reason==="PowerModeUnavailable")return "전력모드 확인 불가"
-  if(reason==="PowerModeObservationUnavailable")return "전력모드 관측 불가"
-  if(reason==="DeadlineInfeasible")return "SLO 기한 내 완료 불가로 거절"
-  if(reason==="QueueFull")return "대기 큐가 가득 차 거절"
+  if(reason==="PowerModeUnavailable")return "전력 모드 확인 불가"
+  if(reason==="PowerModeObservationUnavailable")return "전력 모드 관측 불가"
+  if(reason==="DeadlineInfeasible")return "기한 내 처리 불가로 거부"
+  if(reason==="QueueFull")return "대기열이 가득 차 거부"
   if(reason==="PowerTransitionUnavailable")return "전력 전환 근거 없음"
   if(reason==="PlacementInventoryMissing")return "배치 인벤토리 없음"
   if(reason==="Feasible")return "실행 가능"
   if(reason.includes("await fresh exact")||reason.includes("creation-outcome-unknown")||reason.includes("identity-awaiting-container")||reason.includes("dependency/Ready/handoff"))return reservationReason(reason)
-  if(reason.includes("did not reach power mode"))return "전력모드 전환 시간 초과"
+  if(reason.includes("did not reach power mode"))return "전력 모드 전환 시간 초과"
   if(reason.includes("Pod is not labelled as a serving instance"))return "서비스 인스턴스가 아닌 파드"
-  const observedLabels:Record<string,string>={InstanceUnavailable:"인스턴스 상태 확인 불가",UnconfirmedInstance:"인스턴스 미확인",NodeUnavailable:"노드 사용 불가",PlacementBudgetUnavailable:"배치 자원 예산 확인 불가"}
-  const labels:Record<string,string>={Running:"실행 중",Pending:"대기",Failed:"실패",Succeeded:"완료",Unknown:"미확인",created:"생성",observed:"관측",changed:"변경",deleted:"삭제","server-start":"서버 시작",raised:"문제 감지",resolved:"해소",ObservationUnavailable:"관측 기록 사용 불가",ShuttingDown:"종료 중",ExcludedNode:"제외 노드",Keep:"유지","power sample unavailable":"전력 표본 누락","resume history unavailable":"재연결 기록 공백","event history limit":"사건 보관 한도",Disabled:"CHILL 자동 운영 꺼짐",NotReady:"준비 안 됨",Ready:"준비됨",MissingDataset:"데이터셋 없음",MissingEvidence:"측정 근거 없음",Preparing:"배치 준비 중",RestartDrain:"재시작 후 요청 정리",AppliedDefinitionUnavailable:"적용된 서비스 정의 없음",ReservedScope:"변경 자원 예약 중",PartialObservationWindow:"관측 시간 부족",CapacityPending:"처리 용량 계산 대기",NoPlanMeetsSLO:"SLO 충족 구성 없음",EvaluatedCandidatesExceedSLOWithinReportedSearchBounds:"검토 구성 SLO 초과",MissingOperationCost:"변경 비용 근거 없음",HeldAfterOverload:"부하 증가 후 구성 유지",ReplacementUnpaid:"교체 비용 미회수",TransitionGainWithinUncertainty:"절감량 오차 범위 이내",IdleInstanceRemoved:"유휴 인스턴스 제거",ObservedOperationExecutionError:"변경 실행 오류",PreparationFailed:"배치 준비 실패"}
+  const observedLabels:Record<string,string>={InstanceUnavailable:"인스턴스 상태 확인 불가",UnconfirmedInstance:"인스턴스 미확인",NodeUnavailable:"장치 사용 불가",PlacementBudgetUnavailable:"배치 자원 예산 확인 불가"}
+  const labels:Record<string,string>={Running:"실행 중",Pending:"대기",Failed:"실패",Succeeded:"완료",Unknown:"미확인",created:"생성",observed:"관측",changed:"변경",deleted:"삭제","server-start":"서버 시작",raised:"이상 감지",resolved:"해소",ObservationUnavailable:"관측 기록 사용 불가",ShuttingDown:"종료 중",ExcludedNode:"제외 장치",Keep:"유지","power sample unavailable":"전력 표본 누락","resume history unavailable":"재연결 기록 공백","event history limit":"사건 보관 한도",Disabled:"CHILL 자동 운영 꺼짐",NotReady:"준비 안 됨",Ready:"준비됨",MissingDataset:"데이터셋 없음",MissingEvidence:"측정 근거 없음",Preparing:"배치 준비 중",RestartDrain:"재시작 후 요청 정리",AppliedDefinitionUnavailable:"적용된 서비스 정의 없음",ReservedScope:"변경 자원 예약 중",PartialObservationWindow:"관측 시간 부족",CapacityPending:"처리 용량 계산 대기",NoPlanMeetsSLO:"목표 충족 구성 없음",EvaluatedCandidatesExceedSLOWithinReportedSearchBounds:"검토 구성 목표 초과",MissingOperationCost:"변경 비용 근거 없음",HeldAfterOverload:"부하 증가 후 구성 유지",ReplacementUnpaid:"교체 비용 미회수",TransitionGainWithinUncertainty:"절감량 오차 범위 이내",IdleInstanceRemoved:"유휴 인스턴스 제거",ObservedOperationExecutionError:"변경 실행 오류",PreparationFailed:"배치 준비 실패"}
   return [...new Set(reason.split("; ").map(part=>{const separator=part.indexOf(":"),code=separator<0?part:part.slice(0,separator);return observedLabels[code]??labels[code]??part}))].join("; ")
 }

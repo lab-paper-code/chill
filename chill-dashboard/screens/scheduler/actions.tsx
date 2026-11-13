@@ -10,7 +10,7 @@ import { isLiveActionActive, liveActionKey, type LiveAction, type LiveEvent, typ
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { schedulerRecordMatches, schedulerRecordPath, schedulerRecordRef } from "@/lib/scheduler-history"
 import { actionElapsedNanos, actionErrorLabel, actionKindLabel, clusterRow, groupActions, phaseStatus, planVsActual, reservationText, type ActionRow } from "@/lib/scheduler-actions"
-import { formatDurationNanos, formatKst } from "@/lib/format"
+import { formatDetailTime, formatDurationNanos } from "@/lib/format"
 import type { SchedulerObservation, SchedulerObservationSummaryPage } from "@/lib/read-types"
 import {
   Button, DataTable, DetailDrawer, EmptyState, FilterBar, Fields, HeadroomBar, Hint, Page, PageHeader, PageTabs, QueryBoundary, RawDialog,
@@ -130,7 +130,7 @@ function ActionHistory({ window, status, onStatus, selected, onSelect }: {
           const rows = status === "all" ? all : all.filter(r => bucket(r) === status)
           const count = (key: string) => all.filter(r => bucket(r) === key).length
           const columns: Column<ActionRow>[] = [
-            { key: "start", header: "시작", cell: r => <TimeText at={r.startedAt} mode="absolute" />, csv: r => r.startedAt, width: "11rem" },
+            { key: "start", header: "시작", cell: r => <TimeText at={r.startedAt} mode="list" />, csv: r => r.startedAt, width: "11rem" },
             { key: "kind", header: "동작", cell: r => kindText(r.kind), csv: r => r.kind },
             { key: "node", header: "장치", cell: r => nodeText(r.node), csv: r => r.node.name },
             { key: "status", header: "상태", cell: r => <StatusBadge status={phaseStatus(r.phase)} />, csv: r => r.phase },
@@ -172,8 +172,8 @@ function ActionDrawer({ row, page, onClose, onRaw }: { row: ActionRow; page: Sch
         <Fields columns={2} items={[
           { label: "장치", value: nodeText(row.node) },
           { label: "서비스", value: op?.workloadUID ? names.get(op.workloadUID) ?? null : null, reason: op?.workloadUID ? "현재 없는 서비스" : "서비스 없음" },
-          { label: "시작", value: formatKst(row.startedAt) },
-          { label: "종료", value: took == null ? null : formatKst(row.at), reason: "진행 중" },
+          { label: "시작", value: formatDetailTime(row.startedAt) },
+          { label: "종료", value: took == null ? null : formatDetailTime(row.at), reason: "진행 중" },
           ...(record?.error ? [{ label: "오류", value: <Hint text={record.error} focusable>{actionErrorLabel(record.error) ?? "원인 미분류"}</Hint> }] : []),
         ]} />
         <Section title="계획과 실제">
@@ -227,7 +227,7 @@ function ClusterEvents({ window }: { window: { from: number; to: number } }) {
     [pages],
   )
   const columns: Column<(typeof rows)[number]>[] = [
-    { key: "at", header: "시각", cell: r => <TimeText at={r.at} mode="absolute" />, csv: r => r.at, width: "11rem" },
+    { key: "at", header: "시각", cell: r => <TimeText at={r.at} mode="list" />, csv: r => r.at, width: "11rem" },
     { key: "kind", header: "종류", cell: r => r.kind, csv: r => r.kind, width: "7rem" },
     { key: "target", header: "대상", cell: r => r.target, csv: r => r.target },
     { key: "content", header: "내용", cell: r => r.content, missing: r => r.detail ?? "내용 없음", csv: r => r.content ?? r.detail },

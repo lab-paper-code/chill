@@ -11,9 +11,9 @@ export function parseYAMLDocument(text: string): unknown {
 
 // YAML aliases and non-finite numbers must not change or disappear during JSON transport.
 export function checkJSON(value: unknown, ancestors = new Set<object>()): void {
-  if (typeof value === "number" && Number.isInteger(value) && !Number.isSafeInteger(value)) throw new Error("정확히 전달할 수 없는 큰 정수가 있어요. 생산자가 해당 값의 표현을 확인해야 해요.")
+  if (typeof value === "number" && Number.isInteger(value) && !Number.isSafeInteger(value)) throw new Error("정확히 전달할 수 없는 큰 정수 있음, 값 표현 확인 필요")
   if (value === null || typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) return
-  if (typeof value !== "object" || ancestors.has(value) || (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) throw new Error("JSON으로 전달할 수 없는 값이나 순환 참조가 있어요.")
+  if (typeof value !== "object" || ancestors.has(value) || (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) throw new Error("JSON으로 전달할 수 없는 값이나 순환 참조 있음")
   ancestors.add(value)
   for (const child of Object.values(value)) checkJSON(child, ancestors)
   ancestors.delete(value)

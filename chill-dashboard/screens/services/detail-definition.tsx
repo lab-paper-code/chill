@@ -5,10 +5,11 @@ import Link from "next/link"
 import { DataTable, EmptyState, Fields, QueryBoundary, Section, StatusBadge, TimeText, type Column } from "@/components/kit"
 import { useChillQuery, useSession } from "@/lib/client"
 import type { WorkloadView } from "@/lib/domain"
-import { formatDurationNanos, formatNumber } from "@/lib/format"
+import { formatDurationNanos, formatNumber, formatTarget, goDurationNanos } from "@/lib/format"
 import type { ManagementEvent, ObservationResult, SchedulerDefinition } from "@/lib/read-types"
 import { managementKind, managementPhase, managementResult } from "@/lib/services-records"
 import { parseSchedulerJSON } from "@/lib/scheduler"
+import { admissionPolicy } from "@/lib/status-labels"
 
 export type ServiceTabProps = { name: string; uid: string | undefined; workload: WorkloadView | undefined }
 
@@ -54,11 +55,9 @@ function Applied({ workload }: { workload: WorkloadView }) {
   )
 }
 
-const policyLabel = { Reject: "거절", Delay: "지연 허용" } as const
-
 type Definition = {
-  model: string; preprocessor: string; dataset?: string; percentile: number; target: string
-  policy: keyof typeof policyLabel; maxQueued: number; lifetime?: string
+  model: string; preprocessor: string; dataset?: string; target: string
+  policy: string; maxQueued: number; lifetime?: string
 }
 
 function DefinitionFields({ definition }: { definition: Definition }) {
@@ -67,8 +66,8 @@ function DefinitionFields({ definition }: { definition: Definition }) {
       { label: "모델", value: catalogLink("models", definition.model) },
       { label: "전처리기", value: catalogLink("preprocessors", definition.preprocessor) },
       { label: "데이터셋", value: catalogLink("datasets", definition.dataset), reason: "지정하지 않음" },
-      { label: "목표", value: `p${definition.percentile} ${definition.target}` },
-      { label: "과부하 정책", value: policyLabel[definition.policy] },
+      { label: "목표", value: definition.target },
+      { label: "과부하 정책", value: admissionPolicy(definition.policy) },
       { label: "대기 상한", value: formatNumber(definition.maxQueued) },
       { label: "최종 기한", value: definition.lifetime, reason: "지정하지 않음" },
     ]} />
@@ -76,21 +75,21 @@ function DefinitionFields({ definition }: { definition: Definition }) {
 }
 
 const fromWorkload = ({ desired: { spec } }: WorkloadView): Definition => ({
-  model: spec.modelRef.name, preprocessor: spec.preprocessorRef.name, dataset: spec.datasetRef?.name, percentile: spec.slo.percentile, target: spec.slo.targetLatency,
-  policy: spec.admission.policy, maxQueued: spec.admission.maxQueuedRequests, lifetime: spec.requestLifetime,
+  model: spec.modelRef.name, preprocessor: spec.preprocessorRef.name, dataset: spec.datasetRef?.name, target: formatTarget(spec.slo.percentile, goDurationNanos(spec.slo.targetLatency)),
+  policy: spec.admission.policy, maxQueued: spec.admission.maxQueuedRequests, lifetime: spec.requestLifetime ? formatDurationNanos(goDurationNanos(spec.requestLifetime)) : undefined,
 })
 
 // The wire definition carries more than SchedulerDefinition declares.
 type RecordedDefinition = SchedulerDefinition & {
-  preprocessor: { name: string }; dataset?: { name: string }; admission: { policy: keyof typeof policyLabel; maxQueuedRequests: number }; requestLifetime?: number
+  preprocessor: { name: string }; dataset?: { name: string }; admission: { policy: string; maxQueuedRequests: number }; requestLifetime?: number
 }
 const fromRecorded = (recorded: RecordedDefinition): Definition => ({
-  model: recorded.model.name, preprocessor: recorded.preprocessor.name, dataset: recorded.dataset?.name, percentile: recorded.slo.percentile, target: formatDurationNanos(recorded.slo.targetLatencyNanos),
+  model: recorded.model.name, preprocessor: recorded.preprocessor.name, dataset: recorded.dataset?.name, target: formatTarget(recorded.slo.percentile, recorded.slo.targetLatencyNanos),
   policy: recorded.admission.policy, maxQueued: recorded.admission.maxQueuedRequests, lifetime: recorded.requestLifetime === undefined ? undefined : formatDurationNanos(recorded.requestLifetime),
 })
 
 const columns: Column<ManagementEvent>[] = [
-  { key: "at", header: "시각", cell: event => <TimeText at={event.at} mode="absolute" />, csv: event => event.at },
+  { key: "at", header: "시각", cell: event => <TimeText at={event.at} mode="list" />, csv: event => event.at },
   { key: "kind", header: "종류", cell: event => managementKind(event.kind), csv: event => managementKind(event.kind) },
   { key: "phase", header: "단계", cell: event => managementPhase(event.phase), csv: event => managementPhase(event.phase) },
   { key: "result", header: "결과", cell: event => <StatusBadge status={managementResult(event)} reason={event.error} />, csv: event => managementResult(event).label },

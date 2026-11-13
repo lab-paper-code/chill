@@ -10,7 +10,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { useChillMutation, useChillQuery } from "@/lib/client"
 import { ApiError } from "@/lib/client-transport"
-import { explain } from "@/lib/labels"
+import { admissionPolicy, errorCodeLabel } from "@/lib/status-labels"
 import { workloadSpec, type DatasetResource, type ModelResource, type PreprocessorResource, type WorkloadSpec, type WorkloadView } from "@/lib/domain"
 import { datasetGap } from "@/lib/measurement-request"
 
@@ -21,7 +21,6 @@ type Catalog = { models: ModelResource[]; preprocessors: PreprocessorResource[];
 
 const NONE = "~"
 const emptyDraft: Draft = { name: "", model: "", preprocessor: "", dataset: "", percentile: "99.5", latency: "100ms", policy: "Reject", maxQueued: "1024", lifetime: "" }
-const policyLabel = { Reject: "거절", Delay: "지연 처리" } as const
 // Go duration syntax, same pattern workloadSpec() checks.
 const durationPattern = /^[+-]?(?:0|(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))+)$/
 // Server code → the field it names.
@@ -42,9 +41,9 @@ const datasetFits = (data: DatasetResource, pre: PreprocessorResource | undefine
 
 function problems(draft: Draft, creating: boolean): Errors {
   const errors: Errors = {}
-  if (creating && !/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(draft.name)) errors.name = "소문자, 숫자, -만 쓸 수 있어요"
-  if (!draft.model) errors.model = "선택해 주세요"
-  if (!draft.preprocessor) errors.preprocessor = "선택해 주세요"
+  if (creating && !/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(draft.name)) errors.name = "소문자, 숫자, -만 가능"
+  if (!draft.model) errors.model = "선택 필요"
+  if (!draft.preprocessor) errors.preprocessor = "선택 필요"
   const p = Number(draft.percentile)
   if (!draft.percentile.trim() || !Number.isFinite(p) || p <= 0 || p > 100) errors.percentile = "0 초과 100 이하"
   if (!durationPattern.test(draft.latency.trim())) errors.latency = "시간과 단위 (예: 100ms)"
@@ -62,7 +61,7 @@ const rows: { field: Field; label: string; show: (d: Draft) => string }[] = [
   { field: "dataset", label: "데이터셋", show: d => d.dataset || "없음" },
   { field: "percentile", label: "분위수 (%)", show: d => d.percentile },
   { field: "latency", label: "목표 지연", show: d => d.latency },
-  { field: "policy", label: "과부하 정책", show: d => policyLabel[d.policy] },
+  { field: "policy", label: "과부하 정책", show: d => admissionPolicy(d.policy) },
   { field: "maxQueued", label: "대기 상한 (건)", show: d => d.maxQueued },
   { field: "lifetime", label: "요청 최종 기한", show: d => d.lifetime || "기본" },
 ]
@@ -149,7 +148,7 @@ function Editor({ name, catalog, base, reload }: { name?: string; catalog: Catal
       setReview(false)
       if (!(error instanceof ApiError)) { setFailure(error instanceof Error ? error.message : "저장 실패"); return }
       const code = (error.data as { code?: string } | null)?.code ?? ""
-      if (error.unknownOutcome) { setFailure("결과 미확인"); toast({ title: "결과 미확인", description: "목록에서 등록 여부를 확인해 주세요", type: "warning" }); return }
+      if (error.unknownOutcome) { setFailure("결과 미확인"); toast({ title: "결과 미확인", description: "목록에서 등록 여부 확인 필요", type: "warning" }); return }
       if (!creating && error.status === 409 && (code === "Conflict" || code === "ResourceVersionConflict")) {
         const fresh = await reload()
         if (fresh) setLatest(fresh)
@@ -157,8 +156,8 @@ function Editor({ name, catalog, base, reload }: { name?: string; catalog: Catal
         return
       }
       const field = codeField[code]
-      if (field) setErrors({ [field]: explain(code)[0] })
-      else setFailure(explain(code)[0])
+      if (field) setErrors({ [field]: errorCodeLabel(code) })
+      else setFailure(errorCodeLabel(code))
       toast({ title: creating ? "등록 실패" : "수정 실패", type: "error" })
     }
   }
@@ -215,7 +214,7 @@ function Editor({ name, catalog, base, reload }: { name?: string; catalog: Catal
                 <Label id="policy-label">정책</Label>
                 <RadioGroup aria-labelledby="policy-label" value={draft.policy} onValueChange={value => set({ policy: value as Draft["policy"] })} className="flex gap-6">
                   {(["Reject", "Delay"] as const).map(value => (
-                    <Label key={value} className="gap-2 font-normal"><RadioGroupItem value={value} />{policyLabel[value]}</Label>
+                    <Label key={value} className="gap-2 font-normal"><RadioGroupItem value={value} />{admissionPolicy(value)}</Label>
                   ))}
                 </RadioGroup>
               </div>

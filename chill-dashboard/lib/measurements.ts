@@ -1,5 +1,5 @@
 import type { DispatchOccupancyMeasurement, OperationCondition, OperationCostMeasurement, OperationStepStatus, ProfilingRun } from "./read-types.ts"
-import { codeText } from "./labels.ts"
+import { codeMessage } from "./status-labels.ts"
 import { nanosToMilliseconds } from "./scheduler.ts"
 
 export function measurementRequestName(condition:{model:string;node:string;powerMode:string;path:string},taken:Set<string>,now=new Date()):string {
@@ -17,11 +17,6 @@ export function formatMeasurementNumber(value:unknown, unit=""):string {
 }
 export type ProjectionMeasurementKind = "operation-cost-measurements" | "dispatch-occupancy-measurements"
 export const measurementPath = (kind:ProjectionMeasurementKind, namespace:string, name?:string) => `v1/namespaces/${encodeURIComponent(namespace)}/${kind}${name === undefined ? "" : `/${encodeURIComponent(name)}`}`
-export function executionPathLabel(value:string,index?:number) {
-  const backend=/ort-cuda|cuda/.test(value)?"CUDA":/rknn/.test(value)?"NPU":/ort-cpu|cpu/.test(value)?"CPU":""
-  if(!backend)return `등록 실행 경로${index===undefined?"":` ${index+1}`}`
-  return `${[backend,/int8/.test(value)?"정수 8비트":"",/arm64/.test(value)?"ARM 64비트":/amd64/.test(value)?"x86 64비트":""].filter(Boolean).join(" ")} (${value})`
-}
 export function measurementReasonSummary(reason:string) {
   if(!reason.trim())return "상세 사유 미제공"
   const projectionReasons:Record<string,string>={
@@ -38,7 +33,8 @@ export function measurementReasonSummary(reason:string) {
   if(/native preparation Pod failed/i.test(reason))return "모델 준비 실패"
   if(/Stored occupancy does not match/i.test(reason))return "요청과 점유시간 근거 불일치"
   if(/Signed negative d/i.test(reason))return "점유시간 음수"
-  if(codeText[reason]) return codeText[reason].join(" ")
+  const message=codeMessage(reason)
+  if(message) return message
   if(/exactly one proven primitive state effect/i.test(reason)) return "단일 상태 변경 미확인"
   if(/timeout|timed out|deadline exceeded/i.test(reason)) return "측정 대기 시간 초과"
   if(/memory|OOM/i.test(reason)) return "측정 메모리 부족"
@@ -70,7 +66,7 @@ export function occupancyReason(data:Pick<DispatchOccupancyMeasurement,"status"|
     return recorded.split(/;\s*/).map(part=>{
       const label=reasonLabels[part.split(/\s/)[0]]
       if(label)return label
-      if(/^[A-Za-z][A-Za-z0-9_]*$/.test(part)&&!codeText[part])return part
+      if(/^[A-Za-z][A-Za-z0-9_]*$/.test(part)&&!codeMessage(part))return part
       const summary=measurementReasonSummary(part)
       return summary==="상세 사유: 원문"?part:summary
     }).join(", ")
@@ -115,6 +111,6 @@ export function runFailure(run:ProfilingRun) {
     RuntimeFailed:[["점검","최초 오류, 모델 파일, 장치 지원, 실행 환경"],["재요청","지원 실행 경로"]],
   }
   return {title:failure?.label??"실패 분류 미제공",excerpt:failure?.message??"실패 분류 미제공",exitCode:failure?.exitCode??termination?.exitCode,log,
-    target:[["노드",spec.targetNode??"미기록"],["모델",spec.candidate?.modelSpec??"미기록"],["경로",spec.candidate?.executionPath??"미기록"]] as [string,string][],
-    actions:actions[failure?.code??""]??[["점검","실행 조건, 환경, 최초 오류"],["전달","대상 노드, 모델 정보"]]}
+    target:[["장치",spec.targetNode??"미기록"],["모델",spec.candidate?.modelSpec??"미기록"],["경로",spec.candidate?.executionPath??"미기록"]] as [string,string][],
+    actions:actions[failure?.code??""]??[["점검","실행 조건, 환경, 최초 오류"],["전달","대상 장치, 모델 정보"]]}
 }

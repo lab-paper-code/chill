@@ -15,7 +15,8 @@ import type { LiveSnapshot } from "@/lib/live"
 import type { ActiveEvaluations } from "@/lib/evaluation-active"
 import type { SchedulerObservationSummaryPage, SchedulerStateSummary } from "@/lib/read-types"
 import { autonomyEnabled, autonomyState, decisionStatus } from "@/lib/status-labels"
-import { formatNumber } from "@/lib/format"
+import { formatMs, formatNumber, msNumber, percentNumber, rateNumber, wattsNumber } from "@/lib/format"
+import { useDevices } from "@/screens/devices/data"
 import { changeItems, overviewRows, progressItems, serviceStates, TREND_SECONDS, type OverviewRow, type ServiceState } from "@/lib/overview"
 
 const STATES = Object.keys(serviceStates) as ServiceState[]
@@ -77,14 +78,16 @@ export function OverviewScreen() {
   const judged = rows.filter(row => row.slo?.met != null)
   const missed = judged.filter(row => row.slo?.met === false).length
   const inflow = latest ? rows.reduce((sum, row) => sum + (row.received ?? 0), 0) : null
-  const readyNodes = snapshot?.nodes.filter(node => node.ready).length
+  // The same rows as 장치 (inventory, pools, live), so both screens count excluded devices alike.
+  const devices = useDevices()
+  const readyDevices = devices.rows.filter(row => row.ready).length
   const decision = snapshot?.decision
   const controlled = summary.data?.decision.workloads?.filter(row => row.state === "Controlled").length
 
   const columns: Column<OverviewRow>[] = [
     { key: "name", header: "서비스", width: "14rem", cell: row => row.name, sortValue: row => row.name },
     {
-      key: "state", header: "상태", width: "7.5rem", csv: row => row.label,
+      key: "state", header: "운영 상태", width: "7.5rem", csv: row => row.label,
       cell: row => <Hint text={row.reason ?? undefined} focusable={!!row.reason}><StatusDot tone={row.tone} label={row.label} showLabel /></Hint>,
     },
     {
@@ -92,7 +95,7 @@ export function OverviewScreen() {
       cell: row => row.received == null ? null : (
         <span className="inline-flex items-center gap-2">
           <Sparkline values={row.trend} width={48} height={18} label={`최근 ${TREND_SECONDS}초 유입`} />
-          <span className="min-w-8">{formatNumber(row.received)}</span>
+          <span className="min-w-8">{rateNumber(row.received)}</span>
         </span>
       ),
     },
@@ -103,16 +106,16 @@ export function OverviewScreen() {
         const slo = row.slo
         if (slo?.quantileMs == null) return null
         return (
-          <Hint text={`p${slo.percentile}, 목표 ${formatNumber(slo.targetMs)} ms, 표본 ${formatNumber(slo.samples)}`}>
+          <Hint text={`p${slo.percentile}, 목표 ${formatMs(slo.targetMs)}, 표본 ${formatNumber(slo.samples)}`}>
             <span className="inline-flex items-center gap-2">
               <HeadroomBar observed={slo.quantileMs} target={slo.targetMs} />
-              <span className="min-w-10">{formatNumber(slo.quantileMs, slo.quantileMs < 100 ? 1 : 0)}</span>
+              <span className="min-w-10">{msNumber(slo.quantileMs)}</span>
             </span>
           </Hint>
         )
       },
     },
-    { key: "success", header: "성공률", unit: "%", numeric: true, width: "5.5rem", missingReason: `최근 ${TREND_SECONDS}초 끝난 요청 없음`, cell: row => row.success == null ? null : formatNumber(row.success * 100, 1) },
+    { key: "success", header: "성공률", unit: "%", numeric: true, width: "5.5rem", missingReason: `최근 ${TREND_SECONDS}초 끝난 요청 없음`, cell: row => row.success == null ? null : percentNumber(row.success) },
     {
       key: "devices", header: "배치", missingReason: "배치 없음",
       cell: row => row.devices.length === 0 ? null : row.devices.length <= 2 ? row.devices.join(", ") : `${row.devices.slice(0, 2).join(", ")} +${row.devices.length - 2}`,
@@ -138,19 +141,19 @@ export function OverviewScreen() {
         <StatTile
           label="목표 충족" href="/services" value={judged.length ? `${judged.length - missed}/${judged.length}` : null}
           reason={latest ? "판정된 서비스 없음" : "관측 대기"} info="서버가 지연을 판정한 서비스 중 목표를 지킨 수"
-          status={snapshot ? { label: attention ? `확인 필요 ${attention}` : "정상", tone: missed ? "fail" : attention ? "warn" : "ok" } : undefined}
+          status={snapshot && judged.length ? { label: attention ? `확인 필요 ${attention}` : "정상", tone: missed ? "fail" : attention ? "warn" : "ok" } : undefined}
           sub={snapshot ? (attention ? `확인 필요 ${attention}` : "확인 필요 없음") : undefined}
         />
-        <StatTile label="유입" value={inflow == null ? null : formatNumber(inflow)} unit="req/s" reason="관측 대기" sub={snapshot ? `가동 서비스 ${counts.attention + counts.active}` : undefined} />
+        <StatTile label="유입" value={inflow == null ? null : rateNumber(inflow)} unit="req/s" reason="관측 대기" sub={snapshot ? `가동 서비스 ${counts.attention + counts.active}` : undefined} />
         <StatTile
-          label="전력" href="/devices" value={latest?.pool.activeWatts == null ? null : formatNumber(latest.pool.activeWatts)} unit="W"
+          label="전력" href="/devices" value={latest?.pool.activeWatts == null ? null : wattsNumber(latest.pool.activeWatts)} unit="W"
           reason={latest ? "전력 관측 없음" : "관측 대기"} info="서비스를 실행 중인 장치의 전력"
-          sub={snapshot ? `전체 ${latest?.pool.wholeWatts == null ? "—" : formatNumber(latest.pool.wholeWatts)} W, 준비 장치 ${readyNodes}/${snapshot.nodes.length}` : undefined}
+          sub={snapshot ? `전체 ${latest?.pool.wholeWatts == null ? "—" : wattsNumber(latest.pool.wholeWatts)} W${devices.inventory.data ? `, 준비 장치 ${readyDevices}/${devices.rows.length}` : ""}` : undefined}
         />
         <StatTile
           label="스케줄러" href={decision ? `/scheduler/decisions?${new URLSearchParams({ at: decision.at })}` : "/scheduler/decisions"}
           value={decision ? decisionStatus(decision.state).label : null} reason={snapshot ? "판단 기록 없음" : "관측 대기"}
-          sub={decision || controlled != null ? <>{decision && <><TimeText at={decision.at} />, </>}자동 제어 {controlled ?? "—"}</> : undefined}
+          sub={decision || controlled != null ? <>{decision && <><TimeText at={decision.at} mode="relative" />, </>}자동 제어 {controlled ?? "—"}</> : undefined}
         />
       </StatRow>
 

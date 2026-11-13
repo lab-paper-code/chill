@@ -27,8 +27,8 @@ const columns: Column<Run>[] = [
     cell: run => { const at = stageProgress(run); return at && `${at.index}/${at.total}` },
     sortValue: run => stageProgress(run)?.index, missingReason: "시작 전",
   },
-  { key: "start", header: "시작", cell: run => run.startedAt && <TimeText at={run.startedAt} mode="absolute" seconds={false} />, sortValue: run => time(run.startedAt), missingReason: "시작 전", width: "9.5rem" },
-  { key: "end", header: "종료", cell: run => run.finishedAt && <TimeText at={run.finishedAt} mode="absolute" seconds={false} />, sortValue: run => run.finishedAt ? Date.parse(run.finishedAt) : undefined, missing: run => run.startedAt ? "진행 중" : "시작 전", width: "9.5rem" },
+  { key: "start", header: "시작", cell: run => run.startedAt && <TimeText at={run.startedAt} mode="list" />, sortValue: run => time(run.startedAt), missingReason: "시작 전", width: "9.5rem" },
+  { key: "end", header: "종료", cell: run => run.finishedAt && <TimeText at={run.finishedAt} mode="list" />, sortValue: run => run.finishedAt ? Date.parse(run.finishedAt) : undefined, missing: run => run.startedAt ? "진행 중" : "시작 전", width: "9.5rem" },
   {
     key: "pool", header: "정리", width: "8rem",
     cell: run => { const state = cleanupState(run); return state && <StatusBadge status={state.status} reason={state.reason} /> },

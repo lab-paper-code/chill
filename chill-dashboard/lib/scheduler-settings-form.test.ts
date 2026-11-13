@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { SchedulerSettings } from "./read-types.ts"
-import { changeRows, fieldInput, formOf, parseField, rebase, settingsOf } from "./scheduler-settings-form.ts"
+import { changeRows, fieldInput, fieldText, fieldUnit, formOf, parseField, rebase, settingsOf } from "./scheduler-settings-form.ts"
 
 const controls = { placement: true, resources: true, replicas: true, routing: true, batching: true, power: true, membership: true }
 const base = {
@@ -18,12 +18,15 @@ test("untouched form keeps exact stored values and absent optional fields", () =
   assert.equal(settings.servingMemoryBytes, 18446744073709551615n)
   assert.equal("planSearchEvaluations" in settings, false)
   assert.equal(changeRows(base, settings, uid => uid).length, 0)
-  assert.equal(fieldInput("controlIntervalNanos", base), "10000")
+  assert.equal(fieldInput("controlIntervalNanos", base), "10")
+  assert.equal(fieldText("controlIntervalNanos", base), "10초")
+  assert.equal(fieldUnit("controlIntervalNanos"), "초")
   assert.equal(fieldInput("planSearchEvaluations", base), "500000")
 })
 
 test("inputs convert units exactly and reject invalid values", () => {
-  assert.equal(parseField("controlIntervalNanos", "0.5"), 500000n)
+  assert.equal(parseField("controlIntervalNanos", "0.5"), 500000000n)
+  assert.equal(parseField("controlIntervalNanos", "0.000000001"), 1n)
   assert.equal(parseField("servingMemoryBytes", "128"), 134217728n)
   assert.equal(parseField("servingMemoryBytes", "0.5"), 524288n)
   assert.equal(parseField("planPolishActive", "0"), 0n)

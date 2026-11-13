@@ -5,7 +5,7 @@ import { sectionTabs } from "@/lib/routes"
 import { useChillQuery } from "@/lib/client"
 import { decodeExperimentPage, type ExperimentPage, type OutcomeAxis } from "@/lib/experiments"
 import { resultName } from "@/lib/experiments-results"
-import { duration } from "@/lib/live-display"
+import { formatSeconds } from "@/lib/format"
 import { experimentStepStatus, experimentVerdict, type StatusInfo } from "@/lib/status-labels"
 import { DataTable, EmptyState, Page, PageHeader, PageTabs, QueryBoundary, StatusBadge, StatusDot, TimeText } from "@/components/kit"
 
@@ -45,10 +45,10 @@ export function ExperimentResultsScreen() {
               paging={{ mode: "offset", offset, limit: LIMIT, total: data.page?.total, onOffsetChange: setOffset }}
               columns={[
                 { key: "name", header: "실험", width: "30%", cell: r => resultName(r) },
-                { key: "from", header: "시작", width: "9.5rem", cell: r => <TimeText at={r.from} mode="absolute" seconds={false} /> },
-                { key: "length", header: "길이", numeric: true, cell: r => {
+                { key: "from", header: "시작", width: "9.5rem", cell: r => <TimeText at={r.from} mode="list" /> },
+                { key: "length", header: "소요", numeric: true, cell: r => {
                   const seconds = (Date.parse(r.to) - Date.parse(r.from)) / 1000
-                  return Number.isFinite(seconds) && seconds >= 0 ? duration(seconds) : null
+                  return Number.isFinite(seconds) && seconds >= 0 ? formatSeconds(seconds) : null
                 } },
                 { key: "execution", header: "실행", cell: r => axis(r.outcome?.execution, experimentStepStatus, "status"), missingReason: "기록 없음" },
                 { key: "measurement", header: "측정", cell: r => axis(r.outcome?.measurement, experimentVerdict, "verdict"), missingReason: "기록 없음" },

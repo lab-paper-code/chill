@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { advancedIssue, nameIssue, pathLabel, pathSupport } from "./measurements-request-form.ts"
+import { advancedIssue, nameIssue, pathSupport } from "./measurements-request-form.ts"
 import type { Advanced } from "./measurement-request.ts"
 import type { InventoryClass, ModelCompatibility } from "./read-types.ts"
 
@@ -15,12 +15,6 @@ const model = { spec: {
   ],
 } }
 const orin = { name: "orin", uid: "u", resourceVersion: "1", nodeSelector: {}, architecture: "arm64", memory: "", powerModes: [], nodes: [] } as InventoryClass
-
-test("path labels are backend, 정수 8비트 and architecture in the matrix words", () => {
-  assert.equal(pathLabel(model, "ort-cuda-arm64"), "CUDA ARM 64비트")
-  assert.equal(pathLabel(model, "ort-cpu-int8-amd64"), "CPU 정수 8비트 x86 64비트")
-  assert.equal(pathLabel(model, "missing"), "missing")
-})
 
 test("path support: static mismatch blocks, server verdict decides the rest", () => {
   assert.deepEqual(pathSupport(model, model.spec.executionPaths[1], orin, "n"), { state: "unsupported", reason: "x86 64비트 전용" })

@@ -44,7 +44,7 @@ export function datasetGap(dataset:DatasetSpec,preprocessor:PreprocessorSpec|und
   const records=new Map(dataset.fields.map(field=>[field.name,field]))
   return (preprocessor?.input.fields??[]).map(field=>{
     const record=records.get(field.name)
-    return !record?`${field.name} 필드가 없어요`:record.format!==field.format?`${field.name} 형식이 달라요 (${field.format} 필요)`:record.maxBytes>field.maxBytes?`${field.name} 크기가 최대 ${field.maxBytes} B보다 클 수 있어요`:""
+    return !record?`${field.name} 필드 없음`:record.format!==field.format?`${field.name} 형식 불일치 (${field.format} 필요)`:record.maxBytes>field.maxBytes?`${field.name} 크기가 최대 ${field.maxBytes} B 초과 가능`:""
   }).filter(Boolean).join(", ")
 }
 
@@ -65,7 +65,7 @@ export function requestInputs(model:string,artifact:string,preprocessor:string,d
   const explicitDataset=context.datasets.find(item=>item.metadata.name===dataset)
   const selected=explicitDataset&&(!inherited.dataset||compatible(explicitDataset)&&history.some(entry=>entry.dataset===dataset&&entry.preprocessor===pre?.metadata.name))?explicitDataset:priorDataset??(datasets.length===1?datasets[0]:undefined)
   const contract=pre?.spec.input.fields.map(field=>`${field.name} (${field.format}, 최대 ${field.maxBytes} B)`).join(", ")
-  const warning=!pre?"모델과 실행 경로에 연결된 전처리기의 입력 계약을 확인할 수 없어요. 카탈로그에서 전처리기 연결을 확인하고 직접 선택하세요.":!candidates.includes(pre)?"선택한 전처리기가 이 모델과 실행 경로에 연결되어 있지 않아요. 카탈로그 연결을 확인하세요.":selected&&!compatible(selected)?`데이터셋이 전처리기 입력 조건에 맞지 않아요: ${datasetGap(selected.spec,pre.spec)}`:!selected?datasets.length>1?`입력 조건 ${contract}에 맞는 데이터셋이 여러 개예요. 사용할 데이터셋을 직접 선택하세요.`:`입력 조건 ${contract}과 필드 집합이 같은 유일한 데이터셋을 확인하지 못했어요. 등록 데이터셋을 직접 선택하세요. 추가 필드는 명시 선택할 때 허용해요.`:""
+  const warning=!pre?"모델과 실행 경로에 연결된 전처리기 입력 형식 미확인, 카탈로그의 전처리기 연결 확인 후 직접 선택":!candidates.includes(pre)?"선택한 전처리기가 이 모델과 실행 경로에 연결되지 않음, 카탈로그 연결 확인 필요":selected&&!compatible(selected)?`데이터셋이 전처리기 입력 조건과 불일치: ${datasetGap(selected.spec,pre.spec)}`:!selected?datasets.length>1?`입력 조건 ${contract}에 맞는 데이터셋 여러 개, 직접 선택 필요`:`입력 조건 ${contract}과 필드 집합이 같은 유일한 데이터셋 없음, 직접 선택 필요 (직접 선택 시 추가 필드 허용)`:""
   return {preprocessor:pre?.metadata.name??"",dataset:selected?.metadata.name??"",warning}
 }
 
@@ -76,7 +76,7 @@ export function requestRejectionGuidance(reason:string):RequestRejectionGuidance
   if(/active measurement cannot contain settlingDurationSeconds|curve plan active.*protocol is invalid/i.test(reason))return {target:"measurement-activeDuration",fields:["activeDuration","warmup"],message:"실행 측정 조건 확인",constraints:[["측정 시간 (s)","≥ 1"],["예열 (회)","≥ 0"],["실행 중 안정 시간","미전송"]]}
   if(/batch.*(?:maxBatchSize|positive|valid|supported)|planned batch size/i.test(reason))return {target:"measurement-batches",fields:[],message:"처리 건수 확인",constraints:[["처리 건수","≥ 1, ≤ 경로 최대 배치"],["모델 선언 배치","전체 선택"]]}
   if(/dataset|preprocessor/i.test(reason))return {target:"request-input-guidance",fields:[],message:"입력 연결 확인",constraints:[["전처리기","모델 파일 연결"],["데이터셋","입력 이름과 형식 일치, 크기 상한 이하"],["UID 또는 이미지 누락","카탈로그 등록 수정"]]}
-  if(/power.?mode|target.?node|candidate.*compatible|executionPath/i.test(reason))return {target:"measurement-device",fields:[],message:"실행 장비 조건 확인",constraints:[["실행 노드","준비 상태"],["전력 모드","장치 등록값"],["실행 경로","호환 선언"]]}
+  if(/power.?mode|target.?node|candidate.*compatible|executionPath/i.test(reason))return {target:"measurement-device",fields:[],message:"실행 장치 조건 확인",constraints:[["실행 장치","준비 상태"],["전력 모드","장치 등록값"],["실행 경로","호환 선언"]]}
   return null
 }
 export const steps = ["workload", "device", "run", "size", "advanced", "name", "review"] as const
@@ -143,14 +143,14 @@ export function updateDraft(current:Draft,patch:Partial<Draft>,context:Context,i
 }
 function advancedProblem(values: Advanced) {
   const bad = advancedFields.find(([key, , min, max=2147483647, step=1]) => !Number.isFinite(values[key]) || step!=="any"&&!Number.isInteger(values[key]) || values[key] < min || key==="sparseMeanGap"&&values[key]===0 || values[key] > max)
-  if (bad) return `"${bad[1]}"에 ${bad[2]}${bad[0]==="sparseMeanGap"?" 초과의 수": " 이상의 정수"}를 적어 주세요.`
-  if(values.utilizations.split(",").some(value=>!value.trim()||!Number.isFinite(Number(value))||Number(value)<=0||Number(value)>=1))return "운영점 이용률에 0보다 크고 1보다 작은 수를 쉼표로 구분해 적어 주세요."
-  if (values.retryLimit > 10) return "일시적 인프라 장애 재시도 한도는 10번까지 정할 수 있어요."
-  if (values.activeTimeout >= values.activeInterval || values.idleTimeout >= values.idleInterval) return "전력 기록 대기 한도는 기록 간격보다 짧아야 해요."
-  if (values.activeWindow < values.activeDuration || values.idleWindow < values.idleDuration) return "전력 기록 시간은 측정 시간보다 짧을 수 없어요."
+  if (bad) return `"${bad[1]}"은 ${bad[2]}${bad[0]==="sparseMeanGap"?" 초과 수": " 이상 정수"}`
+  if(values.utilizations.split(",").some(value=>!value.trim()||!Number.isFinite(Number(value))||Number(value)<=0||Number(value)>=1))return "운영점 이용률은 0 초과 1 미만, 쉼표로 구분"
+  if (values.retryLimit > 10) return "일시적 인프라 장애 재시도 한도는 10번 이하"
+  if (values.activeTimeout >= values.activeInterval || values.idleTimeout >= values.idleInterval) return "전력 기록 대기 한도는 기록 간격 미만"
+  if (values.activeWindow < values.activeDuration || values.idleWindow < values.idleDuration) return "전력 기록 시간은 측정 시간 이상"
   return ""
 }
-export const nodeReason = (node: InventoryNode) => node.ready !== "True" ? "지금 준비되지 않았어요" : node.schedulingDisabled ? "새 작업을 받지 않도록 막혀 있어요" : ""
+export const nodeReason = (node: InventoryNode) => node.ready !== "True" ? "준비 안 됨" : node.schedulingDisabled ? "새 작업 차단됨" : ""
 // Only a proven static mismatch blocks a path; runtime support is checked by preflight.
 export function pathReason(model: ModelResource, path: ExecutionPath, cls: InventoryClass) {
   const verdict = staticCompatibility(model, path, cls)
@@ -171,23 +171,23 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
   const name = d.name ?? (model && node && path ? measurementRequestName({...d,powerMode}, taken) : "")
   function problem(step: Step): string {
     switch (step) {
-      case "workload": return !d.workload?"측정할 Workload를 선택하세요. 등록된 Workload가 없으면 먼저 등록하세요.":!model?"모델을 선택하세요.":!preprocessor?"전처리기를 선택하세요.":!dataset?"데이터셋을 선택하세요.":datasetGap(dataset.spec,preprocessor.spec)
+      case "workload": return !d.workload?"측정할 서비스 선택 필요, 없으면 서비스 먼저 등록":!model?"모델 선택 필요":!preprocessor?"전처리기 선택 필요":!dataset?"데이터셋 선택 필요":datasetGap(dataset.spec,preprocessor.spec)
       case "device":
-        if (!cls || !node) return "잴 장비를 골라 주세요."
-        if (nodeReason(node)) return `${node.name}는 ${nodeReason(node)}. 다른 장비를 골라 주세요.`
-        return model && !model.spec.executionPaths.some(p => !pathReason(model, p, cls)) ? "이 모델은 이 장비에서 실행할 수 없어요. 다른 장비를 골라 주세요." : ""
+        if (!cls || !node) return "장치 선택 필요"
+        if (nodeReason(node)) return `${node.name}: ${nodeReason(node)}, 다른 장치 선택 필요`
+        return model && !model.spec.executionPaths.some(p => !pathReason(model, p, cls)) ? "이 모델을 실행할 수 없는 장치, 다른 장치 선택 필요" : ""
       case "run":
-        if (!model || !cls || !path || pathReason(model, path, cls)) return "실행 방식을 골라 주세요."
-        if (!cls.powerModes.length) return "이 장비에 등록된 전력 모드가 없어서 잴 수 없어요."
-        return cls.powerModes.some(m => m.name === powerMode) ? "" : "전력 모드를 골라 주세요."
+        if (!model || !cls || !path || pathReason(model, path, cls)) return "실행 경로 선택 필요"
+        if (!cls.powerModes.length) return "등록된 전력 모드가 없는 장치"
+        return cls.powerModes.some(m => m.name === powerMode) ? "" : "전력 모드 선택 필요"
       case "size":
-        if (trials !== 3) return "반복 횟수는 정확히 3번이어야 해요."
+        if (trials !== 3) return "반복 횟수는 3번"
         return ""
       case "advanced": return advancedProblem(protocol.values)
       case "name":
-        if (!name) return "이름을 적어 주세요."
-        if (name.length > 200 || !dns1123.test(name)) return "이름은 200자 이하의 영문 소문자, 숫자, '-', '.'로 적고, 처음과 끝은 영문 소문자나 숫자여야 해요."
-        return taken.has(name) ? "같은 이름의 측정이 이미 있어요. 다른 이름을 적어 주세요." : ""
+        if (!name) return "이름 필요"
+        if (name.length > 200 || !dns1123.test(name)) return "이름은 200자 이하 영문 소문자, 숫자, '-', '.', 처음과 끝은 영문 소문자나 숫자"
+        return taken.has(name) ? "같은 이름의 측정 있음" : ""
       case "review": return ""
     }
   }
@@ -211,7 +211,7 @@ export function manifest(d: Draft, context: Context, namespace: string) {
 // `?from=` copies a whole existing plan; the funnel then opens at the first step that needs attention, else the name.
 export function begin(from: string | null, context: Context) {
   const source = from ? context.plans.find(p => p.metadata.name === from) : undefined
-  if (!source) return { draft: emptyDraft, index: 0, error: from ? "복사할 측정을 찾지 못해서 처음부터 골라요." : "", copied: false }
+  if (!source) return { draft: emptyDraft, index: 0, error: from ? "복사할 측정 없음, 처음부터 선택" : "", copied: false }
   const s = source.spec
   // A copied name is a selection only while that Workload is still one of the choices.
   const workload = context.workloads.some(item => item.desired.metadata.name === s.activeProtocol.workload) ? s.activeProtocol.workload! : ""

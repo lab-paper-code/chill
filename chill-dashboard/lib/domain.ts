@@ -24,8 +24,7 @@ export type PreprocessorResource = { apiVersion?: string; kind?: string; metadat
 export type DatasetResource = { apiVersion?: string; kind?: string; metadata: Metadata; spec: DatasetSpec }
 type CatalogRef = { name: string }
 type AppliedRef = { name: string; uid: string; generation: number }
-export const admissionPolicies = { Reject: "기한 내 완료 불가 요청 거절(기본)", Delay: "뒤로 미뤄 처리 — 늦은 완료 허용" } as const
-export type WorkloadSpec = { modelRef: CatalogRef; preprocessorRef: CatalogRef; datasetRef?: CatalogRef; slo: { percentile: number; targetLatency: string }; admission: { policy: keyof typeof admissionPolicies; maxQueuedRequests: number }; requestLifetime?: string }
+export type WorkloadSpec = { modelRef: CatalogRef; preprocessorRef: CatalogRef; datasetRef?: CatalogRef; slo: { percentile: number; targetLatency: string }; admission: { policy: "Reject" | "Delay"; maxQueuedRequests: number }; requestLifetime?: string }
 export type Operation = { kind: string; phase: string; targetGeneration: number; targetCatalogUID?: string; targetCatalogGeneration?: number; acceptedAt: string; appliedAt?: string; completedAt?: string; reason?: string; error?: string; actorUsername?: string; actorUID?: string }
 // The only artifact format → firstfloor backend pairs ChillServer accepts (internal/modelcatalog/catalog.go:107-123).
 export const backendsByFormat: Record<string, readonly string[]> = { onnx: ["ort-cpu", "ort-cuda"], rknn: ["rknnlite"] }
@@ -55,14 +54,14 @@ export const resourceHref = (kind: string, name: string, uid: string, action = "
 // An empty dataset leaves datasetRef out; the service registers and waits with MissingDataset.
 export function workloadSpec(model: string, preprocessor: string, dataset: string, percentile: string, latency: string, admission: { policy: string; maxQueuedRequests: number }, requestLifetime = ""): WorkloadSpec {
   const p = Number(percentile)
-  if (!percentile.trim() || !Number.isFinite(p) || p <= 0 || p > 100) throw new Error("SLO 백분위는 0 < p ≤ 100 이어야 합니다.")
-  if (!model) throw new Error("모델 참조가 필요합니다.")
-  if (!preprocessor) throw new Error("전처리기 참조가 필요합니다.")
-  if (!latency.trim()) throw new Error("SLO 목표 지연과 단위가 필요합니다. Go API가 양수와 범위를 검증합니다.")
-  if (admission.policy !== "Reject" && admission.policy !== "Delay") throw new Error("과부하 정책은 Reject 또는 Delay여야 해요.")
-  if (!Number.isInteger(admission.maxQueuedRequests) || admission.maxQueuedRequests < 1) throw new Error("대기 상한은 1 이상의 정수여야 해요.")
-  // Go duration syntax; the server checks lifetime bounds against the SLO and 129s.
-  if (requestLifetime && !/^[+-]?(?:0|(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))+)$/.test(requestLifetime)) throw new Error("요청 최종 기한은 시간과 단위로 적어 주세요. 예: 2s, 1m30s")
+  if (!percentile.trim() || !Number.isFinite(p) || p <= 0 || p > 100) throw new Error("분위수는 0 초과 100 이하")
+  if (!model) throw new Error("모델 선택 필요")
+  if (!preprocessor) throw new Error("전처리기 선택 필요")
+  if (!latency.trim()) throw new Error("목표 지연 필요, 예: 100ms")
+  if (admission.policy !== "Reject" && admission.policy !== "Delay") throw new Error("과부하 정책은 거부 또는 지연 허용")
+  if (!Number.isInteger(admission.maxQueuedRequests) || admission.maxQueuedRequests < 1) throw new Error("대기 상한은 1 이상 정수")
+  // Go duration syntax; the server checks lifetime bounds against the target and 129s.
+  if (requestLifetime && !/^[+-]?(?:0|(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))+)$/.test(requestLifetime)) throw new Error("요청 최종 기한은 시간과 단위, 예: 2s, 1m30s")
   return { modelRef: { name: model }, preprocessorRef: { name: preprocessor }, ...(dataset ? { datasetRef: { name: dataset } } : {}), slo: { percentile: p, targetLatency: latency }, admission: { policy: admission.policy, maxQueuedRequests: admission.maxQueuedRequests }, ...(requestLifetime ? { requestLifetime } : {}) }
 }
 function base64(bytes: Uint8Array): string {
@@ -72,11 +71,11 @@ function base64(bytes: Uint8Array): string {
 }
 // One raw sample for the applied preprocessor input contract; the gateway checks JPEG and UTF-8 content.
 export function rawInferenceBody(fields: RawField[], values: Record<string, Uint8Array | undefined>): string {
-  if (!fields.length) throw new Error("적용된 전처리기의 입력 계약이 없어요.")
+  if (!fields.length) throw new Error("적용된 전처리기 입력 형식 없음")
   return JSON.stringify({ inputs: fields.map(field => {
     const data = values[field.name]
-    if (!data?.length) throw new Error(`${field.name}: 값을 넣어 주세요.`)
-    if (data.length > field.maxBytes) throw new Error(`${field.name}: 최대 ${field.maxBytes}바이트까지 보낼 수 있어요.`)
+    if (!data?.length) throw new Error(`${field.name}: 값 필요`)
+    if (data.length > field.maxBytes) throw new Error(`${field.name}: 최대 ${field.maxBytes}바이트`)
     return { name: field.name, datatype: "BYTES", data: base64(data) }
   }) })
 }

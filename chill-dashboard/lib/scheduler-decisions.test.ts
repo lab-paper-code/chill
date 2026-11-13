@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { compareRows, decisionControlPath, decisionHeadline, decisionRecordPath, decisionResult, latencyRows, tickPhases, type ControlObservation } from "./scheduler-decisions.ts"
+import { compareRows, decisionControlPath, decisionHeadline, decisionRecordPath, decisionResult, latencyRows, summaryHeadline, tickPhases, type ControlObservation } from "./scheduler-decisions.ts"
 import type { SchedulerCandidate, SchedulerDecision } from "./read-types.ts"
 
 const plan = (id: string, keep: boolean, joules: number | null, expected: number | null): SchedulerCandidate =>
@@ -36,6 +36,15 @@ test("headline gives server reasons first, then the keep plan's status or the en
   assert.deepEqual(decisionHeadline({ ...idle, workloads: [{ uid: "u1", state: "Disabled", reason: "AutonomousControlOff" }] }), { text: "자동 제어 서비스 없음" })
   assert.equal(decisionHeadline(decision("2026-11-13T15:00:00Z", null)), null)
   assert.equal(decisionHeadline(decision("2026-11-13T15:00:00Z", plan("c2", false, 120, 45_000_000))), null)
+})
+
+test("summary headline matches the detail where the row carries enough, else null", () => {
+  const row = { at: "2026-11-13T15:00:00Z", status: "Feasible" }
+  assert.deepEqual(summaryHeadline({ ...row, reasons: ["NoPlanMeetsSLO"] }), { reasons: ["NoPlanMeetsSLO"] })
+  assert.deepEqual(summaryHeadline({ ...row, targetKeep: true }), { text: "더 나은 후보 없음" })
+  assert.deepEqual(summaryHeadline({ ...row, targetKeep: true, workloads: [{ uid: "u1", state: "Disabled", reason: "AutonomousControlOff" }] }), { text: "자동 제어 서비스 없음" })
+  assert.equal(summaryHeadline({ ...row, targetKeep: false }), null)
+  assert.equal(summaryHeadline(row), null)
 })
 
 test("latency and comparison use the selected plan's server values", () => {

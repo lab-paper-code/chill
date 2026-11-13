@@ -16,9 +16,11 @@ import type { ApiError } from "@/lib/client-transport"
 import type { DatasetResource, ModelList, PreprocessorResource, WorkloadSummary } from "@/lib/domain"
 import type { InventoryView, MeasurementCoverageSummaryResponse, ModelCompatibility } from "@/lib/read-types"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
-import { deviceLabel, resolveMeasurementPrefill } from "@/lib/measurement-coverage"
+import { resolveMeasurementPrefill } from "@/lib/measurement-coverage"
+import { deviceClassLabel, executionPathLabel, powerModeLabel } from "@/lib/display-labels"
+import { formatSeconds } from "@/lib/format"
 import { begin, emptyDraft, manifest, nodeReason, pathReason, requestCopySource, requestHref, steps, updateDraft, view, type Advanced, type Context, type Draft, type Step } from "@/lib/measurement-request"
-import { advancedIssue, nameIssue, pathLabel, pathSupport, type PathSupport } from "@/lib/measurements-request-form"
+import { advancedIssue, nameIssue, pathSupport, type PathSupport } from "@/lib/measurements-request-form"
 import { useCoverageInventory, useMeasurementCoverage, useMeasurementPlans, useRequestProfileHistory } from "@/hooks/use-measurement-data"
 import { useMeasurementDocumentSubmission } from "@/hooks/use-measurement-submission"
 import { ChoiceGroup, PreflightSection, UnknownOutcome, allLoaded, suffix, useSubmitToast } from "./request-shared"
@@ -196,7 +198,7 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
             options={context.classes.map(cls => {
               const ready = cls.nodes.some(item => !nodeReason(item))
               const runnable = !v.model || v.model.spec.executionPaths.some(path => !pathReason(v.model!, path, cls))
-              return { value: cls.name, label: deviceLabel(cls.name), title: cls.name, disabled: !ready || !runnable, reason: !ready ? "준비된 장치 없음" : !runnable ? "실행 경로 없음" : undefined }
+              return { value: cls.name, label: deviceClassLabel(cls.name), title: cls.name, disabled: !ready || !runnable, reason: !ready ? "준비된 장치 없음" : !runnable ? "실행 경로 없음" : undefined }
             })}
             onChange={name => {
               const cls = context.classes.find(item => item.name === name)
@@ -215,7 +217,7 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
           {v.model && v.cls && <ChoiceGroup label="실행 경로" wide disabled={locked} value={d.path} error={show && (!v.path || selectedSupport?.state === "unsupported") ? "지원 경로 선택" : undefined}
             options={v.model.spec.executionPaths.map((path, index) => {
               const state = support(index)
-              return { value: path.name, label: pathLabel(v.model, path.name), title: path.name, disabled: state?.state === "unsupported", reason: state?.state === "candidate" ? undefined : state?.reason }
+              return { value: path.name, label: executionPathLabel(path.name, v.model), title: path.name, disabled: state?.state === "unsupported", reason: state?.state === "candidate" ? undefined : state?.reason }
             })}
             onChange={name => update({ path: name })} />}
           {v.cls && <ChoiceGroup label="전력 모드" disabled={locked} value={v.powerMode} error={show && !v.cls.powerModes.some(mode => mode.name === v.powerMode) ? (v.cls.powerModes.length ? "선택 필요" : "등록된 모드 없음") : undefined}
@@ -228,8 +230,8 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
         <FormSection title="측정 방식" info={v.protocol.from ? `기본값: ${v.protocol.from}` : undefined}>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             {field("warmup", "예열", "회")}
-            {field("activeDuration", "실행 측정", "s")}
-            {field("idleDuration", "유휴 측정", "s")}
+            {field("activeDuration", "실행 측정", "초")}
+            {field("idleDuration", "유휴 측정", "초")}
             {field("retryLimit", "재시도 한도", "회")}
           </div>
         </FormSection>
@@ -242,14 +244,14 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
           <CollapsibleContent>
             <div className="grid gap-6 border-t border-border p-5" inert={!advancedOpen}>
               <AdvancedGroup title="실행 전력 기록">
-                {field("activeWindow", "기록 시간", "s")}{field("activeInterval", "기록 간격", "ms")}{field("activeTimeout", "대기 한도", "ms")}
+                {field("activeWindow", "기록 시간", "초")}{field("activeInterval", "기록 간격", "ms")}{field("activeTimeout", "대기 한도", "ms")}
               </AdvancedGroup>
               <AdvancedGroup title="유휴 전력 기록">
-                {field("settling", "안정 시간", "s")}{field("idleWindow", "기록 시간", "s")}{field("idleInterval", "기록 간격", "ms")}{field("idleTimeout", "대기 한도", "ms")}
+                {field("settling", "안정 시간", "초")}{field("idleWindow", "기록 시간", "초")}{field("idleInterval", "기록 간격", "ms")}{field("idleTimeout", "대기 한도", "ms")}
               </AdvancedGroup>
               <AdvancedGroup title="운영점">
-                {field("utilizations", "이용률")}{field("sparseMeanGap", "희소 요청 간격", "ms")}{field("phaseDuration", "운영점별 측정", "s")}{field("postLoadDuration", "부하 후 기록", "s")}
-                {field("requestLifetime", "요청 수명", "s")}{field("deliveryMargin", "전달 여유", "ms")}{field("framedDecodedRequestUpperBytes", "요청 프레임 상한", "B")}
+                {field("utilizations", "이용률")}{field("sparseMeanGap", "희소 요청 간격", "ms")}{field("phaseDuration", "운영점별 측정", "초")}{field("postLoadDuration", "부하 후 기록", "초")}
+                {field("requestLifetime", "요청 수명", "초")}{field("deliveryMargin", "전달 여유", "ms")}{field("framedDecodedRequestUpperBytes", "요청 프레임 상한", "B")}
               </AdvancedGroup>
             </div>
           </CollapsibleContent>
@@ -263,16 +265,16 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
           <Fields columns={3} items={[
             { label: "서비스", value: d.workload },
             { label: "모델", value: d.model },
-            { label: "장치 종류", value: deviceLabel(d.deviceClass) },
+            { label: "장치 종류", value: deviceClassLabel(d.deviceClass) },
             { label: "장치", value: d.node },
-            { label: "실행 경로", value: d.path ? pathLabel(v.model, d.path) : null },
-            { label: "전력 모드", value: v.powerMode },
+            { label: "실행 경로", value: d.path ? executionPathLabel(d.path, v.model) : null },
+            { label: "전력 모드", value: v.powerMode && powerModeLabel(v.powerMode) },
             { label: "전처리기", value: d.preprocessor },
             { label: "데이터셋", value: d.dataset },
             { label: "배치별 반복", value: `${v.trials}회` },
             { label: "예열", value: Number.isFinite(values.warmup) ? `${values.warmup}회` : null },
-            { label: "실행 측정", value: Number.isFinite(values.activeDuration) ? `${values.activeDuration} s` : null },
-            { label: "유휴 측정", value: Number.isFinite(values.idleDuration) ? `${values.idleDuration} s` : null },
+            { label: "실행 측정", value: Number.isFinite(values.activeDuration) ? formatSeconds(values.activeDuration) : null },
+            { label: "유휴 측정", value: Number.isFinite(values.idleDuration) ? formatSeconds(values.idleDuration) : null },
           ]} />
         </FormSection>
         {submission.unknown

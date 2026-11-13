@@ -1,9 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { coverageMeasurementStates, coverageMeasurementStatus, deviceLabel } from "@/lib/measurement-coverage"
+import { coverageMeasurementStatus } from "@/lib/measurement-coverage"
+import { deviceClassLabel, powerModeLabel } from "@/lib/display-labels"
 import { cellMeasured, cellReasons, matrixColumns, type MatrixGroup } from "@/lib/measurements-coverage-matrix"
-import { measurementStatus, type StatusTone } from "@/lib/status-labels"
+import { coverageMeasurementStates, measurementStatus, type StatusTone } from "@/lib/status-labels"
 import type { MeasurementCoverageCell as Cell } from "@/lib/read-types"
 import { Matrix, MatrixCell, Missing, StatusDot } from "@/components/kit"
 
@@ -11,10 +12,10 @@ export const STATUSES = Object.keys(coverageMeasurementStates)
 
 // One legend entry per icon: states that share a tone share the icon.
 const LEGEND: { tone: StatusTone; label: string }[] = [
-  { tone: "ok", label: "측정 있음" },
-  { tone: "progress", label: "진행" },
-  { tone: "warn", label: "부족, 검토 필요" },
-  { tone: "fail", label: "문제" },
+  { tone: "ok", label: coverageMeasurementStates.usable },
+  { tone: "progress", label: coverageMeasurementStates.running },
+  { tone: "warn", label: `${coverageMeasurementStates.insufficient}, ${coverageMeasurementStates.review}` },
+  { tone: "fail", label: coverageMeasurementStates.problem },
   { tone: "idle", label: "미측정, 미확인" },
 ]
 
@@ -31,10 +32,10 @@ export function CoverageMatrix({ rows, cells, status, onOpen, empty }: {
       columns={paths.map(path => ({ key: path.name, label: path.label, hint: path.name }))}
       groups={rows.map(group => ({
         key: group.deviceClass,
-        label: deviceLabel(group.deviceClass),
+        label: deviceClassLabel(group.deviceClass),
         rows: group.modes.map(row => ({
           key: row.mode,
-          label: row.mode,
+          label: powerModeLabel(row.mode),
           cells: Object.fromEntries([...row.cells].map(([path, cell]) => [path, <CellButton key={path} cell={cell} dim={!!status && coverageMeasurementStatus(cell) !== status} onOpen={onOpen} />])),
         })),
       }))}

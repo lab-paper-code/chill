@@ -24,7 +24,7 @@ export function MeasurementResultsScreen() {
     <Page>
       <PageHeader
         title="측정"
-        actions={<Link className={buttonClassName({ variant: "default" })} href={occupancy ? occupancyRequestHref(config.namespace) : "/measurements/requests/new"}>{occupancy ? "분배 점유시간 측정 요청" : "측정 요청"}</Link>}
+        actions={<Link className={buttonClassName({ variant: "default" })} href={occupancy ? occupancyRequestHref(config.namespace) : "/measurements/requests/new"}>{occupancy ? "새 점유시간 측정 요청" : "새 측정 요청"}</Link>}
       />
       <PageTabs tabs={sectionTabs.measurements} />
       {kind === "throughput" && <MeasurementThroughputResults lead={lead} />}

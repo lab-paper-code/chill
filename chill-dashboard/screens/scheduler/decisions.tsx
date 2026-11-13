@@ -5,9 +5,9 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { sectionTabs } from "@/lib/routes"
 import { useChillQuery, useSession } from "@/lib/client"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { formatKst, formatNumber } from "@/lib/format"
+import { formatDurationNanos, formatKst, formatListTime, formatNumber } from "@/lib/format"
 import { decisionStatus, schedulerReason, type StatusInfo } from "@/lib/status-labels"
-import { decisionListPath, decisionRecordPath, decisionResult, latestDecisionPath, type DecisionPage, type DecisionRow } from "@/lib/scheduler-decisions"
+import { decisionListPath, decisionRecordPath, decisionResult, latestDecisionPath, summaryHeadline, type DecisionPage, type DecisionRow } from "@/lib/scheduler-decisions"
 import type { SchedulerObservationPage, SchedulerSettings } from "@/lib/read-types"
 import type { WorkloadView } from "@/lib/domain"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -64,11 +64,11 @@ function Tiles() {
   const none = latest.error ? "기록 조회 실패" : latest.data ? "판단 기록 없음" : "조회 중"
   return (
     <StatRow columns={3}>
-      <StatTile label="마지막 판단" value={last ? <TimeText at={last.at} /> : null} reason={none}
+      <StatTile label="마지막 판단" value={last ? <TimeText at={last.at} mode="relative" /> : null} reason={none}
         sub={last ? rowStatus(last).label : undefined} href={last ? `/scheduler/decisions?at=${encodeURIComponent(last.decision!.at)}` : undefined} />
-      <StatTile label="판단 주기" value={interval == null ? null : formatNumber(Number(interval) / 1e9, Number(interval) % 1e9 ? 1 : 0)} unit="s"
+      <StatTile label="판단 주기" value={interval == null ? null : formatDurationNanos(interval)}
         reason={settings.error ? "설정 조회 실패" : "조회 중"} href="/scheduler/settings" />
-      <StatTile label="마지막 소요" value={elapsed == null ? null : formatNumber(Number(elapsed) / 1e6, 0)} unit="ms" reason={last ? "소요 기록 없음" : none}
+      <StatTile label="마지막 소요" value={elapsed == null ? null : formatDurationNanos(elapsed)} reason={last ? "소요 기록 없음" : none}
         info="후보를 만들고 비교하는 데 걸린 시간"
         status={over == null ? undefined : over ? { label: "주기 초과", tone: "fail" } : { label: "주기 이내", tone: "ok" }}
         sub={over == null ? undefined : `주기의 ${formatNumber((Number(elapsed) / Number(interval)) * 100, 1)}%`} />
@@ -120,7 +120,7 @@ function DecisionsBody({ range, maxSpan, set }: { range: TimeRangeValue; maxSpan
         return (
           <span className="flex items-center gap-2.5">
             <Checkbox checked={checked} disabled={!checked && picks.length >= 2} aria-label={`${formatKst(at)} 비교에 담기`} onCheckedChange={value => togglePick(at, value === true)} />
-            <span className="tabular-nums"><span className="hidden sm:inline">{formatKst(at).slice(5, 11)}</span>{formatKst(at).slice(11)}</span>
+            <span className="tabular-nums">{formatListTime(at)}</span>
           </span>
         )
       },
@@ -128,17 +128,17 @@ function DecisionsBody({ range, maxSpan, set }: { range: TimeRangeValue; maxSpan
     },
     { key: "result", header: "결과", width: "17%", cell: row => <StatusDot status={rowStatus(row)} showLabel />, csv: row => rowStatus(row).label },
     {
-      key: "reason", header: "사유", missingReason: "기록된 사유 없음",
-      cell: row => row.decision?.reasons?.length ? <ReasonSummary codes={row.decision.reasons} /> : null,
-      csv: row => (row.decision?.reasons ?? []).map(code => { const reason = schedulerReason(code); return reason.code ?? reason.label }).join(", "),
+      key: "reason", header: "사유", missingReason: "요약에 사유 없음, 상세에서 확인",
+      cell: row => { const headline = summaryHeadline(row.decision!); return !headline ? null : "text" in headline ? headline.text : <ReasonSummary codes={headline.reasons} /> },
+      csv: row => { const headline = summaryHeadline(row.decision!); return !headline ? null : "text" in headline ? headline.text : headline.reasons.map(code => { const reason = schedulerReason(code); return reason.code ?? reason.label }).join(", ") },
     },
     {
-      key: "elapsed", header: "소요", unit: "ms", numeric: true, width: "21%", missingReason: "소요 기록 없음",
+      key: "elapsed", header: "소요", numeric: true, width: "21%", missingReason: "소요 기록 없음",
       cell: row => {
         const ms = elapsedMs(row)
         return ms == null ? null : (
           <span className="inline-flex items-center gap-2">
-            {formatNumber(ms, 0)}
+            {formatDurationNanos(row.decision!.evaluationElapsedNanos)}
             <HeadroomBar observed={ms} target={intervalMs} className="w-10" />
           </span>
         )

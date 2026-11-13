@@ -5,7 +5,8 @@ import { Button, ConfirmDialog, DataTable, DetailDrawer, EmptyState, Fields, Fil
 import { ApiError } from "@/lib/client-transport"
 import { useChillMutation, useChillQuery } from "@/lib/client"
 import { occupancyDirect, occupancyDisplayReason, occupancyRunning } from "@/lib/dispatch-occupancy"
-import { formatNumber } from "@/lib/format"
+import { formatNumber, formatSeconds } from "@/lib/format"
+import { powerModeLabel } from "@/lib/display-labels"
 import { measurementPath } from "@/lib/measurements"
 import type { DispatchOccupancyMeasurement, MeasurementProjectionList } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
@@ -123,11 +124,11 @@ export function MeasurementOccupancyResults({ lead, namespace }: { lead: Segment
                 { label: "장치", value: selected.node },
                 { label: "서비스", value: selected.conditions.workload },
                 { label: "배치", value: `${selected.conditions.batch}건` },
-                { label: "전력 모드", value: selected.status.powerMode, reason: "기록 없음" },
-                { label: "시작", value: selected.measurementWindow?.start && <TimeText at={selected.measurementWindow.start} mode="absolute" />, reason: "시작 전" },
-                { label: "종료", value: selected.measurementWindow?.end && <TimeText at={selected.measurementWindow.end} mode="absolute" />, reason: "끝나지 않음" },
-                { label: "예열", value: `${selected.conditions.warmupSeconds} s` },
-                { label: "측정", value: `${selected.conditions.durationSeconds} s` },
+                { label: "전력 모드", value: selected.status.powerMode && powerModeLabel(selected.status.powerMode), reason: "기록 없음" },
+                { label: "시작", value: selected.measurementWindow?.start && <TimeText at={selected.measurementWindow.start} mode="detail" />, reason: "시작 전" },
+                { label: "종료", value: selected.measurementWindow?.end && <TimeText at={selected.measurementWindow.end} mode="detail" />, reason: "끝나지 않음" },
+                { label: "예열", value: formatSeconds(selected.conditions.warmupSeconds) },
+                { label: "측정", value: formatSeconds(selected.conditions.durationSeconds) },
                 { label: "송신자", value: `${selected.conditions.workers}명` },
               ]} />
             </Section>

@@ -1,8 +1,9 @@
 // Scheduler settings screen: the editable form, its validation and the change rows of a review,
-// a conflict and a history record. Wire values stay exact (bigint) and time is ms in the UI, ns on the wire.
+// a conflict and a history record. Wire values stay exact (bigint); durations are seconds in the UI, ns on the wire.
 import type { SchedulerSettings } from "./read-types.ts"
 import { settingControls, settingFields, type SettingField } from "./scheduler-settings.ts"
-import { marginMilliseconds, millisecondsToNanos, nanosToMilliseconds, stringifySchedulerJSON, wireInteger } from "./scheduler.ts"
+import { marginMilliseconds, stringifySchedulerJSON, wireInteger } from "./scheduler.ts"
+import { formatDurationNanos } from "./format.ts"
 import { schedulerLabel, schedulerOptions } from "./scheduler-selection.ts"
 
 export type FieldKey = SettingField["key"]
@@ -16,10 +17,11 @@ export const settingsGroups: { value: SettingsGroup; label: string }[] = [
 export const fields = settingFields
 
 const isNanos = (key: FieldKey) => key.endsWith("Nanos")
-const MIB = 1048576n, INT64 = 9223372036854775807n, UINT64 = 18446744073709551615n
+const MIB = 1048576n, INT64 = 9223372036854775807n, UINT64 = 18446744073709551615n, SECOND = 1_000_000_000n
 /** Input unit suffix of a field. */
 export function fieldUnit(key: FieldKey): string | undefined {
-  if (isNanos(key) || key === "completionMarginMS") return "ms"
+  if (isNanos(key)) return "초"
+  if (key === "completionMarginMS") return "ms"
   if (key === "servingMemoryBytes") return "MiB"
   return settingFields.find(field => field.key === key)?.unit
 }
@@ -30,9 +32,21 @@ export function fieldInput(key: FieldKey, settings: SchedulerSettings): string |
   const value = settings[key] ?? field.defaultValue
   if (field.kind === "boolean") return Boolean(value)
   if (value === undefined) return ""
-  if (isNanos(key)) return nanosToMilliseconds(value as number | bigint)
+  if (isNanos(key)) return nanosToSeconds(BigInt(value as number | bigint))
   if (key === "servingMemoryBytes") return mib(BigInt(value as number | bigint))
   return String(value)
+}
+/** Exact seconds text of a nanosecond value: 10000000000 → "10", 500000000 → "0.5". */
+function nanosToSeconds(nanos: bigint): string {
+  const fraction = (nanos % SECOND).toString().padStart(9, "0").replace(/0+$/, "")
+  return `${nanos / SECOND}${fraction ? `.${fraction}` : ""}`
+}
+function secondsToNanos(text: string): bigint {
+  const match = /^(\d+)(?:\.(\d{1,9}))?$/.exec(text)
+  if (!match) throw new Error("form")
+  const nanos = BigInt(match[1]) * SECOND + BigInt((match[2] ?? "").padEnd(9, "0"))
+  if (nanos < 1n || nanos > INT64) throw new Error("form")
+  return nanos
 }
 function mib(bytes: bigint): string {
   if (bytes % MIB === 0n) return String(bytes / MIB)
@@ -60,7 +74,7 @@ export function parseField(key: FieldKey, text: string): bigint | number | strin
   const value = text.trim()
   if (!value) throw new Error("값 필요")
   try {
-    if (isNanos(key)) return millisecondsToNanos(value, 1n)
+    if (isNanos(key)) return secondsToNanos(value)
     if (key === "completionMarginMS") return marginMilliseconds(value)
     if (key === "servingMemoryBytes") return mibBytes(value)
     if (key === "transitionReserveFraction" || key === "scaleDownHeadroomFraction") return fraction(value, false)
@@ -69,7 +83,7 @@ export function parseField(key: FieldKey, text: string): bigint | number | strin
     return wireInteger(value, key === "planPolishActive" ? 0n : 1n, INT64)
   } catch (error) {
     if (error instanceof Error && ["0 초과 1 이하", "0 이상 1 이하", "알 수 없는 값", "바이트 단위로 나누어떨어지지 않음", "범위 초과", "숫자로 입력"].includes(error.message)) throw error
-    throw new Error(isNanos(key) ? "0 초과, 소수 6자리까지" : key === "completionMarginMS" ? "0 이상 숫자" : key === "planPolishActive" ? "0 이상 정수" : "1 이상 정수")
+    throw new Error(isNanos(key) ? "0 초과, 소수 9자리까지" : key === "completionMarginMS" ? "0 이상 숫자" : key === "planPolishActive" ? "0 이상 정수" : "1 이상 정수")
   }
 }
 
@@ -130,6 +144,7 @@ export function fieldText(key: FieldKey, settings: SchedulerSettings): string {
   if (typeof input === "boolean") return input ? "켜짐" : "꺼짐"
   if (key === "planSearchStrategy") return schedulerLabel(input || undefined)
   if (!input) return "—"
+  if (isNanos(key)) return formatDurationNanos((settings[key] ?? settingFields.find(field => field.key === key)!.defaultValue) as number | bigint)
   const [whole, part] = input.split(".")
   const grouped = /^\d+$/.test(whole) ? BigInt(whole).toLocaleString("ko-KR") : whole
   const unit = fieldUnit(key)

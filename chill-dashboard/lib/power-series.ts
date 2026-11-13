@@ -32,28 +32,28 @@ function record(value:unknown):value is Record<string,unknown> {return !!value&&
 export function parsePowerSeriesJSON(text:string):OperatingPowerSeries {
   const wire=parseSchedulerJSON(text)
   if(!record(wire)||wire.format!=="columns"||typeof wire.from!=="string"||typeof wire.to!=="string"||
-    (typeof wire.bucketNanos!=="number"&&typeof wire.bucketNanos!=="bigint")||!record(wire.windows)||!record(wire.nodes))throw new Error("전력 형식 불일치: columns 응답이 필요해요.")
+    (typeof wire.bucketNanos!=="number"&&typeof wire.bucketNanos!=="bigint")||!record(wire.windows)||!record(wire.nodes))throw new Error("전력 형식 불일치: columns 응답 필요")
   const {from,to,bucketNanos,windows,nodes}=wire,start=timestampNanos(from),end=timestampNanos(to),width=BigInt(bucketNanos)
-  if(start===null||end===null||end<=start||width<=0n||!Array.isArray(windows.scope))throw new Error("전력 구간이 올바르지 않아요.")
+  if(start===null||end===null||end<=start||width<=0n||!Array.isArray(windows.scope))throw new Error("전력 구간 오류")
   const count=windows.scope.length
   const windowColumns=windowKeys.map(key=> {
     const values=windows[key]
-    if(!Array.isArray(values)||values.length!==count)throw new Error("전력 구간 열 길이가 일치하지 않아요.")
+    if(!Array.isArray(values)||values.length!==count)throw new Error("전력 구간 열 길이 불일치")
     return {key,values}
   })
   const nodeColumns=nodeKeys.map(key=>{
     const values=nodes[key]
-    if(!Array.isArray(values)||values.length!==count)throw new Error("전력 장치 열 길이가 일치하지 않아요.")
+    if(!Array.isArray(values)||values.length!==count)throw new Error("전력 장치 열 길이 불일치")
     return {key,values}
   })
   const aligned=start-start%width
   const buckets=Array.from({length:count},(_,index)=>{
     const left=aligned+BigInt(index)*width,right=left+width,identities=nodeColumns[0].values[index]
-    if(identities!==null&&!Array.isArray(identities))throw new Error("전력 장치 열이 올바르지 않아요.")
+    if(identities!==null&&!Array.isArray(identities))throw new Error("전력 장치 열 오류")
     const length=identities?.length??0
     for(const column of nodeColumns) {
       const values=column.values[index]
-      if(identities===null?values!==null:!Array.isArray(values)||values.length!==length)throw new Error("전력 장치 열 길이가 일치하지 않아요.")
+      if(identities===null?values!==null:!Array.isArray(values)||values.length!==length)throw new Error("전력 장치 열 길이 불일치")
     }
     const restoredNodes=identities===null?null:Array.from({length},(_,nodeIndex)=>Object.fromEntries(nodeColumns.flatMap(({key,values})=>{
       const value=values[index][nodeIndex]

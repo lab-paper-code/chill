@@ -96,6 +96,15 @@ export function decisionHeadline(decision: SchedulerDecision): { reasons: string
   const saving = savingJoules(decision)
   return saving != null && saving > 0 ? { text: `예상 에너지 ${formatNumber(saving, 1)} J 절감` } : null
 }
+/**
+ * decisionHeadline as far as a summary row carries it: the reason codes, or the keep branches when the row says the target is the keep plan.
+ * A change needs the full record (keep status, expected energy), so it gives null; the list never fetches records per row.
+ */
+export function summaryHeadline(decision: NonNullable<DecisionRow["decision"]>): { reasons: string[] } | { text: string } | null {
+  if (decision.reasons?.length) return { reasons: decision.reasons }
+  if (decision.targetKeep !== true) return null
+  return decision.workloads?.length && decision.workloads.every(w => w.state !== "Controlled") ? { text: "자동 제어 서비스 없음" } : { text: "더 나은 후보 없음" }
+}
 /** Keep minus change expected energy, in J; null without a change or either value. */
 export function savingJoules(decision: SchedulerDecision): number | null {
   const target = changedTarget(decision), keep = decision.keep.expectedJoules

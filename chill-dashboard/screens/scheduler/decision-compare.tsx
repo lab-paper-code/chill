@@ -2,7 +2,7 @@
 
 import { useChillQuery } from "@/lib/client"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { formatKst, formatNumber } from "@/lib/format"
+import { formatListTime, formatNumber } from "@/lib/format"
 import { decisionStatus } from "@/lib/status-labels"
 import { compareRows, decisionRecordPath, type CompareRow } from "@/lib/scheduler-decisions"
 import type { SchedulerObservation, SchedulerObservationPage } from "@/lib/read-types"
@@ -41,8 +41,8 @@ function Table({ a, b, names }: { a: SchedulerObservation; b: SchedulerObservati
     <div className="max-h-[65dvh] overflow-y-auto">
       <DataTable<CompareRow> label="판단 비교" rows={rows} rowKey={row => row.key} pageSize={0} columns={[
         { key: "label", header: "항목", width: "40%", cell: row => row.unit ? `${row.label} (${row.unit})` : row.label },
-        { key: "a", header: `A ${formatKst(a.at).slice(5)}`, numeric: true, missingReason: "기록 없음", cell: row => show(row.a, row.digits) },
-        { key: "b", header: `B ${formatKst(b.at).slice(5)}`, numeric: true, missingReason: "기록 없음", cell: row => show(row.b, row.digits) },
+        { key: "a", header: `A ${formatListTime(a.at)}`, numeric: true, missingReason: "기록 없음", cell: row => show(row.a, row.digits) },
+        { key: "b", header: `B ${formatListTime(b.at)}`, numeric: true, missingReason: "기록 없음", cell: row => show(row.b, row.digits) },
         {
           key: "diff", header: "차이", numeric: true, missingReason: "비교할 값 없음",
           cell: row => {

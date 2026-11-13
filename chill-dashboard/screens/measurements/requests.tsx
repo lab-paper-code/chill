@@ -8,8 +8,8 @@ import { Button, buttonClassName, DataTable, EmptyState, FilterBar, Hint, Page, 
 import { useSession } from "@/lib/client"
 import { useMeasurementPlans } from "@/hooks/use-measurement-data"
 import { sectionTabs } from "@/lib/routes"
-import { deviceLabel } from "@/lib/measurement-coverage"
-import { pathLabel, requestPhase } from "@/lib/measurements-coverage-matrix"
+import { deviceClassLabel, executionPathLabel, powerModeLabel } from "@/lib/display-labels"
+import { requestPhase } from "@/lib/measurements-coverage-matrix"
 import type { MeasurementPlan } from "@/lib/read-types"
 
 const statuses = ["all", "Measuring", "Complete", "Failed"] as const
@@ -27,11 +27,11 @@ const conditionValue = (plan: MeasurementPlan, key: (typeof CONDITION_KEYS)[numb
 const columns: Column<MeasurementPlan>[] = [
   { key: "name", header: "요청", cell: p => p.metadata.name, sortValue: p => p.metadata.name, width: "28%" },
   { key: "model", header: "모델", cell: p => condition(p).modelSpec, sortValue: p => condition(p).modelSpec },
-  { key: "device", header: "장치와 전력 모드", cell: p => `${deviceLabel(condition(p).deviceClass)} ${condition(p).powerMode}`, sortValue: p => `${condition(p).deviceClass} ${condition(p).powerMode}` },
-  { key: "path", header: "실행 경로", cell: p => pathLabel(condition(p).executionPath), sortValue: p => pathLabel(condition(p).executionPath) },
+  { key: "device", header: "장치와 전력 모드", cell: p => `${deviceClassLabel(condition(p).deviceClass)} ${powerModeLabel(condition(p).powerMode)}`, sortValue: p => `${condition(p).deviceClass} ${condition(p).powerMode}` },
+  { key: "path", header: "실행 경로", cell: p => executionPathLabel(condition(p).executionPath), sortValue: p => executionPathLabel(condition(p).executionPath) },
   { key: "status", header: "상태", cell: p => <StatusBadge status={requestPhase(p.status?.phase)} />, sortValue: p => requestPhase(p.status?.phase).label, width: "7rem" },
   { key: "trials", header: "완료 회차", unit: "개", numeric: true, cell: p => p.status?.completedTrials, sortValue: p => p.status?.completedTrials, missingReason: "아직 집계되지 않음", width: "8rem" },
-  { key: "created", header: "생성", cell: p => <TimeText at={p.metadata.creationTimestamp} mode="absolute" seconds={false} />, sortValue: p => Date.parse(p.metadata.creationTimestamp), width: "10rem" },
+  { key: "created", header: "생성", cell: p => <TimeText at={p.metadata.creationTimestamp} mode="list" />, sortValue: p => Date.parse(p.metadata.creationTimestamp), width: "10rem" },
 ]
 
 export function MeasurementRequestsScreen() {
@@ -52,8 +52,8 @@ export function MeasurementRequestsScreen() {
     replace(next)
   }
   const clearCondition = () => { const next = new URLSearchParams(params.toString()); CONDITION_KEYS.forEach(key => next.delete(key)); replace(next) }
-  const create = <Link href="/measurements/requests/new" className={buttonClassName({ variant: "default" })}>측정 요청</Link>
-  const conditionLabel = given.map(([key, value]) => key === "deviceClass" ? deviceLabel(value) : key === "path" ? pathLabel(value) : value).join(", ")
+  const create = <Link href="/measurements/requests/new" className={buttonClassName({ variant: "default" })}>새 측정 요청</Link>
+  const conditionLabel = given.map(([key, value]) => key === "deviceClass" ? deviceClassLabel(value) : key === "path" ? executionPathLabel(value) : key === "powerMode" ? powerModeLabel(value) : value).join(", ")
 
   return (
     <Page>

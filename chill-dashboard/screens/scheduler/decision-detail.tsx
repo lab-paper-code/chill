@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useChillQuery } from "@/lib/client"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { schedulerLabel, schedulerOptions } from "@/lib/scheduler-selection"
-import { formatDurationNanos, formatKst, formatNumber } from "@/lib/format"
+import { formatDetailTime, formatDurationNanos, formatKst, formatNumber, msNumber, rateNumber } from "@/lib/format"
 import { autonomyState, candidateStatus, decisionStatus, schedulerReason } from "@/lib/status-labels"
 import { actionKindLabel } from "@/lib/scheduler-actions"
 import {
@@ -89,7 +89,7 @@ function Summary({ decision, name }: { decision: SchedulerDecision; name: Names 
   if (target) plans.push({ label: "변경안", plan: target, diff: saving == null ? null : -saving })
   const actions = (target?.actions ?? []) as PlannedAction[]
   return (
-    <Section card title={formatKst(decision.at)} actions={<>
+    <Section card title={formatDetailTime(decision.at)} actions={<>
       <Link href={`/scheduler/actions?at=${encodeURIComponent(decision.at)}`} className={buttonClassName({ variant: "ghost", size: "sm" })}>작업 보기</Link>
       <StatusBadge status={decisionStatus(recordResult(decision))} />
     </>}>
@@ -124,9 +124,9 @@ function Latency({ decision, name }: { decision: SchedulerDecision; name: Names 
   const columns: Column<LatencyRow>[] = [
     { key: "service", header: "서비스", width: "34%", cell: row => <Service uid={row.uid} name={name} /> },
     { key: "percentile", header: "분위수", cell: row => row.percentile == null ? null : `p${row.percentile}` },
-    { key: "target", header: "목표", unit: "ms", numeric: true, cell: row => formatNumber(row.targetMs, 1) },
-    { key: "keep", header: "유지안", unit: "ms", numeric: true, missingReason: "예측 불가", cell: row => row.keepMs == null ? null : formatNumber(row.keepMs, 1) },
-    ...(target ? [{ key: "change", header: "변경안", unit: "ms", numeric: true, missingReason: "예측 불가", cell: (row: LatencyRow) => row.changeMs == null ? null : formatNumber(row.changeMs, 1) }] : []),
+    { key: "target", header: "목표", unit: "ms", numeric: true, cell: row => msNumber(row.targetMs) },
+    { key: "keep", header: "유지안", unit: "ms", numeric: true, missingReason: "예측 불가", cell: row => row.keepMs == null ? null : msNumber(row.keepMs) },
+    ...(target ? [{ key: "change", header: "변경안", unit: "ms", numeric: true, missingReason: "예측 불가", cell: (row: LatencyRow) => row.changeMs == null ? null : msNumber(row.changeMs) }] : []),
   ]
   return (
     <DataTable title="서비스별 예상 지연" label="서비스별 예상 지연" rows={latency} rowKey={row => row.uid} pageSize={0} columns={columns}
@@ -157,7 +157,7 @@ function Inputs({ decision, name }: { decision: SchedulerDecision; name: Names }
           { key: "received", header: "받은 요청", unit: "건", numeric: true, cell: item => item.received == null ? null : formatNumber(item.received) },
           { key: "accepted", header: "접수", unit: "건", numeric: true, cell: item => item.accepted == null ? null : formatNumber(item.accepted) },
           { key: "inputs", header: "입력률", unit: "개/s", numeric: true, cell: item => item.inputs == null ? null : formatNumber(item.inputs, 2) },
-          { key: "planned", header: "계획 수요", unit: "req/s", numeric: true, missingReason: "용량 계산 없음", cell: item => item.planned == null ? null : formatNumber(item.planned, 2) },
+          { key: "planned", header: "계획 수요", unit: "req/s", numeric: true, missingReason: "용량 계산 없음", cell: item => item.planned == null ? null : rateNumber(item.planned) },
         ]} />
       </div>
     </Section>

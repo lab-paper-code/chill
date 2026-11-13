@@ -9,7 +9,7 @@ import {
 } from "@/components/kit"
 import { useChillQuery, useSession } from "@/lib/client"
 import type { WorkloadView } from "@/lib/domain"
-import { formatKst, formatMs, formatNumber } from "@/lib/format"
+import { formatKst, formatMs, formatNumber, msNumber } from "@/lib/format"
 import type { ObservationResult, RequestRow } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { nanosToMs, outcomeCodes, requestMs, outcomeLabel, requestError, requestMarks, requestResult } from "@/lib/services-records"
@@ -119,7 +119,7 @@ function Summary({ result }: { result: ObservationResult }) {
             key={cohort.definition} label={`${result.cohorts.length > 1 ? `정의 ${index + 1} ` : ""}지연 p${cohort.percentile ?? "—"}`}
             value={quantile == null ? null : formatNumber(quantile, 0)} unit="ms" reason="완료된 요청 표본 없음"
             info="완료된 요청만으로 서버가 집계한 분위수"
-            sub={<span className="inline-flex items-center gap-2">{target != null && <>목표 {formatMs(target, 0)}{quantile != null && <HeadroomBar observed={quantile} target={target} />}</>} 표본 {formatNumber(cohort.sampleCount)}</span>}
+            sub={<span className="inline-flex items-center gap-2">{target != null && <>목표 {formatMs(target)}{quantile != null && <HeadroomBar observed={quantile} target={target} />}</>} 표본 {formatNumber(cohort.sampleCount)}</span>}
           />
         )
       })}
@@ -129,9 +129,9 @@ function Summary({ result }: { result: ObservationResult }) {
 }
 
 const columns: Column<RequestRow>[] = [
-  { key: "at", header: "시각", cell: row => <TimeText at={row.receivedAt} mode="absolute" />, csv: row => row.receivedAt, width: "11rem" },
+  { key: "at", header: "시각", cell: row => <TimeText at={row.receivedAt} mode="list" />, csv: row => row.receivedAt, width: "11rem" },
   { key: "result", header: "결과", cell: row => <StatusBadge status={requestResult(row)} />, csv: row => requestResult(row).label },
-  { key: "elapsed", header: "소요 시간", unit: "ms", numeric: true, cell: row => (row.elapsedNanos === undefined ? null : formatNumber(nanosToMs(row.elapsedNanos), 1)), csv: row => nanosToMs(row.elapsedNanos), missingReason: "아직 끝나지 않음" },
+  { key: "elapsed", header: "소요 시간", unit: "ms", numeric: true, cell: row => (row.elapsedNanos === undefined ? null : msNumber(nanosToMs(row.elapsedNanos))), csv: row => nanosToMs(row.elapsedNanos), missingReason: "아직 끝나지 않음" },
   { key: "node", header: "장치", cell: row => row.node?.name, csv: row => row.node?.name, missingReason: "배정 전" },
   { key: "batch", header: "배치", numeric: true, cell: row => row.batchSize, csv: row => row.batchSize, missingReason: "실행 기록 없음" },
 ]
@@ -152,7 +152,7 @@ function RequestDrawer({ row, result, onClose }: { row: RequestRow | null; resul
         {current && (
           <div className="grid gap-5">
             <Fields columns={2} items={[
-              { label: "시각", value: <TimeText at={current.receivedAt} mode="absolute" /> },
+              { label: "시각", value: <TimeText at={current.receivedAt} mode="detail" /> },
               { label: "소요 시간", value: current.elapsedNanos === undefined ? null : requestMs(current.elapsedNanos), reason: "아직 끝나지 않음" },
               { label: "장치", value: current.node?.name, reason: "배정 전" },
               { label: "배치", value: current.batchSize, reason: "실행 기록 없음" },

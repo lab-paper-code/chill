@@ -39,7 +39,7 @@ export async function relay(path:string,token:string,signal:AbortSignal,method="
     response = await fetch(`/api/chill/${path}`,{method,signal,cache:"no-store",credentials:"omit",headers:{Authorization:`Bearer ${token}`,...(body === undefined ? {} : {"Content-Type":"application/json"}),...(version ? {"If-Match":version} : {}),...(timeout ? {"X-Chill-Request-Timeout":timeout} : {})},body:body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body)})
     text = await response.text()
   } catch (error) {
-    throw Object.assign(new ApiError(response?.status ?? 0,"응답 본문 미수신, 원본 상태를 조회한 뒤 명시적으로 재제출하세요",null,method !== "GET" && !path.endsWith("/preflight") && !path.endsWith("?dryRun=All"),response?.headers.get("X-Chill-Request-ID") ?? null,response?.headers.get("X-Chill-Workload-UID") ?? null,response?.headers.get("X-Chill-Relay-Timing") ?? null,performance.now()-started),{requestPath:new URL(path,"https://dashboard.invalid/").pathname,originalError:error instanceof Error?{name:error.name,message:token?error.message.replaceAll(token,"[redacted]"):error.message}:undefined})
+    throw Object.assign(new ApiError(response?.status ?? 0,"응답 본문 미수신, 원본 상태 확인 후 다시 제출",null,method !== "GET" && !path.endsWith("/preflight") && !path.endsWith("?dryRun=All"),response?.headers.get("X-Chill-Request-ID") ?? null,response?.headers.get("X-Chill-Workload-UID") ?? null,response?.headers.get("X-Chill-Relay-Timing") ?? null,performance.now()-started),{requestPath:new URL(path,"https://dashboard.invalid/").pathname,originalError:error instanceof Error?{name:error.name,message:token?error.message.replaceAll(token,"[redacted]"):error.message}:undefined})
   }
   const browserRTT = performance.now()-started
   let data:unknown = text

@@ -53,7 +53,7 @@ export function reasonText(code: string | null | undefined): string | undefined 
   return reason.code ? `코드 ${reason.code}` : reason.label
 }
 
-export const injectionActions: Record<string, string> = { "delete-serving-pod": "서비스 파드 삭제", "cordon-delete": "노드 차단 후 파드 삭제", uncordon: "노드 차단 해제" }
+export const injectionActions: Record<string, string> = { "delete-serving-pod": "서비스 파드 삭제", "cordon-delete": "장치 차단 후 파드 삭제", uncordon: "장치 차단 해제" }
 
 // Step strip ---------------------------------------------------------------
 

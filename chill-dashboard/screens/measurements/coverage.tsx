@@ -5,7 +5,7 @@ import Link from "next/link"
 import { sectionTabs } from "@/lib/routes"
 import { useSession } from "@/lib/client"
 import { formatNumber } from "@/lib/format"
-import { deviceLabel } from "@/lib/measurement-coverage"
+import { deviceClassLabel } from "@/lib/display-labels"
 import { measurementStatus } from "@/lib/status-labels"
 import type { MeasurementCoverageSummaryResponse as Coverage } from "@/lib/read-types"
 import { useMeasurementCoverage } from "@/hooks/use-measurement-data"
@@ -31,7 +31,7 @@ export function CoverageScreen() {
         badges={data && <Basis data={data} />}
         actions={<>
           {data && data.nextActions.length > 0 && <Button variant="outline" onClick={() => set({ actions: "1", cell: null })}>다음 조치 {data.nextActions.length}</Button>}
-          <Link href="/measurements/requests/new" className={buttonClassName({ variant: "default" })}>측정 요청</Link>
+          <Link href="/measurements/requests/new" className={buttonClassName({ variant: "default" })}>새 측정 요청</Link>
         </>}
       />
       <PageTabs tabs={sectionTabs.measurements} />
@@ -46,7 +46,7 @@ function Basis({ data }: { data: Coverage }) {
   const failed = data.sources.filter(source => source.error || !source.complete).map(source => source.kind)
   return (
     <>
-      <span className="text-sm text-muted-foreground">기준 <TimeText at={data.dataAsOf} /></span>
+      <span className="text-sm text-muted-foreground">기준 <TimeText at={data.dataAsOf} mode="relative" /></span>
       {data.freshness === "stale" && <StatusBadge tone="warn" label="오래된 관측" />}
       {(data.completeness === "partial" || failed.length > 0) && <StatusBadge tone="warn" label="일부 조회 실패" reason={failed.join(", ") || undefined} />}
     </>
@@ -70,7 +70,7 @@ function CoverageBody({ data, search, set, namespace }: {
   const returnTo = `/measurements/coverage?${search}`
   const pickModel = (value: string) => set({ model: value, deviceClass: null, cell: null })
   const filters = [
-    filterChoice("장치 종류", deviceClass, classes, value => set({ deviceClass: value }), deviceLabel),
+    filterChoice("장치 종류", deviceClass, classes, value => set({ deviceClass: value }), deviceClassLabel),
     filterChoice("상태", status, STATUSES, value => set({ status: value }), code => measurementStatus(code).label),
   ]
   return (
@@ -78,7 +78,7 @@ function CoverageBody({ data, search, set, namespace }: {
       <StatRow>
         <StatTile label="지원 조합" value={count(summary.supportedCellCount)} reason="서버 미제공" />
         <StatTile label="측정 완료" value={count(summary.completeCellCount)} reason="서버 미제공"
-          sub={summary.countsByDisplayStatus.running ? `진행 ${formatNumber(summary.countsByDisplayStatus.running)}` : undefined} />
+          sub={summary.countsByDisplayStatus.running ? `측정 중 ${formatNumber(summary.countsByDisplayStatus.running)}` : undefined} />
         <StatTile label="기준 충족" value={count(summary.criteriaMetCellCount)} reason="서버 미제공" />
         <StatTile label="실패" value={count(summary.failedCellCount)} reason="서버 미제공" />
       </StatRow>

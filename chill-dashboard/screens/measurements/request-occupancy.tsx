@@ -10,9 +10,11 @@ import { decodeResponse } from "@/lib/client-transport"
 import type { WorkloadSummary } from "@/lib/domain"
 import type { InventoryView, MeasurementCoverageSummaryResponse, MeasurementPlan, MeasurementProjectionList, OccupancyMutation, OccupancyRequest, OccupancyTask } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { coverageProgress, deviceLabel, type CoverageModel } from "@/lib/measurement-coverage"
+import { coverageProgress, type CoverageModel } from "@/lib/measurement-coverage"
+import { deviceClassLabel, executionPathLabel, powerModeLabel } from "@/lib/display-labels"
+import { formatSeconds } from "@/lib/format"
 import { occupancyBody, occupancyChecked, occupancyResponseState, occupancyResultHref } from "@/lib/dispatch-occupancy"
-import { nameIssue, pathLabel } from "@/lib/measurements-request-form"
+import { nameIssue } from "@/lib/measurements-request-form"
 import { useCoverageInventory, useMeasurementCoverage, useMeasurementPlans } from "@/hooks/use-measurement-data"
 import { UnknownOutcome, allLoaded, lostResponse, suffix, useSubmitToast } from "./request-shared"
 
@@ -115,7 +117,7 @@ function OccupancyForm({ namespace, bar, onDirty, plans, workloads, inventory, c
   const label = (item: MeasurementPlan) => {
     const c = item.spec.state.candidate
     const itemModel = inventory.models.find(entry => entry.name === c.modelSpec) as CoverageModel | undefined
-    return `${c.modelSpec} / ${deviceLabel(c.deviceClass)} ${c.powerMode} / ${pathLabel(itemModel, c.executionPath)} / ${item.spec.state.targetNode}`
+    return `${c.modelSpec} / ${deviceClassLabel(c.deviceClass)} ${powerModeLabel(c.powerMode)} / ${executionPathLabel(c.executionPath, itemModel)} / ${item.spec.state.targetNode}`
   }
   const measured = cell ? coverageProgress(cell)?.measured ?? [] : []
   const dryCode = (dry.error?.data as { code?: string } | null | undefined)?.code
@@ -166,7 +168,7 @@ function OccupancyForm({ namespace, bar, onDirty, plans, workloads, inventory, c
 }
 
 const supplyModes: Record<string, string> = { "closed-loop": "닫힌 루프", "short-burst": "짧은 버스트" }
-const seconds = (value?: number) => value == null ? null : `${value} s`
+const seconds = (value?: number) => value == null ? null : formatSeconds(value)
 
 /** The server-frozen protocol of a checked request; read-only. */
 function protocolFields(task: OccupancyTask): FieldItem[] {

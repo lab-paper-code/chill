@@ -2,7 +2,8 @@
 
 import { DataTable, EmptyState, MeterBar, Page, PageHeader, QueryBoundary, Section, StatRow, StatTile, StatusDot, TimeRange, useTimeRangeParam, type Column } from "@/components/kit"
 import { deviceRole, energyParts, readiness } from "@/lib/devices-view"
-import { formatNumber, formatWatts } from "@/lib/format"
+import { formatNumber, formatWatts, wattsNumber } from "@/lib/format"
+import { deviceClassLabel, powerModeLabel } from "@/lib/display-labels"
 import type { PowerPoint } from "@/lib/power-series"
 import { devicePowerScale, type DeviceRow } from "@/lib/resources-data"
 import { PowerChart, useDevices, usePower } from "./data"
@@ -23,20 +24,20 @@ export function DeviceListScreen() {
 
   const columns: Column<DeviceRow>[] = [
     { key: "name", header: "장치", cell: row => row.name, sortValue: row => row.name, width: "13%" },
-    { key: "class", header: "종류", cell: row => row.classes[0]?.name, sortValue: row => row.classes[0]?.name, missingReason: "장비 사양 없음", width: "19%" },
+    { key: "class", header: "종류", cell: row => row.classes[0] && deviceClassLabel(row.classes[0].name), sortValue: row => row.classes[0]?.name, missingReason: "장비 사양 없음", width: "19%" },
     {
       key: "role", header: "역할",
       cell: row => { const role = deviceRole(row.roles, excluded.has(row.name)); return role && <StatusDot status={role} showLabel /> },
       sortValue: row => deviceRole(row.roles, excluded.has(row.name))?.label, missingReason: pools.error ? "배치 조회 실패" : "역할 없음",
     },
     { key: "ready", header: "준비", cell: row => { const ready = readiness(row.ready); return ready && <StatusDot status={ready} showLabel /> }, sortValue: row => readiness(row.ready)?.label, missingReason: "준비 상태 미확인" },
-    { key: "mode", header: "전력 모드", cell: row => row.powerMode || null, sortValue: row => row.powerMode, missingReason: "전력 모드 미확인" },
+    { key: "mode", header: "전력 모드", cell: row => row.powerMode ? powerModeLabel(row.powerMode) : null, sortValue: row => row.powerMode, missingReason: "전력 모드 미확인" },
     {
       key: "watts", header: "전력", unit: "W", numeric: true, width: "9rem",
       cell: row => row.watts == null ? null : (
         <span className="inline-flex items-center gap-2">
-          <MeterBar value={row.watts} max={scale} label={`전력 ${formatNumber(row.watts, 1)} W`} className="w-12" />
-          {formatNumber(row.watts, 1)}
+          <MeterBar value={row.watts} max={scale} label={`전력 ${formatWatts(row.watts)}`} className="w-12" />
+          {wattsNumber(row.watts)}
         </span>
       ),
       sortValue: row => row.watts, missingReason: "전력 미관측",
@@ -52,8 +53,8 @@ export function DeviceListScreen() {
     <Page>
       <PageHeader title="장치" />
       <StatRow columns={4}>
-        <StatTile label="전체 풀" value={pool?.wholeWatts == null ? null : formatNumber(pool.wholeWatts, 1)} unit="W" reason={waiting} />
-        <StatTile label="활성 풀" value={pool?.activeWatts == null ? null : formatNumber(pool.activeWatts, 1)} unit="W" reason={waiting} />
+        <StatTile label="전체 풀" value={pool?.wholeWatts == null ? null : wattsNumber(pool.wholeWatts)} unit="W" reason={waiting} />
+        <StatTile label="활성 풀" value={pool?.activeWatts == null ? null : wattsNumber(pool.activeWatts)} unit="W" reason={waiting} />
         <StatTile
           label="구간 에너지" value={energy.value == null ? null : formatNumber(energy.value, 1)} unit={energy.unit}
           sub={total?.wholePoolMeanWatts == null ? undefined : `평균 ${formatWatts(total.wholePoolMeanWatts)}`}

@@ -8,9 +8,8 @@ import { Button, ConfirmDialog, DataTable, Dialog, EmptyState, Fields, FilterBar
 import { Textarea } from "@/components/ui/textarea"
 import { useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import { ApiError } from "@/lib/client-transport"
-import { explain } from "@/lib/labels"
 import { formatDurationNanos } from "@/lib/format"
-import { evaluationPhase, experimentVerdict } from "@/lib/status-labels"
+import { errorCodeLabel, evaluationPhase, experimentVerdict } from "@/lib/status-labels"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import type { InventoryView, SchedulerSettings } from "@/lib/read-types"
 import type { WorkloadSummary } from "@/lib/domain"
@@ -161,8 +160,8 @@ function RunPicker() {
             { key: "name", header: "이름", width: "40%", cell: run => run.name, sortValue: run => run.name },
             { key: "phase", header: "상태", cell: run => <StatusDot status={evaluationPhase(run.phase)} showLabel /> },
             { key: "stages", header: "단계", numeric: true, cell: run => records(run.spec.stages).length, sortValue: run => records(run.spec.stages).length },
-            { key: "started", header: "시작", cell: run => run.startedAt ? <TimeText at={run.startedAt} mode="absolute" /> : null, sortValue: run => run.startedAt ?? "", missingReason: "시작 전" },
-            { key: "finished", header: "종료", cell: run => run.finishedAt ? <TimeText at={run.finishedAt} mode="absolute" /> : null, sortValue: run => run.finishedAt ?? "", missingReason: "종료 전" },
+            { key: "started", header: "시작", cell: run => run.startedAt ? <TimeText at={run.startedAt} mode="list" /> : null, sortValue: run => run.startedAt ?? "", missingReason: "시작 전" },
+            { key: "finished", header: "종료", cell: run => run.finishedAt ? <TimeText at={run.finishedAt} mode="list" /> : null, sortValue: run => run.finishedAt ?? "", missingReason: "종료 전" },
           ]} />
       )}
     </QueryBoundary>
@@ -184,8 +183,8 @@ function PublicationPicker() {
           columns={[
             { key: "name", header: "실험", width: "40%", cell: item => item.facts?.name ?? item.definition?.run.name ?? null, missingReason: "이름 미기록" },
             { key: "stages", header: "단계", numeric: true, cell: item => item.stages.length },
-            { key: "from", header: "시작", cell: item => <TimeText at={item.from} mode="absolute" /> },
-            { key: "to", header: "종료", cell: item => <TimeText at={item.to} mode="absolute" /> },
+            { key: "from", header: "시작", cell: item => <TimeText at={item.from} mode="list" /> },
+            { key: "to", header: "종료", cell: item => <TimeText at={item.to} mode="list" /> },
             { key: "verdict", header: "판정", cell: item => item.outcome?.measurement?.verdict ? <StatusDot status={experimentVerdict(item.outcome.measurement.verdict)} showLabel /> : null, missingReason: "판정 없음" },
           ]} />
       )}
@@ -306,7 +305,7 @@ function Editor({ title, source, missing = [] }: { title: string; source: Source
       if (error.unknownOutcome || error.status === 0) { setUnknown(true); toast({ title: "결과 미확인", type: "warning" }); return }
       const code = (error.data as { code?: unknown } | null)?.code
       if (existing && error.status === 409) { setBlocked(true); toast({ title: "이미 시작되어 수정 불가", type: "error" }); return }
-      toast({ title: existing ? "저장 실패" : "시작 실패", description: typeof code === "string" ? explain(code)[0] : `HTTP ${error.status}`, type: "error" })
+      toast({ title: existing ? "저장 실패" : "시작 실패", description: typeof code === "string" ? errorCodeLabel(code) : `HTTP ${error.status}`, type: "error" })
     }
   }
 

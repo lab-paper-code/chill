@@ -13,7 +13,8 @@ import type { WorkloadView } from "@/lib/domain"
 import type { SchedulerSettings } from "@/lib/read-types"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { writableSettingKeys } from "@/lib/scheduler-settings"
-import { admissionStatus, autonomyEnabled, serviceReadiness } from "@/lib/status-labels"
+import { admissionStatus, autonomyEnabled, errorCodeLabel, serviceReadiness, sloVerdict } from "@/lib/status-labels"
+import { useLive } from "@/lib/use-live"
 import { ServiceDefinitionTab } from "./detail-definition"
 import { ServiceRequestsTab } from "./detail-requests"
 import { ServiceStatusTab } from "./detail-status"
@@ -45,6 +46,8 @@ export function ServiceDetailScreen({ name }: { name: string }) {
   const [autonomy, setAutonomy] = React.useState<{ next: boolean; base: SchedulerSettings; version: string } | null>(null)
   const [deleting, setDeleting] = React.useState(false)
   const [raw, setRaw] = React.useState(false)
+  // Readiness is the registration's state; a missed live latency window is the operating problem 개요 shows, added beside it.
+  const latestLive = useLive().state.metrics.at(-1)
 
   if (gone && urlUID) {
     const props = { name, uid: urlUID, workload: undefined }
@@ -68,7 +71,8 @@ export function ServiceDetailScreen({ name }: { name: string }) {
   const autonomous = !!current && !!settings.data?.autonomousWorkloads?.includes(current)
   const settingsDenied = !!settings.error && [401, 403].includes(settings.error.status)
   const switchHint = settingsDenied ? "권한 없음" : settings.error && !settings.data ? "설정 조회 실패" : wrongUID ? "다른 등록" : undefined
-  const reason = workload && workload.reason !== workload.readiness ? serviceReadiness(workload.reason) : undefined
+  const reason = workload && workload.reason !== workload.readiness ? errorCodeLabel(workload.reason) : undefined
+  const missed = !!current && latestLive?.workloads[current]?.slo?.met === false
 
   async function askAutonomy(next: boolean) {
     const fresh = await settings.refetch()
@@ -110,7 +114,8 @@ export function ServiceDetailScreen({ name }: { name: string }) {
       <PageHeader
         title={name}
         badges={workload && <>
-          <StatusBadge status={serviceReadiness(workload.readiness)} reason={reason && (reason.code ? `코드 ${reason.code}` : reason.label)} />
+          <StatusBadge status={serviceReadiness(workload.readiness)} reason={reason} />
+          {missed && <StatusBadge status={sloVerdict(false)} reason="최근 관측 구간 지연이 목표 초과" />}
           <StatusBadge status={admissionStatus(workload.admission)} />
         </>}
         actions={<>

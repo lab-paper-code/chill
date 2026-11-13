@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { useChillMutation, type ChillMutationInput } from "@/lib/client"
 import type { ApiError, RelayResponse } from "@/lib/client-transport"
 import { formatNumber } from "@/lib/format"
-import { codeText, explain } from "@/lib/labels"
+import { codeMessage } from "@/lib/status-labels"
 import { routingShare } from "@/lib/live-display"
 import type { OperationResult } from "@/lib/read-types"
 import { actionStatus } from "@/lib/status-labels"
@@ -25,8 +25,8 @@ const MAX_WEIGHT = 2147483647
 export function failureToast(error: ApiError): { title: string; description?: string; type: "warning" | "error" } {
   if (error.unknownOutcome || error.status === 0) return { title: "결과 미확인", type: "warning" }
   const code = (error.data as { code?: unknown } | null)?.code
-  // A known code reads as its sentence; an unknown one stays out of the layout (원본 is in the response).
-  const description = typeof code === "string" && Object.hasOwn(codeText, code) ? explain(code)[0] : undefined
+  // A known code reads as its label; an unknown one stays out of the layout (원본 is in the response).
+  const description = typeof code === "string" ? codeMessage(code) : undefined
   if (error.status === 409) return { title: "다른 변경과 충돌", description: description ?? "최신 상태를 다시 읽음", type: "error" }
   if (error.status === 401 || error.status === 403) return { title: "권한 없음", description, type: "error" }
   return { title: "실패", description: description ?? `HTTP ${error.status}`, type: "error" }

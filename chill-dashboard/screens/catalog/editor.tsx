@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { catalogKinds, type CatalogKind } from "@/lib/routes"
 import { useChillQuery } from "@/lib/client"
-import { codeText } from "@/lib/labels"
+import { errorCodeLabel } from "@/lib/status-labels"
 import type { ModelList } from "@/lib/domain"
 import { blankDraft, diff, draftFrom, validate, type Draft } from "@/lib/catalog-editor"
 import { useResource, type ResourceState } from "@/hooks/use-catalog-resource"
@@ -52,7 +52,7 @@ function Editor({ kind, r, name, title }: { kind: CatalogKind; r: ResourceState;
   useEffect(() => {
     if (!error) return
     const code = (error.data as { code?: string } | null)?.code
-    toast({ title: error.unknownOutcome ? "결과 미확인" : "저장 실패", description: error.unknownOutcome ? "최신 상태를 확인하세요" : (code && codeText[code]?.[0]) || error.message, type: "error" })
+    toast({ title: error.unknownOutcome ? "결과 미확인" : "저장 실패", description: error.unknownOutcome ? "최신 상태 확인 필요" : code ? errorCodeLabel(code) : error.message, type: "error" })
   }, [error]) // eslint-disable-line react-hooks/exhaustive-deps -- once per failure
 
   if (!draft) return <Page><PageHeader title={title} /><EmptyState title="수정할 수 없는 형식" /></Page>

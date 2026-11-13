@@ -18,26 +18,58 @@ export function formatNumber(value: Num, digits = 0): string {
   return n == null ? DASH : n.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits })
 }
 
-/** Nanoseconds as "850 µs", "12.3 ms", then "55.8초" under a minute and "1분 28초" from one minute up. */
+/**
+ * Nanoseconds as "850 µs", "12.3 ms", "948 ms", then "55.8초" under a minute and "1분 28초" from one minute up.
+ * Milliseconds follow `formatMs`; a whole number of seconds has no decimal: a configured 10 s period reads "10초".
+ */
 export function formatDurationNanos(value: Num): string {
   const n = finite(value)
   if (n == null || n < 0) return DASH
-  if (n < 1e6) return `${formatNumber(n / 1e3, n < 1e4 ? 1 : 0)} µs`
-  if (n < 1e9) return `${formatNumber(n / 1e6, n < 1e7 ? 2 : 1)} ms`
+  if (n < 1e6) return `${formatNumber(n / 1e3, n < 1e4 && n % 1e3 ? 1 : 0)} µs`
+  if (n < 1e9) return formatMs(n / 1e6)
   // Rounded to one decimal; 59.96 s would read "60.0초", so it moves to the minute form.
-  if (n < 59.95e9) return `${formatNumber(n / 1e9, 1)}초`
+  if (n < 59.95e9) return `${formatNumber(n / 1e9, Math.round(n / 1e8) % 10 ? 1 : 0)}초`
   return duration(Math.round(n / 1e9))
 }
 
-/** Milliseconds, for live latency values. */
-export function formatMs(value: Num, digits = 1): string {
-  const n = finite(value)
-  return n == null ? DASH : `${formatNumber(n, digits)} ms`
+/** Seconds through `formatDurationNanos`. */
+export function formatSeconds(seconds: Num): string {
+  const n = finite(seconds)
+  return n == null ? DASH : formatDurationNanos(Math.round(n * 1e9))
 }
 
-export function formatWatts(value: Num, digits = 1): string {
+const goUnits: Record<string, number> = { ns: 1, us: 1e3, "µs": 1e3, "μs": 1e3, ms: 1e6, s: 1e9, m: 60e9, h: 3600e9 }
+/** Go duration text ("500ms", "1.5s", "1m30s") in nanoseconds; undefined when it is not one. */
+export function goDurationNanos(text: string): number | undefined {
+  const parts = [...text.trim().matchAll(/(\d+\.?\d*|\.\d+)(ns|us|µs|μs|ms|s|m|h)/g)]
+  if (!parts.length || parts.map(part => part[0]).join("") !== text.trim()) return undefined
+  return Math.round(parts.reduce((sum, [, value, unit]) => sum + Number(value) * goUnits[unit], 0))
+}
+
+/** Milliseconds number: one decimal below 100 ms unless whole, whole from 100 ms. For a column or tile that shows "ms". */
+export function msNumber(value: Num): string {
   const n = finite(value)
-  return n == null ? DASH : `${formatNumber(n, digits)} W`
+  return n == null ? DASH : formatNumber(n, Math.abs(n) < 100 && !Number.isInteger(n) ? 1 : 0)
+}
+/** Milliseconds, for latency values and targets: "948 ms", "1,000 ms", "12.4 ms". */
+export function formatMs(value: Num): string {
+  const text = msNumber(value)
+  return text === DASH ? DASH : `${text} ms`
+}
+/** A latency target: "p95 1,000 ms". */
+export function formatTarget(percentile: Num, targetNanos: Num): string {
+  const p = finite(percentile), n = finite(targetNanos)
+  return p == null || n == null ? DASH : `p${p} ${formatMs(n / 1e6)}`
+}
+
+/** Watts number: one decimal below 100 W, whole watts from 100 W. For a column or tile that shows "W". */
+export function wattsNumber(value: Num): string {
+  const n = finite(value)
+  return n == null ? DASH : formatNumber(n, Math.abs(n) < 100 ? 1 : 0)
+}
+export function formatWatts(value: Num): string {
+  const text = wattsNumber(value)
+  return text === DASH ? DASH : `${text} W`
 }
 
 /** Joules, switching to kJ from 10 000 J. */
@@ -56,15 +88,25 @@ export function formatBytes(value: Num): string {
   return `${formatNumber(size, unit === 0 ? 0 : 1)} ${units[unit]}`
 }
 
+/** A fraction (0.987) as a percent number ("98.7"), one decimal for success rates. For a column or tile that shows "%". */
+export function percentNumber(fraction: Num, digits = 1): string {
+  const n = finite(fraction)
+  return n == null ? DASH : formatNumber(n * 100, digits)
+}
 /** A fraction (0.987) as "98.7%". */
 export function formatPercent(fraction: Num, digits = 1): string {
-  const n = finite(fraction)
-  return n == null ? DASH : `${formatNumber(n * 100, digits)}%`
+  const text = percentNumber(fraction, digits)
+  return text === DASH ? DASH : `${text}%`
 }
 
-export function formatRate(value: Num, digits = 1): string {
+/** Request rate number: one decimal below 10 req/s, whole numbers from 10. For a column or tile that shows "req/s". */
+export function rateNumber(value: Num): string {
   const n = finite(value)
-  return n == null ? DASH : `${formatNumber(n, digits)} req/s`
+  return n == null ? DASH : formatNumber(n, Math.abs(n) < 10 ? 1 : 0)
+}
+export function formatRate(value: Num): string {
+  const text = rateNumber(value)
+  return text === DASH ? DASH : `${text} req/s`
 }
 
 const kst = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
@@ -82,6 +124,13 @@ export function formatKst(at: string | number | Date | null | undefined, seconds
   const text = kst.format(new Date(ms))
   return seconds ? text : text.slice(0, 16)
 }
+/** Time in a list or table row: "11-13 14:03:22" KST. */
+export function formatListTime(at: string | number | Date | null | undefined): string {
+  const text = formatKst(at)
+  return text === DASH ? DASH : text.slice(5)
+}
+/** Time in a detail view: "2026-11-13 14:03:22" KST. */
+export const formatDetailTime = (at: string | number | Date | null | undefined): string => formatKst(at)
 
 /**
  * Relative time against `now`: "방금" within 5 s either side (server and browser clocks drift a little),

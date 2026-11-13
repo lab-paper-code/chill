@@ -9,9 +9,8 @@ import { useChillMutation, useChillQuery } from "@/lib/client"
 import { evaluationActions, type EvaluationLiveTarget } from "@/lib/evaluation-request"
 import { decodeExperiment, experimentPath, type Experiment } from "@/lib/experiments"
 import { condition, isFinished, reasonText, runHref, runPath, type Run } from "@/lib/experiments-run"
-import { explain } from "@/lib/labels"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { evaluationExecution, evaluationPhase, evaluationVerdict } from "@/lib/status-labels"
+import { errorCodeLabel, evaluationExecution, evaluationPhase, evaluationVerdict } from "@/lib/status-labels"
 import { releasable, ReleaseAction, RunCleanup } from "./run-detail-cleanup"
 import { RunPlan } from "./run-detail-plan"
 import { Elapsed, RunProgress } from "./run-detail-progress"
@@ -82,7 +81,7 @@ function RunScreen({ run, tab, refetch }: { run: Run; tab: string; refetch: () =
       onError: error => {
         setRemoving(false)
         const code = (error.data as { code?: unknown } | null)?.code
-        toast(error.unknownOutcome || error.status === 0 ? { title: "결과 미확인", type: "warning" } : { title: `${actions.remove} 실패`, description: typeof code === "string" ? explain(code)[0] : `HTTP ${error.status}`, type: "error" })
+        toast(error.unknownOutcome || error.status === 0 ? { title: "결과 미확인", type: "warning" } : { title: `${actions.remove} 실패`, description: typeof code === "string" ? errorCodeLabel(code) : `HTTP ${error.status}`, type: "error" })
         refetch()
       },
     },
@@ -107,8 +106,8 @@ function RunScreen({ run, tab, refetch }: { run: Run; tab: string; refetch: () =
       {run.startedAt && (
         <Section card>
           <Fields columns={3} items={[
-            { label: "시작", value: <TimeText at={run.startedAt} mode="absolute" /> },
-            { label: "종료", value: run.finishedAt ? <TimeText at={run.finishedAt} mode="absolute" /> : null, reason: finished ? "미기록" : "진행 중" },
+            { label: "시작", value: <TimeText at={run.startedAt} mode="detail" /> },
+            { label: "종료", value: run.finishedAt ? <TimeText at={run.finishedAt} mode="detail" /> : null, reason: finished ? "미기록" : "진행 중" },
             { label: "소요", value: <Elapsed from={run.startedAt} to={run.finishedAt} /> },
           ]} />
         </Section>

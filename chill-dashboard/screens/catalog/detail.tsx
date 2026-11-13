@@ -12,7 +12,8 @@ import { buildCatalogManifest } from "@/lib/catalog-manifest"
 import { servicesUsing, type CatalogResource } from "@/lib/catalog-read"
 import { serviceReadiness } from "@/lib/status-labels"
 import { formatBytes } from "@/lib/format"
-import { buttonClassName, ConfirmDialog, DataTable, Dialog, EmptyState, Fields, IdText, Page, PageHeader, QueryBoundary, RawDialog, Section, StatusBadge, TimeText, useToast } from "@/components/kit"
+import { architectureLabel, executionPathLabel } from "@/lib/display-labels"
+import { buttonClassName, ConfirmDialog, DataTable, Dialog, EmptyState, Fields, Hint, IdText, Page, PageHeader, QueryBoundary, RawDialog, Section, StatusBadge, TimeText, useToast } from "@/components/kit"
 import Button from "@/components/custom/blocks/Button"
 
 const none = <EmptyState title="없음" compact />
@@ -68,8 +69,8 @@ export function CatalogDetailScreen({ kind, name }: { kind: CatalogKind; name: s
           <Page>
             <Section card>
               <Fields columns={3} items={[
-                { label: "등록", value: data.metadata.creationTimestamp ? <TimeText at={data.metadata.creationTimestamp} mode="absolute" /> : null },
-                { label: "사용하는 서비스", value: workloads.data ? `${users.length}개` : null, reason: "서비스 목록 조회 실패" },
+                { label: "등록", value: data.metadata.creationTimestamp ? <TimeText at={data.metadata.creationTimestamp} mode="detail" /> : null },
+                { label: "사용 서비스", value: workloads.data ? `${users.length}개` : null, reason: "서비스 목록 조회 실패" },
                 ...(kind === "datasets" ? [
                   { label: "이미지", value: <IdText value={(data as DatasetResource).spec.source.image} /> },
                   { label: "경로", value: (data as DatasetResource).spec.source.path },
@@ -80,7 +81,7 @@ export function CatalogDetailScreen({ kind, name }: { kind: CatalogKind; name: s
             {kind === "models" && <ModelBody spec={(data as ModelResource).spec} />}
             {kind === "preprocessors" && <PreprocessorBody spec={(data as PreprocessorResource).spec} />}
             {kind === "datasets" && <DatasetBody spec={(data as DatasetResource).spec} />}
-            <Section title="사용하는 서비스">
+            <Section title="사용 서비스">
               <QueryBoundary query={workloads} skeleton="table">
                 {() => <UsersTable users={users} />}
               </QueryBoundary>
@@ -106,7 +107,7 @@ export function CatalogDetailScreen({ kind, name }: { kind: CatalogKind; name: s
 function UsersTable({ users, compact = false }: { users: WorkloadSummary[]; compact?: boolean }) {
   return (
     <DataTable
-      label="사용하는 서비스"
+      label="사용 서비스"
       rows={users}
       rowKey={w => w.desired.metadata.uid}
       rowHref={w => resourceHref("services", w.desired.metadata.name, w.desired.metadata.uid)}
@@ -151,7 +152,7 @@ function ModelBody({ spec }: { spec: ModelResource["spec"] }) {
           columns={[
             { key: "name", header: "이름", cell: a => a.name },
             { key: "format", header: "형식", cell: a => a.format.toUpperCase() },
-            { key: "arch", header: "아키텍처", cell: a => a.source.architecture },
+            { key: "arch", header: "아키텍처", cell: a => architectureLabel(a.source.architecture) },
             { key: "files", header: "파일", numeric: true, cell: a => a.source.files.length },
             { key: "image", header: "이미지", cell: a => <IdText value={a.source.image} /> },
           ]}
@@ -165,7 +166,7 @@ function ModelBody({ spec }: { spec: ModelResource["spec"] }) {
           empty={none}
           pageSize={0}
           columns={[
-            { key: "name", header: "이름", cell: p => p.name },
+            { key: "name", header: "이름", cell: p => <Hint text={p.name}>{executionPathLabel(p.name, { spec })}</Hint> },
             { key: "artifact", header: "파일", cell: p => p.artifact },
             { key: "runtime", header: "런타임", cell: p => p.runtime.family },
             { key: "backend", header: "백엔드", cell: p => p.runtime.backend },
@@ -191,7 +192,7 @@ function PreprocessorBody({ spec }: { spec: PreprocessorResource["spec"] }) {
           columns={[
             { key: "model", header: "모델", cell: a => a.target.model },
             { key: "artifact", header: "파일", cell: a => a.target.artifact },
-            { key: "arch", header: "아키텍처", cell: a => a.source.architecture },
+            { key: "arch", header: "아키텍처", cell: a => architectureLabel(a.source.architecture) },
             { key: "path", header: "경로", cell: a => a.source.path },
             { key: "image", header: "이미지", cell: a => <IdText value={a.source.image} /> },
           ]}

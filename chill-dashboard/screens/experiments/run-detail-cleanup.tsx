@@ -7,8 +7,7 @@ import { useChillMutation } from "@/lib/client"
 import { evaluationActions, evaluationReleaseBody } from "@/lib/evaluation-request"
 import type { Experiment, OutcomeAxis } from "@/lib/experiments"
 import { condition, reasonText, runPath, type Run } from "@/lib/experiments-run"
-import { explain } from "@/lib/labels"
-import { evaluationCleanup, evaluationPool } from "@/lib/status-labels"
+import { errorCodeLabel, evaluationCleanup, evaluationPool } from "@/lib/status-labels"
 import { Reason } from "./run-detail-progress"
 
 type Residual = NonNullable<OutcomeAxis["residuals"]>[number]
@@ -32,7 +31,7 @@ export function ReleaseAction({ run, onChanged }: { run: Run; onChanged: () => v
       onError: error => {
         setOpen(false)
         const code = (error.data as { code?: unknown } | null)?.code
-        toast(error.unknownOutcome || error.status === 0 ? { title: "결과 미확인", type: "warning" } : { title: "반환 확인 요청 실패", description: typeof code === "string" ? explain(code)[0] : `HTTP ${error.status}`, type: "error" })
+        toast(error.unknownOutcome || error.status === 0 ? { title: "결과 미확인", type: "warning" } : { title: "반환 확인 요청 실패", description: typeof code === "string" ? errorCodeLabel(code) : `HTTP ${error.status}`, type: "error" })
       },
       onSettled: () => { onChanged(); void cache.invalidateQueries({ queryKey: ["chill", "v1/evaluations"] }) },
     },
@@ -58,9 +57,9 @@ export function RunCleanup({ run, publication }: { run: Run; publication: Bounda
       <Section card>
         <Fields items={[
           { label: "장치 풀", value: pool ? <StatusBadge status={evaluationPool(pool)} reason={reasonText(pool.reason)} /> : null, reason: "미기록" },
-          { label: "풀 변경 시각", value: pool?.lastTransitionTime ? <TimeText at={pool.lastTransitionTime} mode="absolute" /> : null, reason: "미기록" },
+          { label: "풀 변경 시각", value: pool?.lastTransitionTime ? <TimeText at={pool.lastTransitionTime} mode="detail" /> : null, reason: "미기록" },
           { label: "정리", value: cleanup ? <StatusBadge status={evaluationCleanup(cleanup)} reason={reasonText(cleanup.reason)} /> : null, reason: "정리 전" },
-          { label: "정리 시각", value: cleanup?.lastTransitionTime ? <TimeText at={cleanup.lastTransitionTime} mode="absolute" /> : null, reason: "정리 전" },
+          { label: "정리 시각", value: cleanup?.lastTransitionTime ? <TimeText at={cleanup.lastTransitionTime} mode="detail" /> : null, reason: "정리 전" },
         ]} />
       </Section>
 

@@ -33,7 +33,7 @@ test("request error codes", () => {
 })
 
 test("request times are always ms", () => {
-  assert.equal(requestMs(363_189), "0.36 ms")
-  assert.equal(requestMs(3_000_000_000n), "3,000.0 ms")
+  assert.equal(requestMs(363_189), "0.4 ms")
+  assert.equal(requestMs(3_000_000_000n), "3,000 ms")
   assert.equal(requestMs(undefined), "—")
 })

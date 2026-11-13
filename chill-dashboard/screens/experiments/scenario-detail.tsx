@@ -9,8 +9,7 @@ import { ApiError } from "@/lib/client-transport"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { canDeleteLoad, object, type LoadScenario } from "@/lib/evaluation-author"
 import { arrivalLabels, scenarioParts, scenarioSeconds, scenarioServices } from "@/lib/experiments-scenario"
-import { duration } from "@/lib/live-display"
-import { formatBytes, formatNumber } from "@/lib/format"
+import { formatBytes, formatSeconds, rateNumber } from "@/lib/format"
 import { Button, buttonClassName, ConfirmDialog, DataTable, EmptyState, Fields, Missing, Page, PageHeader, QueryBoundary, RawDialog, Section, TimeText, useToast } from "@/components/kit"
 import { RateChart } from "./scenario-chart"
 import { SCENARIOS_PATH } from "./scenarios"
@@ -51,7 +50,7 @@ function Body({ item }: { item: LoadScenario }) {
       },
       onError: error => {
         setRemoving(false)
-        if (error instanceof ApiError && error.unknownOutcome) toast({ title: "결과 미확인", description: "목록에서 삭제 여부를 확인하세요", type: "warning" })
+        if (error instanceof ApiError && error.unknownOutcome) toast({ title: "결과 미확인", description: "목록에서 삭제 여부 확인 필요", type: "warning" })
         else if (error instanceof ApiError && error.status === 409) toast({ title: "사용 중이라 삭제할 수 없음", type: "error" })
         else toast({ title: "삭제 실패", type: "error" })
       },
@@ -73,8 +72,8 @@ function Body({ item }: { item: LoadScenario }) {
       />
       <Section card>
         <Fields columns={3} items={[
-          { label: "전체 길이", value: `${duration(scenarioSeconds(item.spec))} (구간 ${parts.length}개)` },
-          { label: "생성", value: item.createdAt ? <TimeText at={item.createdAt} mode="absolute" seconds={false} /> : null, reason: "미기록" },
+          { label: "전체 길이", value: `${formatSeconds(scenarioSeconds(item.spec))} (구간 ${parts.length}개)` },
+          { label: "생성", value: item.createdAt ? <TimeText at={item.createdAt} mode="detail" /> : null, reason: "미기록" },
           { label: "사용 중 실험", value: item.inUse.length
             ? <span className="flex min-w-0 flex-wrap gap-x-3">{item.inUse.map(run => <Link key={run} href={`/experiments/runs/${encodeURIComponent(run)}`} className="truncate text-primary hover:underline">{run}</Link>)}</span>
             : "없음" },
@@ -85,8 +84,8 @@ function Body({ item }: { item: LoadScenario }) {
         label="구간" title="구간 (요청률 req/s)" rows={parts.map((part, index) => ({ ...part, index }))} rowKey={row => String(row.index)} pageSize={0}
         columns={[
           { key: "id", header: "구간", cell: row => row.id },
-          { key: "seconds", header: "길이", unit: "초", numeric: true, cell: row => row.seconds == null ? null : formatNumber(row.seconds, row.seconds % 1 ? 1 : 0) },
-          ...shown.map((service, i) => ({ key: `r${i}`, header: service, numeric: true, cell: (row: { rates: Record<string, number | null> }) => row.rates[service] == null ? null : formatNumber(row.rates[service], 2) })),
+          { key: "seconds", header: "길이", numeric: true, cell: row => row.seconds == null ? null : formatSeconds(row.seconds) },
+          ...shown.map((service, i) => ({ key: `r${i}`, header: service, numeric: true, cell: (row: { rates: Record<string, number | null> }) => row.rates[service] == null ? null : rateNumber(row.rates[service]) })),
         ]}
       />
       <DataTable

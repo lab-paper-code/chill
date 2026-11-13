@@ -7,7 +7,8 @@ import { Textarea } from "@/components/ui/textarea"
 import type { ModelList } from "@/lib/domain"
 import type { MeasurementPlanSpec } from "@/lib/read-types"
 import { useChillQuery } from "@/lib/client"
-import { pathLabel } from "@/lib/measurements-request-form"
+import { executionPathLabel, powerModeLabel } from "@/lib/display-labels"
+import { formatSeconds } from "@/lib/format"
 import { parseMeasurementDocument, type MeasurementRequestDocument } from "@/lib/measurement-document"
 import { requestHref } from "@/lib/measurement-request"
 import { useMeasurementPlans } from "@/hooks/use-measurement-data"
@@ -83,10 +84,10 @@ export function DocumentRequestForm({ namespace, bar, onDirty }: Props) {
           { label: "모델", value: candidate?.modelSpec, reason: "문서에 없음" },
           { label: "장치 종류", value: candidate?.deviceClass, reason: "문서에 없음" },
           { label: "장치", value: spec?.state?.targetNode, reason: "문서에 없음" },
-          { label: "실행 경로", value: candidate?.executionPath ? pathLabel(models.data?.items.find(item => item.metadata.name === candidate.modelSpec), candidate.executionPath) : null, reason: "문서에 없음" },
-          { label: "전력 모드", value: candidate?.powerMode, reason: "문서에 없음" },
+          { label: "실행 경로", value: candidate?.executionPath ? executionPathLabel(candidate.executionPath, models.data?.items.find(item => item.metadata.name === candidate.modelSpec)) : null, reason: "문서에 없음" },
+          { label: "전력 모드", value: candidate?.powerMode && powerModeLabel(candidate.powerMode), reason: "문서에 없음" },
           { label: "배치별 반복", value: unit(spec?.trialsPerBatch, "회"), reason: "문서에 없음" },
-          { label: "실행 측정", value: unit(spec?.activeProtocol?.durationSeconds, " s"), reason: "문서에 없음" },
+          { label: "실행 측정", value: spec?.activeProtocol?.durationSeconds == null ? null : formatSeconds(spec.activeProtocol.durationSeconds), reason: "문서에 없음" },
         ]} />
       </FormSection>}
 

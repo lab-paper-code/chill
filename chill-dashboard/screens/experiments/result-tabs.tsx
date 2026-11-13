@@ -9,8 +9,7 @@ import {
   comparisonConditions, energyScopes, latencyDigits, nodeEnergyRows, OUTCOME_CLASSES, partRows, rejectionReasons, rejectionRows,
   requestRows, serviceSummaries, stageEnergy, waitLocations, type ConditionWord, type StageRef,
 } from "@/lib/experiments-results"
-import { formatKst, formatNumber } from "@/lib/format"
-import { duration } from "@/lib/live-display"
+import { formatDetailTime, formatNumber, formatSeconds, percentNumber, rateNumber, wattsNumber } from "@/lib/format"
 import { energyStatus, experimentVerdict, type StatusInfo } from "@/lib/status-labels"
 import { buttonClassName, DataTable, EmptyState, Fields, HeadroomBar, Hint, MeterBar, Missing, Section, Select, StatRow, StatTile, StatusBadge, StatusDot, TimeText } from "@/components/kit"
 
@@ -59,9 +58,9 @@ export function ResultSummary({ run, stage, base }: { run: Experiment; stage: Ex
       <StatRow>
         <StatTile label={energy.partial ? "관측 에너지" : "에너지"} unit="kJ" value={kilo(energy.joules)} status={energyStatus(energy.status)} reason="게시 없음"
           sub={baseEnergy?.joules != null && !baseEnergy.partial ? `기준 ${kilo(baseEnergy.joules)} kJ` : undefined} />
-        <StatTile label="평균 전력" unit="W" value={energy.watts === null ? null : formatNumber(energy.watts, 1)} reason="게시 없음"
-          sub={baseEnergy?.watts != null && !baseEnergy.partial ? `기준 ${formatNumber(baseEnergy.watts, 1)} W` : undefined} />
-        <StatTile label="길이" value={seconds === null ? null : duration(seconds)} sub={`${formatKst(stage.from, false)} 시작`} />
+        <StatTile label="평균 전력" unit="W" value={energy.watts === null ? null : wattsNumber(energy.watts)} reason="게시 없음"
+          sub={baseEnergy?.watts != null && !baseEnergy.partial ? `기준 ${wattsNumber(baseEnergy.watts)} W` : undefined} />
+        <StatTile label="소요" value={seconds === null ? null : formatSeconds(seconds)} sub={`${formatDetailTime(stage.from)} 시작`} />
         <StatTile label="목표 충족 서비스" value={judged ? `${met} / ${services.length}` : null} reason={services.length ? "판정 없음" : "서비스 기록 없음"} />
       </StatRow>
       {services.length === 0 ? <EmptyState title="서비스 기록 없음" /> : (
@@ -73,9 +72,9 @@ export function ResultSummary({ run, stage, base }: { run: Experiment; stage: Ex
               <Section key={item.name} title={item.name} card actions={<StatusBadge status={experimentVerdict(item.verdict)} />}>
                 <Fields columns={2} items={[
                   { label: "기한 내 성공률 (%)", info: "목표 지연 안에 성공한 요청의 비율", reason: "게시 없음",
-                    value: item.success === null ? null : <>{formatNumber(item.success * 100, 1)}<Delta value={diff(item.success, other?.success, 100)} digits={1} unit="%p" /></> },
+                    value: item.success === null ? null : <>{percentNumber(item.success)}<Delta value={diff(item.success, other?.success, 100)} digits={1} unit="%p" /></> },
                   { label: "유효 처리량 (req/s)", info: "목표 지연 안에 성공한 초당 요청 수", reason: "게시 없음",
-                    value: item.goodput === null ? null : <>{formatNumber(item.goodput, 2)}<Delta value={diff(item.goodput, other?.goodput)} digits={2} /></> },
+                    value: item.goodput === null ? null : <>{rateNumber(item.goodput)}<Delta value={diff(item.goodput, other?.goodput)} digits={1} /></> },
                   { label: `지연 p${item.target?.percentile ?? 95} (ms)`, reason: "게시 없음",
                     value: item.targetQuantile === null ? null : (
                       <span className="inline-flex items-center gap-2">
@@ -119,11 +118,11 @@ export function ResultParts({ run, stage }: { run: Experiment; stage: Experiment
       columns={[
         { key: "stage", header: "단계", width: "18%", cell: row => row.stage },
         { key: "part", header: "부하 구간", width: "10%", cell: row => row.part || null, missingReason: "구간 기록 없음" },
-        { key: "rate", header: "요청률", unit: "req/s", numeric: true, cell: row => <Metered value={row.rate} max={maxRate} text={row.rate === null ? null : formatNumber(row.rate, row.rate < 10 ? 2 : 1)} label="요청률" />, missingReason: "계획 없음" },
+        { key: "rate", header: "요청률", unit: "req/s", numeric: true, cell: row => <Metered value={row.rate} max={maxRate} text={row.rate === null ? null : rateNumber(row.rate)} label="요청률" />, missingReason: "계획 없음" },
         { key: "p95", header: "지연 p95", unit: "ms", numeric: true, missingReason: "게시 없음",
           cell: row => row.p95 === null ? null : <span className="inline-flex items-center gap-2"><HeadroomBar observed={row.p95} target={row.target} className="hidden sm:inline-block" />{latency(row.p95)}</span> },
         { key: "success", header: "기한 내 성공", unit: "%", numeric: true, missingReason: "게시 없음",
-          cell: row => row.success === null ? null : <span className="inline-flex items-center gap-1.5">{row.success === worst && <StatusDot tone="warn" label="최저" />}{formatNumber(row.success * 100, 1)}</span> },
+          cell: row => row.success === null ? null : <span className="inline-flex items-center gap-1.5">{row.success === worst && <StatusDot tone="warn" label="최저" />}{percentNumber(row.success)}</span> },
         { key: "energy", header: "에너지", unit: "kJ", numeric: true, missingReason: "단계 단위로만 게시", cell: row => <Metered value={row.joules} max={maxEnergy} text={kilo(row.joules)} label="에너지" /> },
         { key: "log", header: "스케줄러", width: "7rem", cell: row => <Link href={`/scheduler/decisions?from=${row.from}&to=${row.to}`} className={buttonClassName({ variant: "link", size: "sm" })}>판단 기록</Link> },
       ]}
@@ -155,8 +154,8 @@ export function ResultRequests({ stage }: { stage: ExperimentStage }) {
         ]}
       />
       <DataTable
-        label="거절" title="거절" rows={rejections} rowKey={row => row.key} pageSize={0}
-        empty={<EmptyState compact title="거절 없음" />}
+        label="거부" title="거부" rows={rejections} rowKey={row => row.key} pageSize={0}
+        empty={<EmptyState compact title="거부 없음" />}
         columns={[
           { key: "service", header: "서비스", width: "24%", cell: row => row.service },
           { key: "code", header: "사유", cell: row => rejectionReasons[row.code] ?? <Missing reason={`코드 ${row.code}`} /> },
@@ -175,26 +174,26 @@ export function ResultEnergy({ stage }: { stage: ExperimentStage }) {
   const coverage = object(object(stage.kpis.power).energyCoverage), limit = finite(object(coverage.policy).maxSingleGapSeconds), gap = finite(coverage.maximumGapSeconds)
   const nodes = nodeEnergyRows(stage)
   const nodeStatus = (row: (typeof nodes)[number]): StatusInfo | null =>
-    row.complete === false ? { label: "불완전", tone: "warn" } : row.policyMet === false ? { label: "기준 미달", tone: "warn" } : row.complete && row.policyMet ? { label: "충족", tone: "ok" } : null
+    row.complete === false ? { label: "불완전", tone: "warn" } : row.policyMet === false ? { label: "기준 미달", tone: "warn" } : row.complete && row.policyMet ? { label: "기준 충족", tone: "ok" } : null
   return (
     <>
       <StatRow>
         <StatTile label={energy.partial ? "관측 에너지" : "풀 전체 에너지"} unit="kJ" value={kilo(energy.joules)} status={energyStatus(energy.status)} reason="게시 없음"
-          sub={energy.watts === null ? undefined : `평균 ${formatNumber(energy.watts, 1)} W`} />
+          sub={energy.watts === null ? undefined : `평균 ${wattsNumber(energy.watts)} W`} />
         <StatTile label="배출 포함 에너지" unit="kJ" value={drained.partial ? null : kilo(drained.joules)} reason={drained.partial ? "일부 계측" : "게시 없음"} info="부하가 끝난 뒤 남은 요청을 처리한 시간까지 포함한 에너지" />
-        <StatTile label="최대 계측 공백" unit="s" value={gap === null ? null : formatNumber(gap, 1)} reason="게시 없음" sub={limit === null ? undefined : `상한 ${formatNumber(limit, 0)} s`} />
+        <StatTile label="최대 계측 공백" value={gap === null ? null : formatSeconds(gap)} reason="게시 없음" sub={limit === null ? undefined : `상한 ${formatSeconds(limit)}`} />
         <StatTile label="요청 배출" value={energy.drainComplete === null ? null : energy.drainComplete ? "완료" : "미완료"} reason="게시 없음"
           status={energy.drainComplete === null ? undefined : energy.drainComplete ? { label: "완료", tone: "ok" } : { label: "미완료", tone: "warn" }} />
       </StatRow>
       <DataTable
-        label="노드별 계측" title="노드별 계측" rows={nodes} rowKey={row => row.name} pageSize={0} download={{ filename: `energy-${stage.id}` }}
+        label="장치별 계측" title="장치별 계측" rows={nodes} rowKey={row => row.name} pageSize={0} download={{ filename: `energy-${stage.id}` }}
         empty={<EmptyState compact title="계측 기록 없음" />}
         columns={[
-          { key: "name", header: "노드", cell: row => row.name, sortValue: row => row.name },
+          { key: "name", header: "장치", cell: row => row.name, sortValue: row => row.name },
           { key: "joules", header: "에너지", unit: "kJ", numeric: true, cell: row => kilo(row.joules), sortValue: row => row.joules },
-          { key: "watts", header: "평균 전력", unit: "W", numeric: true, cell: row => row.watts === null ? null : formatNumber(row.watts, 1), sortValue: row => row.watts },
+          { key: "watts", header: "평균 전력", unit: "W", numeric: true, cell: row => row.watts === null ? null : wattsNumber(row.watts), sortValue: row => row.watts },
           { key: "gap", header: "공백", unit: "%", numeric: true, cell: row => row.gapFraction === null ? null : formatNumber(row.gapFraction * 100, 2), sortValue: row => row.gapFraction },
-          { key: "maxGap", header: "최대 공백", unit: "s", numeric: true, cell: row => row.maxGapSeconds === null ? null : formatNumber(row.maxGapSeconds, 1), sortValue: row => row.maxGapSeconds },
+          { key: "maxGap", header: "최대 공백", numeric: true, cell: row => row.maxGapSeconds === null ? null : formatSeconds(row.maxGapSeconds), sortValue: row => row.maxGapSeconds },
           { key: "failures", header: "읽기 실패", numeric: true, cell: row => row.readFailures === null ? null : formatNumber(row.readFailures, 0), sortValue: row => row.readFailures },
           { key: "status", header: "상태", cell: row => { const status = nodeStatus(row); return status && <StatusDot status={status} showLabel /> } },
         ]}
@@ -228,7 +227,7 @@ export function ResultConditions({ run, stage, base }: { run: Experiment; stage:
           { label: "실패 처리", value: text(contract.failurePolicy), reason: "기록 없음" },
           { label: "에너지 범위", value: energyScopes[String(contract.energyScope)] ?? null, reason: contract.energyScope ? `코드 ${String(contract.energyScope)}` : "기록 없음" },
           { label: "공백 비율 상한 (%)", value: gapFraction === null ? null : formatNumber(gapFraction * 100, 1), reason: "기록 없음" },
-          { label: "단일 공백 상한 (s)", value: singleGap === null ? null : formatNumber(singleGap, 0), reason: "기록 없음" },
+          { label: "단일 공백 상한", value: singleGap === null ? null : formatSeconds(singleGap), reason: "기록 없음" },
         ]} />
       </Section>
       <Section title="정의 출처" card>
@@ -236,9 +235,9 @@ export function ResultConditions({ run, stage, base }: { run: Experiment; stage:
           { label: "실행", reason: "기록 없음",
             value: runName && <Link className="hover:underline" href={`/experiments/runs/${encodeURIComponent(runName)}${runUID ? `?uid=${encodeURIComponent(runUID)}` : ""}`}>{runName}</Link> },
           { label: "질문", value: question && <Hint text={question} focusable className="block max-w-full truncate text-left">{question}</Hint>, reason: "기록 없음" },
-          { label: "게시", value: <TimeText at={run.to} mode="absolute" seconds={false} /> },
+          { label: "게시", value: <TimeText at={run.to} mode="detail" /> },
           { label: "부하 시나리오", value: spec?.loadScenarioRef.name, reason: "기록 없음" },
-          { label: "부하 발생 노드", value: text(generator.nodeName), reason: "기록 없음" },
+          { label: "부하 발생 장치", value: text(generator.nodeName), reason: "기록 없음" },
           { label: "설정 변경", value: policy === "미기록" ? null : <Hint text={policy} focusable className="block max-w-full truncate text-left">{policy}</Hint>, reason: "기록 없음" },
         ]} />
       </Section>

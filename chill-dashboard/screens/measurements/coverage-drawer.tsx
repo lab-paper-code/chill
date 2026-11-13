@@ -1,18 +1,19 @@
 "use client"
 
 import Link from "next/link"
-import { formatNumber } from "@/lib/format"
-import { coverageBatchState, coverageMeasurementStatus, coverageProgress, coverageRequestHref, coverageVariant, deviceLabel } from "@/lib/measurement-coverage"
+import { formatNumber, msNumber } from "@/lib/format"
+import { coverageBatchState, coverageMeasurementStatus, coverageProgress, coverageRequestHref, coverageVariant } from "@/lib/measurement-coverage"
+import { deviceClassLabel, executionPathLabel, powerModeLabel } from "@/lib/display-labels"
 import { measurementSchedulerUsed } from "@/lib/measurement-assessment"
 import { coverageOccupancyRequestHref, occupancyReasonLabel, occupancyRequestHref, occupancyStates } from "@/lib/dispatch-occupancy"
 import { measurementStatus, type StatusInfo } from "@/lib/status-labels"
 import type { MeasurementCoverageCell as Cell, MeasurementCoverageResponse, ResultRow } from "@/lib/read-types"
 import { Button, DataTable, DetailDrawer, Feed, Fields, Hint, Section, StatusDot, TimeText, buttonClassName, type Column } from "@/components/kit"
-import { cellMeasured, cellReasons, pathLabel } from "@/lib/measurements-coverage-matrix"
+import { cellMeasured, cellReasons } from "@/lib/measurements-coverage-matrix"
 
 const BATCH_STATES: Record<string, StatusInfo> = {
   measured: { label: "측정됨", tone: "ok" },
-  running: { label: "진행", tone: "progress" },
+  running: { label: "측정 중", tone: "progress" },
   missing: { label: "미측정", tone: "idle" },
   unknown: { label: "미확인", tone: "idle" },
   outside: { label: "목표 밖", tone: "idle" },
@@ -21,7 +22,7 @@ type BatchRow = { batch: number; state: string; result: ResultRow | undefined }
 const missingBatch = (r: BatchRow) => r.state === "measured" ? "결과 기록 없음" : BATCH_STATES[r.state].label
 const batchColumns: Column<BatchRow>[] = [
   { key: "batch", header: "배치", unit: "건", cell: r => <Hint text={BATCH_STATES[r.state].label}><StatusDot status={BATCH_STATES[r.state]} label={String(r.batch)} showLabel /></Hint> },
-  { key: "latency", header: "지연 p95", unit: "ms", numeric: true, cell: r => r.result?.p95Milliseconds == null ? null : formatNumber(r.result.p95Milliseconds, 2), missing: missingBatch },
+  { key: "latency", header: "지연 p95", unit: "ms", numeric: true, cell: r => r.result?.p95Milliseconds == null ? null : msNumber(r.result.p95Milliseconds), missing: missingBatch },
   { key: "energy", header: "건당 에너지", unit: "J", numeric: true, cell: r => r.result?.incrementalJoulesPerItem == null ? null : formatNumber(r.result.incrementalJoulesPerItem, 3), missing: missingBatch },
 ]
 
@@ -43,7 +44,7 @@ export function CellDrawer({ cell, namespace, returnTo, onClose }: { cell: Cell;
   return (
     <DetailDrawer
       open onOpenChange={open => { if (!open) onClose() }}
-      title={`${deviceLabel(cell.deviceClass.name)} ${cell.powerMode}`}
+      title={`${deviceClassLabel(cell.deviceClass.name)} ${powerModeLabel(cell.powerMode)}`}
       status={measurementStatus(code)}
       footer={
         <div className="flex flex-wrap justify-end gap-2">
@@ -63,8 +64,8 @@ export function CellDrawer({ cell, namespace, returnTo, onClose }: { cell: Cell;
       ]} />
       <Fields columns={2} items={[
         { label: "모델", value: cell.model.name },
-        { label: "실행 경로", value: <Hint text={cell.executionPath}>{pathLabel(cell.executionPath)}</Hint> },
-        { label: "측정 시각", value: measuredAt && <TimeText at={measuredAt} mode="absolute" seconds={false} />, reason: "측정 없음" },
+        { label: "실행 경로", value: <Hint text={cell.executionPath}>{executionPathLabel(cell.executionPath)}</Hint> },
+        { label: "측정 시각", value: measuredAt && <TimeText at={measuredAt} mode="detail" />, reason: "측정 없음" },
         { label: "분배 점유시간", value: occupancy.length ? <Hint text={[...new Set(occupancy.map(row => occupancyReasonLabel(row.reason)))].join(", ")}>{[...new Set(occupancy.map(row => occupancyStates[row.state]))].join(", ")}</Hint> : null, reason: "기록 없음" },
       ]} />
       {rows.length > 0 && (
@@ -99,8 +100,8 @@ export function NextActionsDrawer({ actions, cells, hrefOf, onClose }: { actions
           <Feed label={model} items={[...rows.values()].filter(row => row.cell.model.name === model).map(row => ({
             key: row.key,
             status: ACTION_KINDS[row.kind] ?? { label: "—", tone: "idle", code: row.kind },
-            title: `${deviceLabel(row.cell.deviceClass.name)} ${row.cell.powerMode}`,
-            secondary: pathLabel(row.cell.executionPath),
+            title: `${deviceClassLabel(row.cell.deviceClass.name)} ${powerModeLabel(row.cell.powerMode)}`,
+            secondary: executionPathLabel(row.cell.executionPath),
             meta: (ACTION_KINDS[row.kind] ?? { label: "—" }).label,
             href: hrefOf(row.cell),
           }))} />

@@ -7,8 +7,7 @@ import type { LoadScenario } from "@/lib/evaluation-author"
 import { object, records } from "@/lib/evaluation-author"
 import type { Experiment } from "@/lib/experiments"
 import { planRows, serviceNames, settingRows, specStages, type PlanRow, type Run, type ScenarioSource, type SettingRow } from "@/lib/experiments-run"
-import { formatNumber } from "@/lib/format"
-import { duration } from "@/lib/live-display"
+import { formatSeconds, rateNumber } from "@/lib/format"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 
 /** Plan of the run: question, stage and load table, settings changes. Frozen scenarios of the publication when available. */
@@ -42,19 +41,19 @@ function PlanTables({ run, scenarios, extra }: { run: Run; scenarios: readonly S
   // Service names are long, so per-service headers carry the name only and the title carries the unit.
   const perService = services.length <= 3
   const rateColumns: Column<PlanRow>[] = perService
-    ? services.map(service => ({ key: `rate:${service}`, header: service, numeric: true, cell: row => row.rates[service] === undefined ? null : formatNumber(row.rates[service], 2), missingReason: "요청 없음" }))
-    : [{ key: "rate", header: `요청률 합계 (${services.length}개 서비스)`, unit: "req/s", numeric: true, cell: row => row.part === null ? null : formatNumber(Object.values(row.rates).reduce((a, b) => a + b, 0), 2) }]
+    ? services.map(service => ({ key: `rate:${service}`, header: service, numeric: true, cell: row => row.rates[service] === undefined ? null : rateNumber(row.rates[service]), missingReason: "요청 없음" }))
+    : [{ key: "rate", header: `요청률 합계 (${services.length}개 서비스)`, unit: "req/s", numeric: true, cell: row => row.part === null ? null : rateNumber(Object.values(row.rates).reduce((a, b) => a + b, 0)) }]
   return (
     <div className="grid gap-6">
       <DataTable<PlanRow>
         label="단계와 부하"
-        title={<span className="flex items-baseline gap-3">단계와 부하<span className="text-xs font-normal tabular-nums text-muted-foreground">{total !== null && `전체 ${duration(total)}`}{perService && services.length > 0 && <span className="ml-3">요청률 req/s</span>}</span></span>}
+        title={<span className="flex items-baseline gap-3">단계와 부하<span className="text-xs font-normal tabular-nums text-muted-foreground">{total !== null && `전체 ${formatSeconds(total)}`}{perService && services.length > 0 && <span className="ml-3">요청률 req/s</span>}</span></span>}
         rows={rows} rowKey={row => row.key} pageSize={0}
         columns={[
           { key: "stage", header: "단계", cell: row => row.stage, width: "15%" },
           { key: "scenario", header: "부하 시나리오", cell: row => row.scenario && <Link className="hover:underline" href={`/experiments/scenarios/${encodeURIComponent(row.scenario.name)}?uid=${encodeURIComponent(row.scenario.uid)}`}>{row.scenario.name}</Link>, missingReason: "미기록", width: "17%" },
           { key: "part", header: "구간", cell: row => row.part, missingReason: "시나리오 없음", width: "8%" },
-          { key: "seconds", header: "길이", unit: "s", numeric: true, cell: row => row.seconds === null ? null : formatNumber(row.seconds), width: "8%" },
+          { key: "seconds", header: "길이", numeric: true, cell: row => row.seconds === null ? null : formatSeconds(row.seconds), width: "8%" },
           ...rateColumns,
         ]}
       />

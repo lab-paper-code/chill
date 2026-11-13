@@ -8,7 +8,7 @@ import { useChillQuery } from "@/lib/client"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import type { LoadScenario } from "@/lib/evaluation-author"
 import { scenarioParts, scenarioSeconds, scenarioServices } from "@/lib/experiments-scenario"
-import { duration } from "@/lib/live-display"
+import { formatSeconds } from "@/lib/format"
 import { Button, DataTable, EmptyState, FilterBar, Hint, Page, PageHeader, PageTabs, QueryBoundary, TimeText, buttonClassName } from "@/components/kit"
 
 export const SCENARIOS_PATH = "v1/evaluations/load-scenarios"
@@ -35,10 +35,10 @@ export function ScenariosScreen() {
               columns={[
                 { key: "name", header: "이름", cell: row => row.name, sortValue: row => row.name, width: "34%" },
                 { key: "parts", header: "구간 수", numeric: true, cell: row => scenarioParts(row.spec).length, sortValue: row => scenarioParts(row.spec).length },
-                { key: "length", header: "전체 길이", numeric: true, cell: row => duration(scenarioSeconds(row.spec)), sortValue: row => scenarioSeconds(row.spec), csv: row => scenarioSeconds(row.spec) },
+                { key: "length", header: "전체 길이", numeric: true, cell: row => formatSeconds(scenarioSeconds(row.spec)), sortValue: row => scenarioSeconds(row.spec), csv: row => scenarioSeconds(row.spec) },
                 { key: "services", header: "서비스", numeric: true, cell: row => <Hint text={scenarioServices(row.spec).join(", ")} focusable>{scenarioServices(row.spec).length}</Hint>, sortValue: row => scenarioServices(row.spec).length },
                 { key: "inUse", header: "사용 중 실험", numeric: true, cell: row => row.inUse.length, sortValue: row => row.inUse.length },
-                { key: "created", header: "생성", cell: row => row.createdAt ? <TimeText at={row.createdAt} mode="absolute" seconds={false} /> : null, sortValue: row => row.createdAt ? Date.parse(row.createdAt) : null, csv: row => row.createdAt ?? "" },
+                { key: "created", header: "생성", cell: row => row.createdAt ? <TimeText at={row.createdAt} mode="list" /> : null, sortValue: row => row.createdAt ? Date.parse(row.createdAt) : null, csv: row => row.createdAt ?? "" },
               ]}
             />
           )

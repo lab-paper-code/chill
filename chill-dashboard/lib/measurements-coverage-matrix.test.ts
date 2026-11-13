@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { cellReasons, matrixColumns, matrixRows, measuredText, pathLabel, requestPhase } from "./measurements-coverage-matrix.ts"
+import { cellReasons, matrixColumns, matrixRows, measuredText, requestPhase } from "./measurements-coverage-matrix.ts"
 import type { MeasurementCoverageCell } from "./read-types.ts"
 
 const cell = (deviceClass: string, powerMode: string, executionPath: string, displayStatus: string, verdict = "Compatible") => ({
@@ -8,9 +8,7 @@ const cell = (deviceClass: string, powerMode: string, executionPath: string, dis
   support: { verdict, node: null, reasons: [], diagnostics: [] }, assessment: { displayStatus, reasons: [] }, variants: [], batchProgress: null, failureSummary: [],
 }) as unknown as MeasurementCoverageCell
 
-test("path labels drop the raw name and keep colliding paths distinct", () => {
-  assert.equal(pathLabel("firstfloor-ort-cpu-int8-arm64"), "CPU 정수 8비트 ARM 64비트")
-  assert.equal(pathLabel("custom-path"), "custom-path")
+test("matrix columns keep colliding path labels distinct", () => {
   const cells = [cell("a", "x", "ort-cuda-rnn-arm64", "usable"), cell("a", "x", "ort-cuda-vlm-arm64", "usable"), cell("a", "x", "firstfloor-rknnlite", "usable")]
   assert.deepEqual(matrixColumns(cells).map(column => column.label), ["NPU", "ort-cuda-rnn-arm64", "ort-cuda-vlm-arm64"])
 })

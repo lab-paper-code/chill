@@ -4,7 +4,7 @@ import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significa
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
 import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
-import { executionPathLabel, measurementReasonSummary } from "./measurements.ts"
+import { measurementReasonSummary } from "./measurements.ts"
 import { formatMeasurementNumber, measurementRequestName } from "./measurements.ts"
 
 test("measurement quantities use fixed unit precision and preserve valid zero and negative CI bounds",()=>{
@@ -97,7 +97,7 @@ test("R10: projection reasons summarize repeated state-effect errors and preserv
 
 test("failure actions name the measured node model path and smallest-batch limit",()=>{
   const run={spec:{targetNode:"genesis2",candidate:{modelSpec:"smolvlm2",executionPath:"cuda"},measurement:{batch:1}},status:{},assessment:{failureSummary:[{code:"GPUMemoryExhausted"}]}} as unknown as Parameters<typeof runFailure>[0]
-  assert.deepEqual(runFailure(run).target,[["노드","genesis2"],["모델","smolvlm2"],["경로","cuda"]])
+  assert.deepEqual(runFailure(run).target,[["장치","genesis2"],["모델","smolvlm2"],["경로","cuda"]])
   assert.match(runFailure(run).actions.flat().join(" "),/CPU 정수 8비트/)
   assert.match(runFailure({...run,spec:{...run.spec,measurement:{batch:8}}}).actions.flat().join(" "),/작은 배치/)
   for(const code of ["HostOOM","PowerObservationTimeout","ImagePullFailed","RuntimeFailed","Other"]) {
@@ -130,13 +130,7 @@ test("R14: occupancy evidence and interruption codes use server-grounded Korean 
   assert.equal(occupancyReason({...occupancy,status:{reason:"FutureOccupancyCode"}}),"FutureOccupancyCode")
 })
 
-test("measurement labels distinguish backend variants while translating workload protocols",()=>{
-  assert.equal(executionPathLabel("firstfloor-ort-cpu-arm64"),"CPU ARM 64비트 (firstfloor-ort-cpu-arm64)")
-  const paths=["firstfloor-ort-cuda-arm64","firstfloor-rnn-ort-cuda-arm64","firstfloor-vlm-ort-cuda-arm64"]
-  const labels=paths.map(path=>executionPathLabel(path))
-  assert.equal(new Set(labels).size,paths.length)
-  for(const [index,path] of paths.entries())assert.equal(labels[index],`CUDA ARM 64비트 (${path})`)
-  assert.equal(executionPathLabel("new-private-backend",2),"등록 실행 경로 3")
+test("measurement reason summaries translate known server text",()=>{
   assert.equal(measurementReasonSummary("No verified catalog profile for current condition"),"현재 조건의 검증된 프로파일 없음")
 })
 

@@ -6,7 +6,8 @@ import { SkeletonBlock } from "@/components/custom/blocks/SkeletonBlock"
 import { useChillQuery } from "@/lib/client"
 import { ApiError } from "@/lib/client-transport"
 import type { WorkloadView } from "@/lib/domain"
-import { formatNumber } from "@/lib/format"
+import { formatMs, formatNumber, msNumber, percentNumber, rateNumber } from "@/lib/format"
+import { powerModeLabel } from "@/lib/display-labels"
 import type { LiveInstance, LiveSnapshot } from "@/lib/live"
 import { belongsToPool, minuteMetrics, sloLatency, workloadQueue, routingShare } from "@/lib/live-display"
 import type { SchedulerSettings } from "@/lib/read-types"
@@ -96,7 +97,7 @@ function LiveStatus({ name, snapshot, live, locked }: { name: string; snapshot: 
 
   const columns: Column<PlacementRow>[] = [
     { key: "device", header: "장치", cell: row => row.device, sortValue: row => row.device },
-    { key: "mode", header: "전력 모드", cell: row => row.powerMode || null, missingReason: "관측 없음" },
+    { key: "mode", header: "전력 모드", cell: row => row.powerMode ? powerModeLabel(row.powerMode) : null, missingReason: "관측 없음" },
     { key: "share", header: "분배 비율", unit: "%", numeric: true, cell: row => row.share == null ? null : formatNumber(row.share, 1), missingReason: "분배 없음" },
     { key: "running", header: "처리 중", numeric: true, cell: row => formatNumber(row.running) },
     { key: "waiting", header: "대기", numeric: true, cell: row => formatNumber(row.waiting) },
@@ -110,17 +111,17 @@ function LiveStatus({ name, snapshot, live, locked }: { name: string; snapshot: 
   return (
     <div className="flex flex-col gap-6">
       <StatRow className="grid-cols-2 xl:grid-cols-5">
-        <StatTile label="유입" value={latest ? formatNumber(latest.received) : null} unit="req/s" reason="관측 없음" />
+        <StatTile label="유입" value={latest ? rateNumber(latest.received) : null} unit="req/s" reason="관측 없음" />
         <StatTile
           label="지연" unit="ms" info={slo ? `최근 ${slo.windowSeconds}초 완료 요청의 p${percentile}` : `완료 요청의 p${percentile}`}
-          value={slo?.quantileMs != null ? formatNumber(slo.quantileMs, slo.quantileMs < 100 ? 1 : 0) : null}
+          value={slo?.quantileMs != null ? msNumber(slo.quantileMs) : null}
           reason={!slo ? "관측 없음" : slo.samples === 0 ? "표본 없음" : "표본 부족"}
           status={slo?.met != null ? sloVerdict(slo.met) : undefined}
-          sub={<span className="inline-flex items-center gap-2">{slo?.quantileMs != null && <HeadroomBar observed={slo.quantileMs} target={slo.targetMs} />}목표 {formatNumber(targetMs)} ms</span>}
+          sub={<span className="inline-flex items-center gap-2">{slo?.quantileMs != null && <HeadroomBar observed={slo.quantileMs} target={slo.targetMs} />}목표 {formatMs(targetMs)}</span>}
         />
         <StatTile
           label="성공률" unit="%" info="최근 60초 완료와 실패 기준"
-          value={completed + failed ? formatNumber(completed / (completed + failed) * 100, 1) : null} reason="완료 요청 없음"
+          value={completed + failed ? percentNumber(completed / (completed + failed)) : null} reason="완료 요청 없음"
           sub={completed + failed ? `${formatNumber(completed)} / ${formatNumber(completed + failed)}` : undefined}
         />
         <StatTile label="실패" unit="건" info="최근 60초" value={recent.length ? formatNumber(failed) : null} reason="관측 없음" />

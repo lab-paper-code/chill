@@ -10,7 +10,7 @@ import { useChillMutation, useChillQuery, useSession, type ChillMutationInput } 
 import { errorDetails, type ApiError, type RelayResponse } from "@/lib/client-transport"
 import { formatText, rawInferenceBody, rawOutputs, type RawField, type WorkloadView } from "@/lib/domain"
 import { formatBytes, formatDurationNanos } from "@/lib/format"
-import { statusLabel } from "@/lib/labels"
+import { errorCodeLabel } from "@/lib/status-labels"
 import type { ObservationResult, RequestRow } from "@/lib/read-types"
 import { requestError, requestMs, requestResult } from "@/lib/services-records"
 import { StageBars } from "./stage-bars"
@@ -64,9 +64,9 @@ function TestForm({ workload }: { workload: WorkloadView }) {
   const title = (field: RawField) => duplicate(field) ? `${formatText(field.format)} ${field.name}` : formatText(field.format)
 
   const blocked = !fields.length ? "모델 입출력 처리 없음"
-    : !workload.admission ? `접수 중지${workload.desired.status?.admission.reason ? `: ${statusLabel(workload.desired.status.admission.reason)}` : ""}` : ""
+    : !workload.admission ? `접수 중지${workload.desired.status?.admission.reason ? `: ${errorCodeLabel(workload.desired.status.admission.reason)}` : ""}` : ""
   const missing = fields.some(field => !values[field.name]?.length)
-  const disabledReason = blocked || (missing ? "입력을 채워 주세요" : "") || timeoutProblem || Object.values(problems).find(Boolean) || ""
+  const disabledReason = blocked || (missing ? "입력 필요" : "") || timeoutProblem || Object.values(problems).find(Boolean) || ""
 
   async function pick(field: RawField, file: File | undefined) {
     if (!file) return

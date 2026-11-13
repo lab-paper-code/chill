@@ -9,10 +9,11 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import { ApiError } from "@/lib/client-transport"
 import { useMeasurementPlans } from "@/hooks/use-measurement-data"
-import { currentRunCondition, deviceLabel, runSpec } from "@/lib/measurement-coverage"
-import { pathLabel, requestPhase } from "@/lib/measurements-coverage-matrix"
+import { currentRunCondition, runSpec } from "@/lib/measurement-coverage"
+import { requestPhase } from "@/lib/measurements-coverage-matrix"
+import { deviceClassLabel, executionPathLabel, powerModeLabel } from "@/lib/display-labels"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
-import { formatKst, formatNumber } from "@/lib/format"
+import { formatNumber, formatSeconds, msNumber } from "@/lib/format"
 import { measurementStatus } from "@/lib/status-labels"
 import type { CampaignResult, MeasurementFailure, MeasurementPlanSpec, ProfilingRun, ResultRow, RunsView } from "@/lib/read-types"
 
@@ -22,7 +23,7 @@ type Campaign = CampaignResult["campaign"] & { spec: MeasurementPlanSpec }
 
 const resultColumns: Column<ResultRow>[] = [
   { key: "batch", header: "배치", unit: "건", numeric: true, cell: r => r.batch, sortValue: r => r.batch, csv: r => r.batch },
-  { key: "p95", header: "지연 p95", unit: "ms", numeric: true, cell: r => formatNumber(r.p95Milliseconds, 2), sortValue: r => r.p95Milliseconds, missingReason: "지연 표본 없음" },
+  { key: "p95", header: "지연 p95", unit: "ms", numeric: true, cell: r => msNumber(r.p95Milliseconds), sortValue: r => r.p95Milliseconds, missingReason: "지연 표본 없음" },
   { key: "total", header: "총 에너지", unit: "J/건", numeric: true, cell: r => formatNumber(r.totalJoulesPerItem, 3), sortValue: r => r.totalJoulesPerItem },
   { key: "incremental", header: "추가 에너지", unit: "J/건", numeric: true, cell: r => formatNumber(r.incrementalJoulesPerItem, 3), sortValue: r => r.incrementalJoulesPerItem },
   { key: "half", header: "신뢰 구간 ±", unit: "J/건", numeric: true, cell: r => formatNumber(r.confidence?.halfWidth, 3), sortValue: r => r.confidence?.halfWidth, missingReason: "신뢰 구간 없음" },
@@ -36,7 +37,7 @@ const runColumns: Column<ProfilingRun>[] = [
   { key: "batch", header: "배치", unit: "건", numeric: true, cell: r => runSpec(r).measurement?.batch, sortValue: r => runSpec(r).measurement?.batch },
   { key: "attempt", header: "반복", numeric: true, cell: r => r.labels?.["edge.dacs.io/attempt"] ?? null, sortValue: r => Number(r.labels?.["edge.dacs.io/attempt"]), missingReason: "기록 없음" },
   { key: "status", header: "상태", cell: r => <StatusBadge status={measurementStatus(r.assessment?.displayStatus)} />, sortValue: r => measurementStatus(r.assessment?.displayStatus).label },
-  { key: "ended", header: "실행 종료", cell: r => { const at = currentRunCondition(r, "ExecutionComplete")?.lastTransitionTime; return at ? formatKst(at) : null }, sortValue: r => currentRunCondition(r, "ExecutionComplete")?.lastTransitionTime, missingReason: "아직 끝나지 않음", width: "12rem" },
+  { key: "ended", header: "실행 종료", cell: r => { const at = currentRunCondition(r, "ExecutionComplete")?.lastTransitionTime; return at ? <TimeText at={at} mode="list" /> : null }, sortValue: r => currentRunCondition(r, "ExecutionComplete")?.lastTransitionTime, missingReason: "아직 끝나지 않음", width: "12rem" },
 ]
 
 export function MeasurementRequestDetailScreen({ name }: { name: string }) {
@@ -95,7 +96,7 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
         setConfirm(false)
         const code = error instanceof ApiError ? (error.data as { code?: unknown } | null)?.code : undefined
         const text = error.unknownOutcome || error.status === 0 ? "결과 미확인" : error.status === 403 ? "삭제 권한 없음" : code === "MeasurementInUse" ? "운영 중인 측정이라 삭제 불가" : error.status === 409 ? "그 사이 요청이 바뀜" : "삭제 실패"
-        toast({ title: text, description: error.unknownOutcome || error.status === 0 ? "목록에서 상태를 확인하세요" : name, type: "error" })
+        toast({ title: text, description: error.unknownOutcome || error.status === 0 ? "목록에서 상태 확인 필요" : name, type: "error" })
       },
     },
   )
@@ -154,17 +155,17 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
             { label: "모델", value: candidate.modelSpec },
             { label: "전처리기", value: candidate.preprocessor },
             { label: "데이터셋", value: spec.activeProtocol.dataset as string | undefined },
-            { label: "장치 종류", value: deviceLabel(candidate.deviceClass) },
+            { label: "장치 종류", value: deviceClassLabel(candidate.deviceClass) },
             { label: "장치", value: spec.state.targetNode },
-            { label: "전력 모드", value: candidate.powerMode },
-            { label: "실행 경로", value: pathLabel(candidate.executionPath) },
+            { label: "전력 모드", value: powerModeLabel(candidate.powerMode) },
+            { label: "실행 경로", value: executionPathLabel(candidate.executionPath) },
             { label: "배치별 반복", value: `${spec.trialsPerBatch}회` },
             { label: "재시도 한도", value: `${spec.retryLimit}회` },
-            { label: "실행 측정", value: `${spec.activeProtocol.durationSeconds} s` },
+            { label: "실행 측정", value: formatSeconds(spec.activeProtocol.durationSeconds) },
             { label: "예열", value: `${spec.activeProtocol.warmupIterations}회` },
-            { label: "유휴 측정", value: `${spec.idleProtocol.durationSeconds} s` },
+            { label: "유휴 측정", value: formatSeconds(spec.idleProtocol.durationSeconds) },
             { label: "신뢰 수준", value: spec.pointPolicy?.confidenceLevel ? `${Number(spec.pointPolicy.confidenceLevel) * 100}%` : null },
-            ...(plan ? [{ label: "생성", value: <TimeText at={plan.metadata.creationTimestamp} mode="absolute" /> }] : []),
+            ...(plan ? [{ label: "생성", value: <TimeText at={plan.metadata.creationTimestamp} mode="detail" /> }] : []),
           ]} />
         </Section>
       )}

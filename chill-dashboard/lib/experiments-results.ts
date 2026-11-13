@@ -9,7 +9,7 @@ export const resultName = (run: Experiment): string => run.definition?.run.name 
 export const latencyDigits = (value: number): number => Math.abs(value) < 10 ? 2 : Math.abs(value) < 100 ? 1 : 0
 export const rejectionReasons: Record<string, string> = { QueueFull: "대기열 가득", DeadlineInfeasible: "기한 내 처리 불가" }
 export const waitLocations: Record<string, string> = { gateway: "게이트웨이", executor: "실행기" }
-export const energyScopes: Record<string, string> = { "declared-node-meters": "선언된 노드 계측기" }
+export const energyScopes: Record<string, string> = { "declared-node-meters": "선언된 장치 계측기" }
 
 const ms = (value: unknown, nanos: boolean): number | null => {
   const n = typeof value === "bigint" ? Number(value) : finite(value)
@@ -131,7 +131,7 @@ export function partRows(run: Experiment, service: string): PartRow[] {
   })
 }
 
-export const OUTCOME_CLASSES = [["onTime", "기한 내 성공"], ["late", "늦은 완료"], ["rejected", "거절"], ["timeout", "시간 초과"], ["failed", "실패"], ["incomplete", "미완료"]] as const
+export const OUTCOME_CLASSES = [["onTime", "기한 내 성공"], ["late", "늦은 완료"], ["rejected", "거부"], ["timeout", "시간 초과"], ["failed", "실패"], ["incomplete", "미완료"]] as const
 export type RequestRow = { name: string; outcomes: Published | null; gateway: Quantiles; executor: Quantiles }
 export function requestRows(stage: ExperimentStage): RequestRow[] {
   return experimentRows(stage).map(row => ({
