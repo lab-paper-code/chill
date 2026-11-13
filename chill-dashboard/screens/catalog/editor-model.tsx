@@ -1,6 +1,7 @@
 "use client"
 
 import { FormSection } from "@/components/kit"
+import { architectureLabel } from "@/lib/display-labels"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { backendsByFormat, datatypes, type ExecutionPath, type ModelArtifact, type ModelSpec } from "@/lib/domain"
@@ -8,7 +9,7 @@ import { blankArtifact, blankPath, blankTensor, type Errors } from "@/lib/catalo
 import { IntList, Num, PathList, Pick, RowList, Text } from "./editor-fields"
 
 const formats = Object.keys(backendsByFormat).map(value => ({ value }))
-const architectures = [{ value: "amd64" }, { value: "arm64" }]
+const architectures = ["amd64", "arm64"].map(value => ({ value, label: architectureLabel(value) }))
 const policies = [{ value: "keep", label: "유지" }, { value: "drop", label: "버림" }, { value: "defer", label: "미룸" }]
 const derivationBlank = { sourceArtifact: "", targetPlatform: "", declaredBatchSizes: [1], conversion: { tool: "", version: "" } }
 

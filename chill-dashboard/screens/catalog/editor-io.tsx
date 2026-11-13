@@ -1,12 +1,13 @@
 "use client"
 
 import { FormSection } from "@/components/kit"
+import { architectureLabel } from "@/lib/display-labels"
 import { fieldFormats, formatText, type DatasetSpec, type ModelResource, type PreprocessorSpec, type RawField } from "@/lib/domain"
 import { blankField, blankTarget, type Errors } from "@/lib/catalog-editor"
 import { Num, Pick, RowList, Text } from "./editor-fields"
 
 const formats = fieldFormats.map(value => ({ value, label: formatText(value) }))
-const architectures = [{ value: "amd64" }, { value: "arm64" }]
+const architectures = ["amd64", "arm64"].map(value => ({ value, label: architectureLabel(value) }))
 
 function FieldRows<T extends { name: string; format: RawField["format"]; maxBytes?: number }>({ title, fields, onChange, blank, errors, prefix, sized }: { title: string; fields: T[]; onChange: (fields: T[]) => void; blank: () => T; errors: Errors; prefix: string; sized: boolean }) {
   return (

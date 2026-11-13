@@ -106,7 +106,7 @@ function Editor({ kind, r, name, title }: { kind: CatalogKind; r: ResourceState;
           {draft.kind === "datasets" && <DatasetForm spec={draft.spec} errors={errors} onChange={spec => setDraft({ kind: "datasets", spec })} />}
           <FormActions changes={isNew ? undefined : changes.length}>
             <Link href={isNew ? `/catalog/${kind}` : `/catalog/${kind}/${encodeURIComponent(name ?? "")}`} className={buttonClassName({ variant: "ghost" })}>취소</Link>
-            <Button type="submit" variant="default" loading={r.mutation.isPending && !review} disabled={locked || (!isNew && !changes.length)}>{isNew ? "등록" : "검토 후 적용"}</Button>
+            <Button type="submit" variant="default" loading={r.mutation.isPending && !review} disabled={locked || (!isNew && !changes.length)}>{isNew ? "등록" : "검토"}</Button>
           </FormActions>
         </form>
       )}

@@ -13,7 +13,7 @@ import { formatDetailTime, formatNumber, formatSeconds, percentNumber, rateNumbe
 import { energyStatus, experimentVerdict, type StatusInfo } from "@/lib/status-labels"
 import { buttonClassName, DataTable, EmptyState, Fields, HeadroomBar, Hint, MeterBar, Missing, Section, Select, StatRow, StatTile, StatusBadge, StatusDot, TimeText } from "@/components/kit"
 
-export const CONDITION_LABELS = { load: "부하", identity: "서비스 정의", rules: "측정 규칙", duration: "구간 길이" } as const
+export const CONDITION_LABELS = { load: "부하", identity: "서비스 정의", rules: "측정 규칙", duration: "단계 소요" } as const
 
 /** `?key=value` updates that keep the rest of the query; null removes the key. */
 export function useQueryUpdate() {

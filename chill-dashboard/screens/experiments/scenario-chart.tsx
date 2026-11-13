@@ -8,7 +8,7 @@ import { scenarioServices, scenarioSteps } from "@/lib/experiments-scenario"
 export function RateChart({ spec, height }: { spec: Spec; height?: number }) {
   return (
     <TimeSeries
-      label="서비스별 요청률" unit="req/s" x="seconds" curve="step" legend height={height} data={scenarioSteps(spec)}
+      label="서비스별 요청률" unit="req/s" digits={2} x="seconds" curve="step" legend height={height} data={scenarioSteps(spec)}
       series={scenarioServices(spec).map((name, index) => ({ key: `s${index}`, label: name || `서비스 ${index + 1}` }))}
     />
   )

@@ -21,7 +21,7 @@ import { scenarioPath, scenarioQuery } from "./scenario-detail"
 
 const emptySpec: Spec = { workloads: [], parts: [], arrivalDistribution: {}, seeds: {}, datasetRefs: {} }
 const arrivalOptions = Object.entries(arrivalLabels).map(([value, label]) => ({ value, label }))
-// A part table holds 구간, 길이, delete and one 9rem rate column per service; past three services it no longer fits the form column.
+// A part table holds 구간, 길이, delete and one 8rem rate column per service; past three services it no longer fits the form column.
 const TABLE_SERVICES = 3
 const TRACE_PAGE = 25
 
@@ -101,7 +101,7 @@ function Editor({ source, editing = false }: { source?: LoadScenario; editing?: 
   }
 
   function done(savedName: string) {
-    toast({ title: editing ? "수정됨" : "저장됨", description: savedName, type: "success" })
+    toast({ title: editing ? "저장됨" : "등록됨", description: savedName, type: "success" })
     void queryClient.invalidateQueries({ predicate: q => String(q.queryKey[1]).startsWith(SCENARIOS_PATH) })
     router.replace(scenarioHref(savedName))
   }
@@ -147,9 +147,9 @@ function Editor({ source, editing = false }: { source?: LoadScenario; editing?: 
                 label="구간" rows={parts.map((part, index) => ({ ...part, index }))} rowKey={row => String(row.index)} pageSize={0}
                 empty={<EmptyState compact title="구간 없음" />}
                 columns={[
-                  { key: "id", header: "구간", width: "10rem", cell: row => <InputBlock inputSize="sm" aria-label={`구간 ${row.index + 1} 이름`} value={row.id} onChange={event => edit(["parts", row.index, "id"], event.target.value)} /> },
-                  { key: "seconds", header: "길이", unit: "초", width: "8rem", numeric: true, cell: row => <NumberInput label={`구간 ${row.index + 1} 길이`} value={row.seconds} onChange={value => edit(["parts", row.index, "durationSeconds"], value)} /> },
-                  ...services.map((service, i) => ({ key: `r${i}`, header: service, width: "9rem", numeric: true, cell: (row: { index: number; rates: Record<string, number | null> }) => <NumberInput label={`구간 ${row.index + 1} ${service} 요청률`} value={row.rates[service] ?? null} onChange={value => edit(["parts", row.index, "rates", service], value)} /> })),
+                  { key: "id", header: "구간", width: "8rem", cell: row => <InputBlock inputSize="sm" aria-label={`구간 ${row.index + 1} 이름`} value={row.id} onChange={event => edit(["parts", row.index, "id"], event.target.value)} /> },
+                  { key: "seconds", header: "길이", unit: "초", width: "7.5rem", numeric: true, cell: row => <NumberInput label={`구간 ${row.index + 1} 길이`} value={row.seconds} onChange={value => edit(["parts", row.index, "durationSeconds"], value)} /> },
+                  ...services.map((service, i) => ({ key: `r${i}`, header: service, width: "8rem", numeric: true, cell: (row: { index: number; rates: Record<string, number | null> }) => <NumberInput label={`구간 ${row.index + 1} ${service} 요청률`} value={row.rates[service] ?? null} onChange={value => edit(["parts", row.index, "rates", service], value)} /> })),
                   { key: "remove", header: "", width: "3rem", cell: row => <Button variant="ghost" size="icon" aria-label={`구간 ${row.index + 1} 삭제`} onClick={() => removePart(row.index)}><Trash2 aria-hidden="true" /></Button> },
                 ]}
               />
@@ -206,7 +206,7 @@ function Editor({ source, editing = false }: { source?: LoadScenario; editing?: 
       <FormActions>
         {unknown && <Button variant="outline" loading={detail.isFetching} onClick={() => void confirmOutcome()}>결과 확인</Button>}
         <Button variant="outline" disabled={!!problems.length || mutation.isPending || unknown} loading={mutation.isPending && !canSave} onClick={() => void preflight()}>사전 점검</Button>
-        <Button variant="default" disabled={!canSave} loading={mutation.isPending && canSave} onClick={() => void save()}>저장</Button>
+        <Button variant="default" disabled={!canSave} loading={mutation.isPending && canSave} onClick={() => void save()}>{editing ? "저장" : "등록"}</Button>
       </FormActions>
     </>
   )
@@ -296,16 +296,22 @@ function TracePicker({ value, onChange }: { value: Spec; onChange: (value: Spec 
   )
 }
 
-/** Number field with its own text, so "1." and "" can be typed; the spec only receives finite numbers (or nothing). */
+/**
+ * Number field with its own text, so "1." and "" can be typed; the spec only receives finite numbers (or nothing).
+ * A value not typed here (copied or generated) shows at most 2 decimals until the field is focused; the stored number is never rounded.
+ */
 function NumberInput({ label, value, onChange, className = "ml-auto w-24" }: { label: string; value: number | null; onChange: (value: number | undefined) => void; className?: string }) {
-  const [text, setText] = React.useState(value == null ? "" : String(value))
-  const parsed = text.trim() === "" ? undefined : Number(text)
-  const typed = parsed != null && Number.isFinite(parsed) ? parsed : undefined
-  if (typed !== (value ?? undefined)) setText(value == null ? "" : String(value))
+  const [text, setText] = React.useState<string | null>(null)
+  const [focused, setFocused] = React.useState(false)
+  const parsed = text === null || text.trim() === "" ? undefined : Number(text)
+  // The value changed from outside (row removed, workloads adopted): drop the typed text.
+  if (text !== null && (parsed != null && Number.isFinite(parsed) ? parsed : undefined) !== (value ?? undefined)) setText(null)
+  const shown = text ?? (value == null ? "" : focused ? String(value) : String(Number(value.toFixed(2))))
   return (
     <div className={className}>
       <InputBlock
-        type="number" inputSize="sm" aria-label={label} min={0} step="any" value={text}
+        type="number" inputSize="sm" aria-label={label} min={0} step="any" value={shown}
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
         onChange={event => {
           const next = event.target.value
           setText(next)

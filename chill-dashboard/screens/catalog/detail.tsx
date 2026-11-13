@@ -152,7 +152,7 @@ function ModelBody({ spec }: { spec: ModelResource["spec"] }) {
           columns={[
             { key: "name", header: "이름", cell: a => a.name },
             { key: "format", header: "형식", cell: a => a.format.toUpperCase() },
-            { key: "arch", header: "아키텍처", cell: a => architectureLabel(a.source.architecture) },
+            { key: "arch", header: "아키텍처", cell: a => <Hint text={a.source.architecture} focusable>{architectureLabel(a.source.architecture)}</Hint> },
             { key: "files", header: "파일", numeric: true, cell: a => a.source.files.length },
             { key: "image", header: "이미지", cell: a => <IdText value={a.source.image} /> },
           ]}
@@ -166,7 +166,7 @@ function ModelBody({ spec }: { spec: ModelResource["spec"] }) {
           empty={none}
           pageSize={0}
           columns={[
-            { key: "name", header: "이름", cell: p => <Hint text={p.name}>{executionPathLabel(p.name, { spec })}</Hint> },
+            { key: "name", header: "이름", cell: p => <Hint text={p.name} focusable>{executionPathLabel(p.name, { spec })}</Hint> },
             { key: "artifact", header: "파일", cell: p => p.artifact },
             { key: "runtime", header: "런타임", cell: p => p.runtime.family },
             { key: "backend", header: "백엔드", cell: p => p.runtime.backend },
@@ -192,7 +192,7 @@ function PreprocessorBody({ spec }: { spec: PreprocessorResource["spec"] }) {
           columns={[
             { key: "model", header: "모델", cell: a => a.target.model },
             { key: "artifact", header: "파일", cell: a => a.target.artifact },
-            { key: "arch", header: "아키텍처", cell: a => architectureLabel(a.source.architecture) },
+            { key: "arch", header: "아키텍처", cell: a => <Hint text={a.source.architecture} focusable>{architectureLabel(a.source.architecture)}</Hint> },
             { key: "path", header: "경로", cell: a => a.source.path },
             { key: "image", header: "이미지", cell: a => <IdText value={a.source.image} /> },
           ]}

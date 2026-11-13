@@ -309,7 +309,6 @@ function Editor({ title, source, missing = [] }: { title: string; source: Source
     }
   }
 
-  const submitLabel = existing ? "저장" : "실험 시작"
   const why = done ? "" : blocked ? "수정할 수 없는 상태" : unknown ? "결과 미확인" : nameError ? `이름: ${nameError}` : invalid.size ? `입력 오류 ${invalid.size}건` : !answer || stale || !answer.checks.every(item => item.passed) ? "사전 점검 통과 후 가능" : ""
   const summary = [
     { label: "단계", value: `${stages.length}개` },
@@ -349,7 +348,7 @@ function Editor({ title, source, missing = [] }: { title: string; source: Source
                 {unknown && <StatusBadge tone="warn" label="결과 미확인" className="justify-self-start" />}
                 <div className="grid gap-2">
                   <Hint text={why || undefined} focusable={!!why} className="grid">
-                    <Button type="button" variant="default" className="w-full" disabled={!canSubmit} loading={send.isPending} onClick={() => setConfirm(true)}>{submitLabel}</Button>
+                    <Button type="button" variant="default" className="w-full" disabled={!canSubmit} loading={send.isPending} onClick={() => setConfirm(true)}>검토</Button>
                   </Hint>
                   {unknown && <Button type="button" variant="outline" className="w-full" loading={lookup.isFetching} onClick={() => void reconcile(spec)}>다시 조회</Button>}
                 </div>
@@ -357,7 +356,7 @@ function Editor({ title, source, missing = [] }: { title: string; source: Source
             </Section>
           </aside>
         </div>
-        <ConfirmDialog open={confirm} onOpenChange={setConfirm} title={existing ? "실험 수정" : "실험 시작"} target={name} confirmLabel={existing ? "저장" : "시작"}
+        <ConfirmDialog open={confirm} onOpenChange={setConfirm} title={existing ? "실험 수정" : "실험 등록"} target={name} confirmLabel={existing ? "적용" : "등록"}
           changes={existing ? specChanges(source.spec, spec) : undefined} pending={send.isPending} onConfirm={() => void submit()}>
           {!existing && <Fields columns={2} items={summary} />}
         </ConfirmDialog>
