@@ -15,7 +15,7 @@ CHILL은 서로 다른 워크로드를 같은 서빙 경로로 동시에 운영�
 - 분배, 증설, 축소와 에너지 목적 교체를 매 제어 주기에 같은 현재 유효 수요로 비교한다. 별도 안정화 시간은 두지 않는다. 에너지 비교 기간은 후보에 독립적인 설정값으로 유지한다.
 - 계수와 계산된 측정 조건, 입력 근거 식별자 및 제어 설정은 실행 기록에 고정한다. 측정의 signed 원시 값과 운영 정책 투영을 구분한다.
 
-세부 계약은 [스케줄러 SRS](../spec/scheduler/SRS.md), [측정 설계](../design/serving/measurement-api.md), [구성 선택](../design/serving/analytic-planner.md), [실행 설계 §5.4](../design/serving/scheduler-implementation.md)에 둔다.
+세부 계약은 [스케줄러 SRS](../spec/scheduler/SRS.md), [측정 설계](../design/serving/measurement-api.md), [구성 선택](../design/serving/analytic-planner.md), [전환과 handoff](../design/serving/scheduler-implementation.md#전환과-handoff)에 둔다.
 
 ## 현재 우선순위와 범위
 

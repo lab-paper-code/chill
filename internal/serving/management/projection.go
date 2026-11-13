@@ -39,7 +39,7 @@ func ValidateModel(model *api.ModelSpec) error {
 }
 
 // Snapshot keeps only the execution paths whose artifact the preprocessor
-// provides code for (WM-08).
+// provides code for (측정 근거가 있는 실행 후보).
 func Snapshot(w *api.Workload, model *api.ModelSpec, p *api.Preprocessor, dataset *api.Dataset) (*serving.Definition, error) {
 	if err := ValidateModel(model); err != nil {
 		return nil, err

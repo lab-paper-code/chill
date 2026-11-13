@@ -19,7 +19,7 @@ const failedPreparationSlot = "failed-slot"
 
 // #218: prepare times out before policy ACK, but its exact executor later
 // becomes Ready. Compensation must retire it, not turn failure into success.
-// SCH-AC-38; P2 §3 R4 compensation/idempotent cleanup alternative.
+// 예약 충돌과 효과 반환 검증: compensation and idempotent cleanup alternative.
 func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 	for _, evidence := range []string{"unclaimed", "canceled", "claimed", "identity-mismatch", "other-owner", pendingPowerEvidence, activeSiblingEvidence, "preexisting", "policy-ack"} {
 		t.Run(evidence, func(t *testing.T) {
@@ -73,7 +73,7 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 }
 
 // A subset's Before.Native is not the requested ACK of a sibling's new
-// preparation. Historical evidence must not bypass R4b retirement/absence.
+// preparation. Historical evidence must not bypass retirement or physical absence checks.
 func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) {
 	c, api, child, parent := failedPrepareCompensationFixture(t, "canceled")
 	actual := *schedulerPhysicalState(c.state.Snapshot.Instances[1].ID, c.runtime.Instances())

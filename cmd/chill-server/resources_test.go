@@ -38,7 +38,7 @@ func TestLoadGeneratorResourcePodSelected(t *testing.T) {
 	}
 }
 
-// SCH-AC-53: replacement accepts the last issued identity, never aliases UIDs.
+// 외부 자원 표본과 누적값 검증: replacement accepts the last issued identity, never aliases UIDs.
 func TestResourcesHandshakeReplacementAndRestart(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()

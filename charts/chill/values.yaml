@@ -57,7 +57,7 @@ operator:
     create: true
     name: ""
 
-# EXP-01/EXP-14: operational inputs are frozen from chill-evaluation-config at start.
+# 불변 실험 정의/실행 결과와 게시: operational inputs are frozen from chill-evaluation-config at start.
 # Provision the referenced Secrets separately; the chart never creates credentials.
 evaluation:
   enabled: false

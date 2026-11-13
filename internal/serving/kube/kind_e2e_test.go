@@ -262,7 +262,7 @@ func kindHolder(t *testing.T, kube kubernetes.Interface, name string) string {
 	return value
 }
 
-// SCH-AC-26: an available Node moves to the measurement POOL and returns, a
+// 측정 노드 편입과 반환 검증: an available Node moves to the measurement POOL and returns, a
 // serving Node is refused with its reason, and a Node with a Pod CHILL did not
 // place is measured and that Pod is recorded.
 func TestE2EKindSCHAC26MeasurementAdmission(t *testing.T) {
@@ -479,7 +479,7 @@ func kindWorkloadState(d serving.SchedulerDecision, uid string) serving.Schedule
 	return serving.SchedulerWorkloadState{}
 }
 
-// SCH-AC-24: a Workload whose only completed measurement is on a Node that
+// 첫 구성 자동 생성 검증: a Workload whose only completed measurement is on a Node that
 // never served it starts on that Node; the other available Node keeps its
 // lowest mode, the configured completion margin is evaluated and the next
 // control interval decides again.
@@ -596,7 +596,7 @@ func kindInstance(t *testing.T, kube kubernetes.Interface, c *SchedulerControlle
 	c.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 }
 
-// SCH-AC-25: a Workload with autonomous control off keeps its instance and
+// 자동제어와 근거 대기 공존 검증: a Workload with autonomous control off keeps its instance and
 // the mode of its Node, an autonomous Workload without a completed
 // measurement is marked as waiting for evidence, and the measured autonomous
 // Workload is still decided.

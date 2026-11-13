@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// SCH-26/50, AC-45: non-serving occupancy cannot become stale live capacity.
+// 실패 격리와 관측 기반 복구, Pod별 실물 자원 장부, 장애 주입의 격리와 복구 검증: non-serving occupancy cannot become stale live capacity.
 // Neither a logical stop nor termination releases its physical resource budget.
 func TestCapacityTerminalLedgerAllowsIndependentRecoveryAC45(t *testing.T) {
 	for _, terminal := range []bool{false, true} {

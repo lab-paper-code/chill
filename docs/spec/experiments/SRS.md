@@ -71,7 +71,7 @@ SLO, 에너지와 생성기 품질과 전력 완전성의 기존 판정 규칙�
 설정 소유는 [Configuration Ownership and Freezing Paths](../../adr/0031-configuration-ownership-and-freezing.md), 미확인 자원은
 [Resource Ledger and Scoped Reservations](../../adr/0023-resource-ledger.md)을 따른다. 저장 계약은 캠페인 의존 중 바꾸지 않으며
 [Durable Stored-Contract Compatibility](../../adr/0019-durable-stored-contract-compatibility.md)의 단일 reader를 유지한다.
-기존 게시 불변성은 [관측 설계 §6.4](../../design/serving/measurement-api.md#실험-조회와-저장-계약)가 정본이다.
+기존 게시 불변성은 [실험 조회와 저장 계약](../../design/serving/measurement-api.md#실험-조회와-저장-계약)가 정본이다.
 
 ## 4. 수용 시나리오
 

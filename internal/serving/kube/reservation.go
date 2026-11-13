@@ -749,7 +749,7 @@ func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.Inst
 	return reflect.DeepEqual(previous, current)
 }
 
-// SCH-AC-38 / P2 §3 R4: compensate only a failed owner's own, unclaimed
+// 예약 충돌과 효과 반환 검증 compensation: compensate only a failed owner's own, unclaimed
 // preparation. remove already performs stop/drain/source retirement; its
 // completion is not a return proof until releaseObservedScopes sees Pod absence.
 func (c *reservationState) compensatePreparationsLocked(

@@ -447,7 +447,7 @@ func TestSchedulerMeasurementNodeIsFixed(t *testing.T) {
 	}
 }
 
-// SCH-35: autonomy is rejected while the Workload is routed to a fixed-batch baseline.
+// 고정 배치 비교 실행: autonomy is rejected while the Workload is routed to a fixed-batch baseline.
 func TestSchedulerFixedBatchAutonomyRejectsRoutedBaseline(t *testing.T) {
 	_, snap := schedulerFixture()
 	uid := snap.Instances[0].WorkloadUID

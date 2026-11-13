@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// SCH-AC-32: release removes the override, including for future physical Pods.
+// 배분 선언 삭제 후 분배 검증: release removes the override, including for future physical Pods.
 func TestReleaseSchedulerRoutingFollowsNewReadySeed(t *testing.T) {
 	r, original, _ := routingRuntime(t, map[string]int32{"w1": 1, "w2": 3})
 	first := r.instances[original.ID].ReadyInstance

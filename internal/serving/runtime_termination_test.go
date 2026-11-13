@@ -2,7 +2,7 @@ package serving
 
 import "testing"
 
-// SCH-26/50, AC-45: admission-stop never proves physical termination; exact
+// 실패 격리와 관측 기반 복구, Pod별 실물 자원 장부, 장애 주입의 격리와 복구 검증: admission-stop never proves physical termination; exact
 // terminal facts survive both outstanding-call merges and delayed Ready probes.
 func TestRuntimeTerminationIsPhysicalAndMonotonicAC45(t *testing.T) {
 	for _, outstanding := range []int{0, 1} {

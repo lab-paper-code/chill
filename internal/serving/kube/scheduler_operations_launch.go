@@ -227,7 +227,7 @@ func (c *reservationState) readySubset(ctx context.Context, target serving.Sched
 				selected = append(selected, wanted)
 			}
 		}
-		// SCH-20/AC-38: preserve verified serving capacity until this workload's
+		// 준비된 인스턴스 분배, 예약 충돌과 효과 반환 검증: preserve verified serving capacity until this workload's
 		// positive destinations are Ready; never revive stopped/unroutable paths.
 		if len(selected) < positive {
 			current := []serving.SchedulerInstance{}

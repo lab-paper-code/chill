@@ -18,7 +18,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
-// SCH-AC-52: a raw snapshot must neither rewrite bytes nor export the open minute.
+// 완결 원시와 보관본 조회 검증: a raw snapshot must neither rewrite bytes nor export the open minute.
 func TestRawObservationClosedMinutesAndDefinitions(t *testing.T) {
 	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	ctx := context.Background()

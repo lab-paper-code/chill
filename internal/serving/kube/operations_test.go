@@ -257,7 +257,7 @@ func TestRouteRetainsOnlyExactNativeAcknowledgmentsAcrossSequentialFailures(t *t
 
 // full-E5-7-01, scheduler rows 4558–4560 (08:36:10): lattepanda is
 // stopped at weight 0; jetsono is the sole destination at weight 1000.
-// SCH-AC-38 keeps the physical fence for positive destinations, not retirees.
+// 예약 충돌과 효과 반환 검증 keeps the physical fence for positive destinations, not retirees.
 func TestRouteRequiresPolicyACKOnlyForPositiveDestinationsAC38(t *testing.T) {
 	for _, test := range []struct {
 		name       string

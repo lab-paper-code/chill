@@ -535,7 +535,7 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 	}
 }
 
-// SCH-20/AC-38, full-E5-3-01 scheduler.jsonl.gz:6307 (02:45:39.328560181Z):
+// 준비된 인스턴스 분배, 예약 충돌과 효과 반환 검증, full-E5-3-01 scheduler.jsonl.gz:6307 (02:45:39.328560181Z):
 // old genesis3/nano/rasp5 weights 495/126/379 provide κ=103.37311385470142
 // for λ=74.58333333333333. The former :6331 subset gave genesis3 1000,
 // only κ=62.46166324284952, before the nano CUDA destination was Ready.
@@ -1636,7 +1636,7 @@ func TestCapturePreservesEveryExecutorlessPodUIDAC37(t *testing.T) {
 	}
 }
 
-// SCH-20/AC-38: preparation clocks do not withdraw a serving route. Once all
+// 준비된 인스턴스 분배, 예약 충돌과 효과 반환 검증: preparation clocks do not withdraw a serving route. Once all
 // positive destinations are Ready, independent power work still does not block it.
 func TestReadyDestinationsPreserveServingRouteOnPreparationClock(t *testing.T) {
 	controller, target, source := acknowledgedHandoffFixture(t)

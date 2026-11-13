@@ -13,7 +13,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-// SCH-20/26/50: a frozen route chain progresses without Tick or a new decision.
+// 준비된 인스턴스 분배, 실패 격리와 관측 기반 복구, Pod별 실물 자원 장부: a frozen route chain progresses without Tick or a new decision.
 func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 	for _, scenario := range []string{"complete", "duplicate-completion", "cancel-owner", "controls-off", "uid-off", "capture-cancelled", "capture-failed", "late-ack", "partial"} {
 		t.Run(scenario, func(t *testing.T) {

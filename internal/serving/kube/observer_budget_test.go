@@ -312,7 +312,7 @@ func TestObserverRefreshBoundsNativeProbe(t *testing.T) {
 	}
 }
 
-// SCH-50: failed reads close dispatch but retain the physical inventory.
+// Pod별 실물 자원 장부: failed reads close dispatch but retain the physical inventory.
 func TestObserverPreservesInventoryWhenAReadFails(t *testing.T) {
 	for _, failing := range []string{"/services?", "/pods?"} {
 		t.Run(failing, func(t *testing.T) {
@@ -418,7 +418,7 @@ func TestObserverPollRetriesAfterFailedRefresh(t *testing.T) {
 	}
 }
 
-// SCH-AC-38: a canceled prepare waiting behind a source refresh must not
+// 예약 충돌과 효과 반환 검증: a canceled prepare waiting behind a source refresh must not
 // spend API budget or invalidate unrelated Ready executors when admitted.
 func TestCanceledObserverWaiterPreservesReadyAC38(t *testing.T) {
 	for _, mode := range []string{"refresh", "fresh-poll", "stale-poll"} {

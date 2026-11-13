@@ -14,7 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
-// SCH-AC-53: a failed batch is sent once; the next call rereads rotated SA tokens.
+// 외부 자원 표본과 누적값 검증: a failed batch is sent once; the next call rereads rotated SA tokens.
 func TestResourcePostFailureAndTokenRotation(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(tokenFile, []byte("old-token\n"), 0600); err != nil {

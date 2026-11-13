@@ -10,7 +10,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
-// SCH-AC-53: discover real kubelet directories even with a private cgroup namespace.
+// 외부 자원 표본과 누적값 검증: discover real kubelet directories even with a private cgroup namespace.
 func TestResourceCgroupVersionsAndMissingPeak(t *testing.T) {
 	target := observation.ResourceTarget{PodUID: "aa-bb", ContainerID: "containerd://deadbeef"}
 	for _, driver := range []string{"cgroupfs", "systemd"} {

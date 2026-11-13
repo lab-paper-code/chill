@@ -37,7 +37,7 @@ func TestR6ProfileResponseOmitsRawCatalogAndLatencySamples(t *testing.T) {
 			t.Errorf("response contains internal/raw %s", key)
 		}
 	}
-	// preparations is the catalog restore contract (SCH-67; targeted restoration)
+	// preparations is the catalog restore contract (관측 원시 기록 내보내기; targeted restoration)
 	// and must survive the query projection.
 	if !strings.Contains(string(raw), `"preparations"`) {
 		t.Error("response dropped preparations")

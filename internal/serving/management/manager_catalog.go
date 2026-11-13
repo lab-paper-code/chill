@@ -204,7 +204,7 @@ func (m *Manager) preprocessorsTargeting(ctx context.Context, model string, kept
 	return names, nil
 }
 
-// keepTargetedArtifacts refuses a model change that removes a Preprocessor target (DP-12).
+// keepTargetedArtifacts refuses a model change that removes a Preprocessor target (전처리 대상 모델 산출물 보호).
 func (m *Manager) keepTargetedArtifacts(ctx context.Context, proposed *api.ModelSpec) error {
 	removed, err := m.preprocessorsTargeting(ctx, proposed.Name, proposed.Spec.Artifacts)
 	if err != nil || len(removed) == 0 {
@@ -213,7 +213,7 @@ func (m *Manager) keepTargetedArtifacts(ctx context.Context, proposed *api.Model
 	return managementError("ModelArtifactReferenced", fmt.Sprintf("removed artifacts are targeted by Preprocessors %v", removed), "spec.artifacts")
 }
 
-// validatePreprocessor applies DP-09: the declaration and every target model artifact.
+// validatePreprocessor applies 카탈로그 등록과 수정 검증: the declaration and every target model artifact.
 func (m *Manager) validatePreprocessor(ctx context.Context, p *api.Preprocessor) error {
 	if messages := validation.IsDNS1123Subdomain(p.Name); len(messages) != 0 {
 		return managementError("InvalidPreprocessor", fmt.Sprint(messages), "metadata.name")
@@ -279,7 +279,7 @@ func (m *Manager) CreatePreprocessor(ctx context.Context, name string, spec api.
 }
 
 // UpdatePreprocessor starts a PreprocessorUpdate barrier for referencing
-// Workloads once every dataset they name stays compatible (DP-10).
+// Workloads once every dataset they name stays compatible (전처리와 데이터셋 수정 적용).
 func (m *Manager) UpdatePreprocessor(ctx context.Context, name, resourceVersion string, spec api.PreprocessorSpec) (*api.Preprocessor, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -399,7 +399,7 @@ func (m *Manager) UpdateDataset(ctx context.Context, name, resourceVersion strin
 	if err := validateDataset(proposed); err != nil {
 		return d, err
 	}
-	// DP-10: the Serving applied definition keeps the dataset identity; later
+	// 전처리와 데이터셋 수정 적용: the Serving applied definition keeps the dataset identity; later
 	// measurements freeze the new declaration, which must still serve every
 	// preprocessor paired with it, desired or still applied during a drain.
 	list, err := m.referenceWorkloads(ctx)

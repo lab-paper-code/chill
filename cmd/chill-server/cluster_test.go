@@ -11,7 +11,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
-// SCH-AC-54: startup identity is recorded before projection; failed appends emit nothing.
+// Pod와 장애 기록 후 발행 검증: startup identity is recorded before projection; failed appends emit nothing.
 func TestClusterPublishesOnlyCommittedRows(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

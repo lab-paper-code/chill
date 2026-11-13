@@ -303,7 +303,7 @@ func checkReference(obj client.Object, err error, kind, field string) error {
 }
 
 // loadReferences reads the catalog objects a Workload spec names and checks
-// them and the dataset and preprocessor compatibility (WM-06, DP-07).
+// them and the dataset and preprocessor compatibility (등록과 수정 검증, 데이터셋과 전처리 호환성).
 func (m *Manager) loadReferences(ctx context.Context, spec api.WorkloadSpec) (catalogRefs, error) {
 	var refs catalogRefs
 	var err error
@@ -559,7 +559,7 @@ func (m *Manager) UpdateWorkload(ctx context.Context, name, resourceVersion stri
 		err = m.fail(ctx, w, err)
 		return m.view(w), false, err
 	}
-	// SLO, dataset, lifetime and admission changes keep the accepted execution and apply without drain (WM-16).
+	// SLO, dataset, lifetime and admission changes keep the accepted execution and apply without drain (모델과 전처리 변경 절차).
 	if before != nil && before.SameExecution(d) {
 		if err := m.apply(ctx, w, d); err != nil {
 			err = m.fail(ctx, w, err)
@@ -952,7 +952,7 @@ func (m *Manager) settled(group []*api.Workload, current func(*serving.Definitio
 }
 
 // startSharedUpdate closes admission for the whole group and records each
-// member's accepted target. Advance drains and applies the group together (WM-16).
+// member's accepted target. Advance drains and applies the group together (모델과 전처리 변경 절차).
 func (m *Manager) startSharedUpdate(ctx context.Context, kind string, uid types.UID, generation int64, group []*api.Workload) error {
 	acceptedAt := metav1.Now()
 	actorUsername, actorUID := m.config.Actor(ctx)

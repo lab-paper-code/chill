@@ -15,7 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// SCH-AC-38: the collision lease is wider than a Node-local prepare's writes.
+// 예약 충돌과 효과 반환 검증: the collision lease is wider than a Node-local prepare's writes.
 func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 	for _, evidence := range []string{"untouched", "local-prepare", "route-cancel", "stop-cancel", "power-cancel", unknownPodUID, "stale", "unready", "pod-unready", "native-unready", "pending-power", "native-unknown", "restart", "node-replaced", "not-baseline", "sibling", "cancel-sibling", "absent-sibling", "gc"} {
 		t.Run(evidence, func(t *testing.T) {

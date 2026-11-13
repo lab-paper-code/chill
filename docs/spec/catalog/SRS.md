@@ -138,7 +138,7 @@
 | 5% 초과, 원본 미존재, 무효화와 다른 재사용 행을 원본으로 지정 | 거절 및 근거 보존, 전이적/계열 간 일반화 없음 | [같은 기종 프로파일 재사용 조건](#같은-기종-프로파일-재사용-조건), [활성과 유휴 동등성 확인](#활성과-유휴-동등성-확인), [재사용 확인 근거와 신원](#재사용-확인-근거와-신원), [재사용 후보와 대상별 근거](#재사용-후보와-대상별-근거) |
 | 대상 GPU UUID만 원본과 다름 | 대상의 실측 UUID로 준비와 실물 검증하고 원본 UUID를 target 자원에 사용하지 않음 | [재사용 확인 근거와 신원](#재사용-확인-근거와-신원), [재사용 후보와 대상별 근거](#재사용-후보와-대상별-근거) |
 
-저장과 판정과 genesis2→genesis3 운영 절차는 [측정 API §11](../../design/serving/measurement-api.md#같은-기종-프로파일-재사용)에 정의한다.
+저장과 판정과 genesis2→genesis3 운영 절차는 [같은 기종 프로파일 재사용](../../design/serving/measurement-api.md#같은-기종-프로파일-재사용)에 정의한다.
 
 ## 8. 측정 정책의 선택과 동결
 
@@ -161,7 +161,7 @@ BEO의 trialsPerBatch는 active와 idle 각각 3으로 고정한다. 같은 acto
 | annotation 최소 창/trials 변경 | 기본30초/3회 수락과 거절 유지, 비기본 정책이 실제 판정과 identity에 반영. 최소 확인 trial 설정의 유효 범위를 따르며 BEO 생성은 고정 3회다 | [재사용 확인 창과 반복 설정](#재사용-확인-창과-반복-설정) |
 
 정확한 추가 CR 필드, 단위, 범위와 기본값 및 binding 키는
-[설정 설계 §5~6](../../design/serving/configuration-hardcoding.md#실험과-환경-입력의-동결)을 따른다.
+[실험과 환경 입력의 동결](../../design/serving/configuration-hardcoding.md#실험과-환경-입력의-동결)을 따른다.
 
 ## 9. 측정 커버리지 조회 API
 
@@ -213,7 +213,7 @@ OperationCostMeasurement list/detail은 CR이 가리킨 정확 단계의 실제 
 | 두 publisher의 서로 다른 workload α, alias와 직접 rate와 한/여러 part와 producer 시작 시차 | α는 workload별 값, 예정 offset과 해당 실제 시작 anchor 구분, 0부하 무anchor와 direct-rate null 사유 보존 | [실험 예정 부하와 시간 출처](#실험-예정-부하와-시간-출처) |
 | 기록 뒤 Workload 재생성과 한 모집단에 여러 definition와 과거 summary | 기록 당시 identity/혼합 사유 유지, 옛 응답은 미기록; 현재 UID/기본값 대입과 과거 publication 재쓰기 없음 | [기록 당시 워크로드 정의 투영](#기록-당시-워크로드-정의-투영) |
 
-API 필드, null와 경계 검증은 [측정 API §12](../../design/serving/measurement-api.md#공개-query와-권한)와
-[관측 설계 §18](../../design/serving/observability-split.md#live와-평가-소비),
+API 필드, null와 경계 검증은 [공개 query와 권한](../../design/serving/measurement-api.md#공개-query와-권한)와
+[Live와 평가 소비](../../design/serving/observability-split.md#live와-평가-소비),
 실행 순서와 소유권 및 검증은 해당 설계를 따른다.
 저장 계약, 관측 근거와 설정 소유권 결정을 유지하며 새 측정 lifecycle과 지원 registry와 다중 버전 reader와 해시/바이트 gate는 추가하지 않는다.
