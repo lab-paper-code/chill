@@ -55,7 +55,9 @@ Measurement 삭제는 소유 UID 접두 아래의 S3 객체를 **영구 삭제**
 삭제 가능 범위는 현재 observedGeneration의 완료 result 또는 campaign reconciler가
 terminal로 정한 실패다. Pending, Measuring과 복구 가능한 계획 해석 실패를
 delete로 취소할 수 없다. 저장 객체의 schema는 삭제 여부에 영향을 주지 않는다.
-공유 산출물과 이미지는 cleanup 밖이다. 거절 조건 전체는
+공유 산출물과 이미지는 cleanup 밖이다. scheduler가 준비하는 profile의 측정은
+`chill.dacs.io/measurement-invalid` annotation을 붙이고 다음 profile refresh 뒤
+새 resourceVersion으로 지운다. 거절 조건 전체는
 [측정 API](../serving/measurement-api.md#공개-생성과-삭제)를 따른다.
 
 | 오류 | 보존할 사실과 다음 행동 |

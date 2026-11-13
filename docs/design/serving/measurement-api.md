@@ -73,9 +73,11 @@ BEO 생성과 삭제도 같은 두 권한 층을 사용한다. BEO 삭제는 소
 - BEO가 controller인 Run이 결과를 기록하지 않았다. 결과는 `status.evidence`, 현재 generation의 `ExecutionComplete=False`, 또는 `EvidenceVerified=False/EvidenceInvalid`다. profiler controller는 Job이 끝난 뒤에도 그때까지 execution evidence를 쓸 수 있다. 사유는 나열하지 않으므로 이전 Run도 삭제할 수 있다.
 - 그 Run이 controller인 Job이 active이거나, 그 Job 또는 Run이 기록한 Pod가 종료되지 않았다. worker가 cleanup 뒤에 raw를 다시 쓸 수 있다.
 - `edge.dacs.io/serving-profile`이 이 BEO profile을 가리키는 살아 있는 serving Pod가 있다. observer가 그 annotation으로 instance를 귀속한다.
-- scheduler가 이 BEO에서 나온 profile을 준비 대상으로 싣고 있다. 이 BEO의 profile, 이 BEO가 확인한 reuse profile, 이 BEO를 source로 쓰는 reuse profile이 해당한다. 준비 대상은 init container가 지울 bundle을 내려받는 instance를 시작할 수 있다. refresh는 셀마다 현재 profile만 준비하므로, 새 측정이나 replacement로 현재 지위를 넘긴 BEO는 삭제할 수 있다. 오류 메시지는 profile ID를 담는다. 준비 대상이지만 사용하지 않는 profile을 한 번에 catalog에서 빼는 경로는 없다.
+- scheduler가 이 BEO에서 나온 profile을 준비 대상으로 싣고 있다. 이 BEO의 profile, 이 BEO가 확인한 reuse profile, 이 BEO를 source로 쓰는 reuse profile이 해당한다. 준비 대상은 init container가 지울 bundle을 내려받는 instance를 시작할 수 있다. 오류 메시지는 profile ID와 아래 두 단계를 담는다.
 
-삭제 대상은 `batch-energy-optimizations/<BEO UID>/`, `serving/profiles/<namespace>/<name>/<BEO UID>/`, `serving/profile-reuse/<namespace>/<name>/<BEO UID>/`, 그리고 BEO가 controller인 각 Run의 `profiling-runs/<Run UID>/` 아래 모든 객체다. 모든 writer는 자기 owner ID 아래에만 쓰고, 끝의 `/`가 다른 UID와의 접두 일치를 막는다. 거절 판정은 scheduler mutation lock 안에서 하고, store 삭제와 native 삭제는 그 lock을 놓은 뒤 scheduler refresh lock만 잡고 한다. refresh는 profile bundle과 reuse 기록을 쓰므로, 다음 refresh는 native 삭제 뒤에 시작해 이 BEO를 보지 않는다. 실패 뒤 같은 UID/RV 재시도는 남은 객체만 다시 나열해 끝낸다. native 객체가 이미 사라진 측정의 객체는 이 API로 지정할 수 없어 운영자가 지운다.
+준비 대상인 profile의 측정은 두 단계로 지운다. 먼저 BEO에 `chill.dacs.io/measurement-invalid` annotation을 붙인다. catalog는 이 annotation이 있는 측정을 `MeasurementInvalid` issue로 돌리고 profile을 만들지 않으므로, 다음 profile refresh부터 이 BEO의 profile과 이 BEO를 source나 confirmation으로 쓰는 reuse profile은 준비 대상에서 빠진다. 그 뒤 새 resourceVersion으로 DELETE한다. 새 측정이나 replacement로 현재 지위를 넘긴 BEO는 준비 대상이 아니므로 바로 지울 수 있다.
+
+삭제 대상은 `batch-energy-optimizations/<BEO UID>/`, `serving/profiles/<namespace>/<name>/<BEO UID>/`, `serving/profile-reuse/<namespace>/<name>/<BEO UID>/`, 그리고 BEO가 controller인 각 Run의 `profiling-runs/<Run UID>/` 아래 모든 객체다. 모든 writer는 자기 owner ID 아래에만 쓰고, 끝의 `/`가 다른 UID와의 접두 일치를 막는다. 거절 판정은 scheduler mutation lock 안에서 하고, store 삭제와 native 삭제는 그 lock을 놓은 뒤 scheduler refresh lock만 잡고 한다. refresh는 profile bundle과 reuse 기록을 쓰므로, 다음 refresh는 native 삭제 뒤에 시작해 이 BEO를 보지 않는다. 주기 refresh는 삭제가 refresh lock을 잡고 있으면 그 tick을 건너뛰어 main loop를 막지 않는다. 실패 뒤 같은 UID/RV 재시도는 남은 객체만 다시 나열해 끝낸다. native 객체가 이미 사라진 측정의 객체는 이 API로 지정할 수 없어 운영자가 지운다.
 
 ### 동결 protocol과 실행
 
