@@ -14,6 +14,7 @@ Current source establishes implementation facts.
 | Experiment execution | [EvaluationRun execution](profiling/experiment-execution.md) | Profiler controllers, harness Jobs, and immutable results |
 | Query API | [Query API](query-api/README.md) | Query ownership and Dashboard/CLI responsibilities |
 | Dashboard | [Dashboard implementation](dashboard/README.md) | Web, BFF, live transport, and display boundaries |
+| Dashboard screens | [Dashboard renewal](dashboard/renewal.md) | Screen structure, per-screen content, shared kit, and visual system |
 | Code intelligence | [Code intelligence](code-intelligence/README.md) | Source navigation, package direction, and deployment evidence |
 | Node platform | [Platform](platform/README.md) | Discovery, power actuation, and resource observations |
 

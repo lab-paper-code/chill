@@ -2,6 +2,7 @@
 
 [Dashboard 명세](../../spec/dashboard/SRS.md)가 제품 요구사항과 수용 기준을,
 [시스템 명세](../../spec/README.md)가 측정/제어 의미를 소유한다.
+화면 구조, 화면별 내용과 공용 부품은 [리뉴얼 설계](renewal.md)가 소유한다.
 여기서는 구현 소유권과 전송/표시 계약을 유지한다. 코드 연결, 격리 배포와 실제
 클러스터 수용은 별도로 확인한다.
 
@@ -10,7 +11,7 @@
 | 경계 | 계약 |
 |---|---|
 | 배포 | `chill-dashboard/` 독립 Node build/deploy, 별도 Deployment/ClusterIP, Pod token automount=false |
-| 스택 | Next.js App Router, React, TypeScript, Tailwind, shadcn/ui; 정확한 버전은 package.json/lockfile |
+| 스택 | Next.js App Router, React, TypeScript, Tailwind, shadcn/ui 기본 부품, Avara UI 블록(`components/custom`), 공용 kit(`components/kit`), Pretendard Variable; 정확한 버전은 package.json/lockfile |
 | HTTP | 브라우저 same-origin `/api/chill/v1/...` → Route Handler → 고정 HTTPS ChillServer `/api/v1/...` |
 | 서버 전용 설정 | CHILL_BASE_URL, NODE_EXTRA_CA_CERTS; CA/hostname 검증과 redirect 상태 보존 |
 | 공개 진입 | ChillServer의 dashboard-url 중계; chart 기본 ClusterIP |
@@ -19,7 +20,8 @@
 | 업무 | CHILL이 인증, 검증, 변경, 판단, 통계와 evidence 소유; 웹은 Kube/firstfloor/S3/Node 직접 접근 없음 |
 | 상태 | 탭별 QueryClient cache, 로컬 폼, URL의 대상/UID/기간/필터 |
 
-원본 템플릿의 MIT 고지와 복사 범위를 보존한다. 신원 변경/logout은 socket/timer 종료,
+shadcn/ui 템플릿(`LICENSE.shadcn`)과 `@avara-ui` 레지스트리에서 `components/custom/`으로
+복사한 부품의 MIT 고지와 복사 범위를 보존한다. 신원 변경/logout은 socket/timer 종료,
 요청 취소, cache clear/QueryClient 교체와 민감 폼 remount를 함께 수행한다.
 늦은 callback은 이전 cache에만 작용한다.
 
@@ -127,32 +129,12 @@ Snapshot history는 요청/보존 sequence 범위와 gaps를 보존한다. 보�
 cursor로 최대 5페이지/500건, 최근 15분을 읽고 실제 identity로 live와 dedup한다.
 Archive에 live seq를 만들지 않는다. 미조회 페이지와 coverage 출처를 유지한다.
 
-## 화면과 URL 소유권
+## 화면과 URL
 
-| 경로 | 소유 정보 |
-|---|---|
-| `/` | 운영 판독, 서비스 상태, 진행과 사건 |
-| `/operations/devices` | 장치별 배치, 사양, 모드와 자원 |
-| `/workloads` | 정의/적용/준비, 배치와 연결 |
-| `/measurements` | 지원 조합과 범위, 현재 셀과 신선도 |
-| `/measurements/requests` | 부모 요청, 자식 회차와 실패, 점검/작성 |
-| `/measurements/results` | 처리 성능, 동작 비용 또는 분배 점유시간 |
-| `/experiments` | 실행 목록, 게시와 결과 비교, 부하 정의 |
-| `/records` | 종류별 실제 기록과 선택 근거 |
-| `/settings` | 운영 설정, 모델, 전처리와 데이터셋 |
-
-관련 화면은 대상/UID/namespace/기간을 보존해 연결한다. 같은 KPI를 새 truth로 복제하지
-않는다. 서비스 관리는 WS 연결 없이 관리 API로 동작한다.
-구 화면은 `lib/dashboard-routes.ts`의 명시 매핑으로 이동하고 API 경로는 바꾸지 않는다.
-
-공통 상태는 status.ts, StatusCell과 기존 Sheet/Dialog/DataTable을 사용한다.
-한 selected identity에 한 Sheet만 열고 nested Sheet를 만들지 않는다. 핵심값/이유와
-건수는 본문에 두며 원문은 접는다. 위험 작업만 Dialog다. 비동기 갱신이 읽던 값을
-밀어내거나 자동 정렬하지 않는다. 1440×900에서 주요 영역은 최대 세 개다.
-
-390px/확대 화면은 라벨/값 행으로 재배치해 모든 정보/작업을 보존한다. 키보드 선택,
-Esc/focus 복원, 비색상 상태와 접근 가능한 이름을 유지한다. 의미색과 단위/정밀 숫자
-format은 공통 owner를 쓴다. 새 상태 엔진, 차트 계산이나 보고서 저장소는 만들지 않는다.
+화면 구조, 주소, 화면별 자료와 공용 부품은 [리뉴얼 설계](renewal.md)가 소유한다.
+관련 화면은 대상/UID/namespace/기간을 보존해 연결하고 같은 KPI를 새 truth로 복제하지
+않는다. 서비스 관리는 WS 연결 없이 관리 API로 동작한다. 브라우저는 서버가 계산한
+값을 보이며 새 상태 엔진, 차트 계산이나 보고서 저장소를 만들지 않는다.
 
 ## 측정과 표시 projection
 
@@ -218,9 +200,9 @@ URL UID가 조회 UID와 다르면 수정/중지/재실행/반환을 차단하�
 반환 요청과 실제 반환 상태를 구별한다. 현재 권한은 실제 403 근거 없이 없음으로 단정하지 않는다.
 
 작성/수정은 전용 페이지, 단계 identity는 배열 위치와 구별한다. Dataset 선택은 name/UID를
-함께 고정한다. 미저장 입력 경고와 닫힌 Sheet의 지연 callback 차단을 유지한다.
+함께 고정한다. 미저장 입력 경고와 닫힌 서랍의 지연 callback 차단을 유지한다.
 복사는 알려진 폐기 필드만 제외해 공개하며 지원 확장필드/정밀 JSON을 조용히 버리지 않는다.
 
-게시 선택/구간/서비스/offset은 URL로 보존한다. Sheet 닫기는 선택 identity를 지우지
-않는다. 기록은 원래 API 구간/페이지/coverage와 당시 정의를 사용하며 최신 상태로
-과거 결손을 채우지 않는다. Reader 준비 뒤 publisher를 활성화한다.
+게시 선택/구간/서비스/offset은 URL로 보존한다. 기록은 원래 API 구간/페이지/coverage와
+당시 정의를 사용하며 최신 상태로 과거 결손을 채우지 않는다. Reader 준비 뒤 publisher를
+활성화한다.
