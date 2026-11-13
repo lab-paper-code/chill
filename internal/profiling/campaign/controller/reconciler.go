@@ -30,15 +30,8 @@ const (
 	batchEnergyOptimizationPhaseMeasuring = "Measuring"
 	batchEnergyOptimizationPhaseComplete  = "Complete"
 	batchEnergyOptimizationPhaseFailed    = "Failed"
-	batchEnergyOptimizationConditionDone  = "MeasurementComplete"
-	terminalReasonRetryLimitExhausted     = "RetryLimitExhausted"
-	terminalReasonTransitionFailed        = "TransitionFailed"
 	admissionWait                         = 5 * time.Second
 )
-
-const terminalReasonEnergyObjectivePolicyMismatch = "EnergyObjectivePolicyMismatch"
-
-const terminalReasonInvalidCampaignRun = "InvalidCampaignRun"
 
 // BatchEnergyOptimizationReconciler reconstructs campaign progress from the immutable
 // parent spec and the currently owned ProfilingRuns on every call.
@@ -75,7 +68,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	}
 	// A terminal current-generation campaign is immutable. Replaying its
 	// derivation after explicit evidence cleanup must not recreate stored data.
-	if terminalCampaignStatusCurrent(parent) {
+	if batchenergyoptimization.TerminalStatusCurrent(parent) {
 		return ctrl.Result{}, nil
 	}
 
@@ -132,7 +125,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	decision, err := batchenergyoptimization.Decide(snapshot, method)
 	if err != nil {
 		if errors.Is(err, profilederivation.ErrEnergyObjectivePolicyMismatch) {
-			status := failedStatus(parent, terminalReasonEnergyObjectivePolicyMismatch, err.Error())
+			status := failedStatus(parent, batchenergyoptimization.ReasonEnergyObjectivePolicyMismatch, err.Error())
 			status.CompletedTrials = int32(len(activeRuns) + len(idleRuns))
 			return ctrl.Result{}, r.patchStatus(ctx, parent, status)
 		}
@@ -193,7 +186,7 @@ func appendFailureDiagnostic(
 		for index, trial := range snapshot.Trials {
 			if trial.Verdict != batchenergyoptimization.VerdictFailed ||
 				(string(trial.FailureClass) != decision.Reason &&
-					!(decision.Reason == terminalReasonRetryLimitExhausted && trial.FailureClass == batchenergyoptimization.FailureClassRetryableFailure)) {
+					!(decision.Reason == batchenergyoptimization.ReasonRetryLimitExhausted && trial.FailureClass == batchenergyoptimization.FailureClassRetryableFailure)) {
 				continue
 			}
 			if decision.Run != nil && trial.Measurement != *decision.Run {
@@ -258,7 +251,7 @@ func (r *BatchEnergyOptimizationReconciler) handleTrialProjectionFailure(
 	if !errors.Is(err, errInvalidCampaignTrial) {
 		return err
 	}
-	return r.patchStatus(ctx, parent, failedStatus(parent, terminalReasonInvalidCampaignRun, err.Error()))
+	return r.patchStatus(ctx, parent, failedStatus(parent, batchenergyoptimization.ReasonInvalidCampaignRun, err.Error()))
 }
 
 // requeueFor polls the Node while its power mode settles and backs off other
@@ -381,7 +374,7 @@ func deriveStatus(
 		CompletedTrials:    completed,
 	}
 	condition := metav1.Condition{
-		Type: batchEnergyOptimizationConditionDone, ObservedGeneration: generation,
+		Type: batchenergyoptimization.ConditionMeasurementComplete, ObservedGeneration: generation,
 	}
 	switch decision.Action {
 	case batchenergyoptimization.ActionCreateTransition, batchenergyoptimization.ActionCreateRun, batchenergyoptimization.ActionWait:
@@ -431,7 +424,7 @@ func failedStatus(parent *edgev1alpha1.BatchEnergyOptimization, reason, message 
 	status.Phase = batchEnergyOptimizationPhaseFailed
 	status.Outcome = reason
 	condition := metav1.Condition{
-		Type: batchEnergyOptimizationConditionDone, Status: metav1.ConditionFalse,
+		Type: batchenergyoptimization.ConditionMeasurementComplete, Status: metav1.ConditionFalse,
 		ObservedGeneration: parent.Generation, Reason: reason, Message: message,
 	}
 	condition.LastTransitionTime = conditionTransitionTime(parent.Status.Conditions, condition)
@@ -487,30 +480,4 @@ func batchEnergyOptimizationStatusesEqual(
 		right.Conditions[index].LastTransitionTime = metav1.Time{}
 	}
 	return reflect.DeepEqual(left, right)
-}
-
-func terminalCampaignStatusCurrent(parent *edgev1alpha1.BatchEnergyOptimization) bool {
-	if parent.Generation < 1 || parent.Status.ObservedGeneration != parent.Generation {
-		return false
-	}
-	for _, condition := range parent.Status.Conditions {
-		if condition.Type != batchEnergyOptimizationConditionDone || condition.ObservedGeneration != parent.Generation {
-			continue
-		}
-		if parent.Status.Phase == batchEnergyOptimizationPhaseComplete {
-			return parent.Status.Result != nil && condition.Status == metav1.ConditionTrue && condition.Reason == "ResultWritten"
-		}
-		if parent.Status.Phase == batchEnergyOptimizationPhaseFailed && condition.Status == metav1.ConditionFalse && condition.Reason == parent.Status.Outcome {
-			return condition.Reason == terminalReasonTransitionFailed ||
-				condition.Reason == terminalReasonRetryLimitExhausted ||
-				condition.Reason == string(batchenergyoptimization.FailureClassFatalFailure) ||
-				condition.Reason == string(batchenergyoptimization.FailureClassUnknownFailure) ||
-				condition.Reason == terminalReasonEnergyObjectivePolicyMismatch ||
-				condition.Reason == terminalReasonInvalidCampaignRun ||
-				condition.Reason == profiler.ResolutionReasonInvalidRunSpec ||
-				condition.Reason == profiler.ResolutionReasonExecutionPolicyInvalid ||
-				condition.Reason == profiler.ResolutionReasonActuationPolicyInvalid
-		}
-	}
-	return false
 }

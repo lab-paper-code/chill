@@ -23,7 +23,7 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 		case TransitionInFlight:
 			return Decision{Action: ActionWait, Reason: "TransitionInFlight"}, nil
 		case TransitionFailed:
-			return Decision{Action: ActionFail, Reason: "TransitionFailed"}, nil
+			return Decision{Action: ActionFail, Reason: ReasonTransitionFailed}, nil
 		case TransitionEstablished:
 		}
 	}
@@ -102,7 +102,7 @@ func decideFailedTrials(snapshot Snapshot, completedAttempts map[Measurement]int
 	}
 	if retry != nil && observed.Boundary == nil {
 		if retryFailures[*retry] > snapshot.RetryLimit {
-			return Decision{Action: ActionFail, Run: retry, Reason: "RetryLimitExhausted"}
+			return Decision{Action: ActionFail, Run: retry, Reason: ReasonRetryLimitExhausted}
 		}
 		return Decision{Action: ActionCreateRun, Run: retry, Reason: "RetryAfterFailure"}
 	}

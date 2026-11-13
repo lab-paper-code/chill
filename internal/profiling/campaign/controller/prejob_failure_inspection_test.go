@@ -182,7 +182,7 @@ func newPrejobFixture(t *testing.T, duration int, defect string) (*edge.BatchEne
 	parent.Annotations = map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}
 	parent.Spec.TrialsPerBatch = 3
 	parent.Status = edge.BatchEnergyOptimizationStatus{ObservedGeneration: 1, Phase: "Measuring", CompletedTrials: 3,
-		Conditions: []metav1.Condition{{Type: batchEnergyOptimizationConditionDone, ObservedGeneration: 1, Status: metav1.ConditionUnknown, Reason: "TrialInFlight"}}}
+		Conditions: []metav1.Condition{{Type: campaign.ConditionMeasurementComplete, ObservedGeneration: 1, Status: metav1.ConditionUnknown, Reason: "TrialInFlight"}}}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: config.TargetNode.Name, UID: types.UID(config.TargetNode.UID), ResourceVersion: "11"},
 		Spec: corev1.NodeSpec{Taints: []corev1.Taint{{Key: profilingrun.MeasurementTaintKey, Value: string(parent.UID), Effect: corev1.TaintEffectNoSchedule}}}}
 	active, err := BuildRun(parent, campaign.Measurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 1}, 1, config.State.Backend)

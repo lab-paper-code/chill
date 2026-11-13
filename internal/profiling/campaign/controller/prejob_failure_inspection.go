@@ -11,6 +11,7 @@ import (
 	"github.com/aws/smithy-go"
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
@@ -150,7 +151,7 @@ func inspectPrejobRequest(ctx context.Context, reader client.Reader, key types.N
 	if parent.Status.Result != nil || parent.Status.ObservedGeneration != parent.Generation || parent.Status.Phase != batchEnergyOptimizationPhaseMeasuring || parent.Status.CompletedTrials != 3 || parent.Status.Outcome != "" {
 		return nil, errors.New("RequestStateMismatch")
 	}
-	condition := apimeta.FindStatusCondition(parent.Status.Conditions, batchEnergyOptimizationConditionDone)
+	condition := apimeta.FindStatusCondition(parent.Status.Conditions, batchenergyoptimization.ConditionMeasurementComplete)
 	if len(parent.Status.Conditions) != 1 || condition == nil || condition.ObservedGeneration != parent.Generation || condition.Status != metav1.ConditionUnknown || condition.Reason != "TrialInFlight" {
 		return nil, errors.New("RequestConditionMismatch")
 	}

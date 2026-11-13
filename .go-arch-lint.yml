@@ -102,7 +102,12 @@ deps:
   batch-energy-optimization-core:
     anyVendorDeps: true
     mayDependOn:
+      # The terminal-status predicate reads the native campaign status and the
+      # profiler's terminal resolution reasons; its controller and the deletion
+      # owner both call it.
+      - api
       - profile-derivation
+      - profiler-app
 
   batch-energy-optimization-controller:
     mayDependOn:
