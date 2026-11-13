@@ -16,7 +16,9 @@ export type LiveAction = {
   expectedSeconds:number|null;expectedSource:{costID:string;reference:unknown;statistic:"mean";trialCount:number}|null
 }
 export type LiveReservation = {owner:string;nodes:{uid:string;name:string}[];workloadUIDs:string[];podUIDs:string[];instances:string[];reason:string;explanation:string}
-export type LiveMetric = {received:number;completed:number;failed:number;withinSLO:number;latencySamples:number;p50ms:number|null;p90ms:number|null;p95ms:number|null;p99ms:number|null}
+/** Server-computed SLO window for one service; absent on servers that predate it. The browser never derives it. */
+export type LiveSLOWindow = {windowSeconds:number;percentile:number;targetMs:number;samples:number;withinTarget:number;quantileMs?:number;met?:boolean}
+export type LiveMetric = {received:number;completed:number;failed:number;withinSLO:number;latencySamples:number;p50ms:number|null;p90ms:number|null;p95ms:number|null;p99ms:number|null;slo?:LiveSLOWindow}
 export type LiveGap = {from:string;to:string;scope:string;reason:string}
 type Envelope = {seq:number;at:string}
 export type LiveMetrics = Envelope & {type:"metrics";bucketAt:string;chill_obslog_queue_length:number;chill_obslog_oldest_wait_seconds:number;workloads:Record<string,LiveMetric>;nodes:Record<string,{watts:number|null;observedAt:string|null}>;pool:{wholeWatts:number|null;activeWatts:number|null};gaps?:LiveGap[]}
@@ -107,9 +109,19 @@ function reservation(value:unknown):LiveReservation {
 }
 function metric(value:unknown):LiveMetric {
   const row=object(value)
-  const result={received:field("received",row.received,count),completed:field("completed",row.completed,count),failed:field("failed",row.failed,count),withinSLO:field("withinSLO",row.withinSLO,count),latencySamples:field("latencySamples",row.latencySamples,count),p50ms:field("p50ms",row.p50ms,value=>nullable(value,number)),p90ms:field("p90ms",row.p90ms,value=>nullable(value,number)),p95ms:field("p95ms",row.p95ms,value=>nullable(value,number)),p99ms:field("p99ms",row.p99ms,value=>nullable(value,number))}
+  const result:LiveMetric={received:field("received",row.received,count),completed:field("completed",row.completed,count),failed:field("failed",row.failed,count),withinSLO:field("withinSLO",row.withinSLO,count),latencySamples:field("latencySamples",row.latencySamples,count),p50ms:field("p50ms",row.p50ms,value=>nullable(value,number)),p90ms:field("p90ms",row.p90ms,value=>nullable(value,number)),p95ms:field("p95ms",row.p95ms,value=>nullable(value,number)),p99ms:field("p99ms",row.p99ms,value=>nullable(value,number))}
   if (result.withinSLO > result.completed) invalid("withinSLO: Exceeds completed")
   if (result.latencySamples > result.completed + result.failed) invalid("latencySamples: Exceeds completed + failed")
+  if (row.slo !== undefined) result.slo=field("slo",row.slo,sloWindow)
+  return result
+}
+function sloWindow(value:unknown):LiveSLOWindow {
+  const row=object(value)
+  const result:LiveSLOWindow={windowSeconds:field("windowSeconds",row.windowSeconds,number),percentile:field("percentile",row.percentile,number),targetMs:field("targetMs",row.targetMs,number),samples:field("samples",row.samples,count),withinTarget:field("withinTarget",row.withinTarget,count)}
+  if (result.percentile > 100) invalid("percentile: Expected value at most 100")
+  if (result.withinTarget > result.samples) invalid("withinTarget: Exceeds samples")
+  if (row.quantileMs !== undefined) result.quantileMs=field("quantileMs",row.quantileMs,number)
+  if (row.met !== undefined) result.met=field("met",row.met,boolean)
   return result
 }
 function gap(value:unknown):LiveGap { const row=object(value);const result={from:field("from",row.from,timestamp),to:field("to",row.to,timestamp),scope:field("scope",row.scope,text),reason:field("reason",row.reason,text)};return compareAt(result.from,result.to) <= 0 ? result : invalid("from: Exceeds to") }

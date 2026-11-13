@@ -1,0 +1,10 @@
+// The shared kit. Screens import everything from "@/components/kit". See README.md.
+export { Page, PageHeader, PageTabs, Section, type MoreAction } from "./page"
+export { Fields, HeadroomBar, Hint, IdText, Missing, StatRow, StatTile, StatusBadge, StatusDot, TimeText, useNow, type FieldItem } from "./display"
+export { DataTable, type Column, type DataTableProps, type ServerPaging, type SortState } from "./data-table"
+export { EmptyState, NotReady, QueryBoundary, type BoundaryQuery } from "./query"
+export { ConfirmDialog, DetailDrawer, RawDialog, type Change } from "./overlays"
+export { Sparkline, TimeSeries, type Series, type SeriesPoint } from "./charts"
+export { FilterBar, FormActions, FormSection, LeaveGuard, TIME_PRESETS, TimeRange, resolveTimeRange, useTimeRangeParam, type Choice, type Segment, type TimePreset, type TimeRangeValue } from "./forms"
+export { useToast } from "@/components/custom/blocks/toast-context"
+export { default as Button, buttonClassName } from "@/components/custom/blocks/Button"

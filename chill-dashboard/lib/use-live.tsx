@@ -8,9 +8,12 @@ import { ApiError, errorDetails, relay, warmingRetry, warmingDelay, isCoverageWa
 import { applyLiveMessage, connectLive, initialLiveState, parseLiveMessage, type LiveConnection, type LiveState } from "@/lib/live"
 import { fixtureMessages } from "@/lib/live-fixture"
 import { seedRecentLiveEvents } from "@/lib/live-history"
-import { SourceJSON } from "@/components/read-region"
 
-type LiveContextValue = {state:LiveState;status:string;reconnect:()=>void}
+/**
+ * `state` is what screens render: frozen while paused. `status` and `lastReceivedAt` always describe the connection.
+ * Pausing stops screen updates only; the stream keeps receiving so resuming shows current data at once.
+ */
+type LiveContextValue = {state:LiveState;status:string;lastReceivedAt:number|null;paused:boolean;pause:()=>void;resume:()=>void;reconnect:()=>void}
 const LiveContext=React.createContext<LiveContextValue|null>(null)
 
 export function LiveProvider({children}:{children:React.ReactNode}) {
@@ -27,6 +30,9 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
   const control=React.useRef<LiveConnection|null>(null)
   const reconnect=React.useCallback(()=>control.current?.reconnect(),[])
   const [archiveAttempt,setArchiveAttempt]=React.useState(0)
+  const [frozen,setFrozen]=React.useState<LiveState|null>(null)
+  const pause=React.useCallback(()=>setFrozen(current=>current??queryClient.getQueryData<LiveState>(liveKey)??initialLiveState()),[queryClient,liveKey])
+  const resume=React.useCallback(()=>setFrozen(null),[])
 
   React.useEffect(()=>{
     if (!token) return
@@ -90,9 +96,9 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
     return ()=>{abort.abort();signals.delete(abort)}
   },[operating,scene,token,epoch,signals,queryClient,liveKey,archiveAttempt])
 
-  const value=React.useMemo(()=>({state,status:state.status,reconnect}),[state,reconnect])
+  const value=React.useMemo(()=>({state:frozen??state,status:state.status,lastReceivedAt:state.lastReceivedAt,paused:frozen!==null,pause,resume,reconnect}),[frozen,state,pause,resume,reconnect])
   return <LiveContext.Provider value={value}>
-    {operating && state.eventArchiveError && <div role="status" className="notice">{state.eventArchiveError} <button type="button" onClick={()=>setArchiveAttempt(attempt=>attempt+1)}>다시 조회</button>{state.eventArchiveErrorDetail!==undefined&&<SourceJSON inline title="문제 자세히 보기" value={state.eventArchiveErrorDetail}/>}</div>}
+    {operating && state.eventArchiveError && <div role="status" className="fixed bottom-4 left-4 z-40 flex items-center gap-3 rounded-md border bg-card px-3 py-2 text-sm">{state.eventArchiveError} <button type="button" className="font-medium text-primary hover:underline" onClick={()=>setArchiveAttempt(attempt=>attempt+1)}>다시 조회</button></div>}
     {children}
   </LiveContext.Provider>
 }

@@ -516,3 +516,19 @@ test("payload event identity ignores transport sequence, arrival time and object
   assert.equal(live.eventKey(left),live.eventKey({...right,seq:9}))
   if(right.kind==="action")assert.notEqual(live.eventKey(left),live.eventKey({...right,action:{...right.action,status:"failed"}}))
 })
+test("metrics carry the optional server SLO window and reject an inconsistent one",()=>{
+  const slo={windowSeconds:60,percentile:99.5,targetMs:800,samples:120,withinTarget:119,quantileMs:640.5,met:true}
+  const parsed=parseLiveMessage(JSON.stringify(metrics(1,0,{workloads:{"pool-a":{...metric,slo}}})))
+  assert.equal(parsed?.type,"metrics")
+  if(parsed?.type!=="metrics")throw new Error("metrics rejected")
+  assert.deepEqual(parsed.workloads["pool-a"].slo,slo)
+  const older=parseLiveMessage(JSON.stringify(metrics(1,0)))
+  if(older?.type!=="metrics")throw new Error("metrics rejected")
+  assert.equal("slo" in older.workloads["pool-a"],false)
+  const {quantileMs:_quantile,met:_met,...partial}=slo
+  const sparse=parseLiveMessage(JSON.stringify(metrics(1,0,{workloads:{"pool-a":{...metric,slo:partial}}})))
+  if(sparse?.type!=="metrics")throw new Error("metrics rejected")
+  assert.deepEqual(sparse.workloads["pool-a"].slo,partial)
+  for(const bad of [{...slo,withinTarget:121},{...slo,percentile:101},{...slo,met:"yes"},{...slo,samples:-1}])
+    assert.equal(parseLiveMessage(JSON.stringify(metrics(1,0,{workloads:{"pool-a":{...metric,slo:bad}}}))),null)
+})

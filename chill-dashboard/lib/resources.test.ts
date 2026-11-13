@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { initialLiveState, type LiveMetrics, type LiveNode } from "./live.ts"
 import type { InventoryView, PoolsView } from "./read-types.ts"
-import { deviceRows, devicePowerPercent, devicePowerScale } from "../features/resources-data.ts"
+import { deviceRows, devicePowerPercent, devicePowerScale } from "./resources-data.ts"
 
 const at="2026-11-01T00:00:00Z"
 const node=(uid:string,name:string):LiveNode=>({uid,name,ready:true,measurement:false,powerMode:"fixed",observedAt:at})

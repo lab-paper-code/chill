@@ -1,0 +1,397 @@
+"use client";
+
+import { cn } from "@/lib/utils";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
+
+// ==========================================
+// 1. CONTEXT
+// ==========================================
+interface PopoverContextType {
+  open: boolean;
+  setOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  /**
+   * The trigger node itself, held in state rather than a ref. A ref shared
+   * through context makes every read of this context a ref read during render;
+   * a plain node lets the content position and portal itself without one.
+   */
+  trigger: HTMLElement | null;
+  setTrigger: React.Dispatch<React.SetStateAction<HTMLElement | null>>;
+}
+const PopoverContext = createContext<PopoverContextType | undefined>(undefined);
+
+// ==========================================
+// 2. ROOT COMPONENT
+// ==========================================
+export interface PopoverProps {
+  children: React.ReactNode;
+}
+
+export function Popover({ children }: PopoverProps) {
+  const [open, setOpen] = useState(false);
+  const [trigger, setTrigger] = useState<HTMLElement | null>(null);
+
+  return (
+    <PopoverContext.Provider value={{ open, setOpen, trigger, setTrigger }}>
+      {children}
+    </PopoverContext.Provider>
+  );
+}
+
+// ==========================================
+// 3. TRIGGER
+// ==========================================
+export type PopoverTriggerProps = React.ButtonHTMLAttributes<HTMLButtonElement>;
+
+// CHILL patch: the trigger is a native <button> (no nested interactive
+// wrapper, no hand-rolled Enter/Space handling).
+export function PopoverTrigger({
+  children,
+  className,
+  onClick,
+  ...props
+}: PopoverTriggerProps) {
+  const context = useContext(PopoverContext);
+  if (!context) throw new Error("PopoverTrigger must be used within a Popover");
+
+  const { open, setOpen, setTrigger } = context;
+
+  return (
+    <button
+      ref={setTrigger}
+      type="button"
+      onClick={(event) => {
+        onClick?.(event);
+        event.stopPropagation();
+        setOpen((prev) => !prev);
+      }}
+      className={className}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ==========================================
+// 4. CONTENT (Portal Renderer)
+// ==========================================
+export interface PopoverContentProps
+  extends React.HTMLAttributes<HTMLDivElement> {
+  side?: "top" | "right" | "bottom" | "left";
+  align?: "start" | "center" | "end";
+  sideOffset?: number;
+  /**
+   * Flip to the opposite side and shift the panel back into view when the
+   * preferred placement would overflow the viewport. Set to false to pin the
+   * panel to `side`/`align` even when it gets cropped.
+   */
+  avoidCollisions?: boolean;
+  /** Minimum gap (px) kept between the panel and the viewport edges. */
+  collisionPadding?: number;
+}
+
+const OPPOSITE_SIDE = {
+  top: "bottom",
+  bottom: "top",
+  left: "right",
+  right: "left",
+} as const;
+
+// `max` drops below `min` when the panel is larger than the viewport; pin to
+// `min` there so the panel starts at the top/left edge instead of jumping past it.
+const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(value, Math.max(min, max)));
+
+type Side = NonNullable<PopoverContentProps["side"]>;
+
+// Where the panel ended up, in document coordinates. `null` while unmeasured:
+// the panel is mounted invisibly, measured, then shown in the same frame.
+type Placement = { top: number; left: number; side: Side };
+
+// The entrance grows out of the trigger's edge: a panel below the button
+// scales from its own top edge and slides down a touch, and so on.
+const ENTER_FROM_SIDE: Record<Side, string> = {
+  bottom: "origin-top slide-in-from-top-2",
+  top: "origin-bottom slide-in-from-bottom-2",
+  left: "origin-right slide-in-from-right-2",
+  right: "origin-left slide-in-from-left-2",
+};
+
+export function PopoverContent({
+  side = "bottom",
+  align = "center",
+  sideOffset = 8,
+  avoidCollisions = true,
+  collisionPadding = 8,
+  className,
+  children,
+  ...props
+}: PopoverContentProps) {
+  const context = useContext(PopoverContext);
+  if (!context) throw new Error("PopoverContent must be used within a Popover");
+
+  const { open, setOpen, trigger: triggerEl } = context;
+  const [placement, setPlacement] = useState<Placement | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // Forget the last position on close. This component stays mounted while
+  // closed, so without this a reopen would paint one frame at the stale
+  // coordinates (from before a scroll, or from a different `side`) and then
+  // jump next to the trigger. Adjusted while rendering, when `open` changes,
+  // rather than in an effect.
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (!open) setPlacement(null);
+  }
+
+  // Handle Position Updates. A layout effect runs before the browser paints,
+  // so the first visible frame is already in the right place — a plain effect
+  // would paint first and reposition afterwards, which reads as a jump.
+  useLayoutEffect(() => {
+    if (!open || !triggerEl || !contentRef.current) return;
+
+    // Resolve the document/window the trigger actually lives in, so the
+    // popover works when rendered inside an iframe (e.g. docs device preview).
+    const doc = triggerEl.ownerDocument;
+    const win = doc.defaultView ?? window;
+
+    const updatePosition = () => {
+      const contentEl = contentRef.current;
+      if (!triggerEl || !contentEl) return;
+
+      const viewportWidth = doc.documentElement.clientWidth || win.innerWidth;
+      const viewportHeight = doc.documentElement.clientHeight || win.innerHeight;
+      const padding = avoidCollisions ? collisionPadding : 0;
+      const trigger = triggerEl.getBoundingClientRect();
+
+      // The panel's uncapped size, read from the scroll box. Clearing the caps
+      // and re-measuring would resize the element on every scroll frame and
+      // re-trigger the ResizeObserver below.
+      const chromeY = contentEl.offsetHeight - contentEl.clientHeight;
+      const chromeX = contentEl.offsetWidth - contentEl.clientWidth;
+      const naturalHeight = contentEl.scrollHeight + chromeY;
+      const naturalWidth = contentEl.scrollWidth + chromeX;
+
+      // Room between each trigger edge and the viewport edge, already minus the
+      // gap the panel keeps off the trigger — so this is the space the panel can
+      // occupy WITHOUT covering the control that opened it.
+      const space = {
+        top: trigger.top - padding - sideOffset,
+        bottom: viewportHeight - trigger.bottom - padding - sideOffset,
+        left: trigger.left - padding - sideOffset,
+        right: viewportWidth - trigger.right - padding - sideOffset,
+      };
+
+      let resolvedSide = side;
+      if (avoidCollisions) {
+        const wantsVertical = side === "top" || side === "bottom";
+        const needed = wantsVertical ? naturalHeight : naturalWidth;
+        const flipped = OPPOSITE_SIDE[side];
+
+        // 1. Flip to the opposite edge when the preferred one is too tight and
+        //    the other is roomier.
+        if (space[side] < needed && space[flipped] > space[side])
+          resolvedSide = flipped;
+
+        // 2. A 288px panel rarely fits beside a trigger on a phone. When neither
+        //    horizontal side can hold it, drop to the vertical axis, where the
+        //    panel gets the full width instead of a useless slice of it.
+        if (!wantsVertical && space[resolvedSide] < naturalWidth)
+          resolvedSide = space.bottom >= space.top ? "bottom" : "top";
+
+        // 3. Cap the panel to the room on the side it ended up on, and scroll
+        //    the remainder. This is what keeps the trigger visible: without it a
+        //    panel taller than the space below has to be pushed back up over the
+        //    trigger to fit on screen, hiding the button that was just pressed.
+        const onVertical = resolvedSide === "top" || resolvedSide === "bottom";
+        const across = onVertical
+          ? viewportWidth - padding * 2
+          : viewportHeight - padding * 2;
+        const along = Math.max(0, space[resolvedSide]);
+        contentEl.style.maxWidth = `${Math.max(0, onVertical ? across : along)}px`;
+        contentEl.style.maxHeight = `${Math.max(0, onVertical ? along : across)}px`;
+        contentEl.style.overflowY =
+          contentEl.scrollHeight > contentEl.clientHeight ? "auto" : "";
+        contentEl.style.overflowX =
+          contentEl.scrollWidth > contentEl.clientWidth ? "auto" : "";
+      }
+
+      // Measured after the cap. offsetWidth/Height are the untransformed layout
+      // box; getBoundingClientRect would report the shrunken size while the
+      // zoom-in entrance animation runs, throwing the alignment off a few pixels.
+      const width = contentEl.offsetWidth;
+      const height = contentEl.offsetHeight;
+
+      let top = 0;
+      let left = 0;
+
+      // 2. Calculate Side
+      if (resolvedSide === "top") top = trigger.top - height - sideOffset;
+      if (resolvedSide === "bottom") top = trigger.bottom + sideOffset;
+      if (resolvedSide === "left") left = trigger.left - width - sideOffset;
+      if (resolvedSide === "right") left = trigger.right + sideOffset;
+
+      // 3. Calculate Align
+      if (resolvedSide === "top" || resolvedSide === "bottom") {
+        if (align === "center")
+          left = trigger.left + trigger.width / 2 - width / 2;
+        if (align === "start") left = trigger.left;
+        if (align === "end") left = trigger.right - width;
+      } else {
+        if (align === "center")
+          top = trigger.top + trigger.height / 2 - height / 2;
+        if (align === "start") top = trigger.top;
+        if (align === "end") top = trigger.bottom - height;
+      }
+
+      // 4. Shift whatever still hangs off an edge back into view — but only
+      //    ACROSS the side axis. Alignment is a preference, not a guarantee, so
+      //    an align="start"/"end" panel near an edge slides back. Shifting along
+      //    the side axis is what used to drag the panel over its own trigger;
+      //    the cap in step 3 owns that axis now.
+      if (avoidCollisions) {
+        if (resolvedSide === "top" || resolvedSide === "bottom") {
+          left = clamp(left, padding, viewportWidth - width - padding);
+        } else {
+          top = clamp(top, padding, viewportHeight - height - padding);
+        }
+      }
+
+      const nextTop = top + win.scrollY;
+      const nextLeft = left + win.scrollX;
+      setPlacement((prev) =>
+        prev &&
+        prev.top === nextTop &&
+        prev.left === nextLeft &&
+        prev.side === resolvedSide
+          ? prev
+          : { top: nextTop, left: nextLeft, side: resolvedSide },
+      );
+    };
+
+    updatePosition();
+    win.addEventListener("scroll", updatePosition, true);
+    win.addEventListener("resize", updatePosition);
+    // The visual viewport shrinks when the mobile keyboard opens over an input
+    // inside the panel, and changes on pinch-zoom — neither fires window resize.
+    win.visualViewport?.addEventListener("resize", updatePosition);
+    win.visualViewport?.addEventListener("scroll", updatePosition);
+
+    // Reposition when the panel or trigger changes size (content loading, the
+    // max-height cap applied above, a responsive breakpoint crossing).
+    const sizeObserver = new (win.ResizeObserver ?? ResizeObserver)(
+      updatePosition,
+    );
+    sizeObserver.observe(contentRef.current);
+    sizeObserver.observe(triggerEl);
+
+    return () => {
+      sizeObserver.disconnect();
+      win.removeEventListener("scroll", updatePosition, true);
+      win.removeEventListener("resize", updatePosition);
+      win.visualViewport?.removeEventListener("resize", updatePosition);
+      win.visualViewport?.removeEventListener("scroll", updatePosition);
+    };
+  }, [
+    open,
+    side,
+    align,
+    sideOffset,
+    avoidCollisions,
+    collisionPadding,
+    triggerEl,
+  ]);
+
+  // Handle Click Outside & Escape Key
+  useEffect(() => {
+    if (!open) return;
+
+    const handleInteractOutside = (e: MouseEvent | TouchEvent) => {
+      if (
+        contentRef.current &&
+        !contentRef.current.contains(e.target as Node) &&
+        triggerEl &&
+        !triggerEl.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+
+    // CHILL patch: Esc returns focus to the trigger.
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      triggerEl?.focus();
+    };
+
+    // Listen on the document the trigger actually lives in (supports iframe rendering).
+    const doc = contentRef.current?.ownerDocument ?? document;
+
+    doc.addEventListener("mousedown", handleInteractOutside);
+    doc.addEventListener("touchstart", handleInteractOutside);
+    doc.addEventListener("keydown", handleEscape);
+
+    return () => {
+      doc.removeEventListener("mousedown", handleInteractOutside);
+      doc.removeEventListener("touchstart", handleInteractOutside);
+      doc.removeEventListener("keydown", handleEscape);
+    };
+  }, [open, setOpen, triggerEl]);
+
+  // triggerEl is null until the trigger commits, which also covers SSR: there
+  // is no document to portal into on the server.
+  if (!triggerEl || !open) return null;
+
+  // Portal into the trigger's own document (supports iframe rendering).
+  const portalTarget = triggerEl.ownerDocument.body;
+
+  return createPortal(
+    <div
+      ref={contentRef}
+      role="dialog"
+      tabIndex={-1}
+      className={cn(
+        // Below lg the panel competes with the screen for room: smaller type and
+        // padding buy back the height that would otherwise have to be scrolled.
+        // Width stays a single class so an overriding `className="w-48"` wins at
+        // every breakpoint instead of only below lg.
+        "absolute z-[9999] w-72 max-w-[calc(100vw-1rem)] p-3 lg:p-4 text-sm lg:text-base outline-none text-popover-foreground bg-popover border border-border rounded-xl shadow-lg",
+        // `duration-200` sets transition-duration as well as the animation
+        // length, and the browser's default transition-property is `all` — so
+        // without `transition-none` the panel would tween its top/left from
+        // wherever it last was, sliding across the screen instead of opening in
+        // place. Radix/shadcn avoid this the same way: the positioned wrapper
+        // never transitions; only the entrance keyframes animate.
+        "transition-none animate-in fade-in zoom-in-95 duration-200",
+        // Animate from whichever side the panel actually landed on; until it
+        // is measured, fall back to the requested side so the classes are stable.
+        ENTER_FROM_SIDE[placement?.side ?? side],
+        className,
+      )}
+      style={{
+        top: placement?.top ?? 0,
+        left: placement?.left ?? 0,
+        // Mounted but not yet measured — keep it out of sight rather than
+        // flashing it at 0,0. Cleared in the same frame the layout effect runs.
+        visibility: placement ? undefined : "hidden",
+      }}
+      // Stop clicks inside the popover from bubbling up to the document
+      onClick={(e) => e.stopPropagation()}
+      {...props}
+    >
+      {children}
+    </div>,
+    portalTarget,
+  );
+}

@@ -245,7 +245,7 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
     assert.equal(plan("GET", "v1/observations/scheduler", search).path,
       `/api/v1/observations/scheduler?${window}&order=${order}&filter=decision-action&uid=workload-uid&limit=7&view=compact`)
   }
-  for (const filter of ["all", "decision", "action", "snapshot", "settings", "power", "other"]) {
+  for (const filter of ["all", "decision-action", "decision-change", "decision", "action", "snapshot", "settings", "power", "other"]) {
     assert.match(plan("GET", "v1/observations/scheduler", `?${window}&filter=${filter}`).path, new RegExp(`filter=${filter}`))
   }
   for (const invalid of ["order=", "order=DESC", "order=desc&order=asc", "filter=", "filter=unknown", "filter=action&filter=decision", "uid=", "uid=a&uid=b", "uid=a%20b", "uid=a%2Fb", "uid=a%5Cb", `uid=${"a".repeat(257)}`]) {

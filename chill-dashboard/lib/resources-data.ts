@@ -1,6 +1,6 @@
-import type { LiveState } from "../lib/live.ts"
-import { belongsToPool } from "../lib/live-display.ts"
-import type { InventoryClass, InventoryView, NodeRef, PoolsView, SchedulerSnapshot, WorkloadRef, InstanceState } from "../lib/read-types.ts"
+import type { LiveState } from "./live.ts"
+import { belongsToPool } from "./live-display.ts"
+import type { InventoryClass, InventoryView, NodeRef, PoolsView, SchedulerSnapshot, WorkloadRef, InstanceState } from "./read-types.ts"
 
 export type DeviceRow = NodeRef & {configured:boolean;classes:InventoryClass[];ready:boolean|null;observedAt:string|null;watts:number|null;powerAt:string|null;powerMode:string;roles:string[];reasons:string[];services:WorkloadRef[];instances:string[];poolInstances:InstanceState[];schedulingDisabled:boolean|null}
 

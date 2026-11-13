@@ -1,0 +1,373 @@
+"use client";
+
+import { cn } from "@/lib/utils";
+import { AlertCircle, AlertTriangle, BadgeCheck, CheckCircle2, Info, X } from "lucide-react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ToastContext, type ToastProps } from "./toast-context";
+
+// ==========================================
+// DYNAMIC THEME ENGINE
+// ==========================================
+export type ToastVariant = "default" | "glow" | "glass" | "minimal";
+export type ToastPosition = "top-right" | "top-left" | "top-center" | "bottom-right" | "bottom-left" | "bottom-center";
+
+// Stack geometry: how far each card behind the front one peeks out, how much
+// it shrinks, how many stay visible, and the gap between cards once expanded.
+const STACK_PEEK = 12;
+const STACK_SCALE = 0.05;
+const STACK_VISIBLE = 3;
+const STACK_GAP = 12;
+
+// Entrance: 0.4s back.out(1.5) from 30px off the edge at 90% scale. Exit:
+// 0.3s power2.in back out to the same spot, from wherever the card is.
+const BACK_OUT =
+  "linear(0, .1434, .2741, .3925, .4993, .5949, .68, .7551, .8207, .8775, .9259, .9666, 1, 1.0268, 1.0474, 1.0625, 1.0726, 1.0782, 1.08, 1.0784, 1.0741, 1.0675, 1.0593, 1.0499, 1.04, 1.0301, 1.0207, 1.0125, 1.0059, 1.0016, 1)";
+const POWER2_IN = "cubic-bezier(0.3333, 0, 0.6667, 0)";
+const ENTER_MS = 400;
+const EXIT_MS = 300;
+
+// ==========================================
+// INDIVIDUAL TOAST COMPONENT (Web Animations API)
+// ==========================================
+interface ToastItemProps extends ToastProps {
+  onRemove: (id: string) => void;
+  variant: ToastVariant;
+  position: ToastPosition;
+  /** Freezes the auto-dismiss timer — used by the stack while it is expanded. */
+  paused?: boolean;
+}
+
+const ToastItem = ({ id, title, description, type = "default", duration = 5000, action, onRemove, variant, position, paused = false }: ToastItemProps) => {
+  const toastRef = useRef<HTMLDivElement>(null);
+  const [hovered, setHovered] = useState(false);
+  // Set once the exit starts: the close button, the action and the timer can
+  // all ask for it, and only the first request counts.
+  const closing = useRef(false);
+  const enterRef = useRef<Animation | null>(null);
+  const removeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Determine entrance direction based on position
+  const isTop = position.includes("top");
+  const yOffset = isTop ? -30 : 30;
+
+  // Handle Exit — starts from the card's current look, so closing during the
+  // entrance carries on from mid-flight instead of jumping to the end first.
+  const handleClose = useCallback(() => {
+    const el = toastRef.current;
+    if (!el || closing.current) return;
+    closing.current = true;
+    const now = getComputedStyle(el);
+    const from = { opacity: now.opacity, transform: now.transform };
+    enterRef.current?.cancel();
+    let removed = false;
+    const remove = () => {
+      if (removed) return;
+      removed = true;
+      if (removeTimer.current) clearTimeout(removeTimer.current);
+      onRemove(id);
+    };
+    el.animate(
+      [from, { opacity: 0, transform: `translateY(${yOffset}px) scale(0.9)` }],
+      { duration: EXIT_MS, easing: POWER2_IN, fill: "forwards" },
+    ).finished.then(remove, () => {});
+    // Finish events can lag in a background tab; removal must not.
+    removeTimer.current = setTimeout(remove, EXIT_MS + 50);
+  }, [id, onRemove, yOffset]);
+
+  // Handle Entrance
+  useEffect(() => {
+    const el = toastRef.current;
+    if (!el || closing.current) return;
+    const enter = (enterRef.current = el.animate(
+      [
+        { opacity: 0, transform: `translateY(${yOffset}px) scale(0.9)` },
+        { opacity: 1, transform: "translateY(0px) scale(1)" },
+      ],
+      { duration: ENTER_MS, easing: BACK_OUT },
+    ));
+    return () => {
+      if (!closing.current) enter.cancel();
+    };
+  }, [yOffset]);
+
+  useEffect(
+    () => () => {
+      if (removeTimer.current) clearTimeout(removeTimer.current);
+    },
+    [],
+  );
+
+  // Auto-dismiss with a pausable timer: hovering the card (or the expanded
+  // stack) stops the clock and resumes from where it left off.
+  const remaining = useRef(duration);
+  const startedAt = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPaused = paused || hovered;
+
+  useEffect(() => {
+    if (duration <= 0 || isPaused) return;
+    startedAt.current = Date.now();
+    timer.current = setTimeout(handleClose, remaining.current);
+    return () => {
+      if (!timer.current) return;
+      clearTimeout(timer.current);
+      timer.current = null;
+      remaining.current = Math.max(0, remaining.current - (Date.now() - startedAt.current));
+    };
+  }, [duration, isPaused, handleClose]);
+
+  // Styling logic & type specific colors
+  // CHILL patch: status colours come from the theme tokens (--ok, --fail, --warn, --primary).
+  const typeStyles = {
+    success: {
+      icon: variant === "glass" ? BadgeCheck : CheckCircle2,
+      iconColor: "text-ok",
+      colorVar: "var(--ok)",
+      glowBorder: "border-ok/40",
+      glowShadow: "",
+      minimalBorder: "border-l-ok",
+    },
+    error: {
+      icon: AlertCircle,
+      iconColor: "text-fail",
+      colorVar: "var(--fail)",
+      glowBorder: "border-fail/40",
+      glowShadow: "",
+      minimalBorder: "border-l-fail",
+    },
+    warning: {
+      icon: AlertTriangle,
+      iconColor: "text-warn",
+      colorVar: "var(--warn)",
+      glowBorder: "border-warn/40",
+      glowShadow: "",
+      minimalBorder: "border-l-warn",
+    },
+    info: {
+      icon: Info,
+      iconColor: "text-primary",
+      colorVar: "var(--primary)",
+      glowBorder: "border-primary/40",
+      glowShadow: "",
+      minimalBorder: "border-l-primary",
+    },
+    default: {
+      icon: null,
+      iconColor: "",
+      colorVar: "var(--primary)",
+      glowBorder: "border-primary/40",
+      glowShadow: "",
+      minimalBorder: "border-l-primary",
+    },
+  };
+  const currentType = typeStyles[type];
+  const { icon: Icon, iconColor } = currentType;
+
+  const variantStyles = {
+    default: "bg-card border border-border",
+    glow: cn(
+      "bg-background shadow-lg border text-foreground",
+      currentType.glowBorder,
+      currentType.glowShadow
+    ),
+    glass: "rounded-2xl border border-foreground/10 bg-card/70 backdrop-blur-xl shadow-2xl shadow-black/10 dark:shadow-black/40",
+    minimal: cn("border-l-4 rounded-l-none bg-background shadow-md", currentType.minimalBorder),
+  };
+
+  const isGlass = variant === "glass";
+  const glassStyle: React.CSSProperties = isGlass
+    ? { backgroundImage: `radial-gradient(140% 120% at 0% 0%, color-mix(in oklab, ${currentType.colorVar} 35%, transparent) 0%, transparent 65%)` }
+    : {};
+
+  return (
+    <div
+      ref={toastRef}
+      className={cn("pointer-events-auto flex w-full max-w-sm items-start gap-4 rounded-xl p-4 transition-colors", variantStyles[variant])}
+      style={glassStyle}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {Icon && (
+        <Icon
+          className={cn(
+            "mt-0.5 w-5 h-5 shrink-0",
+            iconColor,
+            // Glass icons are solid badges: fill with the accent, cut the glyph out in the card colour.
+            isGlass && "w-6 h-6 fill-current stroke-card",
+          )}
+        />
+      )}
+
+      <div className="flex flex-col gap-1 w-full min-w-0">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        {description && <p className="text-sm text-muted-foreground">{description}</p>}
+
+        {action && (
+          <button onClick={() => { action.onClick(); handleClose(); }} className="mt-2 w-max px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary text-primary-foreground transition-all hover:opacity-90 active:scale-95 shadow-xs">
+            {action.label}
+          </button>
+        )}
+      </div>
+
+      <button type="button" aria-label="알림 닫기" onClick={handleClose} className={cn("shrink-0 p-1 rounded-md opacity-60 hover:opacity-100 hover:bg-muted transition-all", isGlass && "self-center")}>
+        <X className="w-4 h-4" aria-hidden="true" />
+      </button>
+    </div>
+  );
+};
+
+// ==========================================
+// STACK SLOT (measures its toast so the expanded stack can lay cards out)
+// ==========================================
+interface StackSlotProps {
+  id: string;
+  onHeight: (id: string, height: number) => void;
+  className?: string;
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+}
+
+const StackSlot = ({ id, onHeight, className, style, children }: StackSlotProps) => {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const report = () => onHeight(id, el.offsetHeight);
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [id, onHeight]);
+
+  return (
+    <div ref={ref} className={className} style={style}>
+      {children}
+    </div>
+  );
+};
+
+// ==========================================
+// TOAST PROVIDER (WRAPPER)
+// ==========================================
+export interface ToastProviderProps {
+  children: React.ReactNode;
+  variant?: ToastVariant;
+  position?: ToastPosition;
+  /**
+   * Piles toasts on top of each other — the newest in front, older ones
+   * peeking out behind it. Hovering the pile fans it out into a list.
+   */
+  stack?: boolean;
+}
+
+export function ToastProvider({ children, variant = "default", position = "bottom-right", stack = false }: ToastProviderProps) {
+  const [toasts, setToasts] = useState<ToastProps[]>([]);
+  const [hovered, setHovered] = useState(false);
+  const [heights, setHeights] = useState<Record<string, number>>({});
+
+  const toast = useCallback((props: Omit<ToastProps, "id">) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, ...props }]);
+  }, []);
+
+  const dismiss = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    setHeights((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }, []);
+
+  const reportHeight = useCallback((id: string, height: number) => {
+    setHeights((prev) => (prev[id] === height ? prev : { ...prev, [id]: height }));
+  }, []);
+
+  const isTop = position.startsWith("top");
+  const expanded = stack && hovered;
+
+  // The stack is one absolutely-laid-out column, so it only needs a corner.
+  const stackPositionClasses = {
+    "top-right": "top-4 right-4",
+    "top-left": "top-4 left-4",
+    "top-center": "top-4 left-1/2 -translate-x-1/2",
+    "bottom-right": "bottom-4 right-4",
+    "bottom-left": "bottom-4 left-4",
+    "bottom-center": "bottom-4 left-1/2 -translate-x-1/2",
+  };
+
+  // No overflow clipping here: variants like `glow` paint outside the card
+  // via box-shadow, and a clipped container would crop the halo on every edge.
+  const positionClasses = {
+    "top-right": "top-0 right-0 sm:top-4 sm:right-4 flex-col",
+    "top-left": "top-0 left-0 sm:top-4 sm:left-4 flex-col",
+    "top-center": "top-0 left-1/2 -translate-x-1/2 sm:top-4 flex-col",
+    "bottom-right": "bottom-0 right-0 sm:bottom-4 sm:right-4 flex-col-reverse",
+    "bottom-left": "bottom-0 left-0 sm:bottom-4 sm:left-4 flex-col-reverse",
+    "bottom-center": "bottom-0 left-1/2 -translate-x-1/2 sm:bottom-4 flex-col-reverse",
+  };
+
+  // Stack layout: index 0 is the front (newest) card. Collapsed cards sit
+  // behind the front one, each nudged out and scaled down a little; expanded
+  // cards are laid out by their measured heights so nothing overlaps.
+  const ordered = stack ? [...toasts].reverse() : toasts;
+  const offsets: number[] = [];
+  let running = 0;
+  ordered.forEach((t, i) => {
+    offsets[i] = expanded ? running : i * STACK_PEEK;
+    running += (heights[t.id] ?? 0) + STACK_GAP;
+  });
+  const stackHeight = Math.max(running - STACK_GAP, 0) + STACK_PEEK * (STACK_VISIBLE - 1);
+
+  return (
+    <ToastContext.Provider value={{ toast, dismiss }}>
+      {children}
+      {stack ? (
+        <div
+          className={cn(
+            "fixed z-[100] w-[calc(100%-2rem)] sm:w-96",
+            expanded ? "pointer-events-auto" : "pointer-events-none",
+            stackPositionClasses[position],
+          )}
+          style={{ height: stackHeight }}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+        >
+          {ordered.map((t, i) => {
+            const hidden = !expanded && i >= STACK_VISIBLE;
+            const scale = expanded ? 1 : 1 - i * STACK_SCALE;
+            const translate = isTop ? offsets[i] : -offsets[i];
+            return (
+              <StackSlot
+                key={t.id}
+                id={t.id}
+                onHeight={reportHeight}
+                className={cn(
+                  "absolute inset-x-0 transition-all duration-300 ease-out",
+                  isTop ? "top-0" : "bottom-0",
+                  hidden && "opacity-0 pointer-events-none",
+                )}
+                style={{
+                  zIndex: 100 - i,
+                  transform: `translateY(${translate}px) scale(${scale})`,
+                  transformOrigin: isTop ? "top center" : "bottom center",
+                }}
+              >
+                <ToastItem {...t} onRemove={dismiss} variant={variant} position={position} paused={expanded} />
+              </StackSlot>
+            );
+          })}
+        </div>
+      ) : (
+        // CHILL patch: one polite live region announces every toast.
+        <div role="status" aria-live="polite" className={cn("fixed z-[100] flex max-h-screen w-full sm:w-auto p-4 sm:p-0 gap-3 pointer-events-none", positionClasses[position])}>
+          {toasts.map((t) => (
+            <ToastItem key={t.id} {...t} onRemove={dismiss} variant={variant} position={position} />
+          ))}
+        </div>
+      )}
+    </ToastContext.Provider>
+  );
+}

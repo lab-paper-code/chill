@@ -1,14 +1,18 @@
-import type { Metadata } from "next"
-import { Asta_Sans } from "next/font/google"
+import type { Metadata, Viewport } from "next"
+import localFont from "next/font/local"
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
-import { DashboardShell } from "@/components/dashboard-shell"
 
-// Asta Sans ships Hangul; unicode-range files load only the glyphs a page uses.
-// No metric overrides exist for Asta Sans; the CSS stack supplies the fallback.
-const asta = Asta_Sans({subsets:["latin"],variable:"--font-asta",display:"swap",adjustFontFallback:false})
+// Pretendard Variable from the `pretendard` package, copied into the repo so the build needs no network.
+const pretendard = localFont({ src: "./fonts/PretendardVariable.woff2", variable: "--font-pretendard", display: "swap", weight: "45 920" })
 
-export const metadata:Metadata = {title:"CHILL Dashboard",description:"CHILL 원본 상태 · 관리 · 요청 관측"}
-export default function RootLayout({children}:{children:React.ReactNode}) {
-  return <html lang="ko" className={asta.variable} suppressHydrationWarning><body><ThemeProvider><DashboardShell>{children}</DashboardShell></ThemeProvider></body></html>
+export const metadata: Metadata = { title: { template: "%s | CHILL", default: "CHILL" } }
+export const viewport: Viewport = { colorScheme: "light dark" }
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="ko" className={pretendard.variable} suppressHydrationWarning>
+      <body><ThemeProvider>{children}</ThemeProvider></body>
+    </html>
+  )
 }
