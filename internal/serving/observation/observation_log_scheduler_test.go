@@ -408,7 +408,7 @@ func TestWorkloadObservationReadsOnlyRequestedRange(t *testing.T) {
 			}
 		}
 	}
-	result, err := observationLog.Query(context.Background(), d.UID, from, to, nil, nil, 0, "")
+	result, err := observationLog.Query(context.Background(), d.UID, from, to, nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

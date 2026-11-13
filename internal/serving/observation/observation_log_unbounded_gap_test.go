@@ -16,12 +16,12 @@ func TestUnboundedQueryRetainsUnknownStartAfterEmptyCleanBoot(t *testing.T) {
 		t.Run(map[bool]string{true: "missing", false: "malformed"}[marker == ""], func(t *testing.T) {
 			clean, firstStart, now := emptyCleanBootAfterCrash(t, marker)
 			ctx := context.Background()
-			all, err := clean.Query(ctx, "workload", time.Time{}, time.Time{}, nil, nil, 0, "")
+			all, err := clean.Query(ctx, "workload", time.Time{}, time.Time{}, nil, nil, 0, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
 			from := firstStart.Add(-time.Second)
-			window, err := clean.Query(ctx, "workload", from, now, nil, nil, 0, "")
+			window, err := clean.Query(ctx, "workload", from, now, nil, nil, 0, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -118,12 +118,12 @@ func TestCleanPredecessorUnknownStartProvenanceInDefaultQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 	persisted := unknownStartRoot(t, raw.Gaps, "")
-	all, err := log.Query(ctx, "workload", time.Time{}, time.Time{}, nil, nil, 0, "")
+	all, err := log.Query(ctx, "workload", time.Time{}, time.Time{}, nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	from := oldTo.Add(-time.Hour)
-	finite, err := log.Query(ctx, "workload", from, floor, nil, nil, 0, "")
+	finite, err := log.Query(ctx, "workload", from, floor, nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

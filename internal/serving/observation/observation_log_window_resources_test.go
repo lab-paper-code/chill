@@ -187,7 +187,7 @@ func TestColdCapturedPrefixDoesNotSkipConcurrentAppend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	disk, err := log.Query(ctx, "uid", from, to, nil, nil, 0, "")
+	disk, err := log.Query(ctx, "uid", from, to, nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestWindowCacheRetainsLargeWindowAndPrunesBySpan(t *testing.T) {
 			if timing.WindowBudgetFallbacks != 0 {
 				t.Fatalf("unexpected budget fallback: %+v", timing)
 			}
-			disk, err := log.Query(ctx, "uid", from, to, nil, nil, 0, "")
+			disk, err := log.Query(ctx, "uid", from, to, nil, nil, 0, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}

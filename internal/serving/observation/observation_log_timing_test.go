@@ -97,7 +97,7 @@ func TestRequestTimingSnapshotsAndLateSupplementStaySeparate(t *testing.T) {
 	assertServerTiming(t, rows[2].ServerTiming, serving.ServerReplySent, 15, true)
 	assertServerTiming(t, rows[2].ServerTiming, serving.ServerResponseFlushDone, 0, false)
 	assertServerTiming(t, closeRead.open["a"].ServerTiming, serving.ServerReplySent, 0, false)
-	before, err := log.Query(ctx, "uid", at, at.Add(time.Minute), nil, nil, 0, "")
+	before, err := log.Query(ctx, "uid", at, at.Add(time.Minute), nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestRequestTimingSnapshotsAndLateSupplementStaySeparate(t *testing.T) {
 	if err := log.RequestEvent(late); err != nil {
 		t.Fatal(err)
 	}
-	after, err := log.Query(ctx, "uid", at, at.Add(time.Minute), nil, nil, 0, "")
+	after, err := log.Query(ctx, "uid", at, at.Add(time.Minute), nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestRequestTimingSnapshotsAndLateSupplementStaySeparate(t *testing.T) {
 			after.Requests[i].ServerTiming.Record(serving.ServerReplyReceived, 55)
 		}
 	}
-	again, err := log.Query(ctx, "uid", at, at.Add(time.Minute), nil, nil, 0, "")
+	again, err := log.Query(ctx, "uid", at, at.Add(time.Minute), nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestRequestTimingRestoreArchiveQueryAndRawRoundTrip(t *testing.T) {
 		assertServerTiming(t, restored[i].ServerTiming, serving.ServerAuthDone, time.Duration(math.MaxInt64)-index, true)
 		restored[i].ServerTiming.Record(serving.ServerResponseWriteStart, 50)
 	}
-	live, err := restarted.Query(ctx, "uid", at, at.Add(time.Second), nil, nil, 0, "")
+	live, err := restarted.Query(ctx, "uid", at, at.Add(time.Second), nil, nil, 0, "", "")
 	if err != nil || len(live.Requests) != 2 {
 		t.Fatalf("restored query: %+v, %v", live, err)
 	}
@@ -182,7 +182,7 @@ func TestRequestTimingRestoreArchiveQueryAndRawRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	want, err := restarted.Query(ctx, "uid", at, at.Add(time.Second), nil, nil, 0, "")
+	want, err := restarted.Query(ctx, "uid", at, at.Add(time.Second), nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestRequestTimingRestoreArchiveQueryAndRawRoundTrip(t *testing.T) {
 	}
 	// A fresh root forces archive decoding instead of retained in-memory rows.
 	cold, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, clock.now())
-	got, err := cold.Query(ctx, "uid", at, at.Add(time.Second), nil, nil, 0, "")
+	got, err := cold.Query(ctx, "uid", at, at.Add(time.Second), nil, nil, 0, "", "")
 	if err != nil || !reflect.DeepEqual(got.Requests, want.Requests) {
 		t.Fatalf("archive query changed timing values: %+v, %v", got, err)
 	}

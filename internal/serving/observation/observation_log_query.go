@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -43,7 +44,11 @@ type ObservationResult struct {
 	Coverage         serving.ObservationCoverage `json:"coverage"`
 }
 
-func (l *ObservationLog) Query(ctx context.Context, uid string, from, to time.Time, definitions, outcomes []string, limit int, cursor string) (ObservationResult, error) {
+// Query aggregates the whole selected population and pages its request rows.
+// Order "desc" lists rows newest first, the exact reverse of the default
+// ascending order; the cursor counts rows in the chosen order, as in
+// SchedulerObservationPage. Aggregates do not depend on order.
+func (l *ObservationLog) Query(ctx context.Context, uid string, from, to time.Time, definitions, outcomes []string, limit int, cursor, order string) (ObservationResult, error) {
 	if len(definitions) == 0 {
 		definitions = l.config.Definitions
 	}
@@ -99,6 +104,9 @@ func (l *ObservationLog) Query(ctx context.Context, uid string, from, to time.Ti
 		}
 		return selected[a].ReceivedAt.Before(selected[b].ReceivedAt)
 	})
+	if order == "desc" {
+		slices.Reverse(selected)
+	}
 	if offset > len(selected) {
 		return result, &serving.Error{Code: "InvalidQuery", Message: "observation cursor is out of range"}
 	}

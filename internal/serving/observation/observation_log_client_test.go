@@ -167,7 +167,7 @@ func TestClientWindowAddsNativeEvidenceWithoutRewritingReports(t *testing.T) {
 		len(after.ClientObservations) != 2 || after.ClientObservations[1].Outcome != timedOut {
 		t.Fatalf("native evidence failed to join, or timeout became finite: %+v %v", after, err)
 	}
-	requests, err := log.Query(ctx, definition.UID, from, to, nil, nil, 0, "")
+	requests, err := log.Query(ctx, definition.UID, from, to, nil, nil, 0, "", "")
 	if err != nil || len(requests.Requests) != 2 {
 		t.Fatalf("request query: %+v %v", requests, err)
 	}

@@ -65,7 +65,7 @@ func TestHistoricalRequestQueryReadsOnlyRequiredEvidenceAndKeepsLateFinalStatist
 	}
 	archive.rejectCatalog = true
 	for _, window := range []time.Duration{time.Second, 20 * time.Minute} {
-		first, err := log.Query(ctx, definition.UID, at, at.Add(window), nil, nil, 2, "")
+		first, err := log.Query(ctx, definition.UID, at, at.Add(window), nil, nil, 2, "", "")
 		if err != nil {
 			t.Fatalf("historical %s query fetched irrelevant evidence: %v", window, err)
 		}
@@ -76,7 +76,7 @@ func TestHistoricalRequestQueryReadsOnlyRequiredEvidenceAndKeepsLateFinalStatist
 		if cohort.SampleCount != 3 || cohort.QuantileNanos == nil || *cohort.QuantileNanos != float64(3*time.Millisecond) || len(first.Definitions) != 1 {
 			t.Fatalf("late final statistics/definition lost: %+v", first)
 		}
-		last, err := log.Query(ctx, definition.UID, at, at.Add(window), nil, nil, 2, first.NextCursor)
+		last, err := log.Query(ctx, definition.UID, at, at.Add(window), nil, nil, 2, first.NextCursor, "")
 		if err != nil || len(last.Requests) != 1 || last.Requests[0].RequestID != "c" || last.Requests[0].Kind != serving.RequestRowFinal || last.NextCursor != "" || last.Total != first.Total {
 			t.Fatalf("historical terminal page: %+v err=%v", last, err)
 		}
@@ -117,7 +117,7 @@ func TestRequestQuerySeparatesCompletedLatencyFromAllOtherOutcomes(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	result, err := log.Query(ctx, definition.UID, at, at.Add(time.Second), nil, nil, 1, "")
+	result, err := log.Query(ctx, definition.UID, at, at.Add(time.Second), nil, nil, 1, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

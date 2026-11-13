@@ -113,7 +113,7 @@ func TestObservationArchiveTransparentReadsAndCatalog(t *testing.T) {
 	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
 	from, to := observationTestHour, observationTestHour.Add(2*time.Minute)
 	seedObservationMinutes(t, log, clock, from.Add(time.Second), from.Add(time.Minute+time.Second))
-	want, err := log.Query(ctx, archiveTestUID, from, to, nil, nil, 0, "")
+	want, err := log.Query(ctx, archiveTestUID, from, to, nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestObservationArchiveTransparentReadsAndCatalog(t *testing.T) {
 	if err := restarted.DefinitionRecord(&serving.Definition{Name: "workload", UID: "replacement", Generation: 1}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := restarted.Query(ctx, archiveTestUID, from, to, nil, nil, 0, "")
+	got, err := restarted.Query(ctx, archiveTestUID, from, to, nil, nil, 0, "", "")
 	if err != nil || got.Total != want.Total || !reflect.DeepEqual(got.Requests, want.Requests) || !reflect.DeepEqual(got.Definitions, want.Definitions) || !reflect.DeepEqual(got.Management, want.Management) || got.GapUntil != nil || len(got.Coverage.Gaps) != 0 {
 		t.Fatalf("archive changed workload facts/catalog: %+v err=%v", got, err)
 	}
@@ -185,7 +185,7 @@ func checkArchiveSelectedPages(t *testing.T, log *ObservationLog, ctx context.Co
 
 func checkArchiveLocalOverlap(t *testing.T, log *ObservationLog, ctx context.Context, from, to time.Time, want ObservationResult, wantLoad LoadWindow) {
 	t.Helper()
-	got, err := log.Query(ctx, archiveTestUID, from, to, nil, nil, 0, "")
+	got, err := log.Query(ctx, archiveTestUID, from, to, nil, nil, 0, "", "")
 	if err != nil || got.Total != want.Total || len(got.Management) != len(want.Management) {
 		t.Fatalf("overlap duplicated requests/management: %+v %v", got, err)
 	}
@@ -225,7 +225,7 @@ func TestObservationArchiveLateFinalAndLocalFastPath(t *testing.T) {
 	if removed, err := log.removeHour(at.Truncate(time.Hour)); err != nil || !removed {
 		t.Fatalf("remove retained hour: removed=%v err=%v", removed, err)
 	}
-	got, err := log.Query(ctx, archiveTestUID, at, at.Add(time.Second), nil, nil, 0, "")
+	got, err := log.Query(ctx, archiveTestUID, at, at.Add(time.Second), nil, nil, 0, "", "")
 	if err != nil || got.Total != 1 || len(got.Requests) != 1 || got.Requests[0].Kind != serving.RequestRowFinal {
 		t.Fatalf("archive assigned/local final not merged: %+v %v", got, err)
 	}
@@ -329,7 +329,7 @@ func TestObservationArchiveCaptureSurvivesDeletion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	result, err := log.Query(context.Background(), archiveTestUID, observationTestHour.Add(-time.Hour), observationTestHour.Add(time.Minute), nil, nil, 0, "")
+	result, err := log.Query(context.Background(), archiveTestUID, observationTestHour.Add(-time.Hour), observationTestHour.Add(time.Minute), nil, nil, 0, "", "")
 	if err != nil || result.Total != 1 || len(result.Management) != 1 {
 		t.Fatalf("capture raced deletion: %+v %v", result, err)
 	}
@@ -414,7 +414,7 @@ func TestObservationQueriesHonorPreCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	from, to := observationTestHour, observationTestHour.Add(time.Minute)
-	_, queryErr := log.Query(ctx, archiveTestUID, from, to, nil, nil, 0, "")
+	_, queryErr := log.Query(ctx, archiveTestUID, from, to, nil, nil, 0, "", "")
 	_, loadErr := log.LoadWindow(ctx, from, to)
 	_, _, _, _, pageErr := log.SchedulerObservationPage(ctx, from, to, 10, 0, SchedulerObservationSelection{})
 	_, powerErr := log.OperatingPower(ctx, from, to, nil, 10)

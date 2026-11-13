@@ -154,7 +154,7 @@ func TestNativeHTTPServicePairsReachPersistedRequestConsumers(t *testing.T) {
 		}
 	}
 	to := time.Now().UTC().Add(time.Second)
-	read, err := log.Query(ctx, definition.UID, from, to, nil, nil, 0, "")
+	read, err := log.Query(ctx, definition.UID, from, to, nil, nil, 0, "", "")
 	if err != nil || len(read.Requests) != len(samples) {
 		t.Fatalf("persisted final request read: %d rows, %v", len(read.Requests), err)
 	}

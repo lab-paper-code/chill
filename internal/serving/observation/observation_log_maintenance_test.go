@@ -319,14 +319,14 @@ func TestFinalAppendDoesNotLoseConcurrentRequestFold(t *testing.T) {
 	if len(rows) != 2 || rows[0].Kind != serving.RequestRowAssigned || rows[1].Kind != serving.RequestRowFinal || rows[1].Outcome != "" {
 		t.Fatalf("first final did not preserve its admitted version: %+v", rows)
 	}
-	visible, err := log.Query(context.Background(), "uid", observationTestHour, observationTestHour.Add(time.Minute), nil, nil, 0, "")
+	visible, err := log.Query(context.Background(), "uid", observationTestHour, observationTestHour.Add(time.Minute), nil, nil, 0, "", "")
 	if err != nil || visible.Total != 1 || visible.Outcomes["canceled"] != 0 {
 		t.Fatalf("stored final no longer masks the newer open fold: %+v %v", visible, err)
 	}
 	if err := log.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	result, err := log.Query(context.Background(), "uid", observationTestHour, observationTestHour.Add(time.Minute), nil, nil, 0, "")
+	result, err := log.Query(context.Background(), "uid", observationTestHour, observationTestHour.Add(time.Minute), nil, nil, 0, "", "")
 	if err != nil || result.Total != 1 || result.Outcomes["canceled"] != 1 {
 		t.Fatalf("concurrent fold lost or counted twice: %+v %v", result, err)
 	}

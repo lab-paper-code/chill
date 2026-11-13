@@ -268,7 +268,7 @@ func TestRecoveryUnknownSurvivesClearCleanBootAndRawSources(t *testing.T) {
 	from, to := clearAt.Add(time.Second), clearAt.Add(2*time.Second)
 	check := func(log *ObservationLog, source string) {
 		t.Helper()
-		result, err := log.Query(ctx, "w", from, to, nil, nil, 0, "")
+		result, err := log.Query(ctx, "w", from, to, nil, nil, 0, "", "")
 		if err != nil || !log.Health().Healthy {
 			t.Fatalf("historical gap became a current recording failure: %+v %v", result, err)
 		}

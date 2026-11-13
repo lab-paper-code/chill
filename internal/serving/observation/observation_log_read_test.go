@@ -359,7 +359,7 @@ func TestObservationPublicReadsIgnoreBoundLocations(t *testing.T) {
 	for _, location := range []*time.Location{time.UTC, time.Local, time.FixedZone("KST", 9*60*60), time.FixedZone("half-hour", -3*60*60-30*60)} {
 		t.Run(location.String(), func(t *testing.T) {
 			start, end := from.In(location), to.In(location)
-			query, err := log.Query(ctx, "w", start, end, nil, nil, 10, "")
+			query, err := log.Query(ctx, "w", start, end, nil, nil, 10, "", "")
 			if err != nil || query.Total != 1 || len(query.Management) != 1 || query.GapUntil != nil || len(query.Coverage.Gaps) != 0 {
 				t.Fatalf("request/management lookup changed with bound location: %+v %v", query, err)
 			}

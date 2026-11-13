@@ -85,7 +85,7 @@ func timingRow(t *testing.T, log *observation.ObservationLog, id string) serving
 	if err := log.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	result, err := log.Query(context.Background(), "uid", time.Time{}, time.Time{}, nil, nil, 0, "")
+	result, err := log.Query(context.Background(), "uid", time.Time{}, time.Time{}, nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

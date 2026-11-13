@@ -45,7 +45,7 @@ func cleanObservationPredecessor(directory string) error {
 type runtimeObservation struct{ *observation.ObservationLog }
 
 func (l *runtimeObservation) HasRequest(uid, id string) (bool, error) {
-	result, err := l.Query(context.Background(), uid, time.Time{}, time.Time{}, nil, nil, 0, "")
+	result, err := l.Query(context.Background(), uid, time.Time{}, time.Time{}, nil, nil, 0, "", "")
 	if err != nil {
 		return false, err
 	}

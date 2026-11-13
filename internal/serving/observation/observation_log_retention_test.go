@@ -127,7 +127,7 @@ func TestArchiveDeletionReportsGap(t *testing.T) {
 		t.Fatal(err)
 	}
 	from, floor := observationTestHour, observationTestHour.Add(2*time.Hour)
-	result, err := observationLog.Query(context.Background(), "uid", from, from.Add(3*time.Hour), nil, nil, 0, "")
+	result, err := observationLog.Query(context.Background(), "uid", from, from.Add(3*time.Hour), nil, nil, 0, "", "")
 	if err != nil || result.GapUntil == nil || !result.GapUntil.Equal(floor) || result.Total != 0 {
 		t.Fatalf("workload query after deletion: %+v %v", result, err)
 	}
@@ -156,7 +156,7 @@ func TestCaptureSeesWholeHourOrGap(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- observationLog.Flush(context.Background()) }()
 	for range 200 {
-		result, err := observationLog.Query(context.Background(), "uid", observationTestHour, time.Time{}, nil, nil, 0, "")
+		result, err := observationLog.Query(context.Background(), "uid", observationTestHour, time.Time{}, nil, nil, 0, "", "")
 		if err != nil {
 			t.Fatal(err)
 		}

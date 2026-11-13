@@ -737,7 +737,12 @@ func (h *Handler) observations(w http.ResponseWriter, r *http.Request) {
 		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "valid RFC3339 interval and bounded positive event limit are required"})
 		return
 	}
-	result, err := h.observationLog.Query(r.Context(), r.PathValue("uid"), from, to, query["definition"], query["outcome"], limit, query.Get("cursor"))
+	order, present := query["order"]
+	if present && (len(order) != 1 || order[0] != "asc" && order[0] != "desc") {
+		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "invalid observation order", Field: "order"})
+		return
+	}
+	result, err := h.observationLog.Query(r.Context(), r.PathValue("uid"), from, to, query["definition"], query["outcome"], limit, query.Get("cursor"), query.Get("order"))
 	if err != nil {
 		var domain *serving.Error
 		if !errors.As(err, &domain) {

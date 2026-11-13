@@ -21,7 +21,7 @@ func scientificReaders(log *ObservationLog, at time.Time) []struct {
 		read func(context.Context) error
 	}{
 		{"query", func(ctx context.Context) error {
-			_, err := log.Query(ctx, "w", at, at.Add(time.Minute), nil, nil, 0, "")
+			_, err := log.Query(ctx, "w", at, at.Add(time.Minute), nil, nil, 0, "", "")
 			return err
 		}},
 		{"load", func(ctx context.Context) error { _, err := log.LoadWindow(ctx, at, at.Add(time.Minute)); return err }},
@@ -243,7 +243,7 @@ func TestWrittenPrefixCaptureRetainsLiveRowsAndFinalPrecedence(t *testing.T) {
 		}
 	}
 	resume()
-	result, err := log.Query(ctx, "w", at, at.Add(time.Minute), nil, nil, 0, "")
+	result, err := log.Query(ctx, "w", at, at.Add(time.Minute), nil, nil, 0, "", "")
 	if err != nil || result.Total != 2 {
 		t.Fatalf("query lost the written-prefix/live mixture: %+v %v", result, err)
 	}
@@ -259,7 +259,7 @@ func TestWrittenPrefixCaptureRetainsLiveRowsAndFinalPrecedence(t *testing.T) {
 	if err := log.RequestClosed(versionedRequestID, serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
-	result, err = log.Query(ctx, "w", at, at.Add(time.Minute), nil, nil, 0, "")
+	result, err = log.Query(ctx, "w", at, at.Add(time.Minute), nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

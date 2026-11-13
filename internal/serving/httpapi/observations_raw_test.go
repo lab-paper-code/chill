@@ -341,6 +341,80 @@ func TestSchedulerHistorySummaryCarriesDecisionReasonsTargetKeepAndEvaluationTim
 	}
 }
 
+func TestWorkloadObservationOrderPagesNewestFirstWithUnchangedAggregates(t *testing.T) {
+	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
+	h.mux.HandleFunc("GET /api/v1/observations/workloads/{uid}", h.observations)
+	from := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	for i := range 5 {
+		id, at := "r"+strconv.Itoa(i), from.Add(time.Duration(i)*time.Second)
+		for _, event := range []serving.RequestEvent{
+			{Kind: "received", At: at},
+			{Kind: "response_finished", At: at.Add(time.Duration(i+1) * time.Millisecond), ElapsedNanos: int64(time.Duration(i+1) * time.Millisecond), Outcome: "completed"},
+		} {
+			event.RequestID, event.WorkloadUID, event.ReceivedAt = id, "w", at
+			if err := h.observationLog.RequestEvent(event); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := h.observationLog.RequestClosed(id, serving.RequestTimings{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := "/api/v1/observations/workloads/w?from=" + from.Format(time.RFC3339Nano) + "&to=" + from.Add(time.Minute).Format(time.RFC3339Nano) + "&limit=2"
+	type page struct {
+		Total, Selected                            int
+		Outcomes, Cohorts, Definitions, Management json.RawMessage
+		Requests                                   []struct{ RequestID string }
+		NextCursor                                 string
+	}
+	read := func(order string) ([]string, []page) {
+		var ids []string
+		var pages []page
+		for cursor := ""; len(pages) == 0 || cursor != ""; {
+			if len(pages) > 3 {
+				t.Fatalf("order %q pages did not end: %v", order, ids)
+			}
+			response := rawHTTPRequest(h, base+order+cursor)
+			var p page
+			if err := json.Unmarshal(response.Body.Bytes(), &p); err != nil || response.Code != http.StatusOK {
+				t.Fatalf("order %q: status=%d body=%s err=%v", order, response.Code, response.Body, err)
+			}
+			for _, row := range p.Requests {
+				ids = append(ids, row.RequestID)
+			}
+			pages = append(pages, p)
+			cursor = ""
+			if p.NextCursor != "" {
+				cursor = "&cursor=" + p.NextCursor
+			}
+		}
+		return ids, pages
+	}
+	ascending, ascPages := read("&order=asc")
+	byDefault, _ := read("")
+	descending, descPages := read("&order=desc")
+	if !slices.Equal(ascending, []string{"r0", "r1", "r2", "r3", "r4"}) || !slices.Equal(byDefault, ascending) {
+		t.Fatalf("ascending/default rows: asc=%v default=%v", ascending, byDefault)
+	}
+	if !slices.Equal(descending, []string{"r4", "r3", "r2", "r1", "r0"}) {
+		t.Fatalf("descending rows skipped, repeated or not newest first: %v", descending)
+	}
+	for i, p := range descPages {
+		a := ascPages[i]
+		if p.Total != a.Total || p.Selected != a.Selected || string(p.Outcomes) != string(a.Outcomes) || string(p.Cohorts) != string(a.Cohorts) ||
+			string(p.Definitions) != string(a.Definitions) || string(p.Management) != string(a.Management) {
+			t.Fatalf("order changed aggregates: asc=%+v desc=%+v", a, p)
+		}
+	}
+	for _, invalid := range []string{"&order=", "&order=DESC", "&order=newest", "&order=asc&order=desc"} {
+		response := rawHTTPRequest(h, base+invalid)
+		var result serving.Error
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusBadRequest || result.Code != "InvalidQuery" {
+			t.Fatalf("invalid order %s: status=%d body=%s", invalid, response.Code, response.Body)
+		}
+	}
+}
+
 func TestSchedulerHistorySummaryBoundsPayloadAndPreservesRecordIdentity(t *testing.T) {
 	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
 	from := time.Now().UTC()

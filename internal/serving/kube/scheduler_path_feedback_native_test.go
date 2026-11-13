@@ -107,7 +107,7 @@ func TestTickFeedbackUpdatesNewCallsWithoutRewritingAcceptedNativeContext(t *tes
 	if err := c.observationLog.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := c.observationLog.Query(ctx, workload.UID, time.Time{}, time.Time{}, nil, nil, 100, "")
+	rows, err := c.observationLog.Query(ctx, workload.UID, time.Time{}, time.Time{}, nil, nil, 100, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -733,7 +733,7 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	if err := observer.scanLogs(id, stream); err != nil {
 		t.Fatal(err)
 	}
-	result, err := manager.observationLog.Query(context.Background(), definition.UID, now.Add(-time.Second), now.Add(time.Second), nil, nil, 0, "")
+	result, err := manager.observationLog.Query(context.Background(), definition.UID, now.Add(-time.Second), now.Add(time.Second), nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

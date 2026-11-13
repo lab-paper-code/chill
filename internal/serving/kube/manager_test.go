@@ -376,7 +376,7 @@ func TestManagerRegistrationIdentity(t *testing.T) {
 	if _, _, err := m.UpdateWorkload(ctx, "first", "stale", first.Desired.Spec); err == nil {
 		t.Fatal("accepted stale precondition")
 	}
-	observed, err := m.observationLog.Query(context.Background(), string(oldUID), time.Time{}, time.Time{}, nil, nil, 0, "")
+	observed, err := m.observationLog.Query(context.Background(), string(oldUID), time.Time{}, time.Time{}, nil, nil, 0, "", "")
 	if err != nil || len(observed.Definitions) == 0 || len(observed.Management) == 0 {
 		t.Fatal("deletion lost immutable request/management interpretation")
 	}
@@ -667,7 +667,7 @@ func TestManagerRestoreMissingDefinitionAdmissionFailsBeforeStatusWrite(t *testi
 
 func assertObservationLogActor(t *testing.T, observationLog *observation.ObservationLog, uid, kind, username, actorUID string) {
 	t.Helper()
-	observed, err := observationLog.Query(context.Background(), uid, time.Time{}, time.Time{}, nil, nil, 0, "")
+	observed, err := observationLog.Query(context.Background(), uid, time.Time{}, time.Time{}, nil, nil, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
