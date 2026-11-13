@@ -12,7 +12,7 @@ Pod당 persistent runner 하나와 순차 batch 하나다. 같은 UID와 정의�
 
 ## 시간과 수명
 
-원래 receipt와 sender monotonic elapsed를 유지한다. host UTC 차이는 요청 나이가 아니다. 실제 요청은 accept 때 POST를 동결하고 native sender에서 이미 흐른 시간을 한 번 전달한다.
+원래 receipt와 sender monotonic elapsed를 유지한다. 실제 요청은 accept 때 POST를 동결하고 native sender에서 이미 흐른 시간을 한 번 전달한다.
 
 `completionMarginMS`는 유한 비음수 필수 초기값이다. 유효한 client 결합 표본이 생기면 Workload SLO percentile의 TOTAL과 POST를 사용한다. 실제 요청에는 frozen POST 한 번만 적용한다. 새 Tick의 PRE나 TOTAL, 현재 configured margin을 중복 가산하지 않는다.
 
@@ -56,7 +56,7 @@ assigned/final은 허용 당시 admissionPrediction과 exact instance/profile, a
 
 admissionWaits는 eligibility와 queue class가 바뀔 때 실제 실패 사유와 입력을 남긴다. support 부재를 최종 수명 불가능으로 대체하지 않는다. gateway와 native deferred 시각은 다른 local clock이다.
 
-workerHTTP의 connection acquire, connect, request write와 first byte는 기존 body-read exchange 안의 관측이다. connect는 acquire와 겹친다. nativeHTTP는 handler-entry anchor와 로컬 received/decode/enqueue/finished/write-start offset이다. write-start는 delivery 완료가 아니다.
+workerHTTP의 connection acquire, connect, request write와 first byte는 기존 body-read exchange 안의 관측이다. connect는 acquire와 겹친다. nativeHTTP는 handler-entry anchor와 로컬 received/decode/enqueue/finished/write-start offset이다. write-start는 응답 쓰기 시작을 나타낸다.
 
 두 로컬 duration의 차이는 residual이다. 원격 UTC로 편도 지연을 만들거나 미분리 network, encoding과 read 비용을 임의 귀속하지 않는다. supplement는 HTTP outcome과 client SLO 판정을 덮지 않는다.
 
@@ -84,11 +84,11 @@ cold trial load는 입력 순서의 작은 window에서 최대8개의 execution/
 
 ## 실제 S와 G의 조건부 법칙
 
-S는 Go runner IPC 교환 전체, G는 직전 교환 종료부터 다음 교환 시작까지 같은 monotonic clock의 경과다. 첫 anchor가 없으면 G는 null이지0이 아니다. 각 표본은 물리 TrialID와 결합을 유지한다.
+S는 Go runner IPC 교환 전체, G는 직전 교환 종료부터 다음 교환 시작까지 같은 monotonic clock의 경과다. 첫 anchor가 없으면 G는 null이다. 각 표본은 물리 TrialID와 결합을 유지한다.
 
 현재 active 측정은 frozen operatingPoints와 off-node producer를 사용한다. sparse, saturation과 utilization의 실제 S/G와 공급, post-load idle을 구분한다. 원래 target gap으로 실제 G를 대체하거나 donor trace를 import하지 않는다.
 
-profile은 불변 trial별 gap/service index를 한 번 만든다. gap 거리의1-nearest는 조정 k가 아니다. trial을 균등 선택하고 각 trial에서 가장 가까운 모든 실제 record를 균등 선택한다. 양쪽 gap 동률도 포함한다. quantile은 같은 mixture CDF이며 tie를 평탄화하거나 평균/보간하지 않는다.
+profile은 불변 trial별 gap/service index를 한 번 만든다. gap 거리는1-nearest로 선택한다. trial을 균등 선택하고 각 trial에서 가장 가까운 모든 실제 record를 균등 선택한다. 양쪽 gap 동률도 포함한다. quantile은 같은 mixture CDF이며 tie를 평탄화하거나 평균/보간하지 않는다.
 
 replay의 arrival과 실행 완료가 g를 결정하므로 측정 G를 지연에 다시 더하지 않는다. actor는 pack과 IPC 전 running이 될 수 있어 그 decision-age gap은 실제 G의 근사다. exchange elapsed가 있으면 실제 시작 G와 경과를 residual에 사용한다.
 

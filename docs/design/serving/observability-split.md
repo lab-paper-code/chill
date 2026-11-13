@@ -6,7 +6,7 @@ ChillServer는 요청과 제어, 자원과 클러스터 사실을 같은 시간 
 
 `internal/serving/observation`이 process flock, request와 catalog 기록/복원, capture와 archive, retention과 power reduction을 소유한다. Runtime은 inward `RuntimeObservation` 계약을 사용하고 storage를 import하지 않는다.
 
-모든 stream과 root definitions는 frozen bytes를 무제한 FIFO 하나에 넣고 disk worker 하나가 처리한다. RequestEvent, RequestClosed와 SchedulerRecord 반환은 FIFO 수락이며 Write/Sync 완료가 아니다. catalog는 reference보다 먼저 같은 FIFO에 들어간다.
+모든 stream과 root definitions는 frozen bytes를 무제한 FIFO 하나에 넣고 disk worker 하나가 처리한다. RequestEvent, RequestClosed와 SchedulerRecord 반환은 FIFO 수락을 나타낸다. catalog는 reference보다 먼저 같은 FIFO에 들어간다.
 
 제어 decision/action과 mutation audit도 기록 수락 뒤 live에 발행한다. 이 순서를 매 요청 durable fsync로 해석하지 않는다. lifecycle 성공과 raw/read barrier는 필요한 유한 prefix의 write 또는 Sync를 별도로 기다린다.
 
@@ -40,7 +40,7 @@ catalog는 `{kind,key,at,body}`다. hour의 첫 reference와 본문 변경 때 �
 
 ## Client feedback과 모집단
 
-`POST /api/v1/workloads/{id}/feedback`는 observationID, 선택 requestID/workloadUID, elapsedNanos와 outcome, 선택 statusCode를 받는다. 서버가 reportedAt과 이름, 검증 actor를 붙이며 trusted telemetry다. 실제 추론의 암호학적 증명은 아니다.
+`POST /api/v1/workloads/{id}/feedback`는 observationID, 선택 requestID/workloadUID, elapsedNanos와 outcome, 선택 statusCode를 받는다. 서버가 reportedAt과 이름, 검증 actor를 붙이며 trusted telemetry다.
 
 completed와 http_error는 전체 body 수신과 실제 statusCode를 요구한다. timeout, transport_error와 canceled의 elapsed는 중단까지 하한이다. 실패 하한을 유한 성공 latency나 path reserve로 쓰지 않는다.
 
@@ -64,7 +64,7 @@ actor-empty CLEAR는 현재 inference fence만 푼다. 독립 prepare/power/rout
 
 성공 Create의 API Pod UID는 이미 존재하던 crash root와의 관계를 보존해 새 executor에 옛 영향을 전파하지 않는다. 이후 unclean boot의 새 root와 정상 Ready/owner 검사는 면제하지 않는다.
 
-정상 종료는 신규 admission 중지, producer join, pending final drain, Sync/Close, durable clean marker, flock release 순이다. clean은 memory-only tail 없음만 뜻한다. 원격 실행 완료나 모든 제어 성공을 뜻하지 않는다.
+정상 종료는 신규 admission 중지, producer join, pending final drain, Sync/Close, durable clean marker, flock release 순이다. clean은 memory-only tail 없음만 뜻한다.
 
 ## 세그먼트와 archive
 
@@ -86,7 +86,7 @@ retention은 hour 시작 기준 양수 duration, 기본2시간이다. 모든 str
 
 로컬 hour 디렉터리를 우선하고 해당 hour가 없을 때만 archive와 catalog를 읽는다. 로컬에 없는 stream만 archive로 보충하지 않는다. 같은 hour를 두 source로 더하지 않는다.
 
-고정 offset 뒤 append와 미완결 tail은 제외한다. 읽기는 written prefix와 captured live rows이며 다중 source MVCC나 페이지 전체 snapshot이 아니다. 열린 fd는 이후 retention 삭제에도 계속 읽는다.
+고정 offset 뒤 append와 미완결 tail은 제외한다. 읽기는 written prefix와 captured live rows를 대상으로 한다. 열린 fd는 이후 retention 삭제에도 계속 읽는다.
 
 coverage는 captured clock까지만 확정한다. 미래 query end와 boundary-support 검색이 열리지 않은 hour를 결손으로 만들지 않는다. 요청 from/to는 유지하고 coverage.to를 clip하되 실제 power sample을 합성하지 않는다.
 
@@ -108,7 +108,7 @@ decoded request/client cache는 설정 rolling span과 log retention 이내 minu
 
 scheduler full/compact/summary와 filter, uid와 offset은 [설정과 관측 API](scheduler-api.md#이력과-compact-조회)를 따른다. compact의 projection과 omitted 목록은 원본과 다른 공개 범위를 표시한다. stored journal과 원본 상세는 유지한다.
 
-action expectedSeconds와 expectedSource는 선택된 측정 trial의 평균 시간과 근거다. elapsed와 timeout, DAG ETA가 아니다. 근거 부재는 null이며 과거 action에 현재 cost를 대입하지 않는다.
+action expectedSeconds와 expectedSource는 선택된 측정 trial의 평균 시간과 근거다. 근거 부재는 null이며 과거 action에 현재 cost를 대입하지 않는다.
 
 ### 사건 continuation
 
@@ -118,9 +118,9 @@ cursor는 다음 append-hour 또는 `<hour>/<cluster-row-offset>/<scheduler-row-
 
 continuation은 append hour와 각 stream의 행 순서다. 사건시각 정렬은 한 응답 page 안에서만 보장한다. 매 호출 현재 prefix를 읽으며 첫 page에서 후속 append를 전역 동결하지 않는다.
 
-빈 page도 nextCursor가 있으면 계속 읽는다. coverage는 이번에 시도한 append-time 범위와 결손이다. continuation 없음은 이번 head까지 읽었다는 뜻이며 향후 late 사건 없음의 증거가 아니다.
+빈 page도 nextCursor가 있으면 계속 읽는다. coverage는 이번에 시도한 append-time 범위와 결손이다. continuation 없음은 이번 head까지 읽었다는 뜻이다. 이후 late 사건이 추가될 수 있다.
 
-eventLookupHours 기본1은 호출당 append-hour 예산이다. late-delivery cutoff가 아니다. exact와 범위는 같은 규칙이며 malformed, 미래와 out-of-range offset은 InvalidQuery다.
+eventLookupHours 기본1은 호출당 append-hour 예산이다. late-delivery는 이 예산 밖에서도 도착할 수 있다. exact와 범위는 같은 규칙이며 malformed, 미래와 out-of-range offset은 InvalidQuery다.
 
 ### 전력 기간과 bucket
 
@@ -166,13 +166,13 @@ CPU usage와 throttling은 누적 ns, periods는 횟수, memory는 bytes, therma
 
 서버는 기존 ticker에서 GC CPU와 cycle 누적값, 분별 observation directory regular-file 논리 bytes를 기록한다. processStartedAt과 Pod UID를 넘어 누적 차를 빼지 않는다. PVC capacity와 allocated blocks, gctrace 분포와 구분한다.
 
-cluster는 기존 Pod List/Watch와 issue 변화에서 실제 identity와 container 상태, imageID와 restart, 종료 사실을 기록한다. 최초 List는 observed baseline이며 created 이력이 아니다. watch 단절을 삭제로 만들지 않는다.
+cluster는 기존 Pod List/Watch와 issue 변화에서 실제 identity와 container 상태, imageID와 restart, 종료 사실을 기록한다. 최초 List는 observed baseline이다. watch 단절을 삭제로 만들지 않는다.
 
 issue는 raised/changed/resolved이고 반복 성공/실패를 새 원인으로 누적하지 않는다. 기록 수락 뒤 같은 projector로 live에 발행하며 실패를 기록 완료로 표시하지 않는다. 별도 outbox와 과거 사건 복구를 약속하지 않는다.
 
 ## Live와 평가 소비
 
-live hub는600프레임/8MiB ring,602프레임/2MiB queue와1MiB frame 상한을 사용한다. snapshot history의 retained sequence 범위는 보존 frame metadata이며 연속 시간 coverage와 손실 건수가 아니다. REST 사건에 가짜 WS sequence를 붙이지 않는다.
+live hub는600프레임/8MiB ring,602프레임/2MiB queue와1MiB frame 상한을 사용한다. snapshot history의 retained sequence 범위는 보존 frame metadata다. REST 사건에 가짜 WS sequence를 붙이지 않는다.
 
 mutation의 started/completed/failed와 원 status를 함께 읽는다. 오류 없는 NOT_SUBMITTED, Accepted와 DeletionRequested의 completed는 각각 사전 검사와 접수/삭제 요청의 종결이다. physical 측정 완료와 과학적 수용으로 세지 않는다.
 
@@ -180,4 +180,4 @@ evaluation은 CHILL 내부 사실을 raw, resources와 cluster, accepted meters�
 
 불변 experiment의 KPI와 당시 definition, identitySource와 출처를 유지한다. 원본에 없는 identity나 예정 boundary를 현재 상태와 관측 전환으로 보충하지 않는다. 계획 부하, closed-minute 진도와 drain 시점 결손, 최종 판정을 구분한다.
 
-설계와 코드 연결은 실제 배포와 SLO, 전체 에너지 수용의 증거가 아니다. 실측 판정은 [실클러스터 수용 기준](scheduler-operations.md#실클러스터-수용-기준)을 따른다.
+실측 판정은 [실클러스터 수용 기준](scheduler-operations.md#실클러스터-수용-기준)을 따른다.

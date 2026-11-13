@@ -27,7 +27,7 @@
 
 POST는 외부 왕복도 포함하는 회계상 reserve다. 음수 POST나 TOTAL<POST, 잘못된 단계 순서, 결합할 수 없는 identity는 유한 시간 표본에서 제외하고 원본 실패와 결손은 보존한다.
 
-Workload별 TOTAL과 POST는 SLO percentile로 각각 가공한다. 유효 표본이 없으면 `completionMarginMS`를 초기값으로 쓰고 첫 유효 표본부터 갱신한다. 추가 표본 gate나 configured margin의 중복 가산은 없다. `PathFeedback.observedMean`은 같은 결합 cohort의 산술평균이며 구성 요소별 분위수의 합이 아니다.
+Workload별 TOTAL과 POST는 SLO percentile로 각각 가공한다. 유효 표본이 없으면 `completionMarginMS`를 초기값으로 쓰고 첫 유효 표본부터 갱신한다. 추가 표본 gate나 configured margin의 중복 가산은 없다. `PathFeedback.observedMean`은 같은 결합 cohort의 산술평균이다.
 
 실제 요청은 accept 때 POST를 동결한다. native에는 실제 server sender elapsed를 전달하며 Tick의 PRE나 TOTAL을 더하지 않는다. 진행 요청은 frozen sender와 POST, captured native elapsed와 남은 수명을 유지한다. returning 요청은 terminal native 경과와 남은 반환 점유로 복원한다. 새 피드백은 합성 요청의 배치 선택도 다시 평가한다.
 
@@ -55,7 +55,7 @@ q는 service 시작이 아직 관측되지 않은 pending, queued, deferred 요�
 
 profile의 양의 `RoutingWeight`는 빠른 관측 support에서 도출한 상대 분배값이다. 분배가 켜져 있으면 에너지와 physical ID의 안정적인 순서로 합 1000인 정수 weight를 구성한다. 꺼져 있으면 현재 weight와 새 option의 configured weight를 사용한다. 요청 에너지도 이 정수 weight를 소비한다.
 
-현재 구성과 선택 구성의 인스턴스별 양수 nominal rate를 중복 제거해 Poisson 창으로 검사한다. κ̂는 그 검사에서 통과한 최대 rate다. 0이나 빈 tests는 통과 근거가 없다는 뜻이며 물리 처리량 0이나 후보 제거를 뜻하지 않는다. 검사 실패는 선택된 후보를 다시 거절하는 gate가 아니다.
+현재 구성과 선택 구성의 인스턴스별 양수 nominal rate를 중복 제거해 Poisson 창으로 검사한다. κ̂는 그 검사에서 통과한 최대 rate다. 0이나 빈 tests는 통과 근거 부재를 나타낸다. 이 값이나 검사 실패만으로 후보를 제거하지 않는다.
 
 `BuildCapacityRow`와 `hack/kappa`의 전체 격자, 이분 탐색과 `NonMonotone`은 명시적 offline 계산이다. online 판단은 행 준비를 기다리지 않는다. TOTAL이나 POST가 바뀌면 이전 pass, CDF와 κ̂를 현재값으로 재사용하지 않는다. 같은 수치 입력의 완료 결과와 불변 raw, random tape는 재사용할 수 있다.
 
@@ -121,7 +121,7 @@ keep의 노드 에너지는 `P_before × H`다. 전환은 전체 pre/post operat
 
 현재 구성이 충족할 때의 에너지 축소는 개별 교체 payback과 minimumGain을 통과해야 한다. 교체를 해당 노드 keep으로 되돌려도 충족하면 최소 관측 부하와 같은 H에서 비교한다. 지불되지 않은 교체는 `ReplacementUnpaid`다. 빈 노드의 새 절전도 같은 개별 검사를 거치며 다른 노드 이득으로 손해를 덮지 않는다.
 
-minimumGain은 선택 operation의 `energyUncertaintyJoules`와 baseline의 `wattsUncertainty`를 signed 노출량으로 전파한다. 같은 immutable reference와 trial의 공통 항을 먼저 상쇄하고 잔여 절댓값을 합한다. nominal 이득이 문턱보다 커야 전환한다. 같으면 keep이다. 이 문턱은 조건부 위상과 결측 민감도이며 profile 통계 CI나 전체 물리 오차의 신뢰구간을 뜻하지 않는다.
+minimumGain은 선택 operation의 `energyUncertaintyJoules`와 baseline의 `wattsUncertainty`를 signed 노출량으로 전파한다. 같은 immutable reference와 trial의 공통 항을 먼저 상쇄하고 잔여 절댓값을 합한다. nominal 이득이 문턱보다 커야 전환한다. 같으면 keep이다. 이 문턱은 조건부 위상과 결측 민감도다.
 
 `transitionReserveFraction>0`이면 전환 구간마다 실제 Ready와 ACK, owner와 예약상 사용 가능한 공급으로 예비를 검사한다. 같은 공급의 중복 담보를 금지한다. 부족은 후보별 `TransitionReserveInsufficient`이며 f=0은 추가 예비만 끈다. `scaleDownHeadroomFraction`의 하강 보호도 현재 유효 수요에 적용하며 실제 요청 J를 할증하지 않는다.
 
@@ -150,8 +150,8 @@ minimumGain은 선택 operation의 `energyUncertaintyJoules`와 baseline의 `wat
 
 ## 기록과 증거 경계
 
-판단에는 settings, 관측 구간, 최소 수요와 유효 rate, waiting q, timing, 정수 분배, 현재 tested rates, 선택 사슬, 에너지와 제외 이유를 연결한다. heuristic 결과와 직접 재생 결과를 구분한다. `exactEvaluated`는 keep seed와 replay 생략 판정도 포함하며 native replay 횟수가 아니다.
+판단에는 settings, 관측 구간, 최소 수요와 유효 rate, waiting q, timing, 정수 분배, 현재 tested rates, 선택 사슬, 에너지와 제외 이유를 연결한다. heuristic 결과와 직접 재생 결과를 구분한다. `exactEvaluated`는 keep seed와 replay 생략 판정도 포함한다.
 
-`search`의 출발점, 평가 수, 후보 수, 가지치기, fallback, budget 종료와 시간은 [스케줄러 API](scheduler-api.md)에 둔다. `dualBound`는 가격 반복 진단이며 실제 목적함수 하한이나 최적성 보증이 아니다. 전체 평가 구성 목록을 기록하지 않는다.
+`search`의 출발점, 평가 수, 후보 수, 가지치기, fallback, budget 종료와 시간은 [스케줄러 API](scheduler-api.md)에 둔다. `dualBound`는 가격 반복 진단이다. 전체 평가 구성 목록을 기록하지 않는다.
 
 저장 계약은 [Durable Stored-Contract Compatibility](../../adr/0019-durable-stored-contract-compatibility.md)를 따른다. 프로파일 재사용은 source와 확인 정책을 포함한 대상 파생 ID를 사용하며, 대상 Node 비용이나 d를 암묵적으로 복사하지 않는다. 운영 수용은 [실클러스터 수용 기준](scheduler-operations.md#실클러스터-수용-기준)을 따른다.

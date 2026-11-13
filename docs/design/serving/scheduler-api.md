@@ -39,7 +39,7 @@
 | `dispatchOccupancy` | rolling 집계와 native DOM 생성 정책 |
 | `staticRouting`, `staticRoutingValidatedAt` | 읽기 전용 배분 선언과 검증 시각 |
 
-sample의 observation60초, control10초, comparison600초, margin29ms는 설정 예시다. 운영 불변 상수가 아니다. 전체 sample은 [scheduler 구성](../../../config/samples/serving-scheduler.json)을 따른다.
+sample의 observation60초, control10초, comparison600초, margin29ms는 설정 예시다. 전체 sample은 [scheduler 구성](../../../config/samples/serving-scheduler.json)을 따른다.
 
 Serving Pod의 request와 limit은 frozen Actor memory를 유지한다. queue bytes는 `min(min(servingMemoryBytes,memoryLimit−measuredPeak)/2,native.MaxFrameBytes)`다. 양의 headroom이 필요하며 peak에 servingMemoryBytes를 더해 Pod limit을 새로 만들지 않는다.
 
@@ -80,7 +80,7 @@ PUT은 `SchedulerSettings`만 받는다. `staticRouting`과 `staticRoutingValida
 
 측정 생성과 삭제, profile 재사용, 공개 Query 응답은 [측정 API](measurement-api.md)에 둔다. ChillServer는 공개 Query route의 인증과 proxy를 소유하며 Query는 Serving 패키지를 import하지 않는다.
 
-capacity의 항목은 instanceID, scalar input, 별도 pathFeedback, kappaHat와 tests다. test는 inputKey, rate, met, passed와 requests를 제공한다. κ̂는 검사한 rate 중 최대 통과 근거다. 빈 tests나0은 처리량0의 보증이 아니며 미검사 rate를 보간하지 않는다. endpoint는 과거 decision 상세를 대신하지 않는다.
+capacity의 항목은 instanceID, scalar input, 별도 pathFeedback, kappaHat와 tests다. test는 inputKey, rate, met, passed와 requests를 제공한다. κ̂는 검사한 rate 중 최대 통과 근거다. 빈 tests나0은 통과 근거 부재를 나타낸다. 미검사 rate를 보간하지 않는다. 과거 decision 상세는 해당 decision에서 조회한다.
 
 ## 현재 상태와 catalog
 
@@ -88,7 +88,7 @@ decision은 keep, target, Workload 제어 상태, capacity, search와 제외 이
 
 `ComparedNodes`는 keep 외 적격 계획이 있는 Node다. expectedJoules도 이 집합을 합한다. 전체 풀 실측과 구분한다. `missingCells`는 decision 전체에서 중복 제거하며 energyComparison과 undecidableCandidates는 정수 `missingCellRefs`로 참조한다. keep 충족 상태의 비-exact 새 operation 후보는 `replaySkipped:true`일 수 있다.
 
-snapshot reservations는 owner, nodes, workloadUIDs, podUIDs, instances, frozen target과 reason이다. target은 실물이 아니다. 실행 종료 뒤에도 unknown 원격 effect는 예약에 남는다. State는 현재 장부에서 예약을 재투영하되 snapshot.at과 과거 decision을 새 관측으로 표시하지 않는다.
+snapshot reservations는 owner, nodes, workloadUIDs, podUIDs, instances, frozen target과 reason이다. target은 예약 목표다. 실행 종료 뒤에도 unknown 원격 effect는 예약에 남는다. State는 현재 장부에서 예약을 재투영하되 snapshot.at과 과거 decision을 새 관측으로 표시하지 않는다.
 
 인스턴스 `routable`은 현재 새 요청의 양수 분배와 Ready, Stopped, owner와 모델 적격성으로 계산한다. accepted 요청의 drain용 보존 route는 새 요청 가능으로 세지 않는다. Pod Ready와 새 정책 ACK도 별도다.
 

@@ -61,7 +61,7 @@ planner는 nominal 평균을 유지하고 동일 immutable reference/trial의 si
 
 name은 선택이다. 서버가 같은 수락 configuration revision의 dispatchOccupancy 정책과 accepted profile로 전체 native spec을 동결한다. caller protocol 필드는 거절한다. 불가능한 조건은400 OccupancyInfeasible, 정책 부재나 오류는503 OccupancyPolicyUnavailable이다.
 
-정상 제출은 `202 {request:"Accepted",task:<DOM>}`다. `?dryRun=All`은 native 생성과 physical effect 없이 `200 {request:"NOT_SUBMITTED",task:<동결 DOM>}`을 반환한다. 수락은 측정 완료나 과학적 Accepted가 아니다.
+정상 제출은 `202 {request:"Accepted",task:<DOM>}`다. `?dryRun=All`은 native 생성과 physical effect 없이 `200 {request:"NOT_SUBMITTED",task:<동결 DOM>}`을 반환한다. 수락 뒤 측정 완료와 과학적 Accepted를 별도로 판정한다.
 
 DELETE는 항목 URL의 `?uid=<UID>`와 `If-Match` RV가 필요하다. Measuring이나 살아 있는 owned load Job/Pod는409다. producer 종료와 공유 참조를 확인하고 자기 unshared evidence부터 삭제한 뒤 native CR을 삭제한다. partial 삭제 실패는 rollback하지 않는다.
 
@@ -158,7 +158,7 @@ Query가 집계, 정적 호환성, assessment와 retained result를 소유한다
 
 목록과 단건은 native list/get SAR를 각각 요구한다. coverage는 정확 URL GET에 더해 같은 namespace BEO, ProfilingRun과 DOM list SAR를 요구한다. 인증 오류나 권한 거절에 cache 자료를 반환하지 않는다.
 
-정적 compatibility는 Compatible/Incompatible/Unknown이며 Ready와 측정 완료, admission 성공이 아니다. 없거나 무효인 선언은 Unknown과 이유다. 같은 scope의 마지막 matching declaration을 사용하고 앞선 일치는 비차단 진단으로 남긴다. 대표 Node를 다른 Node 지원으로 복제하지 않는다.
+정적 compatibility는 Compatible/Incompatible/Unknown이다. Ready와 측정 완료, admission 성공은 별도로 확인한다. 없거나 무효인 선언은 Unknown과 이유다. 같은 scope의 마지막 matching declaration을 사용하고 앞선 일치는 비차단 진단으로 남긴다. 대표 Node를 다른 Node 지원으로 복제하지 않는다.
 
 Run의 controller owner는 같은 namespace, apiVersion과 kind, exact BEO UID로 결합한다. 이름과 긴 이름의 축약 label만으로 소유를 확정하지 않는다. 원 attempt와 batch/mode를 유지하며 여러 배치를 새 회차 번호로 다시 매기지 않는다.
 
@@ -170,7 +170,7 @@ batch별 incremental J/item은 독립 trial 추정의 산술 평균이다. 기�
 
 NoPublishedResult, RetainedEvidenceMissing과 StatisticsNotRecorded를 구분한다. 실제 권한과 transport, store와 identity 오류를 미기록으로 숨기지 않는다. 단건 통계 때문에 coverage 전체의 raw를 다시 내려받지 않는다.
 
-OCM은 status의 정확 step key만 읽는다. durationNanos는 실제 시작과 끝이며 planned idle이나 watchdog이 아니다. wallJoules는 저장 Accepted 전체 Node wall J다. 실패에 시간만 있으면 시간만 표시하고 후속 미실행 행을 만들지 않는다. CR별 최대8 projection을 병렬 수행하되 이름순과 step 순서를 유지한다.
+OCM은 status의 정확 step key만 읽는다. durationNanos는 실제 시작부터 끝까지의 경과다. wallJoules는 저장 Accepted 전체 Node wall J다. 실패에 시간만 있으면 시간만 표시하고 후속 미실행 행을 만들지 않는다. CR별 최대8 projection을 병렬 수행하되 이름순과 step 순서를 유지한다.
 
 ResultRow는 exact variant와 batch의 p95, CI, idle/active W와 total/incremental J, trial과 sample 분모, power source와 원본 ref를 보존한다. active W는 같은 trial의 유효 적분과 창에서 구한다. source 재사용 행과 대상 confirmation 행은 분리하고 혼합 total J를 만들지 않는다.
 
@@ -186,7 +186,7 @@ variant는 실제 runtime image reference와 관측 version, recipe를 보존한
 
 assessment는 status, displayStatus와 label, execution과 evidence, checklist와 scope다. 서버 label을 UI가 다시 판정하지 않는다. checklist는 variant에 한 번만 전체를 두고 동일 항목 sourceIds를 합친다. cell과 result row는 criteriaMet와 version을 유지하며 checks를 비운다. resultRows와 variants를 용량 때문에 자르지 않는다.
 
-체크는 exact lineage, 목표 batch와 독립 active/shared idle 각각 `max(3,MinimumTrials)`, 유한 CI와 pooled client latency, 동결 power policy와 source를 확인한다. 미조회는 unknown이다. PolicyUnset은 정책 미설정이며 fail이나 pass가 아니다. source timestamp 부재와 node-wall scope를 새 실패 gate로 쓰지 않는다.
+체크는 exact lineage, 목표 batch와 독립 active/shared idle 각각 `max(3,MinimumTrials)`, 유한 CI와 pooled client latency, 동결 power policy와 source를 확인한다. 미조회는 unknown이다. PolicyUnset은 정책 미설정을 나타낸다. source timestamp 부재와 node-wall scope를 새 실패 gate로 쓰지 않는다.
 
 failureSummary는 exact owner Run UID와 조건, 실제 exit와 안전한 한 줄 근거를 사용한다. 명시 CUDA OOM과 CPU/host OOM, power timeout, image pull과 runtime 실패를 구분하며 일반 allocator 문구만으로 GPU 원인을 단정하지 않는다. 원시 로그와 미확정 인과를 보존한다.
 

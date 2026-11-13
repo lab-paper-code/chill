@@ -4,7 +4,7 @@
 
 ## 동작과 idle 추정
 
-SLO 회복에는 부족한 측정 대신 명시 추정을 사용할 수 있다. 비용은 첫 유효 tier의 최신 완료 근거를 고르며 같은 완료시각은 작은 cost ID 순이다.
+SLO 회복에는 명시 추정을 사용할 수 있다. 비용은 첫 유효 tier의 최신 완료 근거를 고르며 같은 완료시각은 작은 cost ID 순이다.
 
 1. 같은 Node와 정확한 모델, 실행 경로와 power 조건.
 2. 같은 Node와 operation.
@@ -13,7 +13,7 @@ SLO 회복에는 부족한 측정 대신 명시 추정을 사용할 수 있다. 
 
 exact prepare/remove는 같은 Node와 profile 조건, exact power는 같은 Node의 from/to와 loaded state, 인스턴스 수를 맞춘다. 측정 runtime image 문자열과 관측 version을 조건에 사용하며 tag도 허용한다. imageID와 digest pinning gate는 없다.
 
-`costProvenance.source`는 exact, node, deviceClass 또는 default이며 costRef나 configured value를 남긴다. 전이 추정과 default는 bound가 아니며 에너지 이동을 허가하지 않는다.
+`costProvenance.source`는 exact, node, deviceClass 또는 default이며 costRef나 configured value를 남긴다. 전이 추정과 default로 에너지 이동을 허가하지 않는다.
 
 각 before/mid/after는 자기 mode와 loaded state의 idle을 쓴다. 정확한 node-state wall baseline, 또는 단일 인스턴스의 같은 Node/mode/meter profile idle이 exact다. 독립 profile idle 여러 개의 합은 exact 공존 실측이 아니다.
 
@@ -131,7 +131,7 @@ CHILL이 서비스별 설정 분위수 SLO를 지키며 meter 오차보다 크�
 
 keep가 가능한 상태에서 prepare한 대상 수와 각각의 예측/실측 절감을 보고한다. offline 동결 입력에서는 측정 에너지와 동일 H의 순위, 정밀 평가 진입과 oracle 비교를 확인하되 실측 통과로 표시하지 않는다.
 
-추가 측정은 현재 판단의 missingCells 합집합에서 정한다. 비교를 바꾸는 unknown이 남으면 해당 수용을 보류한다. 공통 미지 항이 상쇄되는 비교와 SLO 복구는 기존 계약을 따른다. 이 절은 수용 기준이며 실행 완료 기록이 아니다.
+추가 측정은 현재 판단의 missingCells 합집합에서 정한다. 비교를 바꾸는 unknown이 남으면 해당 수용을 보류한다. 공통 미지 항이 상쇄되는 비교와 SLO 복구는 기존 계약을 따른다.
 
 ## 운영 pprof
 

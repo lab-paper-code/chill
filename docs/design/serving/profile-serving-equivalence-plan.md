@@ -21,7 +21,7 @@
 
 ### 운영점에 따른 실행시간 차이
 
-profile 원시 trial의 전처리, 추론, 후처리와 IPC 잔차를 serving 배치 기록과 대조했다(`root/stage-decomposition-report.txt`). 아래는 중앙값 비교이며 분포 일치를 뜻하지 않는다.
+profile 원시 trial의 전처리, 추론, 후처리와 IPC 잔차를 serving 배치 기록과 대조했다(`root/stage-decomposition-report.txt`). 아래는 중앙값 비교다.
 
 | 사례 | 차이가 나는 단계와 조건 | 같은 조건으로 좁힌 결과 |
 |---|---|---|
@@ -66,7 +66,7 @@ profile 원시 trial의 전처리, 추론, 후처리와 IPC 잔차를 serving �
 | 실행 이미지가 profile 적용 조건에서 빠져 미측정 이미지로 serving | 분석 기준 배포에서 확정 |
 | profile과 serving의 유휴 전력이 다른 상태에서 측정됨 | 차이는 확정. 시점 원인은 [INFERENCE] |
 | 같은 조건의 profile과 serving 대조가 없음 | 분석 기준 배포에서 확정 |
-| dispatch occupancy가 배치 시작 간격에서 앞 배치의 실제 service 대신 profile 평균을 차감 | 분석 기준 배포에서 확정. 조건부 service에 `B*d`를 더하는 재생에서 오차가 생기고 음수는 0으로 잘림 |
+| dispatch occupancy가 배치 시작 간격에서 profile 평균을 차감 | 분석 기준 배포에서 확정. 조건부 service에 `B*d`를 더하는 재생에서 오차가 생기고 음수는 0으로 잘림 |
 | reset 예약 반환, 수동 remove identity와 분석기 null 처리 결함 | 분석 기준 실험에서 확정 |
 
 ## 책임과 원칙

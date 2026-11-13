@@ -13,7 +13,7 @@ ChillServer가 `chill.dacs.io/measurement:NoSchedule` taint와 측정 예약을 
 | OperationCostMeasurement | `spec.node` | Complete, Insufficient, Failed |
 | DispatchOccupancyMeasurement | `spec.node` | Complete, Insufficient, Failed |
 
-BEO와 idle 자식 ProfilingRun은 root 승인 뒤 생성하므로 별도 root가 아니다. 일시 Kubernetes와 evidence 오류를 측정 조건의 terminal 실패로 바꾸지 않는다.
+BEO와 idle 자식 ProfilingRun은 승인된 root 아래 생성한다. 일시 Kubernetes와 evidence 오류를 측정 조건의 terminal 실패로 바꾸지 않는다.
 
 ## 직렬화와 현재 입력
 
@@ -71,4 +71,4 @@ record의 power generation과 자기 전환 수로 예상 밖 power 변경을 �
 
 ## 저장 경계
 
-taint와 admission annotation은 과학 evidence 자체가 아니다. operation은 `chill.dacs.io/serving-operation-measurement.v1alpha2`, sequence는 `serving-operation-sequence.v1alpha1`이다. legacy scalar DOM과 신규 burst DOM은 별도 prefix와 schema다. 상세는 [저장 계약](measurement-api.md#저장-계약)을 따른다.
+taint와 admission annotation은 승인 상태를 나타낸다. operation은 `chill.dacs.io/serving-operation-measurement.v1alpha2`, sequence는 `serving-operation-sequence.v1alpha1`이다. legacy scalar DOM과 신규 burst DOM은 별도 prefix와 schema다. 상세는 [저장 계약](measurement-api.md#저장-계약)을 따른다.

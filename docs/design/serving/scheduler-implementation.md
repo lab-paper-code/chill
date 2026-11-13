@@ -61,7 +61,7 @@ Pod UID가 유일한 실물 장부 key다. Runtime은 실행과 binding/routing 
 
 Create 응답, watch와 초기/복구 전체 List로 UID를 발견한다. container 이전 Pod도 보존한다. terminal, terminating과 label drift, profile/Service/read 오류는 삭제 proof가 아니다.
 
-실제 native 오류와 Pod unready는 dispatch를 닫는다. probe 진행 자체는 실패가 아니다. 복구는 native 성공과 동일 UID/container, 단일 Service 검증을 요구한다. 제한된 Service나 후속 Pod List의 첫 실패 때만 검증된 이전 Ready를 한 refresh 유지하고 issue를 남긴다.
+실제 native 오류와 Pod unready는 dispatch를 닫는다. probe 진행 중에는 판정을 기다린다. 복구는 native 성공과 동일 UID/container, 단일 Service 검증을 요구한다. 제한된 Service나 후속 Pod List의 첫 실패 때만 검증된 이전 Ready를 한 refresh 유지하고 issue를 남긴다.
 
 desired/native DecisionID만 다르면 PolicyAckPending이다. 실제 identity와 Ready, allocation과 owner, 요청과 정책을 보존한다. desired로 actual을 덮거나 pending을 완료 ACK로 바꾸지 않는다.
 
@@ -125,6 +125,6 @@ unknown은 transient로 시작하며 같은 서명과 reason이 다른 action/Po
 
 서명은 Node identity, profile, memory limit과 measured peak, GPU UUID, image와 전체 RunnerCommand argv다. allocatable drift와 Ready 시각, 단순 관측 시각을 서명에 넣지 않는다.
 
-예약 영역의 실제 상태와 frozen 의도만 고정하고 밖의 후보는 같은 단일 planner로 평가한다. 새 target이 기존 run과 ID/DAG를 덮지 않는다. Keep는 새 변경 없음이며 판단 생략이 아니다. 물리 미확인과 공통 설정, API와 기록 장애는 실제 범위의 사유로 남긴다.
+예약 영역의 실제 상태와 frozen 의도만 고정하고 밖의 후보는 같은 단일 planner로 평가한다. 새 target이 기존 run과 ID/DAG를 덮지 않는다. Keep는 평가 뒤 현재 구성을 유지하는 판단이다. 물리 미확인과 공통 설정, API와 기록 장애는 실제 범위의 사유로 남긴다.
 
 선택의 현재 수요, 전체 SLO 순위와 고정 H, 회복 추정과 에너지 결정 가능성, reserve와 payback은 [계획기](analytic-planner.md)의 공통 계약이다. 설계 연결을 실클러스터 SLO나 절감 검증 완료로 보고하지 않는다.
