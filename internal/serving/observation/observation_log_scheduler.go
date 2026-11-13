@@ -796,6 +796,15 @@ func schedulerObservationMatches(raw []byte, envelope schedulerObservationEnvelo
 		if kind != schedulerHistoryDecision && kind != schedulerHistoryAction {
 			return false, nil
 		}
+	case "decision-change":
+		if kind != schedulerHistoryDecision {
+			return false, nil
+		}
+		// Decode the status only here: other filters never validate decision bodies.
+		var record struct{ Decision struct{ Status string } }
+		if err := json.Unmarshal(raw, &record); err != nil || record.Decision.Status == serving.SchedulerStatusKeep {
+			return false, err
+		}
 	default:
 		return false, nil
 	}

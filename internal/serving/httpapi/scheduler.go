@@ -116,7 +116,7 @@ func schedulerObservationSelectionQuery(query url.Values) (observation.Scheduler
 			case "filter":
 				selection.Filter = values[0]
 				switch selection.Filter {
-				case "all", "decision-action", "decision", "action", "snapshot", "settings", "power", "other":
+				case "all", "decision-action", "decision", "decision-change", "action", "snapshot", "settings", "power", "other":
 				default:
 					valid = false
 				}

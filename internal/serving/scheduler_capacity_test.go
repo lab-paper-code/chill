@@ -2069,7 +2069,7 @@ func TestCapacityUnroutedTwinKeepsCurrent(t *testing.T) {
 	snap.Routing = map[string]map[string]int32{"w1": {"i1": schedulerRouteUnits}}
 	capacityLoad(s, &snap, snap.Workloads[0], 20)
 	d := capacityDecideForTest(t, s, snap)
-	if d.Status != schedulerStatusKeep || d.Target == nil || !d.Target.Keep || slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return !a.Fixed }) {
+	if d.Status != SchedulerStatusKeep || d.Target == nil || !d.Target.Keep || slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return !a.Fixed }) {
 		t.Fatalf("an equal-energy relabel of keep was chosen: %s %+v", d.Status, d.Target)
 	}
 }
@@ -2146,7 +2146,7 @@ func TestCapacityIdleInstancesWithNegativeGainStay(t *testing.T) {
 	for k := 1; k < 3; k++ {
 		snap.Instances[k].UnroutedSince = &since
 	}
-	if d := capacityDecideForTest(t, s, snap); d.Status != schedulerStatusKeep {
+	if d := capacityDecideForTest(t, s, snap); d.Status != SchedulerStatusKeep {
 		t.Fatalf("unrouted for 30 s removed: %s %v", d.Status, d.Reasons)
 	}
 	since = snap.At.Add(-time.Minute)

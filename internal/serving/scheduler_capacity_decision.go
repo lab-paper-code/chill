@@ -102,7 +102,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	if best.keep && (p.sameRouting(target.Routing) || best.unroutes) {
 		chosen := decision.Keep
 		chosen.Status = target.Status
-		decision.Target, decision.Status = &chosen, schedulerStatusKeep
+		decision.Target, decision.Status = &chosen, SchedulerStatusKeep
 		if !best.feasible {
 			decision.Status = SchedulerStatusOverload
 		}

@@ -13,7 +13,7 @@ import (
 
 // Decision statuses and reasons of the capacity planner (analytic-planner §3, §4).
 const (
-	schedulerStatusKeep              = "Keep"
+	SchedulerStatusKeep              = "Keep"
 	schedulerRouteWeightExceeds      = "RouteWeightExceedsCapacity"
 	schedulerNoPlanMeetsSLO          = "NoPlanMeetsSLO"
 	schedulerPlanInfeasibleResources = "InfeasibleResources"
@@ -280,7 +280,7 @@ func evaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		zero := 0.0
 		decision.Keep.Status, decision.Keep.ExpectedJoules = schedulerStatusFeasible, &zero
 		target := decision.Keep
-		decision.Target, decision.Status = &target, schedulerStatusKeep
+		decision.Target, decision.Status = &target, SchedulerStatusKeep
 		markFixedEstimates(&decision)
 		return decision, ctx.Err()
 	}

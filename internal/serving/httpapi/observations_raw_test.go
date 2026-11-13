@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -245,6 +246,53 @@ func TestSchedulerHistorySelectionQueries(t *testing.T) {
 		var result serving.Error
 		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusBadRequest || result.Code != "InvalidQuery" {
 			t.Fatalf("invalid history query %s: status=%d body=%s err=%v", invalid, response.Code, response.Body, err)
+		}
+	}
+}
+
+func TestSchedulerHistoryDecisionChangeFilterPagesOnlyChangedDecisions(t *testing.T) {
+	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
+	from := time.Now().UTC().Add(-time.Second)
+	to := from.Add(time.Minute)
+	for i, status := range []string{serving.SchedulerStatusKeep, "Feasible", serving.SchedulerStatusKeep, serving.SchedulerStatusOverload, serving.SchedulerStatusKeep, "Pending"} {
+		if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{
+			At: from.Add(time.Duration(i) * time.Second), Decision: &serving.SchedulerDecision{Status: status},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: from.Add(6 * time.Second), Action: &observation.SchedulerActionObservation{ID: "action"}}); err != nil {
+		t.Fatal(err)
+	}
+	base := "/api/v1/observations/scheduler?from=" + from.Format(time.RFC3339Nano) + "&to=" + to.Format(time.RFC3339Nano) + "&filter=decision-change&limit=2&view=summary"
+	for order, want := range map[string][]int{"asc": {1, 3, 5}, "desc": {5, 3, 1}} {
+		var got []int
+		cursor := ""
+		for page := 0; page == 0 || cursor != ""; page++ {
+			if page > 2 {
+				t.Fatalf("%s pages did not terminate: %v", order, got)
+			}
+			response := rawHTTPRequest(h, base+"&order="+order+cursor)
+			var result struct {
+				Events     []observation.SchedulerObservation
+				NextCursor string
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusOK {
+				t.Fatalf("%s decision-change: status=%d body=%s err=%v", order, response.Code, response.Body, err)
+			}
+			for _, event := range result.Events {
+				if event.Decision == nil || event.Decision.Status == serving.SchedulerStatusKeep || event.Offset == nil {
+					t.Fatalf("%s selected a non-change: %+v", order, event)
+				}
+				got = append(got, *event.Offset)
+			}
+			cursor = ""
+			if result.NextCursor != "" {
+				cursor = "&cursor=" + result.NextCursor
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("%s changed decisions skipped or repeated: got %v want %v", order, got, want)
 		}
 	}
 }
