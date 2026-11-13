@@ -24,8 +24,7 @@ Required evidence: setup source and focused reconciler tests. The event edge is
 `RunConfigResolver.Resolve` in
 `internal/profiling/profiler/controller/run_config_resolver.go` resolves production
 RunConfigs. `cmd/profiler/controller_setup.go` passes that method as the
-`NewRunReconciler` resolve callback, rather than constructing a
-single-implementation resolver interface.
+`NewRunReconciler` resolve callback.
 
 Required evidence: `gopls references` on `RunConfigResolver.Resolve` must find the
 composition root, and `gopls definition` on that callback argument must resolve

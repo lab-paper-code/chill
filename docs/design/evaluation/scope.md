@@ -90,7 +90,7 @@ Rejection은 명시 policy/stage/code와 queue wait를 보존한다. 미기록 w
 
 Provisional은 닫힌 분 cutoff까지의 시작한 cohort만 쓴다. 미시작 zero-offer는 길이/
 goodput 미가용이다. 전체 client 행은 마지막 capture에서 확정하고 손실을 숨기지 않는다.
-Inventory/download capture 완료가 gap-free 관측을 뜻하지 않는다.
+Inventory/download capture 완료 여부와 관측 gap 유무는 독립이다.
 
 모든 producer는 readiness 뒤 같은 미래 UTC release를 원자 기록받고 실제 wall/
 monotonic 시작을 남긴다. Release instant를 놓친 쓰기는 BarrierTimeout이다.

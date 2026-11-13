@@ -44,7 +44,7 @@ carrier의 evaluation 입력을 복사하고 실제 record ID/order/bytes를 Rea
 Child는 snapshot을 사용하며 동명 재생성이 실행 입력을 바꾸지 않는다.
 
 작업 경로는 실행별 RWX PVC의 `/work/campaign/run`이다. PVC는 가변 작업 상태,
-store는 불변 정본이다. 입력 CM은 큰 snapshot 대신 snapshotRef만 전달한다.
+store는 불변 정본이다. 입력 CM은 snapshotRef만 전달한다.
 PVC 소실은 자동 재측정이나 새 Job 복원을 허용하지 않는다.
 
 ## 절차
@@ -109,7 +109,7 @@ Writer join 후 손실을 확정하고 추가 종료 오류는 원래 primary fa
 평가 controller는 기존 Profiler leader election이 켜져 있을 때만 등록한다.
 부모만 풀/finish/release/publication을 소유한다. Worker는 각 controller 하나이고
 점유 목록은 APIReader로 읽는다. 시작은 resourceVersion 조건 status 갱신으로 기록한다.
-이는 전역 fencing이 아니며 퇴임 leader의 늦은 외부 명령까지 차단하지 않는다.
+이 조건부 갱신은 전역 fencing을 제공하지 않으며 퇴임 leader의 늦은 외부 명령을 차단하지 않는다.
 
 반환 미확인 Run이 있으면 다음 Run을 시작하지 않는다. 대기는 생성 시각과 name/UID로
 결정한다. 자식은 외부 효과 전에 uncached 부모를 읽어 자신이 active child인지 확인한다.
@@ -163,7 +163,7 @@ Definition은 Run spec, 해석한 LoadScenario/Workload snapshot이다. 현재 �
 동명 Workload로 과거 결손을 채우지 않는다. 비교는 선언된 stage/historical
 publicationID 관계만 사용한다. 단계 이름/요청률로 정책이나 대응을 추정하지 않는다.
 
-목록은 큰 definition 대신 이름/질문, stage row/load ref/settingsPatchKeys, SLO와
+목록은 이름/질문, stage row/load ref/settingsPatchKeys, SLO와
 부하 출처 facts를 투영한다. Patch 값은 상세 definition에 남는다. Unknown/null과
 빈 변경 키를 구별한다. 게시 outcome은 실행/측정/정리 축이며 미게시 진행과 분리한다.
 

@@ -30,8 +30,8 @@ Bearer는 탭 메모리와 버전/system별 sessionStorage에 저장한다. 저�
 TokenReview와 정확한 verb/path SAR을 수행한다. Query의 재검증에서도 사용자 권한을
 서버 SA로 대체하지 않는다.
 
-401/4401은 인증 만료로 정리한다. 403/4403과 서비스 장애는 만료가 아니며 목적 URL을
-유지한다. HTTP는 method/path allowlist, 필요한 header만 전달, no-store다.
+401/4401은 인증 만료로 정리한다. 403/4403과 서비스 장애에는 목적 URL을
+유지하고 인증 만료로 처리하지 않는다. HTTP는 method/path allowlist, 필요한 header만 전달, no-store다.
 요청/완전 응답 각각 8 MiB, 응답 header 16 KiB 한도를 유지한다.
 
 폼은 정의/영향 검토 뒤 명시 제출하고 원본을 조회한다. UID와 resourceVersion/
@@ -130,7 +130,7 @@ Archive에 live seq를 만들지 않는다. 미조회 페이지와 coverage 출�
 | `/settings` | 운영 설정, 모델, 전처리와 데이터셋 |
 
 관련 화면은 대상/UID/namespace/기간을 보존해 연결한다. 같은 KPI를 새 truth로 복제하지
-않는다. 서비스 관리는 관리 API로 동작하며 WS가 선행조건이 아니다.
+않는다. 서비스 관리는 WS 연결 없이 관리 API로 동작한다.
 구 화면은 `lib/dashboard-routes.ts`의 명시 매핑으로 이동하고 API 경로는 바꾸지 않는다.
 
 공통 상태는 status.ts, StatusCell과 기존 Sheet/Dialog/DataTable을 사용한다.
@@ -203,7 +203,7 @@ Operation 결과의 단계 수를 채택률로 번역하지 않으며 상태/근
 
 실행/측정/정리는 독립 축이다. Definition decoding/준비 실패에도 게시 outcome을 남긴다.
 URL UID가 조회 UID와 다르면 수정/중지/재실행/반환을 차단하고 명시 신원 채택을 요구한다.
-반환 요청은 실제 반환이 아니다. 현재 권한은 실제 403 근거 없이 없음으로 단정하지 않는다.
+반환 요청과 실제 반환 상태를 구별한다. 현재 권한은 실제 403 근거 없이 없음으로 단정하지 않는다.
 
 작성/수정은 전용 페이지, 단계 identity는 배열 위치와 구별한다. Dataset 선택은 name/UID를
 함께 고정한다. 미저장 입력 경고와 닫힌 Sheet의 지연 callback 차단을 유지한다.

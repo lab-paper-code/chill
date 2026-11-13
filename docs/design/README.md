@@ -21,4 +21,4 @@ Current source establishes implementation facts.
 
 Keep domain entry points short. Reusable profiling contracts live in
 `profiling/components/`; runtime compatibility and provenance boundaries live in
-`profiling/foundations/`. Link requirements rather than duplicating them.
+`profiling/foundations/`. Link requirements. Do not duplicate them.
