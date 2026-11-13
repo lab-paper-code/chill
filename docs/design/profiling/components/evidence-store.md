@@ -24,7 +24,7 @@ or Ceph failure, HA, backup, TLS, credential rotation, retention, or garbage col
 | `internal/evidencestore/s3` | Conditional create, retrieval, S3 error translation, cancellation, response cleanup; sole S3 client dependency |
 | CHILL Operator / `internal/operator/evidencestore` | Deployment, ClusterIP Service, Secret, persistent storage, bootstrap Job, availability; never reads or verifies Run evidence and does not import the S3 adapter |
 | Measurement worker | Assemble runtime/power raw bytes, immutable-create raw measurement within its byte budget, return bounded receipt; no Kubernetes storage/Service discovery |
-| Profiler controller | Authoritative bounded decode and physical execution/ownership validation; combine terminal Kubernetes facts into immutable execution evidence; publish compact reference |
+| Profiler controller | Validate raw evidence once at finalization; bind raw Pod UID, target Node, actuation, Job success/completion and finalize time; publish immutable execution evidence and compact reference |
 | Kubernetes, CSI, EdgeMesh, engine | Native lifecycle, volumes, edge Service routing, stored-byte serving |
 
 ## Dependency direction
@@ -50,22 +50,26 @@ not authorize changes across those ownership boundaries.
 - Location recovery reads the retained winner without requiring deterministic-key
   spelling or receipt/candidate byte equality. Invalid retained objects are never
   replaced.
-- The evidence loader owns retained read validation: bounded bytes, strict decode,
-  supported schemas, raw runtime/observer facts and terminal ownership links.
-  Raw RunConfig is execution authority; the finalized envelope's Config copy is
-  provenance. Consumers do not re-admit it against mutable Run specs or repeated
-  status/reference/provenance copies.
-- Finalization independently reads after conditional create and returns the
-  validated immutable winner, including after a race. Job/Pod/Node ownership still
-  binds reuse; a different valid candidate never overwrites the winner.
-- Evidence v1alpha17 terminal containers describe only the measurement Pod:
-  `artifact`, `preprocessor`, `runtime`, `metric-observer`, `workload-observer`.
-  Active load completion/ownership and its `dataset`/`load` terminal states are
-  independent live finalization prerequisites. No load-Pod snapshot is stored,
-  and the retained loader does not claim one. Existing raw/evidence schemas stay
-  unchanged; successful retained executions can be reverified without edits.
-- Immutable decode/semantic contradictions carry permanent validation failure
-  and terminalize as `EvidenceInvalid`. API/storage IO failures stay retryable.
+- Finalization owns bounded raw decoding and one-time raw runtime/observer
+  validation. It binds raw Pod UID, target Node, actuation, successful measurement
+  Job completion and finalize time. Raw RunConfig is execution authority; the
+  finalized envelope's Config copy is provenance.
+- Retained execution readers bound actual bytes and decode the current schema
+  only. They do not revalidate raw semantics, execution facts, workload
+  self-consistency or spec/status/reference/provenance copies.
+- Finalization independently reads the immutable winner after conditional create,
+  including after a race; a different candidate never overwrites the winner.
+  This retained read is decode-only, not a second validation boundary.
+- Execution evidence v1alpha18 stores no container terminal records or Node
+  workload snapshot. Finalization does not inspect measurement/load container
+  terminal states or recheck raw workload self-consistency. Raw load counts prove
+  load success; Job status determines finished/failed execution.
+- This is a single stored-contract cutover under
+  [ADR 0019](../../../adr/0019-durable-stored-contract-compatibility.md).
+  Operators delete affected old working objects; there is no compatibility
+  reader, migration or rewrite of archived scientific raw records.
+- Immutable decode contradictions and finalization validation failures
+  terminalize as `EvidenceInvalid`. API/storage IO failures stay retryable.
 - Scientific admission was removed (`788bcf93`); retained evidence supports
   execution and numeric derivation.
 

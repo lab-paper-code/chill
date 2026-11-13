@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha17"
+	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha18"
 )
 
 // ExecutionEvidence is finalized after the worker exits. It references rather
@@ -59,11 +59,9 @@ func IsSupportedExecutionEvidenceSchemaVersion(version string) bool {
 }
 
 type TerminalFacts struct {
-	Job          JobTerminalFacts    `json:"job"`
-	Pod          PodTerminalFacts    `json:"pod"`
-	Node         NodeTerminalFacts   `json:"node"`
-	Containers   []ContainerTerminal `json:"containers"`
-	NodeWorkload NodeWorkload        `json:"nodeWorkload"`
+	Job  JobTerminalFacts  `json:"job"`
+	Pod  PodTerminalFacts  `json:"pod"`
+	Node NodeTerminalFacts `json:"node"`
 }
 
 type JobTerminalFacts struct {
@@ -87,28 +85,4 @@ type PodTerminalFacts struct {
 type NodeTerminalFacts struct {
 	Name string `json:"name"`
 	UID  string `json:"uid"`
-}
-
-type ContainerTerminal struct {
-	Name           string    `json:"name"`
-	RequestedImage string    `json:"requestedImage"`
-	ImageID        string    `json:"imageID"`
-	RestartCount   int32     `json:"restartCount"`
-	ExitCode       int32     `json:"exitCode"`
-	Reason         string    `json:"reason"`
-	StartedAt      time.Time `json:"startedAt"`
-	FinishedAt     time.Time `json:"finishedAt"`
-}
-
-type NodeWorkload struct {
-	ObservedAt time.Time     `json:"observedAt"`
-	Pods       []WorkloadPod `json:"pods"`
-}
-
-type WorkloadPod struct {
-	Namespace string   `json:"namespace"`
-	Name      string   `json:"name"`
-	UID       string   `json:"uid"`
-	Phase     string   `json:"phase"`
-	Images    []string `json:"images"`
 }

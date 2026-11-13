@@ -99,7 +99,7 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 				t.Fatal(err)
 			}
 			if memory == 0 {
-				if len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != invalidEvidenceCode {
+				if len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != "MemoryEvidenceMissing" {
 					t.Fatalf("absent required native memory became eligible: %+v", view)
 				}
 				return
@@ -639,37 +639,34 @@ func TestCatalogTrialRuntimeFactsRespectSharedCPU(t *testing.T) {
 		for _, tc := range []struct {
 			name   string
 			reason string
-			mutate func(*profilingrun.RuntimeCPU, *firstfloor.RuntimeMetadata, *string)
+			mutate func(*profilingrun.RuntimeCPU, *firstfloor.RuntimeMetadata)
 		}{
-			{name: "affinity", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+			{name: "affinity", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata) {
 				cpu.AffinityCPUs = []int{2, 3}
 				native.CPUAffinity = cpu.AffinityCPUs
 			}},
-			{name: "cpuset", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+			{name: "cpuset", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata) {
 				cpu.CPUSetEffective = "0-7"
 				native.CPUSet = cpu.CPUSetEffective
 			}},
-			{name: "quota", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+			{name: "quota", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata) {
 				cpu.CgroupCPUMax = "-1 100000"
 				native.CgroupCPUMax = cpu.CgroupCPUMax
 			}},
-			{name: "threads", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+			{name: "threads", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata) {
 				cpu.ORTIntraOpThreads, cpu.ORTInterOpThreads = 0, 0
 				native.IntraOpThreads, native.InterOpThreads = 0, 0
 			}},
-			{name: "runtime version", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+			{name: "runtime version", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata) {
 				native.RuntimeVersion = changedObservationVersion
 			}},
-			{name: "numpy version", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+			{name: "numpy version", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata) {
 				native.NumpyVersion = changedObservationVersion
 			}},
-			{name: "available providers", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+			{name: "available providers", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata) {
 				native.AvailableProviders = []string{"CPUExecutionProvider", "unused"}
 			}},
-			{name: "physical-node", reason: "node", mutate: func(_ *profilingrun.RuntimeCPU, _ *firstfloor.RuntimeMetadata, node *string) {
-				*node = "trial-node-changed"
-			}},
-			{name: "gpu", reason: "runner conditions", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+			{name: "gpu", reason: "runner conditions", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata) {
 				native.GPUUUID = "GPU-other"
 			}},
 		} {
@@ -678,11 +675,11 @@ func TestCatalogTrialRuntimeFactsRespectSharedCPU(t *testing.T) {
 					// Keep each raw record internally consistent while changing
 					// only the second trial of the selected population.
 					if phase == batchenergyoptimization.WorkloadModeActive && index == 1 {
-						tc.mutate(&active.CPUContract, &active.Firstfloor.Runtime, &active.NodeName)
+						tc.mutate(&active.CPUContract, &active.Firstfloor.Runtime)
 						active.RuntimeVersion = active.Firstfloor.Runtime.RuntimeVersion
 						active.AvailableProviders = active.Firstfloor.Runtime.AvailableProviders
 					} else if phase == batchenergyoptimization.WorkloadModeIdle && index == 4 {
-						tc.mutate(&idle.CPUContract, &idle.Firstfloor.Runtime, &idle.NodeName)
+						tc.mutate(&idle.CPUContract, &idle.Firstfloor.Runtime)
 						idle.RuntimeVersion = idle.Firstfloor.Runtime.RuntimeVersion
 						idle.AvailableProviders = idle.Firstfloor.Runtime.AvailableProviders
 					}
@@ -1153,13 +1150,7 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 	execution := profilerevidence.ExecutionEvidence{SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, RunConfig: config, FinalizedAt: completed.Add(2 * time.Second),
 		Terminal: profilerevidence.TerminalFacts{Job: profilerevidence.JobTerminalFacts{Namespace: pod.Namespace, Name: "job-" + podUID, UID: "job-" + podUID, Succeeded: 1, CompletionTime: completed},
 			Pod:  profilerevidence.PodTerminalFacts{Namespace: pod.Namespace, Name: pod.Name, UID: podUID, ControllerOwnerUID: "job-" + podUID, NodeName: config.TargetNode.Name, Phase: "Succeeded"},
-			Node: profilerevidence.NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID}, NodeWorkload: profilerevidence.NodeWorkload{ObservedAt: completed.Add(time.Second),
-				Pods: []profilerevidence.WorkloadPod{{Namespace: pod.Namespace, Name: pod.Name, UID: podUID, Phase: "Succeeded", Images: pod.Images}}}}}
-	images := map[string]string{"runtime": config.Images.Runtime, "artifact": config.Images.Artifact, "preprocessor": config.State.Preprocessor.Image, "metric-observer": config.Images.MetricObserver, "workload-observer": config.Images.WorkloadObserver}
-	for name, image := range images {
-		execution.Terminal.Containers = append(execution.Terminal.Containers, profilerevidence.ContainerTerminal{Name: name, RequestedImage: image, ImageID: "containerd://" + name,
-			Reason: "Completed", StartedAt: start, FinishedAt: completed.Add(-time.Second)})
-	}
+			Node: profilerevidence.NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID}}}
 	return raw, idle, execution
 }
 

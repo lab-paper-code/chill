@@ -25,6 +25,12 @@ Change a stored contract at most once per work unit, and not while a measurement
 metric availability/quality and partial observed energy. Readers reject the old
 versions; existing evidence is retained unchanged, not migrated or reinterpreted.
 
+Execution evidence v1alpha18 removes container terminal records and Node workload
+snapshots. Finalization validates raw evidence once; retained execution readers
+only bound bytes and decode the current schema. Operators delete affected old
+working objects before new measurements. No v1alpha17 compatibility reader,
+stored-object migration or archived scientific raw-record rewrite is provided.
+
 A reader that meets a form it cannot decode reaches one operator-visible terminal outcome rather than returning an ordinary error that reconciles without bound. The `ProfilingRun` evidence path is the implemented shape: its [reconciler](../../internal/profiling/profiler/controller/run_reconciler.go) publishes `EvidenceVerified=False` with reason `EvidenceInvalid`, and its [lifecycle](../../internal/profiling/profiler/lifecycle.go) then selects the terminal `ActionComplete`.
 
 ## Consequences

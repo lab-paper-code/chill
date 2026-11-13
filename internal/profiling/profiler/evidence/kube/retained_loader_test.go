@@ -455,23 +455,10 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 	}
 	terminal.Node.Name, terminal.Node.UID = config.TargetNode.Name, config.TargetNode.UID
 	terminal.Pod.NodeName = config.TargetNode.Name
-	images := map[string]string{
-		"artifact": config.Images.Artifact, "preprocessor": config.State.Preprocessor.Image,
-		"runtime": config.Images.Runtime, "metric-observer": config.Images.MetricObserver,
-		"workload-observer": config.Images.WorkloadObserver,
-	}
-	template := terminal.Containers[0]
-	template.StartedAt = start.Add(-time.Minute)
-	terminal.Containers = nil
-	for name, image := range images {
-		container := template
-		container.Name, container.RequestedImage, container.ImageID = name, image, image
-		terminal.Containers = append(terminal.Containers, container)
-	}
 	rawRef := evidencestore.ObjectIdentity{Store: "chill-evidence", Key: "raw.json", Size: int64(len(rawBytes))}
 	execution := profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, RunConfig: config,
-		RawMeasurement: rawRef, Terminal: terminal, FinalizedAt: observation.ObservedAt.Add(time.Second),
+		RawMeasurement: rawRef, Terminal: terminal, FinalizedAt: observation.Job.Status.CompletionTime.Add(2 * time.Second),
 	}
 	finalBytes, err := json.Marshal(execution)
 	if err != nil {

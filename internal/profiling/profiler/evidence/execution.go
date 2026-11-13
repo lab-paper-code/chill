@@ -4,9 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
-
-	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 func (e ExecutionEvidence) Validate(raw RawMeasurement) error {
@@ -35,10 +32,7 @@ func (e ExecutionEvidence) ValidateIdle(raw IdleRawMeasurement) error {
 	return nil
 }
 
-func (e ExecutionEvidence) validateLinkedRaw(
-	rawPodUID string,
-	workload *workloadobserver.Result,
-) error {
+func (e ExecutionEvidence) validateLinkedRaw(rawPodUID string) error {
 	if !IsSupportedExecutionEvidenceSchemaVersion(e.SchemaVersion) {
 		return fmt.Errorf("unsupported execution evidence schemaVersion %q", e.SchemaVersion)
 	}
@@ -47,11 +41,6 @@ func (e ExecutionEvidence) validateLinkedRaw(
 	}
 	if err := e.validateActuation(); err != nil {
 		return fmt.Errorf("validate execution actuation: %w", err)
-	}
-	if workload != nil && (workload.Run.Namespace != e.Terminal.Pod.Namespace ||
-		workload.Run.JobUID != e.Terminal.Job.UID || workload.Run.PodName != e.Terminal.Pod.Name ||
-		workload.Run.PodUID != e.Terminal.Pod.UID) {
-		return errors.New("workload observation Run identity does not match terminal Kubernetes facts")
 	}
 	if e.FinalizedAt.IsZero() || e.FinalizedAt.Before(e.Terminal.Job.CompletionTime) {
 		return errors.New("execution evidence finalization time is invalid")
@@ -77,30 +66,11 @@ func (e ExecutionEvidence) canonicalJSON() ([]byte, error) {
 	canonical := e
 	canonical.FinalizedAt = canonical.FinalizedAt.UTC()
 	canonical.Terminal.Job.CompletionTime = canonical.Terminal.Job.CompletionTime.UTC()
-	canonical.Terminal.NodeWorkload.ObservedAt = canonical.Terminal.NodeWorkload.ObservedAt.UTC()
 	if canonical.Actuation != nil {
 		actuation := *canonical.Actuation
 		actuation.Target.ObservedAt = actuation.Target.ObservedAt.UTC()
 		actuation.ReadyAt = actuation.ReadyAt.UTC()
 		canonical.Actuation = &actuation
 	}
-	canonical.Terminal.Containers = append([]ContainerTerminal(nil), e.Terminal.Containers...)
-	for i := range canonical.Terminal.Containers {
-		canonical.Terminal.Containers[i].StartedAt = canonical.Terminal.Containers[i].StartedAt.UTC()
-		canonical.Terminal.Containers[i].FinishedAt = canonical.Terminal.Containers[i].FinishedAt.UTC()
-	}
-	sort.Slice(canonical.Terminal.Containers, func(i, j int) bool {
-		return canonical.Terminal.Containers[i].Name < canonical.Terminal.Containers[j].Name
-	})
-	canonical.Terminal.NodeWorkload.Pods = append([]WorkloadPod(nil), e.Terminal.NodeWorkload.Pods...)
-	for i := range canonical.Terminal.NodeWorkload.Pods {
-		canonical.Terminal.NodeWorkload.Pods[i].Images = append([]string(nil), canonical.Terminal.NodeWorkload.Pods[i].Images...)
-		sort.Strings(canonical.Terminal.NodeWorkload.Pods[i].Images)
-	}
-	sort.Slice(canonical.Terminal.NodeWorkload.Pods, func(i, j int) bool {
-		left := canonical.Terminal.NodeWorkload.Pods[i]
-		right := canonical.Terminal.NodeWorkload.Pods[j]
-		return left.Namespace+"\x00"+left.Name+"\x00"+left.UID < right.Namespace+"\x00"+right.Name+"\x00"+right.UID
-	})
 	return json.Marshal(canonical)
 }

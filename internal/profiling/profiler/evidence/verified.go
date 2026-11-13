@@ -2,8 +2,8 @@ package evidence
 
 import "errors"
 
-// VerifiedEvidence is active evidence that crossed the immutable-storage
-// verification boundary. Only Loader can construct a populated value.
+// VerifiedEvidence is finalized active evidence decoded from immutable storage.
+// Only Loader can construct a populated value.
 type VerifiedEvidence struct {
 	execution ExecutionEvidence
 	raw       RawMeasurement
@@ -21,8 +21,8 @@ func (v VerifiedEvidence) Records() (ExecutionEvidence, RawMeasurement, error) {
 	return v.execution, v.raw, nil
 }
 
-// VerifiedIdleEvidence is model-loaded-idle evidence that crossed the same
-// immutable-storage verification boundary.
+// VerifiedIdleEvidence is finalized model-loaded-idle evidence decoded from
+// immutable storage.
 type VerifiedIdleEvidence struct {
 	execution ExecutionEvidence
 	raw       IdleRawMeasurement

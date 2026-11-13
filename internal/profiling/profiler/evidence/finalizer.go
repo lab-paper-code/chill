@@ -53,7 +53,7 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 	}
 	existingBytes, err := readBounded(ctx, f.store, request.FinalLocation, f.maxObjectBytes)
 	if err == nil {
-		return f.reuseExisting(ctx, existingBytes, request)
+		return f.reuseExisting(existingBytes, request)
 	}
 	if !errors.Is(err, evidencestore.ErrNotFound) {
 		return FinalizeResult{}, fmt.Errorf("inspect finalized evidence: %w", err)
@@ -130,7 +130,7 @@ func (f *Finalizer) retainFinalEvidence(
 	if err != nil {
 		return FinalizeResult{}, fmt.Errorf("read finalized evidence after create: %w", err)
 	}
-	result, err := f.reuseExisting(ctx, retained, request)
+	result, err := f.reuseExisting(retained, request)
 	if err != nil {
 		return FinalizeResult{}, fmt.Errorf("verify finalized evidence after create: %w", err)
 	}
@@ -139,7 +139,6 @@ func (f *Finalizer) retainFinalEvidence(
 }
 
 func (f *Finalizer) reuseExisting(
-	ctx context.Context,
 	payload []byte,
 	request FinalizeRequest,
 ) (FinalizeResult, error) {
@@ -148,14 +147,8 @@ func (f *Finalizer) reuseExisting(
 	if err := decodeExact(payload, &existing); err != nil {
 		return FinalizeResult{}, permanentValidationf("decode existing execution evidence: %w", err)
 	}
-	loader := Loader{store: f.store, maxObjectBytes: f.maxObjectBytes}
-	existing, _, err := loader.loadRaw(ctx, existing)
-	if err != nil {
-		return FinalizeResult{}, fmt.Errorf("validate existing execution evidence: %w", err)
-	}
 	if existing.Terminal.Job.UID != request.Terminal.Job.UID ||
-		existing.Terminal.Pod.UID != request.Terminal.Pod.UID ||
-		existing.Terminal.Node.UID != request.Terminal.Node.UID {
+		existing.Terminal.Pod.UID != request.Terminal.Pod.UID {
 		return FinalizeResult{}, permanentValidationf("existing execution evidence does not belong to this Run")
 	}
 	return FinalizeResult{Reference: identity, SchemaVersion: existing.SchemaVersion, Reused: true}, nil

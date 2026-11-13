@@ -59,11 +59,6 @@ func (a ActuationFacts) validate(
 	if a.ReadyAt.Before(a.Target.ObservedAt) {
 		return permanentValidationError(errors.New("actuation read-back and completion timestamps are out of order"))
 	}
-	for _, container := range terminal.Containers {
-		if container.StartedAt.Before(a.ReadyAt) {
-			return permanentValidationf("container %q started before actuation became ready", container.Name)
-		}
-	}
 	return nil
 }
 

@@ -99,7 +99,7 @@ def coverage_declared_on_node(cell, node, device, model, declarations, has_polic
 
 
 SHARED_CURVE_SCHEMA = "chill.dacs.io/curve-plan.v1alpha11"
-SHARED_EVIDENCE_SCHEMA = "chill.dacs.io/profiling-execution-evidence.v1alpha17"
+SHARED_EVIDENCE_SCHEMA = "chill.dacs.io/profiling-execution-evidence.v1alpha18"
 EXECUTION_CONDITIONS_ANNOTATION = "chill.dacs.io/coverage-execution-conditions"
 
 

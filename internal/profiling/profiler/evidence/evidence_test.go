@@ -303,9 +303,6 @@ func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 		{name: "target drift", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.Target.Actuator.JetsonNVPModel.ID++
 		}, permanent: true},
-		{name: "container before ready", mutate: func(candidate *ExecutionEvidence) {
-			candidate.Actuation.ReadyAt = candidate.Terminal.Containers[0].StartedAt.Add(time.Second)
-		}, permanent: true},
 		{name: "ready before target read-back", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.ReadyAt = candidate.Actuation.Target.ObservedAt.Add(-time.Second)
 		}, permanent: true},
@@ -538,20 +535,6 @@ func TestExecutionEvidenceCanonicalJSONAndIdentityLink(t *testing.T) {
 	invalid.Terminal.Pod.ControllerOwnerUID = "other-job"
 	if err := invalid.Validate(raw); err == nil {
 		t.Fatal("expected Job-to-Pod ownership rejection")
-	}
-
-	driftedRaw := raw
-	workload := *raw.Workload
-	driftedRaw.Workload = &workload
-	driftedRaw.Workload.Run.JobUID = "other-job"
-	if err := evidence.Validate(driftedRaw); err == nil || !strings.Contains(err.Error(), "terminal Kubernetes") {
-		t.Fatalf("expected workload-to-terminal identity rejection, got %v", err)
-	}
-
-	invalid = evidence
-	invalid.Terminal.NodeWorkload.Pods = invalid.Terminal.NodeWorkload.Pods[:1]
-	if err := invalid.Validate(raw); err == nil {
-		t.Fatal("expected missing Run Pod workload observation rejection")
 	}
 }
 
@@ -833,15 +816,7 @@ func validExecutionEvidenceBytes(
 				NodeName:           config.TargetNode.Name,
 				Phase:              "Succeeded",
 			},
-			Node:       NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
-			Containers: terminalContainers(config, completed),
-			NodeWorkload: NodeWorkload{
-				ObservedAt: completed.Add(time.Second),
-				Pods: []WorkloadPod{
-					{Namespace: "monitoring", Name: "edge-metric", UID: "edge-metric-uid", Phase: "Running", Images: []string{"image-b", "image-a"}},
-					{Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID, Phase: "Succeeded", Images: []string{config.Images.Runtime}},
-				},
-			},
+			Node: NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
 		},
 		FinalizedAt: completed.Add(2 * time.Second),
 	}
@@ -919,51 +894,6 @@ func cloneActuationFactsForTest(input *ActuationFacts) *ActuationFacts {
 		copy.Generation = &generation
 	}
 	return &copy
-}
-
-func TestMeasurementTerminalContainersMatchWorkloadMode(t *testing.T) {
-	for _, config := range []profilingrun.RunConfig{loadRunConfig(t), idleRunConfig(t)} {
-		t.Run(config.Measurement.WorkloadMode, func(t *testing.T) {
-			completed := time.Date(2026, 11, 13, 4, 0, 0, 0, time.UTC)
-			measurement := terminalContainers(config, completed)
-			if len(measurement) != 5 {
-				t.Fatalf("measurement Pod has %d containers, want 5", len(measurement))
-			}
-			if err := validateContainers(config, measurement); err != nil {
-				t.Fatalf("actual measurement Pod rejected: %v", err)
-			}
-			dataset := measurement[0]
-			dataset.Name = "dataset"
-			if err := validateContainers(config, append(measurement, dataset)); err == nil {
-				t.Fatal("measurement evidence accepted off-node dataset container")
-			}
-		})
-	}
-}
-
-// terminalContainers mirrors the measurement Pod in both workload modes:
-// model/preprocessor delivery, runtime, and both observers.
-func terminalContainers(config profilingrun.RunConfig, completed time.Time) []ContainerTerminal {
-	container := func(name, image string) ContainerTerminal {
-		return ContainerTerminal{
-			Name:           name,
-			RequestedImage: image,
-			ImageID:        "containerd://" + name + "-image-id",
-			Reason:         "Completed",
-			StartedAt:      completed.Add(-3 * time.Minute),
-			FinishedAt:     completed.Add(-time.Second),
-		}
-	}
-	containers := []ContainerTerminal{
-		container("metric-observer", config.Images.MetricObserver),
-		container("runtime", config.Images.Runtime),
-		container("artifact", config.Images.Artifact),
-		container("preprocessor", config.State.Preprocessor.Image),
-	}
-	if config.Images.WorkloadObserver != "" {
-		containers = append(containers, container("workload-observer", config.Images.WorkloadObserver))
-	}
-	return containers
 }
 
 func TestRawCompactResponseRejectsRepeatedNativeBatchProof(t *testing.T) {

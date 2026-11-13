@@ -14,7 +14,7 @@ measured energy and transition costs rather than static assumptions.
 | Component | Role |
 |---|---|
 | Operator (`cmd/main.go`) | Reconciles the CRDs below, runs profiling campaigns, owns node-agent DaemonSets |
-| Profiler (`cmd/profiler`, `measurement-worker`, observers) | Executes `ProfilingRun`s and writes immutable evidence (Evidence Store, S3-compatible) |
+| Profiler (`cmd/profiler`, `measurement-worker`, observers) | Executes `ProfilingRun`s, validates raw evidence once at finalization, writes immutable execution evidence v1alpha18; retained readers decode only |
 | ChillServer (`cmd/chill-server`) | Single HTTPS entry point: Model/Workload registration, inference, measured-profile scheduler, observation and evidence APIs |
 | Node agent (`cmd/node-agent`) | Publishes hardware facts per Node and applies requested power modes |
 | Dashboard (`chill-dashboard/`) | Operator web UI over the native ChillServer APIs |

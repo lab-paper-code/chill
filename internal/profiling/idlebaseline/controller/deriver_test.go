@@ -218,12 +218,6 @@ func deriverExecution(
 ) profilerevidence.ExecutionEvidence {
 	t.Helper()
 	completed := time.Date(2026, 8, 21, 1, 3, 3, 0, time.UTC)
-	container := func(name, image string) profilerevidence.ContainerTerminal {
-		return profilerevidence.ContainerTerminal{
-			Name: name, RequestedImage: image, ImageID: "containerd://" + name,
-			Reason: "Completed", StartedAt: completed.Add(-time.Minute), FinishedAt: completed.Add(-time.Second),
-		}
-	}
 	return profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, RunConfig: config,
 		RawMeasurement: evidencestore.ObjectIdentity{
@@ -238,17 +232,6 @@ func deriverExecution(
 				ControllerOwnerUID: "job-" + podUID, NodeName: config.TargetNode.Name, Phase: "Succeeded",
 			},
 			Node: profilerevidence.NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
-			Containers: []profilerevidence.ContainerTerminal{
-				container("metric-observer", config.Images.MetricObserver), container("workload-observer", config.Images.WorkloadObserver),
-				container("runtime", config.Images.Runtime), container("artifact", config.Images.Artifact),
-				container("preprocessor", config.State.Preprocessor.Image),
-			},
-			NodeWorkload: profilerevidence.NodeWorkload{
-				ObservedAt: completed.Add(time.Second), Pods: []profilerevidence.WorkloadPod{{
-					Namespace: "default", Name: "profiling-run-pod", UID: podUID,
-					Phase: "Succeeded", Images: []string{config.Images.Runtime},
-				}},
-			},
 		},
 		FinalizedAt: completed.Add(2 * time.Second),
 	}

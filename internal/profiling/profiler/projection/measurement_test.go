@@ -99,11 +99,6 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 		Terminal: profilerevidence.TerminalFacts{
 			Pod:  profilerevidence.PodTerminalFacts{UID: "run-pod"},
 			Node: profilerevidence.NodeTerminalFacts{UID: "node-uid"},
-			NodeWorkload: profilerevidence.NodeWorkload{Pods: []profilerevidence.WorkloadPod{
-				{Namespace: "chill-system", Name: "run", UID: "run-pod", Phase: "Succeeded"},
-				{Namespace: "monitoring", Name: "edge-metric", UID: "metrics", Phase: "Running"},
-				{Namespace: "default", Name: "finished", UID: "finished", Phase: "Succeeded"},
-			}},
 		},
 	}
 	raw := profilerevidence.RawMeasurement{
@@ -386,13 +381,6 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 		Store: rawLocation.Store, Key: rawLocation.Key, Size: int64(len(rawBytes)),
 	}
 	completed := started.Add(2 * time.Minute)
-	container := func(name, image string) profilerevidence.ContainerTerminal {
-		return profilerevidence.ContainerTerminal{
-			Name: name, RequestedImage: image, ImageID: "containerd://" + name,
-			Reason: "Completed", StartedAt: started.Add(-time.Minute),
-			FinishedAt: completed.Add(-time.Second),
-		}
-	}
 	execution := profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		RunConfig:     config, RawMeasurement: rawIdentity,
@@ -406,20 +394,6 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 				ControllerOwnerUID: "job-uid", NodeName: config.TargetNode.Name, Phase: "Succeeded",
 			},
 			Node: profilerevidence.NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
-			Containers: []profilerevidence.ContainerTerminal{
-				container("metric-observer", config.Images.MetricObserver),
-				container("workload-observer", config.Images.WorkloadObserver),
-				container("runtime", config.Images.Runtime),
-				container("artifact", config.Images.Artifact),
-				container("preprocessor", config.State.Preprocessor.Image),
-			},
-			NodeWorkload: profilerevidence.NodeWorkload{
-				ObservedAt: completed.Add(time.Second),
-				Pods: []profilerevidence.WorkloadPod{{
-					Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
-					Phase: "Succeeded", Images: []string{config.Images.Runtime},
-				}},
-			},
 		},
 		FinalizedAt: completed.Add(2 * time.Second),
 	}

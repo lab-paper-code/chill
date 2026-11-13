@@ -156,18 +156,12 @@ func (f *KubernetesExecutionFinalizer) observe(
 	if err := f.reader.Get(ctx, types.NamespacedName{Name: pod.Spec.NodeName}, node); err != nil {
 		return evidencekube.Observation{}, fmt.Errorf("get measurement Node %q: %w", pod.Spec.NodeName, err)
 	}
-	nodePods := &corev1.PodList{}
-	if err := f.reader.List(ctx, nodePods, client.MatchingFields{"spec.nodeName": pod.Spec.NodeName}); err != nil {
-		return evidencekube.Observation{}, fmt.Errorf("list workloads on measurement Node %q: %w", pod.Spec.NodeName, err)
-	}
 	return evidencekube.Observation{
 		Job: job.DeepCopy(), Pod: pod, Node: node,
-		NodePods: nodePods.Items, ObservedAt: f.now().UTC(),
 	}, nil
 }
 
-// validateMeasurementLoad authenticates the separate live load execution without
-// changing the measurement-only terminal snapshot stored in evidence v1alpha17.
+// validateMeasurementLoad requires successful completion of the separate load Job.
 func (f *KubernetesExecutionFinalizer) validateMeasurementLoad(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
@@ -191,27 +185,6 @@ func (f *KubernetesExecutionFinalizer) validateMeasurementLoad(
 	}
 	if !complete {
 		return errors.New("load Job has not completed")
-	}
-	pods := &corev1.PodList{}
-	if err := f.reader.List(ctx, pods, client.InNamespace(run.Namespace)); err != nil {
-		return fmt.Errorf("list load Pods: %w", err)
-	}
-	var pod *corev1.Pod
-	for i := range pods.Items {
-		owner := metav1.GetControllerOf(&pods.Items[i])
-		if owner == nil || owner.Kind != "Job" || owner.UID != load.UID {
-			continue
-		}
-		if pod != nil {
-			return fmt.Errorf("%w: load Pod ownership is ambiguous", profilerevidence.ErrPermanentValidation)
-		}
-		pod = &pods.Items[i]
-	}
-	if pod == nil {
-		return fmt.Errorf("%w: completed load Job has no load Pod", profilerevidence.ErrPermanentValidation)
-	}
-	if err := evidencekube.ValidateLoadPod(config, load, pod); err != nil {
-		return fmt.Errorf("%w: validate load Pod: %w", profilerevidence.ErrPermanentValidation, err)
 	}
 	return nil
 }

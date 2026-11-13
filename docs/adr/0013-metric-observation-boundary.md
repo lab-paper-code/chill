@@ -96,6 +96,6 @@ does not introduce another stored-contract version or a compatibility reader.
 
 The reusable core lives under `internal/metricobserver`, and the edge-metrics adapter lives under `internal/metricobserver/edgemetrics`. Their dependency direction remains toward plain observation contracts and away from Kubernetes, Profiler orchestration, admission, and scheduler packages.
 
-The one-shot profiling Job runs a `metric-observer` container beside the runtime container. It publishes one bounded atomic handoff containing typed samples and failures. The measurement worker validates and persists that result as raw evidence; terminal Kubernetes facts and admission are finalized later.
+The one-shot profiling Job runs a `metric-observer` container beside the runtime container. It publishes one bounded atomic handoff containing typed samples and failures. The measurement worker validates and persists that result as raw evidence. Finalization validates raw evidence once and binds raw Pod UID, target Node, actuation, Job success/completion and finalize time. Execution evidence v1alpha18 retains no container terminal records or Node workload snapshot; retained execution readers only bound bytes and decode.
 
 Metric availability is operational configuration owned by edge-metrics. CHILL fails closed when required evidence is absent and surfaces that reason; it does not enable or disable exporter metrics on behalf of an experiment.

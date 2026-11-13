@@ -14,6 +14,11 @@ That has two consequences.
 
 First, transition cost cannot be measured. The research specification defines transition duration τ, transition energy overhead η, and the transition-survival flag as raw quantities measured between states, alongside the quantities measured within a state. A Run-owned transition has no evidence boundary for them, and two Run-level rules actively prevent observing one: [execution evidence](../../internal/profiling/profiler/evidence/actuation.go) is invalid if any measurement container started before the actuation became ready, so power sampling never covers the transition interval; and workload safety (superseded by [ADR 0022](0022-workload-pool-membership-boundary.md)) fails closed while a foreign Pod occupies the Node, so no inference can be in flight during an apply. Both rules are correct for a Run — a measurement window must not contain the transition that establishes its state, and a Node must not be mutated under someone else's workload. They are wrong only as constraints on measuring the transition itself, which is evidence that the transition does not belong inside a Run.
 
+This paragraph records the original Run-owned constraints. Execution evidence
+v1alpha18 removes measurement-container start/terminal checks and Node workload
+snapshots. Finalization retains actuation and raw measurement-window validation;
+the historical container-start gate is not a current contract.
+
 Second, each Run pays for transitions it does not measure. A Run whose target differs from the current Node state transitions to its target and back again, so N Runs in one arm imply 2N transitions of a shared Node, and each Run's lifetime spans both because its evidence stays withheld until restoration is verified.
 
 ## Decision

@@ -122,10 +122,8 @@ func TestFinalizerCreatesAndReusesExistingEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.FinalizedAt = request.FinalizedAt.Add(time.Minute)
-	request.Terminal.NodeWorkload.ObservedAt = request.Terminal.NodeWorkload.ObservedAt.Add(time.Minute)
-	request.Terminal.NodeWorkload.Pods = append(request.Terminal.NodeWorkload.Pods, WorkloadPod{
-		Namespace: "later", Name: "unrelated", UID: "later-pod", Phase: "Running",
-	})
+	request.Terminal.Node.UID = "later-node-uid"
+	delete(store.objects, record.RawMeasurement.Location())
 	reused, err := restarted.Finalize(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -271,11 +269,11 @@ func TestFinalizerFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("invalid existing final object", func(t *testing.T) {
+	t.Run("malformed existing final object", func(t *testing.T) {
 		store := newFakeObjectStore()
 		store.objects[record.RawMeasurement.Location()] = rawBytes
 		request := requestFrom(record)
-		store.objects[request.FinalLocation] = []byte(`{"schemaVersion":"foreign"}`)
+		store.objects[request.FinalLocation] = []byte("{")
 		finalizer, err := NewFinalizer(store, 1<<20)
 		if err != nil {
 			t.Fatal(err)
@@ -312,71 +310,6 @@ func TestFinalizerFailsClosed(t *testing.T) {
 			t.Fatal("expected oversized object rejection")
 		}
 	})
-}
-
-func TestFinalizerClassifiesImmutableTerminalContradiction(t *testing.T) {
-	config := loadRunConfig(t)
-	raw := validRaw(t, config)
-	record := validExecutionEvidence(t, config, raw)
-	record.Terminal.Containers[0].ExitCode = 1
-	rawBytes, err := raw.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := newFakeObjectStore()
-	store.objects[record.RawMeasurement.Location()] = rawBytes
-	finalizer, err := NewFinalizer(store, 1<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := finalizer.Finalize(context.Background(), requestFrom(record)); !errors.Is(err, ErrPermanentValidation) {
-		t.Fatalf("immutable terminal failure = %v, want permanent validation error", err)
-	}
-	if store.puts != 0 {
-		t.Fatal("invalid terminal evidence was retained")
-	}
-}
-
-func TestFinalizerReverifiesRetainedFiveContainerActiveMeasurement(t *testing.T) {
-	config := loadRunConfig(t)
-	raw := validRaw(t, config)
-	record := validExecutionEvidence(t, config, raw)
-	containers := record.Terminal.Containers[:0]
-	for _, container := range record.Terminal.Containers {
-		if container.Name != "dataset" {
-			containers = append(containers, container)
-		}
-	}
-	record.Terminal.Containers = containers
-	rawBytes, err := raw.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := newFakeObjectStore()
-	store.objects[record.RawMeasurement.Location()] = rawBytes
-	finalizer, err := NewFinalizer(store, 1<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := finalizer.Finalize(context.Background(), requestFrom(record))
-	if err != nil {
-		t.Fatal(err)
-	}
-	loader, err := NewLoader(store, 1<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	verified, err := loader.Load(context.Background(), result.Reference)
-	if err != nil {
-		t.Fatal(err)
-	}
-	execution, _, err := verified.Records()
-	if err != nil || execution.SchemaVersion != ExecutionEvidenceSchemaVersion || len(execution.Terminal.Containers) != 5 {
-		t.Fatalf("retained five-container evidence = %#v, err=%v", execution.Terminal, err)
-	}
-	if !bytes.Equal(store.objects[record.RawMeasurement.Location()], rawBytes) {
-		t.Fatal("retained raw measurement changed")
-	}
 }
 
 func requestFrom(record ExecutionEvidence) FinalizeRequest {

@@ -2,7 +2,6 @@ package evidence
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -21,81 +20,6 @@ func (f TerminalFacts) validate(config profilingrun.RunConfig, rawPodUID string)
 	if blank(f.Node.Name, f.Node.UID) || f.Node.Name != f.Pod.NodeName ||
 		f.Node.Name != config.TargetNode.Name || f.Node.UID != config.TargetNode.UID {
 		return errors.New("terminal Node identity mismatch")
-	}
-	if err := validateContainers(config, f.Containers); err != nil {
-		return err
-	}
-	if f.NodeWorkload.ObservedAt.IsZero() || f.NodeWorkload.ObservedAt.Before(f.Job.CompletionTime) {
-		return errors.New("Node workload observation time is invalid")
-	}
-	seen := map[string]struct{}{}
-	containsRunPod := false
-	for _, pod := range f.NodeWorkload.Pods {
-		if blank(pod.Namespace, pod.Name, pod.UID, pod.Phase) {
-			return errors.New("Node workload Pod identity is incomplete")
-		}
-		if _, duplicate := seen[pod.UID]; duplicate {
-			return errors.New("Node workload contains duplicate Pod UID")
-		}
-		seen[pod.UID] = struct{}{}
-		containsRunPod = containsRunPod || pod.UID == f.Pod.UID
-	}
-	if !containsRunPod {
-		return errors.New("Node workload does not contain the Run Pod")
-	}
-	return nil
-}
-
-func validateContainers(config profilingrun.RunConfig, containers []ContainerTerminal) error {
-	switch config.Measurement.WorkloadMode {
-	case profilingrun.EmpiricalCadenceFixedBatchWorkloadMode, profilingrun.IdleModelLoadedWorkloadMode:
-		// Both modes deliver only model/preprocessor beside the measured actor.
-		// Active dataset delivery belongs to the separate off-node load Pod.
-	default:
-		return fmt.Errorf("unsupported terminal workload mode %q", config.Measurement.WorkloadMode)
-	}
-	expected := map[string]string{
-		"artifact":          config.Images.Artifact,
-		"preprocessor":      config.State.Preprocessor.Image,
-		"runtime":           config.Images.Runtime,
-		"metric-observer":   config.Images.MetricObserver,
-		"workload-observer": config.Images.WorkloadObserver,
-	}
-	return validateExpectedContainers(expected, containers)
-}
-
-// ValidateLoadContainers checks the independently observed off-node load Pod.
-// These containers do not belong to the stored measurement-Pod terminal facts.
-func ValidateLoadContainers(config profilingrun.RunConfig, loadImage string, containers []ContainerTerminal) error {
-	if config.Measurement.WorkloadMode != profilingrun.EmpiricalCadenceFixedBatchWorkloadMode ||
-		config.Measurement.Dataset == nil || strings.TrimSpace(loadImage) == "" {
-		return errors.New("active load requires a frozen dataset and load image")
-	}
-	return validateExpectedContainers(map[string]string{
-		"dataset": config.Measurement.Dataset.Image,
-		"load":    loadImage,
-	}, containers)
-}
-
-func validateExpectedContainers(expected map[string]string, containers []ContainerTerminal) error {
-	if len(containers) != len(expected) {
-		return fmt.Errorf("expected %d terminal containers, found %d", len(expected), len(containers))
-	}
-	seen := map[string]struct{}{}
-	for _, container := range containers {
-		want, ok := expected[container.Name]
-		if !ok {
-			return fmt.Errorf("unexpected terminal container %q", container.Name)
-		}
-		if _, duplicate := seen[container.Name]; duplicate {
-			return fmt.Errorf("duplicate terminal container %q", container.Name)
-		}
-		seen[container.Name] = struct{}{}
-		if container.RequestedImage != want || strings.TrimSpace(container.ImageID) == "" ||
-			container.RestartCount != 0 || container.ExitCode != 0 || container.Reason != "Completed" ||
-			container.StartedAt.IsZero() || container.FinishedAt.Before(container.StartedAt) {
-			return fmt.Errorf("terminal container %q is invalid", container.Name)
-		}
 	}
 	return nil
 }

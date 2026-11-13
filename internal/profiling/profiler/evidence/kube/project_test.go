@@ -24,14 +24,6 @@ func TestProjectTerminalFacts(t *testing.T) {
 	if facts.Node.Name != "edge-node" || facts.Pod.NodeName != facts.Node.Name {
 		t.Fatal("actual Node binding was not projected")
 	}
-	if len(facts.Containers) != 4 || facts.Containers[0].Name != "artifact" ||
-		facts.Containers[1].Name != "metric-observer" || facts.Containers[2].Name != "runtime" ||
-		facts.Containers[3].Name != "workload-observer" {
-		t.Fatalf("unexpected projected containers: %#v", facts.Containers)
-	}
-	if len(facts.NodeWorkload.Pods) != 2 || facts.NodeWorkload.Pods[0].Name != "profiling-pod" {
-		t.Fatalf("unexpected projected Node workload: %#v", facts.NodeWorkload.Pods)
-	}
 }
 
 func TestProjectTerminalFactsIgnoresMutableMetadata(t *testing.T) {
@@ -48,7 +40,6 @@ func TestProjectTerminalFactsIgnoresMutableMetadata(t *testing.T) {
 	drifted.Pod.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "other-controller"}}
 	drifted.Node.ResourceVersion = "100"
 	drifted.Node.Labels = map[string]string{"topology.kubernetes.io/zone": "changed"}
-	drifted.NodePods[0].ResourceVersion = "101"
 	got, err := ProjectTerminalFacts(drifted)
 	if err != nil {
 		t.Fatal(err)
@@ -91,29 +82,6 @@ func TestProjectTerminalFactsRejectsInvalidKubernetesViews(t *testing.T) {
 				observation.Node.Name = "other-node"
 			},
 			match: "do not match",
-		},
-		{
-			name: "container status mismatch",
-			mutate: func(observation *Observation) {
-				observation.Pod.Status.ContainerStatuses = observation.Pod.Status.ContainerStatuses[:1]
-			},
-			match: "count mismatch",
-		},
-		{
-			name: "foreign Node workload Pod",
-			mutate: func(observation *Observation) {
-				observation.NodePods[1].Spec.NodeName = "other-node"
-			},
-			match: "not bound",
-		},
-		{
-			name: "unexpected ephemeral container",
-			mutate: func(observation *Observation) {
-				observation.Pod.Spec.EphemeralContainers = []corev1.EphemeralContainer{{
-					EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug", Image: "debug:v1"},
-				}}
-			},
-			match: "ephemeral",
 		},
 	}
 
@@ -187,21 +155,10 @@ func validObservation() Observation {
 		},
 	}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "edge-node", UID: "node-uid"}}
-	systemPod := corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "monitoring", Name: "edge-metric", UID: "system-pod-uid"},
-		Spec: corev1.PodSpec{
-			NodeName:       node.Name,
-			InitContainers: []corev1.Container{{Name: "setup", Image: "setup:v1"}},
-			Containers:     []corev1.Container{{Name: "exporter", Image: "exporter:v1"}},
-		},
-		Status: corev1.PodStatus{Phase: corev1.PodRunning},
-	}
 	return Observation{
-		Job:        job,
-		Pod:        pod,
-		Node:       node,
-		NodePods:   []corev1.Pod{*pod.DeepCopy(), systemPod},
-		ObservedAt: completed.Add(time.Second),
+		Job:  job,
+		Pod:  pod,
+		Node: node,
 	}
 }
 

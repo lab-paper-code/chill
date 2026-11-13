@@ -19,11 +19,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestKubernetesExecutionFinalizerObservesExactJobPodAndNodeWorkload(t *testing.T) {
+func TestKubernetesExecutionFinalizerObservesExactJobPodAndNode(t *testing.T) {
 	t.Parallel()
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{batchv1.AddToScheme, corev1.AddToScheme} {
@@ -43,30 +42,20 @@ func TestKubernetesExecutionFinalizerObservesExactJobPodAndNodeWorkload(t *testi
 		},
 		Spec: corev1.PodSpec{NodeName: "lattepanda"},
 	}
-	coResident := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "monitoring", Name: "edge-metric", UID: "metric-uid"},
-		Spec:       corev1.PodSpec{NodeName: "lattepanda"},
-	}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "lattepanda", UID: "node-uid"}}
 	reader := fake.NewClientBuilder().WithScheme(scheme).
-		WithIndex(&corev1.Pod{}, "spec.nodeName", func(object client.Object) []string {
-			return []string{object.(*corev1.Pod).Spec.NodeName}
-		}).
-		WithObjects(job, pod, coResident, node).
+		WithObjects(job, pod, node).
 		Build()
 	finalizer, err := NewKubernetesExecutionFinalizer(reader, unusedStoreFactory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
-	finalizer.now = func() time.Time { return now }
 	run := testRun()
 	observation, err := finalizer.observe(context.Background(), run, job)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observation.Pod.UID != pod.UID || observation.Node.UID != node.UID ||
-		len(observation.NodePods) != 2 || !observation.ObservedAt.Equal(now) {
+	if observation.Pod.UID != pod.UID || observation.Node.UID != node.UID {
 		t.Fatalf("observation = %#v", observation)
 	}
 }
@@ -257,31 +246,31 @@ func TestKubernetesExecutionFinalizerUsesFrozenJobStoreBinding(t *testing.T) {
 	}
 }
 
-func TestKubernetesExecutionFinalizerRequiresSuccessfulOwnedLoadPod(t *testing.T) {
+func TestKubernetesExecutionFinalizerRequiresSuccessfulOwnedLoadJob(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		mutate func(*batchv1.Job, *corev1.Pod)
 		match  string
 	}{
-		{name: "valid two-container load"},
+		{name: "completed Job"},
 		{name: "missing Job", mutate: func(job *batchv1.Job, _ *corev1.Pod) { job.Name = "other-load" }, match: "load Job"},
 		{name: "foreign Job", mutate: func(job *batchv1.Job, _ *corev1.Pod) { job.OwnerReferences[0].UID = "foreign-run" }, match: "load Job"},
 		{name: "wrong origin", mutate: func(job *batchv1.Job, _ *corev1.Pod) { job.Spec.Template.Spec.NodeName = "wrong-node" }, match: "load Job"},
 		{name: "failed Job", mutate: func(job *batchv1.Job, _ *corev1.Pod) {
 			job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionTrue})
-		}, match: "load Pod"},
-		{name: "missing Pod", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.OwnerReferences[0].UID = "foreign-job" }, match: "load Pod"},
-		{name: "wrong Pod node", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Spec.NodeName = "wrong-node" }, match: "load Pod"},
-		{name: "failed Pod", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Status.Phase = corev1.PodFailed }, match: "load Pod"},
+		}, match: "load Job"},
+		{name: "missing Pod", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.OwnerReferences[0].UID = "foreign-job" }},
+		{name: "wrong Pod node", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Spec.NodeName = "wrong-node" }},
+		{name: "failed Pod", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Status.Phase = corev1.PodFailed }},
 		{name: "failed dataset", mutate: func(_ *batchv1.Job, pod *corev1.Pod) {
 			pod.Status.InitContainerStatuses[0].State.Terminated.ExitCode = 1
-		}, match: "load Pod"},
+		}},
 		{name: "failed load", mutate: func(_ *batchv1.Job, pod *corev1.Pod) {
 			pod.Status.ContainerStatuses[0].State.Terminated.ExitCode = 1
-		}, match: "load Pod"},
-		{name: "missing container", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Status.ContainerStatuses = nil }, match: "load Pod"},
-		{name: "wrong dataset image", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Spec.InitContainers[0].Image = "wrong-image" }, match: "load Pod"},
-		{name: "wrong load image", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Spec.Containers[0].Image = "wrong-image" }, match: "load Pod"},
+		}},
+		{name: "missing container", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Status.ContainerStatuses = nil }},
+		{name: "wrong dataset image", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Spec.InitContainers[0].Image = "wrong-image" }},
+		{name: "wrong load image", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Spec.Containers[0].Image = "wrong-image" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			run := testRun()

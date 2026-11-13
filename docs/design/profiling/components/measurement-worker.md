@@ -53,7 +53,7 @@ values without weakening the checks or requiring another native measurement.
 | Runtime worker | Sole raw writer: validate executable RunConfig/artifact, execute firstfloor, coordinate window, compose boundary-validated results, immutable-create raw object, write bounded receipt |
 | MetricObserver | Wait for start; bounded observation; observe end, atomically publish only metric result, exit |
 | WorkloadObserver | Target-Node list-watch; close after same-watch metric-container successful exit fence; atomically publish only workload result |
-| Profiler | Materialize/observe native resources, load immutable raw evidence through the authoritative reader, finalize with terminal Kubernetes facts; never inference/power polling |
+| Profiler | Materialize/observe native resources, validate raw evidence once at finalization, bind Job/Pod/Node and actuation facts; never inference/power polling |
 
 No uploader container: it adds handoff/failure ownership without removing worker
 responsibility. MetricObserver has no storage credentials. Runtime image is the
@@ -65,8 +65,9 @@ Each regular process validates its delivered RunConfig at its own execution
 boundary; runtime carries `profilingrun.VerifiedRunConfig`, not parallel mutable
 inputs. Atomic result readers and runtime adapters validate their process results
 once. Coordinator consumes sealed values and checks only new source, target and
-window relationships before raw composition. Retained loading validates the raw
-record independently; later consumers do not repeat its spec/status/provenance
+window relationships before raw composition. Finalization validates the raw
+record once; retained execution readers only bound bytes and decode the current
+schema. Consumers do not repeat raw semantic or spec/status/provenance
 comparisons. Deploy schema-compatible runtime and observer images. Tags and digest
 references are accepted; no digest-pin admission gate applies.
 
@@ -325,8 +326,9 @@ Active raw contains verified RunConfig, actual Pod UID, validated runtime result
 complete metric and bounded workload results. Idle has separate current schema:
 exact load, settling completion, zero inference, residency and declared duration
 instead of active latency/output-validation proof. Both share store/key/size
-reference boundary. Job completion, terminal Pod/Node snapshots and credentials
-are absent; the controller adds terminal Kubernetes facts during finalization.
+reference boundary. Job completion and credentials are absent; finalization adds
+Job/Pod/target-Node identities, actuation, Job success/completion and finalize time.
+Neither raw composition nor finalization adds a Node workload snapshot.
 
 ### Active raw v1alpha14 field contract
 
@@ -494,16 +496,20 @@ load, waits for load completion/failure before collecting the uploaded result,
 and removes load on normal completion, runtime failure and ExecutionLost.
 Both active and model-loaded-idle measurement Pods have init `artifact` and
 `preprocessor`, plus `runtime`, `metric-observer`, and `workload-observer`.
-The active load Pod alone has init `dataset` and app `load`. Before publishing
-verified evidence, finalization independently checks the load Job's Run owner,
-frozen origin node, unique Job-owned successful Pod, frozen dataset image and
-immutable Job load image, and both containers' successful terminal states.
-Evidence v1alpha17 keeps its measurement-Pod-only terminal snapshot unchanged;
-retained loading does not retrospectively assert a stored load-container snapshot.
-Do not append load containers to the measurement Pod or manufacture missing facts.
-Retained raw and successful measurement/load Pods can finalize after a verifier
-fix without rewriting raw or RunConfig. API/store read failures remain retryable;
-immutable semantic contradictions are terminal `EvidenceInvalid`.
+The active load Pod alone has init `dataset` and app `load`. Raw load counts prove
+successful load execution; Job status determines finished/failed execution.
+Finalization validates raw runtime/observer facts once and binds raw Pod UID,
+target Node, actuation, successful measurement Job completion and finalize time.
+It does not inspect measurement/load container terminal states, collect a Node
+workload snapshot or recheck raw workload self-consistency.
+Execution evidence v1alpha18 contains no container terminal records or Node
+workload snapshot. Retained readers only bound bytes and decode the current
+schema; they do not repeat finalization validation.
+Under [ADR 0019](../../../adr/0019-durable-stored-contract-compatibility.md),
+operators delete affected old working objects; no compatibility reader or
+stored-object migration is provided. Raw active v1alpha14 and idle v1alpha8 stay
+unchanged. API/store read failures remain retryable; immutable contradictions
+at finalization are terminal `EvidenceInvalid`.
 Load-first failure waits for runtime termination evidence before cleanup, preserving
 typed `MemoryAllocationFailed` discovery completion and the completed batch prefix.
 Profiling load Jobs carry the existing target-Node measurement-load label so

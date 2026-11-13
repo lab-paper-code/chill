@@ -157,6 +157,7 @@ func measurementLoadOutcome(job *batchv1.Job, run *api.ProfilingRun, originNode 
 	if !metav1.IsControlledBy(job, run) {
 		return false, fmt.Errorf("%w: load Job belongs to another owner", errMeasurementLoadFailed)
 	}
+	complete := false
 	for _, condition := range job.Status.Conditions {
 		if condition.Status != corev1.ConditionTrue {
 			continue
@@ -165,10 +166,10 @@ func measurementLoadOutcome(job *batchv1.Job, run *api.ProfilingRun, originNode 
 			return false, fmt.Errorf("%w: %s: %s", errMeasurementLoadFailed, condition.Reason, condition.Message)
 		}
 		if condition.Type == batchv1.JobComplete {
-			return true, nil
+			complete = true
 		}
 	}
-	return false, nil
+	return complete, nil
 }
 
 func (r *RunReconciler) deleteMeasurementLoad(ctx context.Context, run *api.ProfilingRun) error {

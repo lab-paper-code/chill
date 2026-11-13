@@ -784,18 +784,6 @@ func curveFixtureExecution(
 	if points := config.Measurement.OperatingPoints; points != nil {
 		completed = completed.Add(time.Duration(points.PhaseDurationSeconds*(len(points.Utilizations)+2)+points.PostLoadDurationSeconds) * time.Second)
 	}
-	container := func(name, image string) profilerevidence.ContainerTerminal {
-		return profilerevidence.ContainerTerminal{
-			Name: name, RequestedImage: image, ImageID: "containerd://" + name,
-			Reason: "Completed", StartedAt: completed.Add(-5 * time.Minute), FinishedAt: completed.Add(-time.Second),
-		}
-	}
-	containers := []profilerevidence.ContainerTerminal{
-		container("metric-observer", config.Images.MetricObserver),
-		container("workload-observer", config.Images.WorkloadObserver),
-		container("runtime", config.Images.Runtime), container("artifact", config.Images.Artifact),
-		container("preprocessor", config.State.Preprocessor.Image),
-	}
 	return profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		RunConfig:     config,
@@ -811,15 +799,7 @@ func curveFixtureExecution(
 				Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
 				ControllerOwnerUID: "job-" + podUID, NodeName: config.TargetNode.Name, Phase: "Succeeded",
 			},
-			Node:       profilerevidence.NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
-			Containers: containers,
-			NodeWorkload: profilerevidence.NodeWorkload{
-				ObservedAt: completed.Add(time.Second),
-				Pods: []profilerevidence.WorkloadPod{{
-					Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
-					Phase: "Succeeded", Images: []string{config.Images.Runtime},
-				}},
-			},
+			Node: profilerevidence.NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
 		},
 		FinalizedAt: completed.Add(2 * time.Second),
 	}

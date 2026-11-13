@@ -131,7 +131,7 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 		if err := json.Unmarshal(configJSON, &wireConfig); err != nil {
 			t.Fatal(err)
 		}
-		rawIdentity, output, started := commitNativeCatalogTrial(t, ctx, command, writer, profilingworker.Request{
+		rawIdentity, output := commitNativeCatalogTrial(t, ctx, command, writer, profilingworker.Request{
 			RunConfig: verified, PodUID: podUID, ScheduledNodeName: config.TargetNode.Name,
 			RawLocation: evidencestore.ObjectLocation{Store: "evidence", Key: "native/" + run.Name + "-raw.json"},
 		})
@@ -155,11 +155,7 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 		completed := time.Now().UTC()
 		execution.RawMeasurement = rawIdentity
 		execution.Terminal.Job.CompletionTime = completed
-		execution.Terminal.NodeWorkload.ObservedAt = completed
 		execution.FinalizedAt = completed
-		for i := range execution.Terminal.Containers {
-			execution.Terminal.Containers[i].StartedAt, execution.Terminal.Containers[i].FinishedAt = started, completed
-		}
 		var payload []byte
 		if trial.Measurement.WorkloadMode == batchenergyoptimization.WorkloadModeIdle {
 			payload, err = execution.CanonicalIdleJSON(idleRaw)
@@ -394,7 +390,7 @@ func TestNativeCatalogReplayRetainedWitness(t *testing.T) {
 func commitNativeCatalogTrial(
 	t *testing.T, ctx context.Context, command []string, writer nativeCatalogImmutableWriter,
 	request profilingworker.Request,
-) (evidencestore.ObjectIdentity, []byte, time.Time) {
+) (evidencestore.ObjectIdentity, []byte) {
 	t.Helper()
 	config, err := request.RunConfig.Record()
 	if err != nil {
@@ -467,7 +463,6 @@ func commitNativeCatalogTrial(
 	if err != nil {
 		t.Fatal(err)
 	}
-	started := time.Now().UTC()
 	loadCtx, stopLoad := context.WithCancel(ctx)
 	defer stopLoad()
 	loadDone := make(chan error, 1)
@@ -522,7 +517,7 @@ func commitNativeCatalogTrial(
 	if err != nil {
 		t.Fatal(err)
 	}
-	return receipt.Object, output, started
+	return receipt.Object, output
 }
 
 func assertNativeActiveTrial(

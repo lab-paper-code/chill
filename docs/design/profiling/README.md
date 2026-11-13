@@ -1,6 +1,6 @@
 # Runtime, Artifact, and Profiling
 
-Current boundary: execution → immutable raw/finalized evidence → numeric derivation. The authoritative retained reader bounds actual bytes, decodes supported schemas and validates physical execution/ownership links once; raw RunConfig supplies execution authority. Mutable request/status copies, deterministic-key spelling, receipt sizes and duplicated provenance do not establish a second execution contract. Scientific admission removed @`788bcf93`: thermal/workload observations remain, without automatic scientific accept/reject. Source and retained evidence, not historical plans, establish implementation facts.
+Current boundary: execution → immutable raw/finalized evidence → numeric derivation. Finalization validates raw evidence once and binds raw Pod UID, target Node, actuation, Job success/completion and finalize time. Retained execution readers bound actual bytes and decode the current schema only; raw RunConfig supplies execution authority. Mutable request/status copies, deterministic-key spelling, receipt sizes and duplicated provenance do not establish a second execution contract. Scientific admission removed @`788bcf93`: thermal/workload observations remain, without automatic scientific accept/reject. Source and retained evidence, not historical plans, establish implementation facts.
 
 Batch discovery freezes `1, 2, 4, …` through the selected firstfloor's actual
 `MaxBatchSize`, intersected with finite artifact-declared batches when present;
@@ -48,15 +48,15 @@ Retired Plan 5 experiments remain conclusions, not current APIs: 12 retained idl
 | Contract | Ownership / status |
 |---|---|
 | [Experiment execution](experiment-execution.md) | evaluation immutable definition, profiler orchestration, harness Job and publication — design |
-| [Measurement Worker](components/measurement-worker.md) | firstfloor Job-local execution, synchronization, raw-write/receipt — active |
-| [Evidence Store](components/evidence-store.md) | Immutable winner, bounded authoritative reads, operator lifecycle — active |
+| [Measurement Worker](components/measurement-worker.md) | firstfloor Job-local execution, synchronization, raw-write/receipt; raw load counts prove load success — active |
+| [Evidence Store](components/evidence-store.md) | Immutable winner, finalize-only validation, bounded decode-only execution readers, operator lifecycle — active |
 | [MetricObserver](components/metric-observer.md) | Bounded typed power/thermal observation, no derivation policy — active |
 | [WorkloadObserver](components/workload-observer.md) | Bounded Pod-membership/environment/concurrent-measurement observations — active |
 | [Runtime execution](foundations/runtime-execution/README.md) | Consolidated compatibility/execution/provenance conclusions — active |
 
 Profiling uses firstfloor's serving `/infer` path with dataset `profiling` raw records and preprocessor artifacts; [input contract](../serving/heterogeneous-workloads.md). Frozen RunConfig v1alpha22 binds actual model/preprocessor/dataset, batches/provider and operating-point inputs, including positive integer `postLoadDurationSeconds`, with no CPU allocation or thread overrides. Native request v1alpha2 remains; active runtime and raw are v1alpha14, loaded-idle runtime v1alpha7. An off-node load Job executes sparse, measured-K saturation and Poisson utilization phases; the same loaded actor and observers remain alive through the frozen request-free post-load window. [Measurement Worker](components/measurement-worker.md#active-raw-v1alpha14-field-contract) owns the exact phase/request/batch/power and post-load schema. Runtime-default session thread settings and actual cgroup quota/cpuset/affinity/usage/throttling remain observed evidence. RKNN retains its tensor/host metadata checks and fixed artifact batch.
 
-Evidence v1alpha17 binds actual execution/transition facts; active raw v1alpha14 and idle raw v1alpha8 retain runtime observations rather than CPU allocation requirements. This is one stored-contract cutover: old active evidence/profile objects are archived and deleted operationally, with no old-shape reader. Permanent contradiction is `EvidenceInvalid`. Verified references complete Runs independently of Job existence. Successful measurement and off-node load Jobs use their recorded Run ownership and cleanup lifecycle; failed Jobs retain the configured diagnostic TTL. Evidence is not automatically garbage-collected.
+Execution evidence v1alpha18 binds actual execution/transition facts without container terminal records or Node workload snapshots. Raw load counts prove load success; Job status determines finished/failed execution. Finalization does not recheck raw workload self-consistency. Active raw v1alpha14 and idle raw v1alpha8 remain unchanged. This is one stored-contract cutover under [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md): operators delete affected old working objects, with no compatibility reader or migration. Archived scientific raw records are not rewritten. Permanent contradiction at finalization is `EvidenceInvalid`. Verified references complete Runs independently of Job existence. Successful measurement and off-node load Jobs use their recorded Run ownership and cleanup lifecycle; failed Jobs retain the configured diagnostic TTL. Evidence is not automatically garbage-collected.
 
 Parent controllers share the `ProfilingRunStatus` terminal-failure interpreter for
 execution/evidence interpretation. Verified evidence takes precedence; pending
@@ -85,8 +85,8 @@ retirement. Recorded Job recovery retains its original executable contract.
 and completed active/model-loaded-idle trials. Result schema/outcome, Run ownership,
 current-generation completion, actual trial mode/batch and recorded Job/Pod binding
 remain checked. Frozen result/plan bodies are not re-admitted against mutable
-campaign specs or repeated reference/provenance copies. The profiler evidence
-loader validates raw execution facts and terminal links at its own read boundary.
+campaign specs or repeated reference/provenance copies. The profiler execution
+reader only bounds bytes and decodes; raw validation belongs to finalization.
 Reads remain bounded to eight concurrent trials with input-ordered errors and
 lineage; callbacks retain the caller's frozen store binding and actual byte cap.
 Serving selection, runtime support, energy/memory/profile construction and query

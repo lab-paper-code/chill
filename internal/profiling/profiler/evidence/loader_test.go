@@ -3,7 +3,6 @@ package evidence
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -124,34 +123,4 @@ func TestLoaderLoadsFinalAndRawObjects(t *testing.T) {
 			}
 		})
 	}
-	// An S-only raw object does not become admissible by retaining the selected
-	// unreleased schema label and a valid immutable execution envelope.
-	var legacy map[string]any
-	if err := json.Unmarshal(rawBytes, &legacy); err != nil {
-		t.Fatal(err)
-	}
-	runtime := legacy["runtime"].(map[string]any)
-	for _, phase := range runtime["phases"].([]any) {
-		for _, row := range phase.(map[string]any)["nativeSamples"].([]any) {
-			sample := row.(map[string]any)
-			for _, key := range []string{"serviceDurationNanos", "precedingIdleNanos", "trialID"} {
-				delete(sample, key)
-			}
-		}
-	}
-	legacyBytes, err := json.Marshal(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.objects[rawLocation] = legacyBytes
-	execution.RawMeasurement = identityFor(rawLocation, legacyBytes)
-	executionBytes, err = json.Marshal(execution)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.objects[executionLocation] = executionBytes
-	if _, err := loader.Load(context.Background(), identityFor(executionLocation, executionBytes)); err == nil {
-		t.Fatal("S-only evidence under the selected schema crossed the retained reader")
-	}
-
 }

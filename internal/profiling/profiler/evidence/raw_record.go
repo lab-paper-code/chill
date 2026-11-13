@@ -47,10 +47,10 @@ func (m IdleRawMeasurement) runConfig() profilingrun.RunConfig {
 
 func (m RawMeasurement) validateExecution(execution ExecutionEvidence) error {
 	execution.RunConfig = m.RunConfig
-	return execution.validateLinkedRaw(m.PodUID, m.Workload)
+	return execution.validateLinkedRaw(m.PodUID)
 }
 
 func (m IdleRawMeasurement) validateExecution(execution ExecutionEvidence) error {
 	execution.RunConfig = m.RunConfig
-	return execution.validateLinkedRaw(m.PodUID, m.Workload)
+	return execution.validateLinkedRaw(m.PodUID)
 }

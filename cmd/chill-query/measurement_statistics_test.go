@@ -1299,27 +1299,6 @@ func statisticsTrial(
 	if err != nil {
 		t.Fatal(err)
 	}
-	containers := make([]evidence.ContainerTerminal, 0, 5)
-	images := map[string]string{
-		"runtime":           config.Images.Runtime,
-		"artifact":          config.Images.Artifact,
-		"preprocessor":      config.State.Preprocessor.Image,
-		"metric-observer":   config.Images.MetricObserver,
-		"workload-observer": config.Images.WorkloadObserver,
-	}
-	for name, image := range images {
-		containers = append(
-			containers,
-			evidence.ContainerTerminal{
-				Name:           name,
-				RequestedImage: image,
-				ImageID:        image,
-				Reason:         "Completed",
-				StartedAt:      start.Add(-time.Minute),
-				FinishedAt:     end.Add(time.Second),
-			},
-		)
-	}
 	execution := evidence.ExecutionEvidence{
 		SchemaVersion: evidence.ExecutionEvidenceSchemaVersion,
 		RunConfig:     config,
@@ -1347,19 +1326,6 @@ func statisticsTrial(
 			Node: evidence.NodeTerminalFacts{
 				Name: config.TargetNode.Name,
 				UID:  config.TargetNode.UID,
-			},
-			Containers: containers,
-			NodeWorkload: evidence.NodeWorkload{
-				ObservedAt: end.Add(3 * time.Second),
-				Pods: []evidence.WorkloadPod{
-					{
-						Namespace: pod.Namespace,
-						Name:      name,
-						UID:       name,
-						Phase:     "Succeeded",
-						Images:    []string{config.Images.Runtime},
-					},
-				},
 			},
 		},
 		FinalizedAt: end.Add(4 * time.Second),
