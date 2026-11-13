@@ -365,7 +365,7 @@ export function PaginationEllipsis({
         {...props}
       >
         <MoreHorizontal className="h-4 w-4" />
-        <span className="sr-only">More pages</span>
+        <span className="sr-only">더 많은 페이지</span>
       </span>
     </li>
   );
@@ -607,7 +607,7 @@ export function PaginationPageSize({
 
   return (
     <div className={cn(controlLabel, className)} {...props}>
-      <span>Rows per page</span>
+      <span>페이지당 행</span>
       <PaginationCustomDropdown
         value={pageSize}
         options={options.map((size) => ({
@@ -615,7 +615,7 @@ export function PaginationPageSize({
           label: String(size),
         }))}
         onChange={(val) => onPageSizeChange?.(Number(val))}
-        ariaLabel="Rows per page"
+        ariaLabel="페이지당 행"
       />
     </div>
   );
@@ -666,7 +666,7 @@ export function PaginationPageJump({
         {...props}
       >
         <div className="flex items-center gap-2">
-          <span>Page</span>
+          <span>페이지</span>
           <PaginationCustomDropdown
             value={currentPage}
             options={Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => ({
@@ -674,7 +674,7 @@ export function PaginationPageJump({
               label: String(page),
             }))}
             onChange={(val) => onPageChange?.(Number(val))}
-            ariaLabel="Go to page"
+            ariaLabel="페이지로 이동"
           />
         </div>
         <span>of {totalPages}</span>
@@ -692,7 +692,7 @@ export function PaginationPageJump({
       {...props}
     >
       <label className="flex items-center gap-2">
-        Go to page
+        이동
         <input
           type="number"
           inputMode="numeric"

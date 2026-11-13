@@ -6,6 +6,7 @@
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import React from "react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./TooltipBlock";
 
 export type ButtonVariant =
   | "default"
@@ -41,7 +42,7 @@ export function buttonClassName({
   return cn(
     "inline-flex shrink-0 select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors cursor-pointer",
     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-    "disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
+    "disabled:pointer-events-none disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
     VARIANTS[variant],
     SIZES[size],
     className,
@@ -56,6 +57,11 @@ export interface ButtonProps
   loading?: boolean;
   iconLeft?: React.ReactNode;
   iconRight?: React.ReactNode;
+  /**
+   * Why a disabled button is unavailable. The button then stays focusable (aria-disabled, clicks
+   * ignored) and shows the reason in a tooltip on hover and keyboard focus.
+   */
+  disabledReason?: string;
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
@@ -67,26 +73,44 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       type = "button",
       loading,
       disabled,
+      disabledReason,
       iconLeft,
       iconRight,
       children,
+      onClick,
+      "aria-describedby": describedBy,
       ...props
     },
     ref,
-  ) => (
-    <button
-      ref={ref}
-      type={type}
-      disabled={disabled || loading}
-      aria-busy={loading || undefined}
-      className={buttonClassName({ variant, size, className })}
-      {...props}
-    >
-      {loading ? <Loader2 className="animate-spin" aria-hidden="true" /> : iconLeft}
-      {children}
-      {iconRight}
-    </button>
-  ),
+  ) => {
+    const reasonId = React.useId();
+    const blocked = !!disabled && !!disabledReason && !loading;
+    const button = (
+      <button
+        ref={ref}
+        type={type}
+        disabled={(disabled && !blocked) || loading}
+        aria-disabled={blocked || undefined}
+        aria-busy={loading || undefined}
+        aria-describedby={blocked ? cn(describedBy, reasonId) : describedBy}
+        onClick={blocked ? (event) => event.preventDefault() : onClick}
+        className={buttonClassName({ variant, size, className })}
+        {...props}
+      >
+        {loading ? <Loader2 className="animate-spin" aria-hidden="true" /> : iconLeft}
+        {children}
+        {iconRight}
+      </button>
+    );
+    if (!blocked) return button;
+    return (
+      <Tooltip>
+        <TooltipTrigger className="inline-flex">{button}</TooltipTrigger>
+        <TooltipContent aria-hidden="true" className="max-w-xs whitespace-normal">{disabledReason}</TooltipContent>
+        <span id={reasonId} hidden>{disabledReason}</span>
+      </Tooltip>
+    );
+  },
 );
 Button.displayName = "Button";
 

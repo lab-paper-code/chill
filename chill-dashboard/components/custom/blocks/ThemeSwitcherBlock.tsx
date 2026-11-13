@@ -328,7 +328,7 @@ const ThemeSwitcherPill = React.forwardRef<HTMLDivElement, ThemeSwitcherVariantP
                   ? "text-foreground"
                   : "text-muted-foreground hover:text-foreground",
               )}
-              aria-label={`Switch to ${tab.id} theme`}
+              aria-label={tab.id === "light" ? "밝은 화면" : tab.id === "dark" ? "어두운 화면" : "시스템 설정"}
             >
               <Icon className="w-4 h-4" />
             </button>
@@ -500,9 +500,9 @@ const ThemeSwitcherDropdown = React.forwardRef<HTMLDivElement, ThemeSwitcherVari
           )}
         >
           {[
-            { id: "light", icon: Sun, label: "Light" },
-            { id: "dark", icon: Moon, label: "Dark" },
-            { id: "system", icon: Monitor, label: "System" },
+            { id: "light", icon: Sun, label: "밝은 화면" },
+            { id: "dark", icon: Moon, label: "어두운 화면" },
+            { id: "system", icon: Monitor, label: "시스템 설정" },
           ].map((item) => {
             const Icon = item.icon;
             const isActive = theme === item.id;

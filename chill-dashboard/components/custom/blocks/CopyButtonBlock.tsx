@@ -104,9 +104,9 @@ export const CopyButton = forwardRef<HTMLButtonElement, CopyButtonProps>(
   (
     {
       value,
-      label = "Copy",
-      copiedLabel = "Copied!",
-      errorLabel = "Failed",
+      label = "복사",
+      copiedLabel = "복사됨",
+      errorLabel = "실패",
       iconOnly = false,
       timeout = 2000,
       variant = "solid",
@@ -158,7 +158,7 @@ export const CopyButton = forwardRef<HTMLButtonElement, CopyButtonProps>(
         type="button"
         disabled={disabled}
         aria-live="polite"
-        aria-label={iconOnly ? (isCopied ? "Copied" : "Copy to clipboard") : undefined}
+        aria-label={iconOnly ? (isCopied ? "복사됨" : "클립보드에 복사") : undefined}
         data-state={status}
         onClick={(e) => {
           onClick?.(e);

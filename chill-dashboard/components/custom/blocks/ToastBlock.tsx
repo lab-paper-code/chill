@@ -25,6 +25,7 @@ const BACK_OUT =
 const POWER2_IN = "cubic-bezier(0.3333, 0, 0.6667, 0)";
 const ENTER_MS = 400;
 const EXIT_MS = 300;
+const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ==========================================
 // INDIVIDUAL TOAST COMPONENT (Web Animations API)
@@ -37,9 +38,11 @@ interface ToastItemProps extends ToastProps {
   paused?: boolean;
 }
 
-const ToastItem = ({ id, title, description, type = "default", duration = 5000, action, onRemove, variant, position, paused = false }: ToastItemProps) => {
+const ToastItem = ({ id, title, description, type = "default", duration, action, onRemove, variant, position, paused = false }: ToastItemProps) => {
   const toastRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
+  // CHILL patch: focus inside the toast pauses the timer too (keyboard users reading or closing it).
+  const [focused, setFocused] = useState(false);
   // Set once the exit starts: the close button, the action and the timer can
   // all ask for it, and only the first request counts.
   const closing = useRef(false);
@@ -56,9 +59,12 @@ const ToastItem = ({ id, title, description, type = "default", duration = 5000, 
     const el = toastRef.current;
     if (!el || closing.current) return;
     closing.current = true;
-    const now = getComputedStyle(el);
-    const from = { opacity: now.opacity, transform: now.transform };
-    enterRef.current?.cancel();
+    // CHILL patch: a focused toast hands focus to the next toast's close button, else to the page body.
+    el.dataset.closing = "";
+    if (el.contains(document.activeElement)) {
+      const next = document.querySelector<HTMLElement>("[data-toast]:not([data-closing]) [data-toast-close]");
+      (next ?? document.getElementById("main"))?.focus();
+    }
     let removed = false;
     const remove = () => {
       if (removed) return;
@@ -66,6 +72,10 @@ const ToastItem = ({ id, title, description, type = "default", duration = 5000, 
       if (removeTimer.current) clearTimeout(removeTimer.current);
       onRemove(id);
     };
+    if (reducedMotion()) return remove();
+    const now = getComputedStyle(el);
+    const from = { opacity: now.opacity, transform: now.transform };
+    enterRef.current?.cancel();
     el.animate(
       [from, { opacity: 0, transform: `translateY(${yOffset}px) scale(0.9)` }],
       { duration: EXIT_MS, easing: POWER2_IN, fill: "forwards" },
@@ -74,10 +84,10 @@ const ToastItem = ({ id, title, description, type = "default", duration = 5000, 
     removeTimer.current = setTimeout(remove, EXIT_MS + 50);
   }, [id, onRemove, yOffset]);
 
-  // Handle Entrance
+  // Handle Entrance (Web Animations ignore the CSS reduced-motion rule, so check it here).
   useEffect(() => {
     const el = toastRef.current;
-    if (!el || closing.current) return;
+    if (!el || closing.current || reducedMotion()) return;
     const enter = (enterRef.current = el.animate(
       [
         { opacity: 0, transform: `translateY(${yOffset}px) scale(0.9)` },
@@ -99,13 +109,15 @@ const ToastItem = ({ id, title, description, type = "default", duration = 5000, 
 
   // Auto-dismiss with a pausable timer: hovering the card (or the expanded
   // stack) stops the clock and resumes from where it left off.
-  const remaining = useRef(duration);
+  // CHILL patch: errors stay longer than confirmations; `duration: 0` keeps a toast until closed.
+  const lifetime = duration ?? (type === "error" ? 10_000 : type === "warning" ? 8_000 : 5_000);
+  const remaining = useRef(lifetime);
   const startedAt = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isPaused = paused || hovered;
+  const isPaused = paused || hovered || focused;
 
   useEffect(() => {
-    if (duration <= 0 || isPaused) return;
+    if (lifetime <= 0 || isPaused) return;
     startedAt.current = Date.now();
     timer.current = setTimeout(handleClose, remaining.current);
     return () => {
@@ -114,7 +126,7 @@ const ToastItem = ({ id, title, description, type = "default", duration = 5000, 
       timer.current = null;
       remaining.current = Math.max(0, remaining.current - (Date.now() - startedAt.current));
     };
-  }, [duration, isPaused, handleClose]);
+  }, [lifetime, isPaused, handleClose]);
 
   // Styling logic & type specific colors
   // CHILL patch: status colours come from the theme tokens (--ok, --fail, --warn, --primary).
@@ -182,10 +194,13 @@ const ToastItem = ({ id, title, description, type = "default", duration = 5000, 
   return (
     <div
       ref={toastRef}
+      data-toast=""
       className={cn("pointer-events-auto flex w-full max-w-sm items-start gap-4 rounded-xl p-4 transition-colors", variantStyles[variant])}
       style={glassStyle}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}
     >
       {Icon && (
         <Icon
@@ -199,7 +214,7 @@ const ToastItem = ({ id, title, description, type = "default", duration = 5000, 
       )}
 
       <div className="flex flex-col gap-1 w-full min-w-0">
-        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <p className="text-sm font-semibold text-foreground">{title}</p>
         {description && <p className="text-sm text-muted-foreground">{description}</p>}
 
         {action && (
@@ -209,7 +224,7 @@ const ToastItem = ({ id, title, description, type = "default", duration = 5000, 
         )}
       </div>
 
-      <button type="button" aria-label="알림 닫기" onClick={handleClose} className={cn("shrink-0 p-1 rounded-md opacity-60 hover:opacity-100 hover:bg-muted transition-all", isGlass && "self-center")}>
+      <button type="button" data-toast-close="" aria-label="알림 닫기" onClick={handleClose} className={cn("shrink-0 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors", isGlass && "self-center")}>
         <X className="w-4 h-4" aria-hidden="true" />
       </button>
     </div>
@@ -265,10 +280,15 @@ export function ToastProvider({ children, variant = "default", position = "botto
   const [toasts, setToasts] = useState<ToastProps[]>([]);
   const [hovered, setHovered] = useState(false);
   const [heights, setHeights] = useState<Record<string, number>>({});
+  // CHILL patch: text for the two live regions; a trailing space toggles so a repeated message is announced again.
+  const [announced, setAnnounced] = useState({ polite: "", alert: "" });
 
   const toast = useCallback((props: Omit<ToastProps, "id">) => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, ...props }]);
+    const channel = props.type === "error" ? "alert" : "polite";
+    const text = [props.title, props.description, props.action && "동작 있음"].filter(Boolean).join(". ");
+    setAnnounced((prev) => ({ ...prev, [channel]: prev[channel] === text ? `${text}\u00a0` : text }));
   }, []);
 
   const dismiss = useCallback((id: string) => {
@@ -361,13 +381,24 @@ export function ToastProvider({ children, variant = "default", position = "botto
           })}
         </div>
       ) : (
-        // CHILL patch: one polite live region announces every toast.
-        <div role="status" aria-live="polite" className={cn("fixed z-[100] flex max-h-screen w-full sm:w-auto p-4 sm:p-0 gap-3 pointer-events-none", positionClasses[position])}>
+        // CHILL patch: a named region in one place; bottom right, lifted above a sticky FormActions bar.
+        <div
+          role="region"
+          aria-label="알림"
+          className={cn(
+            "fixed z-[100] flex max-h-screen gap-3 pointer-events-none",
+            position === "bottom-right"
+              ? "inset-x-4 bottom-4 flex-col-reverse items-end sm:left-auto sm:w-96 [body:has([data-form-actions])_&]:bottom-20"
+              : cn("w-full sm:w-auto p-4 sm:p-0", positionClasses[position]),
+          )}
+        >
           {toasts.map((t) => (
             <ToastItem key={t.id} {...t} onRemove={dismiss} variant={variant} position={position} />
           ))}
         </div>
       )}
+      <div aria-live="polite" className="sr-only">{announced.polite}</div>
+      <div role="alert" className="sr-only">{announced.alert}</div>
     </ToastContext.Provider>
   );
 }

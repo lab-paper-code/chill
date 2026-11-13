@@ -1,45 +1,28 @@
 "use client";
 
+// Avara UI Select, rebuilt for CHILL on native controls. The Avara listbox had no
+// keyboard or ARIA support, so the props stay and the internals changed:
+// - single choice is a styled native <select>: arrow keys, type-ahead, Esc, focus
+//   return, the platform picker on phones, and it works inside modal dialogs;
+// - `multiple` is a button that opens a native popover (top layer, light dismiss,
+//   Esc, focus return) holding a group of real checkboxes.
+// `variant` and `color` are accepted for compatibility and ignored: one look, theme tokens.
 import { cn } from "@/lib/utils";
-import { AlertCircle, Check, ChevronDown, Search, X } from "lucide-react";
-import React, { forwardRef, useEffect, useMemo, useRef, useState } from "react";
-import { getThemeStyles } from "./select-theme";
+import { AlertCircle, ChevronDown } from "lucide-react";
+import React, { forwardRef, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
-// ==========================================
-// DYNAMIC THEME ENGINE
-// ==========================================
 export type SelectColor = "indigo" | "rose" | "emerald" | "zinc" | string;
 export type SelectVariant = "default" | "filled" | "underlined" | "glow" | "glass" | "liquid-glass";
 export type SelectSize = "sm" | "md" | "lg";
 
-// ==========================================
-// SELECT COMPONENT
-// ==========================================
 export interface SelectOption {
   label: string;
   value: string;
+  /** Ignored: native options hold text only. */
   icon?: React.ElementType;
-  group?: string; // Added for nested/grouped options
+  /** Options sharing a group are listed under its heading. */
+  group?: string;
 }
-
-// Walks up the tree to the first ancestor that clips its overflow (a modal
-// shell, a scroll pane, a card with overflow-hidden). That element — not the
-// viewport — is what actually crops the dropdown, so it defines the space the
-// menu has to work with. Returns null when nothing clips, meaning the viewport
-// is the only bound. Only overflow-y counts: the menu grows vertically, and a
-// box that clips just sideways (overflow-x: clip, e.g. a slide-in stage) leaves
-// it free to hang below — treating that as a clip flipped the menu up into it.
-const getClippingRect = (el: HTMLElement): DOMRect | null => {
-  let node = el.parentElement;
-  while (node && node !== document.body) {
-    const { overflowY } = window.getComputedStyle(node);
-    if (/(auto|scroll|hidden|clip)/.test(overflowY)) {
-      return node.getBoundingClientRect();
-    }
-    node = node.parentElement;
-  }
-  return null;
-};
 
 /** Everything the two selection modes share. */
 interface SelectBlockBaseProps {
@@ -48,14 +31,21 @@ interface SelectBlockBaseProps {
   variant?: SelectVariant;
   color?: SelectColor;
   inputSize?: SelectSize;
+  /** Visible label above the control. */
   label?: string;
   helperText?: string;
   error?: string;
+  /** Leading content inside the box, e.g. a short label prefix. */
   icon?: React.ReactNode;
   disabled?: boolean;
   className?: string;
-  /** Adds a filter box above the options. */
+  /** Multiple only: a filter box above the options. Single choice uses the native type-ahead. */
   searchable?: boolean;
+  /** Accessible name when there is no visible `label`. */
+  "aria-label"?: string;
+  id?: string;
+  name?: string;
+  required?: boolean;
 }
 
 /** The default: one option at a time, so the value is a plain string. */
@@ -74,519 +64,183 @@ export interface SelectBlockMultipleProps extends SelectBlockBaseProps {
 
 /**
  * Discriminated on `multiple`, so a single select hands your callback a
- * `string` and a multi select hands it a `string[]` — neither needs a cast,
- * and passing a `setState` straight in just works.
+ * `string` and a multi select hands it a `string[]`.
  */
 export type SelectBlockProps = SelectBlockSingleProps | SelectBlockMultipleProps;
 
-/** The two modes collapsed, which is what the implementation works with. */
 type SelectBlockImplProps = SelectBlockBaseProps & {
   multiple?: boolean;
   value?: string | string[];
   onChange?: (value: string | string[]) => void;
 };
 
-const SelectBlockImpl = forwardRef<HTMLDivElement, SelectBlockImplProps>(
-  (
-    {
-      options = [],
-      value,
-      onChange,
-      placeholder = "Select an option",
-      variant = "default",
-      color = "primary",
-      inputSize = "md",
-      label,
-      helperText,
-      error,
-      icon,
-      disabled = false,
-      className,
-      multiple = false,
-      searchable = false,
-    },
-    ref,
-  ) => {
-    const [isOpen, setIsOpen] = useState(false);
-    const [dropUp, setDropUp] = useState(false);
-    const [searchQuery, setSearchQuery] = useState("");
-    const selectRef = useRef<HTMLDivElement>(null);
-    const dropdownRef = useRef<HTMLDivElement>(null);
-    const searchInputRef = useRef<HTMLInputElement>(null);
-    const { theme, style } = getThemeStyles(color);
+const heights: Record<SelectSize, string> = { sm: "h-8", md: "h-9", lg: "h-10" };
+type Naming = { "aria-label"?: string; "aria-labelledby"?: string };
 
-    // selectRef drives the click-outside and drop-direction logic, so the
-    // forwarded ref is mirrored onto it rather than replacing it.
-    React.useImperativeHandle(ref, () => selectRef.current as HTMLDivElement);
+/** Options in order, under their group headings. */
+function grouped(options: SelectOption[]) {
+  const groups = new Map<string, SelectOption[]>();
+  for (const option of options) {
+    const key = option.group ?? "";
+    groups.set(key, [...(groups.get(key) ?? []), option]);
+  }
+  return [...groups];
+}
 
-    const hasError = Boolean(error);
+const SelectBlockImpl = forwardRef<HTMLDivElement, SelectBlockImplProps>((props, ref) => {
+  const { options = [], value, onChange, placeholder = "선택", inputSize = "md", label, helperText, error, icon, disabled = false, className, multiple = false, searchable = false, id, name, required } = props;
+  const auto = useId();
+  const controlId = id ?? `${auto}-control`;
+  const iconId = `${auto}-icon`;
+  const noteId = `${auto}-note`;
+  const note = error || helperText;
+  // Name: the visible label, else aria-label, else the visible prefix, else the placeholder.
+  const naming = label ? {} : props["aria-label"] ? { "aria-label": props["aria-label"] } : icon ? { "aria-labelledby": iconId } : { "aria-label": placeholder };
+  const frame = cn(
+    "relative flex w-full min-w-0 items-center gap-2 rounded-md border bg-card pl-3 text-sm transition-colors",
+    "has-[>:is(select,button):focus-visible]:outline-2 has-[>:is(select,button):focus-visible]:outline-offset-2 has-[>:is(select,button):focus-visible]:outline-ring",
+    heights[inputSize],
+    error ? "border-fail" : "border-input hover:border-foreground/30",
+    disabled && "cursor-not-allowed opacity-50",
+  );
+  const control = "h-full min-w-0 flex-1 cursor-pointer truncate bg-transparent pr-8 text-left outline-none disabled:cursor-not-allowed";
+  const chevron = <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-2.5 size-4 text-muted-foreground" />;
 
-    // Filter options based on search
-    const filteredOptions = useMemo(() => {
-      if (!searchQuery) return options;
-      return options.filter((opt) =>
-        opt.label.toLowerCase().includes(searchQuery.toLowerCase()),
-      );
-    }, [options, searchQuery]);
-
-    // Group options if "group" property is provided
-    const groupedOptions = useMemo(() => {
-      return filteredOptions.reduce(
-        (acc, opt) => {
-          const group = opt.group || "ungrouped";
-          if (!acc[group]) acc[group] = [];
-          acc[group].push(opt);
-          return acc;
-        },
-        {} as Record<string, SelectOption[]>,
-      );
-    }, [filteredOptions]);
-
-    // Focus search input automatically when opened
-    useEffect(() => {
-      if (isOpen && searchable && searchInputRef.current) {
-        setTimeout(() => searchInputRef.current?.focus(), 50);
-      }
-      if (!isOpen) setSearchQuery("");
-    }, [isOpen, searchable]);
-
-    // Close dropdown on click outside
-    useEffect(() => {
-      const handleClickOutside = (event: MouseEvent) => {
-        if (
-          selectRef.current &&
-          !selectRef.current.contains(event.target as Node)
-        ) {
-          setIsOpen(false);
-        }
-      };
-      document.addEventListener("mousedown", handleClickOutside);
-      return () =>
-        document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
-
-    // Decide which way the menu opens *before* it becomes visible, so it never
-    // renders in the wrong place for a frame. The menu is always mounted (it is
-    // only hidden via opacity), so its height is measurable while closed.
-    const handleToggle = () => {
-      if (!isOpen && selectRef.current) {
-        const trigger = selectRef.current.getBoundingClientRect();
-        const clip = getClippingRect(selectRef.current);
-        const menuHeight = dropdownRef.current?.offsetHeight ?? 240;
-
-        const bottomBound = Math.min(
-          window.innerHeight,
-          clip ? clip.bottom : Number.POSITIVE_INFINITY,
-        );
-        const topBound = Math.max(0, clip ? clip.top : 0);
-
-        const spaceBelow = bottomBound - trigger.bottom - 8;
-        const spaceAbove = trigger.top - topBound - 8;
-
-        // Only flip when below genuinely can't fit and above is roomier.
-        setDropUp(spaceBelow < menuHeight && spaceAbove > spaceBelow);
-      }
-      setIsOpen(!isOpen);
-    };
-
-    const handleSelect = (optValue: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (multiple) {
-        const currentValues = Array.isArray(value) ? value : [];
-        const newValues = currentValues.includes(optValue)
-          ? currentValues.filter((v) => v !== optValue)
-          : [...currentValues, optValue];
-        if (onChange) onChange(newValues);
-      } else {
-        if (onChange) onChange(optValue);
-        setIsOpen(false);
-      }
-    };
-
-    const handleRemoveTag = (optValue: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (multiple && Array.isArray(value)) {
-        if (onChange) onChange(value.filter((v) => v !== optValue));
-      }
-    };
-
-    // --- Size Classes ---
-    const sizeClasses = {
-      sm: {
-        wrapper: "min-h-9 px-3 py-1.5",
-        text: "text-xs",
-        icon: "w-3.5 h-3.5",
-        option: "px-3 py-2 text-xs",
-        tag: "px-1.5 py-0.5 text-[10px]",
-      },
-      md: {
-        wrapper: "min-h-9 px-3 py-1.5",
-        text: "text-sm",
-        icon: "w-4 h-4",
-        option: "px-4 py-2.5 text-sm",
-        tag: "px-2 py-1 text-xs",
-      },
-      lg: {
-        wrapper: "min-h-14 px-5 py-3.5",
-        text: "text-base",
-        icon: "w-5 h-5",
-        option: "px-5 py-3 text-base",
-        tag: "px-2.5 py-1 text-sm",
-      },
-    };
-    const s = sizeClasses[inputSize as SelectSize] || sizeClasses.md;
-
-    // --- Variant Styles ---
-    const getVariantStyles = () => {
-      const baseWrapper = cn(
-        "relative flex items-center justify-between w-full transition-all duration-300 cursor-pointer outline-none",
-        s.wrapper,
-      );
-
-      if (disabled)
-        return {
-          wrapper: cn(
-            baseWrapper,
-            "opacity-50 cursor-not-allowed border border-border bg-muted",
-          ),
-          active: "",
-        };
-      if (hasError)
-        return {
-          wrapper: cn(
-            baseWrapper,
-            "border border-fail bg-card",
-            variant === "underlined" && "border-0 border-b-2 rounded-none",
-            variant !== "underlined" && "rounded-md",
-          ),
-          active: "ring-2 ring-fail/20",
-        };
-
-      switch (variant) {
-        case "filled":
-          return {
-            wrapper: cn(
-              baseWrapper,
-              "bg-muted border border-transparent rounded-xl",
-            ),
-            active: cn("bg-background ring-4", theme.ring),
-          };
-        case "underlined":
-          return {
-            wrapper: cn(
-              baseWrapper,
-              "border-b-2 border-border bg-transparent rounded-none px-0",
-            ),
-            active: theme.ring.split(" ")[1],
-          };
-        case "glow":
-          return {
-            wrapper: cn(
-              baseWrapper,
-              "bg-background border border-border rounded-xl shadow-sm",
-            ),
-            active: theme.glow,
-          };
-        case "liquid-glass":
-          return {
-            wrapper: cn(
-              baseWrapper,
-              "min-h-[38px] px-3 py-2 text-sm border-white/25 text-white bg-white/10 hover:bg-white/15 focus:bg-white/20 focus:border-white/50 border rounded-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.2)] transition-all",
-            ),
-            active: "ring-2 ring-white/30 border-white/50 bg-white/20",
-          };
-        case "glass":
-          return {
-            wrapper: cn(
-              baseWrapper,
-              "min-h-[38px] px-3 py-2 text-sm border-black/15 text-neutral-900 bg-black/5 hover:bg-black/10 focus:bg-white/40 focus:border-black/30 dark:border-white/25 dark:text-white dark:bg-white/10 dark:hover:bg-white/15 dark:focus:bg-white/20 dark:focus:border-white/50 border rounded-xl shadow-xs transition-all",
-            ),
-            active: "ring-2 ring-black/10 dark:ring-white/20 border-black/30 dark:border-white/40 bg-black/10 dark:bg-white/15",
-          };
-        case "default":
-        default:
-          return {
-            wrapper: cn(
-              baseWrapper,
-              "bg-card border border-input rounded-md",
-            ),
-            active: cn("ring-2", theme.ring),
-          };
-      }
-    };
-
-    const styles = getVariantStyles();
-
-    // Renders the selected content (Tags for multi, text for single)
-    const renderSelectedContent = () => {
-      if (multiple && Array.isArray(value) && value.length > 0) {
-        return (
-          <div className="flex flex-wrap items-center gap-1.5 w-full pr-6 overflow-hidden">
-            {value.map((val) => {
-              const opt = options.find((o) => o.value === val);
-              if (!opt) return null;
-              return (
-                <span
-                  key={val}
-                  onClick={(e) => handleRemoveTag(val, e)}
-                  className={cn(
-                    "inline-flex items-center gap-1 font-semibold rounded-md border border-transparent hover:border-red-200 dark:hover:border-red-900 transition-colors",
-                    s.tag,
-                    theme.bgSoft,
-                  )}
-                >
-                  {opt.label}
-                  <X
-                    className={cn("shrink-0 hover:text-red-500", s.icon)}
-                    style={{ width: "0.8em", height: "0.8em" }}
-                  />
-                </span>
-              );
-            })}
-          </div>
-        );
-      }
-
-      const singleOption = options.find((opt) => opt.value === value);
-      return (
-        <span
-          className={cn(
-            "truncate pr-6",
-            s.text,
-            !singleOption
-              ? variant === "liquid-glass"
-                ? "text-white/60"
-                : variant === "glass"
-                  ? "text-neutral-500 dark:text-white/60"
-                  : "text-muted-foreground"
-              : variant === "liquid-glass"
-                ? "text-white font-medium"
-                : variant === "glass"
-                  ? "text-neutral-900 font-medium dark:text-white"
-                  : "text-foreground",
-          )}
-        >
-          {singleOption ? singleOption.label : placeholder}
-        </span>
-      );
-    };
-
-    return (
-      <div
-        ref={selectRef}
-        className={cn("flex flex-col gap-1.5 w-full relative", className)}
-        style={style}
-      >
-        {label && (
-          <label
-            className={cn(
-              "text-sm font-semibold",
-              hasError
-                ? "text-fail"
-                : variant === "liquid-glass"
-                  ? "text-white/90"
-                  : variant === "glass"
-                    ? "text-white/90 dark:text-white/90"
-                    : "text-foreground",
-              disabled && "opacity-50",
-            )}
-          >
-            {label}
-          </label>
-        )}
-
-        {/* Trigger Button */}
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={handleToggle}
-          className={cn(
-            styles.wrapper,
-            isOpen && styles.active,
-            multiple && Array.isArray(value) && value.length > 0 && "py-1.5",
-          )}
-        >
-          <div className="flex items-center gap-2 overflow-hidden w-full">
-            {icon && (
-              <div
-                className={cn(
-                  "shrink-0 text-muted-foreground",
-                  isOpen && theme.text,
-                )}
-              >
-                {icon}
-              </div>
-            )}
-            {renderSelectedContent()}
-          </div>
-
-          <div className="absolute right-4 flex items-center gap-2 shrink-0 bg-transparent">
-            {hasError && <AlertCircle className={cn(s.icon, "text-red-500")} />}
-            <ChevronDown
-              className={cn(
-                s.icon,
-                variant === "liquid-glass"
-                  ? "text-white/80"
-                  : variant === "glass"
-                    ? "text-neutral-700 dark:text-white/70"
-                    : "text-muted-foreground",
-                "transition-transform duration-300",
-                isOpen && "rotate-180",
-                isOpen && theme.text,
-              )}
-            />
-          </div>
-        </button>
-
-        {/* Dropdown Menu */}
-        <div
-          ref={dropdownRef}
-          className={cn(
-            "absolute left-0 right-0 z-50 overflow-hidden border rounded-2xl shadow-2xl transition-all duration-200 ease-out",
-            variant === "liquid-glass"
-              ? "bg-black/50 backdrop-blur-3xl border border-white/30 text-white shadow-[0_25px_60px_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.4),inset_-1px_-1px_1px_rgba(255,255,255,0.15)]"
-              : variant === "glass"
-                ? "bg-white/50 dark:bg-black/60 backdrop-blur-3xl border border-white/50 dark:border-white/20 text-neutral-900 dark:text-white shadow-2xl"
-                : "bg-popover text-popover-foreground border-border",
-            dropUp
-              ? cn(
-                  "origin-bottom",
-                  variant === "underlined"
-                    ? "bottom-[100%]"
-                    : "bottom-[calc(100%+8px)]",
-                )
-              : cn(
-                  "origin-top",
-                  variant === "underlined"
-                    ? "top-[100%]"
-                    : "top-[calc(100%+8px)]",
-                ),
-            isOpen
-              ? "opacity-100 scale-y-100 translate-y-0 pointer-events-auto"
-              : cn(
-                  "opacity-0 scale-y-95 pointer-events-none",
-                  dropUp ? "translate-y-2" : "-translate-y-2",
-                ),
-          )}
-        >
-          {searchable && (
-            <div className="p-2 border-b border-border bg-muted/50">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input
-                  ref={searchInputRef}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  placeholder="Search options..."
-                  className="w-full pl-9 pr-3 py-2 bg-card border border-border rounded-lg text-sm text-foreground outline-none focus:ring-2 focus:border-transparent transition-all"
-                  style={{ "--tw-ring-color": `var(--theme-color)` } as React.CSSProperties}
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="max-h-60 overflow-y-auto p-1 flex flex-col gap-0.5 scrollbar-thin scrollbar-thumb-border">
-            {Object.keys(groupedOptions).length === 0 ? (
-              <div className="px-4 py-3 text-sm text-muted-foreground text-center">
-                No results found
-              </div>
-            ) : (
-              Object.entries(groupedOptions).map(([group, opts]) => (
-                <div key={group} className="flex flex-col gap-0.5">
-                  {/* Group Header */}
-                  {group !== "ungrouped" && (
-                    <div className="px-3 py-2 mt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      {group}
-                    </div>
-                  )}
-                  {/* Options */}
-                  {opts.map((opt) => {
-                    const isSelected =
-                      multiple && Array.isArray(value)
-                        ? value.includes(opt.value)
-                        : value === opt.value;
-                    const OptIcon = opt.icon;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={(e) => handleSelect(opt.value, e)}
-                        className={cn(
-                          "w-full flex items-center justify-between rounded-lg transition-colors font-medium text-left cursor-pointer active:scale-[0.98]",
-                          s.option,
-                          isSelected
-                            ? variant === "liquid-glass"
-                              ? "bg-white/30 text-white font-bold border border-white/40 shadow-[0_0_10px_rgba(255,255,255,0.25),inset_0_1px_1px_rgba(255,255,255,0.4)]"
-                              : cn(theme.bgSoft, theme.text, "font-semibold shadow-xs")
-                            : cn(
-                                variant === "liquid-glass"
-                                  ? "text-white hover:bg-white/20"
-                                  : variant === "glass"
-                                    ? "text-neutral-900 dark:text-white/90"
-                                    : "text-foreground",
-                                theme.hoverBg,
-                              ),
-                        )}
-                      >
-                        <div className="flex items-center gap-2">
-                          {multiple && (
-                            <div
-                              className={cn(
-                                "w-4 h-4 rounded-[4px] border flex items-center justify-center transition-colors",
-                                isSelected
-                                  ? cn(theme.bg, "border-transparent")
-                                  : "border-input bg-card",
-                              )}
-                            >
-                              {/* No hardcoded colour: theme.bg already carries the
-                                  correct contrasting text colour for each theme
-                                  (text-white for indigo/rose/hex, but
-                                  text-primary-foreground for "primary", which
-                                  inverts in dark mode). */}
-                              {isSelected && (
-                                <Check className="w-3 h-3" strokeWidth={3} />
-                              )}
-                            </div>
-                          )}
-                          {OptIcon && <OptIcon className={s.icon} />}
-                          <span>{opt.label}</span>
-                        </div>
-                        {isSelected && !multiple && (
-                          <Check
-                            className={cn(s.icon, theme.text)}
-                            strokeWidth={3}
-                          />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))
-            )}
-          </div>
+  return (
+    <div ref={ref} className={cn("flex w-full min-w-0 flex-col gap-1.5", className)}>
+      {label && <label htmlFor={controlId} className={cn("text-sm font-medium", error ? "text-fail" : "text-foreground", disabled && "opacity-50")}>{label}</label>}
+      {multiple ? (
+        <MultiSelect
+          frame={frame} control={control} chevron={chevron} controlId={controlId} naming={naming} icon={icon} iconId={iconId}
+          options={options} value={Array.isArray(value) ? value : []} onChange={next => onChange?.(next)}
+          placeholder={placeholder} disabled={disabled} searchable={searchable} legend={label ?? props["aria-label"] ?? placeholder}
+          describedBy={note ? noteId : undefined}
+        />
+      ) : (
+        <div className={frame}>
+          {icon && <span id={iconId} className="shrink-0 text-muted-foreground">{icon}</span>}
+          <SingleSelect
+            className={control} id={controlId} name={name} required={required} disabled={disabled} naming={naming}
+            options={options} value={typeof value === "string" ? value : ""} onChange={next => onChange?.(next)}
+            placeholder={placeholder} describedBy={note ? noteId : undefined} invalid={!!error}
+          />
+          {chevron}
         </div>
-
-        {error && (
-          <p className="text-xs font-semibold text-red-500 flex items-center gap-1 mt-0.5">
-            <AlertCircle className="w-3.5 h-3.5" /> {error}
-          </p>
-        )}
-        {helperText && !error && (
-          <p className="text-xs font-medium text-muted-foreground mt-0.5">
-            {helperText}
-          </p>
-        )}
-      </div>
-    );
-  },
-);
+      )}
+      {note && (
+        <p id={noteId} className={cn("flex items-center gap-1 text-xs", error ? "font-medium text-fail" : "text-muted-foreground")}>
+          {error && <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" />}{note}
+        </p>
+      )}
+    </div>
+  );
+});
 SelectBlockImpl.displayName = "SelectBlock";
 
-/**
- * The implementation is written against the collapsed props; this cast is
- * what hands callers the discriminated pair instead.
- */
-export const SelectBlock = SelectBlockImpl as React.ForwardRefExoticComponent<
-  SelectBlockProps & React.RefAttributes<HTMLDivElement>
->;
+function SingleSelect({ options, value, onChange, placeholder, naming, describedBy, invalid, className, ...rest }: {
+  options: SelectOption[]; value: string; onChange: (value: string) => void; placeholder: string
+  naming: Naming; describedBy?: string; invalid: boolean; className: string
+  id: string; name?: string; required?: boolean; disabled: boolean
+}) {
+  const known = options.some(option => option.value === value);
+  return (
+    <select
+      {...rest} {...naming}
+      value={known ? value : ""}
+      onChange={event => onChange(event.target.value)}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
+      className={cn(className, "appearance-none [&_option]:bg-card [&_option]:text-foreground", !known && "text-muted-foreground")}
+    >
+      {!known && <option value="" disabled>{placeholder}</option>}
+      {grouped(options).map(([group, items]) => {
+        const list = items.map(option => <option key={option.value} value={option.value}>{option.label}</option>);
+        return group ? <optgroup key={group} label={group}>{list}</optgroup> : <React.Fragment key="">{list}</React.Fragment>;
+      })}
+    </select>
+  );
+}
+
+function MultiSelect({ frame, control, chevron, controlId, naming, icon, iconId, options, value, onChange, placeholder, disabled, searchable, legend, describedBy }: {
+  frame: string; control: string; chevron: React.ReactNode; controlId: string; naming: Naming
+  icon: React.ReactNode; iconId: string; options: SelectOption[]; value: string[]; onChange: (value: string[]) => void
+  placeholder: string; disabled: boolean; searchable: boolean; legend: string; describedBy?: string
+}) {
+  const popoverId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const shown = useMemo(() => (query ? options.filter(option => option.label.toLowerCase().includes(query.toLowerCase())) : options), [options, query]);
+  const labels = options.filter(option => value.includes(option.value)).map(option => option.label);
+  const summary = labels.length === 0 ? placeholder : labels.length <= 2 ? labels.join(", ") : `${labels[0]} 외 ${labels.length - 1}`;
+
+  // Native popovers centre in the viewport; tether this one under its trigger, flipping up when below is short.
+  const place = useCallback(() => {
+    const trigger = triggerRef.current?.parentElement, popover = popoverRef.current;
+    if (!trigger || !popover) return;
+    const box = trigger.getBoundingClientRect();
+    const height = popover.offsetHeight;
+    const below = window.innerHeight - box.bottom - 8;
+    const top = below < height && box.top - 8 > below ? box.top - height - 4 : box.bottom + 4;
+    Object.assign(popover.style, { top: `${Math.max(4, top)}px`, left: `${Math.min(box.left, window.innerWidth - Math.max(box.width, 224) - 4)}px`, width: `${Math.max(box.width, 224)}px` });
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, place]);
+
+  return (
+    <div className={frame}>
+      {icon && <span id={iconId} className="shrink-0 text-muted-foreground">{icon}</span>}
+      <button
+        ref={triggerRef} id={controlId} type="button" popoverTarget={popoverId} disabled={disabled}
+        {...naming} aria-describedby={describedBy}
+        className={cn(control, labels.length === 0 && "text-muted-foreground")}
+      >
+        {summary}
+      </button>
+      {chevron}
+      <div
+        ref={popoverRef} id={popoverId} popover="auto"
+        onBeforeToggle={event => { if (event.newState === "open") place(); }}
+        onToggle={event => {
+          const next = event.newState === "open";
+          setOpen(next);
+          if (next) { place(); popoverRef.current?.querySelector("input")?.focus(); } else setQuery("");
+        }}
+        className="inset-auto m-0 overflow-hidden rounded-md border border-border bg-card p-0 text-sm text-foreground shadow-md"
+      >
+        {searchable && (
+          <div className="border-b border-border p-2">
+            <input type="search" value={query} onChange={event => setQuery(event.target.value)} aria-label="검색" placeholder="검색" className="h-8 w-full rounded-md border border-input bg-card px-2 text-sm outline-none focus-visible:border-primary" />
+          </div>
+        )}
+        <fieldset className="max-h-60 min-w-0 overflow-y-auto p-1">
+          <legend className="sr-only">{legend}</legend>
+          {shown.length === 0 ? <p className="px-2 py-2 text-muted-foreground">결과 없음</p> : grouped(shown).map(([group, items]) => (
+            <div key={group} role={group ? "group" : undefined} aria-label={group || undefined}>
+              {group && <div aria-hidden="true" className="px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground">{group}</div>}
+              {items.map(option => {
+                const checked = value.includes(option.value);
+                return (
+                  <label key={option.value} className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-muted has-[:focus-visible]:bg-muted">
+                    <input type="checkbox" className="size-4 shrink-0 accent-primary" checked={checked} onChange={() => onChange(checked ? value.filter(item => item !== option.value) : [...value, option.value])} />
+                    <span className="min-w-0 truncate">{option.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          ))}
+        </fieldset>
+      </div>
+    </div>
+  );
+}
+
+export const SelectBlock = SelectBlockImpl as React.ForwardRefExoticComponent<SelectBlockProps & React.RefAttributes<HTMLDivElement>>;

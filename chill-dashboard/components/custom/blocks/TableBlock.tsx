@@ -252,16 +252,10 @@ export const TableHeading = forwardRef<HTMLDivElement, TableHeadingProps>(
         {(title || description) && (
           <div className="flex flex-col gap-0.5">
             {title && (
-              <h3
-                className={cn(
-                  "text-base lg:text-lg text-foreground",
-                  variant === "soft"
-                    ? "font-medium tracking-[-0.01em]"
-                    : "font-semibold tracking-tight",
-                )}
-              >
+              // CHILL patch: a table title is a page region heading, same size as Section.
+              <h2 className="text-sm font-semibold text-foreground">
                 {title}
-              </h3>
+              </h2>
             )}
             {description && (
               <p className="text-sm text-muted-foreground">{description}</p>
@@ -311,8 +305,9 @@ export const TableContent = forwardRef<
 
   if (!soft) {
     return (
-      // CHILL patch: a named, keyboard-scrollable region when the table overflows.
-      <div className="w-full overflow-x-auto" role={label ? "region" : undefined} aria-label={label} tabIndex={label ? 0 : undefined}>
+      // CHILL patch: a named, keyboard-scrollable region when the table overflows. `relative` makes it the
+      // containing block of screen-reader-only text in cells, which would otherwise widen the whole page.
+      <div className="relative w-full overflow-x-auto" role={label ? "region" : undefined} aria-label={label} tabIndex={label ? 0 : undefined}>
         <table
           ref={ref}
           className={cn(
@@ -684,7 +679,7 @@ export const TableEmpty = forwardRef<HTMLTableCellElement, TableEmptyProps>(
             )}
             {...props}
           >
-            {children ?? "No data available."}
+            {children ?? "데이터 없음"}
           </td>
         </tr>
       );
@@ -783,7 +778,7 @@ export const TableExpandToggle = forwardRef<
       ref={ref}
       type="button"
       aria-expanded={open}
-      aria-label={open ? "Collapse row" : "Expand row"}
+      aria-label={open ? "행 접기" : "행 펼치기"}
       className={cn(
         variant === "soft"
           ? cn(
@@ -1526,7 +1521,7 @@ export interface TableSearchProps
  * use `DataTableSearch`, which wires itself up.
  */
 export const TableSearch = forwardRef<HTMLInputElement, TableSearchProps>(
-  ({ value, onValueChange, placeholder = "Search…", className, ...props }, ref) => {
+  ({ value, onValueChange, placeholder = "검색", className, ...props }, ref) => {
     const { variant, theme } = useTableStyles();
 
     if (variant === "soft") {
@@ -1556,7 +1551,7 @@ export const TableSearch = forwardRef<HTMLInputElement, TableSearchProps>(
             <button
               type="button"
               onClick={() => onValueChange("")}
-              aria-label="Clear search"
+              aria-label="검색 지우기"
               className={cn(
                 "absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-card hover:text-foreground",
                 FOCUS_RING,
@@ -1618,7 +1613,7 @@ export interface DataTablePageSizeProps {
 export const DataTablePageSize = forwardRef<
   HTMLDivElement,
   DataTablePageSizeProps
->(({ label = "Show", suffix = "Entries", className, side }, ref) => {
+>(({ label = "표시", suffix = "행", className, side }, ref) => {
   const { pageSize, setPageSize, pageSizeOptions, theme, themeStyle } =
     useDataTable();
   const { variant } = useTableStyles();
@@ -1664,7 +1659,7 @@ export const DataTablePageSize = forwardRef<
             aria-haspopup="listbox"
             aria-expanded={menuOpen}
             aria-controls={menuOpen ? listId : undefined}
-            aria-label={label ? `${label}: ${pageSize}` : `Rows per page: ${pageSize}`}
+            aria-label={label ? `${label}: ${pageSize}` : `페이지당 행: ${pageSize}`}
             className={cn(
               "flex h-9 min-w-[4.75rem] items-center justify-between gap-1 rounded-full pl-3.5 pr-2 text-sm tabular-nums",
               SOFT_PILL,
@@ -1685,7 +1680,7 @@ export const DataTablePageSize = forwardRef<
               ref={menuListRef}
               id={listId}
               role="listbox"
-              aria-label={label || "Rows per page"}
+              aria-label={label || "페이지당 행"}
               onKeyDown={onMenuKeyDown}
               className={cn(SOFT_MENU, "left-0", opensUp ? "bottom-full mb-2" : "top-full mt-2")}
             >
@@ -1960,7 +1955,7 @@ export function DataTableExport<T = unknown>({
         )}
       >
         <Download className={cn("text-muted-foreground", soft ? "size-4" : "w-3.5 h-3.5")} />
-        <span>Export</span>
+        <span>내보내기</span>
         {isSelectedOnly && (
           <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-primary/10 text-primary">
             {count}
@@ -1990,7 +1985,7 @@ export function DataTableExport<T = unknown>({
                 soft && "h-9 rounded-xl py-0 text-sm text-foreground hover:bg-[var(--tbl-well)]",
               )}
             >
-              <span>Export CSV</span>
+              <span>CSV로 내보내기</span>
               <span className="text-[10px] text-muted-foreground font-mono uppercase">.csv</span>
             </button>
           )}
@@ -2004,7 +1999,7 @@ export function DataTableExport<T = unknown>({
                 soft && "h-9 rounded-xl py-0 text-sm text-foreground hover:bg-[var(--tbl-well)]",
               )}
             >
-              <span>Export Excel</span>
+              <span>Excel로 내보내기</span>
               <span className="text-[10px] text-muted-foreground font-mono uppercase">.xlsx</span>
             </button>
           )}
@@ -2018,7 +2013,7 @@ export function DataTableExport<T = unknown>({
                 soft && "h-9 rounded-xl py-0 text-sm text-foreground hover:bg-[var(--tbl-well)]",
               )}
             >
-              <span>Export JSON</span>
+              <span>JSON으로 내보내기</span>
               <span className="text-[10px] text-muted-foreground font-mono uppercase">.json</span>
             </button>
           )}
@@ -2217,14 +2212,14 @@ export function DataTableSelectAll({ className }: { className?: string }) {
         checked={isAllPageSelected}
         indeterminate={isSomePageSelected}
         onClick={toggleAllOnPage}
-        label="Select all rows on this page"
+        label="이 페이지의 모든 행 선택"
       />
     </div>
   );
 }
 
 export function DataTableSelect({
-  label = "Select row",
+  label = "행 선택",
   className,
 }: {
   /** Accessible name, e.g. "Select Priya Raman". */
@@ -2329,7 +2324,7 @@ export function DataTableBatchBar<T = unknown>({
       >
         <div
           role="region"
-          aria-label="Actions for selected rows"
+          aria-label="선택한 행 동작"
           className="pointer-events-auto flex max-w-full items-center gap-1 rounded-full bg-[#1b2230] p-1.5 pl-4 text-white shadow-[0_18px_40px_-12px_rgb(15_23_42/0.5)] dark:bg-[#334155] dark:ring-1 dark:ring-white/[0.08]"
         >
           <p
@@ -2350,8 +2345,8 @@ export function DataTableBatchBar<T = unknown>({
           <button
             type="button"
             onClick={clearSelection}
-            aria-label="Clear selection"
-            title="Clear selection"
+            aria-label="선택 해제"
+            title="선택 해제"
             className="ml-0.5 grid size-8 shrink-0 place-items-center rounded-full text-white/70 outline-none transition-colors hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60"
           >
             <X className="size-4" aria-hidden="true" />
@@ -2387,8 +2382,8 @@ export function DataTableBatchBar<T = unknown>({
       <button
         type="button"
         onClick={clearSelection}
-        title="Clear selection"
-        aria-label="Clear selection"
+        title="선택 해제"
+        aria-label="선택 해제"
         className="p-1 text-current opacity-80 hover:opacity-100 transition-opacity shrink-0 cursor-pointer"
       >
         <X className="w-3.5 h-3.5" />
@@ -2452,18 +2447,18 @@ export function TableInfo({ from, to, total, className }: TableInfoProps) {
   if (variant === "soft") {
     return (
       <p className={cn("text-sm tabular-nums text-muted-foreground", className)}>
-        Showing <span className="font-medium text-foreground">{from}</span>
-        {"–"}
-        <span className="font-medium text-foreground">{to}</span> of{" "}
+        <span className="font-medium text-foreground">{from}</span>
+        {"-"}
+        <span className="font-medium text-foreground">{to}</span>{" / "}
         <span className="font-medium text-foreground">{total}</span>
       </p>
     );
   }
   return (
     <div className={cn("text-[13px] text-muted-foreground", className)}>
-      Showing <strong className="font-semibold text-foreground">{from}</strong>{" "}
-      to <strong className="font-semibold text-foreground">{to}</strong> of{" "}
-      <strong className="font-semibold text-foreground">{total}</strong> results
+      <strong className="font-semibold text-foreground">{from}</strong>{"-"}
+      <strong className="font-semibold text-foreground">{to}</strong>{" / "}
+      <strong className="font-semibold text-foreground">{total}</strong>
     </div>
   );
 }
@@ -2520,12 +2515,12 @@ export function TablePagination({
       FOCUS_RING,
     );
     return (
-      <nav aria-label="Pagination" className={cn("flex flex-wrap items-center justify-center gap-0.5 sm:gap-1", className)}>
+      <nav aria-label="페이지 이동" className={cn("flex flex-wrap items-center justify-center gap-0.5 sm:gap-1", className)}>
         <button
           type="button"
           onClick={() => setPage(Math.max(1, page - 1))}
           disabled={page <= 1}
-          aria-label="Previous page"
+          aria-label="이전 페이지"
           className={step}
         >
           <ChevronLeft className="size-4" aria-hidden="true" />
@@ -2545,7 +2540,7 @@ export function TablePagination({
               type="button"
               onClick={() => setPage(entry)}
               aria-current={entry === page ? "page" : undefined}
-              aria-label={`Page ${entry}`}
+              aria-label={`${entry}페이지`}
               className={cn(
                 "inline-flex h-8 min-w-8 items-center justify-center rounded-full px-2 text-sm font-medium tabular-nums transition-colors sm:h-9 sm:min-w-9 sm:px-2.5",
                 FOCUS_RING,
@@ -2562,7 +2557,7 @@ export function TablePagination({
           type="button"
           onClick={() => setPage(Math.min(totalPages, page + 1))}
           disabled={page >= totalPages}
-          aria-label="Next page"
+          aria-label="다음 페이지"
           className={step}
         >
           <ChevronRight className="size-4" aria-hidden="true" />
@@ -2583,7 +2578,7 @@ export function TablePagination({
         type="button"
         onClick={() => setPage(Math.max(1, page - 1))}
         disabled={page === 1}
-        aria-label="Previous page"
+        aria-label="이전 페이지"
         className="w-8 h-8 rounded-lg border-[1.5px] border-border bg-background text-foreground/70 flex items-center justify-center disabled:opacity-35 disabled:cursor-not-allowed hover:bg-muted transition-colors"
       >
         <ChevronLeft className="w-4 h-4" strokeWidth={2.5} />
@@ -2614,7 +2609,7 @@ export function TablePagination({
         type="button"
         onClick={() => setPage(Math.min(totalPages, page + 1))}
         disabled={page === totalPages}
-        aria-label="Next page"
+        aria-label="다음 페이지"
         className="w-8 h-8 rounded-lg border-[1.5px] border-border bg-background text-foreground/70 flex items-center justify-center disabled:opacity-35 disabled:cursor-not-allowed hover:bg-muted transition-colors"
       >
         <ChevronRight className="w-4 h-4" strokeWidth={2.5} />
@@ -2670,7 +2665,7 @@ function DataTableTabsImpl<T>({
   tabs,
   allValue = "all",
   showCounts = true,
-  label = "View",
+  label = "보기",
   size = "sm",
   className,
 }: DataTableTabsProps<T>) {
@@ -2767,7 +2762,7 @@ function DataTableFilterImpl<T>({
   const autoId = useId();
   const id = filterId ?? (typeof by === "string" ? by : autoId);
   const soft = variant === "soft";
-  const accessibleName = label ?? `Filter by ${placeholder.toLowerCase()}`;
+  const accessibleName = label ?? `${placeholder} 필터`;
 
   const items = options.map((option) =>
     typeof option === "string" ? { label: option, value: option } : option,
@@ -2824,7 +2819,7 @@ function DataTableFilterImpl<T>({
         <button
           type="button"
           onClick={() => setFilter(id, by, null)}
-          aria-label={`Clear ${placeholder.toLowerCase()} filter`}
+          aria-label={`${placeholder} 필터 지우기`}
           className={cn(
             "absolute top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-full text-current transition-colors hover:bg-[color-mix(in_oklab,currentColor_14%,transparent)]",
             soft ? "right-2 text-[var(--tbl-accent-ink)]" : "right-1.5",

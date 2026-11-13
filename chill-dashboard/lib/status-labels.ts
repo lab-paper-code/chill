@@ -39,7 +39,7 @@ const autonomy: Table = {
   Controlled: { label: "자율 제어", tone: "ok" },
   Fixed: { label: "고정", tone: "idle" },
   Disabled: { label: "꺼짐", tone: "idle" },
-  MeasurementEvidenceMissing: { label: "측정 근거 부족", tone: "warn" },
+  MeasurementEvidenceMissing: { label: "측정 결과 없음", tone: "warn" },
 }
 export const autonomyState = (code: string | null | undefined) => lookup(autonomy, code)
 /** LiveWorkload.autonomous (settings membership). */
@@ -72,7 +72,7 @@ const measurementPhase: Table = {
   Measuring: { label: "측정 중", tone: "progress" },
   Complete: word("Complete", "ok"),
   Failed: word("Failed", "fail"),
-  Insufficient: { label: "근거 부족", tone: "warn" },
+  Insufficient: { label: "결과 부족", tone: "warn" },
 }
 export const measurementPhaseStatus = (code: string | null | undefined) => lookup(measurementPhase, code)
 
@@ -172,7 +172,7 @@ const evaluationReasons: Record<string, string> = {
   TargetUnavailable: "평가 대상 없음", IdentityMismatch: "실행 대상 식별자 불일치",
   NoControlEffects: "복구할 제어 변경 없음", ResidualState: "잔여 자원 있음", CleanupFailed: "정리 실패",
   SLOFailed: "목표 미충족", GeneratorInvalid: "부하 생성 품질 미달", ObservationUnavailable: "관측 자료 없음",
-  NOT_EVALUATED: "미평가", Returned: "반환됨", OperatorReleased: "운영자 확인 반환", PublicationFailed: "결과 게시 실패",
+  NOT_EVALUATED: "미평가", Returned: "반환됨", OperatorReleased: "확인 후 반환", PublicationFailed: "결과 게시 실패",
 }
 /** Label for an evaluation reason code; unknown codes give "—" and keep the code for the tooltip. */
 export function evaluationReason(code: string | null | undefined): { label: string; code?: string } {
@@ -205,5 +205,5 @@ export function evaluationCleanup(c: EvaluationCondition): StatusInfo {
 }
 const loadJob: Table = { Active: { label: "진행 중", tone: "progress" }, Succeeded: { label: "완료", tone: "ok" }, Failed: { label: "실패", tone: "fail" } }
 export const loadJobStatus = (code: string | null | undefined) => lookup(loadJob, code)
-const injection: Table = { Executed: { label: "실행됨", tone: "ok" }, Cancelled: { label: "취소됨", tone: "idle" }, Invalid: { label: "무효", tone: "fail" } }
+const injection: Table = { Executed: { label: "실행됨", tone: "ok" }, Cancelled: { label: "취소", tone: "idle" }, Invalid: { label: "무효", tone: "fail" } }
 export const injectionOutcome = (code: string | null | undefined) => lookup(injection, code)

@@ -9,11 +9,18 @@ import { cn } from "@/lib/utils"
 import { Table, TableBody, TableCell, TableContent, TableFooter, TableHead, TableHeader, TableHeading, TableRow } from "@/components/custom/blocks/TableBlock"
 import { Pagination } from "@/components/custom/blocks/PaginationBlock"
 import Button from "@/components/custom/blocks/Button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/custom/blocks/TooltipBlock"
-import { Missing } from "./display"
+import { Clip, Hint, Missing } from "./display"
+import { MoreMenu, type MoreAction } from "./page"
 import { EmptyState } from "./query"
 
 const features = tableFeatures({ rowPaginationFeature, rowSortingFeature, sortFns, paginatedRowModel: createPaginatedRowModel(), sortedRowModel: createSortedRowModel() })
+
+// A pinned first column paints the row's own background (hover, selected) over the cells scrolling under it.
+const pinHead = "sticky left-0 z-[1] bg-[color-mix(in_oklab,var(--muted)_60%,var(--card))] shadow-[inset_-1px_0_var(--border)]"
+const pinCell = "sticky left-0 z-[1] bg-card shadow-[inset_-1px_0_var(--border)] group-hover:bg-[color-mix(in_oklab,var(--muted)_50%,var(--card))] group-data-[selected=true]:bg-[color-mix(in_oklab,var(--primary)_12%,var(--card))]"
+// Default: pinned only on phones, where the table scrolls sideways.
+const phonePinHead = "max-sm:sticky max-sm:left-0 max-sm:z-[1] max-sm:bg-[color-mix(in_oklab,var(--muted)_60%,var(--card))] max-sm:shadow-[inset_-1px_0_var(--border)]"
+const phonePinCell = "max-sm:sticky max-sm:left-0 max-sm:z-[1] max-sm:bg-card max-sm:shadow-[inset_-1px_0_var(--border)] max-sm:group-hover:bg-[color-mix(in_oklab,var(--muted)_50%,var(--card))] max-sm:group-data-[selected=true]:bg-[color-mix(in_oklab,var(--primary)_12%,var(--card))]"
 
 type Scalar = string | number | bigint | null | undefined
 export type Column<T> = {
@@ -30,6 +37,8 @@ export type Column<T> = {
   csv?: (row: T) => Scalar
   /** Reason shown on "—" cells of this column. */
   missingReason?: string
+  /** Reason for one row's "—"; falls back to `missingReason`. */
+  missing?: (row: T) => string | undefined
   /** CSS width, e.g. "28%" or "8rem". Columns without one share the rest. */
   width?: string
 }
@@ -57,6 +66,8 @@ export type DataTableProps<T> = {
   /** Row opens something in place, e.g. a DetailDrawer. */
   onRowClick?: (row: T) => void
   selectedKey?: string | null
+  /** Per-row menu in a last, narrow column (not one of the seven). Named "동작 <first cell>". */
+  rowActions?: (row: T) => MoreAction[]
   /** Initial client sort; ignored when `sort` is controlled. */
   defaultSort?: SortState
   /** Controlled sort (required for server-sorted data, together with onSortChange). */
@@ -71,25 +82,13 @@ export type DataTableProps<T> = {
   empty?: React.ReactNode
   /** Dims the rows while a refetch is in flight. */
   busy?: boolean
+  /** "compact": tighter cells and no minimum width, for tables in dialogs and drawers. */
+  density?: "default" | "compact"
+  /** Minimum table width in px before it scrolls sideways; default 104 px per column (0 with compact). */
+  minWidth?: number
+  /** Keeps the first column in view while the rest scrolls, at every width (default: phones only). */
+  stickyFirst?: boolean
   className?: string
-}
-
-/** One line per cell; the full text appears in a tooltip only when it is cut off. */
-function Clip({ children, numeric }: { children: React.ReactNode; numeric?: boolean }) {
-  const [full, setFull] = React.useState<string | null>(null)
-  const measure = (element: HTMLElement) => setFull(element.scrollWidth > element.clientWidth ? element.textContent : null)
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        className={cn("block min-w-0 truncate", numeric && "tabular-nums")}
-        onMouseEnter={event => measure(event.currentTarget)}
-        onFocus={event => measure(event.currentTarget)}
-      >
-        {children}
-      </TooltipTrigger>
-      {full && <TooltipContent className="max-w-sm whitespace-normal break-all">{full}</TooltipContent>}
-    </Tooltip>
-  )
 }
 
 function csvText(value: Scalar) {
@@ -99,32 +98,47 @@ function csvText(value: Scalar) {
 }
 
 /** Sortable, paged table with Avara table markup and TanStack table state. */
-export function DataTable<T extends RowData>({ label, rows, columns, rowKey, title, toolbar, actions, rowHref, onRowClick, selectedKey, defaultSort, sort, onSortChange, pageSize = 25, paging, download, empty, busy, className }: DataTableProps<T>) {
+export function DataTable<T extends RowData>({ label, rows, columns, rowKey, title, toolbar, actions, rowHref, onRowClick, selectedKey, rowActions, defaultSort, sort, onSortChange, pageSize = 25, paging, download, empty, busy, density = "default", minWidth, stickyFirst = false, className }: DataTableProps<T>) {
   const router = useRouter()
+  const id = React.useId()
   const [localSorting, setLocalSorting] = React.useState<SortingState>(defaultSort ? [{ id: defaultSort.key, desc: defaultSort.desc }] : [])
-  const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize: pageSize || Math.max(rows.length, 1) })
+  const [pageIndex, setPageIndex] = React.useState(0)
   const controlled = sort !== undefined
   const sorting: SortingState = controlled ? (sort ? [{ id: sort.key, desc: sort.desc }] : []) : localSorting
+  const clientPaging = !paging && pageSize > 0
+  // Live data replaces `rows` every tick; the page stays where the user put it, clamped when rows shrink.
+  const pagination: PaginationState = clientPaging
+    ? { pageIndex: Math.min(pageIndex, Math.max(Math.ceil(rows.length / pageSize) - 1, 0)), pageSize }
+    : { pageIndex: 0, pageSize: Math.max(rows.length, 1) }
   const helper = createColumnHelper<typeof features, T>()
   const table = useTable({
     features,
     data: rows,
     columns: helper.columns(columns.map(column => helper.accessor(row => column.sortValue?.(row) ?? undefined, { id: column.key, header: column.header, enableSorting: !!column.sortValue, sortUndefined: "last" }))),
     getRowId: row => rowKey(row),
-    manualPagination: !!paging || pageSize === 0,
+    state: { sorting, pagination },
+    manualPagination: !clientPaging,
+    autoResetPageIndex: false,
     enableMultiSort: false,
+    // First activation sorts ascending for every type; repeats toggle.
+    sortDescFirst: false,
     manualSorting: !!paging,
     onSortingChange: update => {
       const next = typeof update === "function" ? update(sorting) : update
       const value = next[0] ? { key: next[0].id, desc: next[0].desc } : null
       if (controlled) onSortChange?.(value)
       else { setLocalSorting(next); onSortChange?.(value) }
-      setPagination(current => ({ ...current, pageIndex: 0 }))
+      setPageIndex(0)
     },
-    onPaginationChange: update => setPagination(current => (typeof update === "function" ? update(current) : update)),
+    onPaginationChange: update => setPageIndex((typeof update === "function" ? update(pagination) : update).pageIndex),
   })
   const visible = table.getRowModel().rows
   const clickable = !!rowHref || !!onRowClick
+  const compact = density === "compact"
+  const width = minWidth ?? (compact ? 0 : Math.max(columns.length * 104, 320))
+  const pinFirst = stickyFirst ? pinCell : compact ? undefined : phonePinCell
+  const pad = compact ? "px-2 first:pl-3 last:pr-3" : "first:pl-4 last:pr-4"
+  const span = columns.length + (rowActions ? 1 : 0)
   const activate = (row: T) => {
     if (rowHref) router.push(rowHref(row))
     else onRowClick?.(row)
@@ -142,15 +156,18 @@ export function DataTable<T extends RowData>({ label, rows, columns, rowKey, tit
   return (
     <Table className={cn("min-w-0", className)} size="md">
       {(title || toolbar || actions || download) && (
-        <TableHeading title={title} className="gap-2 px-3 py-2.5">
+        <TableHeading title={title} className={cn("gap-2 py-2.5", compact ? "px-3" : "px-4")}>
           {toolbar && <div className="mr-auto flex min-w-0 flex-1 flex-wrap items-center gap-2">{toolbar}</div>}
           {actions}
           {download && <Button size="sm" variant="ghost" iconLeft={<Download />} onClick={exportCsv} disabled={!rows.length}>내려받기</Button>}
         </TableHeading>
       )}
-      <TableContent label={label} className="table-fixed" style={{ minWidth: `${Math.max(columns.length * 112, 320)}px` }}>
+      <TableContent label={label} className="table-fixed" style={width ? { minWidth: `${width}px` } : undefined}>
         <caption className="sr-only">{label}</caption>
-        <colgroup>{columns.map(column => <col key={column.key} style={column.width ? { width: column.width } : undefined} />)}</colgroup>
+        <colgroup>
+          {columns.map(column => <col key={column.key} style={column.width ? { width: column.width } : undefined} />)}
+          {rowActions && <col style={{ width: "3rem" }} />}
+        </colgroup>
         <TableHeader>
           {table.getHeaderGroups().map(group => (
             <TableRow key={group.id} isHeader>
@@ -164,20 +181,22 @@ export function DataTable<T extends RowData>({ label, rows, columns, rowKey, tit
                     sortable={header.column.getCanSort()}
                     sortDirection={direction || null}
                     onSort={() => header.column.toggleSorting()}
-                    className={cn(column.numeric && "[&>button]:flex-row-reverse")}
+                    className={cn(pad, "[&>button]:max-w-full", column.numeric && "[&>button]:flex-row-reverse", index === 0 && (stickyFirst ? pinHead : !compact && phonePinHead))}
                   >
-                    <span>{column.header}{column.unit && <span className="font-normal"> ({column.unit})</span>}</span>
+                    <Clip>{column.header}{column.unit && <span className="font-normal"> ({column.unit})</span>}</Clip>
                   </TableHead>
                 )
               })}
+              {rowActions && <TableHead className={pad}><span id={`${id}-act`} className="sr-only">동작</span></TableHead>}
             </TableRow>
           ))}
         </TableHeader>
         <TableBody className={cn(busy && "opacity-60 transition-opacity")}>
           {visible.length === 0 ? (
-            <tr><td colSpan={columns.length} className="p-0">{empty ?? <EmptyState compact title="항목 없음" />}</td></tr>
-          ) : visible.map(row => {
+            <tr><td colSpan={span} className="p-0">{empty ?? <EmptyState compact title="항목 없음" />}</td></tr>
+          ) : visible.map((row, rowIndex) => {
             const key = row.id
+            const cellId = `${id}-r${rowIndex}`
             return (
               <TableRow
                 key={key}
@@ -185,7 +204,9 @@ export function DataTable<T extends RowData>({ label, rows, columns, rowKey, tit
                 tabIndex={onRowClick && !rowHref ? 0 : undefined}
                 aria-selected={selectedKey != null ? selectedKey === key : undefined}
                 onClick={clickable ? event => {
-                  if ((event.target as HTMLElement).closest("a,button,input,label,select,textarea")) return
+                  // Clicks in controls, and in portalled menus opened from the row, do not open the row.
+                  const target = event.target as HTMLElement
+                  if (!event.currentTarget.contains(target) || target.closest("a,button,input,label,select,textarea")) return
                   activate(row.original)
                 } : undefined}
                 onKeyDown={onRowClick && !rowHref ? event => {
@@ -197,24 +218,29 @@ export function DataTable<T extends RowData>({ label, rows, columns, rowKey, tit
               >
                 {columns.map((column, index) => {
                   const content = column.cell(row.original)
-                  const value = content == null || content === "" ? <Missing reason={column.missingReason} /> : content
+                  const value = content == null || content === "" ? <Missing reason={column.missing?.(row.original) ?? column.missingReason} /> : content
                   return (
-                    <TableCell key={column.key} align={column.numeric ? "right" : "left"} className="max-w-0">
+                    <TableCell key={column.key} id={index === 0 ? cellId : undefined} align={column.numeric ? "right" : "left"} className={cn("max-w-0", pad, index === 0 && pinFirst)}>
                       {index === 0 && rowHref ? (
                         <Link href={rowHref(row.original)} className="block truncate font-medium text-foreground hover:underline">{value}</Link>
                       ) : (
-                        <Clip numeric={column.numeric}>{value}</Clip>
+                        <Clip className={cn(column.numeric && "tabular-nums")}>{value}</Clip>
                       )}
                     </TableCell>
                   )
                 })}
+                {rowActions && (
+                  <TableCell align="right" className={cn("py-0", pad)}>
+                    <MoreMenu items={rowActions(row.original)} aria-labelledby={`${id}-act ${cellId}`} triggerClassName="size-7 border-transparent bg-transparent" />
+                  </TableCell>
+                )}
               </TableRow>
             )
           })}
         </TableBody>
       </TableContent>
       {paging?.mode === "offset" ? (
-        <TableFooter className="px-3 py-2 text-xs text-muted-foreground">
+        <TableFooter className="px-4 py-2 text-xs text-muted-foreground">
           <span className="tabular-nums">{rows.length ? `${paging.offset + 1}-${paging.offset + rows.length}` : "0"}{paging.total != null && ` / ${paging.total}`}</span>
           <div className="flex items-center gap-1">
             <Button size="sm" variant="ghost" disabled={paging.offset === 0} onClick={() => paging.onOffsetChange(Math.max(0, paging.offset - paging.limit))}>이전</Button>
@@ -222,18 +248,71 @@ export function DataTable<T extends RowData>({ label, rows, columns, rowKey, tit
           </div>
         </TableFooter>
       ) : paging?.mode === "cursor" ? (
-        <TableFooter className="justify-end px-3 py-2">
+        <TableFooter className="justify-end px-4 py-2">
           <div className="flex items-center gap-1">
             <Button size="sm" variant="ghost" disabled={!paging.hasPrevious} onClick={paging.onPrevious}>이전</Button>
             <Button size="sm" variant="ghost" disabled={!paging.hasNext} onClick={paging.onNext}>다음</Button>
           </div>
         </TableFooter>
-      ) : pageSize > 0 && pageCount > 1 ? (
-        <TableFooter className="px-3 py-2 text-xs text-muted-foreground">
+      ) : clientPaging && pageCount > 1 ? (
+        <TableFooter className="px-4 py-2 text-xs text-muted-foreground">
           <span className="tabular-nums">{`${pagination.pageIndex * pagination.pageSize + 1}-${Math.min((pagination.pageIndex + 1) * pagination.pageSize, rows.length)} / ${rows.length}`}</span>
           <Pagination className="mx-0 w-auto md:justify-end" currentPage={pagination.pageIndex + 1} totalPages={pageCount} siblingCount={1} onPageChange={page => table.setPageIndex(Math.min(Math.max(page, 1), pageCount) - 1)} />
         </TableFooter>
       ) : null}
     </Table>
   )
+}
+
+export type MatrixColumn = { key: string; label: string; /** Tooltip on the column header, e.g. the full name. */ hint?: string }
+export type MatrixRow = { key: string; label: React.ReactNode; /** By column key; absent cells show "—". */ cells: Record<string, React.ReactNode> }
+export type MatrixGroup = { key: string; /** Group heading row; omit for an ungrouped block. */ label?: React.ReactNode; rows: MatrixRow[] }
+
+/** Rows by columns with optional row groups and a row-header column pinned while the rest scrolls. */
+export function Matrix({ label, rowHeader, columns, groups, legend, empty, missingReason }: {
+  label: string
+  /** Header of the row-header column. */ rowHeader: string
+  columns: MatrixColumn[]
+  groups: MatrixGroup[]
+  /** Shown above the grid, e.g. a list of StatusDot entries. */ legend?: React.ReactNode
+  empty?: React.ReactNode
+  missingReason?: string
+}) {
+  return (
+    <Table className="min-w-0">
+      {legend && <TableHeading className="gap-2 px-4 py-2.5">{legend}</TableHeading>}
+      <TableContent label={label} className="table-fixed" style={{ minWidth: `${8 + columns.length * 7}rem` }}>
+        <caption className="sr-only">{label}</caption>
+        <colgroup><col className="w-28 sm:w-40" />{columns.map(column => <col key={column.key} />)}</colgroup>
+        <TableHeader>
+          <TableRow isHeader>
+            <TableHead className={cn(pinHead, "pl-4")}>{rowHeader}</TableHead>
+            {columns.map(column => <TableHead key={column.key}>{column.hint ? <Hint text={column.hint} focusable>{column.label}</Hint> : <Clip>{column.label}</Clip>}</TableHead>)}
+          </TableRow>
+        </TableHeader>
+        {groups.length === 0 ? (
+          <TableBody><tr><td colSpan={columns.length + 1} className="p-0">{empty ?? <EmptyState compact title="항목 없음" />}</td></tr></TableBody>
+        ) : groups.map(group => (
+          <TableBody key={group.key}>
+            {group.label != null && (
+              <TableRow className="bg-muted/40 hover:bg-muted/40">
+                <TableHead scope="rowgroup" colSpan={columns.length + 1} className="pl-4 text-sm text-foreground"><span className="sticky left-4">{group.label}</span></TableHead>
+              </TableRow>
+            )}
+            {group.rows.map(row => (
+              <TableRow key={row.key}>
+                <TableHead scope="row" className={cn(pinCell, "max-w-0 pl-4 text-sm font-normal text-foreground")}><Clip>{row.label}</Clip></TableHead>
+                {columns.map(column => <TableCell key={column.key}>{row.cells[column.key] ?? <Missing reason={missingReason} />}</TableCell>)}
+              </TableRow>
+            ))}
+          </TableBody>
+        ))}
+      </TableContent>
+    </Table>
+  )
+}
+
+/** A pressable matrix cell; `label` is its full accessible name. */
+export function MatrixCell({ label, onClick, dim = false, children }: { label: string; onClick: () => void; /** Fades cells outside the current filter. */ dim?: boolean; children: React.ReactNode }) {
+  return <Button variant="ghost" size="sm" className={cn("-ml-2 max-w-full tabular-nums", dim && "opacity-40")} aria-label={label} onClick={onClick}>{children}</Button>
 }

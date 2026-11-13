@@ -167,7 +167,7 @@ export function TimePicker({
       aria-disabled={disabled}
     >
       <Column
-        label="Hour"
+        label="시"
         items={hourItems}
         selected={is12h ? hour12 : hours24}
         isDisabled={(h) => hourDisabled(h)}
@@ -182,7 +182,7 @@ export function TimePicker({
       />
       <span className="self-center text-sm font-semibold text-muted-foreground">:</span>
       <Column
-        label="Minute"
+        label="분"
         items={minuteItems}
         selected={minutes !== null ? minutes - (minutes % minuteStep) : null}
         isDisabled={minuteDisabled}
@@ -193,7 +193,7 @@ export function TimePicker({
       />
       {is12h && (
         <Column<"AM" | "PM">
-          label="AM or PM"
+          label="오전 오후"
           items={["AM", "PM"]}
           selected={period}
           isDisabled={periodDisabled}
@@ -202,7 +202,7 @@ export function TimePicker({
             const m = minutes ?? 0;
             commit(h24, outOfBounds(h24, m) ? firstValidMinute(h24) : m);
           }}
-          render={(p) => p}
+          render={(p) => (p === "AM" ? "오전" : "오후")}
           theme={theme}
           disabled={disabled || !value}
         />

@@ -707,7 +707,7 @@ function CircularChart({
         {/* Donut Center Total Label */}
         {type === "donut" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-            <span className="text-xs font-medium text-muted-foreground">Total</span>
+            <span className="text-xs font-medium text-muted-foreground">합계</span>
             <span className="text-xl font-semibold text-foreground">
               {prefix}
               {total}
@@ -758,7 +758,7 @@ function DonutLegendChart({
   return (
     <div className="flex flex-col items-center gap-5 animate-fade sm:flex-row">
       <div className="relative size-36 shrink-0">
-        <svg viewBox="0 0 100 100" className="size-full -rotate-90" role="img" aria-label="Share of the whole by category">
+        <svg viewBox="0 0 100 100" className="size-full -rotate-90" role="img" aria-label="항목별 비율">
           {data.map((d, i) => {
             const length = (C * d.value) / total;
             return (
@@ -840,7 +840,7 @@ function StackedBarChart({
   const total = data.reduce((sum, d) => sum + d.value, 0) || 1;
   return (
     <div className="animate-fade">
-      <div className="flex h-8 gap-0.5 overflow-hidden rounded-lg" role="img" aria-label="Share of the whole by category">
+      <div className="flex h-8 gap-0.5 overflow-hidden rounded-lg" role="img" aria-label="항목별 비율">
         {data.map((d, i) => (
           <div
             key={d.label}
@@ -1091,7 +1091,7 @@ function ConversionRate({ signUps, visits }: { signUps: number; visits: number }
             Visit to sign-up rate
             <Popover>
               <PopoverTrigger
-                aria-label="How this rate is calculated"
+                aria-label="계산 방식"
                 className="grid size-6 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary"
               >
                 <Info className="size-3.5" aria-hidden="true" />
@@ -1140,8 +1140,8 @@ export function TrafficSourcesChart({
     { label: "Twitter / X", value: 890 },
     { label: "LinkedIn", value: 430 },
   ],
-  title = "Traffic sources",
-  caption = "Today",
+  title = "유입 경로",
+  caption = "오늘",
   signUps = 412,
   showConversionRate = true,
   className,
@@ -1175,7 +1175,7 @@ export function TrafficSourcesChart({
         {href && (
           <a
             href={href}
-            aria-label="Open visitor analytics"
+            aria-label="방문자 분석 열기"
             className="grid size-8 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground border border-border/70"
           >
             <ArrowUpRight className="size-4" aria-hidden="true" />
@@ -1227,8 +1227,8 @@ export function VisitorsByCountryChart({
     { label: "Canada", value: 650, code: "CA" },
     { label: "France", value: 420, code: "FR" },
   ],
-  title = "Visitors by country",
-  caption = "Today",
+  title = "국가별 방문자",
+  caption = "오늘",
   className,
   colors = DASH_COLORS,
   showCodes = true,
@@ -1258,7 +1258,7 @@ export function VisitorsByCountryChart({
         {href && (
           <a
             href={href}
-            aria-label="Open country analytics"
+            aria-label="국가별 분석 열기"
             className="grid size-8 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground border border-border"
           >
             <ArrowUpRight className="size-4" aria-hidden="true" />
@@ -1310,7 +1310,7 @@ function DeltaBadge({ change, className }: { change: number; className?: string 
     >
       <Icon className="size-3.5" aria-hidden="true" />
       <span className="sr-only">
-        {direction === "up" ? "Up " : direction === "down" ? "Down " : "No change, "}
+        {direction === "up" ? "증가 " : direction === "down" ? "감소 " : "변화 없음, "}
       </span>
       {formatChange(rounded)}
     </span>
@@ -1391,8 +1391,8 @@ function ColumnsChart({ entry }: { entry: ResolvedOverviewMetric }) {
     <div>
       <div
         role="group"
-        aria-roledescription="chart"
-        aria-label={`${entry.metric.label}. Use the arrow keys to read each value.`}
+        aria-roledescription="차트"
+        aria-label={`${entry.metric.label}. 화살표 키로 값 읽기`}
         tabIndex={0}
         onKeyDown={onKeyDown}
         onBlur={() => setInspected(null)}
@@ -1578,9 +1578,9 @@ export interface MetricsOverviewChartProps {
 
 export function MetricsOverviewChart({
   metrics = defaultOverviewMetrics,
-  title = "This year by month",
-  compareCaption = "vs last month",
-  periodLabel = "a month",
+  title = "올해 월별",
+  compareCaption = "지난달 대비",
+  periodLabel = "한 달",
   className,
   defaultMetricId,
 }: MetricsOverviewChartProps) {
@@ -1619,7 +1619,7 @@ export function MetricsOverviewChart({
       {/* Metric Tabs */}
       <div
         role="tablist"
-        aria-label="Metrics"
+        aria-label="지표"
         className="flex gap-px border-b border-border bg-border/40"
       >
         {resolved.map((entry) => {
@@ -1687,14 +1687,14 @@ export function MetricsOverviewChart({
                 {active.points.length > 0 && (
                   <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] leading-5">
                     <div className="flex items-baseline gap-1.5">
-                      <dt className="text-muted-foreground">Total</dt>
+                      <dt className="text-muted-foreground">합계</dt>
                       <dd className="font-semibold tabular-nums text-foreground">{active.formatShort(active.total)}</dd>
                     </div>
                     <div className="flex items-baseline gap-1.5">
                       <dt className="flex items-center gap-1.5 self-center text-muted-foreground">
                         <span aria-hidden="true" className="w-3 border-t border-dashed border-current" />
-                        <span aria-hidden="true">Avg</span>
-                        <span className="sr-only">Average</span>
+                        <span aria-hidden="true">평균</span>
+                        <span className="sr-only">평균</span>
                       </dt>
                       <dd className="font-semibold tabular-nums text-foreground">
                         {active.formatShort(active.average)}{" "}
@@ -1711,12 +1711,12 @@ export function MetricsOverviewChart({
                   onValueChange={(next) => {
                     if (next === "columns" || next === "line") setForm(next);
                   }}
-                  aria-label="Chart style"
+                  aria-label="차트 모양"
                 >
-                  <ToggleGroupItem value="columns" aria-label="Columns" title="Columns" className="w-8 px-0">
+                  <ToggleGroupItem value="columns" aria-label="막대" title="막대" className="w-8 px-0">
                     <ChartColumnBig className="size-4" aria-hidden="true" />
                   </ToggleGroupItem>
-                  <ToggleGroupItem value="line" aria-label="Trend line" title="Trend line" className="w-8 px-0">
+                  <ToggleGroupItem value="line" aria-label="추세선" title="추세선" className="w-8 px-0">
                     <ChartSpline className="size-4" aria-hidden="true" />
                   </ToggleGroupItem>
                 </ToggleGroup>

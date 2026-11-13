@@ -793,7 +793,7 @@ export function BrandLogoAccordion({
       <div
         ref={containerRef}
         role="tablist"
-        aria-label={title || "Brand showcase"}
+        aria-label={title || "목록"}
         onMouseEnter={() => pauseOnHover && setIsPaused(true)}
         onMouseLeave={() => pauseOnHover && setIsPaused(false)}
         style={{
@@ -892,7 +892,7 @@ export function BrandLogoAccordion({
                       onClick={(e) => e.stopPropagation()}
                       className="inline-flex items-center gap-1.5 mt-3.5 text-[12px] font-medium text-primary hover:underline underline-offset-4 opacity-90 transition-opacity"
                     >
-                      <span>{item.linkText || "Visit website"}</span>
+                      <span>{item.linkText || "웹사이트 열기"}</span>
                       <ArrowUpRight className="size-3.5" />
                     </a>
                   )}

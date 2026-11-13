@@ -339,9 +339,9 @@ export const Progress = forwardRef<HTMLDivElement, ProgressProps>(
         aria-valuenow={indeterminate ? undefined : value}
         aria-valuetext={
           indeterminate
-            ? "In progress"
+            ? "진행 중"
             : status !== "active"
-              ? `${Math.round(percentage)}%, ${status}`
+              ? `${Math.round(percentage)}%, ${({ success: "완료", error: "실패", warning: "주의", paused: "일시정지" } as Record<string, string>)[status] ?? status}`
               : undefined
         }
         aria-busy={indeterminate || undefined}

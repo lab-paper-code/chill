@@ -93,3 +93,41 @@ export function formatRelative(at: string | number | Date | null | undefined, no
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}시간 전`
   return `${Math.floor(seconds / 86400)}일 전`
 }
+
+/** Round axis values covering [min, max] in about `count` steps, and the fraction digits that keep them apart. */
+export function niceTicks(min: number, max: number, count = 4): { ticks: number[]; digits: number } {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return { ticks: [0, 1], digits: 0 }
+  if (min === max) { const pad = Math.abs(min) / 10 || 1; min = min >= 0 && min - pad < 0 ? 0 : min - pad; max += pad }
+  const raw = (max - min) / count
+  const power = 10 ** Math.floor(Math.log10(raw))
+  const step = [1, 2, 2.5, 5, 10].map(m => m * power).find(s => s >= raw * (1 - 1e-9)) ?? 10 * power
+  const start = Math.floor(min / step + 1e-9) * step, end = Math.ceil(max / step - 1e-9) * step
+  const ticks: number[] = []
+  for (let value = start; value <= end + step / 2; value += step) ticks.push(Number(value.toPrecision(12)))
+  const text = String(Number(step.toPrecision(6)))
+  return { ticks, digits: text.includes("e-") ? 6 : (text.split(".")[1]?.length ?? 0) }
+}
+
+const MS_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400].map(s => s * 1000)
+const KST_OFFSET = 9 * 3_600_000
+/**
+ * Time axis ticks in KST, aligned to round clock times, with a label precision that never repeats a label:
+ * seconds under one-minute steps, the date once the window spans a day.
+ */
+export function timeTicks(from: number, to: number, count = 5): { ticks: number[]; label: (ms: number) => string } {
+  const span = Math.max(to - from, 1000)
+  const step = MS_STEPS.find(item => span / item <= count) ?? Math.ceil(span / count / 86_400_000) * 86_400_000
+  const ticks: number[] = []
+  for (let t = Math.ceil((from + KST_OFFSET) / step) * step - KST_OFFSET; t <= to; t += step) ticks.push(t)
+  const cut: [number, number] = step < 60_000 ? [11, 19] : step >= 86_400_000 ? [5, 10] : span >= 86_400_000 ? [5, 16] : [11, 16]
+  return { ticks, label: ms => kst.format(new Date(ms)).slice(...cut) }
+}
+
+/** Ticks for an axis in seconds from a start (load scenarios), labelled "1분 30초". */
+export function secondTicks(total: number, count = 5): { ticks: number[]; label: (seconds: number) => string } {
+  const span = Math.max(total, 1)
+  const step = MS_STEPS.map(ms => ms / 1000).find(item => span / item <= count) ?? Math.ceil(span / count / 3600) * 3600
+  const ticks: number[] = []
+  for (let s = 0; s <= span; s += step) ticks.push(s)
+  return { ticks, label: duration }
+}

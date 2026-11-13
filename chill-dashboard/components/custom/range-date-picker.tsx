@@ -122,22 +122,9 @@ const colorThemes: Record<string, Record<string, string>> = {
   },
 };
 
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
+const MONTH_NAMES = ["1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"];
 
-const WEEKDAY_NAMES = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+const WEEKDAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
 
 const subDays = (date: Date, days: number): Date => {
   const result = new Date(date);
@@ -188,8 +175,7 @@ const isBetween = (
 
 const formatDateString = (date: Date | null): string => {
   if (!date) return "";
-  const month = MONTH_NAMES[date.getMonth()].slice(0, 3);
-  return `${month} ${date.getDate()}, ${date.getFullYear()}`;
+  return `${date.getFullYear()}년 ${date.getMonth() + 1}월 ${date.getDate()}일`;
 };
 
 const startOfDay = (d: Date) =>
@@ -696,13 +682,14 @@ export function RangeDatePicker({
       {/* Month Header */}
       <header className="flex items-center justify-between pb-3">
         <h2 className="text-sm font-extrabold text-foreground tracking-tight">
-          {MONTH_NAMES[m]} {y}
+          {y}년 {MONTH_NAMES[m]}
         </h2>
         <div className="flex items-center gap-1">
           {showPrevNav && (
             <button
               type="button"
               onClick={prevMonth}
+              aria-label="이전 달"
               className="size-7 rounded-lg border border-border/80 hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
             >
               <ChevronLeft className="size-4" />
@@ -712,6 +699,7 @@ export function RangeDatePicker({
             <button
               type="button"
               onClick={nextMonth}
+              aria-label="다음 달"
               className="size-7 rounded-lg border border-border/80 hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
             >
               <ChevronRight className="size-4" />
@@ -816,14 +804,14 @@ export function RangeDatePicker({
   const timeEnds = [
     {
       key: "from",
-      label: "Start",
+      label: "시작",
       date: selectingFrom,
       min: fromMinTime,
       onChange: handleFromTime,
     },
     {
       key: "to",
-      label: "End",
+      label: "끝",
       date: selectingTo,
       min: toMinTime,
       onChange: handleToTime,
@@ -869,7 +857,7 @@ export function RangeDatePicker({
           <>
             <CalendarDays className="size-4 text-muted-foreground/70" />
             <span className="text-[11px] font-medium leading-snug text-muted-foreground">
-              Pick an end day on the calendar
+              달력에서 끝 날짜 선택
             </span>
           </>
         )}
@@ -976,11 +964,11 @@ export function RangeDatePicker({
                 <strong className="text-foreground">
                   {formatStamp(selectingFrom)}
                 </strong>
-                {showTime && <span>– choose an end day</span>}
+                {showTime && <span>, 끝 날짜 선택</span>}
               </span>
             ) : (
               <span>
-                {showTime ? "Choose a start day" : "Select date range"}
+                {showTime ? "시작 날짜 선택" : "기간 선택"}
               </span>
             )}
           </div>
@@ -992,7 +980,7 @@ export function RangeDatePicker({
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-border/80 text-[11px] font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             >
               <RotateCcw className="size-3" />
-              {showTime ? "Clear" : "Reset"}
+              {showTime ? "지우기" : "초기화"}
             </button>
           )}
         </footer>

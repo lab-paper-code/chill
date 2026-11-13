@@ -17,7 +17,7 @@ import { Hint } from "./display"
 /** A titled group of form fields (fieldset + legend), on a card. */
 export function FormSection({ title, info, children, className }: { title: string; info?: string; children: React.ReactNode; className?: string }) {
   return (
-    <fieldset className={cn("min-w-0 rounded-xl border border-border bg-card p-5", className)}>
+    <fieldset className={cn("min-w-0 rounded-xl border border-border bg-card p-4", className)}>
       <legend className="float-left mb-4 flex w-full items-center gap-1.5 text-sm font-semibold">
         {title}
         {info && <Hint text={info} focusable><span className="text-xs font-normal text-muted-foreground">?</span></Hint>}
@@ -30,7 +30,7 @@ export function FormSection({ title, info, children, className }: { title: strin
 /** Sticky bottom row: change count, secondary actions and the submit button. */
 export function FormActions({ changes, children, className }: { changes?: number; children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("sticky bottom-0 z-10 -mx-4 flex items-center gap-2 border-t border-border bg-background/95 px-4 py-3 sm:-mx-6 sm:px-6", className)}>
+    <div data-form-actions="" className={cn("sticky bottom-0 z-10 -mx-4 flex items-center gap-2 border-t border-border bg-background/95 px-4 py-3 sm:-mx-6 sm:px-6", className)}>
       {changes != null && <span role="status" className="text-sm tabular-nums text-muted-foreground">{changes ? `변경 ${changes}건` : "변경 없음"}</span>}
       <div className="ml-auto flex items-center gap-2">{children}</div>
     </div>
@@ -39,7 +39,9 @@ export function FormActions({ changes, children, className }: { changes?: number
 
 /**
  * Asks before leaving a form with unsaved changes: browser reload/close (beforeunload)
- * and in-app link clicks. ponytail: browser Back is not intercepted; add a history guard if it matters.
+ * and in-app link clicks to another page. Links that keep the pathname (query tabs, filters)
+ * stay on the form and pass through.
+ * ponytail: browser Back is not intercepted; add a history guard if it matters.
  */
 export function LeaveGuard({ when }: { when: boolean }) {
   const router = useRouter()
@@ -52,7 +54,7 @@ export function LeaveGuard({ when }: { when: boolean }) {
       const link = event.target instanceof Element ? event.target.closest("a[href]") : null
       if (!(link instanceof HTMLAnchorElement) || link.target === "_blank" || link.hasAttribute("download")) return
       const url = new URL(link.href)
-      if (url.origin !== window.location.origin || (url.pathname === window.location.pathname && url.search === window.location.search)) return
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return
       event.preventDefault()
       event.stopPropagation()
       setTarget(`${url.pathname}${url.search}${url.hash}`)
@@ -76,13 +78,18 @@ export function LeaveGuard({ when }: { when: boolean }) {
   )
 }
 
-export type Segment = { label: string; value: string; options: { value: string; label: string; count?: number }[]; onChange: (value: string) => void }
+type SegmentOption = { value: string; label: string; count?: number }
+/** One choice at a time. */
+export type Segment = { label: string; value: string; options: SegmentOption[]; onChange: (value: string) => void; multiple?: false }
+/** Several chips pressed at once, e.g. a status filter; an empty array means no filter. */
+export type MultiSegment = { label: string; value: string[]; options: SegmentOption[]; onChange: (value: string[]) => void; multiple: true }
 export type Choice = { label: string; value: string; options: SelectOption[]; onChange: (value: string) => void; searchable?: boolean }
 
 /** Search box, segmented choices and selects in one wrapping row. */
 export function FilterBar({ search, segments, selects, end, className }: {
   search?: { value: string; onChange: (value: string) => void; placeholder?: string; label?: string }
-  segments?: Segment[]
+  segments?: (Segment | MultiSegment)[]
+  /** Native selects with the label as a visible prefix. */
   selects?: Choice[]
   end?: React.ReactNode
   className?: string
@@ -97,18 +104,23 @@ export function FilterBar({ search, segments, selects, end, className }: {
           />
         </div>
       )}
-      {segments?.map(segment => (
-        <ToggleGroup key={segment.label} type="single" variant="segmented" size="sm" aria-label={segment.label} value={segment.value} onValueChange={value => { if (value) segment.onChange(value) }}>
-          {segment.options.map(option => (
-            <ToggleGroupItem key={option.value} value={option.value}>
-              {option.label}{option.count != null && <span className="ml-1 tabular-nums text-muted-foreground">{option.count}</span>}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      ))}
+      {segments?.map(segment => {
+        const items = segment.options.map(option => (
+          <ToggleGroupItem key={option.value} value={option.value}>
+            {option.label}{option.count != null && <span className="ml-1 tabular-nums text-muted-foreground">{option.count}</span>}
+          </ToggleGroupItem>
+        ))
+        return (
+          <div key={segment.label} className="max-w-full overflow-x-auto [scrollbar-width:none]">
+            {segment.multiple
+              ? <ToggleGroup type="multiple" variant="segmented" size="sm" aria-label={segment.label} value={segment.value} onValueChange={segment.onChange}>{items}</ToggleGroup>
+              : <ToggleGroup type="single" variant="segmented" size="sm" aria-label={segment.label} value={segment.value} onValueChange={value => { if (value) segment.onChange(value) }}>{items}</ToggleGroup>}
+          </div>
+        )
+      })}
       {selects?.map(choice => (
-        <div key={choice.label} className="w-full sm:w-44">
-          <SelectBlock inputSize="sm" options={choice.options} value={choice.value} onChange={choice.onChange} placeholder={choice.label} searchable={choice.searchable} />
+        <div key={choice.label} className="w-full sm:w-52">
+          <SelectBlock inputSize="sm" aria-label={choice.label} icon={<span className="text-xs">{choice.label}</span>} options={choice.options} value={choice.value} onChange={choice.onChange} placeholder="선택" />
         </div>
       ))}
       {end && <div className="ml-auto flex items-center gap-2">{end}</div>}

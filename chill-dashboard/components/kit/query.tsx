@@ -31,7 +31,7 @@ export type BoundaryQuery<T> = {
 const httpLabels: Record<number, string> = { 404: "찾을 수 없음", 409: "충돌", 429: "요청 과다", 502: "서버 연결 실패", 503: "서버 사용 불가", 504: "응답 지연" }
 
 function Skeleton({ kind }: { kind: "table" | "tiles" | "block" }) {
-  if (kind === "tiles") return <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-hidden="true">{[0, 1, 2, 3].map(i => <SkeletonBlock key={i} animation="pulse" height={88} radius={10} />)}</div>
+  if (kind === "tiles") return <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-hidden="true">{[0, 1, 2, 3].map(i => <SkeletonBlock key={i} animation="pulse" height={88} radius={10} />)}</div>
   if (kind === "block") return <SkeletonBlock animation="pulse" height={160} radius={10} aria-hidden="true" />
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card" aria-hidden="true">

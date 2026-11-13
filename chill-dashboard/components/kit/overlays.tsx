@@ -24,8 +24,8 @@ export function DetailDrawer({ open, onOpenChange, title, status, actions, foote
   return (
     <Drawer open={open} onOpenChange={onOpenChange} side="right">
       <DrawerContent>
-        <DrawerHeader className="flex items-center gap-2">
-          <DrawerTitle className="min-w-0">{title}</DrawerTitle>
+        <DrawerHeader className="flex flex-wrap items-center gap-2">
+          <DrawerTitle className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{title}</DrawerTitle>
           {status && <StatusBadge status={status} />}
           {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}
         </DrawerHeader>
@@ -78,20 +78,21 @@ function ConfirmBody({ onOpenChange, title, target, changes, children, confirmLa
             if (!pending) onConfirm(text.trim())
           }}
         >
-          {target && <div className="text-sm"><span className="text-muted-foreground">대상 </span><span className="font-medium">{target}</span></div>}
+          {target && <div className="text-sm [overflow-wrap:anywhere]"><span className="text-muted-foreground">대상 </span><span className="font-medium">{target}</span></div>}
           {changes && changes.length > 0 && (
-            <div className="overflow-x-auto rounded-md border border-border">
+            // Label column: its content width up to 9rem, Korean words kept whole. Values wrap by word; long tokens (names, ids) break anywhere.
+            <div className="rounded-md border border-border">
               <table className="w-full text-sm">
                 <caption className="sr-only">변경 전후</caption>
                 <thead className="bg-muted/60 text-xs text-muted-foreground">
-                  <tr><th scope="col" className="px-3 py-2 text-left font-medium">항목</th><th scope="col" className="px-3 py-2 text-left font-medium">변경 전</th><th scope="col" className="px-3 py-2 text-left font-medium">변경 후</th></tr>
+                  <tr><th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-medium">항목</th><th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-medium">변경 전</th><th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-medium">변경 후</th></tr>
                 </thead>
                 <tbody>
                   {changes.map(change => (
-                    <tr key={change.label} className="border-t border-border">
-                      <th scope="row" className="px-3 py-2 text-left font-normal text-muted-foreground">{change.label}</th>
-                      <td className="px-3 py-2 tabular-nums">{change.before}</td>
-                      <td className="px-3 py-2 font-medium tabular-nums">{change.after}</td>
+                    <tr key={change.label} className="border-t border-border align-top">
+                      <th scope="row" className="px-3 py-2 text-left font-normal text-muted-foreground"><span className="block max-w-36 break-keep">{change.label}</span></th>
+                      <td className="px-3 py-2 tabular-nums break-keep [overflow-wrap:anywhere]">{change.before}</td>
+                      <td className="px-3 py-2 font-medium tabular-nums break-keep [overflow-wrap:anywhere]">{change.after}</td>
                     </tr>
                   ))}
                 </tbody>

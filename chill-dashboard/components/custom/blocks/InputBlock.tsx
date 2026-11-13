@@ -500,12 +500,12 @@ export const InputBlock = forwardRef<HTMLInputElement, InputBlockProps>(
               className={cn("font-semibold text-foreground", s.text)}
             >
               {isDragging
-                ? "Drop files here"
-                : "Click or drag file to this area"}
+                ? "여기에 놓기"
+                : "눌러서 고르거나 끌어 놓기"}
             </p>
             <p className="text-xs text-muted-foreground mt-1 max-w-[250px]">
-              {accept ? `Supports ${accept}` : "Supports all file types"}{" "}
-              {multiple && "• Upload multiple"}
+              {accept ? `형식 ${accept}` : "모든 형식"}
+              {multiple && ", 여러 개 가능"}
             </p>
           </div>
 
@@ -700,7 +700,7 @@ export const InputBlock = forwardRef<HTMLInputElement, InputBlockProps>(
             ref={listRef}
             id={listId}
             role="listbox"
-            aria-label={label ? `${label} suggestions` : "Suggestions"}
+            aria-label={label ? `${label} 추천` : "추천"}
             className={cn(
               "absolute left-0 right-0 z-50 max-h-[18.5rem] overflow-y-auto p-1 border border-border bg-popover text-popover-foreground rounded-xl shadow-lg",
               "animate-in fade-in duration-150",

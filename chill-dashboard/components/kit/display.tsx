@@ -29,8 +29,39 @@ export function Hint({ text, children, focusable = false, className }: { text?: 
 export function Missing({ reason }: { reason?: React.ReactNode }) {
   return (
     <Hint text={reason} focusable>
-      <span className="text-muted-foreground" aria-label={typeof reason === "string" ? `값 없음: ${reason}` : "값 없음"}>{DASH}</span>
+      <span className="text-muted-foreground"><span aria-hidden="true">{DASH}</span><span className="sr-only">값 없음</span></span>
     </Hint>
+  )
+}
+
+/**
+ * One line of content. While it is cut off, the full text shows in a tooltip, and plain text becomes
+ * a tab stop so keyboard users can read it too.
+ */
+export function Clip({ children, className }: { children: React.ReactNode; className?: string }) {
+  const ref = React.useRef<HTMLSpanElement>(null)
+  const [full, setFull] = React.useState<string | null>(null)
+  const measure = React.useCallback(() => {
+    const element = ref.current
+    if (!element) return
+    const text = element.scrollWidth > element.clientWidth + 1 ? element.textContent : null
+    setFull(current => (current === text ? current : text))
+  }, [])
+  React.useLayoutEffect(measure)
+  React.useEffect(() => {
+    if (!ref.current) return
+    const observer = new ResizeObserver(measure)
+    observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [measure])
+  const text = typeof children === "string" || typeof children === "number"
+  return (
+    <Tooltip>
+      <TooltipTrigger className={cn("block min-w-0", className)} tabIndex={full && text ? 0 : undefined}>
+        <span ref={ref} className="block truncate">{children}</span>
+      </TooltipTrigger>
+      {full && <TooltipContent aria-hidden="true" className="max-w-sm whitespace-normal break-all">{full}</TooltipContent>}
+    </Tooltip>
   )
 }
 
@@ -73,8 +104,8 @@ export function StatTile({ label, value, unit, sub, info, reason, status, href, 
 }) {
   const body = (
     <>
-      <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-        <span className="truncate">{label}</span>
+      <div className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
+        <Clip>{label}</Clip>
         {info && <Hint text={info} focusable><Info className="size-3.5" aria-label="설명" /></Hint>}
         {status && <StatusDot status={status} className="ml-auto" />}
       </div>
@@ -82,7 +113,7 @@ export function StatTile({ label, value, unit, sub, info, reason, status, href, 
         <span className="truncate text-2xl font-semibold tabular-nums tracking-tight text-foreground">{value == null || value === "" ? <Missing reason={reason} /> : value}</span>
         {unit && value != null && <span className="text-sm text-muted-foreground">{unit}</span>}
       </div>
-      {sub != null && <div className="mt-1 truncate text-xs text-muted-foreground tabular-nums">{sub}</div>}
+      {sub != null && <div className="mt-1 text-xs text-muted-foreground tabular-nums"><Clip>{sub}</Clip></div>}
     </>
   )
   return href ? (
@@ -94,9 +125,92 @@ export function StatTile({ label, value, unit, sub, info, reason, status, href, 
   )
 }
 
-/** Grid that lays tiles out four across, two on tablets, one on phones. */
-export function StatRow({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn("grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4", className)}>{children}</div>
+const statColumns = { 2: "lg:grid-cols-2", 3: "lg:grid-cols-3", 4: "lg:grid-cols-4", 5: "lg:grid-cols-5", 6: "lg:grid-cols-6" } as const
+/** Grid of tiles: `columns` across on desktops, two across on tablets and phones. */
+export function StatRow({ children, columns = 4, className }: { children: React.ReactNode; columns?: 2 | 3 | 4 | 5 | 6; className?: string }) {
+  return <div className={cn("grid grid-cols-2 gap-3", statColumns[columns], className)}>{children}</div>
+}
+
+const toneFill: Record<StatusTone, string> = { ok: "bg-ok", warn: "bg-warn", fail: "bg-fail", progress: "bg-primary", idle: "bg-idle" }
+/** Thin bar for a value out of a maximum, in a cell or a tile. Display only: the colour never states a verdict. */
+export function MeterBar({ value, max, label, tone = "progress", marker, reason, width = "cell", className }: {
+  value: number | null | undefined; max: number
+  /** Accessible name, e.g. "전력 12.4 / 30 W". */ label: string
+  tone?: StatusTone
+  /** A tick at this value, e.g. a limit or target (same unit as `value`). */ marker?: number
+  /** Why the value is absent. */ reason?: string
+  /** "cell": 64 px inline; "full": the width of its container. */ width?: "cell" | "full"
+  className?: string
+}) {
+  if (value == null || !Number.isFinite(value) || !(max > 0)) return <Missing reason={reason} />
+  const share = (n: number) => Math.min(Math.max(n / max, 0), 1) * 100
+  return (
+    <span
+      role="meter" aria-label={label} aria-valuenow={value} aria-valuemin={0} aria-valuemax={max}
+      className={cn("relative h-1.5 shrink-0 overflow-hidden rounded-full bg-muted align-middle", width === "full" ? "block w-full" : "inline-block w-16", className)}
+    >
+      <span className={cn("absolute inset-y-0 left-0 rounded-full", toneFill[tone])} style={{ width: `${share(value)}%` }} />
+      {marker != null && <span aria-hidden="true" className="absolute inset-y-0 w-0.5 bg-foreground/60" style={{ left: `min(${share(marker)}%, 100% - 2px)` }} />}
+    </span>
+  )
+}
+
+export type FeedItem = {
+  key: string
+  title: React.ReactNode
+  status?: StatusInfo; tone?: StatusTone
+  /** One secondary value after the title, e.g. the target name. */ secondary?: React.ReactNode
+  /** Relative time on the right ("3분 전"), absolute KST on hover. */ at?: string | number | Date | null
+  /** Replaces the time on the right. */ meta?: React.ReactNode
+  href?: string
+}
+/** One-line list rows: status mark, title, secondary text and time. Rows link when `href` is set. */
+export function Feed({ items, empty = "항목 없음", label }: { items: FeedItem[]; empty?: string; label?: string }) {
+  const now = useNow()
+  if (!items.length) return <p className="py-2 text-sm text-muted-foreground">{empty}</p>
+  return (
+    <ul aria-label={label} className="-mx-2 flex flex-col">
+      {items.map(item => {
+        const body = (
+          <>
+            {(item.status || item.tone) && <StatusDot status={item.status} tone={item.tone} />}
+            <span className="min-w-0 max-w-[60%] shrink-0 truncate font-medium text-foreground">{item.title}</span>
+            {item.secondary != null && <span className="min-w-0 flex-1 truncate text-muted-foreground">{item.secondary}</span>}
+            <span className="ml-auto shrink-0 pl-2 text-xs tabular-nums text-muted-foreground">
+              {item.meta ?? (item.at ? <Hint text={`${formatKst(item.at)} KST`}><time dateTime={new Date(item.at).toISOString()}>{now ? formatRelative(item.at, now) : formatKst(item.at)}</time></Hint> : null)}
+            </span>
+          </>
+        )
+        const row = "flex h-9 min-w-0 items-center gap-2 rounded-md px-2 text-sm"
+        return <li key={item.key}>{item.href ? <Link href={item.href} className={cn(row, "hover:bg-muted")}>{body}</Link> : <div className={row}>{body}</div>}</li>
+      })}
+    </ul>
+  )
+}
+
+export type StepItem = { label: string; status: "done" | "current" | "failed" | "pending"; /** Tooltip, e.g. a failure reason. */ reason?: string }
+const stepTone = { done: "ok", current: "progress", failed: "fail", pending: "idle" } as const
+const stepWord = { done: "완료", current: "진행 중", failed: "실패", pending: "대기" } as const
+/** Ordered stages and their state in one wrapping row. */
+export function Steps({ items, label, className }: { items: StepItem[]; label: string; className?: string }) {
+  return (
+    <ol aria-label={label} className={cn("flex flex-wrap items-center gap-x-2 gap-y-2", className)}>
+      {items.map((item, index) => {
+        const Icon = toneIcon[stepTone[item.status]]
+        return (
+          <li key={`${index}-${item.label}`} aria-current={item.status === "current" ? "step" : undefined} className="flex items-center gap-2">
+            {index > 0 && <span aria-hidden="true" className="h-px w-3 bg-border sm:w-6" />}
+            <Hint text={item.reason} focusable className="inline-flex">
+              <span className={cn("inline-flex items-center gap-1.5 text-sm", item.status === "pending" ? "text-muted-foreground" : "text-foreground", item.status === "current" && "font-medium")}>
+                <Icon className={cn("size-4 shrink-0", toneText[stepTone[item.status]])} aria-hidden="true" />
+                {item.label}<span className="sr-only">: {stepWord[item.status]}</span>
+              </span>
+            </Hint>
+          </li>
+        )
+      })}
+    </ol>
+  )
 }
 
 /**
@@ -177,7 +291,7 @@ export function Fields({ items, columns = 2, className }: { items: FieldItem[]; 
             {item.label}
             {item.info && <Hint text={item.info} focusable><Info className="size-3" aria-label="설명" /></Hint>}
           </dt>
-          <dd className="min-w-0 truncate text-sm text-foreground sm:mt-0.5">{item.value == null || item.value === "" ? <Missing reason={item.reason} /> : item.value}</dd>
+          <dd className="min-w-0 text-sm text-foreground sm:mt-0.5">{item.value == null || item.value === "" ? <Missing reason={item.reason} /> : <Clip>{item.value}</Clip>}</dd>
         </div>
       ))}
     </dl>

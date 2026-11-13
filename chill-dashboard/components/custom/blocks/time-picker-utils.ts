@@ -16,7 +16,7 @@ export const roundToStep = (date: Date, step: number) => {
 };
 
 export const formatTime = (date: Date, format: TimeFormat = "12h") =>
-  new Intl.DateTimeFormat("en-US", {
+  new Intl.DateTimeFormat("ko-KR", {
     hour: "numeric",
     minute: "2-digit",
     hour12: format === "12h",

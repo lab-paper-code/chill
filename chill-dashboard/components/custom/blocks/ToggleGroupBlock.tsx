@@ -360,7 +360,7 @@ export const ToggleGroupItem = forwardRef<
   const getVariantStyles = () => {
     if (segmented) {
       return cn(
-        "relative z-[1] whitespace-nowrap rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-primary/60 focus-visible:ring-offset-0",
+        "relative z-[1] whitespace-nowrap rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-offset-[-2px]",
         segmentedSizes[size],
         isActive && "text-foreground",
         // Until the sliding highlight is measured (and in multiple groups,
@@ -406,7 +406,8 @@ export const ToggleGroupItem = forwardRef<
       tabIndex={radio ? (isActive || groupValue === "" ? 0 : -1) : undefined}
       onClick={handleToggle}
       className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed",
+        // CHILL patch: the app-wide focus outline (primary, 2px) instead of a grey ring.
+        "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-200 focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 disabled:cursor-not-allowed",
         sizeStyles[size],
         getVariantStyles(),
         className,

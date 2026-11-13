@@ -23,6 +23,7 @@ import { ThemeSwitcher } from "@/components/custom/blocks/ThemeSwitcherBlock"
 import Button from "@/components/custom/blocks/Button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Fields, StatusDot, TimeText } from "@/components/kit/display"
+import { usePageTitle } from "@/components/kit/page"
 import { SignIn } from "./sign-in"
 
 const icons: Record<NavItem["icon"], React.ElementType> = { overview: LayoutDashboard, services: Layers, devices: Cpu, scheduler: Workflow, measurements: Ruler, experiments: FlaskConical, catalog: Boxes }
@@ -90,7 +91,9 @@ function AppSidebar() {
 
 function TopBar() {
   const pathname = usePathname()
-  const crumbs = breadcrumbs(pathname)
+  const title = usePageTitle(pathname)
+  // The last crumb of a detail page is a name or id from the URL; the PageHeader title says it better.
+  const crumbs = breadcrumbs(pathname).map((crumb, index, all) => index === all.length - 1 && crumb.dynamic && title ? { ...crumb, label: title } : crumb)
   const [paletteOpen, setPaletteOpen] = React.useState(false)
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
