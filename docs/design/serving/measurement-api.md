@@ -4,7 +4,7 @@
 
 ## 소유권과 근거 경계
 
-`internal/serving/measurement`가 occupancy intent 해석, 동결 객체와 제출, BEO와 DOM 삭제를 소유한다. producer 종료, 소유 evidence 탐색과 공유 참조 보호, evidence-before-native 삭제를 같은 owner에서 처리한다.
+`internal/serving/measurement`가 occupancy intent 해석, 동결 객체와 제출, BEO와 DOM 삭제를 소유한다. producer 종료 확인과 evidence-before-native 삭제를 같은 owner에서 처리한다.
 
 HTTP는 인증과 strict decode, 응답을 맡고 composition root가 기존 mutation mutex와 accepted profile, configuration decoder와 timeout을 주입한다. 별도 측정 writer나 scheduler 권한을 만들지 않는다.
 
@@ -67,7 +67,7 @@ DELETE는 항목 URL의 `?uid=<UID>`와 `If-Match` RV가 필요하다. Measuring
 
 Bearer TokenReview와 정확한 URL SAR, namespace allowlist와 native resource SAR를 모두 적용한다. POST create는 collection scope, DELETE는 URL 이름의 delete다. 삭제 lookup과 evidence 정리는 owner SA가 수행하며 caller get을 추가 권한으로 요구하지 않는다.
 
-BEO 생성과 삭제도 같은 두 권한 층과 producer/evidence 보호를 사용한다. 순차 탐색 실패의 정리는 현재 generation Failed와 MeasurementComplete=False를 확인한다. 이름과 label만으로 소유를 추정하지 않는다.
+BEO 생성과 삭제도 같은 두 권한 층을 사용한다. BEO 삭제는 소유와 위치로만 결정하며 저장된 payload를 읽거나 decode하지 않는다. 따라서 이전 schema로 쓴 객체도 삭제할 수 있다. 거절(409 MeasurementInUse)은 네 가지다. 현재 generation을 관측한 terminal 상태가 아니면 거절한다. campaign reconciler는 그때까지 curve plan, result와 Run을 계속 쓸 수 있기 때문이다. BEO가 controller인 Run이 controller인 Job이 active이거나, 그 Job 또는 Run이 기록한 Pod가 종료되지 않았으면 거절한다. worker가 cleanup 뒤에 raw를 다시 쓸 수 있기 때문이다. `edge.dacs.io/serving-profile`이 이 BEO profile을 가리키는 살아 있는 serving Pod가 있으면 거절한다. observer가 그 annotation으로 instance를 귀속하기 때문이다. 삭제 대상은 `batch-energy-optimizations/<BEO UID>/`, `serving/profiles/<namespace>/<name>/<BEO UID>/`, 그리고 BEO가 controller인 각 Run의 `profiling-runs/<Run UID>/` 아래 모든 객체다. 모든 writer는 자기 owner UID 아래에만 쓰고, 끝의 `/`가 다른 UID와의 접두 일치를 막는다. `serving/profile-reuse/`의 scheduler 재사용 판정 기록은 측정 산출물이 아니므로 남긴다. 실패 뒤 같은 UID/RV 재시도는 남은 객체만 다시 나열해 끝낸다. native 객체가 이미 사라진 측정의 객체는 이 API로 지정할 수 없어 운영자가 지운다.
 
 ### 동결 protocol과 실행
 
