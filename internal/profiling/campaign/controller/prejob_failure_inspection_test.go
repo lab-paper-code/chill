@@ -124,7 +124,7 @@ func TestInspectPrejobFailureUsesActualFrozenChildPreparation(t *testing.T) {
 					_, resolutionErr := resolver.Resolve(ctx, active)
 					var capacity *profiler.MetricCapacityError
 					reason, terminal := profiler.TerminalResolutionReason(resolutionErr)
-					if !terminal || reason != profiler.ResolutionReasonExecutionPolicyInvalid || !errors.As(resolutionErr, &capacity) {
+					if !terminal || reason != profilingrun.ResolutionReasonExecutionPolicyInvalid || !errors.As(resolutionErr, &capacity) {
 						t.Fatalf("active child did not reach metric capacity admission: reason=%s terminal=%t error=%T: %v",
 							reason, terminal, resolutionErr, resolutionErr)
 					}
@@ -134,7 +134,7 @@ func TestInspectPrejobFailureUsesActualFrozenChildPreparation(t *testing.T) {
 					return verified.ForDerivation(), err
 				}, "evidence", client.ObjectKeyFromObject(parent), parent.UID)
 				if expectEligible {
-					if err != nil || !proof.Eligible || proof.Reason != profiler.ResolutionReasonExecutionPolicyInvalid || len(proof.IdleRuns) != 3 || proof.Child.UID != active.UID {
+					if err != nil || !proof.Eligible || proof.Reason != profilingrun.ResolutionReasonExecutionPolicyInvalid || len(proof.IdleRuns) != 3 || proof.Child.UID != active.UID {
 						t.Fatalf("actual eligibility: %+v, %v", proof, err)
 					}
 				} else if err == nil || proof.Eligible {

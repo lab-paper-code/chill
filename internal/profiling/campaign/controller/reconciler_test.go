@@ -12,7 +12,6 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
-	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -352,7 +351,7 @@ func TestCampaignCurvePlanFailureClassification(t *testing.T) {
 			}
 			reason, opens := "CurvePlanResolutionFailed", 2
 			if test.terminal {
-				reason, opens = profiler.ResolutionReasonInvalidRunSpec, 1
+				reason, opens = profilingrun.ResolutionReasonInvalidRunSpec, 1
 			}
 			if updated.Status.Phase != batchEnergyOptimizationPhaseFailed || updated.Status.Outcome != reason ||
 				updated.Status.ObservedGeneration != parent.Generation || len(updated.Status.Conditions) != 1 {

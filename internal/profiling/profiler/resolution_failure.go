@@ -3,15 +3,8 @@ package profiler
 import (
 	"errors"
 	"fmt"
-)
 
-const (
-	// ResolutionReasonInvalidRunSpec marks an immutable Run request that cannot be projected.
-	ResolutionReasonInvalidRunSpec = "InvalidRunSpec"
-	// ResolutionReasonExecutionPolicyInvalid marks an invalid selected execution policy.
-	ResolutionReasonExecutionPolicyInvalid = "ExecutionPolicyInvalid"
-	// ResolutionReasonActuationPolicyInvalid marks an invalid selected actuation policy.
-	ResolutionReasonActuationPolicyInvalid = "ActuationPolicyInvalid"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 // TerminalResolutionError marks an immutable Run or installation-policy error
@@ -50,10 +43,10 @@ func TerminalResolutionReason(err error) (string, bool) {
 
 // InvalidExecutionPolicy constructs a terminal execution-policy failure.
 func InvalidExecutionPolicy(format string, args ...any) error {
-	return NewTerminalResolutionError(ResolutionReasonExecutionPolicyInvalid, fmt.Errorf(format, args...))
+	return NewTerminalResolutionError(profilingrun.ResolutionReasonExecutionPolicyInvalid, fmt.Errorf(format, args...))
 }
 
 // InvalidActuationPolicy constructs a terminal actuation-policy failure.
 func InvalidActuationPolicy(format string, args ...any) error {
-	return NewTerminalResolutionError(ResolutionReasonActuationPolicyInvalid, fmt.Errorf(format, args...))
+	return NewTerminalResolutionError(profilingrun.ResolutionReasonActuationPolicyInvalid, fmt.Errorf(format, args...))
 }

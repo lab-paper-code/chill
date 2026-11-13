@@ -10,6 +10,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 
 	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -441,8 +442,8 @@ func terminalPreJobFailureCurrent(run *edgev1alpha1.ProfilingRun) bool {
 			continue
 		}
 		switch condition.Reason {
-		case profiler.ResolutionReasonInvalidRunSpec, profiler.ResolutionReasonExecutionPolicyInvalid,
-			profiler.ResolutionReasonActuationPolicyInvalid, requiredStateNotConfirmedReason:
+		case profilingrun.ResolutionReasonInvalidRunSpec, profilingrun.ResolutionReasonExecutionPolicyInvalid,
+			profilingrun.ResolutionReasonActuationPolicyInvalid, requiredStateNotConfirmedReason:
 			return true
 		}
 	}

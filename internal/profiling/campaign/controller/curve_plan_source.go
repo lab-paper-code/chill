@@ -132,7 +132,7 @@ func (p *CurvePlanProjector) Project(
 	plan, err := profilederivation.NewCurvePlan(spec)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, profiler.NewTerminalResolutionError(
-			profiler.ResolutionReasonInvalidRunSpec, fmt.Errorf("construct curve plan: %w", err))
+			profilingrun.ResolutionReasonInvalidRunSpec, fmt.Errorf("construct curve plan: %w", err))
 	}
 	return plan, transition, nil
 }
@@ -160,7 +160,7 @@ func (p *CurvePlanProjector) resolveCandidateReportAndBatches(
 	}
 	plannedBatchSizes, err := resolvePlannedBatchSizes(report)
 	if err != nil {
-		return profilingrun.CandidateReport{}, nil, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
+		return profilingrun.CandidateReport{}, nil, profiler.NewTerminalResolutionError(profilingrun.ResolutionReasonInvalidRunSpec, err)
 	}
 	return report, plannedBatchSizes, nil
 }
@@ -268,7 +268,7 @@ func (s *CurvePlanSource) readStored(
 	stored, err := profilederivation.DecodeCurvePlan(storedBytes)
 	if err != nil {
 		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{},
-			profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec,
+			profiler.NewTerminalResolutionError(profilingrun.ResolutionReasonInvalidRunSpec,
 				fmt.Errorf("decode existing curve plan: %w", err))
 	}
 	return stored, batchenergyoptimization.StoredObjectReference{
@@ -370,14 +370,14 @@ func (p *CurvePlanProjector) prepare(
 ) (profiler.PreparedRun, error) {
 	run, err := BuildRun(parent, measurement, 1, backend)
 	if err != nil {
-		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
+		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profilingrun.ResolutionReasonInvalidRunSpec, err)
 	}
 	if frozenPlan != nil {
 		applyFrozenRunProtocol(run, *frozenPlan, measurement.WorkloadMode)
 	}
 	requested, err := profilercontroller.ProjectRequest(run.Spec)
 	if err != nil {
-		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
+		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profilingrun.ResolutionReasonInvalidRunSpec, err)
 	}
 	if frozenPlan != nil {
 		projection.ApplyFrozenActiveProtocol(&requested.Preparation.Measurement, frozenPlan.Shared().ActiveProtocol)

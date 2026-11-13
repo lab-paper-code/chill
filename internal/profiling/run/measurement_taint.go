@@ -21,8 +21,9 @@ const MeasurementTaintKey = "chill.dacs.io/measurement"
 const AdmissionAnnotation = "chill.dacs.io/admission"
 
 // InvalidAnnotation marks a measurement whose Node changed power mode inside
-// the measurement window by a request the measurement did not make. Evidence
-// readers count it and do not use it.
+// the measurement window by a request the measurement did not make, or one an
+// operator withdraws from serving before deleting it. Evidence readers count
+// it and do not use it.
 const InvalidAnnotation = "chill.dacs.io/measurement-invalid"
 
 // RunnerProfileAnnotation names the profile of the transition-cost runner

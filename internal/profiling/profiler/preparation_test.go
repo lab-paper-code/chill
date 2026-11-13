@@ -84,7 +84,7 @@ func TestPreparerAdmitsMetricScheduleWithinSelectedExecutionPolicy(t *testing.T)
 			}
 			prepared, err := newFixturePreparer(t, resolvers).Prepare(context.Background(), fixtureRequest(config))
 			if test.rejected {
-				if reason, terminal := TerminalResolutionReason(err); !terminal || reason != ResolutionReasonExecutionPolicyInvalid {
+				if reason, terminal := TerminalResolutionReason(err); !terminal || reason != profilingrun.ResolutionReasonExecutionPolicyInvalid {
 					t.Fatalf("oversized schedule classification = %q, terminal=%t, error=%v", reason, terminal, err)
 				}
 				var capacity *MetricCapacityError

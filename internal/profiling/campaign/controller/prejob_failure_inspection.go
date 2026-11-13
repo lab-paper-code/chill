@@ -129,7 +129,7 @@ func InspectPrejobFailure(ctx context.Context, reader client.Reader, objects evi
 	_, err = resolver.Resolve(ctx, active)
 	var capacity *profiler.MetricCapacityError
 	reason, terminal := profiler.TerminalResolutionReason(err)
-	if !terminal || reason != profiler.ResolutionReasonExecutionPolicyInvalid || !errors.As(err, &capacity) {
+	if !terminal || reason != profilingrun.ResolutionReasonExecutionPolicyInvalid || !errors.As(err, &capacity) {
 		return stop(errors.New("NotDeterministicCapacityFailure"))
 	}
 	if ctx.Err() != nil {

@@ -20,7 +20,7 @@ import (
 )
 
 func invalidAuthority(message string) error {
-	return profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, errors.New(message))
+	return profiler.NewTerminalResolutionError(profilingrun.ResolutionReasonInvalidRunSpec, errors.New(message))
 }
 
 func admitRunRoot(annotations map[string]string) error {

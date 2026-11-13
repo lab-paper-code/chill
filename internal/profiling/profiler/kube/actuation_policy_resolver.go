@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -79,7 +80,7 @@ func (r *KubernetesActuationPolicyResolver) ResolveActuationPolicy(
 		},
 	)
 	if err != nil {
-		return profiler.FrozenActuationPolicy{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonActuationPolicyInvalid, err)
+		return profiler.FrozenActuationPolicy{}, profiler.NewTerminalResolutionError(profilingrun.ResolutionReasonActuationPolicyInvalid, err)
 	}
 	return frozen, nil
 }

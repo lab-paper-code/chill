@@ -2,7 +2,7 @@ package batchenergyoptimization
 
 import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/profiling/profiler"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -38,9 +38,9 @@ func TerminalStatusCurrent(parent *edgev1alpha1.BatchEnergyOptimization) bool {
 				condition.Reason == string(FailureClassUnknownFailure) ||
 				condition.Reason == ReasonEnergyObjectivePolicyMismatch ||
 				condition.Reason == ReasonInvalidCampaignRun ||
-				condition.Reason == profiler.ResolutionReasonInvalidRunSpec ||
-				condition.Reason == profiler.ResolutionReasonExecutionPolicyInvalid ||
-				condition.Reason == profiler.ResolutionReasonActuationPolicyInvalid
+				condition.Reason == profilingrun.ResolutionReasonInvalidRunSpec ||
+				condition.Reason == profilingrun.ResolutionReasonExecutionPolicyInvalid ||
+				condition.Reason == profilingrun.ResolutionReasonActuationPolicyInvalid
 		}
 	}
 	return false

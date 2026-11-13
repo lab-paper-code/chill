@@ -103,11 +103,11 @@ deps:
     anyVendorDeps: true
     mayDependOn:
       # The terminal-status predicate reads the native campaign status and the
-      # profiler's terminal resolution reasons; its controller and the deletion
+      # Run's terminal resolution reasons; its controller and the deletion
       # owner both call it.
       - api
       - profile-derivation
-      - profiler-app
+      - profiling-run
 
   batch-energy-optimization-controller:
     mayDependOn:
@@ -389,7 +389,7 @@ deps:
       - evidence-core
       - firstfloor
       - batch-energy-optimization-core
-      - profiler-app
+      - profiling-run
       - query-api
       - serving-core
       - serving-state
