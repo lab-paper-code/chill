@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { RequestRow } from "./read-types.ts"
-import { managementResult, requestError, requestMarks, requestResult, requestStages } from "./services-records.ts"
+import { managementResult, requestError, requestMs, requestMarks, requestResult, requestStages } from "./services-records.ts"
 
 const row = (extra: Partial<RequestRow>): RequestRow => ({ kind: "final", requestID: "r", receivedAt: "2026-01-01T00:00:00Z", ...extra })
 
@@ -30,4 +30,10 @@ test("request error codes", () => {
   assert.equal(requestError("RequestTimeout: deadline"), "응답 시간 초과")
   assert.equal(requestError("Mystery"), null)
   assert.equal(requestError(undefined), null)
+})
+
+test("request times are always ms", () => {
+  assert.equal(requestMs(363_189), "0.36 ms")
+  assert.equal(requestMs(3_000_000_000n), "3,000.0 ms")
+  assert.equal(requestMs(undefined), "—")
 })

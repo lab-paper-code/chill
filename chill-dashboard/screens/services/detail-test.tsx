@@ -12,7 +12,7 @@ import { formatText, rawInferenceBody, rawOutputs, type RawField, type WorkloadV
 import { formatBytes, formatDurationNanos } from "@/lib/format"
 import { statusLabel } from "@/lib/labels"
 import type { ObservationResult, RequestRow } from "@/lib/read-types"
-import { requestError, requestResult } from "@/lib/services-records"
+import { requestError, requestMs, requestResult } from "@/lib/services-records"
 import { StageBars } from "./stage-bars"
 
 export type ServiceTabProps = { name: string; uid: string | undefined; workload: WorkloadView | undefined }
@@ -192,8 +192,8 @@ function Timing({ record, waiting, generative, sloMs, rtt }: { record: RequestRo
     <div className="grid gap-4">
       <Fields items={[
         { label: "결과", value: record ? <StatusBadge status={requestResult(record)} /> : waiting ? <span className="text-muted-foreground">기록 확인 중</span> : null, reason: "완료 기록 없음" },
-        { label: "소요 시간", value: record?.elapsedNanos != null ? formatDurationNanos(record.elapsedNanos) : rtt != null ? formatDurationNanos(rtt * 1e6) : null, reason: "시간 정보 없음", info: record ? undefined : "완료 기록이 없어 브라우저에서 잰 왕복 시간" },
-        { label: "응답 목표", value: sloMs !== undefined ? formatDurationNanos(sloMs * 1e6) : null, reason: "적용된 정의 없음" },
+        { label: "소요 시간", value: record?.elapsedNanos != null ? requestMs(record.elapsedNanos) : rtt != null ? requestMs(rtt * 1e6) : null, reason: "시간 정보 없음", info: record ? undefined : "완료 기록이 없어 브라우저에서 잰 왕복 시간" },
+        { label: "응답 목표", value: sloMs !== undefined ? requestMs(sloMs * 1e6) : null, reason: "적용된 정의 없음" },
       ]} columns={3} />
       {record?.nativeElapsedMS !== undefined && <StageBars row={record} backendLabel={generative ? "답 생성" : undefined} />}
     </div>

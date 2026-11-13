@@ -2,8 +2,7 @@
 
 import * as React from "react"
 import { useQueryClient, type UseMutationResult } from "@tanstack/react-query"
-import { Button, DataTable, Fields, useToast, type Column } from "@/components/kit"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/custom/blocks/DialogBlock"
+import { Button, DataTable, Dialog, Fields, useToast, type Column } from "@/components/kit"
 import { InputBlock } from "@/components/custom/blocks/InputBlock"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -43,17 +42,17 @@ type RoutingDialogProps = {
 }
 export function RoutingDialog(props: RoutingDialogProps) {
   const mutation = useChillMutation()
-  const pending = mutation.isPending
-  return (
-    <Dialog open={props.open} onOpenChange={next => { if (!pending) props.onOpenChange(next) }}>
-      <DialogContent size="lg" hideCloseButton={pending}>
-        {props.open && <RoutingForm {...props} mutation={mutation} />}
-      </DialogContent>
-    </Dialog>
-  )
+  // A fresh form each time the dialog opens, so the draft starts from the current routing.
+  const [opened, setOpened] = React.useState(0)
+  const [wasOpen, setWasOpen] = React.useState(props.open)
+  if (props.open !== wasOpen) {
+    setWasOpen(props.open)
+    if (props.open) setOpened(count => count + 1)
+  }
+  return <RoutingForm key={opened} {...props} mutation={mutation} />
 }
 
-function RoutingForm({ onOpenChange, name, uid, targets, declared, mutation }: RoutingDialogProps & { mutation: UseMutationResult<RelayResponse, ApiError, ChillMutationInput> }) {
+function RoutingForm({ open, onOpenChange, name, uid, targets, declared, mutation }: RoutingDialogProps & { mutation: UseMutationResult<RelayResponse, ApiError, ChillMutationInput> }) {
   const { toast } = useToast()
   const client = useQueryClient()
   const reasonId = React.useId()
@@ -103,9 +102,10 @@ function RoutingForm({ onOpenChange, name, uid, targets, declared, mutation }: R
   }
 
   return (
-    <>
-      <DialogHeader><DialogTitle>분배 수정</DialogTitle></DialogHeader>
-      <form className="grid gap-4" onSubmit={submit}>
+    <Dialog open={open} onOpenChange={onOpenChange} title="분배 수정" size="lg" busy={mutation.isPending} onSubmit={submit} footer={<>
+      <Button type="button" variant="outline" disabled={mutation.isPending} onClick={() => onOpenChange(false)}>취소</Button>
+      <Button type="submit" variant="default" disabled={!ready} loading={mutation.isPending}>적용</Button>
+    </>}>
         <RadioGroup value={mode} onValueChange={value => setMode(value as Mode)} className="flex flex-wrap gap-x-5 gap-y-2" aria-label="분배 방식" disabled={mutation.isPending}>
           <Label><RadioGroupItem value="route" disabled={!targets.length} />{modeLabels.route}</Label>
           <Label><RadioGroupItem value="unroute" />{modeLabels.unroute}</Label>
@@ -121,11 +121,6 @@ function RoutingForm({ onOpenChange, name, uid, targets, declared, mutation }: R
           <Label htmlFor={reasonId}>사유</Label>
           <Textarea id={reasonId} value={reason} onChange={event => setReason(event.target.value)} required maxLength={500} rows={2} disabled={mutation.isPending} className="user-invalid:border-fail" />
         </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" disabled={mutation.isPending} onClick={() => onOpenChange(false)}>취소</Button>
-          <Button type="submit" variant="default" disabled={!ready} loading={mutation.isPending}>적용</Button>
-        </DialogFooter>
-      </form>
-    </>
+    </Dialog>
   )
 }

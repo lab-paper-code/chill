@@ -2,7 +2,7 @@
 import { isLiveActionActive, type LiveEvent, type LiveMetric, type LiveMetrics, type LiveSLOWindow, type LiveSnapshot } from "./live.ts"
 import { belongsToPool, isActionFailure } from "./live-display.ts"
 import { actionKindLabel } from "./scheduler-actions.ts"
-import { autonomyState, decisionStatus, schedulerReason, serviceReadiness, type StatusInfo, type StatusTone } from "./status-labels.ts"
+import { decisionStatus, schedulerReason, serviceReadiness, type StatusTone } from "./status-labels.ts"
 import { DASH, formatNumber } from "./format.ts"
 import type { ActiveEvaluation } from "./evaluation-active.ts"
 import type { SchedulerObservationSummary } from "./read-types.ts"
@@ -27,9 +27,6 @@ export type OverviewRow = {
   success: number | null
   devices: string[]
 }
-
-/** The overview's "자동 제어" column: the decision summary state, with "Controlled" read as switched on. */
-export const autonomyCell = (state: string): StatusInfo => autonomyState(state)
 
 /** The last `seconds` per-second buckets ending at the newest one; missing seconds stay null. */
 export function lastBuckets(metrics: LiveMetrics[], seconds: number): (LiveMetrics | null)[] {

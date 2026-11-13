@@ -1,6 +1,7 @@
 // Display mapping for the service 요청 and 정의 tabs: server outcome and management codes to Korean words.
 import type { RequestRow, WireInteger } from "./read-types.ts"
 import type { StatusInfo } from "./status-labels.ts"
+import { formatNumber } from "./format.ts"
 
 const outcome: Record<string, StatusInfo> = {
   completed: { label: "완료", tone: "ok" },
@@ -34,6 +35,12 @@ export function requestError(code: string | null | undefined): string | null {
 }
 
 export const nanosToMs = (value: WireInteger | null | undefined) => (value == null ? null : Number(value) / 1e6)
+
+/** Request and stage times always in ms (one form across the 요청 and 테스트 tabs): two decimals under 10 ms, else one. */
+export function requestMs(nanos: WireInteger | null | undefined): string {
+  const ms = nanosToMs(nanos)
+  return ms == null || !Number.isFinite(ms) ? "—" : `${formatNumber(ms, ms < 10 ? 2 : 1)} ms`
+}
 
 /** The batch stage durations the server measured; null until the execution record arrived. Generative models name the model stage "답 생성". */
 export function requestStages(row: RequestRow, backendLabel = "추론"): { key: string; label: string; ms: number }[] | null {

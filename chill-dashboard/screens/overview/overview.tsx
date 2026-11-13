@@ -14,9 +14,9 @@ import { useLive } from "@/lib/use-live"
 import type { LiveSnapshot } from "@/lib/live"
 import type { ActiveEvaluations } from "@/lib/evaluation-active"
 import type { SchedulerObservationSummaryPage, SchedulerStateSummary } from "@/lib/read-types"
-import { autonomyEnabled, decisionStatus } from "@/lib/status-labels"
+import { autonomyEnabled, autonomyState, decisionStatus } from "@/lib/status-labels"
 import { formatNumber } from "@/lib/format"
-import { autonomyCell, changeItems, overviewRows, progressItems, serviceStates, TREND_SECONDS, type OverviewRow, type ServiceState } from "@/lib/overview"
+import { changeItems, overviewRows, progressItems, serviceStates, TREND_SECONDS, type OverviewRow, type ServiceState } from "@/lib/overview"
 
 const STATES = Object.keys(serviceStates) as ServiceState[]
 const DEFAULT_STATES: ServiceState[] = ["attention", "active"]
@@ -122,7 +122,7 @@ export function OverviewScreen() {
       cell: row => {
         const scope = autonomy.get(row.uid)
         const autonomous = snapshot?.workloads.find(item => item.uid === row.uid)?.autonomous
-        return <StatusDot status={scope ? autonomyCell(scope) : autonomyEnabled(autonomous)} showLabel />
+        return <StatusDot status={scope ? autonomyState(scope) : autonomyEnabled(autonomous)} showLabel />
       },
     },
   ]

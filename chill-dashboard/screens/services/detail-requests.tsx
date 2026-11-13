@@ -9,10 +9,10 @@ import {
 } from "@/components/kit"
 import { useChillQuery, useSession } from "@/lib/client"
 import type { WorkloadView } from "@/lib/domain"
-import { formatDurationNanos, formatKst, formatMs, formatNumber } from "@/lib/format"
+import { formatKst, formatMs, formatNumber } from "@/lib/format"
 import type { ObservationResult, RequestRow } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { nanosToMs, outcomeCodes, outcomeLabel, requestError, requestMarks, requestResult } from "@/lib/services-records"
+import { nanosToMs, outcomeCodes, requestMs, outcomeLabel, requestError, requestMarks, requestResult } from "@/lib/services-records"
 import { StageBars } from "./stage-bars"
 
 export type ServiceTabProps = { name: string; uid: string | undefined; workload: WorkloadView | undefined }
@@ -41,7 +41,8 @@ export function ServiceRequestsTab({ uid }: ServiceTabProps) {
   const [range, setRange] = useTimeRangeParam(presets, "1h", maxSpanMs)
   const [outcomes, setOutcomes] = useListParam("routcome")
   const [definitions, setDefinitions] = useListParam("rdef")
-  // A preset window is resolved once per choice or refresh, so the query key stays stable between renders.
+  // A preset window is resolved once per choice or refresh: `to` stays fixed while the user pages towards older rows,
+  // so rows arriving meanwhile never shift the pages, and the query key stays stable between renders.
   const [anchor, setAnchor] = React.useState(() => Date.now())
   const span = React.useMemo(() => resolveTimeRange(range, anchor), [range, anchor])
   if (!uid) return <EmptyState title="서비스 식별 정보 없음" />
@@ -59,7 +60,8 @@ function RequestsView({ uid, from, to, limit, range, presets, maxSpanMs, onRange
   range: TimeRangeValue; presets: TimePreset[]; maxSpanMs: number; onRange: (value: TimeRangeValue) => void; onRefresh: () => void
   outcomes: string[]; onOutcomes: (values: string[]) => void; definitions: string[]; onDefinitions: (values: string[]) => void
 }) {
-  // Cursors of the pages visited so far; the last entry is the page on screen. A new window or filter starts at the first page.
+  // Newest first; cursors of the pages visited so far, each towards older rows; the last entry is the page on screen.
+  // A new window, refresh or filter starts at the newest page. The tiles come from the same response as the rows.
   // The view stays mounted, so an open filter popover stays open while the user ticks several outcomes.
   const [cursors, setCursors] = React.useState<string[]>([])
   const [selected, setSelected] = React.useState<RequestRow | null>(null)
@@ -67,7 +69,7 @@ function RequestsView({ uid, from, to, limit, range, presets, maxSpanMs, onRange
   const [seenKey, setSeenKey] = React.useState(filterKey)
   if (seenKey !== filterKey) { setSeenKey(filterKey); setCursors([]); setSelected(null) }
   const cursor = cursors[cursors.length - 1]
-  const params = new URLSearchParams({ from: new Date(from).toISOString(), to: new Date(to).toISOString(), limit: String(limit) })
+  const params = new URLSearchParams({ from: new Date(from).toISOString(), to: new Date(to).toISOString(), limit: String(limit), order: "desc" })
   if (cursor) params.set("cursor", cursor)
   outcomes.forEach(value => params.append("outcome", value))
   definitions.forEach(value => params.append("definition", value))
@@ -90,7 +92,7 @@ function RequestsView({ uid, from, to, limit, range, presets, maxSpanMs, onRange
           <>
             <Summary result={result} />
             <DataTable
-              label="요청" title="요청 기록" rows={result.requests ?? []} rowKey={row => row.requestID} columns={columns} onRowClick={setSelected} selectedKey={selected?.requestID}
+              label="요청" title="요청 기록" narrow="scroll" rows={result.requests ?? []} rowKey={row => row.requestID} columns={columns} onRowClick={setSelected} selectedKey={selected?.requestID}
               paging={{ mode: "cursor", hasPrevious: cursors.length > 0, hasNext: !!result.nextCursor, onPrevious: () => setCursors(list => list.slice(0, -1)), onNext: () => setCursors(list => [...list, result.nextCursor!]) }}
               download={{ filename: `requests-${formatKst(from, false).replace(/\D/g, "")}` }}
               empty={<EmptyState compact title="조건에 맞는 요청 없음" />}
@@ -151,7 +153,7 @@ function RequestDrawer({ row, result, onClose }: { row: RequestRow | null; resul
           <div className="grid gap-5">
             <Fields columns={2} items={[
               { label: "시각", value: <TimeText at={current.receivedAt} mode="absolute" /> },
-              { label: "소요 시간", value: current.elapsedNanos === undefined ? null : formatDurationNanos(current.elapsedNanos), reason: "아직 끝나지 않음" },
+              { label: "소요 시간", value: current.elapsedNanos === undefined ? null : requestMs(current.elapsedNanos), reason: "아직 끝나지 않음" },
               { label: "장치", value: current.node?.name, reason: "배정 전" },
               { label: "배치", value: current.batchSize, reason: "실행 기록 없음" },
               ...(result.definitions.length > 1 ? [{ label: "정의", value: index < 0 ? null : `정의 ${index + 1}`, reason: "이전 정의" }] : []),
@@ -165,7 +167,7 @@ function RequestDrawer({ row, result, onClose }: { row: RequestRow | null; resul
             {requestMarks(current).length > 0 && (
               <section className="grid gap-2" aria-label="수신 후 시점">
                 <h3 className="text-sm font-semibold">수신 후 시점</h3>
-                <Fields columns={2} items={requestMarks(current).map(mark => ({ label: mark.label, value: formatDurationNanos(mark.nanos) }))} />
+                <Fields columns={2} items={requestMarks(current).map(mark => ({ label: mark.label, value: requestMs(mark.nanos) }))} />
               </section>
             )}
           </div>
