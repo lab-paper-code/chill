@@ -51,8 +51,10 @@ type SchedulerConfiguration struct {
 }
 
 type SchedulerService struct {
-	Lock                     sync.Mutex
-	refreshLock              sync.Mutex
+	Lock sync.Mutex
+	// RefreshLock serializes Refresh, which writes profile bundles and reuse
+	// records; measurement deletion holds it so no refresh rewrites them.
+	RefreshLock              sync.Mutex
 	Controller               *servingkube.SchedulerController
 	cluster                  *servingkube.ClusterState
 	operations               *servingops.Operations

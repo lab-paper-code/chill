@@ -698,7 +698,7 @@ func TestRunReconcilerPublishesTerminalResolutionFailureWithoutRequeue(t *testin
 	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
 	if actual.Status.ObservedGeneration != run.Generation || condition == nil ||
 		condition.Status != metav1.ConditionFalse || condition.ObservedGeneration != run.Generation ||
-		condition.Reason != profiler.ResolutionReasonExecutionPolicyInvalid ||
+		condition.Reason != profilingrun.ResolutionReasonExecutionPolicyInvalid ||
 		!strings.Contains(condition.Message, `execution policy "typo-v9" is not configured`) {
 		t.Fatalf("terminal freeze status = %#v", actual.Status)
 	}
@@ -766,8 +766,8 @@ func TestRunReconcilerUsesResolverAdmissionAuthority(t *testing.T) {
 	}{
 		{"root not admitted", "", "", 5 * time.Second, "", 0},
 		{"root refused", profilingrun.RefusedAdmission("NodeServing", "serving/a"), "", 0, "NodeServing", 0},
-		{"forged campaign child", "", "BatchEnergyOptimization", 0, profiler.ResolutionReasonInvalidRunSpec, 0},
-		{"forged idle baseline child", "", "ModelLoadedIdleBaseline", 0, profiler.ResolutionReasonInvalidRunSpec, 0},
+		{"forged campaign child", "", "BatchEnergyOptimization", 0, profilingrun.ResolutionReasonInvalidRunSpec, 0},
+		{"forged idle baseline child", "", "ModelLoadedIdleBaseline", 0, profilingrun.ResolutionReasonInvalidRunSpec, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			run := testRun()

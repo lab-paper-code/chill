@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,11 +20,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 
-	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,8 +33,8 @@ const (
 	measurementRequestDeletionRequested = "DeletionRequested"
 )
 
-// The measurement service removes only source-proven, unreferenced measurement
-// evidence before requesting native deletion. Native GC/finalizers stay native.
+// The measurement service removes every object under the measurement's owned
+// prefixes before requesting native deletion. Native GC/finalizers stay native.
 type QueryBearerContextKey struct{}
 
 type Service struct {
@@ -57,7 +53,6 @@ type Config struct {
 	SchedulerConfigMap     string
 	SchedulerConfigKey     string
 	MaxRequestBytes        int64
-	MaxEvidenceBytes       int64
 	StoreName              string
 	LoadGeneratorNamespace string
 }
@@ -65,14 +60,17 @@ type Config struct {
 // SchedulerInputs shares the scheduler's mutation authority and accepted snapshot.
 // DecodePolicy must use the scheduler's full configuration decoder.
 type SchedulerInputs struct {
-	Lock                  *sync.Mutex
+	Lock *sync.Mutex
+	// RefreshLock serializes catalog refresh, which writes profile bundles and
+	// reuse records.
+	RefreshLock           *sync.Mutex
 	LoadProfiles          func() (string, []serving.Profile, map[string]servingstate.PrepareSpec, bool)
 	DecodePolicy          func(string, int64) (*DispatchOccupancyPolicy, error)
 	GatewayRequestTimeout time.Duration
 }
 
 type Objects interface {
-	evidencestore.LocationReader
+	evidencestore.Lister
 	Delete(context.Context, evidencestore.ObjectLocation) error
 }
 
@@ -180,52 +178,44 @@ func (o *Service) Delete(
 			Message: "native UID and resourceVersion are required",
 		}
 	}
+	if o.objects == nil {
+		return result, &serving.Error{
+			Code:    "MeasurementEvidenceUnavailable",
+			Message: "Evidence Store access is required for deletion",
+		}
+	}
 	if o.scheduler != nil {
-		o.scheduler.Lock.Lock()
-		defer o.scheduler.Lock.Unlock()
+		// Refresh writes profile bundles and reuse records under this
+		// measurement's prefixes. Holding it until the native delete makes the
+		// next refresh read the measurement as deleted.
+		o.scheduler.RefreshLock.Lock()
+		defer o.scheduler.RefreshLock.Unlock()
 	}
-	task := &api.BatchEnergyOptimization{}
-	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, task); err != nil {
-		return result, err
+	task, prefixes, err := o.deletionPrefixes(ctx, namespace, name, uid, version)
+	if task != nil {
+		result.Task = task
 	}
-	result.Task = task
-	if string(task.UID) != uid || task.ResourceVersion != version {
-		resource := schema.GroupResource{Group: api.GroupVersion.Group, Resource: "batchenergyoptimizations"}
-		return result, apierrors.NewConflict(resource, name, errors.New("native UID or resourceVersion changed"))
-	}
-	if task.Status.Phase == string(api.MeasurementPhaseMeasuring) {
-		return result, &serving.Error{Code: "MeasurementInUse", Message: "an active measurement cannot be deleted"}
-	}
-	pods, err := o.kube.CoreV1().Pods(o.opts.ServingNamespace).List(ctx, meta.ListOptions{})
 	if err != nil {
 		return result, err
 	}
-	prefix := namespace + "/" + name + "/"
-	for _, pod := range pods.Items {
-		if strings.HasPrefix(pod.Annotations[servingstate.ServingProfileAnnotation], prefix) &&
-			pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed {
-			return result, measurementInUse("a physical serving Pod still references the measurement")
+	incomplete := &serving.Error{
+		Code: "MeasurementEvidenceDeletionIncomplete",
+		Message: "evidence cleanup stopped; some owned objects may already be deleted, " +
+			"the native measurement is retained, and retry with its UID/resourceVersion is required",
+	}
+	for _, prefix := range prefixes {
+		objects, err := o.objects.List(ctx, prefix)
+		if err != nil {
+			return result, incomplete
 		}
-	}
-	locations, err := o.measurementEvidence(ctx, task)
-	if err != nil {
-		return result, err
-	}
-	if err := o.checkSharedEvidence(ctx, task, locations); err != nil {
-		return result, err
-	}
-	result.DeletedEvidence = make([]MeasurementEvidenceLocation, 0, len(locations))
-	for _, location := range locations {
-		if err := o.objects.Delete(ctx, location); err != nil {
-			return result, &serving.Error{
-				Code: "MeasurementEvidenceDeletionIncomplete",
-				Message: "evidence cleanup stopped; some owned objects may already be deleted, " +
-					"the native measurement is retained, and retry with its UID/resourceVersion is required",
+		for _, object := range objects {
+			if err := o.objects.Delete(ctx, object.Location()); err != nil {
+				return result, incomplete
 			}
+			result.DeletedEvidence = append(result.DeletedEvidence, MeasurementEvidenceLocation{
+				Store: object.Store, Key: object.Key,
+			})
 		}
-		result.DeletedEvidence = append(result.DeletedEvidence, MeasurementEvidenceLocation{
-			Store: location.Store, Key: location.Key,
-		})
 	}
 	result.EvidenceDeleted = true
 	policy := meta.DeletePropagationBackground

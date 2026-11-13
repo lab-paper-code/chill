@@ -4,7 +4,7 @@
 
 ## 소유권과 근거 경계
 
-`internal/serving/measurement`가 occupancy intent 해석, 동결 객체와 제출, BEO와 DOM 삭제를 소유한다. producer 종료, 소유 evidence 탐색과 공유 참조 보호, evidence-before-native 삭제를 같은 owner에서 처리한다.
+`internal/serving/measurement`가 occupancy intent 해석, 동결 객체와 제출, BEO와 DOM 삭제를 소유한다. producer 종료 확인과 evidence-before-native 삭제를 같은 owner에서 처리한다.
 
 HTTP는 인증과 strict decode, 응답을 맡고 composition root가 기존 mutation mutex와 accepted profile, configuration decoder와 timeout을 주입한다. 별도 측정 writer나 scheduler 권한을 만들지 않는다.
 
@@ -63,11 +63,21 @@ name은 선택이다. 서버가 같은 수락 configuration revision의 dispatch
 
 정상 제출은 `202 {request:"Accepted",task:<DOM>}`다. `?dryRun=All`은 native 생성과 physical effect 없이 `200 {request:"NOT_SUBMITTED",task:<동결 DOM>}`을 반환한다. 수락 뒤 측정 완료와 과학적 Accepted를 별도로 판정한다.
 
-DELETE는 항목 URL의 `?uid=<UID>`와 `If-Match` RV가 필요하다. Measuring이나 살아 있는 owned load Job/Pod는409다. producer 종료와 공유 참조를 확인하고 자기 unshared evidence부터 삭제한 뒤 native CR을 삭제한다. partial 삭제 실패는 rollback하지 않는다.
+DELETE는 항목 URL의 `?uid=<UID>`와 `If-Match` RV가 필요하다. Measuring이나 살아 있는 owned load Job/Pod는409다. 삭제 대상은 동결 Node UID와 DOM UID로 정한 producer key 하나이며 저장된 record를 읽지 않는다. 그 key를 지운 뒤 native CR을 삭제한다. partial 삭제 실패는 rollback하지 않고, 이미 없는 key는 삭제된 것으로 본다.
 
 Bearer TokenReview와 정확한 URL SAR, namespace allowlist와 native resource SAR를 모두 적용한다. POST create는 collection scope, DELETE는 URL 이름의 delete다. 삭제 lookup과 evidence 정리는 owner SA가 수행하며 caller get을 추가 권한으로 요구하지 않는다.
 
-BEO 생성과 삭제도 같은 두 권한 층과 producer/evidence 보호를 사용한다. 순차 탐색 실패의 정리는 현재 generation Failed와 MeasurementComplete=False를 확인한다. 이름과 label만으로 소유를 추정하지 않는다.
+BEO 생성과 삭제도 같은 두 권한 층을 사용한다. BEO 삭제는 소유와 위치로만 결정하며 저장된 payload를 읽거나 decode하지 않는다. 따라서 이전 schema로 쓴 객체도 삭제할 수 있다. 거절(409 MeasurementInUse)은 다섯 가지다.
+
+- 현재 generation을 관측한 terminal 상태가 아니다. campaign reconciler가 그때까지 curve plan, result와 Run을 쓸 수 있다. 판정은 reconciler와 같은 `TerminalStatusCurrent`를 쓴다.
+- BEO가 controller인 Run이 결과를 기록하지 않았다. 결과는 `status.evidence`, 현재 generation의 `ExecutionComplete=False`, 또는 `EvidenceVerified=False/EvidenceInvalid`다. profiler controller는 Job이 끝난 뒤에도 그때까지 execution evidence를 쓸 수 있다. 사유는 나열하지 않으므로 이전 Run도 삭제할 수 있다.
+- 그 Run이 controller인 Job이 active이거나, 그 Job 또는 Run이 기록한 Pod가 종료되지 않았다. worker가 cleanup 뒤에 raw를 다시 쓸 수 있다.
+- `edge.dacs.io/serving-profile`이 이 BEO profile을 가리키는 살아 있는 serving Pod가 있다. observer가 그 annotation으로 instance를 귀속한다.
+- scheduler가 이 BEO에서 나온 profile을 준비 대상으로 싣고 있다. 이 BEO의 profile, 이 BEO가 확인한 reuse profile, 이 BEO를 source로 쓰는 reuse profile이 해당한다. 준비 대상은 init container가 지울 bundle을 내려받는 instance를 시작할 수 있다. 오류 메시지는 profile ID와 아래 두 단계를 담는다.
+
+준비 대상인 profile의 측정은 두 단계로 지운다. 먼저 BEO에 `chill.dacs.io/measurement-invalid` annotation을 붙인다. catalog는 이 annotation이 있는 측정을 `MeasurementInvalid` issue로 돌리고 profile을 만들지 않으므로, 다음 profile refresh부터 이 BEO의 profile과 이 BEO를 source나 confirmation으로 쓰는 reuse profile은 준비 대상에서 빠진다. 그 뒤 새 resourceVersion으로 DELETE한다. 새 측정이나 replacement로 현재 지위를 넘긴 BEO는 준비 대상이 아니므로 바로 지울 수 있다.
+
+삭제 대상은 `batch-energy-optimizations/<BEO UID>/`, `serving/profiles/<namespace>/<name>/<BEO UID>/`, `serving/profile-reuse/<namespace>/<name>/<BEO UID>/`, 그리고 BEO가 controller인 각 Run의 `profiling-runs/<Run UID>/` 아래 모든 객체다. 모든 writer는 자기 owner ID 아래에만 쓰고, 끝의 `/`가 다른 UID와의 접두 일치를 막는다. 거절 판정은 scheduler mutation lock 안에서 하고, store 삭제와 native 삭제는 그 lock을 놓은 뒤 scheduler refresh lock만 잡고 한다. refresh는 profile bundle과 reuse 기록을 쓰므로, 다음 refresh는 native 삭제 뒤에 시작해 이 BEO를 보지 않는다. 주기 refresh는 삭제가 refresh lock을 잡고 있으면 그 tick을 건너뛰어 main loop를 막지 않는다. 실패 뒤 같은 UID/RV 재시도는 남은 객체만 다시 나열해 끝낸다. native 객체가 이미 사라진 측정의 객체는 이 API로 지정할 수 없어 운영자가 지운다.
 
 ### 동결 protocol과 실행
 

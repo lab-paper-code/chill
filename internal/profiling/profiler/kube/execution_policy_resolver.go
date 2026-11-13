@@ -77,7 +77,7 @@ func (r *KubernetesExecutionPolicyResolver) Resolve(
 		UID: string(configMap.UID), ResourceVersion: configMap.ResourceVersion, Key: r.options.ConfigMapKey,
 	})
 	if err != nil {
-		return profiler.FrozenExecutionPolicy{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonExecutionPolicyInvalid, err)
+		return profiler.FrozenExecutionPolicy{}, profiler.NewTerminalResolutionError(profilingrun.ResolutionReasonExecutionPolicyInvalid, err)
 	}
 	node := &corev1.Node{}
 	if err := r.reader.Get(ctx, types.NamespacedName{Name: config.TargetNode.Name}, node); err != nil {

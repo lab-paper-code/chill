@@ -42,19 +42,23 @@ complete 객체를 포함하며 `-A`를 지원하지 않는다. Show는 기존 Q
 
 ## 삭제와 채택 안전
 
-Measurement 삭제는 소유 raw/result S3 객체를 **영구 삭제**한다. 공유/현재 참조를
-먼저 해제하고 사용하지 않는 profile만 안전하게 unadopt한다. S3와 Kubernetes
+Measurement 삭제는 소유 UID 접두 아래의 S3 객체를 **영구 삭제**한다. 사용하지
+않는 profile만 안전하게 unadopt한다. S3와 Kubernetes
 전체를 묶는 원자 transaction은 없다. 일부 evidence 삭제 뒤 native 객체가 남을 수
 있다. `DeletionRequested`는 삭제 요청 상태이며 Finalizer/GC가 실제 객체 소멸을
 결정한다. CLI는 부분 실패를 보존하고 nonzero로 종료하며 자동 재시도하지 않는다.
 
 `--uid`와 `--if-match`는 목록에서 얻은 원래 값이다. CLI가 최신 버전으로 바꾸거나
-덮어쓰지 않는다. `deletedEvidence`는 정확한 cleanup key다. 실제 존재했던 객체
-개수로 해석하지 않는다. 이미 없는 owned key는 멱등 처리한다.
+덮어쓰지 않는다. `deletedEvidence`는 이번 요청이 실제로 나열해 삭제한 key다.
+재시도는 남은 객체만 다시 나열해 삭제한다.
 
-삭제 가능 범위는 현재 observedGeneration의 완료 result 또는 source가 정한
-terminal 전환/재시도 소진 실패다. Pending, Measuring과 복구 가능한 계획 해석 실패를
-delete로 취소할 수 없다. 공유 산출물과 이미지는 cleanup 밖이다.
+삭제 가능 범위는 현재 observedGeneration의 완료 result 또는 campaign reconciler가
+terminal로 정한 실패다. Pending, Measuring과 복구 가능한 계획 해석 실패를
+delete로 취소할 수 없다. 저장 객체의 schema는 삭제 여부에 영향을 주지 않는다.
+공유 산출물과 이미지는 cleanup 밖이다. scheduler가 준비하는 profile의 측정은
+`chill.dacs.io/measurement-invalid` annotation을 붙이고 다음 profile refresh 뒤
+새 resourceVersion으로 지운다. 거절 조건 전체는
+[측정 API](../serving/measurement-api.md#공개-생성과-삭제)를 따른다.
 
 | 오류 | 보존할 사실과 다음 행동 |
 |---|---|

@@ -14,6 +14,8 @@ Keep readers strict and single-version. Do not add dual decoders, conversion pat
 
 An operator deletes affected working objects that current readers cannot decode. A finalizer protecting an external mutation must remain usable when unrelated stored fields are invalid.
 
+Every writer keys a stored object under its own owner ID. Measurement deletion (BatchEnergyOptimization and DispatchOccupancyMeasurement) therefore decides what to remove from native UIDs and those keys, never by decoding stored payloads, so an object the current reader rejects stays deletable.
+
 Change a stored contract at most once per work unit, outside campaigns that depend on it. Avoid version bumps without a reader requirement.
 
 Finalization validates raw execution evidence once. Retained execution readers bound object bytes and decode the current schema. Contract cutovers never rewrite archived scientific raw records or published results.

@@ -12,7 +12,6 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
-	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -167,7 +166,7 @@ func newCampaignMetadataValidationClient(
 func TestDeriveStatusPreservesConditionTimeUntilStatusTransitions(t *testing.T) {
 	transition := metav1.NewTime(time.Date(2026, time.August, 11, 1, 2, 3, 0, time.UTC))
 	previous := []metav1.Condition{{
-		Type: batchEnergyOptimizationConditionDone, Status: metav1.ConditionUnknown,
+		Type: batchenergyoptimization.ConditionMeasurementComplete, Status: metav1.ConditionUnknown,
 		LastTransitionTime: transition,
 	}}
 	status := deriveStatus(
@@ -216,9 +215,9 @@ func TestTerminalCampaignReplayDoesNotRecreateEvidenceButResolverFailureStillRet
 		terminal            bool
 	}{
 		{"complete", "Complete", "ResultWritten", metav1.ConditionTrue, true},
-		{"exhausted attempts", batchEnergyOptimizationPhaseFailed, terminalReasonRetryLimitExhausted, metav1.ConditionFalse, true},
-		{"failed transition", batchEnergyOptimizationPhaseFailed, terminalReasonTransitionFailed, metav1.ConditionFalse, true},
-		{"energy objective policy mismatch", batchEnergyOptimizationPhaseFailed, terminalReasonEnergyObjectivePolicyMismatch, metav1.ConditionFalse, true},
+		{"exhausted attempts", batchEnergyOptimizationPhaseFailed, batchenergyoptimization.ReasonRetryLimitExhausted, metav1.ConditionFalse, true},
+		{"failed transition", batchEnergyOptimizationPhaseFailed, batchenergyoptimization.ReasonTransitionFailed, metav1.ConditionFalse, true},
+		{"energy objective policy mismatch", batchEnergyOptimizationPhaseFailed, batchenergyoptimization.ReasonEnergyObjectivePolicyMismatch, metav1.ConditionFalse, true},
 		{"recoverable resolver failure", batchEnergyOptimizationPhaseFailed, "CurvePlanResolutionFailed", metav1.ConditionFalse, false},
 		{"in progress", "Measuring", "TrialInFlight", metav1.ConditionUnknown, false},
 		{"stale terminal generation", "Complete", "ResultWritten", metav1.ConditionTrue, false},
@@ -228,7 +227,7 @@ func TestTerminalCampaignReplayDoesNotRecreateEvidenceButResolverFailureStillRet
 			if err := api.AddToScheme(scheme); err != nil {
 				t.Fatal(err)
 			}
-			parent := &api.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Namespace: "measurements", Name: "terminal", UID: "native", Generation: 2, Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}}, Status: api.BatchEnergyOptimizationStatus{ObservedGeneration: 2, Phase: test.phase, Outcome: test.reason, Result: &api.ProfilingRunEvidenceReference{Store: "evidence", Key: "removed/result.json", Size: 1}, Conditions: []metav1.Condition{{Type: batchEnergyOptimizationConditionDone, Status: test.status, Reason: test.reason, ObservedGeneration: 2}}}}
+			parent := &api.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Namespace: "measurements", Name: "terminal", UID: "native", Generation: 2, Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}}, Status: api.BatchEnergyOptimizationStatus{ObservedGeneration: 2, Phase: test.phase, Outcome: test.reason, Result: &api.ProfilingRunEvidenceReference{Store: "evidence", Key: "removed/result.json", Size: 1}, Conditions: []metav1.Condition{{Type: batchenergyoptimization.ConditionMeasurementComplete, Status: test.status, Reason: test.reason, ObservedGeneration: 2}}}}
 			if test.name == "stale terminal generation" {
 				parent.Status.ObservedGeneration = 1
 				parent.Status.Conditions[0].ObservedGeneration = 1
@@ -278,12 +277,12 @@ func TestCampaignInvalidChildContractStopsWithVisibleFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			if updated.Status.Phase != batchEnergyOptimizationPhaseFailed ||
-				updated.Status.Outcome != terminalReasonInvalidCampaignRun ||
+				updated.Status.Outcome != batchenergyoptimization.ReasonInvalidCampaignRun ||
 				updated.Status.ObservedGeneration != parent.Generation || len(updated.Status.Conditions) != 1 {
 				t.Fatalf("status=%+v", updated.Status)
 			}
 			condition := updated.Status.Conditions[0]
-			if condition.Status != metav1.ConditionFalse || condition.Reason != terminalReasonInvalidCampaignRun ||
+			if condition.Status != metav1.ConditionFalse || condition.Reason != batchenergyoptimization.ReasonInvalidCampaignRun ||
 				!strings.Contains(condition.Message, test.message) {
 				t.Fatalf("condition=%+v", condition)
 			}
@@ -352,7 +351,7 @@ func TestCampaignCurvePlanFailureClassification(t *testing.T) {
 			}
 			reason, opens := "CurvePlanResolutionFailed", 2
 			if test.terminal {
-				reason, opens = profiler.ResolutionReasonInvalidRunSpec, 1
+				reason, opens = profilingrun.ResolutionReasonInvalidRunSpec, 1
 			}
 			if updated.Status.Phase != batchEnergyOptimizationPhaseFailed || updated.Status.Outcome != reason ||
 				updated.Status.ObservedGeneration != parent.Generation || len(updated.Status.Conditions) != 1 {
@@ -563,13 +562,13 @@ func newPolicyMismatchCampaignFixture(t *testing.T, excess bool) (*api.BatchEner
 func assertCampaignPolicyMismatchStatus(t *testing.T, parent *api.BatchEnergyOptimization) {
 	t.Helper()
 	status := parent.Status
-	if status.Phase != batchEnergyOptimizationPhaseFailed || status.Outcome != terminalReasonEnergyObjectivePolicyMismatch ||
+	if status.Phase != batchEnergyOptimizationPhaseFailed || status.Outcome != batchenergyoptimization.ReasonEnergyObjectivePolicyMismatch ||
 		status.CompletedTrials != 16 || status.ObservedGeneration != parent.Generation ||
 		status.Result != nil || len(status.Conditions) != 1 {
 		t.Fatalf("status=%+v", status)
 	}
 	condition := status.Conditions[0]
-	if condition.Status != metav1.ConditionFalse || condition.Reason != terminalReasonEnergyObjectivePolicyMismatch ||
+	if condition.Status != metav1.ConditionFalse || condition.Reason != batchenergyoptimization.ReasonEnergyObjectivePolicyMismatch ||
 		condition.ObservedGeneration != parent.Generation ||
 		!strings.Contains(condition.Message, "active/b8: expected=3, completed=4") {
 		t.Fatalf("condition=%+v", condition)
@@ -911,7 +910,7 @@ func TestRetryExhaustionStatusIdentifiesCurrentBatchAfterEarlierRecovery(t *test
 	if err := native.Get(ctx, request.NamespacedName, current); err != nil {
 		t.Fatal(err)
 	}
-	if current.Status.Phase != batchEnergyOptimizationPhaseFailed || current.Status.Outcome != terminalReasonRetryLimitExhausted ||
+	if current.Status.Phase != batchEnergyOptimizationPhaseFailed || current.Status.Outcome != batchenergyoptimization.ReasonRetryLimitExhausted ||
 		current.Status.Result != nil || unused.derives != 0 || unused.writes != 0 {
 		t.Fatalf("retry exhaustion published or derived a result: status=%+v calls=%+v", current.Status, unused)
 	}
