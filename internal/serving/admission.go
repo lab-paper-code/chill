@@ -10,7 +10,8 @@ import (
 
 // AdmissionInput is an executor snapshot plus assignments not yet present in
 // that snapshot. Observed spans are measured at the snapshot; assignment and
-// candidate spans are measured at the decision. Nil idle age means startup.
+// candidate spans are measured at the decision. A nil idle age has no
+// execution anchor; its service quantile is not measured.
 // The caller supplies the immutable measured distributions in Policy.Batches.
 type AdmissionInput struct {
 	Policy                      firstfloor.Policy

@@ -37,7 +37,7 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
 	path := ModelPath{Name: "cpu", Artifact: "model", Files: []string{"/model"}, Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Firstfloor: settings}
-	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, Preprocessor: Preprocessor{Name: "pre", Input: []RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &DatasetReference{Name: "data", UID: "data-uid"}, SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}, Admission: Admission{Policy: AdmissionPolicyReject, MaxQueuedRequests: 1024}}
+	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, Preprocessor: Preprocessor{Name: "pre", Input: []RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &DatasetReference{Name: "data", UID: "data-uid"}, SLO: SLO{Percentile: 95, TargetLatency: 100 * time.Millisecond}, Admission: Admission{Policy: AdmissionPolicyReject, MaxQueuedRequests: 1024}}
 	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{float64(10 * time.Millisecond)})}}
 	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelFiles: []string{"/model/model"}, Inputs: []string{"x"}, Outputs: []string{"y"}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
 	i := SchedulerInstance{ID: "i1", Node: node.Node, Profile: p, WorkloadUID: d.UID, Allocation: SchedulerAllocation{MemoryBytes: 1000}, Ready: true, Routable: map[string]bool{d.UID: true}, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, ArrivalAgesMS: map[string][]float64{}, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
@@ -48,15 +48,20 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	return s, snap
 }
 
-// Synthetic policy fixtures explicitly give the same service law to startup and
-// a known busy gap. Real evidence never receives fabricated gap/trial fields.
+// schedulerTestFloor identifies the 99th percentile, the highest the tests use.
+const schedulerTestFloor = 459
+
+// Synthetic policy fixtures give one service law at every gap: the durations
+// repeat in whole cycles, all at gap 0, until the 99th percentile's sample
+// floor is covered. Real evidence never receives fabricated gap/trial fields.
 func schedulerTestBatchProfile(batch BatchProfile, durations []float64) BatchProfile {
 	batch.ServiceSamples = nil
-	for _, duration := range durations {
-		gap := int64(0)
-		batch.ServiceSamples = append(batch.ServiceSamples,
-			firstfloor.ServiceSample{ServiceDurationNanos: int64(duration), TrialID: "synthetic"},
-			firstfloor.ServiceSample{ServiceDurationNanos: int64(duration), PrecedingIdleNanos: &gap, TrialID: "synthetic"})
+	for len(batch.ServiceSamples) < schedulerTestFloor {
+		for _, duration := range durations {
+			gap := int64(0)
+			batch.ServiceSamples = append(batch.ServiceSamples,
+				firstfloor.ServiceSample{ServiceDurationNanos: int64(duration), PrecedingIdleNanos: &gap, TrialID: "synthetic"})
+		}
 	}
 	return schedulerTestPairedBatch(batch, batch.ServiceSamples)
 }
@@ -922,7 +927,7 @@ func TestReplayChoosesActualServiceAtNativeIdleAge(t *testing.T) {
 			if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != float64(tc.want) {
 				t.Fatalf("idle age must select an actual S without adding G to latency: %+v reasons=%v", estimate, got.Reasons)
 			}
-			if got.ConditionalService == nil || got.ConditionalService.MinimumTrialCount != 1 {
+			if got.ConditionalService == nil || got.ConditionalService.MinimumRecordCount != 59 {
 				t.Fatalf("conditional support not retained: %+v", got)
 			}
 			if tc.name == "long idle" && (got.ConditionalService.MaximumDistanceNanos != int64(20*time.Millisecond) || got.ConditionalService.OutsideSupportQueries == 0) {

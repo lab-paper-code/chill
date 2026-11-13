@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 func TestRunRecordsRoundTripJobCarriedRunConfig(t *testing.T) {
@@ -45,7 +45,7 @@ func TestValidatePreparedForRunSeparatesResolvedWorkloadFacts(t *testing.T) {
 	prepared := currentPreparedRun(t)
 	measurement := &prepared.RunConfig.Measurement
 	measurement.SLOPercentile = 99
-	minimum, err := profilingrun.MinimumServiceSamples(measurement.SLOPercentile)
+	minimum, err := firstfloor.MinimumServiceSamples(measurement.SLOPercentile)
 	if err != nil {
 		t.Fatal(err)
 	}

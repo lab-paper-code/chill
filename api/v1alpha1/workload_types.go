@@ -40,9 +40,12 @@ type CatalogReference struct {
 }
 
 type WorkloadSLO struct {
+	// Percentile is in (0,100). Its service quantile rests on the sample floor
+	// ceil(ln(1-p)/ln(p)) records, which is infinite at 100.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:ExclusiveMinimum=true
 	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:validation:ExclusiveMaximum=true
 	Percentile float64 `json:"percentile"`
 	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="targetLatency must be a positive duration"
 	// +kubebuilder:validation:XValidation:rule="duration(self) <= duration('2562047h47m16.854775807s')",message="targetLatency must fit a Go duration"
@@ -184,8 +187,8 @@ func ValidateWorkload(name string, spec WorkloadSpec) error {
 			errs = append(errs, field.Invalid(field.NewPath("spec", "datasetRef", "name"), spec.DatasetRef.Name, message))
 		}
 	}
-	if math.IsNaN(spec.SLO.Percentile) || math.IsInf(spec.SLO.Percentile, 0) || spec.SLO.Percentile <= 0 || spec.SLO.Percentile > 100 {
-		errs = append(errs, field.Invalid(field.NewPath("spec", "slo", "percentile"), spec.SLO.Percentile, "must be finite and in (0,100]"))
+	if math.IsNaN(spec.SLO.Percentile) || math.IsInf(spec.SLO.Percentile, 0) || spec.SLO.Percentile <= 0 || spec.SLO.Percentile >= 100 {
+		errs = append(errs, field.Invalid(field.NewPath("spec", "slo", "percentile"), spec.SLO.Percentile, "must be finite and in (0,100): the service quantile needs ceil(ln(1-p)/ln(p)) measured records, which no profile holds at 100"))
 	}
 	if spec.SLO.TargetLatency.Duration <= 0 {
 		errs = append(errs, field.Invalid(field.NewPath("spec", "slo", "targetLatency"), spec.SLO.TargetLatency.String(), "must be a positive duration"))

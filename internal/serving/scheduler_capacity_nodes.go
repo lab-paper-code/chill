@@ -600,7 +600,6 @@ type profileTermsKey struct {
 	maxBatch   int
 	occupancy  time.Duration
 	gap        int64
-	hasGap     bool
 }
 type profileScalar struct {
 	routingWeight profileRoutingWeight
@@ -618,15 +617,20 @@ func (p *capacityPlanner) profileTerms(i SchedulerInstance, d *Definition) (prof
 		return 0, 0, 0, reason
 	}
 	key := profileTermsKey{profile: i.Profile, definition: d, node: i.Node, maxBatch: i.MaxBatch}
-	var gap *int64
-	if slices.ContainsFunc(p.snapshot.Instances, func(old SchedulerInstance) bool { return old.ID == i.ID }) {
-		gap = i.LastServiceEndAgeNanos
+	// A running instance is queried at its idle age. An option without one is
+	// queried at the idle period its Workload's load implies: Poisson arrivals
+	// at rate λ leave a free executor idle 1/λ on average; λ = 0 is the limit,
+	// the longest gap.
+	key.gap = math.MaxInt64
+	if w, ok := p.index[d.UID]; ok && p.ws[w].rate > 0 {
+		key.gap = int64(min(float64(time.Second)/p.ws[w].rate, math.MaxInt64/2))
 	}
+	if slices.ContainsFunc(p.snapshot.Instances, func(old SchedulerInstance) bool { return old.ID == i.ID }) && i.LastServiceEndAgeNanos != nil {
+		key.gap = *i.LastServiceEndAgeNanos
+	}
+	gap := key.gap
 	occupancy := ResolveDispatchOccupancy(p.settings, p.snapshot.DispatchOccupancy, i)
 	key.occupancy = occupancy.PerRequest
-	if gap != nil {
-		key.hasGap, key.gap = true, *gap
-	}
 	if cached, ok := p.profileScalars[key]; ok {
 		return cached.routingWeight, cached.throughput, cached.serviceNanos, cached.reason
 	}
@@ -640,7 +644,7 @@ func (p *capacityPlanner) profileTerms(i SchedulerInstance, d *Definition) (prof
 		if mean, ok := i.Profile.MeanNanos(batch.Batch); ok {
 			throughput = max(throughput, float64(batch.Batch)*float64(time.Second)/(mean+float64(batch.Batch)*float64(occupancy.PerRequest)))
 		}
-		q, _, ok := batch.ServiceDistribution.QuantileNanos(gap, d.SLO.Percentile)
+		q, _, ok := batch.ServiceDistribution.QuantileNanos(&gap, d.SLO.Percentile)
 		if ok {
 			service = min(service, float64(q)+float64(batch.Batch)*float64(occupancy.PerRequest))
 		}

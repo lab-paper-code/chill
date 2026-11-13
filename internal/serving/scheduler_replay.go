@@ -123,11 +123,12 @@ type schedulerReplayResult struct {
 
 // ConditionalServiceEvidence describes the support actually queried by replay.
 // It is evidence of sparsity/extrapolation, not a conditional-tail safety gate.
+// A MinimumRecordCount below the percentile's sample floor means some query
+// was not identified (no gap anchor or too few records) and went unanswered.
 type ConditionalServiceEvidence struct {
 	Queries               int   `json:"queries"`
-	StartupQueries        int   `json:"startupQueries"`
 	MaximumDistanceNanos  int64 `json:"maximumDistanceNanos"`
-	MinimumTrialCount     int   `json:"minimumTrialCount"`
+	MinimumRecordCount    int   `json:"minimumRecordCount"`
 	OutsideSupportQueries int   `json:"outsideSupportQueries"`
 
 	RunningResidualBeyondSupport []RunningResidualBeyondSupport `json:"runningResidualBeyondSupport,omitempty"`
@@ -142,16 +143,13 @@ type RunningResidualBeyondSupport struct {
 	Model           string `json:"model"`
 }
 
-func (e *ConditionalServiceEvidence) record(gap *int64, support firstfloor.ConditionalSupport) {
+func (e *ConditionalServiceEvidence) record(support firstfloor.ConditionalSupport) {
 	if e.Queries == 0 {
-		e.MinimumTrialCount = support.TrialCount
+		e.MinimumRecordCount = support.Records
 	} else {
-		e.MinimumTrialCount = min(e.MinimumTrialCount, support.TrialCount)
+		e.MinimumRecordCount = min(e.MinimumRecordCount, support.Records)
 	}
 	e.Queries++
-	if gap == nil {
-		e.StartupQueries++
-	}
 	e.MaximumDistanceNanos = max(e.MaximumDistanceNanos, support.DistanceNanos)
 	if support.OutsideSupport {
 		e.OutsideSupportQueries++
@@ -163,12 +161,11 @@ func (e *ConditionalServiceEvidence) merge(other ConditionalServiceEvidence) {
 		return
 	}
 	if e.Queries == 0 {
-		e.MinimumTrialCount = other.MinimumTrialCount
+		e.MinimumRecordCount = other.MinimumRecordCount
 	} else {
-		e.MinimumTrialCount = min(e.MinimumTrialCount, other.MinimumTrialCount)
+		e.MinimumRecordCount = min(e.MinimumRecordCount, other.MinimumRecordCount)
 	}
 	e.Queries += other.Queries
-	e.StartupQueries += other.StartupQueries
 	e.MaximumDistanceNanos = max(e.MaximumDistanceNanos, other.MaximumDistanceNanos)
 	e.OutsideSupportQueries += other.OutsideSupportQueries
 	e.RunningResidualBeyondSupport = append(e.RunningResidualBeyondSupport, other.RunningResidualBeyondSupport...)
@@ -752,12 +749,13 @@ func (s *schedulerReplayState) initializeRunning() bool {
 					"pending native exchange uses current idle-age lower-bound approximation before IPC")
 			}
 		}
-		sample, support, ok := b.ServiceDistribution.SampleResidual(gap, elapsed, s.rng)
-		remaining := float64(sample.ServiceDurationNanos - elapsed)
+		percentile := head.source.Definition.SLO.Percentile
+		service, support, ok := b.ServiceDistribution.SampleResidual(gap, elapsed, percentile, s.rng)
+		remaining := float64(service - elapsed)
 		if !ok && elapsed >= 0 {
-			sample, support, ok = b.ServiceDistribution.Sample(gap, s.rng)
+			service, support, ok = b.ServiceDistribution.Sample(gap, percentile, s.rng)
 			if ok {
-				remaining = float64(sample.ServiceDurationNanos)
+				remaining = float64(service)
 				profileMax := int64(0)
 				for _, row := range b.ServiceSamples {
 					profileMax = max(profileMax, row.ServiceDurationNanos)
@@ -771,7 +769,7 @@ func (s *schedulerReplayState) initializeRunning() bool {
 					"RunningResidualBeyondSupport: remaining service uses same-gap-service-restart substitute; SLO and energy ranking bias is bidirectional, not a bound")
 			}
 		}
-		s.out.conditional.record(gap, support)
+		s.out.conditional.record(support)
 		if !ok {
 			s.out.reasons = append(s.out.reasons, "RunningElapsedOutsideProfileRange:"+i.config.ID)
 			return false

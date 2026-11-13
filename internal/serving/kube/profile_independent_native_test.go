@@ -709,8 +709,7 @@ func assertNativeCatalogCapacity(t *testing.T, ctx context.Context, profile *ser
 	row, err := serving.BuildCapacityRow(ctx, settings, nil, option, workload, time.Now().UTC())
 	if err != nil || row.Status != serving.CapacityBuilt || row.Kappa == nil || *row.Kappa < 0 ||
 		row.Input.ProfileID != profile.ID || len(row.Grid) == 0 || row.ConditionalService == nil ||
-		row.ConditionalService.Queries == 0 || row.ConditionalService.StartupQueries == 0 ||
-		row.ConditionalService.MinimumTrialCount != profile.TrialsPerBatch {
+		row.ConditionalService.Queries == 0 {
 		t.Fatalf("kappa did not consume the catalog's physical native populations: %+v %v", row, err)
 	}
 }

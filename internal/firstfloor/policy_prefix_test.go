@@ -263,3 +263,17 @@ func BenchmarkChooseBatchPrefix(b *testing.B) {
 		}
 	}
 }
+
+func retainedServiceRequests(p Policy) []RequestState {
+	count := 0
+	for _, batch := range p.Batches {
+		count = max(count, batch.Size)
+	}
+	requests := make([]RequestState, count)
+	for i := range requests {
+		requests[i] = testState("retained", 1e9, 0)
+		requests[i].Context.RequestID = fmt.Sprint(i)
+		requests[i].Context.SLO.Percentile = 99
+	}
+	return requests
+}

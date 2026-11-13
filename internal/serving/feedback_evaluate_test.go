@@ -167,7 +167,7 @@ func TestFeedbackConsumerSeedAndConditionalSupportRemainDeterministic(t *testing
 	snapshot.PathFeedback = []PathFeedback{{WorkloadUID: snapshot.Workloads[0].UID, TotalNanos: 20e6, PostNanos: 10e6}}
 	one := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 	two := feedbackEvaluateForTest(t, settings, snapshot, candidate)
-	if !reflect.DeepEqual(one, two) || one.ConditionalService == nil || one.ConditionalService.Queries != 2 || one.ConditionalService.StartupQueries != 1 {
+	if !reflect.DeepEqual(one, two) || one.ConditionalService == nil || one.ConditionalService.Queries != 2 {
 		t.Fatalf("same seed/input changed raw conditional sampling: %+v %+v", one, two)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

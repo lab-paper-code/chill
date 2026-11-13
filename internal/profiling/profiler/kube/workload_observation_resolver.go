@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
@@ -106,7 +107,7 @@ func (r *KubernetesWorkloadObservationResolver) ResolveMeasurementWorkload(
 		workload.Spec.SLO.TargetLatency.Duration <= 0 {
 		return profilingrun.MeasurementContract{}, errors.New("measurement Workload identity, model, preprocessor, dataset or SLO differs from the selected measurement")
 	}
-	minimum, err := profilingrun.MinimumServiceSamples(workload.Spec.SLO.Percentile)
+	minimum, err := firstfloor.MinimumServiceSamples(workload.Spec.SLO.Percentile)
 	if err != nil {
 		return profilingrun.MeasurementContract{}, err
 	}

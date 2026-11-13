@@ -336,12 +336,12 @@ func (s *admissionOverloadRun) startNativeBatch(t *testing.T, choice firstfloor.
 	if b == nil {
 		t.Fatal("native batch outside measured support")
 	}
-	sample, _, ok := b.Distribution.Sample(s.native.LastServiceEndAgeNanos, s.rng)
+	service, _, ok := b.Distribution.Sample(s.native.LastServiceEndAgeNanos, 95, s.rng)
 	if !ok {
 		t.Fatal("native service support missing")
 	}
 	s.batchID++
-	s.batchFinish = s.now + time.Duration(sample.ServiceDurationNanos)
+	s.batchFinish = s.now + time.Duration(service)
 	deferred := false
 	for _, q := range s.native.Requests {
 		if q.Context.RequestID == choice.RequestID {

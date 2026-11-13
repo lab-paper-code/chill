@@ -76,7 +76,8 @@ func TestValidateWorkload(t *testing.T) {
 		valid      bool
 	}{
 		{"valid", "detector-fast", "detector.v2", 99, 100 * time.Millisecond, true},
-		{"upper percentile", "detector-fast", "detector", 100, time.Nanosecond, true},
+		{"upper percentile", "detector-fast", "detector", 99.9, time.Nanosecond, true},
+		{"percentile without a sample floor", "detector-fast", "detector", 100, time.Second, false},
 		{"fractional percentile", "detector-fast", "detector", 0.01, time.Second, true},
 		{"empty object", "", "detector", 99, time.Second, false},
 		{"invalid object", "Detector", "detector", 99, time.Second, false},

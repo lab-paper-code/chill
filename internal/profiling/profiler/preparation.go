@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
@@ -475,7 +476,7 @@ func (r PreparationRequest) validateFrozenWorkload() error {
 	measurement := r.Measurement
 	if measurement.WorkloadUID != "" || measurement.WorkloadResourceVersion != "" ||
 		measurement.SLOPercentile != 0 || measurement.SLOTargetLatencyNanos != 0 || measurement.MinServiceSamples != 0 {
-		minimum, err := profilingrun.MinimumServiceSamples(measurement.SLOPercentile)
+		minimum, err := firstfloor.MinimumServiceSamples(measurement.SLOPercentile)
 		if err != nil || measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode ||
 			strings.TrimSpace(measurement.WorkloadUID) == "" ||
 			strings.TrimSpace(measurement.WorkloadUID) != measurement.WorkloadUID ||

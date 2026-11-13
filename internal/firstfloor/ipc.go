@@ -160,6 +160,9 @@ func StartRunner(ctx context.Context, cfg *Config) (*Runner, error) {
 			}
 			if v.err == nil {
 				r.metadata = *m
+				// Ready follows the runner's warm-up executions, so it ends the
+				// last service: the first exchange has a preceding idle gap.
+				r.lastEnd = time.Now()
 				return r, nil
 			}
 		}

@@ -9,7 +9,7 @@ type serviceCostQuery struct {
 	distribution *ServiceDistribution
 	percentile   float64
 	gap          int64
-	startup      bool
+	unanchored   bool
 }
 type serviceCostEntry struct {
 	query serviceCostQuery
@@ -27,7 +27,7 @@ type serviceCosts struct {
 // identify queries; every request still checks its own remaining deadline.
 // ponytail: linear lookup fits few distinct queries; index if mixed-query scans dominate.
 func (costs *serviceCosts) cost(b BatchProfile, percentile float64, gap *int64) float64 {
-	query := serviceCostQuery{distribution: b.Distribution, percentile: percentile, startup: gap == nil}
+	query := serviceCostQuery{distribution: b.Distribution, percentile: percentile, unanchored: gap == nil}
 	if gap != nil {
 		query.gap = *gap
 	}

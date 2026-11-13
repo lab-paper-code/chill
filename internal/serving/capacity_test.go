@@ -354,10 +354,11 @@ func TestCapacityConditionalSupportWithDispatchOccupancy(t *testing.T) {
 	settings.DefaultDispatchOccupancyNanos = 0
 	short, long := int64(0), int64(time.Second)
 	batch := &snapshot.Instances[0].Profile.Batches[0]
-	batch.ServiceSamples = []firstfloor.ServiceSample{
-		{ServiceDurationNanos: int64(time.Millisecond), TrialID: "synthetic"},
-		{ServiceDurationNanos: int64(time.Millisecond), PrecedingIdleNanos: &short, TrialID: "synthetic"},
-		{ServiceDurationNanos: int64(100 * time.Millisecond), PrecedingIdleNanos: &long, TrialID: "synthetic"},
+	batch.ServiceSamples = nil
+	for range 59 { // the p95 sample floor at each gap
+		batch.ServiceSamples = append(batch.ServiceSamples,
+			firstfloor.ServiceSample{ServiceDurationNanos: int64(time.Millisecond), PrecedingIdleNanos: &short, TrialID: "synthetic"},
+			firstfloor.ServiceSample{ServiceDurationNanos: int64(100 * time.Millisecond), PrecedingIdleNanos: &long, TrialID: "synthetic"})
 	}
 	var err error
 	batch.ServiceDistribution, err = firstfloor.NewServiceDistribution(batch.ServiceSamples)
@@ -376,7 +377,7 @@ func TestCapacityConditionalSupportWithDispatchOccupancy(t *testing.T) {
 	if with.Kappa == nil || *with.Kappa >= *without.Kappa {
 		t.Fatalf("conditional service discarded dispatch occupancy: without=%+v with=%+v", without, with)
 	}
-	if with.ConditionalService == nil || with.ConditionalService.Queries == 0 || with.ConditionalService.MinimumTrialCount != 1 {
+	if with.ConditionalService == nil || with.ConditionalService.Queries == 0 || with.ConditionalService.MinimumRecordCount != 59 {
 		t.Fatalf("conditional support evidence missing: %+v", with)
 	}
 }

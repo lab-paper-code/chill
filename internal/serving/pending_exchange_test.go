@@ -75,9 +75,6 @@ func TestPendingExchangePreservesKnownActorGapClassification(t *testing.T) {
 				t.Fatalf("packing and just-started service must retain the same actor-history law: status=%s estimate=%+v reasons=%v",
 					got.Status, estimate, got.Reasons)
 			}
-			if got.ConditionalService == nil || (got.ConditionalService.StartupQueries == 0) != tc.history {
-				t.Fatalf("only an actor without a previous exchange anchor is startup: %+v", got.ConditionalService)
-			}
 			if tc.history && !tc.started && !strings.Contains(strings.Join(got.Assumptions, "\n"),
 				"pending native exchange uses current idle-age lower-bound approximation") {
 				t.Fatalf("pending G must be labelled approximate, not an observed exchange gap: %v", got.Assumptions)

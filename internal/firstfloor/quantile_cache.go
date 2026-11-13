@@ -12,7 +12,7 @@ type quantileQuery struct {
 	distribution                *ServiceDistribution
 	gap, elapsed, upper         int64
 	percentile                  uint64
-	startup, residual, interval bool
+	unanchored, residual, interval bool
 }
 type quantileResult struct {
 	value   int64
@@ -47,7 +47,7 @@ func (c *QuantileCache) maximumQuery(d *ServiceDistribution, lower, upper, elaps
 			return result.value, result.support, result.known
 		}
 	}
-	value, _, support, known := d.maximumQuantileNanos(lower, upper, elapsed, percentile, residual)
+	value, support, known := d.MaximumResidualQuantileNanos(lower, upper, elapsed, percentile)
 	if c != nil {
 		if c.entries == nil {
 			c.entries = make(map[quantileQuery]quantileResult)
@@ -57,7 +57,7 @@ func (c *QuantileCache) maximumQuery(d *ServiceDistribution, lower, upper, elaps
 	return value, support, known
 }
 func (c *QuantileCache) query(d *ServiceDistribution, gap *int64, elapsed int64, percentile float64, residual bool) (int64, ConditionalSupport, bool) {
-	key := quantileQuery{distribution: d, elapsed: elapsed, percentile: math.Float64bits(percentile), startup: gap == nil, residual: residual}
+	key := quantileQuery{distribution: d, elapsed: elapsed, percentile: math.Float64bits(percentile), unanchored: gap == nil, residual: residual}
 	if gap != nil {
 		key.gap = *gap
 	}

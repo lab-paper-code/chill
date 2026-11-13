@@ -49,7 +49,7 @@ func TestSchedulerRunningResidualBeyondSupportRestartsSameGap(t *testing.T) {
 	}
 	var merged ConditionalServiceEvidence
 	merged.merge(result.conditional)
-	if len(merged.RunningResidualBeyondSupport) != 1 || merged.MinimumTrialCount != 1 {
+	if len(merged.RunningResidualBeyondSupport) != 1 || merged.MinimumRecordCount != result.conditional.MinimumRecordCount {
 		t.Fatalf("merged evidence lost restart or original support: %+v", merged)
 	}
 
