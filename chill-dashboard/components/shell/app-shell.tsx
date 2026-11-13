@@ -153,7 +153,7 @@ function Activity() {
   return (
     <div className="flex items-center gap-1.5">
       {running > 0 && <Link href="/experiments/runs" aria-label={`실험 실행 중 ${running}`} className={chip}><FlaskConical className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">실험 실행 중</span> <span className="tabular-nums">{running}</span></Link>}
-      {measuring > 0 && <Link href="/devices" aria-label={`측정 중 장치 ${measuring}`} className={chip}><Gauge className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">측정 중 장치</span> <span className="tabular-nums">{measuring}</span></Link>}
+      {measuring > 0 && <Link href="/devices?role=measuring" aria-label={`측정 중 장치 ${measuring}`} className={chip}><Gauge className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">측정 중 장치</span> <span className="tabular-nums">{measuring}</span></Link>}
     </div>
   )
 }
