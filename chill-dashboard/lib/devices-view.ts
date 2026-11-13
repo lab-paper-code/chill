@@ -1,7 +1,42 @@
 // Display helpers for the device screens. Unit conversion and labels only; no statistics.
+import type { LiveReservation } from "./live.ts"
 import type { PowerPoint } from "./power-series.ts"
-import type { PowerModeActuator } from "./read-types.ts"
+import type { PowerModeActuator, ProfilingRun } from "./read-types.ts"
 import type { StatusInfo } from "./status-labels.ts"
+
+export type Ref = { name: string; uid: string }
+/** What holds a device under measurement: the lease holder UID, its measurement request and the run, as far as known. */
+export type MeasurementHold = { holder: string | null; request: Ref | null; run: Ref | null }
+
+const LEASE = "measurement-lease/"
+/** The measurement request (BatchEnergyOptimization) that controls a run. */
+export function runRequest(run: ProfilingRun): Ref | null {
+  const owner = run.ownerReferences?.find(item => item.kind === "BatchEnergyOptimization" && item.controller !== false)
+  return owner ? { name: owner.name, uid: owner.uid } : null
+}
+
+/**
+ * Measuring devices to what holds them, from data the screen already has: the live reservations
+ * (a lease is owned by the measurement's UID, reason "measurement-lease/<uid>: …") and the running runs.
+ * A lease names its holder; the newest running run whose request is the holder gives request and run.
+ * A measuring device without a lease takes the newest running run aimed at it.
+ */
+export function measurementHolds(measuring: readonly string[], reservations: readonly LiveReservation[], runs: readonly ProfilingRun[]): Map<string, MeasurementHold> {
+  const holders = new Map<string, string>()
+  for (const r of reservations) {
+    if (!r.reason.startsWith(LEASE) && !r.owner.startsWith(LEASE)) continue
+    const holder = r.reason.startsWith(LEASE) ? r.reason.slice(LEASE.length).split(":", 1)[0] : r.owner.slice(LEASE.length)
+    for (const node of r.nodes) holders.set(node.name, holder || r.owner)
+  }
+  const newest = [...runs].sort((a, b) => b.creationTimestamp.localeCompare(a.creationTimestamp))
+  const holds = new Map<string, MeasurementHold>()
+  for (const node of measuring) {
+    const holder = holders.get(node) ?? null
+    const run = holder ? newest.find(item => runRequest(item)?.uid === holder || item.uid === holder) : newest.find(item => item.spec.targetNode === node)
+    holds.set(node, { holder, request: run ? runRequest(run) : null, run: run ? { name: run.name, uid: run.uid } : null })
+  }
+  return holds
+}
 
 /**
  * One role per device. `roles` are the `DeviceRow.roles` labels from `deviceRows`.

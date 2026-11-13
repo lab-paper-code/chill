@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { compareRows, decisionControlPath, decisionHeadline, decisionRecordPath, decisionResult, latencyRows, summaryHeadline, tickPhases, type ControlObservation } from "./scheduler-decisions.ts"
+import { compareRows, decisionControlPath, decisionRecordPath, decisionResult, headline, latencyRows, recordFacts, summaryFacts, tickPhases, type ControlObservation } from "./scheduler-decisions.ts"
 import type { SchedulerCandidate, SchedulerDecision } from "./read-types.ts"
 
 const plan = (id: string, keep: boolean, joules: number | null, expected: number | null): SchedulerCandidate =>
@@ -26,25 +26,30 @@ test("result reads the target-keep marker for Feasible and Keep only", () => {
   assert.equal(decisionResult("Pending", undefined), "Pending")
 })
 
-test("headline gives server reasons first, then the keep plan's status or the energy saved", () => {
+test("headline from a record: server reasons first, then the keep plan's status or the energy difference", () => {
   const changed = decision("2026-11-13T15:00:00Z", plan("c1", false, 80, 45_000_000))
-  assert.deepEqual(decisionHeadline(changed), { text: "예상 에너지 20.0 J 절감" })
-  assert.deepEqual(decisionHeadline({ ...changed, reasons: ["NoPlanMeetsSLO"] }), { reasons: ["NoPlanMeetsSLO"] })
-  assert.deepEqual(decisionHeadline({ ...changed, keep: { ...changed.keep, status: "Overload" } }), { text: "유지안 과부하" })
-  assert.deepEqual(decisionHeadline(decision("2026-11-13T15:00:00Z", plan("keep", true, 100, 40_000_000))), { text: "더 나은 후보 없음" })
+  const of = (d: SchedulerDecision) => headline(recordFacts(d))
+  assert.deepEqual(of(changed), { text: "예상 에너지 20.0 J 절감" })
+  assert.deepEqual(of({ ...changed, reasons: ["NoPlanMeetsSLO"] }), { reasons: ["NoPlanMeetsSLO"] })
+  assert.deepEqual(of({ ...changed, keep: { ...changed.keep, status: "Overload" } }), { text: "유지안 과부하" })
+  assert.deepEqual(of(decision("2026-11-13T15:00:00Z", plan("keep", true, 100, 40_000_000))), { text: "더 나은 후보 없음" })
   const idle = decision("2026-11-13T15:00:00Z", plan("keep", true, 0, null))
-  assert.deepEqual(decisionHeadline({ ...idle, workloads: [{ uid: "u1", state: "Disabled", reason: "AutonomousControlOff" }] }), { text: "자동 제어 서비스 없음" })
-  assert.equal(decisionHeadline(decision("2026-11-13T15:00:00Z", null)), null)
-  assert.equal(decisionHeadline(decision("2026-11-13T15:00:00Z", plan("c2", false, 120, 45_000_000))), null)
+  assert.deepEqual(of({ ...idle, workloads: [{ uid: "u1", state: "Disabled", reason: "AutonomousControlOff" }] }), { text: "자동 제어 서비스 없음" })
+  assert.equal(of(decision("2026-11-13T15:00:00Z", null)), null)
+  assert.deepEqual(of(decision("2026-11-13T15:00:00Z", plan("c2", false, 120, 45_000_000))), { text: "예상 에너지 20.0 J 증가" })
 })
 
-test("summary headline matches the detail where the row carries enough, else null", () => {
+test("headline from a summary row matches the record for the same decision", () => {
   const row = { at: "2026-11-13T15:00:00Z", status: "Feasible" }
-  assert.deepEqual(summaryHeadline({ ...row, reasons: ["NoPlanMeetsSLO"] }), { reasons: ["NoPlanMeetsSLO"] })
-  assert.deepEqual(summaryHeadline({ ...row, targetKeep: true }), { text: "더 나은 후보 없음" })
-  assert.deepEqual(summaryHeadline({ ...row, targetKeep: true, workloads: [{ uid: "u1", state: "Disabled", reason: "AutonomousControlOff" }] }), { text: "자동 제어 서비스 없음" })
-  assert.equal(summaryHeadline({ ...row, targetKeep: false }), null)
-  assert.equal(summaryHeadline(row), null)
+  const of = (d: Parameters<typeof summaryFacts>[0]) => headline(summaryFacts(d))
+  assert.deepEqual(of({ ...row, reasons: ["NoPlanMeetsSLO"] }), { reasons: ["NoPlanMeetsSLO"] })
+  assert.deepEqual(of({ ...row, targetKeep: true, keepExpectedJoules: 100, targetExpectedJoules: 100 }), { text: "더 나은 후보 없음" })
+  assert.deepEqual(of({ ...row, targetKeep: true, workloads: [{ uid: "u1", state: "Disabled", reason: "AutonomousControlOff" }] }), { text: "자동 제어 서비스 없음" })
+  // The same change as the record test above: 100 J kept against 80 J.
+  assert.deepEqual(of({ ...row, targetKeep: false, keepExpectedJoules: 100, targetExpectedJoules: 80 }), headline(recordFacts(decision(row.at, plan("c1", false, 80, 45_000_000)))))
+  assert.deepEqual(of({ ...row, targetKeep: false, keepExpectedJoules: 12_000.5, targetExpectedJoules: 120.5 }), { text: "예상 에너지 11.9 kJ 절감" })
+  assert.equal(of({ ...row, targetKeep: false, keepExpectedJoules: 100 }), null)
+  assert.equal(of(row), null)
 })
 
 test("latency and comparison use the selected plan's server values", () => {

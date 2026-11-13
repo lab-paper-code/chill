@@ -120,6 +120,8 @@ function ActionHistory({ window, status, onStatus, selected, onSelect }: {
   })}`
   const query = useChillQuery<SchedulerObservationSummaryPage>(path, { decoder: parseSchedulerJSON })
   const [raw, setRaw] = React.useState(false)
+  const names = useServiceNames()
+  const services = (r: ActionRow) => r.workloads.map(uid => names.get(uid)).filter((name): name is string => !!name)
   return (
     <Section title="기록">
       <QueryBoundary query={query} isEmpty={d => !d.events?.length} empty={<EmptyState title="기록 없음" />}>
@@ -133,6 +135,10 @@ function ActionHistory({ window, status, onStatus, selected, onSelect }: {
             { key: "start", header: "시작", cell: r => <TimeText at={r.startedAt} mode="list" />, csv: r => r.startedAt, width: "11rem" },
             { key: "kind", header: "동작", cell: r => kindText(r.kind), csv: r => r.kind },
             { key: "node", header: "장치", cell: r => nodeText(r.node), csv: r => r.node.name },
+            {
+              key: "service", header: "서비스", missing: r => (r.workloads.length ? "현재 없는 서비스" : "서비스 없음"), csv: r => services(r).join(" "),
+              cell: r => { const list = services(r); return list.length ? `${list[0]}${list.length > 1 ? ` +${list.length - 1}` : ""}` : null },
+            },
             { key: "status", header: "상태", cell: r => <StatusBadge status={phaseStatus(r.phase)} />, csv: r => r.phase },
             { key: "took", header: "소요", numeric: true, cell: r => { const n = actionElapsedNanos(r); return n == null ? null : formatDurationNanos(n) }, csv: r => actionElapsedNanos(r) },
           ]
@@ -164,14 +170,14 @@ function ActionDrawer({ row, page, onClose, onRaw }: { row: ActionRow; page: Sch
   const record = full?.action && schedulerRecordMatches(ref, { at: full.at, offset: full.offset, action: full.action }) ? full.action : null
   const took = actionElapsedNanos(row)
   const compare = record ? planVsActual(record) : []
-  const op = record?.expected as { workloadUID?: string } | undefined
   const names = useServiceNames()
+  const services = row.workloads.map(uid => names.get(uid)).filter(Boolean).join(", ")
   return (
     <DetailDrawer open onOpenChange={open => { if (!open) onClose() }} title={kindText(row.kind) ?? "작업"} status={phaseStatus(row.phase)} actions={<Button size="sm" variant="ghost" onClick={onRaw}>원본 보기</Button>}>
       <div className="grid gap-6">
         <Fields columns={2} items={[
           { label: "장치", value: nodeText(row.node) },
-          { label: "서비스", value: op?.workloadUID ? names.get(op.workloadUID) ?? null : null, reason: op?.workloadUID ? "현재 없는 서비스" : "서비스 없음" },
+          { label: "서비스", value: services || null, reason: row.workloads.length ? "현재 없는 서비스" : "서비스 없음" },
           { label: "시작", value: formatDetailTime(row.startedAt) },
           { label: "종료", value: took == null ? null : formatDetailTime(row.at), reason: "진행 중" },
           ...(record?.error ? [{ label: "오류", value: <Hint text={record.error} focusable>{actionErrorLabel(record.error) ?? "원인 미분류"}</Hint> }] : []),

@@ -7,13 +7,14 @@ import {
   Button, ConfirmDialog, DataTable, EmptyState, Fields, Page, PageHeader, PageTabs, QueryBoundary, RawDialog, Section,
   StatRow, StatTile, StatusBadge, StatusDot, TimeRange, buttonClassName, useTimeRangeParam, useToast, type Column, type TimeRangeValue,
 } from "@/components/kit"
-import { useChillMutation } from "@/lib/client"
-import { actuatorText, deviceRole, energyParts, quantityBytes, readiness } from "@/lib/devices-view"
+import { useChillMutation, useChillQuery, useSession } from "@/lib/client"
+import { actuatorText, deviceRole, energyParts, quantityBytes, readiness, runRequest, type MeasurementHold } from "@/lib/devices-view"
 import { formatNumber, formatPercent, formatSeconds, wattsNumber } from "@/lib/format"
 import { architectureLabel, deviceClassLabel, powerModeLabel } from "@/lib/display-labels"
 import { routingShare } from "@/lib/live-display"
 import type { PowerPoint } from "@/lib/power-series"
-import type { InventoryClass, SchedulerSettings, WorkloadRef } from "@/lib/read-types"
+import type { InventoryClass, RunsView, SchedulerSettings, WorkloadRef } from "@/lib/read-types"
+import { requestHref } from "@/lib/measurement-request"
 import type { LiveState } from "@/lib/live"
 import { deviceInstances, type DeviceRow } from "@/lib/resources-data"
 import { stringifySchedulerJSON } from "@/lib/scheduler"
@@ -27,7 +28,7 @@ const nodeSeries = [{ key: "w", label: "전력", color: 1 as const }]
 const tabs = [{ value: "overview", label: "현황" }, { value: "power", label: "전력" }, { value: "spec", label: "사양" }]
 
 export function DeviceDetailScreen({ name }: { name: string }) {
-  const { state, inventory, rows, excluded, settings, etag } = useDevices()
+  const { state, inventory, rows, excluded, settings, etag, holds, runs } = useDevices()
   const tab = useSearchParams().get("tab") ?? "overview"
   const [raw, setRaw] = React.useState(false)
   const row = rows.find(item => item.name === name)
@@ -57,6 +58,7 @@ export function DeviceDetailScreen({ name }: { name: string }) {
         <StatTile label="전력 모드" value={row.powerMode ? powerModeLabel(row.powerMode) : null} reason="전력 모드 미확인" />
         <StatTile label="인스턴스" value={String(row.instances.length)} unit="개" sub={`서비스 ${row.services.length}개`} />
       </StatRow>
+      {holds.has(row.name) && <MeasurementHoldSection hold={holds.get(row.name)!} runsFailed={!!runs.error} />}
       <PageTabs param="tab" defaultValue="overview" tabs={tabs} />
       {tab === "power" ? <PowerTab row={row} /> : tab === "spec" ? <SpecTab row={row} cls={cls} /> : <OverviewTab row={row} state={state} />}
       <RawDialog
@@ -64,6 +66,26 @@ export function DeviceDetailScreen({ name }: { name: string }) {
         value={{ deviceClass: cls ?? null, node: state.snapshot?.nodes.find(node => node.uid === row.uid) ?? null, instances: row.poolInstances }}
       />
     </Page>
+  )
+}
+
+/** The measurement holding this device: request and run, linked. A lease whose holder has no running run is looked up once by its request UID. */
+function MeasurementHoldSection({ hold, runsFailed }: { hold: MeasurementHold; runsFailed: boolean }) {
+  const { config } = useSession()
+  const lookup = !hold.request && hold.holder
+  const latest = useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(config.namespace)}/profiling-runs?${new URLSearchParams({ parentUID: hold.holder ?? "", sort: "created", order: "desc", limit: "1" })}`, { enabled: !!lookup })
+  const found = lookup ? latest.data?.runs[0] : undefined
+  const request = hold.request ?? (found ? runRequest(found) : null)
+  const run = hold.run ?? (found ? { name: found.name, uid: found.uid } : null)
+  const reason = runsFailed || latest.error ? "측정 회차 조회 실패" : lookup && latest.isPending ? "조회 중" : "측정 요청 확인 불가"
+  const link = "truncate text-primary hover:underline"
+  return (
+    <Section card>
+      <Fields columns={2} items={[
+        { label: "측정 요청", value: request && <Link href={requestHref(config.namespace, request.name, request.uid)} className={link}>{request.name}</Link>, reason },
+        { label: "회차", value: run && <Link href={`/measurements/runs/${encodeURIComponent(run.name)}?uid=${encodeURIComponent(run.uid)}`} className={link}>{run.name}</Link>, reason: request ? "진행 중인 회차 없음" : reason },
+      ]} />
+    </Section>
   )
 }
 

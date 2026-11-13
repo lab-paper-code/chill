@@ -7,7 +7,7 @@ import { useChillQuery, useSession } from "@/lib/client"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { formatDurationNanos, formatKst, formatListTime, formatNumber } from "@/lib/format"
 import { decisionStatus, schedulerReason, type StatusInfo } from "@/lib/status-labels"
-import { decisionListPath, decisionRecordPath, decisionResult, latestDecisionPath, summaryHeadline, type DecisionPage, type DecisionRow } from "@/lib/scheduler-decisions"
+import { decisionListPath, decisionRecordPath, decisionResult, headline as headlineOf, latestDecisionPath, summaryFacts, type DecisionPage, type DecisionRow } from "@/lib/scheduler-decisions"
 import type { SchedulerObservationPage, SchedulerSettings } from "@/lib/read-types"
 import type { WorkloadView } from "@/lib/domain"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -103,9 +103,17 @@ function DecisionsBody({ range, maxSpan, set }: { range: TimeRangeValue; maxSpan
   const setRange = (value: TimeRangeValue) => set("preset" in value
     ? { range: value.preset === "1h" ? null : value.preset, from: null, to: null, cursor: null }
     : { range: null, from: String(value.from), to: String(value.to), cursor: null })
+  // Below the side-by-side width (90em, as the grid below) the detail sits under the list: bring it into view
+  // once the chosen record has rendered (earlier, the short skeleton clamps the scroll).
+  const reveal = React.useRef(false)
+  const shown = React.useCallback(() => {
+    if (!reveal.current) return
+    reveal.current = false
+    detailRef.current?.scrollIntoView({ block: "start" })
+  }, [])
   const select = (row: DecisionRow) => {
+    reveal.current = window.matchMedia("(max-width: 89.99em)").matches
     set({ at: row.decision!.at, filter: changes ? "changes" : "all" })
-    if (window.matchMedia("(max-width: 1279px)").matches) requestAnimationFrame(() => detailRef.current?.scrollIntoView({ block: "start" }))
   }
   const togglePick = (at: string, on: boolean) => {
     const next = on ? [...picks, at].slice(-2) : picks.filter(value => value !== at)
@@ -114,7 +122,7 @@ function DecisionsBody({ range, maxSpan, set }: { range: TimeRangeValue; maxSpan
 
   const columns: Column<DecisionRow>[] = [
     {
-      key: "at", header: "시각", width: "33%",
+      key: "at", header: "시각", width: "10.5rem",
       cell: row => {
         const at = row.decision!.at, checked = picks.includes(at)
         return (
@@ -126,14 +134,14 @@ function DecisionsBody({ range, maxSpan, set }: { range: TimeRangeValue; maxSpan
       },
       csv: row => formatKst(row.decision!.at),
     },
-    { key: "result", header: "결과", width: "17%", cell: row => <StatusDot status={rowStatus(row)} showLabel />, csv: row => rowStatus(row).label },
+    { key: "result", header: "결과", width: "5.5rem", cell: row => <StatusDot status={rowStatus(row)} showLabel />, csv: row => rowStatus(row).label },
     {
-      key: "reason", header: "사유", missingReason: "요약에 사유 없음, 상세에서 확인",
-      cell: row => { const headline = summaryHeadline(row.decision!); return !headline ? null : "text" in headline ? headline.text : <ReasonSummary codes={headline.reasons} /> },
-      csv: row => { const headline = summaryHeadline(row.decision!); return !headline ? null : "text" in headline ? headline.text : headline.reasons.map(code => { const reason = schedulerReason(code); return reason.code ?? reason.label }).join(", ") },
+      key: "reason", header: "사유", missingReason: "기록된 사유 없음",
+      cell: row => { const headline = headlineOf(summaryFacts(row.decision!)); return !headline ? null : "text" in headline ? headline.text : <ReasonSummary codes={headline.reasons} /> },
+      csv: row => { const headline = headlineOf(summaryFacts(row.decision!)); return !headline ? null : "text" in headline ? headline.text : headline.reasons.map(code => { const reason = schedulerReason(code); return reason.code ?? reason.label }).join(", ") },
     },
     {
-      key: "elapsed", header: "소요", numeric: true, width: "21%", missingReason: "소요 기록 없음",
+      key: "elapsed", header: "소요", numeric: true, width: "7.5rem", missingReason: "소요 기록 없음",
       cell: row => {
         const ms = elapsedMs(row)
         return ms == null ? null : (
@@ -156,7 +164,7 @@ function DecisionsBody({ range, maxSpan, set }: { range: TimeRangeValue; maxSpan
         }]}
         end={<TimeRange value={range} onChange={setRange} presets={["15m", "1h", "24h"]} custom={{ maxSpanMs: maxSpan }} />}
       />
-      <div className="grid items-start gap-6 [@media(min-width:90em)]:grid-cols-[minmax(0,34rem)_minmax(0,1fr)]">
+      <div className="grid items-start gap-6 [@media(min-width:90em)]:grid-cols-[minmax(0,38rem)_minmax(0,1fr)]">
         <QueryBoundary query={list}>
           {() => (
             <DataTable label="판단 기록" rows={rows} rowKey={row => row.decision!.at} columns={columns} pageSize={0}
@@ -172,7 +180,7 @@ function DecisionsBody({ range, maxSpan, set }: { range: TimeRangeValue; maxSpan
           )}
         </QueryBoundary>
         <div ref={detailRef} className="min-w-0 scroll-mt-4">
-          {selected && <DecisionDetail key={selected} at={selected} names={names} intervalNanos={interval} />}
+          {selected && <DecisionDetail key={selected} at={selected} names={names} intervalNanos={interval} onShown={shown} />}
         </div>
       </div>
       {picks.length === 2 && <DecisionCompare open={comparing} onOpenChange={setComparing} picks={picks} names={names} />}

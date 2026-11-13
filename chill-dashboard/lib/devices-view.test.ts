@@ -1,6 +1,20 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { actuatorText, chartRows, deviceRole, energyParts, quantityBytes } from "./devices-view.ts"
+import { actuatorText, chartRows, deviceRole, energyParts, measurementHolds, quantityBytes } from "./devices-view.ts"
+import type { ProfilingRun } from "./read-types.ts"
+
+test("measuring devices name the request and run that hold them", () => {
+  const run = (name: string, request: string, node: string, created: string) => ({
+    namespace: "ns", name, uid: `${name}-uid`, resourceVersion: "1", generation: 1, creationTimestamp: created, spec: { targetNode: node }, status: {},
+    ownerReferences: [{ apiVersion: "edge.dacs.io/v1alpha1", kind: "BatchEnergyOptimization", name: request, uid: `${request}-uid`, controller: true }],
+  }) as ProfilingRun
+  const runs = [run("r-b1", "req-a", "n1", "2026-11-13T10:00:00Z"), run("r-b2", "req-a", "n1", "2026-11-13T11:00:00Z"), run("r-x", "req-b", "n2", "2026-11-13T09:00:00Z")]
+  const lease = (node: string, holder: string) => ({ owner: holder, nodes: [{ uid: node, name: node }], workloadUIDs: [], podUIDs: [], instances: [], reason: `measurement-lease/${holder}: profiling run in progress`, explanation: "" })
+  const holds = measurementHolds(["n1", "n2", "n3"], [lease("n1", "req-a-uid"), lease("n3", "gone")], runs)
+  assert.deepEqual(holds.get("n1"), { holder: "req-a-uid", request: { name: "req-a", uid: "req-a-uid" }, run: { name: "r-b2", uid: "r-b2-uid" } })
+  assert.deepEqual(holds.get("n2"), { holder: null, request: { name: "req-b", uid: "req-b-uid" }, run: { name: "r-x", uid: "r-x-uid" } })
+  assert.deepEqual(holds.get("n3"), { holder: "gone", request: null, run: null })
+})
 
 test("device role: exclusion first, then measurement, service, available", () => {
   assert.equal(deviceRole(["서비스 배치", "측정 중"], true)?.label, "제외")

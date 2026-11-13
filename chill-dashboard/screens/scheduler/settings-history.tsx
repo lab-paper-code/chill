@@ -30,16 +30,20 @@ function HistoryBody({ selected, onSelect, name }: { selected: string; onSelect:
   })
   const query = useChillQuery<SchedulerObservationPage>(`v1/observations/scheduler?${new URLSearchParams({ filter: "settings", order: "desc", ...range })}`, { decoder: parseSchedulerJSON })
   const rows = React.useMemo<Row[]>(() => (query.data?.events ?? []).flatMap(event => event.settings ? [{ at: event.at, change: event.settings, rows: changeRows(event.settings.before, event.settings.after, name) }] : []), [query.data, name])
-  const current = rows.find(row => row.at === selected)
+  // The newest change is open from the start, so the drawer shows what changed without a click.
+  const current = rows.find(row => row.at === selected) ?? rows[0]
   return (
     <QueryBoundary query={query} isEmpty={() => rows.length === 0} empty={<EmptyState compact title="변경 기록 없음" />}>
       {() => (
         <div className="grid gap-5">
-          <DataTable label="설정 변경" rows={rows} rowKey={row => row.at} pageSize={0} onRowClick={row => onSelect(row.at)} selectedKey={selected || undefined}
+          <DataTable label="설정 변경" rows={rows} rowKey={row => row.at} pageSize={0} onRowClick={row => onSelect(row.at)} selectedKey={current?.at}
             columns={[
-              { key: "at", header: "시각", width: "11.5rem", cell: row => <TimeText at={row.at} mode="list" /> },
-              { key: "actor", header: "변경자", cell: row => row.change.actorUsername || null, missingReason: "기록 없음" },
-              { key: "count", header: "항목 수", width: "4.5rem", numeric: true, cell: row => row.rows.length },
+              { key: "at", header: "시각", width: "10rem", cell: row => <TimeText at={row.at} mode="list" /> },
+              { key: "actor", header: "변경자", width: "30%", cell: row => row.change.actorUsername || null, missingReason: "기록 없음" },
+              {
+                key: "items", header: "변경 항목", missingReason: "바뀐 값 없음", csv: row => row.rows.map(item => item.label).join(", "),
+                cell: row => row.rows.length ? `${row.rows[0].label}${row.rows.length > 1 ? ` +${row.rows.length - 1}` : ""}` : null,
+              },
             ]} />
           {current && (
             <Section title="변경 내용" actions={current.change.appliedAt ? undefined : <StatusBadge tone="fail" label="적용 안 됨" reason={current.change.error} />}>

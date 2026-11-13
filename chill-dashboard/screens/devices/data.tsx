@@ -2,10 +2,10 @@
 
 import * as React from "react"
 import { TIME_PRESETS, TimeSeries, useNow, type Series, type TimeRangeValue } from "@/components/kit"
-import { useChillQuery } from "@/lib/client"
-import { chartRows } from "@/lib/devices-view"
+import { useChillQuery, useSession } from "@/lib/client"
+import { chartRows, measurementHolds } from "@/lib/devices-view"
 import { mergePowerSeries, parsePowerSeriesJSON, powerSeriesPath, type PowerPoint } from "@/lib/power-series"
-import type { OperatingPower, OperatingPowerSeries, PoolsView, SchedulerSettings } from "@/lib/read-types"
+import type { OperatingPower, OperatingPowerSeries, PoolsView, RunsView, SchedulerSettings } from "@/lib/read-types"
 import { deviceRows } from "@/lib/resources-data"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { useLive } from "@/lib/use-live"
@@ -18,9 +18,13 @@ function useKept<T>(value: T | undefined): T | undefined {
   return value ?? kept
 }
 
-/** Devices joined by UID from inventory, pools and the live stream; exclusion from scheduler settings. */
+/**
+ * Devices joined by UID from inventory, pools and the live stream; exclusion from scheduler settings;
+ * for measuring devices, the request and run that hold them (live leases and one read of the running runs).
+ */
 export function useDevices() {
   const { state } = useLive()
+  const { config } = useSession()
   const inventory = useCoverageInventory()
   const pools = useChillQuery<PoolsView>("v1/pools", { poll: true })
   const [etag, setEtag] = React.useState<string | null>(null)
@@ -28,7 +32,13 @@ export function useDevices() {
   // Rows only seen in power metrics have no name to show or link to.
   const rows = React.useMemo(() => deviceRows(state, inventory.data, pools.data).filter(row => row.name), [state, inventory.data, pools.data])
   const excluded = React.useMemo(() => new Set(settings.data?.excludedNodes ?? []), [settings.data])
-  return { state, inventory, pools, settings, etag, rows, excluded }
+  const measuring = rows.filter(row => row.roles.includes("측정 중")).map(row => row.name)
+  const runs = useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(config.namespace)}/profiling-runs?${new URLSearchParams({ status: "running", limit: String(config.maxPageSize) })}`,
+    { enabled: measuring.length > 0, poll: true })
+  const measuringKey = measuring.join(",")
+  const holds = React.useMemo(() => measurementHolds(measuringKey ? measuringKey.split(",") : [], state.snapshot?.reservations ?? [], runs.data?.runs ?? []),
+    [measuringKey, state.snapshot?.reservations, runs.data])
+  return { state, inventory, pools, settings, etag, rows, excluded, holds, runs }
 }
 
 const LIVE_REACH_MS = 60_000

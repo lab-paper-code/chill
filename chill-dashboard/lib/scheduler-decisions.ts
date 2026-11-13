@@ -1,7 +1,7 @@
 // Scheduler decision screen helpers: record paths, the reason headline, tick timing rows and the two-decision comparison.
 import type { SchedulerAction, SchedulerCandidate, SchedulerDecision, SchedulerWorkloadState, WireInteger } from "./read-types.ts"
 import { decisionRange } from "./scheduler-history.ts"
-import { formatKst, formatNumber } from "./format.ts"
+import { formatJoules, formatKst } from "./format.ts"
 import { candidateStatus } from "./status-labels.ts"
 
 /** internal/serving/observation SchedulerControlObservation, as served in every view. */
@@ -12,10 +12,16 @@ export type ControlObservation = {
   evaluateNanos: WireInteger; publishNanos: WireInteger; recordNanos: WireInteger; launchNanos: WireInteger
   evaluation?: { preparationNanos: WireInteger; searchNanos: WireInteger; paybackNanos: WireInteger; ratesNanos: WireInteger; projectionNanos: WireInteger }
 }
-/** A view=summary row. `reasons`, `targetKeep` and `evaluationElapsedNanos` are absent on older servers. */
+/**
+ * A view=summary row. `reasons`, `targetKeep`, `evaluationElapsedNanos`, `keepExpectedJoules` and `targetExpectedJoules`
+ * are absent on older servers (and the energies whenever the plan has none).
+ */
 export type DecisionRow = {
   at: string; offset?: WireInteger; control?: ControlObservation
-  decision?: { at: string; status: string; workloads?: SchedulerWorkloadState[] | null; reasons?: string[] | null; targetKeep?: boolean; evaluationElapsedNanos?: WireInteger }
+  decision?: {
+    at: string; status: string; workloads?: SchedulerWorkloadState[] | null; reasons?: string[] | null; targetKeep?: boolean; evaluationElapsedNanos?: WireInteger
+    keepExpectedJoules?: number; targetExpectedJoules?: number
+  }
 }
 export type DecisionPage = { from: string; to: string; events: DecisionRow[] | null; nextCursor?: string; gapUntil?: string }
 
@@ -82,28 +88,32 @@ export const changedTarget = (decision: SchedulerDecision): SchedulerCandidate |
 /** A planned action as recorded on a decision target (the wire row carries the service and expected time). */
 export type PlannedAction = SchedulerAction & { workloadUID?: string; expectedSeconds?: number | null }
 
+/** What a headline needs, from a full record or a summary row; a summary row lacks the keep plan's status. */
+export type HeadlineFacts = {
+  reasons?: string[] | null; workloads?: SchedulerWorkloadState[] | null
+  /** true: the target is the keep plan; false: a change; undefined: no target. */ keep: boolean | undefined
+  keepStatus?: string; keepJoules?: number | null; targetJoules?: number | null
+}
+export const recordFacts = (d: SchedulerDecision): HeadlineFacts => {
+  const target = changedTarget(d)
+  return { reasons: d.reasons, workloads: d.workloads, keep: d.target ? !target : undefined, keepStatus: d.keep.status, keepJoules: d.keep.expectedJoules, targetJoules: target?.expectedJoules }
+}
+export const summaryFacts = (d: NonNullable<DecisionRow["decision"]>): HeadlineFacts =>
+  ({ reasons: d.reasons, workloads: d.workloads, keep: d.targetKeep, keepJoules: d.keepExpectedJoules, targetJoules: d.targetExpectedJoules })
+
 /**
- * Why the decision came out as it did, in one line: the server's reason codes when it gave any;
- * else, for a change, the keep plan's failing status or the expected energy it saves (difference of two server values);
+ * Why the decision came out as it did, in one line, for the list and the detail alike: the server's reason codes when it gave any;
+ * else, for a change, the keep plan's failing status or the expected energy saved or added (difference of two server values);
  * else, for a keep, that no service is under automatic control or that no candidate beat the current plan.
  */
-export function decisionHeadline(decision: SchedulerDecision): { reasons: string[] } | { text: string } | null {
-  if (decision.reasons?.length) return { reasons: decision.reasons }
-  const target = changedTarget(decision)
-  if (!target && decision.workloads?.length && decision.workloads.every(w => w.state !== "Controlled")) return { text: "자동 제어 서비스 없음" }
-  if (!target) return decision.target ? { text: "더 나은 후보 없음" } : null
-  if (decision.keep.status !== "Feasible") return { text: `유지안 ${candidateStatus(decision.keep.status).label}` }
-  const saving = savingJoules(decision)
-  return saving != null && saving > 0 ? { text: `예상 에너지 ${formatNumber(saving, 1)} J 절감` } : null
-}
-/**
- * decisionHeadline as far as a summary row carries it: the reason codes, or the keep branches when the row says the target is the keep plan.
- * A change needs the full record (keep status, expected energy), so it gives null; the list never fetches records per row.
- */
-export function summaryHeadline(decision: NonNullable<DecisionRow["decision"]>): { reasons: string[] } | { text: string } | null {
-  if (decision.reasons?.length) return { reasons: decision.reasons }
-  if (decision.targetKeep !== true) return null
-  return decision.workloads?.length && decision.workloads.every(w => w.state !== "Controlled") ? { text: "자동 제어 서비스 없음" } : { text: "더 나은 후보 없음" }
+export function headline(f: HeadlineFacts): { reasons: string[] } | { text: string } | null {
+  if (f.reasons?.length) return { reasons: f.reasons }
+  if (f.keep === undefined) return null
+  if (f.keep) return f.workloads?.length && f.workloads.every(w => w.state !== "Controlled") ? { text: "자동 제어 서비스 없음" } : { text: "더 나은 후보 없음" }
+  if (f.keepStatus && f.keepStatus !== "Feasible") return { text: `유지안 ${candidateStatus(f.keepStatus).label}` }
+  if (f.keepJoules == null || f.targetJoules == null || f.keepJoules === f.targetJoules) return null
+  const saving = f.keepJoules - f.targetJoules
+  return { text: `예상 에너지 ${formatJoules(Math.abs(saving))} ${saving > 0 ? "절감" : "증가"}` }
 }
 /** Keep minus change expected energy, in J; null without a change or either value. */
 export function savingJoules(decision: SchedulerDecision): number | null {

@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import Link from "next/link"
 import { useChillQuery } from "@/lib/client"
 import { parseSchedulerJSON } from "@/lib/scheduler"
@@ -8,7 +9,7 @@ import { formatDetailTime, formatDurationNanos, formatKst, formatNumber, msNumbe
 import { autonomyState, candidateStatus, decisionStatus, schedulerReason } from "@/lib/status-labels"
 import { actionKindLabel } from "@/lib/scheduler-actions"
 import {
-  changedTarget, controlFor, decisionControlPath, decisionHeadline, decisionRecordPath, latencyRows, recordResult, savingJoules, tickPhases,
+  changedTarget, controlFor, decisionControlPath, decisionRecordPath, headline as headlineOf, latencyRows, recordFacts, recordResult, savingJoules, tickPhases,
   type ControlObservation, type DecisionPage, type LatencyRow, type PlannedAction,
 } from "@/lib/scheduler-decisions"
 import type { SchedulerCandidate, SchedulerDecision, SchedulerNodePlan, SchedulerObservation, SchedulerObservationPage, SchedulerWorkloadState, WireInteger } from "@/lib/read-types"
@@ -36,20 +37,21 @@ function Service({ uid, name }: { uid: string; name: Names }) {
   return label ? <>{label}</> : <IdText value={uid} />
 }
 
-/** Selected decision: full record by its exact time, plus the tick that produced it. */
-export function DecisionDetail({ at, names, intervalNanos }: { at: string; names: Map<string, string>; intervalNanos: WireInteger | undefined }) {
+/** Selected decision: full record by its exact time, plus the tick that produced it. `onShown` runs once the record has rendered. */
+export function DecisionDetail({ at, names, intervalNanos, onShown }: { at: string; names: Map<string, string>; intervalNanos: WireInteger | undefined; onShown?: () => void }) {
   const path = decisionRecordPath(at)
   const record = useChillQuery<SchedulerObservationPage>(path ?? "", { enabled: !!path, ...decoder })
   if (!path) return <EmptyState title="판단 시각 오류" />
   return (
     <QueryBoundary query={record} skeleton="block" isEmpty={data => !data.events?.some(row => row.decision?.at === at)} empty={<EmptyState title="판단 기록 없음" />}>
-      {data => <Detail event={data.events!.find(row => row.decision?.at === at)!} names={names} intervalNanos={intervalNanos} />}
+      {data => <Detail event={data.events!.find(row => row.decision?.at === at)!} names={names} intervalNanos={intervalNanos} onShown={onShown} />}
     </QueryBoundary>
   )
 }
 
 /** Reading order: what was decided and why, keep versus change, then the evidence. */
-function Detail({ event, names, intervalNanos }: { event: SchedulerObservation; names: Map<string, string>; intervalNanos: WireInteger | undefined }) {
+function Detail({ event, names, intervalNanos, onShown }: { event: SchedulerObservation; names: Map<string, string>; intervalNanos: WireInteger | undefined; onShown?: () => void }) {
+  React.useEffect(() => onShown?.(), [onShown])
   const decision = event.decision!
   // Names as recorded with the decision first; deleted services keep theirs.
   const name: Names = uid => event.snapshot?.workloads?.find(w => w?.uid === uid)?.name ?? names.get(uid)
@@ -67,7 +69,7 @@ function Detail({ event, names, intervalNanos }: { event: SchedulerObservation; 
 
 /** The reason line: server reason labels (unknown codes folded into "기타 n건"), else the headline the record supports. */
 function Headline({ decision }: { decision: SchedulerDecision }) {
-  const headline = decisionHeadline(decision)
+  const headline = headlineOf(recordFacts(decision))
   if (!headline) return <p className="text-base text-muted-foreground">기록된 사유 없음</p>
   if ("text" in headline) return <p className="text-base font-semibold">{headline.text}</p>
   const labels = headline.reasons.map(code => schedulerReason(code))

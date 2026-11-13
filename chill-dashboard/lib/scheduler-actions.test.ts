@@ -12,6 +12,13 @@ test("groupActions keeps the newest record per id", () => {
   assert.equal(actionElapsedNanos(rows[1]), null)
 })
 
+test("groupActions reads the action's services from workloadUID and workloadUIDs", () => {
+  const action = (fields: object) => ({ at: "2026-01-01T00:00:01Z", action: { id: "x", kind: "prepare", node, phase: "running", startedAt: "2026-01-01T00:00:00Z", ...fields } })
+  assert.deepEqual(groupActions([action({ workloadUID: "owner" })])[0].workloads, ["owner"])
+  assert.deepEqual(groupActions([action({ workloadUID: "a", workloadUIDs: ["a", "b"] })])[0].workloads, ["a", "b"])
+  assert.deepEqual(groupActions([action({})])[0].workloads, [])
+})
+
 test("phaseStatus covers measurement phases and live codes", () => {
   assert.equal(phaseStatus("Accepted").label, "접수됨")
   assert.equal(phaseStatus("failed").tone, "fail")

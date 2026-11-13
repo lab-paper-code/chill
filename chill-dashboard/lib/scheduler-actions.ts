@@ -21,17 +21,20 @@ const phases: Record<string, StatusInfo> = {
 /** Scheduler action records carry the live vocabulary plus the measurement request phases. */
 export const phaseStatus = (code: string): StatusInfo => phases[code] ?? actionStatus(code)
 
-export type ActionRow = { id: string; kind: string; node: { uid: string; name: string }; startedAt: string; at: string; phase: string; event: SchedulerObservationSummary }
+/** Summary action row: `workloadUID` and `workloadUIDs` (the services the action is for) are absent on older servers and on actions for no service. */
+type SummaryAction = NonNullable<SchedulerObservationSummary["action"]> & { workloadUID?: string; workloadUIDs?: string[] | null }
+export type ActionRow = { id: string; kind: string; node: { uid: string; name: string }; startedAt: string; at: string; phase: string; workloads: string[]; event: SchedulerObservationSummary }
 const finished = new Set(["complete", "completed", "failed", "partial", "cancel", "canceled"])
 
 /** One row per action id: the newest record of the loaded page (order is newest first). */
 export function groupActions(events: SchedulerObservationSummary[]): ActionRow[] {
   const seen = new Set<string>(), rows: ActionRow[] = []
   for (const event of events) {
-    const a = event.action
+    const a = event.action as SummaryAction | undefined
     if (!a || seen.has(a.id)) continue
     seen.add(a.id)
-    rows.push({ id: a.id, kind: a.kind, node: a.node, startedAt: a.startedAt, at: event.at, phase: a.phase, event })
+    const workloads = [...new Set([...(a.workloadUID ? [a.workloadUID] : []), ...(a.workloadUIDs ?? [])])]
+    rows.push({ id: a.id, kind: a.kind, node: a.node, startedAt: a.startedAt, at: event.at, phase: a.phase, workloads, event })
   }
   return rows
 }
