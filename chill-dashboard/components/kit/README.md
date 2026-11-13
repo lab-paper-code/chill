@@ -9,7 +9,11 @@ Screens are assembled only from `@/components/kit` (plus `lib/` data helpers). L
 - Props are decoded route params (`name`, `id`, `kind: CatalogKind`). Read `?uid=`, `?tab=` and filters with `useSearchParams()`; keep selection, tab, filters and time range in the URL.
 - Area-private helpers go in `lib/<area>-*.ts` (pure) next to a `*.test.ts`.
 - Data: `useChillQuery`, `useChillQueries`, `useChillMutation`, `useSession` from `@/lib/client`; `useLive()` from `@/lib/use-live` (`state` is frozen while the user pauses; never read the socket yourself).
-- Labels for server codes: `@/lib/status-labels`. Units: `@/lib/format`. Routes and tab rows: `@/lib/routes`.
+- Shared modules (never a private copy in a screen):
+  - `@/lib/status-labels`: every status, verdict, reason and server error word (`serviceReadiness`, `schedulerReason`, `errorCodeLabel`…).
+  - `@/lib/display-labels`: device class, power mode, execution path and architecture labels (`deviceClassLabel`, `powerModeLabel`, `executionPathLabel`, `architectureLabel`); device names stay as written.
+  - `@/lib/format`: durations (`formatDurationNanos`, `formatSeconds`), latency (`formatMs`, `formatTarget`), power and energy (`formatWatts`, `formatJoules`), rate (`formatRate`), success rate (`formatPercent`), dates (`formatListTime`, `formatDetailTime`, `formatRelative`; in the layout use `TimeText`).
+- Routes and tab rows: `@/lib/routes`.
 
 ## Screen checklist (design section 2)
 
@@ -24,7 +28,7 @@ Screens are assembled only from `@/components/kit` (plus `lib/` data helpers). L
 9. Numbers: `numeric: true` columns (right-aligned, tabular). Units in the header (`unit`), never in the cell.
 10. Verdicts and statistics come from the server. Allowed in the browser: unit conversion, sums and counts, ratio or difference of two server values, comparing a value with its server target. Not allowed: quantiles, power integration, gap interpolation, inventing a verdict rule.
 11. Changes: show target and before/after (`ConfirmDialog.changes`), send `version` (If-Match) where required, never auto-retry. `error.unknownOutcome` means "결과 미확인". Result goes to a toast. Forms use `LeaveGuard`.
-12. Server codes never appear raw: map them in `lib/status-labels.ts`; unknown codes render "—" with the code in the tooltip.
+12. Server codes never appear raw: map them in `lib/status-labels.ts`; an unknown code reads "기타" (reasons "기타 사유", errors "기타 오류") with the raw code in the tooltip, and no code reads "—".
 13. No colours, spacing or table styling in screen files: use kit props. No entrance or count-up animation on live values; no reordering of rows when values change (sort by a stable key).
 14. Works at 1440 px and 390 px, light and dark, by keyboard.
 
@@ -87,7 +91,7 @@ cell: row => <span className="inline-flex items-center gap-2"><MeterBar value={r
 Five tones: `ok`, `warn`, `fail`, `progress` (primary), `idle`. Shape (icon) + colour + text.
 | Prop | Type | Notes |
 |---|---|---|
-| `status` | `StatusInfo` | Preferred: `serviceReadiness(code)`, `actionStatus(code)`, … Unknown code: "—" plus tooltip `코드 X`. |
+| `status` | `StatusInfo` | Preferred: `serviceReadiness(code)`, `actionStatus(code)`, … Unknown code: "기타" plus tooltip `코드 X`. |
 | `tone`, `label` | | Direct form. |
 | `reason` | node | Badge tooltip. |
 | `StatusDot.showLabel` | boolean | Icon only (label in tooltip) or icon + text. A `tone` with no `label` and no `status` is decoration and hidden from screen readers. |
@@ -173,7 +177,7 @@ Rows by columns (e.g. power modes by execution paths) with a pinned row-header c
 
 ### IdText, TimeText, Fields, Feed, Hint, Missing
 - `IdText value head? tail? copy?`: `5f0c2a9e…5f60` + full value tooltip + copy.
-- `TimeText at mode?="list"|"detail"|"relative" seconds?`: see checklist 8; relative says "방금" within 5 s either side and shows the detail form in a tooltip (`"absolute"` is the old name of `"detail"`; replace it). Durations: `formatDurationNanos` from `@/lib/format` ("55.8초" under a minute, "1분 28초" from a minute; "12.3 ms" below a second).
+- `TimeText at mode?="list"|"detail"|"relative" seconds?`: see checklist 8; relative says "방금" within 5 s either side and shows the detail form in a tooltip. Durations: `formatDurationNanos` from `@/lib/format` ("55.8초" under a minute, "1분 28초" from a minute; "12.3 ms" below a second).
 - `Fields items={[{label, value, reason?, info?}]} columns?={1|2|3}`: label/value list; a cut value shows a tooltip.
 - `Feed items={[{key, title, status?|tone?, secondary?, at?, meta?, href?}]} empty? label?`: one-line rows (status mark, title, secondary text, relative time on the right); rows with `href` link. For side columns ("최근 변경", "진행 중").
 - `Hint text focusable?`: tooltip wrapper; with `focusable` the hint is also the wrapper's description for screen readers. `InfoHint text`: the "i" button (24 px) for a one-sentence definition; `info` props use it. `Missing reason`: the "—" itself. `useNow()`: shared 1 s clock.

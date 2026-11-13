@@ -299,9 +299,8 @@ export function useNow(): number {
  * KST time in one of three forms (`mode`): "list" (default, tables and lists) "MM-DD HH:mm:ss";
  * "detail" (detail fields) "YYYY-MM-DD HH:mm:ss"; "relative" ("3분 전", 1 s clock) only where recency
  * is the point (tiles, feeds), with the detail form in a tooltip. `seconds={false}` drops the seconds.
- * "absolute" is the old name of "detail".
  */
-export function TimeText({ at, mode = "list", seconds = true, className }: { at: string | number | Date | null | undefined; mode?: "list" | "detail" | "relative" | "absolute"; seconds?: boolean; className?: string }) {
+export function TimeText({ at, mode = "list", seconds = true, className }: { at: string | number | Date | null | undefined; mode?: "list" | "detail" | "relative"; seconds?: boolean; className?: string }) {
   const now = useNow()
   const detail = formatKst(at, seconds)
   if (detail === DASH) return <Missing />
