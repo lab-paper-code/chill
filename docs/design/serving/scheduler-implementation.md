@@ -1,303 +1,130 @@
 # CHILL 스케줄러 구현 설계
 
-## 1. 기준과 적용 범위
+이 문서는 제어와 물리 수명, 장부와 승인 경계를 정한다. 요구사항은 [스케줄러 명세](../../spec/scheduler/SRS.md), 수치 선택은 [계획기](analytic-planner.md), 실행 조건은 [실행기와 측정](scheduler-runtime-measurement.md), HTTP는 [설정 API](scheduler-api.md), 실제 작업은 [operations](scheduler-operations.md)를 따른다.
 
-[스케줄러 SRS](../../spec/scheduler/SRS.md)의 SCH-01~32, SCH-48~59와 PR-01..04에 대응하는 구조·확정 변경 계약이다. 요구사항·수용 기준의 원본은 `docs/spec/`이며 문서 갱신은 구현·회귀 통과를 뜻하지 않는다.
-firstfloor Go 큐·배처·persistent Python IPC runner는 `internal/firstfloor`, `cmd/serving-worker`, `runtime/firstfloor`에 연결한다. 동료 `/home/genesis1/ETRI/donghwan/firstfloor`는 보존한다. 실제 actor와 후보 replay는 같은 순수 선택 함수를 사용하며 ingress Runtime은 Workload 수용·분배·drain을 맡는다.
+## 책임과 의존 방향
 
-| 세부 계약 | 원본 |
+| 소유자 | 책임 |
 |---|---|
-| 실행기·시간·CPU·device·fixed-batch·baseline·catalog | [실행기와 측정](scheduler-runtime-measurement.md) |
-| 설정·초기 completion margin·API·관측 조회 | [설정과 관측 API](scheduler-api.md) |
-| Pod-bound 전달·수동 원자 실행·reset | [인스턴스 전달과 수동 실행](scheduler-operations.md) |
-| 초기 감사·실행 결과의 경계 | [SRS 감사 결과](scheduler-srs-audit.md), [실행 결과](scheduler-execution-history.md) |
-| 최신 live evidence·수용 범위 | [라이브 증거 캠페인](../../plans/2026-10-13-scheduler-live-evidence-campaign.md) |
-| E2E 피드백·동결 POST·tested-rate κ̂·두 SLO 우선순위 | [승인 M0](path-aware-implementation-plan.md#3-수치시간-계약--m0); 구현 통합 검증 대기 |
+| `internal/firstfloor` | UID별 bounded queue, frozen context, 배칭, 단일 runner와 progress |
+| `internal/serving` | ingress, timing feedback, 분배, 수치와 물리 admission adapter |
+| `internal/scheduler/protocol` | 중립 문제, 계획과 평가 port |
+| `internal/scheduler/v1`, `internal/scheduler/v2` | protocol만 사용하는 탐색 순회 |
+| `internal/scheduler` | 공식 전략 하나와 fallback 선택 |
+| `internal/serving/firstfloor` | HTTP, metadata와 progress의 typed 경계 |
+| `internal/serving/kube` | 실물 관측, capture, 제어 승인과 전환 진행 |
+| `internal/serving/application` | 구성 수락, catalog와 cost refresh, preparation |
+| `internal/serving/management` | 선언, lifecycle, status와 감사 |
+| `internal/serving/state` | operation identity, frozen preparation, scope와 effect receipt |
+| `internal/serving/operations` | prepare/remove/power/route와 metered primitive |
+| Profiling과 metric owner | 같은 actor의 trial, raw, wall power와 immutable evidence |
+| NodeActuator | 단일 host power writer와 독립 readback |
 
-## 2. 책임과 패키지 방향
+의존 방향은 `serving → scheduler → {v1,v2} → protocol`이다. firstfloor는 Serving과 Profiler를 역참조하지 않는다. Query는 Serving 내부 패키지를 import하지 않는다.
 
-| 소유자 | 책임·실제 완료 근거 |
+composition root는 하나의 ClusterState를 Observer, Manager, Operations와 SchedulerController에 주입한다. reservationState의 제어 mutex와 장부 mutex, observerState의 source mutex는 별개다. 잠금이나 map을 복사하지 않는다. Manager는 기존 deletion reservation을 사용하며 별도 장부를 만들지 않는다.
+
+## 요청과 공통 선택
+
+원시 표본은 UID와 Definition, 개별 SLO와 수명을 유지한다. accepted 시 POST를 동결하며 native에 실제 sender elapsed를 전달한다. Tick의 TOTAL이나 PRE를 실제 요청에 중복 가산하지 않는다. 요청 시간, residual과 물리 완료는 [실행기 계약](scheduler-runtime-measurement.md#시간과-수명)에 둔다.
+
+실제 actor와 직접 재생은 같은 순수 선택 함수를 사용한다. stable EDF에서 같은 UID와 불변 정의의 호환 요청만 묶고, 가능한 batch의 조건부 service 분위수와 요청당 증분 J를 비교한다. 더 큰 측정 batch의 엄격한 energy gain과 fill time이 있을 때만 bounded wait한다.
+
+Serving의 Reject와 Delay는 요청 정책이다. Reject는 불가능한 head를 실행 없이 거절하고 Delay는 후순위 FIFO로 옮겨 normal 뒤 처리한다. actor의 측정 deadlinePolicy와 혼동하지 않는다. batch 확정 직전 monotonic 시각으로 cancel, 최종 수명과 SLO를 다시 확인한다.
+
+모든 후보는 같은 outstanding과 arrival cohort, physical inventory와 replay exclusion scope를 사용한다. 모델링할 수 없는 action과 executor는 공급에서 공통 제외하되 allocation, owner와 예약, 요청과 cleanup 의무는 남긴다. 실패 시도의 identity를 이후 같은 logical target의 성공 실물에 적용하지 않는다.
+
+## 판단 평가와 전환 진행
+
+주기 판단과 완료 후 진행은 별도다. capture, 승인, 기록과 launch는 제어 mutex로 직렬화하며 수치 평가는 불변 capture 위에서 lock 밖으로 실행한다. 진행된 상태 위에 옛 snapshot을 다시 게시하지 않는다.
+
+승인은 현재 설정과 preparation 입력, 물리 상태와 예약을 재확인한다. 평가 중 진행이나 구성이 바뀌면 결과를 무효화한다. 새 target은 최신 capture로 lock 밖 admission replay를 수행하고 relock 뒤 상태와 입력을 다시 확인한다.
+
+시계와 모집단에서 파생한 값은 승인 equality에서 제외하되 admission 권한, Ready와 allocation, routable 상태는 비교한다. current state는 승인 snapshot, decision은 원래 평가 입력을 기록한다. decision 기록이 수락된 뒤에만 physical action을 시작한다. 기록 뒤 취소는 기록을 지우지 않고 새 launch를 막는다.
+
+`observationEnd`는 historical cutoff, `at`은 blocking I/O 뒤 Runtime lock에서 outstanding과 정의, routing과 credits를 함께 동결한 원점이다. source 시각을 at으로 다시 쓰지 않는다. 미상과 미래 시각, 실제 capture 실패는 사유로 남기며 고정 age TTL은 없다.
+
+완료 signal은 buffer1 nonblocking이다. Continue는 현재 owner의 capture, reconciliation과 후속 launch만 수행하며 신규 평가나 decision을 만들지 않는다. 주기 timer를 재설정하지 않는다. 실패 기록, 취소 parent, 바뀐 controls와 해제 UID는 전진 허가가 아니다.
+
+## 실물 장부
+
+Pod UID가 유일한 실물 장부 key다. Runtime은 실행과 binding/routing projection, snapshot은 판단 복사다.
+
+| 사실 | 보존 규칙 |
 |---|---|
-| `internal/firstfloor` | bounded per-UID queue, frozen SLO, 같은 UID 호환 batch, energy-gain 대기, 단일 runner; 요청별 progress·실제 batch·runner 종료·동기 응답 |
-| `internal/serving` | 정의·receipt·수명·ingress 대기, 운영 부하·시간 피드백·profile routing·노드 계획; 공통 I/O·cheap scalar/직접 후보 평가·물리 admission adapter와 decision/action DAG 변환 |
-| `internal/scheduler/protocol` | CHILL 비의존 scalar 문제·계획·순위·평가·상태/기록 port; runtime IPC와 별개 |
-| `internal/scheduler/v1`, `internal/scheduler/v2` | protocol만 사용하는 실제 탐색 순회; v1 keep/empty K2/K3, v2 cover/polish/combine/priced·예산·finalists·정확 깔때기 |
-| `internal/scheduler` | 기존 `planSearchStrategy`로 모든 자동제어 Workload의 공식 구현 하나 선택; 기본 v2, 선택 v1과 v1 fallback 연결 |
-| `internal/serving/firstfloor` | HTTP/metadata/progress typed 경계, native/client span; request/UID/definition/physical instance 상관 |
-| `internal/serving/kube` | 실제 자원 snapshot·catalog·Pod/policy/power 원자 동작·DAG; API 뒤 실제 readiness/drain/삭제/Node 상태 |
-| `internal/serving/application` | scheduler configuration acceptance, power observation admission, catalog/cost refresh, runtime preparations and profile-reuse retention; settings-change transaction under the existing shared mutation lock |
-| `internal/serving/management` | Workload spec-to-domain projection, declaration validation, lifecycle transitions, status persistence, audit and workload views/summaries; the existing management lock serializes lifecycle effects |
-| `internal/serving/state` | Shared physical operation identity, frozen preparation, instance snapshots and effect receipts; record types used by reservation and execution owners without importing either owner |
-| `internal/serving/operations` | Physical prepare/remove/power/routing and their metered execution; consumes the existing object client, source observer and shared removal authority without owning another reservation ledger |
-| 기존 Profiling owner | 같은 firstfloor fixed-batch·idle·raw evidence·curve; 원래 Run/Job/Node/container/image/actuation와 trial binding |
-| 기존 NodeActuator | 유일한 host power writer; 독립 read-back·settling·Ready/Failed |
-| 기존 metric/evidence owner | Node wall-power·sample/failure·적분·immutable raw; 조건·구간·coverage가 확인된 watts/joules |
+| identity | namespace/name, Pod UID, Node name/UID. container 생성 뒤 exact `PodUID/containerID` |
+| TargetID와 slot | 계획 alias. 같은 slot의 여러 Pod를 축약하지 않음 |
+| allocation | 실제 memory/GPU, 준비 소유와 예약. unknown이나 stop 계획으로0 처리하지 않음 |
+| owner와 route | owner reference와 binding을 구분. 빈 route는 ownerlessness proof가 아님 |
+| 관측 | 마지막 성공, 원래 시각과 최근 실패를 분리. 실패로 성공 시각을 갱신하지 않음 |
+| 수명 | exact container 종료, finalizer와 삭제 확인. 논리 stop과 물리 반환은 별개 |
 
-`firstfloor`는 Serving/Profiler를 역참조하지 않는 leaf다. Serving core가 leaf를 사용하고 Kubernetes/API는 kube adapter에 둔다. Profiler는 자체 evidence 계약에 같은 실행 경로를 연결하며 `.go-arch-lint.yml`도 이 방향을 따른다.
+Create 응답, watch와 초기/복구 전체 List로 UID를 발견한다. container 이전 Pod도 보존한다. terminal, terminating과 label drift, profile/Service/read 오류는 삭제 proof가 아니다.
 
-Scheduler 방향은 `serving → scheduler → {v1,v2} → protocol`이며 serving·selector도 protocol을 사용한다.
-알고리즘은 serving·Kubernetes·firstfloor·evidence adapter와 서로를 import하지 않는다.
-정확/증분 수치와 물리 admission·후처리는 serving port로 재사용한다.
-이 경계 변경은 snapshot capture, runtime protocol, 요청 수명, physical lifecycle, 잠금·예약 정책을 바꾸지 않는다.
-탐색 계약과 기록은 [피드백 기반 계획기](analytic-planner.md)가 소유한다.
+실제 native 오류와 Pod unready는 dispatch를 닫는다. probe 진행 자체는 실패가 아니다. 복구는 native 성공과 동일 UID/container, 단일 Service 검증을 요구한다. 제한된 Service나 후속 Pod List의 첫 실패 때만 검증된 이전 Ready를 한 refresh 유지하고 issue를 남긴다.
 
-Operations uses ClusterState methods for removal markers and Observer methods for source restoration/termination/retirement, preparation publication and node-move transitions. Each method owns the original critical section; publishing stopped sources, retiring the operation runtime's Pod and deleting the source remain in that order under the same observation lock. This encapsulation does not merge the observation lock with the scheduler reservation locks.
+desired/native DecisionID만 다르면 PolicyAckPending이다. 실제 identity와 Ready, allocation과 owner, 요청과 정책을 보존한다. desired로 actual을 덮거나 pending을 완료 ACK로 바꾸지 않는다.
 
-`cmd/chill-server` constructs one `ClusterState` before Observer, Manager, Operations and SchedulerController and explicitly injects that same object. Its private `reservationState` owns the existing tick serialization mutex, reservation mutex, run ledger and accepted controller snapshot; `observerState` owns the distinct source mutex and removal markers. The controller and observer borrow their respective records by pointer, never by lock/map copy. Manager consumes only the deletion-reservation methods: it never reaches through Observer to a late-bound scheduler and never skips reservation because a controller pointer is nil. `ReserveDeletion` retains the idempotence check, live owned-resource/Node reads and atomic acquisition under `tickMu` then `mu`; `OperationConflict` and release-after-confirmed-deletion are unchanged. The direct ownership-chain resource reader now belongs to Store rather than Observer. The existing test-only correction makes bridge tests obey the same caller-held mutex contract as production; it is not a production race fix.
+unknown 실물은 Ready 공급이 아니며 해당 노드 새 physical 작업을 막는다. 독립 노드 판단은 계속한다. route-only의 양수 목적지는 정확한 executor 확인을 사용하므로 다른 co-resident의 unknown을 전체 목적지 거절로 확대하지 않는다.
 
-Management defines only the store methods, profile/cleanup observation and deletion-reservation contracts it consumes. These private consumer interfaces are required to keep the lifecycle owner independent of concrete Kubernetes/state owners without a package cycle; no second implementation or storage framework is introduced. The composition root injects an actor projection from the existing verified Principal context. It does not accept HTTP identity headers or change authorization, and accepted-operation actor precedence on polling/restart is unchanged. Lifecycle integration fixtures retain the real Manager plus adapter/runtime handles rather than exposing Manager internals.
+retirement는 exact 종료 뒤 finalizer와 Service/config cleanup, 정확한 UID 삭제 확인이다. Pod 없음, GET 실패와 DeletionTimestamp만으로 종료를 추정하지 않는다. Pending Pod의 executor 흔적이 전혀 없는 경우 DELETE 요청은 가능해도 반환 proof는 별도다.
 
-Shared operation records and kind/status identifiers live inward in `state`, breaking the type dependency between physical operations and the shared reservation ledger. They retain field order, JSON tags and evidence values; the internal pre-effect-failure proof is explicitly excluded from JSON. This record move creates no additional authority or locks. Query composition-root callers may import these records, but `internal/queryapi` does not depend on serving packages.
+정확히 종료된 Pod-only `ID=PodUID`, Stopped와 Terminated는 executor stop/drain 없이 기존 remove를 쓴다. container가 있거나 종료 미확정이면 적용하지 않는다. late probe는 종료나 퇴역을 되돌릴 수 없다.
 
-Physical execution now owns its implementations in `operations`; common native-source identity/projection and manual request records live inward in `state`. The object-client, source-observer and removal-authority consumer contracts break the execution/reconciliation package cycle: these dependencies remain the same concrete Store, Observer and ClusterState, not alternate owners. Observer transition methods retain their original lock scopes; the single reservation authority and `tickMu` → reservation mutex ordering are unchanged. Integration callers use the moved implementations directly, with no compatibility forwarding layer.
+## 자원과 범위 예약
 
-Reservation transition encapsulation precedes moving the remaining ledger: `startTransition` retains the complete launch mutex scope (cleanup, eligibility, parent admission and dispatch); `completeRun` and `completeAdmittedRun` publish the receipt, terminal action and result history in their original single critical sections. Cancellation and receipt retirement also mutate the existing ledger through concrete methods. Configuration continues sharing the same mutex; no lock is split or added. Controller callbacks execute synchronously under that mutex and do not escape.
+memory와 whole GPU UUID를 실제 실물과 create 전 target에서 owner/identity 중복 없이 센다. init, sidecar, overhead와 non-serving memory도 포함한다. 외부 GPU owner 불명은 해당 노드 배치를 닫는다. CPU request/quota/mask와 thread matching은 없다.
 
-Scheduled child admission creates and reserves the run, binds its cancellation context and retains its proof parent inside the ledger owner; terminal replay checks and preparation publication use that same owner. Continuation and failed-preparation compensation traverse the one ledger and synchronously dispatch under the original enclosing critical section. Handoff/effect/history projections belong to the ledger rather than reaching through controller fields. Snapshot reconciliation no longer receives a configuration callback or maintains gap/replacement timing projections. Actual owner reservations, frozen targets, Ready/ACK checks and authorized drain/remove continuation remain intact. Snapshot/decision publication, measurement leases and reserved-node views use concrete ledger methods without exposing the mutable run map.
+준비 중 실물과 미생성 예약은 maxReplicas/maxInstances와 bridge peak에 한 번 포함한다. Ready 공급은 아니다. unavailable 분기가 pending 점유를 지우지 않는다.
 
-Pure placement and zero-inference proof assertions now live with physical execution, allowing those helpers to remain private. `PrepareObserved`, `EnsurePreparationConfig` and `SamePreparedPod` still support Kubernetes/observer integration fixtures: importing those fixtures from internal operations tests would create the current `operations` → `kube` → `operations` test cycle. Their existing assertions remain intact pending the real observer/reconciliation boundary.
+공통 admission은 `tickMu → mu` 순서로 영향 집합, 전체 충돌, 원자 등록, live 재확인과 시작을 연결한다. mutation 직전 route/outstanding, exact UID와 optimistic precondition을 검사한다. 범위 확대는 effect 전에 재승인한다.
 
-`cmd/chill-server` constructs the application dependencies; HTTP owns authentication, decoding, If-Match/ETag header interpretation and response/error mapping. The application records settings intent before the ConfigMap write and accepts only after a complete refresh; completion-record failures after effects do not roll back acceptance. Missing If-Match remains 428 and stale/conflicting versions remain 409. Catalog reporting and accepted snapshots remain separate. The dispatch-occupancy policy and its validation remain owned by `internal/serving/measurement`; the application imports that policy rather than defining a second copy. Accepted occupancy query-window errors are owned by the application and mapped by HTTP. The application freezes the response body and ConfigMap version under its mutation lock, then releases the lock before HTTP writes so a slow client does not serialize scheduler mutations.
+Node와 physical scope는 배타다. local prepare나 retirement의 Workload UID는 소유 identity이며 같은 UID의 다른 노드 확장을 일괄 막지 않는다. 실제 Workload 전체 삭제와 reset은 UID 배타 범위다. route writer는 UID별로 직렬화한다.
 
-## 3. 실행기·요청 계약
+route dispatch는 현재 routing과 touched 목적지를 사용해 rebase한다. 더 최신 admission writer의 실제 Ready 몫을 유지하고 자기 몫은 남은1000 안에서 배분한다. borrowed 목적지의 writer 권한을 얻지 않으며 철회된 source를 되살리지 않는다.
 
-외부 요청은 Workload별 입력 1개, 불변 UID·definition·개별 SLO를 유지한다. [Workload 관리](workload-management.md)와 [실행기·시간 계약](scheduler-runtime-measurement.md)이 원시 입력·IPC·deadline policy·monotonic elapsed·physical release의 원본이다.
-판단은 고정 historical `observationEnd`와 현재 outstanding origin `at`를 구분한다. 미상·미래 source 시각과 실제 capture/refresh 실패는 Pending이며 source 시각을 재표시하지 않는다. 고정 age TTL은 없다. 실제 요청은 accept 때 POST를 동결하고 native에 실제 sender elapsed와 함께 전달한다. Tick의 TOTAL/PRE나 새 configured margin을 실제 sender에 중복 가산하지 않는다. 진행 중 요청은 frozen sender·POST와 captured native elapsed를 유지한다([M0 시간 계약](path-aware-implementation-plan.md#31-시간-회계)).
+목적지별 writer watermark는 같은 장부 mutex에서 단조 갱신한다. 예약 반환과 receipt GC가 이를 지우지 않는다. 진짜 새 admission은 다시 분배할 수 있다. 목적지 실물이나 UID 소멸 때 정리한다.
 
-### 3.3 같은 선택 함수의 실행과 replay
+## 효과와 책임 반환
 
-입력은 검증된 batch별 service duration sample·incremental energy/input, per-UID 원래 elapsed/SLO·queue age·반환 envelope·max wait·관측 요청률이다. 출력은 UID·batch size·대기·이유이며 actor와 discrete-event replay가 공유한다.
-1. normal은 stable EDF, 같은 UID/불변 정의의 호환 요청만 배치한다.
-2. 요청별 p-quantile service 비용·원래 elapsed·반환 비용으로 여유를 계산하고 feasible batch의 energy/input을 비교한다.
-3. 더 큰 measured batch의 **엄격한 energy gain**과 관측률 기반 fill time을 확인할 때만 bounded wait한다.
-4. feasible batch가 없으면 keep은 현재 채울 수 있고 MaxBatch 이내인 batch 중 `serviceCost(p-quantile)/크기`가 최소인 batch(동률 큰 batch)를 `maximum_throughput`으로 즉시 실행한다. drop은 head 제거, defer는 후순위 FIFO로 옮긴다.
-5. normal이 없으면 deferred FIFO 호환 prefix도 같은 항목당 비용 최소 규칙으로 실행한다. drop/defer/timeout과 성공 지연 표본, caller lifetime/cancel은 구별한다.
-실제 config/profile·진행 batch snapshot을 기록하고 accepted 정의·SLO는 config 변경으로 재해석하지 않는다.
+goroutine 종료, timeout, 취소와 기록 실패는 원격 effect 부재의 증거가 아니다. effect 전 확정 실패는 멱등 반환하며 첫 API write 결과 불명과 부분 성공은 unknown 책임을 유지한다.
 
-모든 후보는 snapshot의 같은 physical inventory와 진행 중 owner action에서 시작한다. 예약의 frozen target은 아직 생성되지 않은 prepare를 설명하며 현재 용량·점유로 세지 않는다. 실패·partial action이나 모델 입력이 없는 실행기는 모든 후보의 실행 가능 용량에서 동일하게 제외한다. `decision.reasons`와 replay `assumptions`의 `ReplayExcludedAction`·`ReplayExcludedInstance`는 Node UID, 대상 identity, 이유를 보존한다. 해당 Node의 자원·전력 전이와 owner DAG 후속 동작도 제외하되 실물 allocation·예약·outstanding·요청 모집단·정리 의무는 지우지 않는다. 종료된 prepare의 typed 실패 이력은 기존 조합별 재시도·제외 판정을 유지한다.
-실패한 prepare의 action identity와 재시도에 재사용되는 논리 target identity를 구별한다. typed 실패는 그 시도의 정확한 Pod에만 불확실성을 남기며 이후 성공한 prepare의 용량을 제외하지 않는다. 제외된 실행기의 drain 등 후속 동작도 replay 예측 권한에서 제외하지만 실제 outstanding·owner obligation은 완료 처리하거나 지우지 않는다.
+prepare는 error와 함께 Create 또는 existing GET의 exact Pod/Node/Decision 증거를 반환한다. 마지막 capture 실패로 이 증거를 지우지 않으며 terminal 공개 전 owner에 편입한다. 같은 RestartPolicyNever UID의 첫 container만 결합하고 교체 container를 재결합하지 않는다.
 
-Snapshot route writer는 실제 operation의 `controlledTarget(operation)`을 기존 `Action.RouteTarget`에 투영한다. owner가 제어하지 않는 Workload의 과거 routing·instance 행은 snapshot에 넣지 않는다. Replay는 이 owner-controlled target의 UID만 현재 routing에 병합하여 독립 Workload를 유지한다. 예약의 전역 target을 route scope로 재해석하는 과거 snapshot reader는 두지 않는다(ADR 0019); 필드 형태는 같고 의미 전환은 이번 배포에서 함께 적용한다. 현재 실물·소비 정책·routing과 같은 target은 새 action을 만들지 않는다. 이미 실행 중인 route의 ACK·owner obligation은 원래 장부에 남고, 수요 변화로 batch/wait·routing·배치가 바뀌면 기존 전환을 생성한다.
-가상/전환 Node는 PowerMode만 투영하며 CPU inventory를 만들거나 할당하지 않는다. 실제 online CPU는 node-agent 관측이고 `SchedulerNode`/allocation에 ModeCPUs·독점 CPU mask·threads·CPU quota 장부를 두지 않는다. power actuator의 class/readback·정책·물리 Node 신원 검사는 유지한다.
+책임 반환은 writer와 future cleanup이 모두 terminal인 뒤 더 최신 exact 관측으로 노드별 판단한다. Pod 부재와 settled power, 또는 다음 known-effect proof가 필요하다.
 
-## 4. 측정 계약과 catalog
+- 인가 prepare의 identity, profile와 owner, 전체 목표 ACK와 일치하는 late Ready.
+- 같은 frozen parent의 정확한 terminal sibling receipt. 관측은 child와 sibling, parent 종료 뒤여야 한다.
+- admission baseline에 존재하고 may-touch에 없는 executor의 fresh Ready와 이전 정책. dirty executor에는 적용하지 않는다.
 
-Serving/Profiling은 같은 actor/runner·initialized batch 조건을 쓴다. 고정-K는 fake profile 없이 client/service/backend sample·warmup 제외·자원/device/image·원래 trial binding을 보존하며 초기화 domain과 measured policy cap을 구별한다.
-profile은 incremental energy에서 차감한 idle과 raw evidence를 보존한다. baseline은 실제 Node/mode/준비 집합/meter에 연결하고 additive 예상과 공존 실측을 구별한다. 원자 동작은 production primitive·actual readiness/drain/read-back·wall joules·부분 실패·Insufficient를 보존한다. 상세 원본은 [측정 계약](scheduler-runtime-measurement.md)이다.
-
-## 5. 판단 입력과 계획
+may-touch는 reserveRun과 같은 mutex에서 Execute 전에 단조 기록한다. 실패와 child GC로 지우지 않으며 owner 책임 전체 반환까지 baseline과 receipt를 유지한다. untouched 반환은 제거 성공이나 allocation 반환을 뜻하지 않는다.
 
-### 5.1 한 운영 snapshot
-
-observation window·control interval·comparison horizon은 독립 설정이다. 기록 보존/발행 구간·분석 필터와 운영 부하를 구별한다. 모든 UID의 received/accepted/assigned/completion을 한 번 수집하여 사건 구간 inputs/s를 구하고 malformed/거절도 전체 유입에 남긴다. compute demand와 total inflow의 모집단은 다르다.
-Runtime pending/assigned와 native queued/running·elapsed·batch를 physical instance/UID/definition에 연결하되 assignment와 queue entry를 구별한다. λ와 waiting-demand q는 [계획기](analytic-planner.md#3-판정과-순서)를 따른다. Tick의 Workload별 TOTAL·POST와 실제 요청의 frozen POST·native age를 구분한다. unknown/공백/stale 상태, Node Name/UID·단일 POOL·Ready/resource를 함께 캡처한다.
-
-| capture/refresh 경계 | 계약·결정 근거 |
-|---|---|
-| 순서 | observer refresh 뒤 profile 상태를 먼저 읽고 Node 목록을 읽는다. Node 관측 뒤 observer lock을 기다리지 않으며 DeviceClass mode도 한 목록에서 찾는다. prepare poll은 그 사이 완료한 refresh를 재사용한다. operation capture는 `spec.nodeName` selector로 대상 Node Pod만 읽는다. m4 r7의 prepare 판단 11~28 s·Node 목록 약 11.5 s 뒤 `UnknownOrStaleNode`가 근거다. |
-| steady source | 완료/실패 Pod는 자원 캡처·steady refresh field selector로 제외하되 최초/재시작 watch 복구는 전체 Pod를 읽는다. 공유 client로 Node·Pod·Service·probe 뒤 namespace Pod 목록 네 번을 읽어 단일 executor와 retained UID/container 종료를 확인한다. native probe는 2초 이내다. d9에서 6 instances/20 reads가 limiter의 30초를 소진한 것이 근거다. source별 병렬 probe는 잠금 밖에서 수행하고 각 완료 결과는 별도 Pod LIST로 검증·짧게 게시한다. |
-| 제한된 read 실패 | Service 또는 probe 뒤 Pod LIST 실패 때 owner/profile 불변·profile/소유 검사를 통과한 executor의 직전 probe Ready를 그 refresh 한 번만 유지하고 issue/log를 남긴다. 연속 실패는 unready다. 교체/준비 소실은 watch/log follow로 닫으며 Node/Pod 목록 실패는 할당을 닫는다. |
-
-#### 정책 ACK 대기와 실제 관측 실패의 분리 — SCH-48~49
-
-ACK pending·실제 읽기 실패·중복 실물 정리는 함께 적용할 계약이다. 전체 메모리/GPU 자원 실패의 Pending은 유지하되 Node 하나의 InstanceUnavailable을 새 전역 중지로 확대하지 않는다.
-- **SCH-48 / AC-34~35:** `validateMetadata`는 desired/actual DecisionID 불일치만 ACK pending으로 분리하고 profile/runtime/provider/device/입출력/Ready를 검증한다. CPU mask·관측 thread 수를 frozen allocation과 대조하지 않는다. `(ReadyInstance,nil)`과 기존 `State.Reason=PolicyAckPending`을 쓰며 새 bool/cache/sentinel은 없다.
-- 성공 read의 실제 physical ID·Node·profile·allocation·owner·TargetID·Ready·정책·요청·원래 시각을 유지한다. desired로 Native를 덮거나 ACK 때문에 `Ready=false`/`Stopped=true`/`Native=nil`로 바꾸지 않는다. 실패/교체 executor의 stale 상태를 무기한 살리지 않는다.
-- observer는 성공 probe로 받아 동일 Pod UID/container·Service 단일 executor를 검증한다. pending은 unavailable/read-failed fallback이 아니다. 실제 HTTP/디코딩/metadata/Pod/Service 오류는 기존 실패 경로다.
-- Runtime·snapshot의 실물/할당·`!Stopped` replica·POOL 귀속을 유지하고 scheduler 원본/compact/summary/기록 `reasons`, POOL `InstanceState.reason`에 **반영 대기**를 표시한다. ACK 후 다음 probe에서 지우며 available POOL로 이동하지 않는다.
-- 존재/현재 Ready와 새 정책 완료는 별개다. native DecisionID·정책 ACK·실제 target 검사는 유지하고 pending을 route 완료나 목표 `Actual.Native`로 만들지 않는다. route는 owner 예약의 frozen target/ACK 대기를 유지하며 예약 밖 판단을 막지 않는다.
-- **SCH-49 / AC-34~35:** Physical choices, idle postprocessing and action lowering share one exact-node/instance confirmation rule. An unchanged retained physical target is recognized before preparation readiness is judged; a retained unavailable occupant cannot add a global preparation reason that blocks healthy siblings. New preparation, blocker retirement, stop/drain/remove and power remain excluded on unavailable nodes. Known terminal sources retain their existing absence/termination proofs; stopped alone is not a drain receipt.
-- Node/후보/동작에 `InstanceUnavailable`과 identity를 남기고 필요한 후속 변경을 보류한다. 조용히 생략하여 executable로 반환하지 않는다. 실행 중 동작을 조작·재전송하지 않으며 정상 Node의 독립 계획은 기존 전역 검증 아래 계속한다. 이 guard는 장부/공통 proof로 흡수한 뒤만 제거한다.
-- 완료 route의 실제 physical/분배/소비 policy가 같으면 ACK 표시만으로 효과 소실·재전송을 만들지 않는다. 실제 batch/wait/capacity/분배 변경은 불일치이며 running route의 신규 ACK 대기는 단축하지 않는다. active membership의 최종 권위는 아래 미반환 점유 장부다.
-
-### 5.2 Profile routing과 노드 계획
-
-Tick은 [M0](path-aware-implementation-plan.md#33-처리율탐색최종-평가)의 저비용 scalar 탐색과 keep/exact finalists의 직접 replay를 분리한다. profile `RoutingWeight`로 정수 route를 먼저 만들고 최종 demand 결과로 SLO를 비교한다. `State.Delta`는 replay하지 않는다.
-κ̂는 keep와 최종 선택의 현재 positive nominal rate를 판정한 근거다. 검사 rate·outcome·입력을 함께 기록하며 0이나 빈 tests로 후보를 지우지 않는다. online whole-grid·이전 행·`CapacityPending` gate는 사용하지 않는다. 전체 `BuildCapacityRow`는 명시적 offline 계산에만 남긴다.
-`dispatchOccupancy`의 cache-qualified measured B → legacy Accepted DOM → configured default 순서, exact identity·provenance와 max0 정책은 유지한다([계획기 §2](analytic-planner.md#2-routingweight와-현재-tested-rate-κ̂)). metadata만 바뀌고 전체 수치 입력이 같으면 완료 결과를 재사용할 수 있다. TOTAL·POST가 바뀌면 old pass/CDF/κ̂를 그대로 쓰지 않는다.
-Node마다 keep과 measured option 변형 하나 중 현재 memory/GPU budget을 만족하는 계획을 만든다. FixedWorkload/MeasurementNode/NodeUnavailable/배치 설정 부족은 keep-only다. 비용·raw support·현재 자원·baseline 누락은 이유를 남긴다. maxReplicas/maxInstances와 제어 gate는 유지하되 maxCPUs는 없다.
-instance는 Workload 하나를 맡고 snapshot/기록에 `workloadUID` 하나를 가진다. Runtime/replay는 같은 deterministic smooth-weighted 분배를 사용한다. active UID 가중치 합 1000, 비자율 UID는 현재 값 유지, active UID 누락은 오류다. 준비 slot은 실제 Ready physical ID로 해결한다. 같은 physical ID/weight의 credit만 유지하고 변경/new entry는 0이다.
-GPU/memory 예산은 실제 allocation과 system/non-serving 메모리·GPU 예약이다. CPUCount·CPUReserved·독점 CPU IDs와 quota/threads/affinity matching은 없다. whole GPU UUID의 inventory/중복과 measured peak memory+Serving 부가 예산은 계속 검사한다. Pod당 runner 하나·순차 batch이고 replica는 Pod 수다.
-non-serving memory는 Kubernetes init/sidecar/overhead를 포함해 합산한다. CPU request는 배치 예산으로 세지 않는다. CHILL 외 Pod가 물리 GPU를 요청하면 PlacementBudgetUnavailable로 해당 Node만 keep이며 현재 native serving은 non-serving 합계에서 제외한다. 이유 있는 Node도 POOL에 남는다.
-
-### 5.3 전환·에너지·선택
-
-profile idle/meter는 같은 Node·node-exclusive-wall·source kind/NodeName/endpoint/metric/label selector로 연결한다. thermal endpoint/metric은 별도 관측 identity이며 wall-power 연결 조건이 아니다. 다른 series/Node/범위는 거절한다.
-전환은 영향받는 모든 UID의 최종/전환 상태를 직접 demand replay로 평가한다. 동시 allocation 가능 시 prepare→route→old stop/drain/remove, 불가 시 최종 target에 없는 blocker만 stop→drain→remove→prepare→route한다. accepted ingress는 미래 호환성으로 포기하지 않고 현재 Ready/routed 대체가 없으면 old source에 dispatch하여 원래 identity로 drain한다. 실제 retained 처리·queue age·running residual과 전환 사슬을 평가하며 κ̂ 합으로 지연을 대체하지 않는다. 독립 Node는 병렬, 같은 Node 비용은 의존 순서다.
-Obsolete instances with no positive weight in the current routing retire independently of the final route and unrelated preparations. Currently routed sources still wait for their route handoff. Executors retain stop → drain → remove and the runtime's accepted-ingress and physical-return proofs. Verified terminated Pod-only inventory (`ID=PodUID`, stopped and terminated) uses direct remove in blocker, obsolete and power cleanup; the adapter binds its exact snapshot Node/Pod UID to the existing Pod-only operation. Physical return still precedes preparation and power. Frozen owner DAGs are not reinterpreted at execution time.
-Unavailable idle sources remain in the physical target with their exact identity and allocation, without supplying Ready capacity or retaining positive traffic. Their traffic can be withdrawn through the ordinary healthy-destination route path without a policy call to the failed executor. Existing successful probe confirmation restores ordinary cleanup eligibility; there is no new timer, retry count or configuration value.
-The node-wide `InstanceUnavailable` aggregate excludes physical work when any co-resident executor is unknown. Route-only changes instead require the exact positive destination's confirmation and the node's own Ready state: a different unknown co-resident cannot veto a confirmed destination or its generated Ready-subset route.
-Bridge destination selection excludes these independently retiring idle executors as well as stops ordered before the final route, so a bridge cannot resurrect or depend on a source whose cleanup can already run.
-같은 profile/allocation/Node의 Ready/unbound executor는 검증된 scheduler slot의 ownerless 또는 정확한 Workload owner UID일 때 재사용한다. 빈 routing을 ownerlessness proof로 쓰지 않는다. route identity는 physical/logical target·UID weights·소비 completion bound/capacity/batch/wait/deadline이지 후보 순번/rolling witness가 아니다.
-완료 표시는 proof가 아니다. prepare Ready identity/state, route actual 분배/조건, stop의 중지/분배 차단, drain의 추가 outstanding 부재, remove의 actual 부재/drain, power Node read-back을 확인한다. 효과 소실은 새 action으로 재실행하되 확인 불능은 run/예약 유지·재관측이며 effect-lost/재전송이 아니다. 같은 ID/계약의 live terminal 결과는 stale running/cancel snapshot보다 우선한다.
-native 교환이 완료 proof 없이 502/504/취소로 끝나고 native progress가 전혀 없으면, 교환 종료 뒤 시작한 state read에서 요청 부재를 확인하여 `backend_finished/NativeRequestAbsent`로 끝낸다(m4 r6의 drain 영구 대기 근거). routing map만으로 handoff하지 않고 completed route의 Ready/profile/allocation/native ACK와 새 typed completion proof/actual routing이 모두 같아야 stop 의존성을 재사용한다. 첫 handoff/변경 target은 원래 route 완료를 기다린다.
-break-before-make의 빈 routing/bindings 중 의도는 frozen `Operation.Target`의 UID cohort/replicas/weights에서 읽되 actual 점유/ownership/Ready는 현재 snapshot만 쓴다. observed TargetID의 physical slot을 중복 prepare하지 않고 frozen target/proof를 덮거나 복원하지 않는다. prepare timeout은 cost trial 최대+관측 창 하나이며 `failed/ActionDeadlineExceeded` 뒤 원격 효과 불명 예약은 유지한다.
-
-`PreparationFailed`는 생성된 Pod의 시작 실패 사실을 observation-window 만료와 별개로 보존하되, **deterministic 또는 promoted만** 같은 조합에서 제외한다. `state.ClassifyPreparationFailure` 한 함수가 실제 종료 reason/exit code, waiting 상태, 같은 Pod UID의 kubelet event, Node condition, action error를 해석한다. 프로세스 자신의 종료·cgroup OOM·권위 있는 artifact/permission refusal는 deterministic, 전달/네트워크·일시적 API 오류·Node 불가·상위 eviction/preemption은 transient, 미확인 이유는 unknown→transient다. 알려진 transient는 반복돼도 계속 retry한다. unknown만 같은 서명·reason key가 서로 다른 action/Pod UID에서 한 번 독립 재현되면 promoted다. 기존 Action/node-plan의 additive `preparationFailure`에 분류·관측 이유·서명·repeatCount(재현 횟수)·previousPodUID(직전 독립 Pod 하나)를 노출하며, 이력 크기는 반복 횟수와 무관하게 유계다.
-실패한 Pod의 kubelet 근거를 읽기 위해 serving namespace Role에 `events:list`만 추가하며, 실제 조회는 `involvedObject.uid` selector로 해당 Pod에 한정한다. 일반 `ContainerCreating` 대기는 기존 prepare deadline을 유지하고, pull 실패 등 관측된 실패는 사실을 남긴 뒤 다음 결정의 retry 분류를 따른다. 정상 종료/의도적 삭제/운영자 취소는 시작 불가능의 증거로 쓰지 않는다.
-
-근거 변경 비교는 **Node name/UID, profile ID, allocation limit memory/GPU UUID, profile 측정 peak memory, 실제 image 선언, PrepareSpec.Config의 저장된 RunnerCommand 전체 argv**다. 특정 warmup 플래그를 파싱하지 않고 실행 파일·플래그·값·순서 중 어느 것이든 바뀌면 시작 조건이 바뀐 것으로 본다. **allocatable, 샘플 분포, 관측 시각, NodeReady LastTransitionTime은 서명에 넣지 않는다.** 실제로 jetsono allocatable은 +4KiB drift했지만 컨테이너 limit은 그대로였다. 전역 allocatable은 다른 Pod의 실제 사용량에 따른 압박의 약한 대리값이며 컨테이너 OOM 입력은 allocation limit과 측정 memory가 이미 표현한다. unknown이 같은 결정 입력과 같은 이유로 독립 재현되어 promoted이면 Ready 시각만 바뀌어도 해제하지 않는다. 명확한 Node 불가·네트워크 등 알려진 환경 실패는 애초에 승격하지 않고 계속 retry하므로 이 규칙으로 환경 회복을 차단하지 않는다. 다른 placement·기존 Ready 공급과 reservation 반환·drain/stop 안전은 유지한다. 이미지의 측정 profile 재사용/κ key 계약과 warmup 생성 정책은 바꾸지 않는다. 새 시간 back-off·횟수 설정·전체 workload freeze·저장 계약은 없고, 최신 사실이 재현 횟수를 이어받으면 대체된 receipt는 기존 관측 창으로 정리한다. 이 사실은 기존 in-memory action 장부에만 있으므로 scheduler 프로세스 재시작 시 사라지며 영속 복구하지 않는다.
-
-**완료 기반 전진 (Cycle 6 / SCH-20·26·50).** action의 결과와 기록 실패 상태를 저장한 뒤 버퍼1 non-blocking 완료 신호를 보낸다. 서비스는 주기 timer와 별도 case에서 `Continue`를 실행하며 기존 주기 deadline을 재설정하지 않는다. `Continue`는 Tick/설정 변경과 같은 직렬화 경계에서 capture·동일 freshness/resource 검증·owner/effect reconciliation·running parent launch만 재사용한다. EvaluateScheduler·capacity search·신규 admission/decision 발행은 하지 않는다. 관측/기록 실패·취소 parent·실패/partial 결과는 후속 허가가 아니며 중복 신호와 late ACK도 기존 exact effect/owner proof를 우회하지 않는다. 현재 controls가 admission 시점과 다르거나 UID 자동제어가 해제된 parent는 완료 경로에서 전진하지 않는다. 완료마다 관측 I/O는 늘지만 전체 탐색을 반복하지 않고, 실제 cold prepare 시간·자원 반환·ACK-before-live-stop·peak/reserve/ReturnProof는 그대로 남는다.
-
-Tick과 Continue의 `captureReconciled`는 capture 뒤 취소 확인, owner/effect reconciliation, lost-effect 기록, history 갱신을 같은 순서로 수행한다. Continue의 freshness/resource 검증은 reconciliation 전에 수행하며, 기록 실패 시 history 갱신과 후속 launch를 진행하지 않는다.
+failed prepare가 직접 만든 unclaimed Ready 실물만 모든 관련 run 종료와 exact 확인 뒤 기존 stop/drain/remove로 보상 정리할 수 있다. reused, serving, 다른 owner, identity unknown과 pending power는 대상이 아니다. 원래 failed receipt를 성공으로 바꾸지 않는다.
 
-#### 중간 배분
+자기 생성 UID나 API receipt 없는 possibly-effectful Create는 이전 occupant가 전부 사라져도 unknown이다. reset도 이 책임을 인계하며 다른 노드의 cleanup으로 해소하지 않는다.
 
-`intermediateActions/readySubset`은 최종 route 의존성이 남아도 같은 owner의 자식 route를 실행한다(`34b9a40d` 유지). snapshot/native Ready·미정지·routable인 old 공급이 있고 target 일부가 미준비면 **old 보존+검증된 독립 Node 순증**만 허용한다. `snapshotNodeHasPositiveRoute`는 모든 UID를 보아 양수 serving Node를 순증에서 제외한다.
-`SchedulerReadyExpansion`도 현재 settings/snapshot·TOTAL/POST·유효 수요·q·profile routing과 직접 replay를 사용한다. 모든 old/new 양수 목적지의 exact identity·Ready·native policy ACK와 기존 accepted work를 검사한다. old 공급을 보존하고 같은 Node 공급을 중복 합산하지 않는다. 물리 상태·support·평가가 미확인이면 current와 weights를 보존하되 κ̂=0이나 old row pending만으로 차단하지 않는다.
-bootstrap처럼 current serving이 없으면 target Ready 부분집합을 합 1000으로 재정규화한다. stopped/고장/unroutable/이번 tick stop 가능 경로는 되살리지 않는다. 다른 prepare/power/drain을 기다리지 않으며 UID 한정 atomic runtime route와 ACK를 쓴다. launch의 `dependenciesReady`는 부분집합 target, final route는 전체 target/DAG를 검사한다.
-ID `<goal>-ready-<subset hash>`, `Action.from=ready-subset`, OnAction start/end·frozen `operation.target`·before/actual routing을 기록한다. 부분집합은 final target/DAG 완료 조건이 아니고 후속 subset 대체를 effect-lost로 만들지 않는다. 반영은 Ready를 캡처한 tick이며 부족한 current/bootstrap의 실제 SLO 보장은 아니다.
-생략된 bridge의 stop 소비도 완료 bridge와 동일하게 중단 source UID의 ACK/actual handoff만 검사한다. 보존된 다른 UID의 terminal route는 이 소비 범위에 포함하지 않는다(SCH-51).
-다음 bridge도 부모 DAG에서 생략된 선행 bridge를 찾아, 그 bridge에 의존하는 stop들의 source UID 범위와 기존 완료 ACK를 같은 handoff 검사로 소비한다. 부모 전체 UID에 포함된 보존 terminal route는 검사하지 않는다. 생략된 bridge 자신의 frozen 선행조건도 먼저 완료되어야 하며, prepare 결과 전 Ready-subset ACK만으로 stop을 출발시키지 않는다. 생략을 성공 run으로 만들거나 의존 edge를 삭제하지 않는다.
-compiler는 해당 UID의 blocked stop이 있을 때만 bridge를 만들고 그 stop에 의존성을 붙이므로 stop 없는 bridge는 생성하지 않는다. 소비 범위는 빈 non-nil UID 집합에서 시작해 source UID만 모으며 부모 범위로 fallback하지 않는다. 빈 범위는 양수 route가 없어 handoff 증명이 될 수 없다.
-`dependenciesComplete`는 live run의 action(없으면 frozen plan action)에서 `handoffScope`를 한 번 정한다. 완료 run은 기존 strict proof, run 없는 생략만 기존 완료 ACK를 소비하며 running/failed/partial run은 다른 ACK로 승격하지 않는다. ACK 탐색과 정책 refresh의 `requirePolicy` 계약은 유지한다.
-생략된 route는 그 route를 직접 소비한 action의 실제 complete run으로 DAG 완료를 판정한다. 예외는 frozen UID scope가 non-nil empty인 최종 route(`RouteTarget==nil`)뿐이다. 완료·launch·예약 진단은 같은 판정을 공유하여 다른 sibling이 진행 중이어도 소비된 route를 다시 실행하거나 부족 proof로 표시하지 않는다. 뒤 stage가 바꾼 현재 배분/정책을 지난 bridge의 완료 조건으로 다시 요구하지 않으며, 부모 완료 전 running/cancel sibling fence와 실제 실패 우선권을 유지한다.
-bridge stage는 기존 routing을 복제하고 현재 UID만 변경한다. 목적지 선택(`peers`)과 prepare 의존성/종료시각 수집을 재사용하며 stage 전체를 중복 검사하지 않는다.
-과거 회귀 근거: full-E5-3 `02:45:39.328560181Z`의 495:126:379(κ=103.37311385470142/s, 입력 74.58333333333333/s)를 준비 중 genesis3 단독 1000(κ=62.46166324284952/s)으로 줄이지 않고 완료 후 765:235를 적용한다. E5-1의 old+Ready genesis3 순증은 nano를 기다리지 않는다. 당시 κ 수치는 새 tested-rate 정의의 검증 결과가 아니다.
+실제 dispatch 뒤 모든 미완료 frontier가 exact 미확인 precondition에 막히고 running/cancel child가 없을 때만 구조적 실패를 판정한다. 외부 dependency, runnable work, disabled control과 ACK 진행은 해당하지 않는다. failed continuation은 이미 stop한 실물의 drain/remove만 허가한다.
 
-#### 분배 적용 증거
+## 전환과 handoff
 
-route/source release는 Node·UID·실물 합집합 예약을 쓴다. 같은 owner 의존성은 ACK까지 유지하고 독립 범위는 병행한다. running/native noncancelable 작업은 종료까지 보존한다. 비자율 `staticRouting`도 같은 예약/기록(sourceConfigRV·대기 이유·actual readback)을 쓴다.
-ConfigMap/annotation은 desired이고 `Actual.Native`는 실제 ACK만 담는다. 뒤 destination 실패는 앞 ACK/actual routing을 보존해 partial이며 미확인을 완료로 채우지 않는다. `edge.dacs.io/serving-routing`은 UID별 **선언한** weights만 기록하고 accepted 요청용 old memory route는 제외한다. scheduler prepare는 `{}`, owned manual prepare는 owner seed, route는 전체 instance·stop/drain은 해당 instance annotation을 갱신한다. 자율 종료/재시작 뒤도 마지막 Pod 정적 분배를 복구하며 serving source는 annotation이 있고 UID를 하나 이하 가리키는 Pod다.
-최종 handoff 뒤에도 원래 owner의 old Pod/physical/Node·stop/drain/remove 의무와 frozen target·성공 receipt를 보존한다. 정리 중 새 target의 weights 변경은 일반 예약 충돌로 거절하며, 원래 DAG의 중간 route와 Ready-subset 전진만 기존 인가 범위에서 계속한다(SCH-20/AC-38).
-모든 계획은 같은 고정 H=`comparisonPeriodNanos`로 비교한다. 각 action duration은 measured trial 최대, 공통 route+최장 post>H는 `TransitionExceedsHorizon`(=H 허용)이다. [0,H] 에너지는 loaded baseline+평균 atomic wall joules이며 atomic 구간은 baseline을 **대체**한다. `target-baseline-delta`는 차감 전력×시간을 더해 wall joules로 바꾼다. profile incremental/input은 route 시각 전후 배정으로 더하고 `search.comparedNodes` 밖 동일 Node는 소거한다.
-선택은 [M0 비교 정책](path-aware-implementation-plan.md#34-비교-정책)의 전체 SLO 충족 우선·미충족 failure/success-excess/potential tuple을 사용한다. Workload 순서는 `excess` 또는 configured UID 순서의 `workload`다. 물리 실행 불가와 SLO 미충족을 구분하며 κ̂=0·old `Final`로 개선 후보를 선제 거절하지 않는다. v1 K2/K3와 v2 cheap 탐색→exact finalists의 소유·예산은 [계획기](analytic-planner.md#4-노드-계획과-탐색)를 따른다.
-nominal 이득이 operation/선택 baseline의 조건부 B 민감도 문턱 이하면 keep이다. 공유 immutable 근거는 부호 상쇄하되 profile 통계오차/BEO idle fallback CI는 문턱 밖이다. Routing ON은 profile `RoutingWeight`, OFF는 현재/신규 configured weight를 사용한다. 요청 에너지도 같은 정수 weight를 소비하며 weight-only target은 route 하나다.
-`Feasible`, `Overload`, `Keep`(새 변경 없음/진행 전환 계속)과 실제 snapshot 검증의 `Pending`을 구분한다. online 용량표 준비 대기는 선택 상태가 아니다. SLO 미충족 retirement도 일반 후보로 평가하되 Ready·소유·accepted work·정상 handback과 기존 선택적 에너지 축소 보호를 유지한다.
-판단에는 rate·queued·timing·직접 SLO 결과·현재 tested rates·전환 사슬·에너지와 search를 연결한다. 외부 필드는 [scheduler API](scheduler-api.md)를 따른다. `decision.search.examined`는 만든 Node 계획 수, `comparedNodes`는 keep 외 적격 계획이 있는 Node다. `capacity.search.evaluated`는 이웃 sweep의 plan-set 평가 수이며 초기 keep/empty 원점은 제외한다. `startedAt`/`finishedAt`은 실제 search 진입/반환 UTC 경계이고 `durationNanos`는 같은 구간의 monotonic 경과다. 계획 생성·최종 투영은 이 구간 밖이다. 실제 요청/whole-POOL power는 같은 구간·UID·decision에 연결하며 자율 제어는 `autonomousWorkloads` UID만이다.
+동시 자원이 있으면 prepare, 양수 정책 ACK와 route handoff 뒤 old stop/drain/remove한다. blocker를 먼저 비워야 하면 최종 goal의 독립 prepare로 검증 bridge를 만든다. 임시 variant와 모든 전환 경로를 완전 탐색하지 않는다.
 
-### 5.4 자원 장부 — SCH-50~52, AC-37~39
-
-Pod UID 장부/runtime/snapshot 투영과 owner별 예약이 현행 구조이며 전역 `InProgressTarget`/`TransitionInProgress`·global goal/route 장벽·종류별 별도 guard는 제거 대상/대체된 계약이다. 단일 전역 계획기·기존 저장소/CRD/서비스만 사용한다. 정책 ConfigMap 단일화·finalizer 책임 이동은 evaluation 뒤 미해결이다.
-결정 근거는 `/home/genesis1/.cache/chill-assets/ops/pools-deploy`의 `intent/structure-redesign-20261026.md` **나**, `audit-20261024/structure-20261026/{StructTruth,StructFailure,StructControl,StructActions2,clusters}.md` K1~K5·`Research-K1~K5.md`다. 권고 전부/증거 저장소 복구/전력 프로토콜/λ·κ 변경을 완료 조건으로 섞지 않는다.
-장부 cutover의 결정 근거: `6120aaa7`의 unavailable/deferNode 임시 guard는 안전 행동·진단을 장부/공통 proof로 흡수한 뒤 삭제한다. `6545c800`의 ACK pending/actual 관측 보존은 장부 계약으로 유지하고, `dc9c90bf`/`73f1ec79`의 exact 우선·중복 reset은 전체 Pod 열거로 유지한다. Ready 누락=삭제/제거 성공/effect-lost, slot별 단일 실물, reset 전용 예약·global replay 목표 분기는 남기지 않는다.
+stop은 completed 표시만 보지 않고 자기 source UID의 actual 철회, Ready 대체와 정책 ACK를 확인한다. ordinary final과 bridge 모두 같다. rebase 뒤 source 양수 weight가 남으면 stop 없이 parent를 실패로 닫는다.
 
-#### ① 실물 장부와 관측의 분리 — SCH-50
+최종 prepare가 남아도 old 보존과 독립 Ready 순증은 먼저 route할 수 있다. 빈 출발은 Ready subset을1000으로 정규화한다. stopped, retiring과 stop 예정 source는 제외한다. 부분 route도 현재 timing과 수요의 직접 replay와 accepted work 보호를 통과한다.
 
-`kube/observer.go:o.sources`를 **Pod UID 키의 유일한 실물 장부**로 쓰며 Runtime.instances는 실행/binding/routing 투영, snapshot은 판단용 복사다. 별도 registry/`o.verified`/disable wrapper/새 영속 이력·enum/DSL은 없다.
-| 항목 | 권위·보존 규칙 |
-|---|---|
-| identity | namespace/name+Pod UID, Node Name+UID. container 전에도 항목을 만들고 physical ID는 생성 뒤 `Pod UID/container ID`; 이전 container 종료 추적을 덮지 않는다. |
-| slot | ServingSlotAnnotation/TargetID는 계획 주소이지 executor 신분/유일성 proof가 아니다. 같은 slot의 여러 Pod를 모두 보존한다. |
-| allocation | 준비·실제 memory/GPU/profile과 마지막 검증 native 관측. CPU 관측을 할당/예약으로 승격하지 않는다. 준비 중 물리 소유도 점유이며 불일치/미확인은 Node 변경을 닫지 점유를 0으로 만들지 않는다. |
-| owner/route | Workload owner reference와 현재 binding/routing을 구별하고 빈 route로 owner를 지우지 않는다. |
-| observation | 마지막 성공 state/applied DecisionID/Ready/Stopped/요청, 조회 시작·성공 확인·최근 시도 시각/실패 이유. 실패는 성공값/시각을 갱신하지 않는다. |
-| lifetime | 생성/삭제 표식·exact container 종료·source finalizer/제거 결과. 실행 종료/자원 반환/API 삭제/cleanup 완료는 다르다. |
-
-Create 반환·watch·최초/복구 전체 LIST로 UID를 발견하며 probe/profile/Service 검증 전에도 기록한다. create 전 의도는 예약이지 가짜 Pod가 아니다. terminal/terminating·relabel·owner 오류·native/Service/LIST/log 오류·ACK pending은 삭제 사유가 아니다. inventory는 physical ID 없으면 UID 키로 pending/init 실패 Pod를 각각 보존한다.
-refresh 시작/진행 probe는 실패가 아니며 마지막 Ready를 지우지 않는다. 실제 오류/serving label 불일치·Pod watch unready/삭제는 즉시 dispatch를 닫는다. Pod Ready만으로 복구하지 않고 성공 native probe+Pod 재검증을 요구한다. native not-ready/metadata 실패는 후속 LIST 전에 Ready/runtime dispatch를 닫고 실제 native state는 identity 검증 후 원래 조회 시각으로 게시한다.
-퇴역은 동일 UID/container 실제 종료→기존 finalizer/정리→정확 UID 삭제 확인 뒤다. init 실패는 terminal이며 init/main에 실행 중/종료 불명 executor가 없다는 `podTerminated` proof를 사용한다. container ID 없음/DeletionTimestamp/GET 실패/필터 누락/강제 삭제 사건만으로 종료를 추정하지 않는다. 종료 proof 뒤 watch 삭제를 놓치면 정확 UID 성공 재조회로 수렴한다.
-reset/remove는 UID+선택 physical ID를 운반한다. executor가 있으면 exact 종료/drain, 없으면 같은 UID `podTerminated`를 쓰며 fake container/slot fallback은 없다. clearNode도 같은 proof/finalizer를 쓴다. `podAwaitingExecutor`는 container ID·실행/과거 종료 흔적·장부 미확인 executor가 전혀 없는 Pending Pod에 **DELETE 요청만** 허용하고 finalizer/예약/taint는 실제 종료+삭제까지 유지한다.
-실패 때 항목/owner/allocation/성공 상태는 유지하되 fresh/identity 검사 없이 dispatch/κ를 주지 않는다. late probe/LIST는 퇴역/UID 변경을 되돌리지 못한다. `restoreSources`만 생성하고 `startLogs`는 기존 UID/container·!stopped/!deleted를 요구한다. 재시작은 Pod/finalizer/owner/policy annotation에서 복원 뒤 변경을 허가하며 메모리 run 소멸을 원격 취소/부재로 보지 않는다.
-소비자는 전체 장부를 쓴다: `InstallInstances`는 Ready 누락/`!seen && outstanding==0`로 삭제하지 않고 하나의 집계자가 투영한다. capture는 `Native!=nil`/Ready로 실물을 필터하지 않고 CHILL/non-serving을 UID로 중복 제거한다. prepare는 동일 slot/할당의 unknown/준비/미종료 항목·예약을 먼저 찾고 unknown을 absence로 보충하지 않는다.
-budget은 실제 실물+create 전 예약 전체를 owner/UID 중복 없이 세며 stop 계획만으로 자원 반환하지 않는다. power/retire는 Node 모든 잔재의 stop/drain/remove proof(검증된 종료 Pod-only는 direct remove), remove/effect는 exact 종료·route 차단·outstanding 부재·기존 OperationResult를 요구한다(별도 tombstone 없음). physical 수/Ready κ/전환 의도 수를 구별하고 replica/instance 상한에 준비·미종료도 센다.
-active POOL은 Ready 필터가 아닌 **미반환 물리 점유·owner/배분**으로 귀속하여 prepare/drain/cleanup 에너지도 포함한다. 단순 관측 실패로 구간을 끊거나 stale=0 W로 만들지 않는다. 귀속 불명은 이유/구간을 남기며 합계를 완전하다고 하지 않는다. whole-POOL raw coverage/적분은 그대로다.
-
-#### ② 범위 예약과 단일 허가 경로 — SCH-51
-
-`c.runs/actionRun`에 owner(operation ID/DecisionID), Node UID·Workload UID·Pod UID/physical ID 집합을 둔다. Node 전체를 보수적으로 예약하고 CPU별 lock/별도 예약 저장소는 없다. create 전 Node/UID/slot/allocation, 생성 뒤 exact UID/physical을 같은 owner에 묶는다.
-
-Cycle 7 / SCH-AC-38, S3b: admission과 launch는 같은 route scope 계산을 쓴다. nil은 전체, non-nil empty는 변경 없음이다. 비어 있지 않은 route와 prepare/power/resize는 부모를 admission하고, stop/drain/remove 같은 retirement는 현재 `dependenciesReady`일 때만 admission 근거가 된다. route-only 회복도 전체 목적지 Ready를 기다리는 동안 Ready 생존자 subset을 적용할 수 있다. 빈 선언이나 exact handoff가 없어 출발할 수 없는 retirement만 있으면 부모·자식·예약 없이 끝나고, level-triggered 계획기가 다음 Tick에 다시 계획한다. frozen Actions/DependsOn/RouteTarget과 stop의 completedHandoffPresent/exact Ready-policy 검사는 보존한다. 별도 omission 표식·빈 부모 orphan 호환·미시작 retirement의 partial 종결은 없으며, 실제 실행의 failed/partial receipt와 미확인 책임 수명은 바꾸지 않는다.
-
-PrepareInstance는 `(Pod UID, Node UID, 인가 DecisionID, created/reused)` 증거와 error를 함께 반환한다. Execute prepare/resize와 occupancy 호출은 같은 계약을 사용한다. 마지막 Capture 실패가 증거를 지우지 않으며 terminal 공개 전 동일 mutex에서 owner scope에 편입한다. 동일 API-confirmed RestartPolicyNever UID/Node/slot/profile/owner의 첫 container만 terminal 뒤에도 결합하며 returnObserved를 무효화한다. 재결합과 baseline 변경은 금지한다. created=false/생성 결과 불명은 새 생성 보상 proof가 아니며 검색으로 출처를 꾸미지 않는다. late 정상 ACK는 원 실패 receipt를 보존하고 기존 fresh exact proof·terminal sibling·power 경계에서만 반환한다. 증거는 owner 책임의 기존 GC 참조 수명을 따른다.
-
-예약 reason은 blocking action/Pod UID·부족 proof·다음 해소 경로를 action ID 순으로 모아 기존 raw/compact/API 투영에 전달한다. identity-awaiting-container, creation-outcome-unknown과 fresh ACK/absence/power 대기를 구별한다. 새 controller/journal/TTL은 없으며 API 결과 불명은 자동 해소를 주장하지 않는다.
-공통 `kube/admission.go`가 `tickMu` 안에서 **영향집합→전체 충돌→원자 등록→현재 안전 재확인→시작**을 맡는다. effect 전 실패는 부분 키 없이 멱등 반환하며 범위 확대는 effect 전에 재승인한다. `c.mu`/runtime lock은 짧게, probe I/O는 밖에서, watch 신규 UID GET/게시는 수명 lock 안에서 처리한다. mutation 직전 runtime route/outstanding과 exact Pod UID/optimistic lock을 재검사하며 과거 snapshot 허가를 재사용하지 않는다.
-| 진입점 | 예약 범위·수명 |
-|---|---|
-| 자동 launch/scheduledOperation | 실제 변경 DAG의 Node/UID/실물 전체를 첫 effect 전 확보하며 WorkloadUIDs는 실제 변경 UID만이다. |
-| 수동 prepare/remove | 같은 admission. remove는 현재 양수 route/outstanding/owner/UID를 재검사하고 상위 허가 우회 금지. |
-| route/static/manual/ApplyTarget | 철회 source+새 destination의 Node/실물 합집합과 변경 UID; ACK/runtime/readback까지 유지. 같은 physical/weight여도 MaxBatch/MaxWait 변경 UID를 포함한다. ConfigMap RV 직렬화·타 UID 선언 보존. |
-| reset | 전용 Node fake run 대신 한 부모 집합으로 disable→unroute→drain→remove→release→power 전체 예약. 같은 slot 모든 실물·반환 Node 포함, 자식은 자기 충돌 없음. |
-| measurement/occupancy/hand-back | measurement Node+Workload/실물+실제 load Node/공유 endpoint. 같은 UID 다른 Node 측정도 같은 승인 주기 충돌. 외부 root taint/holder를 복원하고 종료/load Job 삭제/hand-back까지 소유. |
-| Workload 삭제 | `reserveDeletion→reserveRun`에서 API 삭제 전 UID·소유 Pod/physical/Node 확보; 빠진 대상은 현재 owned Pod로 보강. 실패/cleanup 대기는 유지하고 finalizer 제거가 아닌 `confirmDeletion` exact UID 부재+runtime Forget 뒤 반환. |
-
-Node/UID/실물 하나라도 타 owner와 겹치면 거절/대기한다. 같은 owner는 DAG 의존 순서다. 새 동명 UID는 옛 예약을 상속하지 않는다. 독립 범위 불명이면 관련 범위를 넓히되 모든 route/UID 전역 lock으로 돌아가지 않는다.
-해제는 goroutine 종료가 아니다. reset 첫 disable ConfigMap conflict/확정 거절/쓰기 전 실패는 effect 전 반환이지만 첫 write timeout은 unknown이고 앞 단계 성공 뒤 거절은 전체 반환 근거가 아니다. 시작 뒤 실제 효과/cleanup 확인 범위만 반환하고 후속 DAG 자원은 계속 예약한다. 실패/취소/timeout/기록 실패의 원격 불명은 실행만 terminal로 하고 재관측까지 예약한다.
-terminal failed/partial manual route/unroute/release는 종료 이후 fresh capture로 exact UID/container·Pod/native Ready와 요청 ACK 또는 exact 이전 정책을 확인하면 Pod 유지한 채 반환한다. mismatch/unready/stale/교체는 안 되며 Pod 부재+해당 Node power 비대기 proof도 유지한다. sibling receipt/보상 정리는 [수동 실행 계약](scheduler-operations.md)의 SCH-AC-38을 따른다.
-
-Defect E: after a real dispatch sweep (including dynamically generated Ready-subset routes), a Running transition fails structurally only when every unfinished dependency frontier ends at an exact unconfirmed precondition and no owner child is Running/Canceling. Unknown/external dependencies, runnable work, disabled controls and in-flight policy ACKs are not this diagnosis. The pure frontier classification lives in `state`; ledger mutation/result publication remains under the existing reservation mutex. The frozen DAG, Before, completed receipts and writer watermarks remain unchanged. Failed continuation admits only existing `FailedStopCleanup`, never a new original stop/prepare/power/route.
-
-Terminal responsibility returns by whole exact node after a strictly newer observation and all touching/future-cleanup writers have terminated. Fresh Pod absence or existing exact known-effect/untouched-baseline proof, settled power and conservative identity association are required. Parent and reserved children lose that node's Nodes/Instances/Pods atomically under the same mutex; unresolved/unknown scopes remain reserved. UID-wide routing/workload duties are not released by a single node's proof. Partial return does not erase physical inventory, pending replica occupancy, frozen evidence or admission watermarks. A restarted empty in-memory ledger is not proof of remote return; probe/bootstrap reconstructs the same physical occupancy, and prevention excludes unavailable physical work again.
-For prepare/resize, carried `scope.Pods` can describe previous occupants, not the new creation. Without this operation's own Pod UID or same-node `PreparationEvidence`, a possibly-effectful Create remains unknown and keeps its node even after every previous Pod disappears. Only an existing `EffectsNotStarted` proof exempts a creation with no own identity; independently proved nodes can still return.
-unknown은 빈 자원도 전역 중지도 아니며 finalizer 책임 이동을 선행하지 않는다.
-
-#### ③ 예약 범위만 고정한 단일 계획기 — SCH-52
-
-장부+예약을 복사하고 예약 Node의 실물/할당/배분/frozen 의도를 고정하여 같은 planner를 실행한다. 실제 unknown 소유·관측은 점유·route를 보호하되 κ̂ 미검사만으로 UID를 고정하지 않는다. 미준비 공급·생성 전 의도 에너지는 현재 공급에 더하지 않는다. Node/Workload fixed 바깥 후보는 계속 평가하고 공통 자원 안전 gate는 면제하지 않는다.
-unavailable Node 미준비 실물은 queue/batch/profile 실행 후보 검증을 요구하지 않으나 Capacity/MaxBatch=0이어도 allocation budget에 남는다. 예약 frozen target의 미생성 instance도 keep count에 넣고 physical/slot/UID 중복을 제거한다. 고정 영역의 SLO/에너지 미확인은 독립 변경 proof와 구별한다.
-새 완전 target은 고정 부분을 포함하되 기존 run frozen target/ID/DAG를 덮거나 취소하지 않고 독립 DAG만 붙인다. 가장 오래된 global goal을 진실로 삼지 않는다. terminal 결과는 stale보다 우선하며 실패도 owner 범위에만 반영한다. UID 한정 runtime/policy/annotation/readback은 변경 UID의 Ready/identity/owner/ACK를 검증하고 보존 UID는 현재 physical 분배 동일성만 검사한다. 타 UID override/accepted context를 쓰지 않는다.
-snapshot/decision은 고정 Node/UID/실물·owner/대기 이유를 action/operation에 연결한다. Keep는 새 변경 없음이지 판단 생략이 아니다. 공통 설정 무효/API/journal 장애는 실제 전역 원인으로 남긴다. replay/API/compact/log/dashboard/fixture도 `reservations`로 함께 이행하며 옛 global 필드/alias를 남기거나 과거 raw를 다시 쓰지 않는다.
-
-#### ④ 빈 출발 평가 — SCH-54, AC-41
-
-빈 출발도 profile routing·현재 timing·수요의 직접 평가를 사용한다. 전체 grid나 capacity row의 Built/pending을 기다리지 않는다. no-profile·missing support와 실제 물리 관측 실패는 해당 원인으로 남긴다. 경과 시간 fallback·새 bootstrap timeout·관측 sample gate는 없으며 생성 뒤 scoped operation·소유권·정상 반환은 유지한다.
-
-## 6. 실제 적용과 관리 연동
-
-kube는 measured profile bundle+작은 mutable policy를 제공한다. 큰 raw 분포는 immutable store/volume에서 startup 한 번 로드·공유하며 request 복사/ConfigMap 반복 전송은 없다. actual metadata/progress로 profile/policy/readiness를 확인한다. transition은 desired/start/progress/complete/failed/partial·prerequisite를 기록하고 actual Pod/NodeActuation/route/drain/remove proof 뒤 후속 동작을 실행한다. host writer는 NodeActuator 하나다.
-부하/관리 변화는 같은 snapshot/계획기로 재판단한다. 동일 진행 동작을 재사용하고 cancel은 시작 전/중단 가능한 동작만, physical effect 뒤는 현재 관측에서 다시 선택한다. failed source는 route 격리 후 recovery proof로 복귀하며 기존 관리 gate/accepted definition/공유 UID/drain을 재사용한다.
-
-### 중복 slot의 수동 reset — AC-36
-
-reset은 선택 owner의 **모든** exact Pod UID/container를 열거·remove 직전 재열거하고 slot으로 축약하지 않는다. runtime resolve/schedulerPhysicalState/applyPolicy 모두 exact physical ID 우선, exact 없을 때 유일 TargetID alias다. `A→S,B→A`에서 A는 A이며 B도 정리한다. 다중 alias는 오류이고 owner를 빈 routing/slot으로 추정하지 않는다. 타 owner/measurement Node/다른 Node UID 보호·각 실물 drain/종료/Pod-Service-config 삭제·재호출 무변경 성공은 [operations](scheduler-operations.md)이 원본이다.
-
-### 초기화와 판단 발행 경계
-
-생성자는 routing freeze하지 않는다. 첫 observer.Refresh+manager.Initialize 성공 뒤 autonomous UID가 있으면 `EnableSchedulerRouting`으로 첫 Tick/HTTPS 전 실제 분포를 freeze하며 live 설정 첫 UID 추가도 같다.
-기존 `--request-timeout` 기본30초의 같은 callCtx가 refresh+평가를 감싼다. Node 계획·직접 replay·rate 판정은 기존 context 취소를 따른다. o.lock/tickMu는 snapshot 평가·설정 수락·발행을 직렬화한다. 계산 중/발행 직전 취소는 발행 전 오류, OnDecision 중/뒤 취소는 이미 유효한 기록은 보존하되 오류 반환·새 physical action 금지다. 시작한 동작을 소급 취소하지 않는다. 다음 full refresh가 canonical settings/구성을 함께 수락하며 취소한 부분 결과나 이전 timing의 수치 결과를 비동기 재사용하지 않는다.
-
-## 7. 설정·권한·관측 API
-
-[설정과 관측 API](scheduler-api.md)가 `/api/v1/scheduler` settings/snapshot/decision/target/actions·TokenReview/SAR/ConfigMap write·before/after/actor/검증/영향/actual appliedAt의 원본이다. ObservationLog는 request/management/decision/settings/action/power, 모든 오류/거절/timeout/cancel/미완료/late·request/batch 수를 보존한다. received와 completion-event rate, unknown/missing과0, wall/whole/incremental energy·단위·meter/구간/coverage를 구별한다. 정적 구성도 같은 관측을 쓴다.
-
-## 8. SRS와 구현 확인 경로
-
-| SRS/AC | 소비자·확인 계약(통과 선언 아님) |
-|---|---|
-| SCH-01~02,19,28 | capacity/decision/actual instances: keep/change·SLO-first·energy·overload/Pending |
-| SCH-03~08,29,31 | Runtime/ObservationLog/native: UID/frozen context·전체 유입·0/unknown·window·관리 drain |
-| SCH-09~12 | catalog/resource: 최신 same-condition·같은 실행기·분포/memory·전체 allocation·exclusive |
-| SCH-13~15 | 공통 adapter: cheap scalar/직접 demand replay 분리·현재 tested-rate κ̂·TOTAL/POST·전환/최종·Node 전체 영향 |
-| SCH-16~18 | idle/action/transition/POOL: inactive/temp Node·wall/delta·중복 없음·같은 T·actual Ready |
-| SCH-20~23 | Runtime/actor: Ready 전달·원래 elapsed·UID batch·energy-gain wait·명시 수명 |
-| SCH-24~27,30 | atomic/operation ledger: prepare-route-drain-remove·effect·partial·재사용·appliedAt |
-| SCH-32 | authenticated settings·UID autonomy·frozen static 비교 |
-| SCH-48~49,AC-34~35 | ACK 지연에도 동일 물리/memory·GPU/owner/slot·Native/Ready/POOL/replica/meter joules 보존, prepare/Create0, ACK 후 표시 해제; actual read 실패 Node 네 gate·정상 Node 진행·전역 memory/GPU 안전 유지. queued/running 동안 power0, 빈 native/drain 뒤만 power 허가 |
-| AC-36 | exact 우선/다중 alias 거절·같은 slot 모든 owned Pod 제거·타 owner 보존·두 번째 reset Pod write0 |
-| SCH-50,AC-37 | ACK/읽기/Service/LIST/watch 장애에도 UID/점유/owner 보존·unknown effect 재전송0·freshness 없이 Ready 공급/dispatch 금지·init 실패/중복 Pod 각각 exact 종료/삭제 뒤 퇴역·late probe 부활 금지 |
-| SCH-51,AC-38 | 모든 mutation 공통 예약, source+destination 충돌·동일 UID 측정 한 승인·독립 범위 실제 시작·부분 예약0·effect 전 멱등 반환/effect 후 unknown 유지·fresh proof 해제·snapshot 뒤 새 route/outstanding remove 거절·새 UID 옛 승인 금지 |
-| SCH-52,AC-39 | slow power/unconfirmed source의 W1/N1 중 독립 W2/N2,N3 Tick→prepare→Ready 캡처 뒤 늦어도 다음 주기 route→정확 physical native 요청 완료. κ̂ 미검사로 전체 대기하지 않으며 W1 frozen ID/target/route/outstanding·부분 Ready 자식·terminal 우선 보존 |
-
-회귀 설계는 기존 fake client/native HTTP fixture와 production 함수 경로를 사용한다. 별도 장부 모형만으로 통과하지 않으며 focused 회귀/빌드/실연 근거는 구현 담당자가 남긴다. 문서/요구사항 추적성만으로 AC를 통과 처리하지 않는다.
-
-### 현재 수요·예비·고정 비교 기간 — SCH-55~58, AC-42~44
-
-현행 정책은 현재 유효 수요의 즉시 후보 비교다. 실제 관측·장부·공통 예약·부분 Ready·SLO·에너지 비교를 유지한다.
-| 경계 | 현행 계약 |
-|---|---|
-| 정책 시간 | ControlInterval, ObservationWindow, ComparisonPeriod 세 시간만 사용하며 API/ConfigMap/Dashboard/sample/binding 계약을 통일한다. |
-| 수요 | 현재 유효 수요는 max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이에 minimumDemand 하한을 적용한다. reductionDemand도 같은 값이며 이력 최대값/지속 시간 gate는 없다. |
-| 후보 | v1/v2 모두 같은 물리 후보·현재 수요를 비교한다. cheap scalar와 exact SLO 순서를 구분하고 두 우선순위 정책·기존 energy/minimumGain을 적용한다. |
-| 하강 여유 | 최종 하강·idle 후처리의 현재 유효 수요×(1+h) 보호와 configured h를 유지한다. old row/κ̂-only gate를 쓰지 않으며 bridge/reserve·실제 J는 할증하지 않는다. |
-| 회복 | 실제 부족·backlog·부분 관측 가용 수요·unknown·예약·소유권·Ready/ACK·old+new peak·bridge/reserve/H를 검사한다. |
-| 빈 Node/Fixed | 같은 현재 수요와 gain/minimumGain/payback을 적용한다. 이미 허가된 owner DAG의 drain/remove는 계속한다. |
-| 예비 | f>0이면 실제 Ready/ACK·ownership·예약상 적격한 profile-rate estimate로 수요 대비 예비를 검사한다. SLO는 직접 replay로 판정한다. 같은 공급 중복 담보를 금지하고 부족은 해당 후보의 `TransitionReserveInsufficient`다. f는 요청률/요청 에너지 분모를 바꾸지 않는다. |
-| 중간 route | 전체 준비를 기다리지 않고 다음 tick 실제 Ready 부분집합을 UID atomic route로 편입하되 기존 공급/ACK/stop-drain-power/인계 보호를 유지한다. |
-| 고정 H | keep/payback/minimumGain/decision.capacity.periodNanos와 모든 후보가 같은 H. H 초과 사슬은 진단하고 baseline/Serving 꼬리를 clamp한다. reserve prepare/load/Serving/remove를 한 번 집계하며 Fixed 새 절전은 원상태 keep 대비 nominal gain>0·minimumGain·payback을 모두 통과한다. |
-| 기록 | settings/search.bounds/H·Run binding/summary를 동결한다. 현재 rate·backlog·Ready profile-rate estimate·tested rates·후보 제외 사유·energy/gain/minimumGain/payback/reserve를 연결하며 과거 raw·게시 증거는 보존한다. |
-
-H=600초 근거는 로컬 `campaign/v2/demo-*/summary.json`의 `stages[].actions[].action` 성공 완료: jetsono MAXN150.939초, lattepanda Smol prepare268.867초, genesis3 Smol prepare292.163초, jetsono 하강196.180초; 보수적 직렬 약488초 포함이지 미래 상한 보장 아님. 285초/Ready와 완료 시각 차이는 계획기를 따른다.
-필수 수용: v1/v2는 같은 현재 수요·backlog의 직접 SLO 순서를 실행 수용까지 유지한다. 정상 저부하의 에너지 축소는 기존 minimumGain·payback과 전환 안전을 통과해야 한다. 전체 미충족은 개선 순서로 비교하되 실제 수집 실패·미확인 물리 상태를 정상 공급으로 세지 않는다.
-AC-43은 f=0 추가 예비만 해제, f>0 미준비/중복 공급 제외·profile-rate estimate·native ACK/직접 SLO·실제 SLO/예비 포함 evaluation joules를 확인한다. AC-44/SCH-59는 H600초 jetsono MAXN→15W −699J/손익 약52분 및 양수이나 문턱 미달 후보 미실행, 다른 Node 이득에 손해 Fixed를 묻지 않음, 빈 Node 후보/비교 집합/payback 포함, 미선택 긴 후보 추가/삭제에도 H/energy 불변과 clamp를 확인한다.
-SCH-54 빈 출발의 직접 평가·최소 instance1·증설·부분 Ready·예약 밖 진행을 유지한다. 3회차 B의 G/L15~18초 Ready 뒤 N32초까지 대기한 fake 시계 사례에서 G/L이 다음 주기 먼저 배분되어야 한다. 새 tuple·두 정책과 예약 해제·accepted drain·H 독립 action timeout·typed API/UI도 수용 범위다. 실클러스터 재시연/evaluation는 별도 승인 후 같은 H/binding/부하로 수행한다.
-
-## 9. 실행 증거와 현재 수용 범위
-
-[초기 실행 결과](scheduler-execution-history.md)는 local/synthetic/fixture/wall-power 미측정과 live MissingEvidence 경계를 보존한다. 현재 배포·차단·다음 의존성·FULL 수용은 [라이브 증거 캠페인](../../plans/2026-10-13-scheduler-live-evidence-campaign.md) 한 곳이 원본이다. 기능 연결과 연구적 SLO/총에너지/공존 오차 개선은 별도 증명이다.
-
-## 10. 같은 기종 profile 재사용 — PR-01..04
-
-검증된 직접 profile 선택(`kube/catalog.go`)→`catalog_reuse.go` 판정/대상 materialize→기존 `internal/serving/application/profiles.go` preparations→observer/option 경로다. 새 CRD/UID alias registry 없이 [측정 API](measurement-api.md)의 Node UID 소비자/CampaignOps 계약을 따른다.
-기존 capacity/observer/operations/runner/cost_power/firstfloor UID guard를 유지하고 대상 Condition/RuntimeMetadata/RuntimeDelivery를 쓴다. catalog `reuseChecks`, profile `reuse`, 기존 BEO immutable result/raw가 근거다. 수락/거절을 기존 store에 content-addressed immutable 기록 후 `record` 참조를 발행하고 refresh signature에 판정 본문도 넣는다. memory는 양쪽 최대, idle baseline/physical UUID/meter는 대상 것이며 raw sample은 합치지 않는다.
+일반 route는 양수 선언을 empty/all-zero로 바꾸지 않는다. 명시 unroute만 철수 허가다. nil scope는 전체, non-nil empty는 변경 없음이다. launch할 수 없는 빈 route와 retirement만 있는 계획은 새 예약을 만들지 않고 다음 Tick에서 재계획한다.
+
+생략 bridge는 frozen dependency와 실제 consumer의 exact 완료 proof로 판단한다. running과 failed receipt를 다른 ACK로 성공 승격하지 않는다. 지난 bridge의 완료에 뒤 stage가 바꾼 전역 routing을 요구하지 않는다.
+
+## 실패 분류와 독립 판단
+
+준비 시작 실패는 deterministic, transient와 unknown으로 분류한다. 자기 프로세스 종료와 cgroup OOM, 권위 있는 artifact/permission 거절은 deterministic이다. 네트워크와 API, Node 불가와 eviction은 transient다.
+
+unknown은 transient로 시작하며 같은 서명과 reason이 다른 action/Pod UID에서 독립 재현되면 promoted다. 알려진 transient는 반복돼도 승격하지 않는다. 분류 이력은 기존 in-memory 장부이며 재시작 후 영속 복원하지 않는다.
+
+서명은 Node identity, profile, memory limit과 measured peak, GPU UUID, image와 전체 RunnerCommand argv다. allocatable drift와 Ready 시각, 단순 관측 시각을 서명에 넣지 않는다.
+
+예약 영역의 실제 상태와 frozen 의도만 고정하고 밖의 후보는 같은 단일 planner로 평가한다. 새 target이 기존 run과 ID/DAG를 덮지 않는다. Keep는 새 변경 없음이며 판단 생략이 아니다. 물리 미확인과 공통 설정, API와 기록 장애는 실제 범위의 사유로 남긴다.
+
+선택의 현재 수요, 전체 SLO 순위와 고정 H, 회복 추정과 에너지 결정 가능성, reserve와 payback은 [계획기](analytic-planner.md)의 공통 계약이다. 설계 연결을 실클러스터 SLO나 절감 검증 완료로 보고하지 않는다.

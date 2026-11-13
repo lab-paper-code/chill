@@ -1,121 +1,74 @@
-# 측정 admission과 단일 writer (M3)
+# 측정 노드 승인과 단일 writer
 
-상태: active — `SCH-34`, `SCH-AC-26`, `DB-FR-34`의 측정/서빙 격리 계약이다. [이행 대안](../architecture-rethink/README.md)과 구분한다. `3dd5902`가 M3 도입 근거이며 당시 2026-10-21 snapshot은 현재 source의 live 수용 기록이 아니다.
-ChillServer가 `chill.dacs.io/measurement:NoSchedule` taint를 소유한다. NodeActuation 기반 중복 설계는 제거되었으며 현행 전력 요청·무효판정은 [node-agent](../platform/node-agent.md#3-노드-전력모드-node-label과-generation)가 권위다.
+ChillServer가 `chill.dacs.io/measurement:NoSchedule` taint와 측정 예약을 소유한다. 승인, 자동제어와 수동 작업은 같은 physical 변경 권한을 사용한다. host 전력은 [플랫폼 노드 제어](../platform/node-agent.md)를 따른다.
 
-## 1. 경계와 이유
+## 요청 루트와 terminal
 
-운영자 taint/runner 준비와 serving-operation의 host 내부주소 의존을 없애고, 측정 시작과 서빙 전력/배치를 같은 writer로 직렬화한다. 서빙 노드를 drain해서 측정하는 안은 `SCH-34` 거절 요구와 기존 SLO를 깨므로 채택하지 않았다. CHILL이 배치하지 않은 Pod는 지우지 않고 결과 census에 남긴다.
-
-## 2. 결정
-
-### 2.1 writer와 요청
-
-- scheduler loop는 Tick 앞에 `Admit`를 호출한다. `tickMu`가 승인·Tick·수동동작을 직렬화하며 Node/serving Pod/DeviceClass/측정루트와 범위예약을 읽는다. `c.mu`는 configuration/run 조회·등록에 짧게 사용한다.
-- 시간이 걸리는 runner/반환/operation/수동동작은 `tickMu` 안에서 범위예약된 `actionRun`으로 등록한 뒤 잠금 밖 goroutine에서 실행하고 기존 OnAction으로 기록한다. 같은 예약범위에는 Admit/Tick이 손대지 않는다.
 | 루트 | 대상 | terminal |
 |---|---|---|
-| BatchEnergyOptimization | spec.state.targetNode | Complete, Failed(Outcome CurvePlanResolutionFailed 제외) |
-| ModelLoadedIdleBaseline | spec.state.targetNode | Complete, Insufficient |
-| 독립 ProfilingRun | spec.targetNode | ExecutionComplete True 또는 False |
-| PowerModeTransitionCost | spec.targetNode | Complete, Failed |
-| OperationCostMeasurement | spec.node | Complete, Insufficient, Failed |
-| DispatchOccupancyMeasurement | spec.node | Complete, Insufficient, Failed |
-BEO/MLIB 자식 ProfilingRun은 루트 승인 뒤 생성하므로 별도 요청하지 않는다.
-- BEO의 결정적 curve-plan 오류(불가능한 batch set·Run 입력)는 기존 Failed/InvalidRunSpec, MeasurementComplete=False로 종료한다. CPU 할당량 선택이나 allocatable 검사는 없다. execution/actuation policy 오류의 terminal 의미와 정상 물리 반환 절차는 유지한다. Kubernetes/Evidence Store 일시 읽기·쓰기 오류를 측정 조건 자체의 실패로 바꾸지 않는다.
+| BatchEnergyOptimization | `spec.state.targetNode` | Complete, Failed. CurvePlanResolutionFailed는 재시도 |
+| ModelLoadedIdleBaseline | `spec.state.targetNode` | Complete, Insufficient |
+| 독립 ProfilingRun | `spec.targetNode` | ExecutionComplete True 또는 False |
+| PowerModeTransitionCost | `spec.targetNode` | Complete, Failed |
+| OperationCostMeasurement | `spec.node` | Complete, Insufficient, Failed |
+| DispatchOccupancyMeasurement | `spec.node` | Complete, Insufficient, Failed |
 
-#### 측정 루트 payload의 증분 조회 (O2)
+BEO와 idle 자식 ProfilingRun은 root 승인 뒤 생성하므로 별도 root가 아니다. 일시 Kubernetes와 evidence 오류를 측정 조건의 terminal 실패로 바꾸지 않는다.
 
-ChillServer는 controller-runtime manager를 실행하지 않는다. 매 Admit는
-여섯 측정 종류의 metadata-only List를 round context로 직접 읽어 현재
-namespace/name·UID·resourceVersion을 확인한다. UID와 opaque resourceVersion이
-모두 같은 객체는 캐시의 decoded payload와 terminal 판정을 재사용한다.
-새 객체·변경 객체만 direct GET하고, 목록에서 사라진 identity는 캐시에서
-지운다. terminal→대기 변경과 같은 이름의 새 UID도 같은 경로로 반영한다.
-읽기 실패·취소 시 그 round는 승인·반환 판단을 하지 않는다.
-재시작·새 namespace의 초기 캐시는 종류별 full List 한 번으로 채운 뒤
-metadata boundary를 검증한다. terminal 6,500개의 cold GET fan-out을 피한다.
-캐시는 전체 payload를 보유하며 삭제된 identity와 제외된 namespace를 해제한다.
+## 직렬화와 현재 입력
 
-모든 종류의 metadata boundary가 완료된 뒤에 대기루트를 creationTimestamp와
-namespace/name으로 정렬한다. Watch 전달 지연·선택적 bookmark·resourceVersion의
-수치 비교에 의존하지 않는다. operation/occupancy가 참조하는 완료 BEO도
-같은 boundary로 검증한 캐시에서 읽어 profile 선택 근거를 유지한다.
-승인·반환이 읽거나 patch하는 객체는 별도 복사하여 캐시를 바꾸지 않는다.
-terminal 판정, tickMu와 taint 단일 writer는 그대로 유지한다.
+Admit는 `tickMu`로 Node 승인과 제어 진행을 직렬화한다. 긴 runner 준비, 측정과 반환은 범위 예약된 actionRun으로 등록한 뒤 잠금 밖에서 실행한다. 같은 범위에 다른 writer를 허가하지 않는다.
 
-Node taint·resourceVersion·power pending, serving Pod 존재와 DeviceClass 전력
-계약은 매 Admit의 direct List를 유지한다. Tick은 요청 window 읽기와 Admit의
-taint 변경/비동기 반환 이후 live 사실을 새로 읽어야 하므로 Admit 목록을
-재사용하지 않는다. 이 목록 공유에는 window 이전의 낡은 관측이나 이미 바뀐
-taint를 Tick에 전달하지 않는 별도 round 계약이 필요하다.
+namespace별 여섯 kind를 metadata-only List로 읽는다. UID와 opaque resourceVersion이 같으면 decoded payload와 terminal 판정을 재사용한다. 새 객체와 변경 객체만 GET하며 사라진 identity를 제거한다. 초기화는 종류별 full List 뒤 metadata boundary를 검증한다.
 
-2026-11-12 로컬 fake benchmark `BenchmarkAdmitTerminalProfilingRuns`:
-terminal ProfilingRun 6,500개, condition message 각 4,050 bytes, cold baseline은
-측정에서 제외했다. metadata 응답은 **817,915 bytes/round**이며 매 round
-실제로 JSON decode한다. Intel i7-8700K·Go 1.26.4, 3회 실행의 중앙값:
-**300,955,307 → 15,254,678 ns/op**,
-**132,529,174 → 8,020,336 B/op**,
-**71,811 → 19,708 allocs/op**.
-3 round의 full payload 조회는 기존 19,500개에서 초기 List의 6,500개로
-줄었고 변경 없는 terminal payload의 개별 GET은 0회다. fake의 metadata
-응답 경로를 사용한 비용 비교이며 live Admit p50·네트워크 왕복 지연 측정은
-아니다. full payload 캐시의 상주 메모리는 이 B/op 수치에 포함되지 않는다.
+모든 boundary 완료 뒤 creationTimestamp, namespace/name 순으로 정렬한다. 읽기 실패나 취소이면 그 round의 승인과 반환 판단을 하지 않는다. Node taint와 RV, power pending, serving Pod와 DeviceClass는 매 Admit 직접 읽는다. Tick은 window 조회와 비동기 반환 뒤 live 사실을 새로 읽는다.
 
-### 2.2 승인과 거절
+## 승인과 거절
 
-노드당 승인1개다. 대기루트는 creationTimestamp, namespace/name 순이며 기다리는 앞 루트가 그 노드 줄을 잡는다. 거절은 terminal이고 다음 루트를 같은 주기에 평가한다.
-| 우선순위 | 조건 | 결과 |
-|---|---|---|
-| 1 | taint·예약run·전력pending·앞루트 대기 | 다음 주기 대기 |
-| 2 | Node 없음 | Refused: NodeMissing |
-| 3 | nonterminal CHILL serving Pod 있음 | Refused: NodeServing와 namespace/name, taint 없음 |
-| 4 | CPU 공유 실행 | affinity/quota/online−reserved 검사 없음. CPU 관측의 누락은 측정 승인 거절 사유가 아니다 |
-| 5 | PMTC runner 부적격 | 아래 runner 사유 |
-| 6 | 그 밖 | taint값=루트UID, Granted RFC3339 시각; PMTC는 runner 준비 뒤 Granted |
-- DeviceClass power mode와 Node readback은 실제 전력 상태를 판정한다. online CPU 목록은 관측이며 예약 mask나 배치 가능성 proof가 아니다.
-- taint/전력pending을 먼저 보므로 앞 측정의 runner 때문에 뒤 루트가 NodeServing으로 거절되지 않는다. 서빙 Pod 거절은 소유 Workload/자동제어와 무관하다.
-- taint는 resourceVersion merge patch다. atomic taints 목록을 SSA manager로 나눌 수 없고 충돌은 다음 주기에 재시도한다.
-- 승인 후 capture/operations의 admittedNode가 해당 노드를 서빙 배치·전력변경에서 제외한다. 전력pending은 Node state/requested-at/policy 기한으로 판단한다. 정책·시각이 없으면 기한을 추정하지 않고 대기한다(`admission.go:powerModePending`).
+노드당 root 하나다. 앞 root 대기는 같은 노드의 뒤 root를 기다리게 한다. 거절은 terminal이므로 다음 root를 같은 round에서 평가할 수 있다.
 
-### 2.3 반환과 측정 무효
+| 조건 | 처리 |
+|---|---|
+| 예약, taint, power pending과 앞 root 대기 | 다음 round 대기 |
+| Node 없음 | Refused NodeMissing |
+| CHILL serving Pod 존재 | Refused NodeServing. terminal Pod도 삭제 전 점유 |
+| executor recovery unknown | Refused NodeServing |
+| root별 profile와 runner 부적격 | 해당 사유 거절 또는 catalog 갱신 대기 |
+| 나머지 | root UID taint와 Granted 시각. 전환 비용은 runner 준비 뒤 Granted |
 
-terminal/삭제 루트, 살아 있는 루트·run이 아닌 taint(운영자=true/끊긴 준비), operation 종료는 노드 반환run을 만든다.
-1. 진행 전력pending을 정책기한까지 기다린다.
-2. 해당 load Job과 남은 CHILL serving Pod, NodeUID label의 runner Service를 제거한다.
-3. 실제 NodeUID와 taint holder를 다시 확인한다. 요청 가능한 최저모드가 있으면 낮추고 독립readback을 확인한다. Fixed/baseline없음은 전력단계를 건너뛴다.
-4. 현재 resourceVersion으로 taint를 제거하고 예약을 반환한다.
-실패하면 taint를 유지하고 다음주기 반환을 다시 시작한다. 루트삭제는 `Interrupted <holder>`로 남긴다. 재시작은 level-based이며 살아 있는 nonterminal 루트 taint는 유지하고 끊긴 PMTC 준비는 반환 후 다시 대기한다.
-현재 무효판정은 각 측정 record의 powerModeGeneration(start/end)과 자기 전환수다. 반환이 외부 NodeActuation을 재판정하지 않는다([무효판정 권위](../platform/node-agent.md#34-측정-무효-판정)). MeasurementInvalid 근거는 catalog/cost/baseline/curve 소비에서 제외하고 issue로 드러낸다.
+CPU affinity/quota와 online−reserved는 gate가 아니다. Node identity, 실제 power, owner와 격리 proof는 유지한다. 외부 Pod는 삭제하지 않고 census에 남긴다.
 
-### 2.4 전환 비용 runner
+taint는 resourceVersion merge patch이며 충돌은 재관측한다. 승인 Node는 capture와 실행 직전 검사에서 서빙 배치와 전력 변경 대상에서 제외한다. power pending 기한은 요청과 정책에서 구하고 누락 시 임의 추정하지 않는다.
 
-- 승인 전 `RunnerProfileMissing`(NodeUID/modelSpec/executionPath/시작모드 일치 준비가능 profile 없음), `RunnerContainerUnsupported`(firstfloor 아님), `RunnerNamespace`(serving namespace 다름)을 거절한다. 일치 profile은 최신측정, 시작 전력모드도 일치해야 한다.
-- taint 후 measurement모드로 `runner-<PMTC UID hash>`를 준비하고 spec.servingService Service를 `chill.dacs.io/measurement-runner:<NodeUID>`로 만든다. selector는 정확 serving PodUID다. PMTC namespace observer가 Pod/Service를 읽는다.
-- 성공은 `chill.dacs.io/runner-profile:<profileID>`와 Granted시각, 준비/result의 runnerProfileID로 고정한다. 실패는 RunnerPrepareFailed를 남기고 같은run에서 반환한다. 루트가 삭제돼도 NodeUID로 runner/Service를 회수한다.
+## 전환 비용 runner와 operation
 
-### 2.5 operation 비용 측정과 serving-operation
+전환 비용 root는 정확한 Node와 실행 경로, 시작 모드의 최신 준비 가능 profile이 필요하다. RunnerProfileMissing, RunnerContainerUnsupported, RunnerNamespace와 RunnerSourceStateMismatch를 구분한다.
 
-상세 spec/판정은 [측정 API](measurement-api.md)가 권위다.
-- opcost는 한 노드의 power/prepare/idle/remove 순서다. 승인 전 catalog profile의 ProfileMissing/NodeMismatch, ActuationNamespace, PowerModeUnknown, MeterUndeclared를 검사한다. profile/issue 모두 아직 없으면 대기하며 거절annotation과 Failed status는 같은 사유다.
-- 승인과run등록은 같은 tickMu 구간이다. runtime/observer의 measurement Operations로 각 단계를 Measure하고 반환한다. Operation.ID=`<CR UID>.<순번>.<단계이름>`, 저장key/record가 그 CR을 가리키며 prepare/remove는 정확 profile preparation/instance다.
-- 단계오류·non-Accepted에서 중단한다. 진행측정의 취소결과도 WithoutCancel로 기록한다. 미완료순서는 `serving/operation-sequences/<CR UID>.json`, schema `serving-operation-sequence.v1alpha1`의 sequenceID/node/requested/saved/reason을 남긴다. 저장된 개별 verdict는 유지하며 비용은 유효기록을 소비하되 SequenceIncomplete issue를 단다.
-- ChillServer 재시작은 Granted/nonterminal opcost를 Failed: ChillServerRestart로 닫고 UID-prefix 저장key로 saved 목록을 복원해 순서기록 후 반환한다. terminal status는 바꾸지 않고 반환만 한다.
-- isolation witness의 예상외 power generation은 PowerChangedDuringMeasurement/Insufficient와 MeasurementInvalid다.
-- `POST /api/v1/scheduler/operations`의 prepare/remove는 live capture로 자동제어밖 Workload·비예약범위·실제 Node/Pod inventory를 확인한다. prepare는 ValidatePreparationCapacity, remove는 removableBy·route weight0·처리중요청없음이 필요하다. snapshot physical ID이므로 serving-<hash>도 제거 가능하다.
-- route/unroute/release/reset의 typed 입력·ACK/readback은 [수동 원자 실행](scheduler-operations.md#수동-원자-실행-계약)을 따른다. 기존 TokenReview/SAR, operation-timeout 기본30분이며 `serving-operation --execute-config`는 manifest를 보내고 응답을 stdout으로 낸다.
+taint 뒤 runner를 준비하고 Node UID label의 Service를 정확한 serving Pod UID selector로 연결한다. profile ID와 Granted 시각은 준비 결과에 고정한다. 실패는 RunnerPrepareFailed이며 같은 owner가 반환한다. root 삭제 뒤에도 Node UID로 회수한다.
 
-### 2.6 측정 controller의 대기
+opcost는 meter와 요청 가능한 power mode, BEO 상태와 대상 Node를 확인한다. catalog에 profile와 issue 모두 없거나 준비 근거가 아직 없으면 기다린다. ProfileMissing, NodeMismatch, PowerModeUnknown, MeterUndeclared를 사유로 남긴다.
 
-BEO/MLIB/독립ProfilingRun/PMTC reconciler는 Granted 전 child/Job을 만들지 않고 5초 requeue한다. Refused는 BEO Failed, MLIB Insufficient, ProfilingRun ExecutionComplete=False, PMTC Failed이며 annotation 첫단어가 사유다. 필요한 ChillServer 측정kind patch/list·Node patch·serving Service create/delete 권한을 사용하며 Profiler에 새 서빙 writer를 만들지 않는다.
+steps는 production Measure로 순서 실행한다. ID는 `<CR UID>.<순번>.<단계이름>`이다. prepare의 정확한 실물을 remove에 쓴다. 첫 오류나 non-Accepted에서 중단하고 partial과 개별 verdict를 보존한다.
 
-## 3. 저장 계약 (ADR 0019)
+미완료 sequence는 `serving/operation-sequences/<CR UID>.json`이다. 재시작으로 끊긴 Granted/nonterminal opcost는 ChillServerRestart와 저장 step 목록을 남기고 반환한다. terminal 결과는 다시 쓰지 않는다.
 
-Node taint/admission/runner annotation은 stored science evidence가 아니다. PMTC runnerProfileID 도입의 result v1alpha4와 당시 Failed PMTC5개 정리는 역사적 cutover이며 현재 PMTC raw/선택필드 버전은 [node-agent 저장표](../platform/node-agent.md#4-저장-계약-adr-0019)를 따른다. operation v1alpha2·occupancy v1alpha1의 generation 선택필드와 미완료 sequence 원형을 유지하고 단일버전 reader를 쓴다.
+DOM은 비자율 Workload, serving 충돌, batch 근거와 frozen native queue/부하 한도를 확인한다. burst 판정, signed 통계와 scheduler 채택은 [측정 API](measurement-api.md)의 별도 경계다.
 
-## 4. 수용과 열린 경계
+## 정상 반환과 무효 근거
 
-- 검사 불변식: 노드별 생성순서·거절시taint없음, 예약/전력pending경합, 반환실패taint유지·재시작복구, 예상외generation 무효, 수동작업/자동제어격리, runner exactidentity·회수, 순서실패·취소·재시작 기록, strict권한을 확인한다. 이 목록은 현재source의 통과기록이 아니다.
-- live E-A1~8: MLIB 승인/최저모드반환 지연; serving BEO거절/SLO보호; 비CHILL Pod보존; PMTC runner/시도목표; opcost3기록; host serving-<hash> remove; 루트삭제/재시작회수; invalid/MeasurementInvalid 수와 출처를 확인한다. 결과는 [live evidence](../../plans/2026-10-13-scheduler-live-evidence-campaign.md)가 권위다.
-- Measurement CRD 통합은 미채택 M5 제안이다. O2는 주기 Admit의 metadata 검증과 payload 재사용이며, 이벤트 즉시 승인을 도입하지 않는다. POOL 측정owner/Dashboard 선택불가(DB-FR-34)는 해당 UI수용과 구분한다.
-- 측정밖 재부팅·미확인 전력은 노드만 제외하고 독립 판단을 계속하는 [node-agent 계약](../platform/node-agent.md)을 따른다. 별도 전역 Pending 질문으로 유지하지 않는다.
+terminal이나 삭제 root, 살아 있는 root/run이 없는 taint와 종료 operation은 hand-back을 만든다.
+
+1. power pending을 실제 정책 기한까지 기다린다.
+2. 해당 load Job과 잔류 CHILL serving Pod를 정상 ClearNode로 제거한다.
+3. Node UID label의 runner Service를 정리한다.
+4. Node UID와 taint holder를 재확인한다.
+5. 요청 가능한 최신 unloaded baseline의 최저 모드로 변경하고 독립 readback을 확인한다. Fixed나 근거 부재는 전력 단계를 건너뛴다.
+6. 현재 RV로 taint를 제거하고 예약을 반환한다.
+
+실패하면 taint와 미확인 책임을 유지하고 다음 round에서 반환을 재시도한다. goroutine 종료나 root 삭제만으로 반환을 주장하지 않는다. root 삭제는 Interrupted holder다.
+
+record의 power generation과 자기 전환 수로 예상 밖 power 변경을 판단한다. MeasurementInvalid는 catalog, cost, baseline과 curve 소비에서 제외하고 이유를 노출한다.
+
+## 저장 경계
+
+taint와 admission annotation은 과학 evidence 자체가 아니다. operation은 `chill.dacs.io/serving-operation-measurement.v1alpha2`, sequence는 `serving-operation-sequence.v1alpha1`이다. legacy scalar DOM과 신규 burst DOM은 별도 prefix와 schema다. 상세는 [저장 계약](measurement-api.md#저장-계약)을 따른다.

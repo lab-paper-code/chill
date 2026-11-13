@@ -1,356 +1,129 @@
 # Scheduler 설정과 관측 API
 
-설정·권한·조회 및 관측 기록 처리 계약이다. 2026-10-25 배분 작업 개정은 구현 목표이며,
-아래 코드 위치는 변경할 현재 구현을 가리킨다(`SCH-36`, `SCH-39`, `SCH-41`).
-판단·제어 불변식은 [스케줄러 구현 설계](scheduler-implementation.md), 실행기와 측정의
-해석은 [실행기와 측정 계약](scheduler-runtime-measurement.md#시간과-수명)을 따른다.
-외부 Workload HTTP·인증·리소스 변경은 [Workload 관리](workload-management.md#5-api와-권한),
-기본 JSONL/S3 보존·집계 모집단은 [관측과 보존](workload-management.md#11-관측과-보존)이 원본이다.
+설정 수락, 권한과 조회 projection의 계약이다. 판단과 전환은 [구현 설계](scheduler-implementation.md), 수치 모델은 [계획기](analytic-planner.md), 요청 접수는 [워크로드 관리](workload-management.md), 저장과 원시 조회는 [관측 설계](observability-split.md)를 따른다.
 
 ## 구성 입력
 
-HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
-`--serving-scheduler-config-key=scheduler.json`으로 Serving namespace의 구성을 읽는다.
-빈 ConfigMap 이름은 기존 Workload 관리와 추론만 실행한다. scheduler는
-`settings.autonomousWorkloads`의 Workload만 자동제어하고, 나머지 Workload는 동일 관측과 판단 기록 아래 현재 배치를 유지한다.
+`--serving-scheduler-configmap`과 `--serving-scheduler-config-key`로 Serving namespace의 구성을 읽는다. 기본 key는 `scheduler.json`이다. ConfigMap 이름이 비면 자동제어 없이 관리와 추론을 실행한다.
 
-| 구성 필드 | 의미와 실제 근거 |
+설정은 strict JSON이다. CPU 상한, quota나 mask 같은 미선언 입력은 거절한다. duration 필드는 정수 ns이며 생략과 명시0을 필드별 검증 규칙으로 구분한다.
+
+| 필드 | 의미 |
 |---|---|
-| `settings` | ns duration의 observationWindowNanos/controlIntervalNanos/comparisonPeriodNanos, 인스턴스 상한 maxReplicas/maxInstances, 메모리 안전 servingMemoryBytes, controls(placement/resources/replicas/routing/batching/power/membership). CPU 할당 상한 maxCPUs를 포함해 미선언 입력은 strict 거절한다. |
-| `settings.servingMemoryBytes` | 서빙 Pod의 memory request와 limit은 profile의 측정 최대 메모리에 이 값을 더한 것이다. 절반(최대 64 MiB)이 firstfloor `maxQueueBytes`이고, Go의 기본 GOGC 100에서 heap이 대기 요청 바이트의 두 배까지 자라는 것을 나머지 절반이 받는다. 2 미만이면 서빙 준비가 `PreparationUnavailable`이다. sample의 128 MiB는 rasp5 q1(측정 198 MiB)이 포아송 40 req/s에서 대기 요청으로 OOMKilled된 m4 r2 사건의 대기열 64 MiB를 담는다 |
-| `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `29`는 m4 r3 포아송 40 req/s 포화에서 잰 m(종단 경과 − (`nativeElapsedMS` − ingress))의 p95 29.2 ms다([용량표 계획기 5장](analytic-planner.md#5-완료-여유-규칙)). E1의 p99 138.23 ms는 요청마다 걸리던 TokenReview 지연이 대부분이었고, 인증 결과 재사용(c829518)과 authz singleflight가 그 지연을 없앴다 |
-| `settings.capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests` | 필수. 요청률 검사의 창 길이(> 0), 요청률마다 재생하는 창 수(≥ 1), 충족 창 수(1 이상 창 수 이하), 창의 최소 요청 수(≥ 1). 현재 결정은 선택안·유지안의 nominal rate만 검사하며 전체 요청률 격자를 계산하지 않는다 |
-| `settings.planSearchWorkers` | 필수 정수≥1. 판단시작부터 controlIntervalNanos 절반 예산, 종료시 capacity.search.budgetCut. sample3은 실행 병렬성 선택이지 CPU 소유/보장이 아니다. 과거 서버6CPU 실측 수치는 당시 조건의 기록이며 새 공유 실행에서 경합·Tick·gateway 성능을 다시 측정한다. |
-| `settings.planSearchStrategy` | 전체 자동제어 Workload에 공통인 공식 scheduler 선택. `v1` 또는 `v2`(기본)만 수락하며, 선택값을 settings 응답과 decision에 그대로 기록한다. 비교용 동시 실행이나 별도 비교 기록은 없다([패키지·탐색 경계](analytic-planner.md)). |
-| `settings.sloPriorityStrategy`, `settings.workloadPriority` | 기존 settings PUT·merge patch·ConfigMap이 함께 받는 정책. 전략은 `excess`(생략 기본값) 또는 `workload`이고 순위는 Workload UID 배열(생략 시 빈 배열)이다. 첫 UID가 최우선이며 미지정 활성 UID는 마지막 동순위 그룹에서 초과 기준을 따른다. 빈 순위는 초과 기준과 같다. 빈 UID와 중복 UID, 명시한 빈/미지원 전략은 설정 경계에서 거절한다. 저장된 미등록·삭제 UID는 보존하고 평가 시 무시하며 현재 Workload·profile·catalog 조회로 검증하지 않는다. 기존 두 필드 없는 구성도 그대로 수락한다. |
-| `settings.autonomousWorkloads` | 자동제어할 Workload UID 목록. decision은 Workload마다 `workloads[]`에 `Disabled`, `MeasurementEvidenceMissing`, `Controlled` 상태와 사유를 남긴다([워크로드별 자동제어](workload-pools.md#31-워크로드별-자동제어)) |
-| `settings.excludedNodes` | 계획에서 뺀 Node 이름 목록(이름마다 하나, 빈 이름 불가, sample은 빈 목록). 그 Node는 측정 POOL Node처럼 그대로 두며 판단의 노드 계획과 snapshot 노드 사유에 `ExcludedNode`로 남는다([용량표 계획기 14장](analytic-planner.md#14-구현-규칙)). Dashboard 운영 설정의 "계획에서 뺀 장비"가 고친다 |
-| `reserved` | Node별 memoryBytes와 필요한 GPUUUID 예약만 가진다. CPU IDs/count/quota/threads를 받지 않는다. GPU inventory는 해당 Node의 verified profile UUID이며 inventory 밖 예약은 PlacementInventoryMissing이다. Pod/Node/Workload/action 소유 예약과 물리 반환 proof는 이 설정과 별개로 유지한다. |
-| `staticRouting` | 읽기 전용 projection: Workload UID → physical instance ID → nonnegative int32 weight. UID의 빈 map은 명시적 배분 해제이고 UID 부재는 Pod 기본 표시를 따르는 상태다. 선언 변경은 `route`/`unroute`/`release` 작업만 받으며 설정 PUT은 이 필드를 받지 않는다(`SCH-39`) |
-| `staticRoutingValidatedAt` | 읽기 전용 선언 변경 출처. 설정 PUT이 아니라 배분 작업의 검증 시각과 연결한다. 실제 성공 여부는 작업의 ACK와 `actual.routing` readback으로 확인한다 |
-| wall meter | 구성 필드가 없다. Profiler facts `metricSources`(schema `v1alpha6`)의 항목마다 `{id: meterID, node: 그 이름의 live Node와 UID, scope: node-exclusive-wall, source: 전력 부분}`을 만든다. Node가 없는 항목은 meter가 없다 |
-| 전력 요청 | 별도 구성 필드 없음. DeviceClass의 비Fixed actuator·Profiler actuation policy가 요청 가능 모드를 정한다. 동작 시작에 Node mode label과 requested-at을 같은 optimistic patch로 쓰고 policy 기한 내 success·독립readback을 확인한다([현행 Node 전력 계약](../platform/node-agent.md#3-노드-전력모드-node-label과-generation)). NodeActuation은 제거됨 |
-| `powerObservation` | sampler의 `Interval/Duration/RequestTimeout`와 적분 coverage의 `MaximumBoundaryDistance/MinimumCoverage/MaximumGap`. 기록 필요량은 observer가 도출하며 별도 기록 개수 설정은 없다 |
-| `dispatchOccupancy` | Explicit rolling B aggregation plus native DOM creation policy. The sole fallback is scalar `settings.defaultDispatchOccupancyNanos`, shared by every batch. The entire block is required for DOM POST; absent/invalid/unaccepted configuration returns `503 OccupancyPolicyUnavailable`. See [configuration and derivation](configuration-hardcoding.md#native-dispatch-occupancy-policy-w2). |
+| `settings.observationWindowNanos` | 부하와 피드백 관측창, 양수 |
+| `settings.controlIntervalNanos` | 제어 주기, 양수 |
+| `settings.comparisonPeriodNanos` | 모든 후보와 keep의 고정 에너지 기간, 양수 |
+| `settings.maxReplicas`, `maxInstances` | UID별 복제와 전체 실물 및 미생성 예약 상한 |
+| `settings.servingMemoryBytes` | frozen memory envelope 안 queue headroom의 상한 |
+| `settings.completionMarginMS` | 필수 유한 비음수. 유효 TOTAL/POST 표본이 없을 때 초기값 |
+| `settings.capacityWindowNanos`, `capacityWindows` | 양수 검사창과 rate당 창 수 |
+| `settings.capacityPassingWindows`, `capacityMinimumRequests` | 필요한 충족창 수와 최소 요청 수. 충족창은 전체 이하 |
+| `settings.capacityGridSteps`, `capacityBisectionWidth`, `capacityTailSamples` | 명시 offline 전체 rate 탐색 설정. grid와 tail은 양수, width는 유한 `(0,1]` |
+| `settings.controls` | placement, resources, replicas, routing, batching, power, membership |
+| `settings.autonomousWorkloads` | 현재 UID 중 자동제어 대상. PUT에서 미등록 UID 제거 |
+| `settings.excludedNodes` | 중복과 빈 이름 없는 Node 이름. keep과 실물 점유 유지 |
+| `settings.minimumDemand` | UID별 유한 비음수 req/s. 생략0, 미등록 UID도 보존 |
+| `settings.sloPriorityStrategy` | `excess` 기본 또는 `workload` |
+| `settings.workloadPriority` | 중복과 빈 값 없는 UID 순서. 미등록 UID 보존, 평가에서는 무시 |
+| `settings.transitionReserveFraction`, `scaleDownHeadroomFraction` | 전환 실제 예비와 최종 하강 수요 여유 |
+| `settings.defaultDispatchOccupancyNanos` | 모든 batch의 명시 scalar fallback |
+| `settings.defaultOperationCost` | prepare/remove/power의 명시 seconds와 whole-wall joules 추정 |
+| `settings.defaultIdlePower` | 명시 nodeWatts와 perInstanceWatts 추정 |
+| `settings.planSearchStrategy` | `v1` 또는 기본 `v2` |
+| `settings.planSearchWorkers` | 양수. 이웃 탐색과 정밀 funnel의 병렬 수 |
+| `settings.planSearchEvaluations` | 증분 탐색 평가 수, 기본500000 |
+| `settings.planExactFinalists`, `planPolishActive` | 기본16과8. active0은 전체 변형 |
+| `settings.planPostFilterFinalists`, `planPricedStart` | 기본false와true |
+| `reserved` | Node별 memoryBytes와 GPUUUID 예약. CPU 예약 없음 |
+| `powerObservation` | sampler와 적분 coverage 설정 |
+| `dispatchOccupancy` | rolling 집계와 native DOM 생성 정책 |
+| `staticRouting`, `staticRoutingValidatedAt` | 읽기 전용 배분 선언과 검증 시각 |
 
-profile 후보, profile ID별 `PrepareSpec`, 원자 동작 비용과 power mode 비용은 조건마다 최신
-완료 측정에서 도출하며 구성 필드가 없다. 측정 기록의 store key는
-`serving/operation-measurements/<Node UID>/<operation ID>.json`이다. firstfloor
-`Policy.fixedBatchSize`의 0 또는 생략은 dynamic이고 양수 B는 비교 기준 strict fixed-size
-serving이며 worker metadata ack로 확인한다([strict fixed-size baseline](scheduler-runtime-measurement.md#strict-fixed-size-baseline-serving)).
+sample의 observation60초, control10초, comparison600초, margin29ms는 설정 예시다. 운영 불변 상수가 아니다. 전체 sample은 [scheduler 구성](../../../config/samples/serving-scheduler.json)을 따른다.
 
-배분 작업은 ConfigMap 선언 저장과 물리 적용을 구분하여 기록한다. 기존 typed
-`ApplyTarget`의 준비·소유권·native policy ACK와 전체 physical readback을 재사용하고,
-다른 UID의 선언과 실제 분배는 보존한다. 실패 또는 부분 적용은 성공으로 표시하지 않으며
-작업의 actor, reason, 전후 선언, `sourceConfigRV`, 시작·완료 시각과 실제 상태를 남긴다.
-수동 단일 UID와 자동제어 UID 목록 모두 `ApplySchedulerWorkloadsTarget`을 사용한다.
-선언의 전후 기록은 바깥 map만 분리하며 기존 내부 weight map은 수정하지 않는다.
-설정 refresh는 이 선언을 실행하거나 실패한 수동 작업을 자동 재시도하지 않는다.
-작업 입력은 HTTP와 CLI의 공유 typed strict decoder에서 중첩 `node`의 미선언 필드까지
-거절한다. 종류별 허용 필드 검사는 값이 `null`이나 0이어도 필드의 존재를 기준으로 적용한다(`SCH-39`).
-Dashboard의 `scheduler-settings.tsx`도 설정 PUT에서 두 읽기 전용 필드를 제외한다.
-`hack/evaluation`의 evaluation/demo/D2 설정 쓰기도 같은 입력 계약을 따른다. `reason`은
-operations POST 전용이며 settings PUT에는 넣지 않는다. 설정 PUT의 미선언
-`reason` 필드는 strict decode에서 400 `InvalidBody`(`field=body`)로 거절한다.
-배분 편집은 바뀐 UID만 route/unroute/release POST로 순서대로 보내고,
-실패/부분 적용에서 멈추며 서버의 실제 `OperationResult`를 보여준다. UI 재시도나 되돌림은 없다.
+Serving Pod의 request와 limit은 frozen Actor memory를 유지한다. queue bytes는 `min(min(servingMemoryBytes,memoryLimit−measuredPeak)/2,native.MaxFrameBytes)`다. 양의 headroom이 필요하며 peak에 servingMemoryBytes를 더해 Pod limit을 새로 만들지 않는다.
 
-## API와 compact projection
+profile 후보와 PrepareSpec, 비용과 wall meter는 검증 측정과 metricSources에서 도출한다. 수동 profile 목록이나 별도 NodeActuation 선언은 없다. 전력 요청 가능성은 DeviceClass와 actuation policy, 실제 readback을 따른다.
 
-설정 GET의 `settings`, `staticRouting`, `powerObservation`과 `ETag`는 한 번의
-ConfigMap 응답에서 읽는다. refresh/Tick의 service 제어 잠금을 기다리지 않고 HTTP
-응답도 이 잠금 없이 쓴다. `meters`는 별도로 수락된 구성의 projection이므로 저장된
-ConfigMap과 같은 적용 시점을 보장하지 않는다. 설정 PUT의 ETag 낙관적 동시성 계약은 유지한다.
+## 설정 수락과 동시성
 
-설정 PUT은 최초 full refresh가 수락한 typed catalog·준비 명세에 새 정책을 동기 적용한다.
-`200`의 `appliedAt`은 이 정책 수락 시각이며 다음 control Tick이 새 설정을 소비한다.
-`servingMemoryBytes`의 큐 cap은 수락된 측정으로 다시 계산하고 completion margin·occupancy
-fallback도 함께 갱신한다. desired ConfigMap의 미수락 reserved·전력·static routing·catalog는
-적용하지 않으며 meter worker를 재시작하거나 profile bundle을 업로드하지 않는다.
-원격 준비는 별도 직렬 잠금으로 실행하고 게시 직전에 ConfigMap resourceVersion을 재확인한다.
-실패·취소·구버전 준비는 기존 수락 상태를 보존한다. 같은 qualified profile ID의 immutable
-bundle만 재사용하며 full preparation의 Node UID·현재 image·큐 검사는 유지한다.
-기존 profile ticker가 catalog와 외부 ConfigMap 수정을 `profileInterval`마다 수락한다.
-control loop는 원격 refresh 완료와 독립적으로 수락된 입력을 사용한다. 최초 수락 전 PUT은 거절한다.
-catalog의 `configVersion`은 마지막 full acceptance를 유지하며 PUT의 새 ETag로 바꾸지 않는다.
+GET의 settings와 staticRouting, powerObservation과 ETag는 같은 ConfigMap 응답이다. meters와 accepted catalog는 별도 수락 revision이다. 이들이 GET의 desired와 같은 적용 시점을 보장하지 않는다.
 
-| API | 동작 |
+PUT은 `SchedulerSettings`만 받는다. `staticRouting`과 `staticRoutingValidatedAt`은 null을 포함한 존재 자체를 `400 InvalidBody`로 거절한다. 미선언 reason도 거절한다. 배분은 [operations](scheduler-operations.md#수동-원자-실행)의 route/unroute/release만 쓴다.
+
+`If-Match` 누락은428, stale과 충돌은409다. 검증 Principal의 groups/extra로 정확한 namespace/name ConfigMap update SAR를 추가 확인한다. 사용자 포괄 권한이나 owner SA 권한으로 대신하지 않는다.
+
+최초 완전 refresh 뒤 PUT은 수락된 typed catalog와 preparation에 정책을 동기 적용한다. 200의 appliedAt은 정책 수락이며 다음 Tick이 소비한다. queue cap, 초기 margin과 occupancy fallback도 갱신한다. 미수락 desired의 reserved나 전력, static routing을 실행하지 않는다.
+
+원격 preparation은 별도 직렬 잠금에서 만들고 게시 직전 ConfigMap RV를 확인한다. 실패, 취소와 구버전 준비는 기존 accepted를 보존한다. full acceptance의 configVersion은 PUT ETag로 바꾸지 않는다. profile ticker는 이후 외부 변경을 수락하고 control loop는 accepted 입력으로 계속한다.
+
+설정 intent는 effect 전에 기록하고 완료 기록 실패로 이미 수락한 effect를 rollback하지 않는다. 응답 본문과 RV는 mutation lock 안에서 동결하고 느린 HTTP write는 lock 밖에서 수행한다.
+
+## API
+
+| 경로 | 의미 |
 |---|---|
-| `GET /api/v1/scheduler` | settings와 실제 snapshot, decision, actions, results, `costIssues` |
-| `GET /api/v1/scheduler/settings`, `/state` | 운영 설정 또는 현재 판단·적용 상태. settings 응답의 `staticRouting`은 읽기 전용 선언이다 |
-| `PUT /api/v1/scheduler` 또는 `/settings` | `SchedulerSettings`만 검증·저장·적용한다. `staticRouting`/`staticRoutingValidatedAt` 입력은 400 `InvalidBody`와 해당 `field`로 거절하며, 생략된 기존 선언은 변경하지 않는다. 설정 변경 기록은 actor, before/after, validatedAt, affected, appliedAt을 유지한다 |
-| `POST /api/v1/scheduler/operations` | 기존 prepare/remove와 명시적 route/unroute/release/reset. 본문·ACK·실패·멱등 계약은 [수동 원자 실행](scheduler-operations.md#수동-원자-실행-계약)을 따른다 |
-| `GET /api/v1/scheduler/profiles` | 읽기 전용. `configVersion`, 완료 측정에서 도출한 조건별 최신 `profiles`, profile ID별 `preparations`, profile을 만들지 못한 측정의 `insufficiencies[]`(CatalogIssue `source/code/reason`) |
-| `GET /api/v1/scheduler/capacity` | 읽기 전용. 현재 결정의 선택안 요청률 검사 근거 `{"tests":[]}`. 각 항목은 `instanceID`, scalar `CapacityInput` 형태의 `input`(Workload UID·SLO·Node·전력모드·profile ID·할당·최대 배치·검사 설정), 별도 TOTAL·POST 입력 `pathFeedback`, `kappaHat`, `tests[]`를 제공한다. raw profile이나 option 본문을 복제하지 않는다. 내부 검사 항목은 `inputKey`, 검사 요청률 `rate`(req/s), 창 판정 `met`, 합격 창 수 `passed`, 창당 요청 수 `requests`다. κ̂는 검사한 요청률 중 최대 통과값이며, 통과 근거 없는 0은 물리 처리량 0을 뜻하지 않는다. 검사하지 않은 요청률을 보간하지 않는다. 현재 근거가 없으면 성공 응답의 빈 배열이며, 전체 격자·용량표 행·Pending/Built 상태는 제공하지 않는다. 인증·인가 경계는 기존과 같다 |
-| `GET /api/v1/pools` | 실제 CHILL 인스턴스의 owner와 binding에서 도출한 `workloads[]`(`workload`, 활성 POOL `nodes`, `instances`), 측정 taint Node의 `measurement[]`, `available[]`와 `other[]`(`node/ready/powerMode/reasons`), `observedAt`, observer `issues` |
-| `GET /api/v1/pools/{uid}` | 해당 Workload의 활성 POOL 하나. 없으면 `PoolNotFound` |
-| `GET /api/v1/observations/load` | 사건 구간의 모든 UID 유입·접수·배정·완료율과 instance assignment 집계 |
-| `GET /api/v1/observations/scheduler` | 고정 `from/to`, bounded `limit`, `cursor/nextCursor`의 원시 기록. 기본/`order=asc`는 append 순, `order=desc`는 사건 `at` 최신순(동률은 append offset 내림차순). `filter`와 `uid`는 아래 조회 계약을 따른다 |
-| `GET /api/v1/observations/power` | 같은 고정 `from/to`의 raw 표본을 Node당 한 번 적분한 전체·활성 POOL J/평균 W; 누락은 null과 사유 |
-| `POST /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements` | Intent-only `{name?,node,batchEnergyOptimization,workload,batch}`. Server resolves and freezes the configured protocol; `202 {request:"Accepted",task:<native DOM>}`. `?dryRun=All` returns `200 {request:"NOT_SUBMITTED",task:<same frozen DOM>}` without a native create or physical effects. |
-| `DELETE /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements/{name}?uid=<uid>` | Requires `If-Match` resourceVersion, refuses Measuring or active load Jobs/Pods, removes only producer-owned unshared DOM evidence before native deletion. Returns 202 and cleanup receipt; a partial cleanup/deletion failure is not rollback. |
+| `GET /api/v1/scheduler` | settings, snapshot, decision, actions, results와 costIssues |
+| `GET /api/v1/scheduler/settings` | 운영 설정과 읽기 전용 배분 선언 |
+| `GET /api/v1/scheduler/state` | 현재 판단과 적용 상태 |
+| `PUT /api/v1/scheduler` 또는 `/api/v1/scheduler/settings` | 설정 검증, 저장과 정책 수락 |
+| `POST /api/v1/scheduler/operations` | prepare/remove/route/unroute/release/reset |
+| `GET /api/v1/scheduler/profiles` | Query 소유 profile, preparation과 insufficiency |
+| `GET /api/v1/scheduler/capacity` | 현재 선택안의 tested-rate 근거, 없으면 `{"tests":[]}` |
+| `GET /api/v1/scheduler/catalog-read` | Query owner 전용 private reporting와 accepted snapshot |
+| `GET /api/v1/namespaces/{namespace}/measurement-coverage` | Query 소유 현재 측정 커버리지 |
+| `GET /api/v1/pools[/{uid}]` | 실제 소속. 없는 활성 풀은 PoolNotFound |
+| `GET /api/v1/observations/load` | 모든 UID 유입과 실행 rate, assignment |
+| `GET /api/v1/observations/scheduler` | 판단과 제어 원시 이력 |
+| `GET /api/v1/observations/power` | raw 적분과 coverage, 전체와 활성 풀 |
+| `GET /api/v1/observations/occupancy` | bounded fresh native-pair 진단 |
 
-DOM mutations reuse BEO TokenReview/path SAR, named create/delete resource SAR
-(`edge.dacs.io/v1alpha1`, `dispatchoccupancymeasurements`), namespace allow-list,
-strict bounded JSON, durable intent → native effect → durable completion →
-committed live publication. POST's create SAR is collection-scoped (empty name);
-DELETE's SAR is the URL name. Query collection/item reads retain list/get SAR.
-Coverage additionally requires list DOM permission. Live acceptance means
-admission, never completed or scientifically accepted measurement evidence.
+측정 생성과 삭제, profile 재사용, 공개 Query 응답은 [측정 API](measurement-api.md)에 둔다. ChillServer는 공개 Query route의 인증과 proxy를 소유하며 Query는 Serving 패키지를 import하지 않는다.
 
-The dashboard caller's `<fullname>-serving-manager` requires **both** rendered
-RBAC layers in every allowed profile namespace:
+capacity의 항목은 instanceID, scalar input, 별도 pathFeedback, kappaHat와 tests다. test는 inputKey, rate, met, passed와 requests를 제공한다. κ̂는 검사한 rate 중 최대 통과 근거다. 빈 tests나0은 처리량0의 보증이 아니며 미검사 rate를 보간하지 않는다. endpoint는 과거 decision 상세를 대신하지 않는다.
 
-| Request | ClusterRole nonResource SAR | Namespaced Role resource SAR (`edge.dacs.io`) |
-|---|---|---|
-| BEO / DOM POST | `post /chill/api/v1/namespaces/<ns>/{batch-energy-optimizations,dispatch-occupancy-measurements}` | `create {batchenergyoptimizations,dispatchoccupancymeasurements}`, collection-scoped |
-| BEO / DOM DELETE | `delete /chill/api/v1/namespaces/<ns>/{batch-energy-optimizations,dispatch-occupancy-measurements}/*` | named `delete` of the corresponding native resource |
+## 현재 상태와 catalog
 
-Their native `get/list` grants remain for reads. DELETE itself requires only
-the caller's named delete SAR; native UID/RV lookup and evidence cleanup use
-ChillServer's owner identity, not an extra caller get SAR. Owner-SA permissions
-do not replace caller permissions. BEO preflight retains its exact POST grant.
-`hack/serving-entrypoint-rbac-test.sh` checks both mutation SARs for BEO and DOM
-against rendered serving-manager roles in default, Profiler, and additional-
-namespace profiles.
+decision은 keep, target, Workload 제어 상태, capacity, search와 제외 이유를 연결한다. capacity는 period, route 시각, UID별 rate와 queued, profile routingRate와 retainedRoutingRate, 정수 weights, 선택 tests와 keepTests를 제공한다.
 
-The private `/api/v1/scheduler/catalog-read` adds **`accepted.occupancy[]`**:
-`{node:{name,uid},powerMode,model,runtimeImage,executionPath,profileID,batch,
-evidence:{store,key,size}}`. Each entry joins the exact occupancy row selected by
-the existing `CostEvidence.refreshOccupancy` to its cached immutable record, not
-a second selection rule or CR-status inference. Only a complete controller-
-accepted snapshot publishes it. Current reporting's `occupancy` is null and
-never filled from a prior accepted snapshot. A failed cost refresh retains the
-earlier `accepted` snapshot with its own revision; Query must compare current
-profile identity and evidence before claiming adoption.
+`ComparedNodes`는 keep 외 적격 계획이 있는 Node다. expectedJoules도 이 집합을 합한다. 전체 풀 실측과 구분한다. `missingCells`는 decision 전체에서 중복 제거하며 energyComparison과 undecidableCandidates는 정수 `missingCellRefs`로 참조한다. keep 충족 상태의 비-exact 새 operation 후보는 `replaySkipped:true`일 수 있다.
 
-This join is reporting, never admission: source object key + Node + model +
-power mode + Accepted verdict identify the cached record. Runtime image,
-per-request value and current profile ID equality are not validity gates.
-An absent current profile still projects the retained row; executionPath uses
-the record when available, otherwise its profile, otherwise the empty string.
-Unprojectable selections do not fail Refresh or initialization:
-`accepted.occupancySkipped[]` (omitted when empty) records
-`{source,node,model,powerMode,profileID,reason}`, with reason
-`noMatchingEvidence` or `ambiguousEvidence(n)`. Other selected rows survive.
+snapshot reservations는 owner, nodes, workloadUIDs, podUIDs, instances, frozen target과 reason이다. target은 실물이 아니다. 실행 종료 뒤에도 unknown 원격 effect는 예약에 남는다. State는 현재 장부에서 예약을 재투영하되 snapshot.at과 과거 decision을 새 관측으로 표시하지 않는다.
 
-Refresh keeps profile/trial/state/runtime incompatibilities as per-source
-`InvalidEvidence`, reuse comparisons as `ReuseChecks`/`ProfileReuseRejected`,
-and incompatible preparations as `PreparationUnavailable`. Operation/power/
-occupancy record validation remains `CostIssue`.
-Required API/store reads, preparation bundle persistence and cancellation abort
-adoption while preserving the accepted controller configuration and source signature.
-A missing measured Node or incompatible declaration remains a profile diagnostic.
-Other fatal boundaries are required configuration decode/validation, physical
-meter binding, power-observation resource admission, immutable reuse-check
-persistence and invalid internal JSON values.
+인스턴스 `routable`은 현재 새 요청의 양수 분배와 Ready, Stopped, owner와 모델 적격성으로 계산한다. accepted 요청의 drain용 보존 route는 새 요청 가능으로 세지 않는다. Pod Ready와 새 정책 ACK도 별도다.
 
-The fixed abort was `kube/catalog_read.go`'s `matches != 1` return, reached from
-`application/scheduler_service.go:211`; missing current profiles no longer
-erase otherwise identified evidence. No other exact-match failure aborts these
-refresh entrypoints. The earlier boundary audit recorded these source locations:
+private catalog-read의 reporting과 accepted는 독립 revision이다. source 일부 실패나 preparation 문제는 per-source issue이며 필수 read와 설정, meter, 저장 실패는 adoption을 중단한다. 이전 accepted가 남아도 현재 reporting에 수락을 추정하지 않는다.
 
-| File under `internal/serving/` | Lines | Kept fatal, reason |
-|---|---|---|
-| `application/scheduler_service.go` | 173, 177, 181 | required scheduler/facts reads and configuration decode/validation |
-| `application/scheduler_service.go` | 189 | power-observation memory/capacity safety |
-| `application/scheduler_service.go` | 199, 209 | propagate catalog/cost source failures below |
-| `application/scheduler_service.go` | 202 | immutable reuse-check persistence/encoding/bound failure (`application/profiles.go:87,90,96`) |
-| `application/scheduler_service.go` | 233, 264 | reuse-check JSON integrity; controller settings/physical meter binding integrity |
-| `kube/catalog.go` | 126, 169, 192 | campaign listing IO; cancellation; frozen-condition encoding integrity (`catalog.go:269`) |
-| `kube/cost.go` | 108, 112, 153, 156 | operation, sequence, power-CR and occupancy source listings (`cost.go:195,243,287`) |
+`accepted.dispatchOccupancy`가 실제 선택된 d와 provenance의 권위다. qualified measured, legacy dom, default 순이다. `accepted.occupancyEstimates`는 완료 rolling reduction의 signed 진단이고 `accepted.occupancy`는 legacy evidence identity다. 이 셋을 같은 채택 표로 합치지 않는다.
 
-Existing nonfatal equality paths remain per-source diagnostics:
-`kube/catalog.go:166–172,346–428` (trial/runtime/CPU/state bindings),
-`kube/catalog_reuse.go:72–98,141–190` (source ID and reuse comparisons),
-`kube/cost.go:124–138,215–226,256–263,382–419` (record/state/cost bindings),
-and incompatible preparations in `application/profiles.go`.
+## 제어 시간과 탐색 진단
 
-Preparation completeness also guards the unchanged-source fast path: a partial
-accepted preparation map is retried by the existing refresh loop. Unchanged
-preparations and diagnostics preserve the accepted controller and rolling
-occupancy snapshot, including an in-flight scan. A changed result is published,
-so recovery can prepare the same profile without changing its request, evidence
-or configuration identity. QPS and refresh time limits are unchanged.
+round는 호출 시간과 오류, Tick은 판단 처분을 소유한다. `control.tickAt`으로 round와 Tick을, `control.decisionAt`으로 Tick과 decision을 연결한다. 전체 분모에는 오류, Keep, fallback과 중도 반환을 포함한다.
 
-`accepted.dispatchOccupancy[]` is the same immutable list supplied to scheduler
-capture and decisions, with one exact Node/profile/path/batch entry and
-`perRequestNanos` plus `provenance:{source,pairs,window?,updatedAt,value}`.
-Selection priority is qualified rolling B (`source:"measured"`), retained accepted
-DOM (`"dom"`), then configured per-request fallback (`"default"`). No missing-d
-gate blocks capacity calculation. The scalar fallback applies to every batch.
-The first read can show DOM/default while aggregation runs;
-request-count limit, scan failure or timeout cannot promote partial facts.
-`accepted.occupancyEstimates[]` retains the current completed rolling reduction's
-signed diagnostics, including cells below minimumPairs; operational negative
-medians alone are clamped to zero. Both additive fields belong only to the same
-accepted configuration/profile snapshot, never current reporting. The legacy
-`accepted.occupancy[]` evidence identities remain unchanged and distinct.
+| scope 또는 필드 | 측정 경계 |
+|---|---|
+| round | application lock 대기, Admit, Tick, unlock. admitError와 tick error 분리 |
+| tick | controller lock 대기, capture, evaluate, publish, record, launch와 unlock |
+| continue | capture와 publish, launch. 신규 평가 처분 없음 |
+| capture | window, refreshList, sourceProbe, rest |
+| window | barrier, scan, cache, decode, join, sort의 배타 하위 시간 |
+| refreshList | Node, Pod, source resource, DeviceClass와 Service List |
+| decision evaluationTiming | preparation, search, payback, rates와 projection의 배타 단계 |
 
+완료 행 자신의 제출, 비동기 영속 완료와 물리 전환 완료는 그 행 elapsed 밖이다. round의 Tick 시간에는 Tick 완료 행 제출이 포함된다. 하위 시간과 backend 부분집합을 전체에 중복 가산하지 않으며 병렬 worker CPU 시간의 합으로 해석하지 않는다.
 
-New native DOM bursts retain their measurement interval in `estimate.window`
-and signed ns/request diagnostics in `estimate.statistics`; their verdict is
-`Observed` or `Insufficient`, not scheduler admission. They publish neither a
-scalar operational d nor idle-fraction evidence. The legacy `Accepted` evidence
-prefix and scheduler reader remain unchanged; burst diagnostics do not replace
-that accepted population. CreationTimestamp is not a measurement start time.
-Query owns public progress and per-cell coverage projection.
+`search.startedAt/finishedAt`은 실제 탐색 UTC 경계, durationNanos는 같은 구간 monotonic이다. examined는 node-plan 수다. 이웃 탐색 evaluated는 초기 keep/empty를 뺀 sweep 평가 수이며 증분 전략의 exactEvaluated는 keep seed와 replay 생략도 포함한 정밀 판정 수다.
 
-`/scheduler/state`의 `costIssues[]`(CostIssue `source/code/reason`)는 비용에 기여하지 못한
-측정이다. decision은 `keep`, `target`, `workloads[]`, `capacity`, snapshot Node의 `measurement`와 `reasons`,
-`search.examined`, `search.comparedNodes`를 담는다. `capacity`는 비교 기간, 고른 route 시각, Workload별
-`rate`·`queued`, 상대 프로파일 요청률 `routingRate`·`retainedRoutingRate`, 인스턴스별 상대 가중치 `weights`,
-선택안 `tests`·유지안 `keepTests`와 노드 계획·제외 사유다. 두 검사 배열의 항목은 위 capacity endpoint와 같은
-`SchedulerFeedbackRate`다. 라우팅 값은 SLO 처리 용량 보장이 아니며 κ̂로 실행을 거절하지 않는다.
-현재 capacity endpoint는 현재 결정의 선택안 검사만 평탄화하므로 과거 결정 상세의 대체 자료로 쓰지 않는다.
-`capacity.undecidableCandidates[]`는 공유 `missingCellRefs`로 필요한 측정을 가리킨다. 현재 keep의 SLO가 충족되고 keep에 없는 비-exact operation 셀이 있으면 요청 replay 없이 에너지 판단 불가로 제외하며, 해당 행에 `replaySkipped: true`를 남긴다. 재생한 후보에서는 이 필드를 생략한다.
-탐색이 실행된 decision의 `capacity.search.startedAt`/`finishedAt`은 실제 탐색 진입/결과 반환에서 직접 캡처한 UTC 시각이며 `durationNanos`는 같은 구간의 monotonic 경과다. `search.examined`는 만든 node-plan 수다. `capacity.search.evaluated`는 v1에서 초기 keep/empty 원점을 제외한 sweep의 plan-set 후보 평가 수이며, v2에서는 keep seed·finalist·fallback의 정확 판정 수다. v2의 `exactEvaluated`도 이 seed와 replay 생략 판정을 포함하므로 native replay 횟수와 구분한다. 관측 이력 full/compact와 replay decoder는 이 구간을 그대로 전달한다. 탐색하지 않은 decision에 구간을 합성하지 않으며 summary는 기존대로 search를 생략한다. 기존 v3 저장 계약·관측 prefix/version은 유지하고, 과거 원시 기록을 수정하거나 시각을 소급 생성하지 않는다.
-`GET /api/v1/scheduler/state?view=summary`와 `/api/v1/observations/scheduler?view=summary`의 decision도 원본 순서의 `workloads[]`(`uid`, `state`, 선택적 `reason`)를 그대로 제공한다.
-이력 summary는 catalog를 복원하지 않고 저장된 decision의 `workloads[]`를 직접 읽으므로 과거 상태·사유와 순서를 유지한다.
+증분 surrogateElapsedNanos와 exactElapsedNanos는 search 안의 부분집합이다. 후자는 keep seed, 정밀 funnel과 fallback, backend 후처리를 포함한다. nominal-rate 진단 취소 뒤에도 이미 수행한 시간은 남는다. 탐색하지 않은 기록이나 과거 raw에 시간을 합성하지 않는다.
 
-제어 호출 완료는 기존 scheduler stream의 작은 `control` 행으로 보존한다. 원본 archive와
-`GET /api/v1/observations/scheduler`의 full/compact/summary에서 읽으며,
-`control.tickAt`으로 round와 Tick을 연결하고, Tick 행의 `control.decisionAt = decision.at`으로
-평가 결과를 연결한다. `scope:"round"`는 application lock
-대기→Admit→Tick→unlock의 `startedAt`/`finishedAt`/`elapsedNanos`와
-`lockWaitNanos`, `admitNanos`, `tickNanos`를 제공한다. `tickNanos`는 실제 Tick 호출 반환까지이며
-Tick 완료 행의 동기 제출도 포함한다. `admitError`와 Tick의 `error`는 별도다.
+## 이력과 compact 조회
 
-`scope:"tick"`은 controller lock 대기부터 unlock까지의 경과와
-`captureNanos`, `evaluateNanos`, `publishNanos`, `recordNanos`, `launchNanos`를 제공한다.
-capture 하위 구간은 `windowNanos`(LoadWindow), `refreshListNanos`(Node·Pod·source resource·DeviceClass·Service List),
-`sourceProbeNanos`(병렬 native probe와 후속 UID 확인의 `probes.Wait`), `restNanos`(잠금 대기·관측 정리·snapshot 조립·reconcile 등 나머지)다.
-window는 `windowBarrierNanos`(기존 finite writer prefix 대기),
-`windowScanNanos`(capture·coverage source 준비와 cold/suffix 파일 scan),
-`windowCacheNanos`(decoded cache 순회), `windowDecodeNanos`(cold/suffix JSON decode),
-`windowJoinNanos`(요청·native·client 결합과 집계), `windowSortNanos`(결과 정렬)로 나눈다.
-이 구간은 서로 겹치지 않으며 합은 `windowNanos` 이하이다.
-요청·client의 최근 minute segment는 committed append 경계별 불변 메모리 window로 재사용한다.
-writer가 새 행을 반영하고, cold/restart·이전 범위 조회는 기존 log에서 복원한다.
-캐시는 rolling window 길이(+minute 정렬) 이내의 요청·client 행을 보유하며 고정 행 수 상한은 없다.
-오래된 조회는 rolling 보유 기간을 늘리지 않으며, 범위 밖 segment는 캐시에 넣지 않는다.
-범위 안의 큰 window도 decoded 행을 재사용한다. Cold/suffix scan·decode 시간은
-각각 `windowScanNanos`·`windowDecodeNanos`에 나타난다.
-저장된 observations.v1alpha6 계약의 `windowBudgetFallbacks` 필드는 항상 0으로 유지한다.
-Cold read·JSON decode·callback은 cache lock 밖에서 수행한다. 완성된 연속 prefix만 게시하며,
-writer append 시작 offset과 cache 끝 offset이 다르면 다음 log read가 빠진 suffix를 복원한다.
-coverage와 요청 stream gap 판정은 기존 log metadata를 그대로 사용한다.
-rolling occupancy는 같은 decoded 요청 행으로 기존 선택 pass와 집계 pass를 수행한다.
-Occupancy cold miss는 선택 상한에서 즉시 멈추는 streaming 경로를 사용하고 부분 cache를 게시하지 않는다.
-native delivery tail, 선택 marker·상한, open row, late supplement와 분위수 모집단은 유지한다.
-namespace-only observer의 전체 POOL Pod List도 `refreshListNanos`에 포함한다.
-List 종류별 `refreshNodesNanos`, `refreshPodsNanos`, `refreshResourcesNanos`(SourceResources의 Deployment·ReplicaSet 조회),
-`refreshDeviceClassesNanos`, `refreshServicesNanos`도 기록하며 합은 `refreshListNanos` 이하이다.
-namespace-only observer의 전체 POOL Pod List 시간은 `refreshPodsNanos`에도 더한다.
-`scope:"continue"`는 같은 capture 하위 구간과 lock 대기·publish·launch 시간을 기록한다.
-Continue는 기존 owner만 진행하며 평가 처분은 기록하지 않는다.
-완료 전 route가 없는 전이는 request/client window를 읽지 않는다(`windowNanos=0`).
-route 전에는 Ready-expansion 판단에 쓸 최신 수요를 읽으며, cleanup도 최신 물리 관측·ACK 검사를 유지한다.
-하위 구간은 중복 없이 `captureNanos`로 합산하며 오류·중도 반환도 실제 실행한 구간만 기록한다.
-capture는 refresh의 Node·DeviceClass List를 재사용한다. Node의 `observedAt`은 해당 List 요청 직전의 보수적인 하한이다.
-`recordNanos`는 기존 OnDecision callback 전체이며 실패한 callback 시간도 포함한다.
-완료 행 자체의 제출은 해당 행의 종료 경계 뒤이므로 `elapsedNanos`에 포함하지 않는다.
-모든 scope는 오류·중도 반환을 기록하며 `phase`는 마지막 진입 단계다. Tick은 Keep도 기록한다.
-평가 처분 `status`·`targetID`·`fallback`은 Tick 완료 행만 제공한다.
-round는 호출 식별·전체 시간·오류만 소유하며 Tick의 빈 오류 반환값에서 처분을 추정하지 않는다.
-결정 callback이 기록 후 취소해도 Tick 행의 처분과 `decisionAt`은 유지한다.
-평가 전 종료 또는 평가 오류로 decision을 생성하지 못하면 처분은 비어 있다.
-이 행은 큰 decision/snapshot을 다시 저장하지 않으며, 제출 오류는 서버 로그로 남긴다.
-비동기 파일 영속 완료·물리 동작 완료는 이 시간에 포함하지 않는다.
+scheduler history는 `[from,to)` 사건시각을 필터한다. 기본과 asc는 append 순, desc는 사건시각 내림차순과 append offset 내림차순이다. `filter`는 all, decision-action, decision, action, snapshot, settings, power, other다. uid는 명시 Workload 관계만 선택한다.
 
-`decision.evaluationElapsedNanos`는 기존 capture+EvaluateScheduler 구간을 유지한다.
-`decision.evaluationTiming`과 Tick 완료 행의 `control.evaluation`은
-`preparationNanos`(정규화·검증·입력 및 노드 계획 준비), `searchNanos`,
-`paybackNanos`(search 뒤 payback/minimum-gain), `ratesNanos`(nominal-rate 진단),
-`projectionNanos`(최종 decision 구성)의 배타적 단계를 제공한다.
-탐색 전에 반환하면 preparation만 측정한다. v2 finalist postfilter는 search 안에 남는다.
-`capacity.search.surrogateElapsedNanos`는 v2 Candidates 호출만,
-`exactElapsedNanos`는 keep seeding·exact funnel·exact fallback·backend postfilter를 포함한다.
-두 scalar는 `decision.evaluationTiming`과 Tick 완료 행의 `control.evaluation`에도 보존한다.
-Search 뒤 nominal-rate 진단이 취소돼 빈 decision을 반환해도 이미 수행한 backend 시간은 남는다.
-이 scalar는 search의 부분집합이며 다섯 배타적 단계에 다시 합산하지 않는다.
-v1은 backend 전체 exact search의 wall time이며 병렬 worker CPU 시간의 합이 아니다.
-두 backend 시간은 scalar table/problem 준비와 native 진단 변환을 제외하므로
-합을 전체 search/Tick 시간으로 해석하지 않는다. 과거 행에 새 시간값을 소급 생성하지 않는다.
-`comparedNodes`는 keep 밖의 적격 노드 계획이 있는 Node이며 `expectedJoules`는 이 Node만 합산한다.
-관측 기록의 인스턴스는 profile을 `profileID`로, Workload를 `workloadUID` 하나로 보존한다.
+미지원 값과 중복 key, 빈 UID와 잘못된 문자열은 InvalidQuery다. cursor는 같은 query의 선택 결과 offset이며 `event.offset`은 필터 전 원본 offset이다. 원본 상세는 filter/order/uid 없이 limit1과 원본 offset으로 읽는다.
 
-인스턴스 출력은 `routable: {"<workloadUID>": true|false}`를 Ready와 별도로 제공한다
-(`SCH-36`). snapshot·POOL의 같은 physical instance는 같은 서버 계산값을 쓴다.
-현재 Workload별 새 요청 유효 분배에 포함되고 가중치가 양수일 때만 참이며,
-Ready/Stopped·소유권·모델 적격성은 기존 runtime 분배 필터를 따른다. 과거 접수 요청의
-drain용 보존 route는 새 요청의 routable로 세지 않는다.
+full은 원본이다. compact는 profile dictionary와 ref를 제공하고 현재 상태의 options와 arrivals를 null, 정확한 count로 투영한다. raw duration 벡터를 생략해도 durationSampleCount를 유지한다. history dictionary는 원본 profile을 유지하며 compact plan의 생략은 원본 기록을 바꾸지 않는다.
 
-현재 `/scheduler`, `/scheduler/state`와 scheduler history는 선택적으로
-`view=compact`를 받는다. 생략하면 기존 full raw 응답이며 저장 관측 기록, archive와
-page/cursor 선택은 바꾸지 않는다. 다른 `view` 값은 `InvalidQuery`로 거절한다.
-compact 응답은 같은 envelope에 `profiles` dictionary를 추가하고, snapshot의 instances/options/
-reservations[].target 및 decision의 keep/target 안 인스턴스의 `profile`만
-`{"$ref":"응답 내 key"}`로 치환한다. nil은 그대로다. history dictionary에는 원본 profile 객체를
-보존한다. profile ID가 key의 기준이며 같은 ID의 다른 보존 값은 별도 suffix key로 남긴다.
-같은 값의 반복만 공유하며 equality는 admission/validation gate가 아니다. 소비자는 이
-필드만 dictionary로 해석한 뒤 기존 화면 계약을 사용한다. SLO, 정책, 설정,
-물리/선택 인스턴스 신원, 사유, 출처와 action acknowledgement 원본은 바꾸지 않는다.
-응답 한 page의 얕은 DTO만 만들며 별도 history scan, raw evidence 복사, decoded cache
-또는 fallback reader는 없다.
+summary의 workloads는 저장 원본 순서와 reason을 유지하고 catalog 재복원으로 바꾸지 않는다. decoded request/client cache는 설정 rolling span을 보유하며 cold scan은 cache lock 밖이다. 과거 문서의 고정 행 수 상한을 적용하지 않는다.
 
-현재 `/scheduler?view=compact`, `/scheduler/state?view=compact`는 dashboard에서 읽지 않는
-`snapshot.options`와 `snapshot.arrivals`를 `null`로 투영하고, 정확한 `optionCount`와
-`arrivalCount`를 제공한다. options에만 필요한 profile은 dictionary에 등록하지 않는다.
-현재 instance·decision·reservation이 참조하는 profile은 기존대로 조건·출처·에너지·메모리와
-`batches.durationSampleCount`를 유지하며 raw `durationNanos` 모집단만 보내지 않는다.
-다섯 소비자(`resources`, `scheduler-settings`, `scheduler-transitions`, `scheduler`, `service-hub`)의
-노드·instance·routing·workload·outstanding 요청, decision·SLO·capacity·baseline·cost·action·result는 보존한다.
-무쿼리 full 응답과 history compact, 원본 상태·저장 journal/catalog 계약은 바꾸지 않는다.
-회귀는 500개 option·2,000개 arrival로 8 MiB를 넘는 원본을 두 current envelope 모두 **2 MB 미만**으로
-직렬화하고, 정확한 count·실사용 profile·요청·후보 및 history/원본 보존을 함께 검사한다.
-
-snapshot의 `reservations`는 `{owner,nodes,workloadUIDs,podUIDs,instances,target?,reason?}` 목록이다.
-`target`은 owner의 frozen target이며 실제 상태는 snapshot의 instances/routing에서 읽는다.
-전역 `inProgressTarget` 필드는 제거되었고 호환 alias는 없다. 실행 종료 뒤에도 원격 효과가
-미확인이면 예약이 남는다. 예약 밖 판단은 계속되므로 예약 존재 자체를 전역 대기로 해석하지 않는다.
-`State()` 응답은 actions와 같은 mutex 아래 현재 소유권으로 reservations를 재투영한다.
-완료 후 반환된 예약은 다음 reconcile 전에도 사라지며, 실제 소유 중인 running/partial 예약은 유지한다.
-이때 snapshot.at, 관측값과 decision은 마지막 reconcile 값 그대로다.
-
-power 조회는 controller가 수락한 ChillServer configuration 하나를 atomic하게 읽어 meter
-구성을 고정한다. 긴 refresh·control Tick의 scheduler mutex를 기다리지 않으며, 새 설정은
-controller 적용 성공 뒤에만 게시한다. 거절된 refresh는 이전 설정을 그대로 유지한다.
-
-라이브 채널 메시지 계약 v1은 [Dashboard 설계 §3](../dashboard/README.md#3-라이브-api-계약-v1)을 따른다.
-라이브 Hub는 `Publish`의 Delta와 명시적 Removed로만 상태 변경을 발행하며 전체 교체 API는 없다. Dashboard tooltip은 dot indicator와 기본 label/value만 표시한다.
-
-## 관측 조회의 일관성·모집단·제외 규칙
-
-현행 시간 세그먼트·catalog·로컬/archive 선택과 요청 reducer는 [관측 분리 §3~6](observability-split.md)이 권위다. 폐기된 window metadata/census/prefix reader 계약은 적용하지 않는다.
-- writer mutex에서 stream fd·길이·시간을 고정하고 읽기/decode/집계는 밖에서 한다. 새 append·rotation을 섞지 않으며 실제 손상/read 오류는 health·incomplete로 남긴다. 별도 저장index·decoded cache는 없다.
-- scheduler page는 `[from,to)` 사건시각을 선택하고 append wall time을 사건시간 필터로 쓰지 않는다. query 생략 시 기존 append 순 bounded read와 다음 일치 1건 lookahead를 유지한다. `order=desc`는 사건시각 내림차순이며 동률은 원본 append offset 내림차순이다(`asc`는 기존 append 순).
-- `filter`는 기존 Dashboard 종류 규약 `all`, `decision-action`, `decision`, `action`, `snapshot`, `settings`, `power`, `other`를 받으며 생략은 `all`과 같다. 복합 행의 종류 우선순위는 decision → snapshot → settings → action → power → other이다. `decision-action`은 전력 표본 등 나머지 종류를 제외한다.
-- `uid=<workloadUID>`는 decision의 workload·후보, snapshot의 Workload 참조·인스턴스·routing, settings의 제어 UID·전후 static routing, action.expected의 명시 workloadUID/workloadUIDs 또는 prepare owner·인스턴스·target 관계로 선택한다. action의 명시 UID 범위가 있으면 target의 다른 Workload로 확대하지 않는다. Node UID·임의 문자열은 Workload 관계가 아니다.
-- 새 query는 HTTP 경계에서 한 번 검증한다. `order`/`filter`의 미지원·빈 값, 중복 키, 빈 UID·256 bytes 초과·공백/제어문자·경로 구분자는 400 `InvalidQuery`이다. cursor는 선택·정렬된 결과의 offset이므로 페이지마다 같은 from/to/order/filter/uid를 보낸다. 새 query를 사용한 응답의 각 `event.offset`은 필터·정렬 이전 `[from,to)` append offset이다. 상세 ref는 이를 보존하고 원본 조회에는 `limit=1&cursor=<offset>`만 사용한다(order/filter/uid 생략). 저장 JSONL·catalog·archive에는 offset이나 query를 추가하지 않는다.
-- Dashboard 사건 표시는 라벨·숫자·상태어와 짧은 근거 칩을 사용하고, 설명은 용어 도움말 한 곳으로 모은다.
-- power의 짧은 collector verdict는 조회 coverage의 대체물이 아니다. 실제 sample·원 gap·경계거리·meter/scope/source identity·보관 완전성·조회구간을 검사한다. 경계 밖은 기록된 boundary 거리 안에서만 보조하고 오래된 이전 표본으로 정상 닫힌 구간을 무효화하지 않는다. source 실패·OOM/재시작 공백은 결손이다.
-- source kind/endpoint/metric/labels가 다른 과거 기록을 현재 meter 실측으로 재해석하지 않는다. 누락정의·역순시각·알수없는 원시를 빈성공으로 바꾸거나 legacy window reader로 fallback하지 않는다.
-- JSON projection은 `encoding/json.Unmarshal` 한 경계에서 건너뛴 subtree까지 구문검사하고 실제 float/정수/duration/시각과 선택원문은 표준decoder 의미를 보존한다. 별도 구문 검증 pass는 없다. Scanner는 stream별 buffer를 재사용하고 newline 경계를 유지한다.
-
-## 설정 권한과 적용 기록
-
-설정 변경은 검증된 identity의 groups/extra까지 사용하여 해당 namespace/name의
-`configmaps/update` Resource SAR를 추가 확인한다. decision과 snapshot을 관측 기록에
-보존한 뒤 physical action을 시작하고, 실제 시작·완료·실패와 부분 상태를 별도로 기록한다.
-
-## 구현 위치와 검사
-
-- `internal/serving/httpapi/scheduler.go:Handler.scheduler`, `persistSchedulerSettings`:
-  설정 PUT의 선언 입력을 거절하고 읽기 전용 GET은 유지한다.
-- `internal/serving/kube/static_routing.go:manualRoutingOperationLocked`,
-  `persistManualConfiguration`, `executeManualRouting`: 명시적 작업의 선언·ACK/readback을 실행한다.
-- `internal/serving/runtime_scheduler.go:Runtime.routeWeightLocked`,
-  `applySchedulerTargetLocked`, `schedulerRoutingLocked`: UID의 빈 선언과 부재를 구별한다.
-  release는 전역 `DisableSchedulerRouting`이 아니라 해당 UID만 제어 map에서 제거하고
-  Pod 기본 표시를 다시 읽어 rebuild/dispatch한다. 현재 ApplyTarget이 덮어쓰는
-  `instance.Routing`과 기본 표시를 혼동하지 않도록 현재 Pod annotation을 원본으로 삼는다.
-- 검사: 설정 PUT 선언 입력 거절·다른 UID 보존, route/unroute/release 각각의 ACK와
-  전체 readback, Ready지만 unroute인 인스턴스의 routable=false,
-  release 뒤 새 측정 인스턴스의 routable=true와 실제 요청 처리를 확인한다
-  (`SCH-36`, `SCH-39`, `SCH-AC-32`).
+power 조회는 accepted meter 구성을 atomic하게 고정하고 긴 scheduler 잠금을 기다리지 않는다. 실제 source, raw gap과 coverage가 판정 근거다. 오래된 source를 현재 meter로 대입하거나 결손을0으로 표시하지 않는다.
