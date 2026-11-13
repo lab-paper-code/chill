@@ -295,16 +295,21 @@ export function useNow(): number {
   return React.useSyncExternalStore(subscribeClock, () => clockNow, () => 0)
 }
 
-/** Relative time ("3분 전") with the absolute KST time in a tooltip, or absolute KST with mode="absolute". */
-export function TimeText({ at, mode = "relative", seconds = true, className }: { at: string | number | Date | null | undefined; mode?: "relative" | "absolute"; seconds?: boolean; className?: string }) {
+/**
+ * KST time in one of three forms (`mode`): "list" (default, tables and lists) "MM-DD HH:mm:ss";
+ * "detail" (detail fields) "YYYY-MM-DD HH:mm:ss"; "relative" ("3분 전", 1 s clock) only where recency
+ * is the point (tiles, feeds), with the detail form in a tooltip. `seconds={false}` drops the seconds.
+ * "absolute" is the old name of "detail".
+ */
+export function TimeText({ at, mode = "list", seconds = true, className }: { at: string | number | Date | null | undefined; mode?: "list" | "detail" | "relative" | "absolute"; seconds?: boolean; className?: string }) {
   const now = useNow()
-  const absolute = formatKst(at, seconds)
-  if (absolute === DASH) return <Missing />
+  const detail = formatKst(at, seconds)
+  if (detail === DASH) return <Missing />
   const iso = new Date(typeof at === "string" ? Date.parse(at) : at instanceof Date ? at.getTime() : Number(at)).toISOString()
-  if (mode === "absolute") return <time dateTime={iso} className={cn("tabular-nums", className)}>{absolute}</time>
+  if (mode !== "relative") return <time dateTime={iso} className={cn("tabular-nums", className)}>{mode === "list" ? detail.slice(5) : detail}</time>
   return (
-    <Hint text={`${absolute} KST`} focusable>
-      <time dateTime={iso} className={cn("tabular-nums", className)}>{now ? formatRelative(at, now) : absolute}</time>
+    <Hint text={`${detail} KST`} focusable>
+      <time dateTime={iso} className={cn("tabular-nums", className)}>{now ? formatRelative(at, now) : detail}</time>
     </Hint>
   )
 }

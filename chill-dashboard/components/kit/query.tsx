@@ -4,6 +4,7 @@ import * as React from "react"
 import { Inbox, Lock, RefreshCw, ServerCog, TriangleAlert } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ApiError, isCoverageWarming } from "@/lib/client-transport"
+import { errorCodeLabel } from "@/lib/status-labels"
 import Button from "@/components/custom/blocks/Button"
 import { SkeletonBlock } from "@/components/custom/blocks/SkeletonBlock"
 import { LoaderBlock } from "@/components/custom/blocks/LoaderBlock"
@@ -28,6 +29,7 @@ export type BoundaryQuery<T> = {
   refetch: () => unknown
 }
 
+// Only for answers without a typed server code: then the HTTP status is all there is to say.
 const httpLabels: Record<number, string> = { 404: "찾을 수 없음", 409: "충돌", 429: "요청 과다", 502: "서버 연결 실패", 503: "서버 사용 불가", 504: "응답 지연" }
 
 function Skeleton({ kind }: { kind: "table" | "tiles" | "block" }) {
@@ -67,12 +69,16 @@ export function QueryBoundary<T>({ query, children, skeleton = "table", isEmpty,
     body = <EmptyState icon={Lock} title={error.status === 401 ? "접속 정보 확인 필요" : "권한 없음"} />
   } else if (error && data === undefined) {
     const code = (error.data as { code?: unknown } | null)?.code
-    const detail = typeof code === "string" ? code : error.status ? `HTTP ${error.status}` : "응답 없음"
+    const typed = typeof code === "string" ? code : undefined
+    // No answer at all is a connection failure; an answer is a failed read, named by its code when known.
+    const title = error.status === 0 ? "연결 실패" : "조회 실패"
+    const reason = error.status === 0 ? undefined : typed ? errorCodeLabel(typed) : httpLabels[error.status]
+    const detail = [typed, error.status ? `HTTP ${error.status}` : "응답 없음", error.requestID && `요청 ${error.requestID}`].filter(Boolean).join(", ")
     body = (
       <div role="alert" className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-border bg-card py-10 text-center">
         <span className="grid size-10 place-items-center rounded-full bg-fail-soft text-fail"><TriangleAlert className="size-5" aria-hidden="true" /></span>
-        <p className="text-sm font-medium">조회 실패{httpLabels[error.status] ? `: ${httpLabels[error.status]}` : ""}</p>
-        <p className="font-mono text-xs text-muted-foreground">{detail}</p>
+        <p className="text-sm font-medium">{title}{reason ? `: ${reason}` : ""}</p>
+        <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">자세히</summary><p className="mt-1 font-mono">{detail}</p></details>
         <Button size="sm" variant="outline" iconLeft={<RefreshCw />} onClick={() => void query.refetch()}>다시 시도</Button>
       </div>
     )

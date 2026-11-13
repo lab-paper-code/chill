@@ -6,6 +6,12 @@ import { usePathname, useRouter } from "next/navigation"
 import { Boxes, ChevronsLeft, Cpu, FlaskConical, Gauge, Layers, LayoutDashboard, Pause, Play, RefreshCw, Ruler, Search, Snowflake, Workflow } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SessionProvider, useChillQuery, useInitializing, useSession, useSignOut } from "@/lib/client"
+import { useCoverageInventory } from "@/hooks/use-measurement-data"
+import { parseSchedulerJSON } from "@/lib/scheduler"
+import { runHref, type Run } from "@/lib/experiments-run"
+import { decodeExperimentPage, type ExperimentPage } from "@/lib/experiments"
+import { resultName } from "@/lib/experiments-results"
+import type { LoadScenario } from "@/lib/evaluation-author"
 import { LiveProvider, useLive } from "@/lib/use-live"
 import { activeNav, breadcrumbs, navigation, sectionTabs, type NavItem } from "@/lib/routes"
 import type { WorkloadSummary, ModelList } from "@/lib/domain"
@@ -16,7 +22,7 @@ import { useSidebar } from "@/components/custom/blocks/sidebar-context"
 import { TooltipProvider } from "@/components/custom/blocks/TooltipBlock"
 import { ToastProvider } from "@/components/custom/blocks/ToastBlock"
 import { BreadcrumbBlock } from "@/components/custom/blocks/BreadcrumbBlock"
-import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/custom/blocks/CommandBlock"
+import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, useCommandSearch } from "@/components/custom/blocks/CommandBlock"
 import { Kbd } from "@/components/custom/blocks/KbdBlock"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/custom/blocks/PopoverBlock"
 import { ThemeSwitcher } from "@/components/custom/blocks/ThemeSwitcherBlock"
@@ -94,9 +100,11 @@ function AppSidebar() {
 
 function TopBar() {
   const pathname = usePathname()
-  const title = usePageTitle(pathname)
-  // The last crumb of a detail, new or edit page is a name, an id or "새로 만들기"; the PageHeader title says it better.
-  const crumbs = breadcrumbs(pathname).map((crumb, index, all) => index === all.length - 1 && crumb.titled && title ? { ...crumb, label: title } : crumb)
+  const page = usePageTitle(pathname)
+  // The last crumb of a detail or new page is a name, an id or "새로 만들기": the PageHeader title says it better.
+  // An edit page keeps "수정" (the crumb before it already names the object). Parents the URL lacks go before the last crumb.
+  const crumbs = breadcrumbs(pathname).map((crumb, index, all) => index === all.length - 1 && crumb.titled && page && !crumb.href.endsWith("/edit") ? { ...crumb, label: page.title } : crumb)
+  if (page?.parents.length && crumbs.length) crumbs.splice(crumbs.length - 1, 0, ...page.parents.filter(parent => !crumbs.some(crumb => crumb.href === parent.href)))
   const [paletteOpen, setPaletteOpen] = React.useState(false)
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -141,10 +149,11 @@ function Activity() {
   const running = active.data?.items.length ?? 0
   const measuring = state.snapshot?.nodes.filter(node => node.measurement).length ?? 0
   const chip = "inline-flex h-8 items-center gap-1.5 rounded-md bg-primary-soft px-2 text-xs font-medium text-primary hover:bg-primary/15"
+  // Phones keep the icon and the count; the name stays in the accessible label.
   return (
-    <div className="hidden items-center gap-1.5 md:flex">
-      {running > 0 && <Link href="/experiments/runs" className={chip}><FlaskConical className="size-3.5" aria-hidden="true" />실험 실행 중 <span className="tabular-nums">{running}</span></Link>}
-      {measuring > 0 && <Link href="/devices" className={chip}><Gauge className="size-3.5" aria-hidden="true" />측정 중 장치 <span className="tabular-nums">{measuring}</span></Link>}
+    <div className="flex items-center gap-1.5">
+      {running > 0 && <Link href="/experiments/runs" aria-label={`실험 실행 중 ${running}`} className={chip}><FlaskConical className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">실험 실행 중</span> <span className="tabular-nums">{running}</span></Link>}
+      {measuring > 0 && <Link href="/devices" aria-label={`측정 중 장치 ${measuring}`} className={chip}><Gauge className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">측정 중 장치</span> <span className="tabular-nums">{measuring}</span></Link>}
     </div>
   )
 }
@@ -181,7 +190,7 @@ function LiveStatus() {
         <h2 className="mb-3 text-sm font-semibold">실시간 상태</h2>
         <Fields columns={1} items={[
           { label: "연결", value: <StatusDot status={state} showLabel /> },
-          { label: "마지막 수신", value: live.lastReceivedAt ? <TimeText at={live.lastReceivedAt} /> : null, reason: "수신 없음" },
+          { label: "마지막 수신", value: live.lastReceivedAt ? <TimeText at={live.lastReceivedAt} mode="relative" /> : null, reason: "수신 없음" },
           { label: "서버 연결", value: <StatusDot status={serverState} showLabel /> },
           { label: "서버 초기화", value: <StatusDot status={initializing ? { label: "초기화 중", tone: "progress" } : { label: "완료", tone: "ok" }} showLabel /> },
         ]} />
@@ -220,36 +229,74 @@ function AccountMenu() {
 /** Ctrl K: jump to a page, service, device or model by name. */
 function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const router = useRouter()
-  const workloads = useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary", { enabled: open })
-  const models = useChillQuery<ModelList>("v1/models", { enabled: open })
-  const { state } = useLive()
   const go = (href: string) => { onOpenChange(false); router.push(href) }
-  const pages = [
-    ...navigation.flatMap(group => group.items.map(item => ({ href: item.href, label: item.label }))),
-    ...Object.values(sectionTabs).flatMap(tabs => tabs.map(tab => ({ href: tab.href, label: `${navigation.flatMap(group => group.items).find(item => tab.href.startsWith(`${item.href}/`))?.label ?? ""} ${tab.label}` }))),
+  return (
+    <CommandDialog open={open} onOpenChange={onOpenChange} aria-label="검색">
+      <CommandInput placeholder="화면, 서비스, 장치, 카탈로그, 실험" aria-label="검색어" />
+      <CommandList className="max-h-[min(60dvh,420px)]">
+        <CommandEmpty>결과 없음</CommandEmpty>
+        <PaletteGroups go={go} />
+      </CommandList>
+    </CommandDialog>
+  )
+}
+
+type Named = { metadata: { name: string; uid: string } }
+type PaletteEntry = { key: string; label: string; kind?: string; href: string }
+
+/**
+ * Mounted only while the palette is open, so its lists load lazily. Every list uses the path and decoder
+ * of the screen that shows it, so the cache is shared and nothing is fetched twice.
+ */
+function PaletteGroups({ go }: { go: (href: string) => void }) {
+  const search = useCommandSearch().trim()
+  const workloads = useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary")
+  const inventory = useCoverageInventory()
+  const models = useChillQuery<ModelList>("v1/models")
+  const preprocessors = useChillQuery<{ items: Named[] }>("v1/preprocessors")
+  const datasets = useChillQuery<{ items: Named[] }>("v1/datasets")
+  const runs = useChillQuery<{ items: Run[] }>("v1/evaluations", { decoder: parseSchedulerJSON })
+  const scenarios = useChillQuery<{ items: LoadScenario[] }>("v1/evaluations/load-scenarios", { decoder: parseSchedulerJSON })
+  // The newest 50 published results (the server's page limit).
+  const results = useChillQuery<ExperimentPage>("v1/experiments?limit=50&offset=0", { decoder: decodeExperimentPage })
+  const areaOf = (href: string) => navigation.flatMap(group => group.items).find(item => href.startsWith(`${item.href}/`))?.label ?? ""
+  const catalog = (kind: string, word: string, items: Named[] | undefined): PaletteEntry[] =>
+    (items ?? []).map(item => ({ key: `${kind}-${item.metadata.uid}`, label: item.metadata.name, kind: word, href: `/catalog/${kind}/${encodeURIComponent(item.metadata.name)}?uid=${encodeURIComponent(item.metadata.uid)}` }))
+  const groups: { heading: string; entries: PaletteEntry[] }[] = [
+    { heading: "화면", entries: [
+      ...navigation.flatMap(group => group.items.map(item => ({ key: item.href, label: item.label, href: item.href }))),
+      ...Object.values(sectionTabs).flatMap(tabs => tabs.map(tab => ({ key: tab.href, label: `${areaOf(tab.href)} ${tab.label}`, href: tab.href }))),
+    ] },
+    { heading: "서비스", entries: (Array.isArray(workloads.data) ? workloads.data : []).map(row => ({ key: row.desired.metadata.uid, label: row.desired.metadata.name, href: `/services/${encodeURIComponent(row.desired.metadata.name)}?uid=${encodeURIComponent(row.desired.metadata.uid)}` })) },
+    // Inventory, not the live stream: excluded and idle devices are found too.
+    { heading: "장치", entries: [...new Map((inventory.data?.classes ?? []).flatMap(cls => cls.nodes.map(node => [node.uid, { key: node.uid, label: node.name, href: `/devices/${encodeURIComponent(node.name)}` }]))).values()] },
+    { heading: "실험", entries: [
+      ...(runs.data?.items ?? []).map(run => ({ key: run.uid, label: run.name, kind: "실행", href: runHref(run) })),
+      ...(results.data?.items ?? []).map(result => ({ key: result.id, label: resultName(result), kind: "결과", href: `/experiments/results/${encodeURIComponent(result.id)}` })),
+      ...(scenarios.data?.items ?? []).map(scenario => ({ key: scenario.uid, label: scenario.name, kind: "부하 시나리오", href: `/experiments/scenarios/${encodeURIComponent(scenario.name)}` })),
+    ] },
+    { heading: "카탈로그", entries: [...catalog("models", "모델", models.data?.items), ...catalog("preprocessors", "전처리기", preprocessors.data?.items), ...catalog("datasets", "데이터셋", datasets.data?.items)] },
   ]
   const item = "gap-2 px-2.5 py-2"
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} aria-label="검색">
-      <CommandInput placeholder="화면, 서비스, 장치, 모델" aria-label="검색어" />
-      <CommandList className="max-h-[min(60dvh,420px)]">
-        <CommandEmpty>결과 없음</CommandEmpty>
-        <CommandGroup heading="화면">
-          {pages.map(page => <CommandItem key={page.href} className={item} value={page.label} onSelect={() => go(page.href)}>{page.label}</CommandItem>)}
+    <>
+      {groups.map(group => (
+        <CommandGroup key={group.heading} heading={group.heading}>
+          {group.entries.map(entry => (
+            <CommandItem key={entry.key} className={item} value={`${group.heading} ${entry.kind ?? ""} ${entry.label}`} onSelect={() => go(entry.href)}>
+              <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+              {entry.kind && <span className="shrink-0 text-xs text-muted-foreground">{entry.kind}</span>}
+            </CommandItem>
+          ))}
         </CommandGroup>
-        <CommandGroup heading="서비스">
-          {(Array.isArray(workloads.data) ? workloads.data : []).map(row => {
-            const meta = row.desired.metadata
-            return <CommandItem key={meta.uid} className={item} value={`서비스 ${meta.name}`} onSelect={() => go(`/services/${encodeURIComponent(meta.name)}?uid=${encodeURIComponent(meta.uid)}`)}>{meta.name}</CommandItem>
-          })}
+      ))}
+      {search && (
+        <CommandGroup heading="측정">
+          <CommandItem className={item} value={`측정 요청 ${search}`} onSelect={() => go(`/measurements/requests?${new URLSearchParams({ q: search })}`)}>
+            <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />측정 요청에서 &lsquo;{search}&rsquo; 찾기
+          </CommandItem>
         </CommandGroup>
-        <CommandGroup heading="장치">
-          {(state.snapshot?.nodes ?? []).map(node => <CommandItem key={node.uid} className={item} value={`장치 ${node.name}`} onSelect={() => go(`/devices/${encodeURIComponent(node.name)}`)}>{node.name}</CommandItem>)}
-        </CommandGroup>
-        <CommandGroup heading="모델">
-          {(models.data?.items ?? []).map(model => <CommandItem key={model.metadata.uid} className={item} value={`모델 ${model.metadata.name}`} onSelect={() => go(`/catalog/models/${encodeURIComponent(model.metadata.name)}?uid=${encodeURIComponent(model.metadata.uid)}`)}>{model.metadata.name}</CommandItem>)}
-        </CommandGroup>
-      </CommandList>
-    </CommandDialog>
+      )}
+    </>
   )
 }

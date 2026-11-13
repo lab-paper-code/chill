@@ -50,19 +50,21 @@ export function MoreMenu({ items, triggerClassName, ...aria }: { items: MoreActi
   )
 }
 
-// The current page title, read by the top bar to label the last breadcrumb (a name or an id in the URL).
-let pageTitle: { path: string; title: string } | null = null
+export type ParentCrumb = { label: string; href: string }
+type PageEntry = { path: string; title: string; parents: ParentCrumb[] }
+// The current page title (and parents the URL does not show), read by the top bar for the breadcrumbs.
+let pageTitle: PageEntry | null = null
 const titleListeners = new Set<() => void>()
 const setPageTitle = (next: typeof pageTitle) => { pageTitle = next; titleListeners.forEach(notify => notify()) }
 const subscribeTitle = (listener: () => void) => { titleListeners.add(listener); return () => { titleListeners.delete(listener) } }
-/** Title registered by the PageHeader of `pathname`, if it is mounted. */
-export function usePageTitle(pathname: string): string | undefined {
+/** Title and parent crumbs registered by the PageHeader of `pathname`, if it is mounted. */
+export function usePageTitle(pathname: string): PageEntry | undefined {
   const current = React.useSyncExternalStore(subscribeTitle, () => pageTitle, () => null)
-  return current?.path === pathname ? current.title : undefined
+  return current?.path === pathname ? current : undefined
 }
 
 /** Page title, status badges, one primary action, and the overflow menu for the rest. Long titles wrap. */
-export function PageHeader({ title, status, badges, actions, more }: {
+export function PageHeader({ title, status, badges, actions, more, parents }: {
   title: string
   status?: StatusInfo
   /** Extra badges after the status, e.g. admission. */
@@ -71,13 +73,16 @@ export function PageHeader({ title, status, badges, actions, more }: {
   actions?: React.ReactNode
   /** Overflow menu items. Destructive items are listed last, after a separator. */
   more?: MoreAction[]
+  /** Breadcrumbs the URL does not hold, inserted before the page's own crumb (e.g. a run's parent request). */
+  parents?: ParentCrumb[]
 }) {
   const pathname = usePathname()
+  const parentsKey = JSON.stringify(parents ?? [])
   React.useEffect(() => {
-    const entry = { path: pathname, title }
+    const entry = { path: pathname, title, parents: JSON.parse(parentsKey) as ParentCrumb[] }
     setPageTitle(entry)
     return () => { if (pageTitle === entry) setPageTitle(null) }
-  }, [pathname, title])
+  }, [pathname, title, parentsKey])
   return (
     <header className="flex flex-wrap items-start gap-x-3 gap-y-2">
       <div className="flex min-h-9 min-w-0 flex-[1_1_16rem] flex-wrap items-center gap-x-3 gap-y-1.5">

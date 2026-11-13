@@ -141,7 +141,10 @@ export function resolveTimeRange(value: TimeRangeValue, now: number): { from: nu
 const toKstInput = (ms: number) => formatKst(ms, false).replace(" ", "T")
 const fromKstInput = (text: string) => Date.parse(`${text}:00+09:00`)
 
-/** Recent-window presets allowed by the screen plus "직접 선택" (KST, bounded by `maxSpanMs`). */
+/**
+ * Recent-window presets allowed by the screen plus one "직접 선택" control (KST, bounded by `maxSpanMs`);
+ * once a custom window is set, that control shows it ("11-14 09:00–10:30") and no preset is pressed.
+ */
 export function TimeRange({ value, onChange, presets, custom }: {
   value: TimeRangeValue
   onChange: (value: TimeRangeValue) => void
@@ -149,12 +152,10 @@ export function TimeRange({ value, onChange, presets, custom }: {
   /** Enables "직접 선택"; the span is limited to `maxSpanMs`. */
   custom?: { maxSpanMs: number }
 }) {
-  const current = "preset" in value ? value.preset : "custom"
   return (
-    <div className="flex items-center gap-2">
-      <ToggleGroup type="single" variant="segmented" size="sm" aria-label="구간" value={current} onValueChange={next => { if (next && next !== "custom") onChange({ preset: next as TimePreset }) }}>
+    <div className="flex flex-wrap items-center gap-2">
+      <ToggleGroup type="single" variant="segmented" size="sm" aria-label="구간" value={"preset" in value ? value.preset : ""} onValueChange={next => { if (next) onChange({ preset: next as TimePreset }) }}>
         {presets.map(preset => <ToggleGroupItem key={preset} value={preset}>{TIME_PRESETS[preset].label}</ToggleGroupItem>)}
-        {custom && <ToggleGroupItem value="custom" disabled={current !== "custom"} className={current !== "custom" ? "hidden" : undefined}>직접</ToggleGroupItem>}
       </ToggleGroup>
       {custom && <CustomRange value={value} onChange={onChange} maxSpanMs={custom.maxSpanMs} />}
     </div>
@@ -163,6 +164,12 @@ export function TimeRange({ value, onChange, presets, custom }: {
 
 function CustomRange({ value, onChange, maxSpanMs }: { value: TimeRangeValue; onChange: (value: TimeRangeValue) => void; maxSpanMs: number }) {
   const [initial] = React.useState(() => resolveTimeRange(value, Date.now()))
+  const chosen = "preset" in value ? null : value
+  // "MM-DD HH:mm–HH:mm" within a day, else both dates.
+  const shown = chosen && (() => {
+    const [a, b] = [formatKst(chosen.from, false).slice(5), formatKst(chosen.to, false).slice(5)]
+    return a.slice(0, 5) === b.slice(0, 5) ? `${a}–${b.slice(6)}` : `${a} – ${b}`
+  })()
   const [from, setFrom] = React.useState(() => toKstInput(initial.from))
   const [to, setTo] = React.useState(() => toKstInput(initial.to))
   const fromId = React.useId(), toId = React.useId()
@@ -170,8 +177,8 @@ function CustomRange({ value, onChange, maxSpanMs }: { value: TimeRangeValue; on
   const error = !Number.isFinite(start) || !Number.isFinite(end) ? "시각 형식 오류" : end <= start ? "끝이 시작보다 늦어야 함" : end - start > maxSpanMs ? `최대 ${Math.round(maxSpanMs / 3_600_000)}시간` : ""
   return (
     <Popover>
-      <PopoverTrigger className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-sm hover:bg-muted">
-        <CalendarRange className="size-4" aria-hidden="true" />직접 선택
+      <PopoverTrigger aria-label={shown ? `직접 선택: ${shown} KST` : undefined} className={cn("inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-sm", shown ? "border-primary/40 bg-primary-soft font-medium text-primary tabular-nums" : "border-border bg-card hover:bg-muted")}>
+        <CalendarRange className="size-4" aria-hidden="true" />{shown ?? "직접 선택"}
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-4 text-sm lg:p-4 lg:text-sm">
         <form className="grid gap-3" onSubmit={event => { event.preventDefault(); if (!error) onChange({ from: start, to: end }) }}>

@@ -3,7 +3,7 @@
 // Time series on recharts: the Avara chart block draws {label, value} with numbers only,
 // so it cannot leave gaps for null samples or use a time axis.
 import * as React from "react"
-import { CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts"
 import { formatKst, formatNumber, niceTicks, secondTicks, timeTicks } from "@/lib/format"
 import { duration } from "@/lib/live-display"
 
@@ -61,9 +61,11 @@ export function TimeSeries({ data, series, unit, height = 220, domain, reference
   return (
     <figure className="m-0 min-w-0">
       <figcaption className="sr-only">{label}. {text}</figcaption>
-      <div style={{ height }} aria-hidden="true">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }} accessibilityLayer={false}>
+      {/* The unit sits above the axis, so it never collides with the top tick in a narrow chart. */}
+      {unit && <div aria-hidden="true" className="pl-1 text-[11px] leading-4 text-muted-foreground">{unit}</div>}
+      <div aria-hidden="true">
+        {/* `responsive` sizes the SVG by CSS from the first render (ResponsiveContainer started at -1 x -1 and warned). */}
+        <LineChart responsive style={{ width: "100%", height }} data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }} accessibilityLayer={false}>
             <CartesianGrid stroke="var(--border)" vertical={false} />
             <XAxis
               dataKey="t" type="number" scale={x === "time" ? "time" : "linear"} domain={[axes.start, axes.end]} allowDataOverflow
@@ -73,7 +75,6 @@ export function TimeSeries({ data, series, unit, height = 220, domain, reference
             <YAxis
               width={52} domain={[axes.y.ticks[0], axes.y.ticks.at(-1)!]} ticks={axes.y.ticks} tickFormatter={value => formatNumber(value, axes.y.digits)}
               tick={tick} stroke="var(--border)" tickLine={false} axisLine={false}
-              label={unit ? { value: unit, position: "insideTopLeft", offset: 0, dy: -4, fill: "var(--muted-foreground)", fontSize: 11 } : undefined}
             />
             <Tooltip
               isAnimationActive={false}
@@ -90,7 +91,6 @@ export function TimeSeries({ data, series, unit, height = 220, domain, reference
               <ReferenceDot key={`${point.key}-${point.t}`} x={point.t} y={point.value} r={2.5} stroke="none" fill={colorOf(series.find(item => item.key === point.key)!, series.findIndex(item => item.key === point.key))} />
             ))}
           </LineChart>
-        </ResponsiveContainer>
       </div>
       {legend && (
         <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">

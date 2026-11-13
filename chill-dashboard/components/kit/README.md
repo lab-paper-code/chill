@@ -20,7 +20,7 @@ Screens are assembled only from `@/components/kit` (plus `lib/` data helpers). L
 5. List to detail is a page change. Detail pages use `PageTabs` with `param="tab"`. A drawer previews a row; dialogs only confirm or take a short input.
 6. One primary action in `PageHeader.actions`. Delete and other risky actions go in `more` with `destructive: true` and a `ConfirmDialog`.
 7. Absent value: return `null` from the cell or `value`, the kit shows "—"; put the reason in `missingReason`/`reason`. Errors and no-permission are region states via `QueryBoundary`.
-8. Times are KST. Live screens: `<TimeText at=… />`. Record tables: `<TimeText mode="absolute" />`.
+8. Times are KST through `TimeText`: tables and lists `mode="list"` (default, "11-14 09:12:05"), detail fields `mode="detail"` ("2026-11-14 09:12:05"), `mode="relative"` ("3분 전") only where recency is the point (tiles, feeds).
 9. Numbers: `numeric: true` columns (right-aligned, tabular). Units in the header (`unit`), never in the cell.
 10. Verdicts and statistics come from the server. Allowed in the browser: unit conversion, sums and counts, ratio or difference of two server values, comparing a value with its server target. Not allowed: quantiles, power integration, gap interpolation, inventing a verdict rule.
 11. Changes: show target and before/after (`ConfirmDialog.changes`), send `version` (If-Match) where required, never auto-retry. `error.unknownOutcome` means "결과 미확인". Result goes to a toast. Forms use `LeaveGuard`.
@@ -40,6 +40,7 @@ All imports: `import { … } from "@/components/kit"`.
 | `badges` | node | Extra badges (e.g. admission). |
 | `actions` | node | One primary `Button variant="default"`. |
 | `more` | `MoreAction[]` = `{label,onSelect,destructive?,disabled?,disabledReason?}[]` | Overflow menu; destructive items last. With `disabledReason` a disabled item stays focusable and shows the reason. |
+| `parents` | `{label,href}[]` | Breadcrumbs the URL does not hold, inserted before the page's own crumb. A measurement run: `parents={[{ label: "요청", href: "/measurements/requests" }, { label: request, href: \`/measurements/requests/${encodeURIComponent(request)}\` }]}` gives "측정 > 요청 > <요청> > <실행>". |
 | `PageTabs.tabs` | `TabLink[]` | Link tabs (route change). Use `sectionTabs.scheduler` etc. |
 | `PageTabs.param` + `defaultValue` + `tabs:{value,label,count?}[]` | | Query tabs (`?tab=`); the default value is not written to the URL. |
 | `Section` | `title?, actions?, card?` | A titled region (h2); `card` puts it on a bordered surface. |
@@ -53,7 +54,7 @@ All imports: `import { … } from "@/components/kit"`.
   <Section title="배치" card>…</Section>
 </Page>
 ```
-Section list pages show `<PageTabs tabs={sectionTabs.scheduler} />` under the header. Breadcrumbs are automatic (top bar, detail/new/edit pages only): route words get their label, and the last crumb shows the `PageHeader` title when it is a name, an id, "새로 만들기" or "수정" (an id with no header shows "상세").
+Section list pages show `<PageTabs tabs={sectionTabs.scheduler} />` under the header. Breadcrumbs are automatic (top bar, detail/new/edit pages only): route words get their label; the last crumb shows the `PageHeader` title when it is a name, an id or "새로 만들기" (an id with no header shows "상세"); an edit page ends "… > <이름> > 수정".
 
 ```tsx
 <Rail label="설정 묶음" value={group} onChange={setGroup} items={[{ value: "targets", label: "대상", count: 2 }, { value: "limits", label: "한도" }]}>
@@ -137,7 +138,7 @@ Rows by columns (e.g. power modes by execution paths) with a pinned row-header c
 `Matrix label rowHeader columns={[{key,label,hint?}]} groups={[{key,label?,rows:[{key,label,cells:{[columnKey]: node}}]}]} legend? empty? missingReason?`; absent cells show "—". A pressable cell is `<MatrixCell label="측정 있음 배치 3/4" onClick={…} dim?>…</MatrixCell>`.
 
 ### QueryBoundary, EmptyState, NotReady
-`QueryBoundary query={useChillQuery(...)}` renders: skeleton (`skeleton="table"|"tiles"|"block"` or a node), "초기화 중" (CoverageWarming), "권한 없음" / "접속 정보 확인 필요" (403/401), "조회 실패" with code and "다시 시도", `empty` when `isEmpty(data)`, else `children(data)`.
+`QueryBoundary query={useChillQuery(...)}` renders: skeleton (`skeleton="table"|"tiles"|"block"` or a node), "초기화 중" (CoverageWarming), "권한 없음" / "접속 정보 확인 필요" (403/401), "연결 실패" when no answer arrived, else "조회 실패" with the server code's shared label when known (or the HTTP meaning when there is no code); the raw code, HTTP status and request id sit in "자세히"; then "다시 시도". `empty` when `isEmpty(data)`, else `children(data)`.
 ```tsx
 <QueryBoundary query={workloads} isEmpty={d => d.length === 0} empty={<EmptyState title="서비스 없음" action={<Button>서비스 등록</Button>} />}>
   {data => <DataTable … rows={data} />}
@@ -172,13 +173,13 @@ Rows by columns (e.g. power modes by execution paths) with a pinned row-header c
 
 ### IdText, TimeText, Fields, Feed, Hint, Missing
 - `IdText value head? tail? copy?`: `5f0c2a9e…5f60` + full value tooltip + copy.
-- `TimeText at mode?="relative"|"absolute" seconds?`: relative ("방금" within 5 s either side, "3분 전", 1 s clock) with KST tooltip, or absolute KST. Durations: `formatDurationNanos` from `@/lib/format` ("55.8초" under a minute, "1분 28초" from a minute; "12.3 ms" below a second).
+- `TimeText at mode?="list"|"detail"|"relative" seconds?`: see checklist 8; relative says "방금" within 5 s either side and shows the detail form in a tooltip (`"absolute"` is the old name of `"detail"`; replace it). Durations: `formatDurationNanos` from `@/lib/format` ("55.8초" under a minute, "1분 28초" from a minute; "12.3 ms" below a second).
 - `Fields items={[{label, value, reason?, info?}]} columns?={1|2|3}`: label/value list; a cut value shows a tooltip.
 - `Feed items={[{key, title, status?|tone?, secondary?, at?, meta?, href?}]} empty? label?`: one-line rows (status mark, title, secondary text, relative time on the right); rows with `href` link. For side columns ("최근 변경", "진행 중").
 - `Hint text focusable?`: tooltip wrapper; with `focusable` the hint is also the wrapper's description for screen readers. `InfoHint text`: the "i" button (24 px) for a one-sentence definition; `info` props use it. `Missing reason`: the "—" itself. `useNow()`: shared 1 s clock.
 
 ### TimeSeries, Sparkline
-`TimeSeries data={[{t, a: number|null}]} series={[{key:"a", label:"전체 풀", color?:1-6}]} label unit? height? domain?=[from,to] reference?={value,label} digits? legend? x?="time"|"seconds" curve?="linear"|"step" summary?`.
+`TimeSeries data={[{t, a: number|null}]} series={[{key:"a", label:"전체 풀", color?:1-6}]} label unit? height? domain?=[from,to] reference?={value,label} digits? legend? x?="time"|"seconds" curve?="linear"|"step" summary?`. The unit is printed above the y axis.
 - Null samples are gaps (never connected); a sample with gaps on both sides is drawn as a dot. No animation.
 - Y axis: round ticks from zero with the decimals the range needs (0.25 steps stay apart); the reference line is always inside it.
 - X axis: KST clock ticks that never repeat a label (seconds under one-minute steps, the date beyond a day). `x="seconds"`: `t` is seconds from the start, labelled "1분 30초" (load scenarios); `curve="step"` holds each value until the next sample.
@@ -214,7 +215,9 @@ const setStatus = (next: string[]) => {
 }
 <FilterBar segments={[{ label: "상태", multiple: true, value: status, onChange: setStatus, options: [{ value: "fail", label: "실패" }, { value: "warn", label: "주의" }] }]} />
 ```
-- `TimeRange value onChange presets={["15m","1h"]} custom?={maxSpanMs}`; store it with `const [range, setRange] = useTimeRangeParam(["15m","1h"], "15m", 3_600_000)` and resolve with `resolveTimeRange(range, now)`.
+- `TimeRange value onChange presets={["15m","1h"]} custom?={maxSpanMs}`: presets plus one "직접 선택" control that, once a window is set, shows it ("11-14 09:00–10:30") while no preset is pressed. Store it with `const [range, setRange] = useTimeRangeParam(["15m","1h"], "15m", 3_600_000)` and resolve with `resolveTimeRange(range, now)`.
+
+Search (Ctrl K, shell): screens, services, every inventory device, catalog objects, experiment runs, the newest 50 results and scenarios, grouped by area, plus "측정 요청에서 '<입력>' 찾기" (`/measurements/requests?q=`). It reads the same query paths and decoders as the list screens, so lists are shared, not fetched twice; a new list screen that should be searchable is added in `components/shell/app-shell.tsx` `PaletteGroups`.
 
 ### Button, useToast
 `Button variant="default"|"outline"|"secondary"|"destructive"|"ghost"|"link" size="default"|"sm"|"lg"|"icon" loading iconLeft iconRight disabledReason?`; `buttonClassName({variant,size})` styles a `Link`. With `disabled` and `disabledReason` the button stays focusable (`aria-disabled`, clicks ignored) and shows the reason as a tooltip on hover and keyboard focus.

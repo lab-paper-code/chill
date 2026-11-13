@@ -34,6 +34,11 @@ function useCommand() {
   return context;
 }
 
+/** CHILL patch: the current search text, for items that act on the query itself. */
+export function useCommandSearch(): string {
+  return useCommand().search;
+}
+
 // ==========================================
 // 2. ROOT COMPONENT
 // ==========================================

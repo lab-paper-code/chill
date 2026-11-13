@@ -94,7 +94,7 @@ export function KitShowcase() {
         <StatTile label="서비스" value="9 / 11" sub="목표 충족 / 판정" href="/services" info="최근 60초 서버 판정" />
         <StatTile label="유입" value={formatRate(482.4).replace(" req/s", "")} unit="req/s" sub="12개 서비스" />
         <StatTile label="전력" value="214.6" unit="W" sub="전체 풀 388.2 W" status={{ label: "정상", tone: "ok" }} />
-        <StatTile label="스케줄러" value={null} reason="판단 기록 없음" sub={<TimeText at={BASE - 95_000} />} />
+        <StatTile label="스케줄러" value={null} reason="판단 기록 없음" sub={<TimeText at={BASE - 95_000} mode="relative" />} />
       </StatRow>
 
       <Section title="상태" card>
@@ -111,8 +111,8 @@ export function KitShowcase() {
           <span className="inline-flex items-center gap-2"><HeadroomBar observed={610} target={500} />610 ms</span>
           <span className="inline-flex items-center gap-2"><HeadroomBar observed={null} target={500} reason="관측 없음" /></span>
           <IdText value="5f0c2a9e-41b7-4d3e-9a8f-1c2b3d4e5f60" />
-          <TimeText at={BASE - 180_000} />
-          <TimeText at={BASE} mode="absolute" />
+          <TimeText at={BASE - 180_000} mode="relative" />
+          <TimeText at={BASE} mode="list" />
         </div>
       </Section>
 
@@ -120,7 +120,7 @@ export function KitShowcase() {
         <Fields items={[
           { label: "모델", value: "resnet50-int8" }, { label: "전처리기", value: "imagenet-224" },
           { label: "응답 목표", value: "p99.5 500 ms", info: "요청의 99.5%가 500 ms 안에 끝나야 함" }, { label: "데이터셋", value: null, reason: "지정 안 됨" },
-          { label: "대기 상한", value: "64" }, { label: "생성", value: <TimeText at={BASE - 86_400_000 * 3} mode="absolute" /> },
+          { label: "대기 상한", value: "64" }, { label: "생성", value: <TimeText at={BASE - 86_400_000 * 3} mode="detail" /> },
         ]} />
       </Section>
 
