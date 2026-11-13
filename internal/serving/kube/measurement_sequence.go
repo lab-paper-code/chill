@@ -87,7 +87,7 @@ func (c *SchedulerController) admitNodeStateLocked(ctx context.Context, ref serv
 
 // measureOperation measures one request with the measurement operations: the
 // configured meter of its Node, the configured evidence store and the catalog
-// profile of a prepare.
+// profile of a prepare. A measurement instance is prepared without a profile.
 func (c *SchedulerController) measureOperation(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
 	record := servingops.OperationMeasurement{SchemaVersion: servingops.OperationMeasurementSchema, Request: request, Verdict: servingops.MeasurementInsufficient}
 	i := slices.IndexFunc(config.Meters, func(m servingops.MeterDeclaration) bool { return m.Node == request.Operation.Node })
@@ -96,7 +96,7 @@ func (c *SchedulerController) measureOperation(ctx context.Context, config Sched
 	}
 	request.Meter, request.Store = config.Meters[i], config.EvidenceStore
 	profiles := c.observer.Profiles()
-	if prepare := request.Operation.Prepare; prepare != nil {
+	if prepare := request.Operation.Prepare; prepare != nil && !prepare.Measurement() {
 		j := slices.IndexFunc(profiles, func(p serving.Profile) bool {
 			return prepare.Instance.Profile != nil && p.ID == prepare.Instance.Profile.ID
 		})

@@ -173,22 +173,23 @@ type Config struct {
 	MemoryLimitBytes    int64             `json:"memoryLimitBytes,omitempty"`
 	GPUUUID             string            `json:"gpuUUID,omitempty"`
 	AcceleratorResource string            `json:"acceleratorResource,omitempty"`
-	WarmupBatchSizes    []int             `json:"warmupBatchSizes,omitempty"`
-	WarmupIterations    int               `json:"warmupIterations,omitempty"`
-	Model               string            `json:"model"`
-	Inputs              []string          `json:"inputs"`  // raw input field names
-	Outputs             []string          `json:"outputs"` // raw output field names
-	MaxNewTokens        int               `json:"maxNewTokens,omitempty"`
-	RunnerCommand       []string          `json:"runnerCommand"`
-	RunnerTimeoutMS     int               `json:"runnerTimeoutMS"`
-	MaxQueueRequests    int               `json:"maxQueueRequests"`
-	MaxQueueBytes       int               `json:"maxQueueBytes"`
-	MaxRequestBytes     int               `json:"maxRequestBytes"`
-	Mode                string            `json:"mode"` // serving or profiling
-	BatchSizes          []int             `json:"batchSizes"`
-	MaxBatchSize        int               `json:"maxBatchSize"`
-	ProfilePath         string            `json:"profilePath,omitempty"`
-	Policy              Policy            `json:"policy"`
+	// WarmupBatchSizes is set by BuildRunnerCommand to every initialized batch.
+	WarmupBatchSizes []int    `json:"warmupBatchSizes,omitempty"`
+	WarmupIterations int      `json:"warmupIterations,omitempty"`
+	Model            string   `json:"model"`
+	Inputs           []string `json:"inputs"`  // raw input field names
+	Outputs          []string `json:"outputs"` // raw output field names
+	MaxNewTokens     int      `json:"maxNewTokens,omitempty"`
+	RunnerCommand    []string `json:"runnerCommand"`
+	RunnerTimeoutMS  int      `json:"runnerTimeoutMS"`
+	MaxQueueRequests int      `json:"maxQueueRequests"`
+	MaxQueueBytes    int      `json:"maxQueueBytes"`
+	MaxRequestBytes  int      `json:"maxRequestBytes"`
+	Mode             string   `json:"mode"` // serving or profiling
+	BatchSizes       []int    `json:"batchSizes"`
+	MaxBatchSize     int      `json:"maxBatchSize"`
+	ProfilePath      string   `json:"profilePath,omitempty"`
+	Policy           Policy   `json:"policy"`
 }
 type Progress struct {
 	RequestID         string             `json:"requestID"`

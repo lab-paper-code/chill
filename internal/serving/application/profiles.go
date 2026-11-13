@@ -200,6 +200,9 @@ func (o *SchedulerService) measuredPreparation(
 		)
 	}
 	actor := p.Condition.Actor
+	// The measured command may warm fewer batches; serving warms every
+	// initialized batch.
+	actor.BuildRunnerCommand()
 	actor.Mode = "serving"
 	actor.ProfilePath = "/profile/bundle.json"
 	actor.RunnerTimeoutMS = int(o.opts.OperationTimeout / time.Millisecond)
@@ -219,6 +222,11 @@ func (o *SchedulerService) measuredPreparation(
 			MaxBatch: p.Batches[len(p.Batches)-1].Batch,
 		},
 		Config: actor,
+	}
+	if rknn {
+		spec.Delivery.RKNNLite = p.RuntimeDelivery
+	} else if access := p.Condition.RuntimeAccess; access != nil {
+		spec.Delivery.SupplementalGroups = access.SupplementalGroups
 	}
 	return spec, nil
 }

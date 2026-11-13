@@ -9,7 +9,6 @@ import (
 	slices "slices"
 
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	serving "github.com/lab-paper-code/chill/internal/serving"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	core "k8s.io/api/core/v1"
 	resource "k8s.io/apimachinery/pkg/api/resource"
@@ -53,43 +52,51 @@ func privilegedContainer(container core.Container) bool {
 	return container.SecurityContext != nil && ptr.Deref(container.SecurityContext.Privileged, false)
 }
 
-// measuredRuntimeDelivery returns the measured RKNNLite delivery and its host
+// measuredRuntimeDelivery returns the measured RKNNLite delivery's host
 // projection. The runner reads the delivery file; the Pod gets the same host
 // access the measured profiling Job projected from it.
-func measuredRuntimeDelivery(p *serving.Profile) (profilingrun.RuntimeDeliveryProjection, []byte, error) {
-	if p.Condition.Backend != profilingrun.FirstfloorRKNNLiteBackend {
-		return profilingrun.RuntimeDeliveryProjection{}, nil, nil
+func measuredRuntimeDelivery(delivery servingstate.PrepareDelivery) (profilingrun.RuntimeDeliveryProjection, error) {
+	if delivery.RKNNLite == nil {
+		return profilingrun.RuntimeDeliveryProjection{}, nil
 	}
 	var frozen profilingrun.CandidateRuntimeDelivery
-	if err := json.Unmarshal(p.RuntimeDelivery, &frozen); err != nil {
-		return profilingrun.RuntimeDeliveryProjection{}, nil, fmt.Errorf("decode measured RKNNLite delivery: %w", err)
+	if err := json.Unmarshal(delivery.RKNNLite, &frozen); err != nil {
+		return profilingrun.RuntimeDeliveryProjection{}, fmt.Errorf("decode measured RKNNLite delivery: %w", err)
 	}
-	host, err := profilingrun.ProjectRuntimeDelivery(p.Condition.Backend, frozen)
-	if err != nil {
-		return profilingrun.RuntimeDeliveryProjection{}, nil, err
-	}
-	return host, p.RuntimeDelivery, nil
+	return profilingrun.ProjectRuntimeDelivery(profilingrun.FirstfloorRKNNLiteBackend, frozen)
 }
 
-// ValidatePreparation checks a preparation against its measured profile.
+// ValidatePreparation checks a preparation against its measured profile. A
+// measurement instance has no profile: it needs its identity, Node, the profile
+// it publishes and its memory, and initializes (so warms) only its fixed
+// batch; profiling mode needs no batch 1.
 func ValidatePreparation(spec servingstate.PrepareSpec) error {
 	p := spec.Instance.Profile
-	if p == nil || p.Condition.Firstfloor == nil || p.RuntimeMetadata == nil || spec.Name == "" || spec.Instance.Node.UID != p.Condition.NodeUID {
-		return errors.New("measured firstfloor preparation contract required")
-	}
-	if err := spec.Store.Validate(); err != nil {
-		return err
-	}
-	if spec.Bundle.Store != spec.Store.Store || spec.Bundle.Size <= 0 {
-		return errors.New("immutable profile delivery identity required")
-	}
-	if spec.Config.Policy.ProfileID != p.ID || spec.Config.Mode != servingstate.NativeServingMode || len(spec.Config.Policy.Batches) != 0 || spec.Config.ProfilePath != "/profile/bundle.json" {
-		return errors.New("small policy must reference immutable startup profile")
+	if spec.Measurement() {
+		if spec.Name == "" || spec.Instance.Node.Name == "" || spec.Instance.Node.UID == "" || spec.Config.Policy.ProfileID == "" {
+			return errors.New("measurement preparation requires a name, a Node and the profile it publishes")
+		}
+		if !slices.Equal(spec.Config.BatchSizes, []int{spec.Config.Policy.FixedBatchSize}) {
+			return errors.New("measurement preparation initializes exactly its fixed batch size")
+		}
+	} else {
+		if p == nil || p.Condition.Firstfloor == nil || p.RuntimeMetadata == nil || spec.Name == "" || spec.Instance.Node.UID != p.Condition.NodeUID {
+			return errors.New("measured firstfloor preparation contract required")
+		}
+		if err := spec.Store.Validate(); err != nil {
+			return err
+		}
+		if spec.Bundle.Store != spec.Store.Store || spec.Bundle.Size <= 0 {
+			return errors.New("immutable profile delivery identity required")
+		}
+		if spec.Config.Policy.ProfileID != p.ID || spec.Config.Mode != servingstate.NativeServingMode || len(spec.Config.Policy.Batches) != 0 || spec.Config.ProfilePath != "/profile/bundle.json" {
+			return errors.New("small policy must reference immutable startup profile")
+		}
 	}
 	if spec.MemoryBytes != spec.Instance.Allocation.MemoryBytes || spec.MemoryBytes > uint64(1<<63-1) {
 		return errors.New("preparation memory must exactly equal selected bounded allocation")
 	}
-	if spec.Instance.Allocation.GPUUUID != p.RuntimeMetadata.GPUUUID {
+	if p != nil && spec.Instance.Allocation.GPUUUID != p.RuntimeMetadata.GPUUUID {
 		return errors.New("preparation GPU selection differs from measured physical conditions")
 	}
 	return nil

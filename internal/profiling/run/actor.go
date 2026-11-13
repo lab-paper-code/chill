@@ -6,8 +6,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
-// ActorConfig derives startup once from the selected execution recipe. The
-// initialized capability domain and the measured warmup domain are independent.
+// ActorConfig derives startup once from the selected execution recipe. Its
+// runner warms every initialized batch size (BuildRunnerCommand).
 // Callers add resource envelopes and lifecycle-only queue/timeout/policy fields.
 func (c RunConfig) ActorConfig() firstfloor.Config {
 	settings := c.State.Firstfloor
@@ -22,7 +22,6 @@ func (c RunConfig) ActorConfig() firstfloor.Config {
 		Inputs:            slices.Clone(c.State.Preprocessor.Inputs),
 		Outputs:           slices.Clone(c.State.Preprocessor.Outputs),
 		MaxNewTokens:      c.State.Preprocessor.MaxNewTokens,
-		WarmupBatchSizes:  slices.Clone(c.Measurement.WarmupBatchSizes),
 		WarmupIterations:  c.Measurement.StartupWarmupIterations,
 	}
 	if points := c.Measurement.OperatingPoints; points != nil {
@@ -52,7 +51,6 @@ func (c RunConfig) ActorConfig() firstfloor.Config {
 		}
 	}
 	slices.Sort(actor.BatchSizes)
-	slices.Sort(actor.WarmupBatchSizes)
 	if access := c.Delivery.RuntimeAccess; access != nil {
 		actor.GPUUUID = access.GPUUUID
 		for name := range access.Resources {
