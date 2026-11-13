@@ -48,7 +48,7 @@ const cellID = (model, cls, path, mode) => [model, cls, path, mode].join('/')
 export function activeMeasurements(capture, epoch) {
   const ns = capture.meta.namespace
   const coverage = capture.json(`v1/namespaces/${ns}/measurement-coverage`, '?view=summary&summary=v2')
-  const beos = capture.json(`v1/namespaces/${ns}/batch-energy-optimizations`, '?view=summary&summary=v2&limit=50&offset=0').items
+  const beos = capture.known(`v1/namespaces/${ns}/batch-energy-optimizations`, '?view=summary&summary=v2').items
   const classes = capture.json('v1/inventory', '?limit=200&offset=0').classes
   const nodeClass = Object.fromEntries(classes.flatMap(cls => cls.nodes.map(node => [node.name, cls.name])))
   const nodeUID = Object.fromEntries(classes.flatMap(cls => cls.nodes.map(node => [node.name, node.uid])))
@@ -63,7 +63,9 @@ export function activeMeasurements(capture, epoch) {
   const nodeOf = {}
   for (const [node, model, path, mode] of [...PLACEMENTS, PREPARED]) nodeOf[cellID(model, nodeClass[node], path, mode)] = node
   const fixed = [...new Set([...used, cellID(PREPARED[1], nodeClass[PREPARED[0]], PREPARED[2], PREPARED[3]), ...COMPLETE.map(name => candidateCell(beoByName[name]))])]
-  const pool = coverage.cells.filter(cell => MODELS.includes(cell.model.name) && cell.support.verdict === 'Compatible' && cell.assessment.displayStatus === 'problem' && cell.variants.length && !fixed.includes(cell.id))
+  // Pool cells must name a captured Complete request, which the overlay then turns healthy or measuring.
+  const pool = coverage.cells.filter(cell => MODELS.includes(cell.model.name) && cell.support.verdict === 'Compatible' && cell.assessment.displayStatus === 'problem' && cell.variants.length && !fixed.includes(cell.id)
+    && beoByName[cell.currentMeasurement?.id.split('/')[1]]?.status?.phase === 'Complete')
   // Interleave models, and device classes within a model, so every model and class gets cells.
   const interleave = groups => { const out = []; for (let i = 0; out.length < groups.flat().length; i++) for (const group of groups) if (group[i]) out.push(group[i]); return out }
   const spread = interleave(MODELS.map(model => interleave(Object.values(Object.groupBy(pool.filter(cell => cell.model.name === model), cell => cell.deviceClass.name))))).map(cell => cell.id)
@@ -161,11 +163,12 @@ export function activeMeasurements(capture, epoch) {
     const inProgress = BATCHES.slice(measured.length, measured.length + 1)
     const base = { ...assessment('running'), execution: { phase: 'Measuring', generation: 1, observedGeneration: 1 } }
     const batchProgress = progress(measured, { inProgress, missing: BATCHES.slice(measured.length + 1) })
-    const request = cell.id === measuringCell ? requestID(beoByName[MEASURING]) : cell.currentMeasurement?.id ?? cell.variants[0].requestIds[0]
+    const request = runningRequest(cell), item = requestItem(request.split('/')[1]), runIds = item ? runsOf(item, t).map(run => run.uid) : []
     return { ...cell, assessment: base, batchProgress, failureSummary: [], variantCount: 1,
-      variants: [{ ...cell.variants[0], assessment: base, batchProgress, resultRows: [], requestIds: [request], measuredAt: '0001-01-01T00:00:00Z' }],
+      variants: [{ ...cell.variants[0], assessment: base, batchProgress, resultRows: [], requestIds: [request], runIds, measuredAt: '0001-01-01T00:00:00Z' }],
       history: [{ requestId: request, status: 'running' }, ...cell.history.filter(row => row.requestId !== request)] }
   }
+  function runningRequest(cell) { return cell.id === measuringCell ? requestID(beoByName[MEASURING]) : cell.currentMeasurement?.id ?? cell.variants[0].requestIds[0] }
 
   // summary and nextActions follow SummarizeMeasurementCoverage / AddCoverageActions.
   function summarize(base, rows) {
@@ -188,33 +191,41 @@ export function activeMeasurements(capture, epoch) {
     return { summary, nextActions }
   }
 
-  // BEO projections.
-  const beoAssessment = (item, t) => {
-    const name = item.metadata.name
-    if (name === MEASURING) return { ...assessment('running'), execution: { phase: 'Measuring', generation: 1, observedGeneration: 1 } }
-    const p = profileByCell[candidateCell(item)]
-    return { ...assessment('criteria_met', { scope: { schedulerUsed: p.schedulerUsed, reused: false, facts: [] } }), execution: { phase: 'Complete', generation: 1, observedGeneration: 1 } }
+  // BEO overlays by request name: the profile request of every measured cell (complete), and the request of
+  // every running cell (measuring: MEASURING advances one trial every 45 s, the others hold batches 1 and 2).
+  const overlay = new Map(profiles.map(p => [p.profile.split('/')[1], { p }]))
+  for (const id of runningIDs) {
+    const name = runningRequest(cells[id]).split('/')[1]
+    overlay.set(name, id === measuringCell ? { trials: measuringTrials, measured: measuringBatches } : { trials: () => TRIALS * 3, measured: () => [1, 2] })
+  }
+  let requestItem = name => beoByName[name]
+  const execution = phase => ({ phase, generation: 1, observedGeneration: 1 })
+  const beoAssessment = item => {
+    const o = overlay.get(item.metadata.name)
+    if (!o.p) return { ...assessment('running'), execution: execution('Measuring') }
+    return { ...assessment(o.p.partial ? 'partial' : 'criteria_met', { scope: { schedulerUsed: o.p.schedulerUsed, reused: false, facts: [] } }), execution: execution('Complete') }
   }
   function beoStatus(item, t) {
-    const finished = seconds(epoch - 5_400_000)
-    if (item.metadata.name === MEASURING) return { completedTrials: measuringTrials(t), conditions: [{ lastTransitionTime: seconds(epoch - 900_000), message: 'batch-energy-optimization measurement is running', observedGeneration: 1, reason: 'Measuring', status: 'Unknown', type: 'MeasurementComplete' }], observedGeneration: 1, phase: 'Measuring' }
-    return { completedTrials: TRIALS * (BATCHES.length + 1), conditions: [{ lastTransitionTime: finished, message: 'batch-energy-optimization result is complete', observedGeneration: 1, reason: 'ResultWritten', status: 'True', type: 'MeasurementComplete' }],
+    const o = overlay.get(item.metadata.name)
+    if (!o.p) return { completedTrials: o.trials(t), conditions: [{ lastTransitionTime: seconds(epoch - 900_000), message: 'batch-energy-optimization measurements are in progress', observedGeneration: 1, reason: 'TrialInFlight', status: 'Unknown', type: 'MeasurementComplete' }], observedGeneration: 1, phase: 'Measuring' }
+    return { completedTrials: TRIALS * (o.p.measured.length + 1), conditions: [{ lastTransitionTime: o.p.at, message: 'batch-energy-optimization result is complete', observedGeneration: 1, reason: 'ResultWritten', status: 'True', type: 'MeasurementComplete' }],
       observedGeneration: 1, outcome: 'MinimumFound/SearchSpaceExhausted', phase: 'Complete',
       result: { key: `batch-energy-optimizations/${item.metadata.uid}/result.json`, schemaVersion: 'chill.dacs.io/batch-energy-optimization-result.v1alpha5', size: 11284, store: STORE } }
   }
-  const overlaid = new Set([...COMPLETE, MEASURING])
   const runsOf = (item, t) => {
-    const name = item.metadata.name, profile = requestID(item), c = item.spec.state.candidate, node = item.spec.state.targetNode
-    const done = name === MEASURING ? measuringTrials(t) : TRIALS * (BATCHES.length + 1)
+    const name = item.metadata.name, o = overlay.get(name), profile = requestID(item), c = item.spec.state.candidate, node = o.p?.node ?? item.spec.state.targetNode
+    const done = o.p ? TRIALS * (o.p.measured.length + 1) : o.trials(t), measuring = !o.p
     const trials = [[1, 'idle'], ...BATCHES.map(b => [b, 'active'])].flatMap(([batch, mode]) => [1, 2, 3].map(attempt => ({ batch, mode, attempt })))
-    return trials.slice(0, Math.min(trials.length, done + (name === MEASURING ? 1 : 0))).map(({ batch, mode, attempt }, index) => {
-      const uid = runUID(profile, mode, batch, attempt), running = index >= done, created = (name === MEASURING ? epoch - 900_000 : epoch - 9_000_000) + index * 45_000
+    const first = measuring ? epoch - 900_000 : Date.parse(o.p.at) - (done + 1) * 45_000
+    return trials.slice(0, Math.min(trials.length, done + (measuring ? 1 : 0))).map(({ batch, mode, attempt }, index) => {
+      const uid = runUID(profile, mode, batch, attempt), running = index >= done, created = first + index * 45_000
       const runName = `${name}-${mode}-b${batch}-a${attempt}`
       const measurement = mode === 'idle' ? { batch, warmupIterations: 0, settlingDurationSeconds: 2, durationSeconds: 10, durationToleranceSeconds: 0.5, workloadMode: 'idle-model-loaded' }
-        : { batch, warmupIterations: 1, durationSeconds: 60, durationToleranceSeconds: 0.5, workloadMode: 'saturated-serial-fixed-batch', dataset: item.spec.activeProtocol.dataset }
+        : { batch, warmupIterations: 1, durationSeconds: 60, durationToleranceSeconds: 0.5, workloadMode: 'saturated-serial-fixed-batch', dataset: item.spec.activeProtocol?.dataset }
       const job = `profilingrun-${hash(uid).slice(0, 32)}`
-      const conditions = running ? [] : [{ type: 'ExecutionComplete', status: 'True', observedGeneration: 1, lastTransitionTime: seconds(created + 40_000), reason: 'JobSucceeded', message: 'measurement Job completed successfully' },
-        { type: 'EvidenceVerified', status: 'True', observedGeneration: 1, lastTransitionTime: seconds(created + 40_000), reason: 'EvidenceVerified', message: 'immutable execution evidence was independently verified' }]
+      const conditions = running ? [{ type: 'ExecutionComplete', status: 'Unknown', observedGeneration: 1, lastTransitionTime: seconds(created + 5_000), reason: 'JobRunning', message: 'measurement Job is running' }]
+        : [{ type: 'ExecutionComplete', status: 'True', observedGeneration: 1, lastTransitionTime: seconds(created + 40_000), reason: 'JobSucceeded', message: 'measurement Job completed successfully' },
+          { type: 'EvidenceVerified', status: 'True', observedGeneration: 1, lastTransitionTime: seconds(created + 40_000), reason: 'EvidenceVerified', message: 'immutable execution evidence was independently verified' }]
       const evidence = runEvidence(uid)
       return { namespace: ns, name: runName, uid, resourceVersion: String(386000000 + index), generation: 1, creationTimestamp: seconds(created),
         ownerReferences: [{ apiVersion: 'edge.dacs.io/v1alpha1', kind: 'BatchEnergyOptimization', name, uid: item.metadata.uid, controller: true, blockOwnerDeletion: true }],
@@ -222,11 +233,11 @@ export function activeMeasurements(capture, epoch) {
         spec: { candidate: c, targetNode: node, measurement, campaignTrial: { batch, attempt }, metricObservation: { intervalMilliseconds: 1000, timeoutMilliseconds: 500, durationSeconds: mode === 'idle' ? 12 : 64 } },
         status: { observedGeneration: 1, conditions, job: { name: job, uid: uuid(job) }, actualExecution: { pod: { name: `${job}-${hash(job).slice(0, 5)}`, uid: uuid(`${job}/pod`) }, node: { name: node, uid: nodeUID[node] } },
           ...(running ? {} : { evidence: { store: STORE, key: evidence.key, schemaVersion: 'chill.dacs.io/profiling-execution-evidence.v1alpha18', size: evidence.size }, jobCleanup: 'Done' }) },
-        assessment: running ? { ...assessment('running'), execution: { phase: 'Running', generation: 1, observedGeneration: 1 } }
-          : { ...assessment('complete', { scope: { schedulerUsed: null, reused: false, facts: [`Retained evidence: ${STORE}/${evidence.key}`] } }), execution: { phase: 'Complete', generation: 1, observedGeneration: 1 }, checklist: { criteriaMet: null, version: CHECKLIST, checks: [] } } }
+        assessment: running ? { ...assessment('running'), execution: execution('Running') }
+          : { ...assessment('complete', { scope: { schedulerUsed: null, reused: false, facts: [`Retained evidence: ${STORE}/${evidence.key}`] } }), execution: execution('Complete'), checklist: { criteriaMet: null, version: CHECKLIST, checks: [] } } }
     })
   }
-  const synthRuns = t => [...COMPLETE, MEASURING].flatMap(name => runsOf(beoByName[name], t))
+  const synthRuns = t => [...overlay.keys()].flatMap(name => requestItem(name) ? runsOf(requestItem(name), t) : [])
 
   return {
     // Instance profile identity for a serving placement; undefined outside the selected cells.
@@ -249,16 +260,19 @@ export function activeMeasurements(capture, epoch) {
       const selected = all.filter(row => (!q.get('profile') || row.id === q.get('profile')) && Object.values(filters).every(key => !q.get(key) || row.facets[key] === q.get(key))
         && (!q.get('status') || row.assessment.displayStatus === q.get('status')) && (!q.get('q') || row.id.includes(q.get('q'))))
       const offset = Number(q.get('offset')) || 0, limit = Math.min(50, Number(q.get('limit')) || 25), page = selected.slice(offset, offset + limit)
-      const names = new Set(overlaid)
+      const names = new Set(overlay.keys())
       return { ...base, insufficiencies: (base.insufficiencies ?? []).filter(row => !names.has(row.source?.Name)), preparations: {},
         profiles: page.map(({ facets: _facets, ...row }) => row),
         page: { offset, limit, total: selected.length, ...(offset + limit < selected.length ? { nextOffset: offset + limit } : {}) },
         filters: Object.fromEntries([...Object.entries(filters).map(([key, facet]) => [key, [...new Set(all.map(row => row.facets[facet]))].sort()]), ['statuses', [...new Set(all.map(row => row.assessment.displayStatus))].sort()]]) }
     },
 
+    // Overlaid requests by name; `attach` gives the overlay the request items the caller lists.
+    overlays: name => overlay.has(name),
+    attach(lookup) { requestItem = lookup },
     // One BEO list item (plain or summary) with the active-scene status overlay.
     beoItem(item, t) {
-      return overlaid.has(item.metadata?.name) ? { ...item, status: beoStatus(item, t), ...('assessment' in item ? { assessment: beoAssessment(item, t) } : {}) } : item
+      return overlay.has(item.metadata?.name) ? { ...item, status: beoStatus(item, t), assessment: beoAssessment(item) } : item
     },
 
     // Workload supportedInputs from the usable profiles of a model, grouped by execution path.
@@ -300,22 +314,21 @@ export function activeMeasurements(capture, epoch) {
         runtimeImage: p.condition.runtimeImage, serviceSeconds: batch => perf(p.id, batch).callMs / 1000 }
     },
 
-    beoResult(name, t) {
-      const item = beoByName[name]
-      if (!overlaid.has(name)) return undefined
-      const status = beoStatus(item, t), measuring = name === MEASURING
+    beoResult(item, t) {
+      const name = item.metadata.name, o = overlay.get(name)
+      const status = beoStatus(item, t)
       const campaign = { namespace: ns, name, uid: item.metadata.uid, resourceVersion: item.metadata.resourceVersion, generation: 1, spec: item.spec, phase: status.phase, ...(status.outcome ? { outcome: status.outcome } : {}),
         completedTrials: status.completedTrials, conditions: status.conditions, storedResult: status.result ? { store: STORE, key: status.result.key, size: status.result.size } : null }
       const readAt = iso(t)
-      if (measuring) return { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationResult', readAt, campaign, result: null, statistics: null, statisticsReason: 'NoPublishedResult',
-        measurementFacts: null, measurementFactsReason: 'NoPublishedResult', assessment: beoAssessment(item, t), resultRows: [] }
-      const p = profileByCell[candidateCell(item)], c = item.spec.state.candidate
+      if (!o.p) return { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationResult', readAt, campaign, result: null, statistics: null, statisticsReason: 'NoPublishedResult',
+        measurementFacts: null, measurementFactsReason: 'NoPublishedResult', assessment: { ...beoAssessment(item), scope: { schedulerUsed: false, reused: false, facts: [] } }, resultRows: [] }
+      const p = o.p, c = item.spec.state.candidate
       const runs = runsOf(item, t)
       const factsBody = { request: { namespace: ns, name, uid: item.metadata.uid }, resultReference: { store: STORE, key: status.result.key, size: status.result.size }, condition: p.condition,
         pointPolicy: { version: 'point-policy.v1', minimumTrials: TRIALS, confidenceLevel: 0.95 }, batches: p.batchFacts }
       return { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationResult', readAt, campaign,
         result: { schemaVersion: 'chill.dacs.io/batch-energy-optimization-result.v1alpha5', outcome: status.outcome,
-          measurementState: { targetNode: item.spec.state.targetNode, modelSpec: c.modelSpec, deviceClass: c.deviceClass, executionPath: c.executionPath, powerMode: c.powerMode },
+          measurementState: { targetNode: p.node, modelSpec: c.modelSpec, deviceClass: c.deviceClass, executionPath: c.executionPath, powerMode: c.powerMode },
           curvePlan: { store: STORE, key: `batch-energy-optimizations/${item.metadata.uid}/curve-plan.json`, schemaVersion: 'chill.dacs.io/curve-plan.v1alpha14', size: 6120 },
           completedTrials: runs.map(run => ({ run: { namespace: ns, name: run.name, uid: run.uid }, measurement: { workloadMode: run.spec.measurement.workloadMode, batch: run.spec.measurement.batch },
             evidence: { store: STORE, key: run.status.evidence.key, schemaVersion: run.status.evidence.schemaVersion, size: run.status.evidence.size } })),
@@ -323,25 +336,20 @@ export function activeMeasurements(capture, epoch) {
         statistics: { batches: p.batchFacts.map(f => ({ batch: f.batch, incrementalWorkJoulesPerItem: f.incrementalJoulesPerItem, activeTrialCount: TRIALS, idleTrialCount: TRIALS, confidence: f.confidence,
           latencySampleCount: f.latencySampleCount, latencyP95Milliseconds: f.p95Milliseconds, sources: f.sources })) },
         statisticsReason: null, measurementFacts: factsBody, measurementFactsReason: null,
-        assessment: { ...beoAssessment(item, t), checklist: { criteriaMet: true, version: CHECKLIST, checks: checks(p.rows) } }, resultRows: p.rows }
+        assessment: { ...beoAssessment(item), checklist: { criteriaMet: p.partial ? null : true, version: CHECKLIST, checks: checks(p.rows) } }, resultRows: p.rows }
     },
 
-    // profiling-runs: synthetic child runs first (active scene), then the captured runs; filters per readapi ProfilingRunsView.
-    runs(captured, q, t, synthetic = true) {
-      const keys = { model: run => run.spec.candidate.modelSpec, deviceClass: run => run.spec.candidate.deviceClass, path: run => run.spec.candidate.executionPath, powerMode: run => run.spec.candidate.powerMode,
-        node: run => run.spec.targetNode, parentUID: run => run.ownerReferences?.[0]?.uid, status: run => run.assessment?.displayStatus }
-      const own = synthetic ? synthRuns(t) : [], names = new Set(own.map(run => run.name))
-      return [...own, ...captured.filter(run => !names.has(run.name))].filter(run => Object.entries(keys).every(([key, get]) => !q.get(key) || get(run) === q.get(key)))
-    },
+    // Synthetic child runs of every overlaid request.
+    runs: synthRuns,
 
-    // Evidence passport for a synthetic child run; undefined for other names.
+    // Evidence passport for a synthetic child run with evidence; undefined for other names.
     passport(name, t) {
       const run = synthRuns(t).find(row => row.name === name)
       if (!run || !run.status.evidence) return undefined
-      const item = beoByName[run.ownerReferences[0].name], p = profileByCell[candidateCell(item)], batch = run.spec.measurement.batch, idle = run.spec.measurement.workloadMode === 'idle-model-loaded'
-      const f = perf(p.id, batch), started = Date.parse(run.creationTimestamp) + 25_000, duration = idle ? 10 : 60, ended = started + duration * 1000
+      const c = run.spec.candidate, batch = run.spec.measurement.batch, idle = run.spec.measurement.workloadMode === 'idle-model-loaded'
+      const f = perf(cellID(c.modelSpec, c.deviceClass, c.executionPath, c.powerMode), batch), started = Date.parse(run.creationTimestamp) + 25_000, duration = idle ? 10 : 60, ended = started + duration * 1000
       const calls = idle ? 0 : Math.round(f.calls / TRIALS), mean = idle ? 0 : f.callMs, watts = idle ? f.idle : f.active
-      const gpu = p.cell.executionPath.includes('cuda'), node = run.spec.targetNode
+      const gpu = c.executionPath.includes('cuda'), node = run.spec.targetNode
       const nativeSamples = idle ? [] : Array.from({ length: 6 }, (_, i) => {
         const at = started + Math.round(i * f.callMs * 7), service = f.callMs * jitter(`${name}/${i}`, 0.05), ids = Array.from({ length: batch }, (_, k) => `${run.uid.slice(0, 8)}-${i}-${k}`)
         return { batchID: 1000 + i * 7, batchSize: batch, requestIDs: ids, recordIDs: ids.map(id => `rec-${id}`), units: ids.map(() => 1), serviceDurationNanos: Math.round(service * 1e6), precedingIdleNanos: Math.round(f.callMs * 0.04e6), trialID: run.uid,
@@ -352,7 +360,7 @@ export function activeMeasurements(capture, epoch) {
         run: { namespace: run.namespace, name, uid: run.uid, resourceVersion: run.resourceVersion, generation: 1, spec: run.spec, conditions: run.status.conditions, job: run.status.job, actualExecution: run.status.actualExecution },
         evidence: { finalizedAt: iso(ended + 3000), final: { store: STORE, key: run.status.evidence.key, size: run.status.evidence.size }, raw: { store: STORE, key: `profiling-runs/${run.uid}/raw.json`, size: 182_000 + calls * 24 } },
         measurement: {
-          runtime: { family: 'firstfloor', version: 'onnxruntime 1.20.1', provider: gpu ? 'CUDAExecutionProvider' : 'CPUExecutionProvider', architecture: p.cell.executionPath.endsWith('amd64') ? 'amd64' : 'arm64', batch,
+          runtime: { family: 'firstfloor', version: 'onnxruntime 1.20.1', provider: gpu ? 'CUDAExecutionProvider' : 'CPUExecutionProvider', architecture: c.executionPath.endsWith('amd64') ? 'amd64' : 'arm64', batch,
             warmupIterations: run.spec.measurement.warmupIterations, measurementStartedAt: iso(started), measurementEndedAt: iso(ended), elapsedSeconds: duration, completedCalls: calls, completedItems: calls * batch,
             throughputItemsPerSecond: idle ? 0 : round(calls * batch / duration, 2), latencyMilliseconds: { count: calls, mean: round(mean, 3), p50: round(mean * 0.97, 3), p95: round(f.p95, 3), p99: round(f.p95 * 1.09, 3) }, nativeSamples },
           power: { source: { kind: 'edge-metrics', nodeName: node, metric: 'node_wall_power_watts' }, startedAt: iso(started - 1000), endedAt: iso(ended + 3000), observationSeconds: duration + 4, samples: duration + 4, failures: 0,

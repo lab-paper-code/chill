@@ -2,9 +2,11 @@
 
 Serves the dashboard against a captured ChillServer, without a cluster. Local development only.
 
-    node --experimental-strip-types server/replay.mjs --capture <dir> [--port 3600] [--scene captured|active] [--no-next]
+    node --experimental-strip-types server/replay.mjs --capture <dir> [--port 3600] [--scene captured|active] [--no-next] [--self-check]
 
-One process starts a fake ChillServer on `port+1` (HTTPS, loopback), a browser-facing HTTPS server on `port` (the live proxy from `live-proxy.mjs` plus a raw pipe for Next HMR upgrades), and `next dev` on `port+2` wired to the fake upstream. `--no-next` starts only the two servers. Files: `replay.mjs` (routes, mutations, live), `replay-capture.mjs` (capture reader, paging), `replay-journal.mjs` (scheduler journal), `replay-scene.mjs` (active scene), `replay-measure.mjs` (active measurement evidence).
+One process starts a fake ChillServer on `port+1` (HTTPS, loopback), a browser-facing HTTPS server on `port` (the live proxy from `live-proxy.mjs` plus a raw pipe for Next HMR upgrades), and `next dev` on `port+2` wired to the fake upstream. `--no-next` starts only the two servers. Files: `replay.mjs` (routes, mutations, live, self-check), `replay-capture.mjs` (capture reader, paging), `replay-journal.mjs` (scheduler journal), `replay-requests.mjs` (measurement requests and runs, both scenes), `replay-scene.mjs` (active scene), `replay-measure.mjs` (active measurement evidence).
+
+Every start runs a self-consistency sweep over both scenes (about 50 s): each list the dashboard reads must resolve through every detail path it builds (requests → `/result` and `profiling-runs?parentUID=`; runs → evidence passport; coverage request ids, profiles → `profile=`; occupancy, operation-cost, evaluations, experiments, load scenarios, catalog kinds, workloads and their observations in both orders), every body must decode with `lib/` parsers, every node named must be in the inventory, and no record may lie in the future. Failures are printed; `--self-check` exits 1 on any failure (0 otherwise) without serving. A GET that throws answers 500 `{code: ReplayError}` (no JS message) and logs the stack.
 
 ## Scenes and tokens
 
@@ -15,14 +17,17 @@ The Bearer token picks the scene per request, REST and live alike: `active`, `ca
 
 ## Time
 
-Every captured timestamp is shifted once by process start minus `capturedAt` (whole minutes), so a record keeps one timestamp for the life of the process and ages afterwards; nothing loops or is re-stamped in REST. Live frames keep that shift for their content; envelope, bucket and meter times are now-based. Active-scene records are functions of their own time and never move.
+Every captured timestamp is shifted once by process start minus `capturedAt` (whole minutes), so a record keeps one timestamp for the life of the process and ages afterwards; nothing loops or is re-stamped in REST. List pages captured after `capturedAt` (requests, runs) are moved back by a further whole number of minutes so none of them lies in the future. Live frames keep that shift for their content; envelope, bucket and meter times are now-based. Active-scene records are functions of their own time and never move; journal and event windows are cut at now.
 
 ## Reads
 
 - Exact `path?query` first; else the same path scored on non-volatile query keys (`from,to,at,cursor,limit,offset,order,page,sort` are ignored); else a single object is taken from its captured list; else 404 `ReplayMissing`.
-- Paged lists (`experiments`, `evaluations/inputs`, `systems`, `inventory`, batch-energy-optimizations, profiling-runs, `scheduler/profiles`) honour `offset`/`limit` with a correct `page`. A list captured as one page ends at its captured items (`total` reduced, no `nextOffset`).
+- Paged lists (`experiments`, `evaluations/inputs`, `systems`, `inventory`, `scheduler/profiles`) honour `offset`/`limit` with a correct `page`. A list captured as one page ends at its captured items (`total` reduced, no `nextOffset`).
+- Measurement requests (`batch-energy-optimizations`, plain and `view=summary`): the union of every captured page (deduplicated by uid), plus requests the coverage names that no page lists (rebuilt from their cell), plus submissions, minus deletions; name order, `page` only when `limit`/`offset` is given (default limit 25, max 50), as in cmd/chill-query. In the active scene the requests of healthy cells read Complete with a result, those of running cells read Measuring.
+- Runs (`profiling-runs`): every captured run, plus the child runs each request implies (completed trials in campaign order, the in-flight trial, and every run named by a failure summary, failed with `ExecutionComplete=False`, its runtime termination and a failed assessment). Filters, `q`, `condition`, `group`, `sort`/`order` and paging follow readapi (`order` without `sort` and unknown keys are 400). `page.total` is the size of that set, not the cluster's.
+- `/result` per request phase: overlaid healthy (active) → 200 with rows; captured 502 bodies as recorded; Complete with an unsupported result or curve-plan schema → 502 `BatchEnergyOptimizationResultUnavailable` carrying the campaign; Failed → 200 `RequestFailed` with the failure summary of its problem runs; Measuring/Pending → 200 `NoPublishedResult`. Evidence passport: synthetic active runs with current evidence → 200; running runs without evidence → 202 `EvidencePassportPending`; otherwise 502 `EvidencePassportUnavailable` with the Run state (captured bodies where recorded); unknown run → 404.
 - `observations/scheduler` serves one journal per scene in every view (`summary`, `compact`, full) and filter (`all`, kinds, `decision-action`, `decision-change`, `other` = control rows), with `from/to` windows, `order`, and a cursor equal to the record's offset in that window. Captured records are served from their richest captured form; every decision has a tick control row. Summary decision rows carry `reasons`, `targetKeep` and `evaluationElapsedNanos` when known. `decision-change` = target present and not the keep plan.
-- `observations/events` (`from,to` or `at`), `observations/workloads/{uid}` (`definition`, `outcome`, cursor), `observations/power` (window, series, columns) and `observations/load` return only records in `[from,to)`; cursors advance and end.
+- `observations/events` (`from,to` or `at`), `observations/workloads/{uid}` (`definition`, `outcome`, cursor, `order=asc|desc`: desc pages newest first, aggregates unchanged, other values 400), `observations/power` (window, series, columns) and `observations/load` return only records in `[from,to)`; cursors advance and end.
 - `model-compatibility` answers from the captured matrix; unknown combinations get the `Unknown` verdict.
 
 ## Mutations

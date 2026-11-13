@@ -16,11 +16,13 @@ import { loadCapture, nanos, pageOf, shiftTimes } from './replay-capture.mjs'
 import { capturedJournal, queryJournal } from './replay-journal.mjs'
 import { activeScene } from './replay-scene.mjs'
 import { activeMeasurements } from './replay-measure.mjs'
+import { measurementRequests } from './replay-requests.mjs'
+import { parseMeasurementJSON } from '../lib/measurement-summary.ts'
 import { parseSchedulerJSON, stringifySchedulerJSON } from '../lib/scheduler.ts'
 
 const SCENES = ['captured', 'active']
-const { values: args } = parseArgs({ options: { capture: { type: 'string' }, port: { type: 'string', default: '3600' }, scene: { type: 'string', default: 'captured' }, 'no-next': { type: 'boolean', default: false } } })
-if (!args.capture || !SCENES.includes(args.scene)) { console.error('usage: replay.mjs --capture <dir> [--port 3600] [--scene captured|active] [--no-next]'); process.exit(2) }
+const { values: args } = parseArgs({ options: { capture: { type: 'string' }, port: { type: 'string', default: '3600' }, scene: { type: 'string', default: 'captured' }, 'no-next': { type: 'boolean', default: false }, 'self-check': { type: 'boolean', default: false } } })
+if (!args.capture || !SCENES.includes(args.scene)) { console.error('usage: replay.mjs --capture <dir> [--port 3600] [--scene captured|active] [--no-next] [--self-check]'); process.exit(2) }
 const port = Number(args.port), upstreamPort = port + 1, nextPort = port + 2
 const startedAt = Date.now()
 // One time shift for the life of the process: captured records keep their timestamps and age.
@@ -31,6 +33,8 @@ const epoch = startedAt - 40_480
 const measure = activeMeasurements(capture, epoch)
 const active = activeScene(capture, epoch, { profileFor: measure.profileFor, supportedInputs: measure.supportedInputs })
 const capturedRecords = capturedJournal(capture)
+const inventoryNodes = parsed => Object.fromEntries(parsed.classes.flatMap(cls => cls.nodes.map(node => [node.name, node.uid])))
+const requests = measurementRequests({ capture, startedAt, ns, nodeUID: inventoryNodes(capture.json('v1/inventory', '?limit=200&offset=0')), measure })
 let defaultScene = args.scene
 const mutations = []
 
@@ -106,15 +110,7 @@ function loadScenarios(scene) {
   return own.loadScenarios
 }
 
-// BEO and occupancy lists: captured items (first captured page), active overlays, submissions, deletions.
-function beoItems(scene, search, now) {
-  const known = capture.known(`${NS}batch-energy-optimizations`, search)
-  const own = state[scene].beo, view = new URLSearchParams(search).get('view') === 'summary'
-  const added = own.added.map(item => view ? { ...item, assessment: { status: 'running', displayStatus: 'running', label: '진행', reasons: [], execution: { phase: 'Pending', generation: 1, observedGeneration: 0 },
-    evidence: { available: false, accepted: false, reasons: [] }, checklist: { criteriaMet: null, version: 'result-checklist.v1', checks: [] }, scope: { schedulerUsed: null, reused: false, facts: [] } } } : item)
-  const items = [...added, ...known.items.map(item => scene === 'active' ? measure.beoItem(item, now) : item)].filter(item => !own.removed.has(item.metadata.name))
-  return { body: known.body, items }
-}
+// Occupancy list: submissions, active overlays, captured items, deletions. BEO requests and runs live in replay-requests.mjs.
 function domItems(scene, now) {
   const own = state[scene].dom
   const items = [...own.added, ...(scene === 'active' ? measure.occupancy(now) : []), ...parsed(`${NS}dispatch-occupancy-measurements`).items]
@@ -153,7 +149,7 @@ function capturedPower(q) {
 // v1/observations/events: either `at` (+cursor) or `from,to` (+limit, cursor); numeric cursor over the ascending window.
 function events(scene, q, now) {
   const base = parsed('v1/observations/events') ?? {}
-  const rows = (from, to) => scene === 'active' ? active.events(from, to) : (base.events ?? []).filter(row => Date.parse(row.at) >= from && Date.parse(row.at) < to)
+  const rows = (from, to) => scene === 'active' ? active.events(from, Math.min(to, now)) : (base.events ?? []).filter(row => Date.parse(row.at) >= from && Date.parse(row.at) < to)
   const cursor = Number(q.get('cursor') ?? 0) || 0
   if (q.has('at')) {
     const at = nanos(q.get('at'))
@@ -199,7 +195,9 @@ function get(scene, path, url, now) {
   }
   if (path === 'v1/observations/scheduler') {
     const history = state[scene].history.map(row => ({ at: iso(row.at), settings: row.change }))
-    const records = act ? (fromN, toN) => active.journal(fromN, toN, autonomous(scene), state[scene].settings, state[scene].history)
+    // Synthetic records never lie in the future: a window reaching past now is cut at now.
+    const nowN = BigInt(now) * 1_000_000n
+    const records = act ? (fromN, toN) => active.journal(fromN, toN < nowN ? toN : nowN, autonomous(scene), state[scene].settings, state[scene].history)
       : () => [...capturedRecords, ...history.map(row => ({ at: row.at, atN: nanos(row.at), kind: 'settings', summary: { at: row.at, settings: { actorUsername: row.settings.actorUsername, actorUID: row.settings.actorUID, appliedAt: row.settings.appliedAt } }, compact: () => row, full: () => row }))]
         .sort((a, b) => a.atN < b.atN ? -1 : a.atN > b.atN ? 1 : 0)
     const result = queryJournal(records, q, now)
@@ -207,6 +205,7 @@ function get(scene, path, url, now) {
   }
   if (path === 'v1/observations/events') return events(scene, q, now)
   if (path.startsWith('v1/observations/workloads/')) {
+    if (q.has('order') && !['asc', 'desc'].includes(q.get('order'))) return error(400, 'InvalidQuery', 'invalid observation query')
     const base = parsed(path, url.search)
     if (!base) return undefined
     const result = act ? active.observations(base, q, now, state[scene].inferRows) : undefined
@@ -243,15 +242,13 @@ function get(scene, path, url, now) {
     return [200, { ...body, classes: classes.items, models: models.items, classPage: classes.page, modelPage: models.page }]
   }
   if (path === `${NS}batch-energy-optimizations`) {
-    const search = new URLSearchParams(q); search.delete('offset'); search.delete('limit')
-    const { body, items } = beoItems(scene, `?${search}`, now), { offset, limit } = paging(q, 50, 50), slice = pageOf(items, offset, limit)
-    return [200, { ...body, items: slice.items, page: slice.page }]
+    const { apiVersion, kind, metadata } = parsed(path, '?limit=50&offset=0')
+    return requests.list(scene, state[scene].beo, q, now, { apiVersion, kind, metadata })
   }
-  if (path === `${NS}profiling-runs`) {
-    const known = capture.known(path, '?limit=50&offset=0'), { offset, limit } = paging(q, 50, 200)
-    const slice = pageOf(measure.runs(known.items, q, now, act), offset, limit)
-    return [200, { ...known.body, readAt: iso(now), runs: slice.items, page: slice.page }]
-  }
+  if (path === `${NS}profiling-runs`) return requests.runs(scene, state[scene].beo, q, now)
+  const named = /^(batch-energy-optimizations|profiling-runs)\/([^/]+)\/(result|evidence-passport)$/.exec(path.startsWith(NS) ? path.slice(NS.length) : '')
+  if (named?.[1] === 'batch-energy-optimizations' && named[3] === 'result') return requests.result(scene, state[scene].beo, decodeURIComponent(named[2]), now)
+  if (named?.[1] === 'profiling-runs' && named[3] === 'evidence-passport') return requests.passport(scene, state[scene].beo, decodeURIComponent(named[2]), now)
   if (path === 'v1/scheduler/profiles') {
     const base = parsed(path, '?view=summary&summary=v2&limit=50&offset=0')
     if (act) return [200, measure.profiles(base, q)]
@@ -278,16 +275,7 @@ function get(scene, path, url, now) {
     if (path === 'v1/scheduler/state' && q.get('view') === 'summary') return [200, active.schedulerSummary(parsed(path, url.search), now, autonomous(scene))]
     if (path === 'v1/evaluations/active') return [200, active.activeEvaluations(now)]
     if (path === `${NS}measurement-coverage`) return [200, measure.coverage(parsed(path, url.search), now)]
-    const named = /^([a-z-]+)\/([^/]+)\/([a-z-]+)$/.exec(path.startsWith(NS) ? path.slice(NS.length) : '')
-    if (named?.[1] === 'batch-energy-optimizations' && named[3] === 'result') { const body = measure.beoResult(decodeURIComponent(named[2]), now); if (body) return [200, body] }
-    if (named?.[1] === 'profiling-runs' && named[3] === 'evidence-passport') { const body = measure.passport(decodeURIComponent(named[2]), now); if (body) return [200, body] }
   }
-  const added = /^batch-energy-optimizations\/([^/]+)\/result$/.exec(path.startsWith(NS) ? path.slice(NS.length) : '')
-  const submitted = added && state[scene].beo.added.find(item => item.metadata.name === decodeURIComponent(added[1]))
-  if (submitted) return [200, { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationResult', readAt: iso(now), campaign: { namespace: ns, name: submitted.metadata.name, uid: submitted.metadata.uid,
-    resourceVersion: submitted.metadata.resourceVersion, generation: 1, spec: submitted.spec, completedTrials: 0, storedResult: null }, result: null, statistics: null, statisticsReason: 'NoPublishedResult',
-  measurementFacts: null, measurementFactsReason: 'NoPublishedResult', assessment: { status: 'running', displayStatus: 'running', label: '진행', reasons: [], execution: { phase: 'Pending', generation: 1, observedGeneration: 0 },
-    evidence: { available: false, accepted: false, reasons: [] }, checklist: { criteriaMet: null, version: 'result-checklist.v1', checks: [] }, scope: { schedulerUsed: null, reused: false, facts: [] } }, resultRows: [] }]
   const raw = capture.match(path, url.search)
   if (raw) {
     let body = capture.text(raw)
@@ -376,7 +364,7 @@ async function mutate(scene, req, path, url) {
     if (view.uid !== body?.uid || view.phase !== 'Blocked') return error(409, 'ResourceVersionConflict', view.uid !== body?.uid ? 'EvaluationRun UID changed' : 'release requires a finished, blocked evaluation')
     if (!body.reason) return error(400, 'InvalidInput', 'release reason required')
     if (act && name === active.evaluationNames.blocked) own.released = { at: now, reason: body.reason }
-    else own.evaluations.set(name, { ...view, phase: 'Done', conditions: view.conditions.map(c => c.type === 'PoolAcquired' ? { ...c, status: 'False', reason: 'OperatorReleased', lastTransitionTime: seconds(now) } : c) })
+    else own.evaluations.set(name, { ...view, phase: 'Done', finishedAt: view.finishedAt ?? seconds(now), conditions: view.conditions.map(c => c.type === 'PoolAcquired' ? { ...c, status: 'False', reason: 'OperatorReleased', lastTransitionTime: seconds(now) } : c) })
     return [202, { name, uid: body.uid }]
   }
   if (/^v1\/evaluations(\/[^/]+)?$/.test(path) && !['v1/evaluations/load-scenarios'].includes(path)) {
@@ -437,7 +425,7 @@ async function mutate(scene, req, path, url) {
     if (body?.apiVersion !== 'edge.dacs.io/v1alpha1' || body?.kind !== 'BatchEnergyOptimization' || !dns(name) || (body.metadata.namespace && body.metadata.namespace !== ns)) return error(400, 'InvalidBody', 'native BatchEnergyOptimization identity must match the requested namespace')
     const preflight = measure.preflight(body, null, now)
     if (!preflight.resolves) return error(400, 'MeasurementPreflightRejected', preflight.reason)
-    if (beoItems(scene, '?limit=50&offset=0', now).items.some(item => item.metadata.name === name)) return error(409, 'AlreadyExists', `batchenergyoptimizations.edge.dacs.io "${name}" already exists`)
+    if (requests.item(scene, own.beo, name, now)) return error(409, 'AlreadyExists', `batchenergyoptimizations.edge.dacs.io "${name}" already exists`)
     const task = { apiVersion: body.apiVersion, kind: body.kind, metadata: { ...body.metadata, namespace: ns }, spec: body.spec }
     if (q.get('dryRun') === 'All') return [200, { request: 'NOT_SUBMITTED', task }]
     const created = { ...task, metadata: { ...task.metadata, uid: randomUUID(), resourceVersion: String(now), generation: 1, creationTimestamp: seconds(now) }, status: {} }
@@ -446,7 +434,7 @@ async function mutate(scene, req, path, url) {
   }
   const beo = /^batch-energy-optimizations\/([^/]+)$/.exec(path.startsWith(NS) ? path.slice(NS.length) : '')
   if (beo && req.method === 'DELETE') {
-    const name = decodeURIComponent(beo[1]), item = beoItems(scene, '?limit=50&offset=0', now).items.find(row => row.metadata.name === name)
+    const name = decodeURIComponent(beo[1]), item = requests.item(scene, own.beo, name, now)
     if (!version(req) || !q.get('uid')) return error(400, 'ResourceVersionRequired', 'native UID and resourceVersion are required')
     if (!item) return error(404, 'NotFound', `batchenergyoptimizations.edge.dacs.io "${name}" not found`)
     if (item.metadata.uid !== q.get('uid') || item.metadata.resourceVersion !== version(req)) return error(409, 'ResourceVersionConflict', 'native UID or resourceVersion changed')
@@ -503,26 +491,125 @@ async function mutate(scene, req, path, url) {
   return error(404, 'ReplayMissing', `${req.method} /api/${path}`)
 }
 
+// Every GET goes through here: a replay bug is logged and answered 500 ReplayError without its JS message.
+function answer(scene, path, url, now) {
+  try { return get(scene, path, url, now) ?? [404, { code: 'ReplayMissing', message: `/api/${path}` }] } catch (failure) {
+    console.error(`replay: GET /api/${path}${url.search}`, failure)
+    return [500, { code: 'ReplayError' }]
+  }
+}
+
 const upstream = https.createServer({ key, cert }, async (req, res) => {
   const token = tokenOf(req.headers.authorization)
   if (!token) return send(res, 401, { code: 'Unauthenticated', message: 'Bearer token required' })
   const url = new URL(req.url, 'https://replay')
   if (!url.pathname.startsWith('/api/v1/')) return send(res, 404, { code: 'ReplayMissing', message: url.pathname })
   const path = url.pathname.slice('/api/'.length), scene = sceneOf(token)
+  if (req.method === 'GET') return send(res, ...answer(scene, path, url, Date.now()))
   try {
-    if (req.method !== 'GET') {
-      const [status, body, headers] = await mutate(scene, req, path, url)
-      mutations.push({ at: iso(Date.now()), scene, method: req.method, path: `${path}${url.search}`, status })
-      if (mutations.length > 200) mutations.shift()
-      return send(res, status, body, headers)
-    }
-    const hit = get(scene, path, url, Date.now())
-    if (!hit) return send(res, 404, { code: 'ReplayMissing', message: url.pathname })
-    send(res, ...hit)
+    const [status, body, headers] = await mutate(scene, req, path, url)
+    mutations.push({ at: iso(Date.now()), scene, method: req.method, path: `${path}${url.search}`, status })
+    if (mutations.length > 200) mutations.shift()
+    send(res, status, body, headers)
   } catch (failure) {
-    send(res, failure.status ?? 500, { code: failure.status ? 'InvalidBody' : 'ReplayError', message: failure.message })
+    if (!failure.status) console.error(`replay: ${req.method} /api/${path}${url.search}`, failure)
+    send(res, failure.status ?? 500, failure.status ? { code: 'InvalidBody', message: failure.message } : { code: 'ReplayError' })
   }
 })
+
+// Self-consistency sweep over both scenes: every list the dashboard reads resolves through every detail path
+// it builds, every body decodes with lib/ parsers, no synthetic record lies in the future. Returns failures.
+function selfCheck() {
+  const failures = [], now = Date.now()
+  for (const scene of SCENES) {
+    const fail = message => failures.push(`[${scene}] ${message}`)
+    const read = (pathQuery, expect = [200]) => {
+      const url = new URL(`https://replay/api/${pathQuery}`), [status, body] = answer(scene, url.pathname.slice('/api/'.length), url, now)
+      let value
+      try { value = parseMeasurementJSON(typeof body === 'string' ? body : stringifySchedulerJSON(body)) } catch (error) { fail(`${pathQuery}: body does not decode (${error.message})`) }
+      if (!expect.includes(status)) fail(`${pathQuery}: status ${status}${value?.code ? ` ${value.code}` : ''}`)
+      return { status, body: value }
+    }
+    const future = (what, at) => { if (Date.parse(at) > now + 1000) fail(`${what}: ${at} is in the future`) }
+    const enc = encodeURIComponent
+    // Requests: list (full and paged), /result, child runs; failure-summary runs exist and failed.
+    const list = read(`${NS}batch-energy-optimizations?view=summary&summary=v2`).body?.items ?? []
+    const pagedNames = []
+    for (let offset = 0; offset !== undefined;) { const page = read(`${NS}batch-energy-optimizations?view=summary&summary=v2&limit=50&offset=${offset}`).body; pagedNames.push(...(page?.items ?? []).map(row => row.metadata.name)); offset = page?.page?.nextOffset }
+    if (pagedNames.join() !== list.map(row => row.metadata.name).join()) fail('batch-energy-optimizations pages differ from the full list')
+    const names = new Map(list.map(row => [row.metadata.name, row]))
+    const runsOf = uid => read(`${NS}profiling-runs?parentUID=${enc(uid)}&limit=200`).body?.runs ?? []
+    for (const item of list) {
+      const { name, uid } = item.metadata, st = item.status ?? {}
+      future(`request ${name} creationTimestamp`, item.metadata.creationTimestamp)
+      for (const c of st.conditions ?? []) future(`request ${name} condition`, c.lastTransitionTime)
+      const result = read(`${NS}batch-energy-optimizations/${enc(name)}/result`, [200, 502])
+      if (result.body?.campaign?.name !== name || result.body?.campaign?.uid !== uid) fail(`${name}/result: campaign does not name the request`)
+      if (st.phase === 'Complete' && result.status === 200 && !result.body.resultRows?.length) fail(`${name}/result: complete without rows`)
+      if (scene === 'active' && st.phase === 'Complete' && result.status === 200 && item.assessment?.displayStatus === 'usable' && result.body.assessment?.displayStatus !== 'usable') fail(`${name}/result: assessment differs from the list`)
+      const children = runsOf(uid)
+      if (!children.length && (st.completedTrials || st.phase === 'Measuring' || item.assessment?.failureSummary?.some(row => row.runName))) fail(`${name}: profiling-runs?parentUID returns no runs`)
+      for (const row of item.assessment?.failureSummary ?? []) if (row.runName && !children.some(run => run.name === row.runName && run.assessment.displayStatus === 'problem')) fail(`${name}: failure-summary run ${row.runName} is not a problem child run`)
+    }
+    // Runs: every run in the list resolves its passport the way the real handler does.
+    const runs = []
+    for (let offset = 0; offset !== undefined;) { const page = read(`${NS}profiling-runs?limit=200&offset=${offset}`).body; runs.push(...(page?.runs ?? [])); offset = page?.page?.nextOffset }
+    for (const run of runs) {
+      future(`run ${run.name} creationTimestamp`, run.creationTimestamp)
+      for (const c of run.status.conditions ?? []) future(`run ${run.name} condition`, c.lastTransitionTime)
+      if (!names.has(run.ownerReferences[0].name)) fail(`run ${run.name}: owner ${run.ownerReferences[0].name} is not listed`)
+      const passport = read(`${NS}profiling-runs/${enc(run.name)}/evidence-passport`, [200, 202, 502])
+      if (passport.status === 200 && !passport.body?.measurement) fail(`${run.name}/evidence-passport: 200 without measurement`)
+      if (passport.status === 202 && passport.body?.code !== 'EvidencePassportPending') fail(`${run.name}/evidence-passport: 202 without EvidencePassportPending`)
+      if (passport.status === 502 && passport.body?.run?.name !== run.name) fail(`${run.name}/evidence-passport: 502 without the Run state`)
+    }
+    const byQ = read(`${NS}profiling-runs?q=${enc('98BAD44F9CED-active')}&limit=200`).body?.runs ?? []
+    if (!byQ.length || byQ.some(run => !run.name.includes('98bad44f9ced-active'))) fail('profiling-runs?q does not select by name')
+    if (!runs.some(run => run.status.conditions?.some(c => c.type === 'ExecutionComplete' && c.status === 'False'))) fail('no run with a failed ExecutionComplete condition')
+    // Coverage: every request a cell names is listed with the same uid.
+    const coverage = read(`${NS}measurement-coverage?view=summary&summary=v2`).body
+    for (const cell of coverage?.cells ?? []) {
+      const ids = [cell.currentMeasurement?.id, ...cell.history.map(row => row.requestId), ...cell.failureSummary.map(row => row.requestId), ...cell.variants.flatMap(v => v.requestIds)].filter(Boolean)
+      for (const id of new Set(ids)) { const [, name, uid] = id.split('/'); if (names.get(name)?.metadata.uid !== uid) fail(`coverage ${cell.id}: request ${id} is not listed`) }
+      for (const row of cell.failureSummary) if (row.runName && !runs.some(run => run.name === row.runName)) fail(`coverage ${cell.id}: failure run ${row.runName} is not listed`)
+    }
+    // Profiles, operation costs, occupancy, evaluations, experiments, load scenarios, catalog, workloads.
+    const profiles = []
+    for (let offset = 0; offset !== undefined;) { const page = read(`v1/scheduler/profiles?limit=50&offset=${offset}`).body; profiles.push(...(page?.profiles ?? [])); offset = page?.page?.nextOffset }
+    for (const p of profiles) {
+      if (read(`v1/scheduler/profiles?profile=${enc(p.id)}&limit=1`).body?.profiles?.[0]?.id !== p.id) fail(`profile ${p.id}: profile= does not resolve`)
+      const [, name, uid] = p.id.split('/'); if (names.get(name)?.metadata.uid !== uid) fail(`profile ${p.id}: request is not listed`)
+    }
+    const nodes = new Set(read('v1/inventory?limit=200').body?.classes?.flatMap(cls => cls.nodes.map(node => node.name)) ?? [])
+    for (const row of read(`${NS}operation-cost-measurements`).body?.items ?? []) read(`${NS}operation-cost-measurements/${enc(row.metadata.name)}`)
+    for (const row of read(`${NS}dispatch-occupancy-measurements`).body?.items ?? []) {
+      read(`${NS}dispatch-occupancy-measurements/${enc(row.metadata.name)}`)
+      if (!nodes.has(row.node)) fail(`occupancy ${row.metadata.name}: node ${row.node} not in inventory`)
+    }
+    for (const row of read('v1/evaluations').body?.items ?? []) read(`v1/evaluations/${enc(row.name)}`)
+    for (const row of read('v1/evaluations/load-scenarios').body?.items ?? []) read(`v1/evaluations/load-scenarios/${enc(row.name)}`)
+    for (let offset = 0; offset !== undefined;) { const page = read(`v1/experiments?limit=50&offset=${offset}`).body; for (const row of page?.items ?? []) read(`v1/experiments/${enc(row.id)}`); offset = page?.page?.nextOffset }
+    for (const kind of ['models', 'preprocessors', 'datasets']) for (const row of read(`v1/${kind}`).body?.items ?? []) read(`v1/${kind}/${enc(row.metadata.name)}`)
+    const span = `from=${enc(new Date(now - 600_000).toISOString())}&to=${enc(new Date(now).toISOString())}`
+    for (const view of read('v1/workloads?view=summary').body ?? []) {
+      const { name, uid } = view.desired.metadata
+      read(`v1/workloads/${enc(name)}`)
+      const asc = read(`v1/observations/workloads/${uid}?${span}`).body?.requests ?? [], desc = []
+      for (let cursor = ''; cursor !== undefined;) { const page = read(`v1/observations/workloads/${uid}?${span}&order=desc&limit=7${cursor ? `&cursor=${cursor}` : ''}`).body; desc.push(...(page?.requests ?? [])); cursor = page?.nextCursor }
+      if (desc.map(row => row.requestID).join() !== asc.map(row => row.requestID).reverse().join()) fail(`observations/workloads/${uid}: order=desc pages are not the asc rows reversed`)
+    }
+    read(`v1/observations/workloads/${read('v1/workloads?view=summary').body?.[0]?.desired.metadata.uid}?${span}&order=up`, [400])
+    // Nodes named by pools, requests and runs exist in the inventory.
+    const pools = read('v1/pools').body
+    for (const node of [...(pools?.available ?? []), ...(pools?.measurement ?? [])].map(row => row.node.name).concat((pools?.workloads ?? []).flatMap(w => w.nodes.map(n => n.name)))) if (!nodes.has(node)) fail(`pools: node ${node} not in inventory`)
+    for (const node of new Set([...list.map(row => row.spec.state.targetNode), ...runs.map(run => run.spec.targetNode)])) if (!nodes.has(node)) fail(`node ${node} is named by requests or runs but not in inventory`)
+    // No synthetic decision or event after now, whatever window is asked.
+    const ahead = `from=${enc(new Date(now - 120_000).toISOString())}&to=${enc(new Date(now + 86_400_000).toISOString())}`
+    for (const row of read(`v1/observations/scheduler?${ahead}&filter=decision&view=summary`).body?.events ?? []) future('scheduler decision', row.at)
+    for (const row of read(`v1/observations/events?${ahead}&limit=500`).body?.events ?? []) future('event', row.at)
+  }
+  return failures
+}
 
 // chill-live/1 hub: hello, resume, snapshot, then scene frames with a contiguous per-connection seq.
 const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false })
@@ -623,6 +710,13 @@ browser.on('upgrade', (req, socket, head) => {
   socket.on('error', () => target.destroy())
 })
 
+// The sweep runs at every start (failures printed); --self-check exits with its verdict instead of serving.
+{
+  const checkedAt = Date.now(), failures = selfCheck()
+  for (const line of failures) console.error(`self-check: ${line}`)
+  console.log(`self-check: ${failures.length ? `${failures.length} failure(s)` : 'ok'} in ${Date.now() - checkedAt} ms`)
+  if (args['self-check']) { rmSync(directory, { recursive: true, force: true }); process.exit(failures.length ? 1 : 0) }
+}
 upstream.listen(upstreamPort, '127.0.0.1'); await once(upstream, 'listening')
 browser.listen(port, '127.0.0.1'); await once(browser, 'listening')
 const root = fileURLToPath(new URL('..', import.meta.url))

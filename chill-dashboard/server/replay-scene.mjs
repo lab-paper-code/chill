@@ -196,7 +196,7 @@ export function activeScene(capture, epoch, options = {}) {
         population: 'received events in [windowStart,windowEnd); validated compute arrivals (including capacity/evidence rejections) replayed; outstanding retained independently',
         loads, comparedNodes: [...servingNodes, PREPARE_NODE].map(ref) },
       workloads: workloadStates(autonomous), references: [],
-      capacity: { periodNanos: 600e9, routeNanos: 60e9, search: { strategy: 'local-search', neighborhood: 2, evaluated: 40 + mod(k, 30), durationNanos: Math.round(evaluate * 0.7), budgetCut: false,
+      capacity: { periodNanos: 600e9, routeNanos: 60e9, search: { strategy: settings.planSearchStrategy ?? 'v2', neighborhood: 2, evaluated: 40 + mod(k, 30), durationNanos: Math.round(evaluate * 0.7), budgetCut: false,
         surrogateElapsedNanos: Math.round(evaluate * 0.4), exactElapsedNanos: Math.round(evaluate * 0.25) },
         workloads: services.map(svc => ({ uid: svc.uid, rate: round(svc.rate * (1 + svc.swing * wave(t, svc.period)), 3), minimumDemand: settings.minimumDemand?.[svc.uid] ?? 0, queued: svc.pending,
           routingRate: round(svc.rate * 1.2, 3), retainedRoutingRate: round(svc.rate * 0.6, 3), tests: [], keepTests: [], weights: Object.fromEntries(svc.instances.map(inst => [inst.id, inst.weight])) })),
@@ -367,26 +367,45 @@ export function activeScene(capture, epoch, options = {}) {
             { step: 'judge', startedAt: seconds(go + 290_000), finishedAt: seconds(go + 292_000), reason: 'ProcedureComplete', measurementVerdict: 'PASS' }, { step: 'cleanup-jobs', startedAt: seconds(go + 292_000), finishedAt: seconds(go + 294_000), reason: 'ProcedureComplete' }]
             : current ? [{ step: 'factor', startedAt: seconds(begin), finishedAt: seconds(go), reason: 'ProcedureComplete' }, { step: 'stage', startedAt: seconds(go), finishedAt: null }] : [],
           startedAt: done || current ? seconds(begin) : null, finishedAt: done ? seconds(go + 294_000) : null, goAt: done || current ? seconds(go) : null,
-          ...(current && provisional ? { provisionalD1: { ...provisional, asOf: iso(t - 4000), closedThrough: seconds(Math.floor((t - 4000) / 60_000) * 60_000) } } : {}),
+          ...(current && provisional ? { provisionalD1: provisionalD1(provisional, (t - go) / 270_000, t) } : {}),
           progress: progress.map(([phase, at]) => ({ phase, at: iso(at) })), ...(progress.length ? { lastProgressAt: iso(progress.at(-1)[1]) } : {}),
-          loadJobs: done || current ? [{ name: `${name}-load`, uid: uuid(i, 79), status: done ? 'Succeeded' : 'Running', startedAt: seconds(go), ...(done ? { completedAt: seconds(go + 280_000) } : {}) }] : [] }
+          loadJobs: done || current ? [{ name: `${name}-load`, uid: uuid(i, 79), status: done ? 'Succeeded' : 'Active', startedAt: seconds(go), ...(done ? { completedAt: seconds(go + 280_000), reason: 'Completed' } : {}) }] : [] }
       }),
       startedAt: seconds(start), phase: 'Running', liveTarget: source.liveTarget ?? [] }
   }
   function blockedEvaluation(released) {
     const source = evaluationSource(BLOCKED.source), start = epoch - 3_000_000, end = start + 1_900_000
-    return { ...source, name: BLOCKED.name, uid: BLOCKED.uid, publicationID: undefined, phase: released ? 'Done' : 'Blocked', startedAt: seconds(start), finishedAt: undefined,
+    return { ...source, name: BLOCKED.name, uid: BLOCKED.uid, publicationID: undefined, phase: released ? 'Done' : 'Blocked', startedAt: seconds(start), finishedAt: released ? seconds(released.at) : undefined,
       conditions: [released ? condition('PoolAcquired', 'False', 'OperatorReleased', released.at, `released by replay-operator: ${released.reason}`) : condition('PoolAcquired', 'True', 'Acquired', start),
         condition('ExecutionComplete', 'True', 'Complete', end), condition('MeasurementPassed', 'True', 'MeasurementComplete', end + 4000),
         condition('CleanupComplete', 'False', 'ResidualState', end + 60_000, `load Job ${BLOCKED.name}-s001-load still has a running Pod on genesis2; a replay instance keeps 1 GPU allocation`)],
       currentProcedure: 'cleanup-jobs',
       stages: (source.stages ?? []).map((stage, i) => ({ ...stage, uid: uuid(i, 83), name: `eval-${BLOCKED.uid.replace(/-/g, '')}-s00${i}`,
-        loadJobs: [{ name: `${BLOCKED.name}-s00${i}-load`, uid: uuid(i, 85), status: i === (source.stages.length - 1) ? 'Running' : 'Succeeded', startedAt: seconds(start + i * 900_000),
-          ...(i === source.stages.length - 1 ? { reason: 'ResidualState' } : { completedAt: seconds(start + i * 900_000 + 880_000) }) }] })) }
+        loadJobs: [{ name: `${BLOCKED.name}-s00${i}-load`, uid: uuid(i, 85), status: i === (source.stages.length - 1) ? 'Active' : 'Succeeded', startedAt: seconds(start + i * 900_000),
+          ...(i === source.stages.length - 1 ? {} : { completedAt: seconds(start + i * 900_000 + 880_000), reason: 'Completed' }) }] })) }
   }
   function pendingEvaluation() {
     const source = evaluationSource(PENDING.source)
     return { name: PENDING.name, uid: PENDING.uid, spec: { ...source.spec, question: 'Pending replay run awaiting the evaluation pool.' }, conditions: [], procedures: [], stages: [], phase: 'Pending', liveTarget: [] }
+  }
+  // EvaluationProvisionalD1 of the running stage: the captured snapshot's per-service shape, counts scaled to
+  // the elapsed share of the load (offered = scheduled arrivals so far), rates and latencies kept.
+  let provisionalTemplate
+  function provisionalD1(source, share, t) {
+    provisionalTemplate ??= capture.json('v1/evaluations', '').items.flatMap(item => (item.stages ?? []).map(stage => stage.provisionalD1)).find(p => p && Object.values(p.workloads ?? {}).some(w => w.outcomeClasses?.onTime > 0))
+    const template = provisionalTemplate ?? source, f = Math.min(1, Math.max(0.02, share)), scale = n => Math.round(n * f)
+    const counts = value => Object.fromEntries(Object.entries(value).map(([key, n]) => [key, typeof n === 'number' ? scale(n) : n]))
+    const stats = value => ({ ...value, samples: scale(value.samples) })
+    const metrics = w => ({ ...w, outcomeClasses: counts(w.outcomeClasses), timeoutCauses: counts(w.timeoutCauses), loadLengthSeconds: round(w.loadLengthSeconds * f, 3),
+      completedLatencyNS: stats(w.completedLatencyNS), gatewayWaitNS: stats(w.gatewayWaitNS), executorWaitNS: stats(w.executorWaitNS),
+      rejections: (w.rejections ?? []).map(r => ({ ...r, count: scale(r.count), gatewayWaitNS: stats(r.gatewayWaitNS), executorWaitNS: stats(r.executorWaitNS) })),
+      ...('offered' in w ? { offered: scale(w.offered), deadlineSuccess: scale(w.deadlineSuccess), requiredSuccessfulRank: scale(w.requiredSuccessfulRank) } : {}) })
+    const workloads = Object.fromEntries(Object.keys(source.workloads ?? template.workloads).map(name => [name, template.workloads[name] ?? Object.values(template.workloads)[0]]).map(([name, w]) => [name, {
+      ...metrics(w), outcomes: counts(w.outcomes ?? {}), unfinishedOrUnsent: scale(w.unfinishedOrUnsent ?? 0), substages: (w.substages ?? []).map(metrics) }]))
+    const generatorQuality = Object.fromEntries(Object.keys(workloads).map(name => { const g = template.generatorQuality?.[name] ?? Object.values(template.generatorQuality ?? {})[0]
+      return g ? [name, { ...g, offered: scale(g.offered), issued: scale(g.issued), unissued: scale(g.unissued), durationNS: Math.round(g.durationNS * f), sendLatenessNS: stats(g.sendLatenessNS), actualGapNS: stats(g.actualGapNS), plannedGapNS: stats(g.plannedGapNS),
+        generatorQuality: { ...g.generatorQuality, denominator: scale(g.generatorQuality?.denominator ?? 0), exceeding: scale(g.generatorQuality?.exceeding ?? 0) } }] : null }).filter(Boolean))
+    return { asOf: iso(t - 4000), closedThrough: seconds(Math.floor((t - 4000) / 60_000) * 60_000), provisional: true, workloads, generatorQuality }
   }
 
   return {
@@ -531,6 +550,8 @@ export function activeScene(capture, epoch, options = {}) {
         cohort.quantileNanos = quantile(cohort.latencyNanos, cohort.percentile / 100)
         if (!cohort.sampleCount) { cohort.latencyNanos = null; cohort.completionResidualNanos = null }
       }
+      // order=desc pages newest first; the cursor counts rows in that order. Aggregates are order-free.
+      if (q.get('order') === 'desc') selected.reverse()
       const limit = q.has('limit') ? Number(q.get('limit')) : 0, cursor = Number(q.get('cursor') ?? 0)
       if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > selected.length) return { status: 400, body: { code: 'InvalidQuery', message: 'observation cursor is out of range' } }
       const end = limit > 0 && limit < selected.length - cursor ? cursor + limit : selected.length
