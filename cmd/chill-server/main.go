@@ -16,6 +16,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "session-load" {
+		if err := sessionLoadCommand(os.Args[2:], sessionTerminationPath, os.Stdout); err != nil {
+			_, _ = os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
+		return
+	}
 	opts := options{}
 	opts.bindFlags(flag.CommandLine)
 	zapOptions := zap.Options{Development: true}
