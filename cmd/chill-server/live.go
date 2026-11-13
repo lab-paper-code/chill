@@ -130,13 +130,11 @@ func liveWorkload(state serving.WorkloadState) live.Workload {
 }
 func (p *livePublisher) workloadRows() []live.Workload {
 	rows := make([]live.Workload, 0, len(p.registered))
-	uids := make([]string, 0, len(p.registered))
-	for uid, row := range p.registered {
+	for _, row := range p.registered {
 		rows = append(rows, row)
-		uids = append(uids, uid)
 	}
 	slices.SortFunc(rows, func(a, b live.Workload) int { return strings.Compare(a.UID, b.UID) })
-	p.metrics.SetWorkloads(uids)
+	p.metrics.SetWorkloads(rows)
 	return rows
 }
 func (p *livePublisher) runtime(runtime *serving.Runtime) {
@@ -202,6 +200,7 @@ func (p *livePublisher) decision(d serving.SchedulerDecision, snapshot serving.S
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.autonomous = slices.Clone(d.Settings.AutonomousWorkloads)
+	p.metrics.SetSLOWindow(d.Settings.ObservationWindow)
 	for uid, row := range p.registered {
 		row.Autonomous = slices.Contains(p.autonomous, uid)
 		p.registered[uid] = row
@@ -328,7 +327,7 @@ func (p *livePublisher) request(event serving.RequestEvent) {
 		if event.SLO != nil {
 			slo = event.SLO.TargetLatency
 		}
-		p.metrics.Finished(event.WorkloadUID, event.At, event.Outcome == "completed", measured, slo)
+		p.metrics.Finished(event.WorkloadUID, event.At, event.ReceivedAt, event.Outcome == "completed", measured, slo)
 	}
 }
 func (p *livePublisher) powerScope(meters []servingops.MeterDeclaration, enabled bool) {

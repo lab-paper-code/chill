@@ -105,6 +105,13 @@ UTC 초 bucket의 received는 수신 사건, completed/failed는 종결 사건�
 집단의 유효 종단 표본과 latencySamples다. Native supplement/중복 final을 새 완료로
 세지 않는다. 늦은 callback은 최근 10초 bucket을 전체 대체하고 이후는 gap/REST다.
 
+각 서비스 행의 선택 `slo`는 bucket 끝에서 끝나는 scheduler `observationWindowNanos`
+창의 판정이다: `windowSeconds`, 설정 `percentile`/`targetMs`, `samples`,
+`withinTarget`(지연 ≤ 목표), `quantileMs`와 `met`(`quantileMs ≤ targetMs`).
+모집단과 방법은 REST cohort와 같다: 창 안 수신, completed, 양수 지연,
+`gonum/stat.Empirical`. 표본이 없으면 `quantileMs`/`met`가 없고, 양수 목표가 없거나
+첫 scheduler 판단 전이라 창을 모르면 `slo` 전체가 없다. 정정 bucket도 자기 끝의 창을 다시 계산한다.
+
 관측 가능한 무유입 초는 zero counts, 계측 불가는 gaps다. 분위수 평균, 결손 영 채움/
 직선 보간을 하지 않는다. Node W는 해당 초의 실제 표본 평균이고 이전 W를 복사하지
 않는다. Pool W는 같은 범위/시각/완전성의 UID 중복 없는 합계다. J는 서버 coverage

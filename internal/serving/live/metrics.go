@@ -1,6 +1,7 @@
 package live
 
 import (
+	"cmp"
 	"maps"
 	"math"
 	"slices"
@@ -16,6 +17,17 @@ import (
 type workloadBucket struct {
 	metric    Metric
 	latencies []float64
+}
+
+type sloSample struct {
+	receivedAt int64 // Unix nanoseconds
+	ms         float64
+}
+
+// sloSamples keeps a Workload's receipts sorted by latency so a window read is
+// one filtering pass instead of a sort under the flush lock.
+type sloSamples struct {
+	sorted, pending []sloSample
 }
 
 type powerBucket struct {
@@ -39,21 +51,26 @@ type metricBucket struct {
 // received event and Finished once for response_finished, not for native finish,
 // a retryable durable append, or a later native supplement.
 type Metrics struct {
-	mu                        sync.Mutex
-	hub                       *Hub
-	next                      time.Time
-	buckets                   map[int64]*metricBucket
-	workloads, meters, active map[string]struct{}
-	membershipKnown           bool
-	pendingGaps               []Gap
-	queueLength               *atomic.Int64
-	queueOldestEnqueued       *atomic.Int64
+	mu                  sync.Mutex
+	hub                 *Hub
+	next                time.Time
+	buckets             map[int64]*metricBucket
+	workloads           map[string]SLO
+	meters, active      map[string]struct{}
+	membershipKnown     bool
+	pendingGaps         []Gap
+	queueLength         *atomic.Int64
+	queueOldestEnqueued *atomic.Int64
+	sloWindow           time.Duration
+	sloSamples          map[string]*sloSamples
+	sloSpare            []sloSample
+	sloScratch          []float64
 }
 
 func NewMetrics(hub *Hub, now time.Time, queueLength, queueOldestEnqueued *atomic.Int64) *Metrics {
 	return &Metrics{hub: hub, next: now.UTC().Truncate(time.Second), buckets: make(map[int64]*metricBucket),
-		workloads: make(map[string]struct{}), meters: make(map[string]struct{}), active: make(map[string]struct{}),
-		queueLength: queueLength, queueOldestEnqueued: queueOldestEnqueued}
+		workloads: make(map[string]SLO), meters: make(map[string]struct{}), active: make(map[string]struct{}),
+		sloSamples: make(map[string]*sloSamples), queueLength: queueLength, queueOldestEnqueued: queueOldestEnqueued}
 }
 
 func uidSet(uids []string) map[string]struct{} {
@@ -64,10 +81,14 @@ func uidSet(uids []string) map[string]struct{} {
 	return set
 }
 
-func (m *Metrics) SetWorkloads(uids []string) {
+// SetWorkloads receives every registered Workload with its configured SLO.
+func (m *Metrics) SetWorkloads(workloads []Workload) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.workloads = uidSet(uids)
+	m.workloads = make(map[string]SLO, len(workloads))
+	for _, w := range workloads {
+		m.workloads[w.UID] = w.SLO
+	}
 	for _, bucket := range m.buckets {
 		if !bucket.at.Before(m.next) {
 			for uid := range m.workloads {
@@ -75,6 +96,13 @@ func (m *Metrics) SetWorkloads(uids []string) {
 			}
 		}
 	}
+}
+
+// SetSLOWindow receives the scheduler's configured observation window.
+func (m *Metrics) SetSLOWindow(window time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sloWindow = window
 }
 
 // SetPowerScope receives the complete meter set and actual active membership,
@@ -143,9 +171,19 @@ func (m *Metrics) Received(uid string, at time.Time) {
 	}
 }
 
-func (m *Metrics) Finished(uid string, at time.Time, completed bool, latency *time.Duration, slo time.Duration) {
+// Finished takes the request's receipt time because the SLO window selects
+// requests by receipt, like the observation-log cohorts.
+func (m *Metrics) Finished(uid string, at, receivedAt time.Time, completed bool, latency *time.Duration, slo time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if completed && latency != nil && *latency > 0 {
+		samples := m.sloSamples[uid]
+		if samples == nil {
+			samples = &sloSamples{}
+			m.sloSamples[uid] = samples
+		}
+		samples.pending = append(samples.pending, sloSample{receivedAt.UnixNano(), float64(*latency) / float64(time.Millisecond)})
+	}
 	bucket := m.bucketLocked(at, "workload:"+uid)
 	if bucket == nil {
 		return
@@ -318,9 +356,16 @@ func (m *Metrics) Flush(now time.Time) error {
 		}
 	}
 	slices.Sort(keys)
+	// Retain receipts for the oldest correctable bucket's window.
+	m.mergeSLOSamplesLocked(m.next.Add(-10*time.Second - m.sloWindow).UnixNano())
 	for _, key := range keys {
 		bucket := m.buckets[key]
 		message := bucket.frame()
+		for uid, row := range message.Workloads {
+			if row.SLO = m.sloLocked(uid, bucket.at); row.SLO != nil {
+				message.Workloads[uid] = row
+			}
+		}
 		message.ObslogQueueLength = queueLength
 		message.ObslogOldestWaitSeconds = oldestWait
 		message.Gaps = append(message.Gaps, m.pendingGaps...)
@@ -339,4 +384,62 @@ func (m *Metrics) Flush(now time.Time) error {
 		}
 	}
 	return nil
+}
+
+// mergeSLOSamplesLocked folds pending receipts into the latency order and drops
+// receipts older than floor in the same linear pass.
+func (m *Metrics) mergeSLOSamplesLocked(floor int64) {
+	for uid, samples := range m.sloSamples {
+		slices.SortFunc(samples.pending, func(a, b sloSample) int { return cmp.Compare(a.ms, b.ms) })
+		merged := m.sloSpare[:0]
+		for sorted, pending := samples.sorted, samples.pending; len(sorted) > 0 || len(pending) > 0; {
+			var next sloSample
+			if len(pending) == 0 || len(sorted) > 0 && sorted[0].ms <= pending[0].ms {
+				next, sorted = sorted[0], sorted[1:]
+			} else {
+				next, pending = pending[0], pending[1:]
+			}
+			if next.receivedAt >= floor {
+				merged = append(merged, next)
+			}
+		}
+		m.sloSpare, samples.sorted, samples.pending = samples.sorted[:0], merged, samples.pending[:0]
+		if len(merged) == 0 {
+			delete(m.sloSamples, uid)
+		}
+	}
+}
+
+// sloLocked judges the window ending at bucketAt with the observation-log
+// cohort population and method (observation.ObservationResult.aggregate):
+// requests received in [end-window,end), completed, positive elapsed latency,
+// gonum stat.Empirical at the configured percentile.
+func (m *Metrics) sloLocked(uid string, bucketAt time.Time) *SLOWindow {
+	slo, ok := m.workloads[uid]
+	if !ok || m.sloWindow <= 0 || slo.TargetLatencyNanos <= 0 || !(slo.Percentile > 0 && slo.Percentile <= 100) {
+		return nil
+	}
+	end := bucketAt.Add(time.Second)
+	from := end.Add(-m.sloWindow)
+	target := float64(slo.TargetLatencyNanos) / float64(time.Millisecond)
+	result := &SLOWindow{WindowSeconds: m.sloWindow.Seconds(), Percentile: slo.Percentile, TargetMS: target}
+	m.sloScratch = m.sloScratch[:0]
+	if samples := m.sloSamples[uid]; samples != nil {
+		for _, sample := range samples.sorted {
+			if sample.receivedAt >= from.UnixNano() && sample.receivedAt < end.UnixNano() {
+				m.sloScratch = append(m.sloScratch, sample.ms)
+				if sample.ms <= target {
+					result.WithinTarget++
+				}
+			}
+		}
+	}
+	result.Samples = uint64(len(m.sloScratch))
+	if result.Samples > 0 {
+		// Already ascending: samples.sorted is in latency order.
+		quantile := stat.Quantile(slo.Percentile/100, stat.Empirical, m.sloScratch, nil)
+		met := quantile <= target
+		result.QuantileMS, result.Met = &quantile, &met
+	}
+	return result
 }

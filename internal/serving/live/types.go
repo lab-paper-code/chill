@@ -215,6 +215,22 @@ type Metric struct {
 	P90MS          *float64 `json:"p90ms"`
 	P95MS          *float64 `json:"p95ms"`
 	P99MS          *float64 `json:"p99ms"`
+	// SLO is omitted for a Workload without a positive configured target or
+	// while the scheduler observation window is unknown.
+	SLO *SLOWindow `json:"slo,omitempty"`
+}
+
+// SLOWindow judges the configured SLO percentile over the scheduler
+// observation window ending at the bucket end. QuantileMS and Met are omitted
+// when the window holds no samples.
+type SLOWindow struct {
+	WindowSeconds float64  `json:"windowSeconds"`
+	Percentile    float64  `json:"percentile"`
+	TargetMS      float64  `json:"targetMs"`
+	Samples       uint64   `json:"samples"`
+	WithinTarget  uint64   `json:"withinTarget"`
+	QuantileMS    *float64 `json:"quantileMs,omitempty"`
+	Met           *bool    `json:"met,omitempty"`
 }
 
 type NodeMetric struct {

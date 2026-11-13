@@ -19,7 +19,7 @@ func TestBlockedObservationWriterPublishesCurrentBacklogMetrics(t *testing.T) {
 	hub := live.New(at)
 	t.Cleanup(hub.Close)
 	metrics := live.NewMetrics(hub, at, &length, &oldest)
-	metrics.SetWorkloads([]string{"uid"})
+	metrics.SetWorkloads([]live.Workload{{UID: "uid"}})
 	log, clock := clockedObservationLog(t, ObservationLogConfig{
 		QueueLength: &length, QueueOldestEnqueued: &oldest,
 		OnRequestEvent: func(event serving.RequestEvent) {
