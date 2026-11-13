@@ -75,7 +75,7 @@ function CoverageBody({ data, search, set, namespace }: {
   ]
   return (
     <div className="flex flex-col gap-6">
-      <StatRow className="grid-cols-2">
+      <StatRow>
         <StatTile label="지원 조합" value={count(summary.supportedCellCount)} reason="서버 미제공" />
         <StatTile label="측정 완료" value={count(summary.completeCellCount)} reason="서버 미제공"
           sub={summary.countsByDisplayStatus.running ? `진행 ${formatNumber(summary.countsByDisplayStatus.running)}` : undefined} />
@@ -95,7 +95,7 @@ function CoverageBody({ data, search, set, namespace }: {
       {cell && <CellDrawer cell={cell} namespace={namespace} returnTo={returnTo} onClose={() => set({ cell: null })} />}
       {!cell && search.get("actions") && (
         <NextActionsDrawer actions={data.nextActions} cells={data.cells} onClose={() => set({ actions: null })}
-          onOpen={target => set({ model: target.model.name, deviceClass: null, status: null, cell: target.id, actions: null })} />
+          hrefOf={target => `/measurements/coverage?${new URLSearchParams({ model: target.model.name, cell: target.id })}`} />
       )}
     </div>
   )

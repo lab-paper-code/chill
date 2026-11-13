@@ -17,7 +17,7 @@ export function coveragePathVisible(cell:MeasurementCoverageCell,inventory?:Inve
   return cell.support.verdict!=="Incompatible"&&!cell.support.reasons.some(reason=>reason.code==="ArtifactArchitectureMismatch")
 }
 export function coverageSupportReasons(cell:MeasurementCoverageCell) {
-  return cell.support.reasons.length?cell.support.reasons:[{code:"DeclarationMismatch",message:"장치·실행 경로 불일치"}]
+  return cell.support.reasons.length?cell.support.reasons:[{code:"DeclarationMismatch",message:"장치와 실행 경로 불일치"}]
 }
 export function coverageVariant(cell:MeasurementCoverageCell,id?:string) {
   return cell.variants.find(variant=>variant.id===id)
@@ -52,10 +52,10 @@ export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:strin
 export type Compatibility = {state:"candidate"|"unsupported"|"unknown";reason:string}
 export function staticCompatibility(model:Pick<CoverageModel,"spec">, path:ExecutionPath, cls:InventoryClass):Compatibility {
   const artifact = model.spec.artifacts.find(item => item.name === path.artifact)
-  if (!artifact?.source.architecture || !cls.architecture) return {state:"unknown",reason:"모델 파일 또는 architecture 선언 미확인"}
-  if (artifact.source.architecture !== cls.architecture) return {state:"unsupported",reason:`architecture 불일치: 파일 ${artifact.source.architecture} / 장치 ${cls.architecture}`}
-  if(path.runtime.backend==="rknnlite"&&cls.accelerator&&cls.accelerator!=="rk3588-npu")return {state:"unsupported",reason:`RKNNLite는 rk3588-npu 전용입니다. 장치 가속기: ${cls.accelerator}`}
-  return {state:"candidate",reason:"선언상 후보 · 실제 runtime 지원 미확인"}
+  if (!artifact?.source.architecture || !cls.architecture) return {state:"unknown",reason:"아키텍처 선언 없음"}
+  if (artifact.source.architecture !== cls.architecture) return {state:"unsupported",reason:"아키텍처 불일치"}
+  if(path.runtime.backend==="rknnlite"&&cls.accelerator&&cls.accelerator!=="rk3588-npu")return {state:"unsupported",reason:"RK3588 NPU 전용"}
+  return {state:"candidate",reason:"실행 지원 미확인"}
 }
 
 export function runAttempt(run:ProfilingRun) {
@@ -71,23 +71,23 @@ export function currentRunCondition(run:ProfilingRun,type:string) {
 export type MeasurementPrefill = {active:boolean;values:Record<string,string>;errors:string[];returnTo:string;node:string}
 export function resolveMeasurementPrefill(params:URLSearchParams,namespace:string,inventory:InventoryView):MeasurementPrefill {
   const keys=["namespace","model","modelUID","deviceClass","deviceClassUID","node","nodeUID","path","powerMode","from","uid","fromNamespace","fromUID","returnTo"],errors:string[]=[]
-  for(const key of keys) if(params.getAll(key).length>1) errors.push(`${key}: 같은 키가 중복됐어요`)
+  for(const key of keys) if(params.getAll(key).length>1) errors.push("값 중복")
   const values=Object.fromEntries(keys.map(key=>[key,params.get(key)??""]))
   const active=["model","deviceClass","node","path","powerMode"].some(key=>params.has(key))
-  if(values.namespace && values.namespace !== namespace) errors.push(`namespace 접근 범위 불일치: ${values.namespace}`)
-  if(values.fromNamespace && values.fromNamespace !== namespace) errors.push(`복사 원본 namespace 접근 범위 불일치: ${values.fromNamespace}`)
-  if(active && values.from) errors.push("복사 원본과 조합 초깃값을 함께 사용할 수 없어요")
+  if(values.namespace && values.namespace !== namespace) errors.push("다른 작업 영역")
+  if(values.fromNamespace && values.fromNamespace !== namespace) errors.push("복사 원본이 다른 작업 영역")
+  if(active && values.from) errors.push("복사 원본과 조합 동시 지정")
   const model=inventory.models.find(model=>model.name===values.model) as CoverageModel|undefined,cls=inventory.classes.find(cls=>cls.name===values.deviceClass)
   if(active) {
-    if(!model) errors.push(`모델을 찾지 못했어요: ${values.model}`)
-    if(!cls) errors.push(`장치 종류를 찾지 못했어요: ${values.deviceClass}`)
-    if(values.modelUID&&model?.uid!==values.modelUID)errors.push("모델 UID 불일치")
-    if(values.deviceClassUID&&cls?.uid!==values.deviceClassUID)errors.push("장치 종류 UID 불일치")
-    if(values.nodeUID&&cls?.nodes.find(node=>node.name===values.node)?.uid!==values.nodeUID)errors.push("Node UID 불일치")
+    if(!model) errors.push("모델 없음")
+    if(!cls) errors.push("장치 종류 없음")
+    if(values.modelUID&&model?.uid!==values.modelUID)errors.push("모델이 다시 등록됨")
+    if(values.deviceClassUID&&cls?.uid!==values.deviceClassUID)errors.push("장치 종류가 다시 등록됨")
+    if(values.nodeUID&&cls?.nodes.find(node=>node.name===values.node)?.uid!==values.nodeUID)errors.push("장치가 다시 등록됨")
     const path=model?.spec.executionPaths.find(path=>path.name===values.path)
-    if(!path) errors.push(`경로를 찾지 못했어요: ${values.path}`)
-    if(cls && !cls.powerModes.some(mode=>mode.name===values.powerMode)) errors.push(`전력모드를 찾지 못했어요: ${values.powerMode}`)
-    if(values.node && !cls?.nodes.some(node=>node.name===values.node)) errors.push(`해당 장치 종류의 Node가 아니에요: ${values.node}`)
+    if(!path) errors.push("실행 경로 없음")
+    if(cls && !cls.powerModes.some(mode=>mode.name===values.powerMode)) errors.push("전력 모드 없음")
+    if(values.node && !cls?.nodes.some(node=>node.name===values.node)) errors.push("장치 종류에 없는 장치")
     if(model && path && cls) {const verdict=staticCompatibility(model,path,cls);if(verdict.state==="unsupported") errors.push(verdict.reason)}
   }
   return {active,values,errors,returnTo:safeMeasurementReturn(values.returnTo),node:values.node || (cls?.nodes.length===1?cls.nodes[0].name:"")}

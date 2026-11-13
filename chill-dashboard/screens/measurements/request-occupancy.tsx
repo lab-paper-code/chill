@@ -10,7 +10,7 @@ import { decodeResponse } from "@/lib/client-transport"
 import type { WorkloadSummary } from "@/lib/domain"
 import type { InventoryView, MeasurementCoverageSummaryResponse, MeasurementPlan, MeasurementProjectionList, OccupancyMutation, OccupancyRequest, OccupancyTask } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { coverageProgress, type CoverageModel } from "@/lib/measurement-coverage"
+import { coverageProgress, deviceLabel, type CoverageModel } from "@/lib/measurement-coverage"
 import { occupancyBody, occupancyChecked, occupancyResponseState, occupancyResultHref } from "@/lib/dispatch-occupancy"
 import { nameIssue, pathLabel } from "@/lib/measurements-request-form"
 import { useCoverageInventory, useMeasurementCoverage, useMeasurementPlans } from "@/hooks/use-measurement-data"
@@ -78,7 +78,7 @@ function OccupancyForm({ namespace, bar, onDirty, plans, workloads, inventory, c
   const prefillMismatch = (!!(params.get("measurementID") || profileID) && !pinned) || (!!params.get("node") && !!plan && params.get("node") !== nodeName) || (!!params.get("nodeUID") && !!node && node.uid !== params.get("nodeUID"))
   const nodeBlocked = !!node && (node.ready !== "True" || node.schedulingDisabled)
   const batchValid = /^\d+$/.test(batchText) && Number.isSafeInteger(batch) && batch >= 1 && batch <= 2147483647
-  const errors = { plan: !plan ? "선택 필요" : !node ? "노드 없음" : "", node: nodeBlocked ? "준비 안 됨" : "", workload: !workload ? "선택 필요" : "", batch: batchValid ? "" : "1 이상 정수", name: nameIssue(name, undefined, false) }
+  const errors = { plan: !plan ? "선택 필요" : !node ? "장치 없음" : "", node: nodeBlocked ? "준비 안 됨" : "", workload: !workload ? "선택 필요" : "", batch: batchValid ? "" : "1 이상 정수", name: nameIssue(name, undefined, false) }
   const invalid = Object.values(errors).some(Boolean)
   const locked = dry.isPending || send.isPending || unknown || send.isSuccess
   const dirty = Object.values(selection).some(value => value !== undefined) && !send.isSuccess
@@ -115,7 +115,7 @@ function OccupancyForm({ namespace, bar, onDirty, plans, workloads, inventory, c
   const label = (item: MeasurementPlan) => {
     const c = item.spec.state.candidate
     const itemModel = inventory.models.find(entry => entry.name === c.modelSpec) as CoverageModel | undefined
-    return `${c.modelSpec} / ${c.deviceClass} / ${pathLabel(itemModel, c.executionPath)} / ${c.powerMode} / ${item.spec.state.targetNode}`
+    return `${c.modelSpec} / ${deviceLabel(c.deviceClass)} ${c.powerMode} / ${pathLabel(itemModel, c.executionPath)} / ${item.spec.state.targetNode}`
   }
   const measured = cell ? coverageProgress(cell)?.measured ?? [] : []
   const dryCode = (dry.error?.data as { code?: string } | null | undefined)?.code
@@ -123,8 +123,8 @@ function OccupancyForm({ namespace, bar, onDirty, plans, workloads, inventory, c
 
   return (
     <Page>
-      <PageHeader title="새 측정 요청" badges={prefillMismatch ? <StatusBadge tone="warn" label="초깃값 불일치" /> : undefined}
-        more={response ? [{ label: "검사 원본 보기", onSelect: () => setRaw(true) }] : undefined} />
+      <PageHeader title="새 측정 요청" badges={prefillMismatch ? <StatusBadge tone="warn" label="초깃값 불일치" reason="링크의 측정 조합을 찾지 못함" /> : undefined}
+        more={response ? [{ label: "원본 보기", onSelect: () => setRaw(true) }] : undefined} />
       {bar}
       <LeaveGuard when={dirty} />
       <FormSection title="대상">
@@ -133,7 +133,7 @@ function OccupancyForm({ namespace, bar, onDirty, plans, workloads, inventory, c
           options={candidates.map(item => ({ value: item.metadata.name, label: label(item) })).sort((a, b) => a.label.localeCompare(b.label))}
           onChange={value => update({ plan: value, workload: undefined })} />
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <InputBlock label="노드" readOnly placeholder="—" value={nodeName} error={errors.node || undefined} />
+          <InputBlock label="장치" readOnly placeholder="—" value={nodeName} error={errors.node || undefined} />
           <SelectBlock label="서비스" placeholder={workloadChoices.length ? "선택" : "서비스 없음"} disabled={locked || !workloadChoices.length}
             error={shown && errors.workload ? errors.workload : undefined} value={workloadName}
             options={workloadChoices.map(item => ({ value: item.desired.metadata.name, label: item.desired.metadata.name }))}
@@ -149,18 +149,18 @@ function OccupancyForm({ namespace, bar, onDirty, plans, workloads, inventory, c
       {unknown
         ? <UnknownOutcome name={frozenName ?? name} onLookup={() => void records.refetch()} looking={records.isFetching} checked={records.isSuccess}
             href={found ? occupancyResultHref(namespace, found.metadata.name, found.metadata.uid) : undefined} />
-        : (dry.isPending || dry.error || response) && <Section title="검사" card actions={
+        : (dry.isPending || dry.error || response) && <Section title="사전 검사" card actions={
             dry.isPending ? <StatusBadge tone="progress" label="검사 중" />
-            : dry.error ? <StatusBadge tone="fail" label={dry.error.status ? occupancyResponseState(dryCode) : "응답 없음"} reason={dry.error.status ? `HTTP ${dry.error.status}${dryCode ? ` ${dryCode}` : ""}` : undefined} />
+            : dry.error ? <StatusBadge tone="fail" label={dry.error.status ? occupancyResponseState(dryCode) : "응답 없음"} reason={dry.error.status ? `HTTP ${dry.error.status}` : undefined} />
             : passed ? <StatusBadge tone="ok" label="통과" /> : <StatusBadge tone="fail" label={occupancyResponseState(undefined, response?.request)} />}>
             {passed && response?.task ? <Fields columns={3} items={protocolFields(response.task)} /> : null}
           </Section>}
 
       <FormActions>
-        <Button variant="outline" loading={dry.isPending} disabled={locked} onClick={verify}>검사</Button>
-        <Button variant="default" loading={send.isPending} disabled={!passed || locked || invalid} onClick={submit}>측정 요청</Button>
+        <Button variant="outline" loading={dry.isPending} disabled={locked} onClick={verify}>사전 검사</Button>
+        <Button variant="default" loading={send.isPending} disabled={!passed || locked || invalid} disabledReason={!passed && !locked ? "사전 검사 통과 필요" : undefined} onClick={submit}>측정 요청</Button>
       </FormActions>
-      {response && <RawDialog open={raw} onOpenChange={setRaw} value={response} filename={`${frozenName ?? "occupancy"}-check.json`} title="검사 원본" />}
+      {response && <RawDialog open={raw} onOpenChange={setRaw} value={response} filename={`${frozenName ?? "occupancy"}-check.json`} title="사전 검사 원본" />}
     </Page>
   )
 }

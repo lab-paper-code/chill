@@ -16,21 +16,28 @@ import { StatusBadge } from "./display"
 
 /**
  * Plain modal for short content that is neither a confirmation nor a row preview (e.g. a comparison
- * table). Native modal <dialog>: Esc closes it and focus returns to the opener.
+ * table or a short form). Native modal <dialog>: Esc closes it and focus returns to the opener.
+ * With `onSubmit` the body and the footer are one form (a submit button in `footer` submits it).
+ * `busy` (a request in flight) keeps it open: Esc, the backdrop and the close button do nothing, and the
+ * close button is hidden; the footer's own buttons show the progress.
  */
-export function Dialog({ open, onOpenChange, title, size = "md", footer, children }: {
+export function Dialog({ open, onOpenChange, title, size = "md", footer, onSubmit, busy = false, children }: {
   open: boolean; onOpenChange: (open: boolean) => void
   title: string
   /** Width: sm 24rem, md 32rem, lg 42rem, xl 56rem. */ size?: "sm" | "md" | "lg" | "xl"
   /** Buttons on the right of the bottom row. */ footer?: React.ReactNode
+  /** Makes body and footer one <form>; the default submit is prevented before this runs. */ onSubmit?: (event: React.FormEvent<HTMLFormElement>) => void
+  busy?: boolean
   children: React.ReactNode
 }) {
+  const body = <>{children}{footer && <DialogFooter>{footer}</DialogFooter>}</>
   return (
-    <Modal open={open} onOpenChange={onOpenChange}>
-      <DialogContent size={size}>
+    <Modal open={open} onOpenChange={next => { if (!busy) onOpenChange(next) }}>
+      <DialogContent size={size} hideCloseButton={busy}>
         <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
-        {children}
-        {footer && <DialogFooter>{footer}</DialogFooter>}
+        {onSubmit
+          ? <form className="grid gap-4" aria-busy={busy || undefined} onSubmit={event => { event.preventDefault(); onSubmit(event) }}>{body}</form>
+          : body}
       </DialogContent>
     </Modal>
   )

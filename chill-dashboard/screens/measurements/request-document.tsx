@@ -82,7 +82,7 @@ export function DocumentRequestForm({ namespace, bar, onDirty }: Props) {
           { label: "서비스", value: spec?.activeProtocol?.workload || null, reason: "문서에 없음" },
           { label: "모델", value: candidate?.modelSpec, reason: "문서에 없음" },
           { label: "장치 종류", value: candidate?.deviceClass, reason: "문서에 없음" },
-          { label: "노드", value: spec?.state?.targetNode, reason: "문서에 없음" },
+          { label: "장치", value: spec?.state?.targetNode, reason: "문서에 없음" },
           { label: "실행 경로", value: candidate?.executionPath ? pathLabel(models.data?.items.find(item => item.metadata.name === candidate.modelSpec), candidate.executionPath) : null, reason: "문서에 없음" },
           { label: "전력 모드", value: candidate?.powerMode, reason: "문서에 없음" },
           { label: "배치별 반복", value: unit(spec?.trialsPerBatch, "회"), reason: "문서에 없음" },

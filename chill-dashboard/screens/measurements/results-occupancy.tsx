@@ -1,9 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { MoreVertical } from "lucide-react"
 import { Button, ConfirmDialog, DataTable, DetailDrawer, EmptyState, Fields, FilterBar, Missing, QueryBoundary, RawDialog, Section, StatusBadge, TimeText, useToast, type Column, type Segment } from "@/components/kit"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { ApiError } from "@/lib/client-transport"
 import { useChillMutation, useChillQuery } from "@/lib/client"
 import { occupancyDirect, occupancyDisplayReason, occupancyRunning } from "@/lib/dispatch-occupancy"
@@ -61,26 +59,15 @@ export function MeasurementOccupancyResults({ lead, namespace }: { lead: Segment
   }
 
   const columns: Column<DispatchOccupancyMeasurement>[] = [
-    { width: "30%", key: "name", header: "측정", cell: item => item.metadata.name, sortValue: item => item.metadata.name },
-    { width: "14%", key: "node", header: "장치", cell: item => item.node, sortValue: item => item.node },
-    { width: "24%", key: "workload", header: "서비스", cell: item => item.conditions.workload, sortValue: item => item.conditions.workload },
-    { width: "8%", key: "batch", header: "배치", unit: "건", numeric: true, cell: item => item.conditions.batch, sortValue: item => item.conditions.batch },
+    { width: "28%", key: "name", header: "측정", cell: item => item.metadata.name, sortValue: item => item.metadata.name },
+    { width: "12%", key: "node", header: "장치", cell: item => item.node, sortValue: item => item.node },
+    { width: "22%", key: "workload", header: "서비스", cell: item => item.conditions.workload, sortValue: item => item.conditions.workload },
+    { width: "10%", key: "batch", header: "배치", unit: "건", numeric: true, cell: item => item.conditions.batch, sortValue: item => item.conditions.batch },
     {
-      width: "12%", key: "occupancy", header: "점유시간", unit: "ms", numeric: true, sortValue: item => occupancyNanos(item) == null ? undefined : Number(occupancyNanos(item)),
+      width: "14%", key: "occupancy", header: "점유시간", unit: "ms", numeric: true, sortValue: item => occupancyNanos(item) == null ? undefined : Number(occupancyNanos(item)),
       cell: item => ms(occupancyNanos(item)) ?? <Missing reason={item.phase === "Complete" ? "결과 없음" : occupancyDisplayReason(item)} />,
     },
-    { width: "12%", key: "status", header: "상태", cell: item => <StatusBadge status={statusOf(item)} reason={item.phase === "Complete" ? undefined : occupancyDisplayReason(item)} /> },
-    {
-      key: "menu", header: "", width: "3.5rem",
-      cell: item => (
-        <DropdownMenu>
-          <DropdownMenuTrigger className="inline-flex size-8 items-center justify-center rounded-md hover:bg-muted" aria-label={`${item.metadata.name} 메뉴`}><MoreVertical className="size-4" aria-hidden="true" /></DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-32" onClick={event => event.stopPropagation()}>
-            <DropdownMenuItem variant="destructive" disabled={item.phase === "Measuring"} onSelect={() => setRemoving(item)}>삭제</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ),
-    },
+    { key: "status", header: "상태", cell: item => <StatusBadge status={statusOf(item)} reason={item.phase === "Complete" ? undefined : occupancyDisplayReason(item)} /> },
   ]
   const stats = selected?.estimate?.statistics
   return (
@@ -105,6 +92,7 @@ export function MeasurementOccupancyResults({ lead, namespace }: { lead: Segment
             busy={list.isFetching}
             download={{ filename: "dispatch-occupancy" }}
             empty={<EmptyState compact title="조건에 맞는 결과 없음" />}
+            rowActions={item => [{ label: "삭제", destructive: true, disabled: item.phase === "Measuring", disabledReason: item.phase === "Measuring" ? "측정 중" : undefined, onSelect: () => setRemoving(item) }]}
           />
         )}
       </QueryBoundary>
@@ -117,6 +105,7 @@ export function MeasurementOccupancyResults({ lead, namespace }: { lead: Segment
       >
         {selected ? (
           <>
+            {selected.phase !== "Complete" && <Fields columns={1} items={[{ label: "사유", value: occupancyDisplayReason(selected) }]} />}
             {stats && (
               <Section title="분포">
                 <Fields columns={2} items={[
@@ -125,7 +114,7 @@ export function MeasurementOccupancyResults({ lead, namespace }: { lead: Segment
                   { label: "하위 10%", value: `${ms(stats.p10)} ms` },
                   { label: "상위 10%", value: `${ms(stats.p90)} ms` },
                   { label: "음수 비율", value: `${formatNumber(stats.negativeFraction * 100, 1)} %` },
-                  { label: "인접 쌍", value: selected.estimate?.pairs == null ? null : `${formatNumber(selected.estimate.pairs)} 쌍` },
+                  { label: "인접 쌍", value: selected.estimate?.pairs == null ? null : `${formatNumber(selected.estimate.pairs)}쌍` },
                 ]} />
               </Section>
             )}
@@ -133,14 +122,13 @@ export function MeasurementOccupancyResults({ lead, namespace }: { lead: Segment
               <Fields columns={2} items={[
                 { label: "장치", value: selected.node },
                 { label: "서비스", value: selected.conditions.workload },
-                { label: "배치", value: `${selected.conditions.batch} 건` },
-                { label: "전력 모드", value: selected.status.powerMode },
-                { label: "시작", value: <TimeText at={selected.measurementWindow?.start} mode="absolute" /> },
-                { label: "종료", value: <TimeText at={selected.measurementWindow?.end} mode="absolute" /> },
+                { label: "배치", value: `${selected.conditions.batch}건` },
+                { label: "전력 모드", value: selected.status.powerMode, reason: "기록 없음" },
+                { label: "시작", value: selected.measurementWindow?.start && <TimeText at={selected.measurementWindow.start} mode="absolute" />, reason: "시작 전" },
+                { label: "종료", value: selected.measurementWindow?.end && <TimeText at={selected.measurementWindow.end} mode="absolute" />, reason: "끝나지 않음" },
                 { label: "예열", value: `${selected.conditions.warmupSeconds} s` },
                 { label: "측정", value: `${selected.conditions.durationSeconds} s` },
-                { label: "송신자", value: `${selected.conditions.workers} 명` },
-                ...(selected.phase === "Complete" ? [] : [{ label: "사유", value: occupancyDisplayReason(selected) }]),
+                { label: "송신자", value: `${selected.conditions.workers}명` },
               ]} />
             </Section>
             <RawDialog open={raw} onOpenChange={setRaw} value={selected} filename={`${selected.metadata.name}.json`} title="분배 점유시간 원본" />
@@ -152,14 +140,12 @@ export function MeasurementOccupancyResults({ lead, namespace }: { lead: Segment
         onOpenChange={open => { if (!open && !mutation.isPending) setRemoving(null) }}
         title="분배 점유시간 삭제"
         target={removing?.metadata.name}
-        changes={[{ label: "측정 기록", before: "있음", after: "삭제" }]}
+        changes={[{ label: "측정 기록", before: "있음", after: "삭제" }, { label: "근거 파일", before: "있음", after: "삭제" }]}
         tone="destructive"
         confirmLabel="삭제"
         pending={mutation.isPending}
         onConfirm={() => removing && remove(removing)}
-      >
-        근거 파일도 함께 삭제됩니다
-      </ConfirmDialog>
+      />
     </>
   )
 }

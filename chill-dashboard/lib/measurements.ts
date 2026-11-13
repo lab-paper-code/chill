@@ -20,7 +20,7 @@ export const measurementPath = (kind:ProjectionMeasurementKind, namespace:string
 export function executionPathLabel(value:string,index?:number) {
   const backend=/ort-cuda|cuda/.test(value)?"CUDA":/rknn/.test(value)?"NPU":/ort-cpu|cpu/.test(value)?"CPU":""
   if(!backend)return `등록 실행 경로${index===undefined?"":` ${index+1}`}`
-  return `${[backend,/int8/.test(value)?"정수 8비트":"",/arm64/.test(value)?"ARM 64비트":/amd64/.test(value)?"x86 64비트":""].filter(Boolean).join(" · ")} (${value})`
+  return `${[backend,/int8/.test(value)?"정수 8비트":"",/arm64/.test(value)?"ARM 64비트":/amd64/.test(value)?"x86 64비트":""].filter(Boolean).join(" ")} (${value})`
 }
 export function measurementReasonSummary(reason:string) {
   if(!reason.trim())return "상세 사유 미제공"
@@ -36,7 +36,7 @@ export function measurementReasonSummary(reason:string) {
   if(/No verified catalog profile/i.test(reason))return "현재 조건의 검증된 프로파일 없음"
   if(/unknown field/i.test(reason))return "설정 항목 미지원"
   if(/native preparation Pod failed/i.test(reason))return "모델 준비 실패"
-  if(/Stored occupancy does not match/i.test(reason))return "요청·점유시간 근거 불일치"
+  if(/Stored occupancy does not match/i.test(reason))return "요청과 점유시간 근거 불일치"
   if(/Signed negative d/i.test(reason))return "점유시간 음수"
   if(codeText[reason]) return codeText[reason].join(" ")
   if(/exactly one proven primitive state effect/i.test(reason)) return "단일 상태 변경 미확인"
@@ -63,7 +63,7 @@ export function occupancyReason(data:Pick<DispatchOccupancyMeasurement,"status"|
     OccupancyEvidenceMissing:"점유시간 근거 파일 없음",OccupancyEvidenceUnavailable:"점유시간 근거 읽기 실패",OccupancyEvidenceInvalid:"점유시간 근거 해석 실패",OccupancyThroughputInvalid:"처리량 오류",
     BatchUnmeasured:"배치 미측정",WorkloadMissing:"서비스 근거 없음",WorkloadAutonomous:"CHILL 자동 운영 사용 중",WorkloadServing:"서비스 실행 중",ConditionsInfeasible:"측정 조건 불충족",
     MissingPhysicalEvidence:"실행 근거 없음",MissingWindowBoundary:"측정 구간 경계 없음",UnknownPhysicalContinuity:"실행 연속성 미확인",NativeExecutionError:"실행 오류",UnknownRequestExecution:"요청 실행 미확인",ObservationRetentionGap:"관측 보존 공백",PhysicalDrainUnconfirmed:"실행 종료 미확인",
-    OccupancyEvidenceInsufficient:"점유시간 근거 부족",OccupancyNegativeD:"점유시간 음수",OccupancyEvidenceMismatch:"요청·점유시간 근거 불일치",OccupancyValueProblem:"점유시간·처리량 오류",
+    OccupancyEvidenceInsufficient:"점유시간 근거 부족",OccupancyNegativeD:"점유시간 음수",OccupancyEvidenceMismatch:"요청과 점유시간 근거 불일치",OccupancyValueProblem:"점유시간 또는 처리량 오류",
   }
   const recorded=reason||data.assessment?.reasons[0]?.code||data.assessment?.reasons[0]?.message||""
   if(recorded) {
@@ -73,11 +73,11 @@ export function occupancyReason(data:Pick<DispatchOccupancyMeasurement,"status"|
       if(/^[A-Za-z][A-Za-z0-9_]*$/.test(part)&&!codeText[part])return part
       const summary=measurementReasonSummary(part)
       return summary==="상세 사유: 원문"?part:summary
-    }).join(" · ")
+    }).join(", ")
   }
   return data.assessment?.displayStatus==="problem"?"상세 사유 미제공":d===undefined||!x?"결과 없음":"—"
 }
-export const significant = (value:number) => Number.isFinite(value) ? value.toLocaleString("ko-KR",{maximumSignificantDigits:3}) : `${String(value)} · 품질 경고`
+export const significant = (value:number) => Number.isFinite(value) ? value.toLocaleString("ko-KR",{maximumSignificantDigits:3}) : `${String(value)} (품질 경고)`
 export function safeMeasurementReturn(value:string|null, fallback="/measurements") {
   if (!value || !value.startsWith("/") || value.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(value)) return fallback
   try {
@@ -106,15 +106,15 @@ export function runFailure(run:ProfilingRun) {
   const termination=runStatusObject(run.status.runtimeTermination),log=cleanRunLog(termination?.logTail)
   const failure=run.assessment?.failureSummary?.[0]
   const spec=run.spec as {targetNode?:string;candidate?:{modelSpec?:string;executionPath?:string};measurement?:{batch?:number}}
-  const smaller=spec.measurement?.batch===1?"다른 CPU·int8 경로 / 큰 메모리 장치":"더 작은 배치"
+  const smaller=spec.measurement?.batch===1?"다른 CPU 정수 8비트 경로 / 큰 메모리 장치":"더 작은 배치"
   const actions:Record<string,[string,string][]>={
-    GPUMemoryExhausted:[["점검","GPU 여유 메모리·동시 작업"],["재요청",smaller],["동시 점유","당시 기록 없음"]],
-    HostOOM:[["점검","시스템 메모리·동시 작업"],["재요청",smaller]],
-    PowerObservationTimeout:[["점검","전력 계측기 연결·응답·대기 한도·간격"],["재요청","전력 관측 복구 후 동일 조건"],["판정 범위","모델 성능 판정 제외"]],
-    ImagePullFailed:[["점검","이미지 주소·버전·가져오기 권한"],["재요청","이미지 접근 복구 후"]],
-    RuntimeFailed:[["점검","최초 오류·모델 파일·장치 지원·실행 환경"],["재요청","지원 실행 경로"]],
+    GPUMemoryExhausted:[["점검","GPU 여유 메모리, 동시 작업"],["재요청",smaller],["동시 점유","당시 기록 없음"]],
+    HostOOM:[["점검","시스템 메모리, 동시 작업"],["재요청",smaller]],
+    PowerObservationTimeout:[["점검","전력 계측기 연결, 응답, 대기 한도, 간격"],["재요청","전력 관측 복구 후 동일 조건"],["판정 범위","모델 성능 판정 제외"]],
+    ImagePullFailed:[["점검","이미지 주소, 버전, 가져오기 권한"],["재요청","이미지 접근 복구 후"]],
+    RuntimeFailed:[["점검","최초 오류, 모델 파일, 장치 지원, 실행 환경"],["재요청","지원 실행 경로"]],
   }
   return {title:failure?.label??"실패 분류 미제공",excerpt:failure?.message??"실패 분류 미제공",exitCode:failure?.exitCode??termination?.exitCode,log,
     target:[["노드",spec.targetNode??"미기록"],["모델",spec.candidate?.modelSpec??"미기록"],["경로",spec.candidate?.executionPath??"미기록"]] as [string,string][],
-    actions:actions[failure?.code??""]??[["점검","실행 조건·환경·최초 오류"],["전달","대상 노드·모델 정보"]]}
+    actions:actions[failure?.code??""]??[["점검","실행 조건, 환경, 최초 오류"],["전달","대상 노드, 모델 정보"]]}
 }

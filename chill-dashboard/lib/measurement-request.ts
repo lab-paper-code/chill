@@ -13,7 +13,7 @@ export function requestHref(namespace:string,name:string,uid?:string) {
 export function requestCopySource(name:string,namespace:string,uid:string|null,plans:MeasurementPlan[]) {
   const source=plans.find(plan=>plan.metadata.name===name&&plan.metadata.namespace===namespace)
   return !source?.metadata.uid||uid&&source.metadata.uid!==uid
-    ?{source:undefined,error:"복사 원본의 저장 영역·식별자를 확인할 수 없어요. 같은 이름의 다른 요청으로 대체하지 않아요."}
+    ?{source:undefined,error:"복사 원본 없음"}
     :{source,error:""}
 }
 
@@ -45,7 +45,7 @@ export function datasetGap(dataset:DatasetSpec,preprocessor:PreprocessorSpec|und
   return (preprocessor?.input.fields??[]).map(field=>{
     const record=records.get(field.name)
     return !record?`${field.name} 필드가 없어요`:record.format!==field.format?`${field.name} 형식이 달라요 (${field.format} 필요)`:record.maxBytes>field.maxBytes?`${field.name} 크기가 최대 ${field.maxBytes} B보다 클 수 있어요`:""
-  }).filter(Boolean).join(" · ")
+  }).filter(Boolean).join(", ")
 }
 
 // Catalog contracts, not names, select the preprocessor and dataset.
@@ -65,17 +65,17 @@ export function requestInputs(model:string,artifact:string,preprocessor:string,d
   const explicitDataset=context.datasets.find(item=>item.metadata.name===dataset)
   const selected=explicitDataset&&(!inherited.dataset||compatible(explicitDataset)&&history.some(entry=>entry.dataset===dataset&&entry.preprocessor===pre?.metadata.name))?explicitDataset:priorDataset??(datasets.length===1?datasets[0]:undefined)
   const contract=pre?.spec.input.fields.map(field=>`${field.name} (${field.format}, 최대 ${field.maxBytes} B)`).join(", ")
-  const warning=!pre?"모델·실행 경로에 연결된 전처리기의 입력 계약을 확인할 수 없어요. 카탈로그에서 전처리기 연결을 확인하고 직접 선택하세요.":!candidates.includes(pre)?"선택한 전처리기가 이 모델·실행 경로에 연결되어 있지 않아요. 카탈로그 연결을 확인하세요.":selected&&!compatible(selected)?`데이터셋이 전처리기 입력 조건에 맞지 않아요: ${datasetGap(selected.spec,pre.spec)}`:!selected?datasets.length>1?`입력 조건 ${contract}에 맞는 데이터셋이 여러 개예요. 사용할 데이터셋을 직접 선택하세요.`:`입력 조건 ${contract}과 필드 집합이 같은 유일한 데이터셋을 확인하지 못했어요. 등록 데이터셋을 직접 선택하세요. 추가 필드는 명시 선택할 때 허용해요.`:""
+  const warning=!pre?"모델과 실행 경로에 연결된 전처리기의 입력 계약을 확인할 수 없어요. 카탈로그에서 전처리기 연결을 확인하고 직접 선택하세요.":!candidates.includes(pre)?"선택한 전처리기가 이 모델과 실행 경로에 연결되어 있지 않아요. 카탈로그 연결을 확인하세요.":selected&&!compatible(selected)?`데이터셋이 전처리기 입력 조건에 맞지 않아요: ${datasetGap(selected.spec,pre.spec)}`:!selected?datasets.length>1?`입력 조건 ${contract}에 맞는 데이터셋이 여러 개예요. 사용할 데이터셋을 직접 선택하세요.`:`입력 조건 ${contract}과 필드 집합이 같은 유일한 데이터셋을 확인하지 못했어요. 등록 데이터셋을 직접 선택하세요. 추가 필드는 명시 선택할 때 허용해요.`:""
   return {preprocessor:pre?.metadata.name??"",dataset:selected?.metadata.name??"",warning}
 }
 
 export type RequestRejectionGuidance={target:string;fields:string[];message:string;constraints:[string,string][]}
 export function requestRejectionGuidance(reason:string):RequestRejectionGuidance|null {
-  if(/model-loaded idle measurement protocol is invalid|curve plan idle.*protocol is invalid/i.test(reason))return {target:"measurement-settling",fields:["settling"],message:"유휴 측정 조건 확인",constraints:[["안정 시간 (s)","≥ 1"],["자동 유휴 예열 (회)","0"],["자동 유휴 데이터셋","없음"],["서버 유휴 배치 · ORT","1"]]}
+  if(/model-loaded idle measurement protocol is invalid|curve plan idle.*protocol is invalid/i.test(reason))return {target:"measurement-settling",fields:["settling"],message:"유휴 측정 조건 확인",constraints:[["안정 시간 (s)","≥ 1"],["자동 유휴 예열 (회)","0"],["자동 유휴 데이터셋","없음"],["서버 유휴 배치 (ORT)","1"]]}
   if(/invalid or under-covering metric observation request|metric.*(?:interval|timeout|duration)/i.test(reason))return {target:"measurement-activeWindow",fields:["activeWindow","activeTimeout","idleWindow","idleTimeout"],message:"전력 기록 조건 확인",constraints:[["전력 기록 시간","≥ 측정 시간"],["대기 한도","< 기록 간격"],["입력값","양의 정수"]]}
   if(/active measurement cannot contain settlingDurationSeconds|curve plan active.*protocol is invalid/i.test(reason))return {target:"measurement-activeDuration",fields:["activeDuration","warmup"],message:"실행 측정 조건 확인",constraints:[["측정 시간 (s)","≥ 1"],["예열 (회)","≥ 0"],["실행 중 안정 시간","미전송"]]}
-  if(/batch.*(?:maxBatchSize|positive|valid|supported)|planned batch size/i.test(reason))return {target:"measurement-batches",fields:[],message:"처리 건수 확인",constraints:[["처리 건수","≥ 1 · ≤ 경로 최대 배치"],["모델 선언 배치","전체 선택"]]}
-  if(/dataset|preprocessor/i.test(reason))return {target:"request-input-guidance",fields:[],message:"입력 연결 확인",constraints:[["전처리기","모델 파일 연결"],["데이터셋","입력 이름·형식 일치 · 크기 상한 이하"],["UID·이미지 누락","카탈로그 등록 수정"]]}
+  if(/batch.*(?:maxBatchSize|positive|valid|supported)|planned batch size/i.test(reason))return {target:"measurement-batches",fields:[],message:"처리 건수 확인",constraints:[["처리 건수","≥ 1, ≤ 경로 최대 배치"],["모델 선언 배치","전체 선택"]]}
+  if(/dataset|preprocessor/i.test(reason))return {target:"request-input-guidance",fields:[],message:"입력 연결 확인",constraints:[["전처리기","모델 파일 연결"],["데이터셋","입력 이름과 형식 일치, 크기 상한 이하"],["UID 또는 이미지 누락","카탈로그 등록 수정"]]}
   if(/power.?mode|target.?node|candidate.*compatible|executionPath/i.test(reason))return {target:"measurement-device",fields:[],message:"실행 장비 조건 확인",constraints:[["실행 노드","준비 상태"],["전력 모드","장치 등록값"],["실행 경로","호환 선언"]]}
   return null
 }
@@ -86,21 +86,21 @@ const dns1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)
 export type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number; utilizations:string; sparseMeanGap:number; phaseDuration:number; postLoadDuration:number; requestLifetime:number; deliveryMargin:number; framedDecodedRequestUpperBytes:number }
 export const advancedFields: [key: keyof Omit<Advanced,"utilizations">, label: string, min: number, max?:number, step?:number|"any"][] = [
   ["warmup", "측정 전 예열 횟수", 0],
-  ["activeDuration", "측정 시간 · 초", 1],
-  ["activeWindow", "전력 기록 시간 · 초", 1],
-  ["activeInterval", "전력 기록 간격 · 밀리초", 1],
-  ["activeTimeout", "전력 기록 대기 한도 · 밀리초", 1],
-  ["sparseMeanGap", "희소 요청 평균 간격 · 밀리초", 0, Number.MAX_VALUE, "any"],
-  ["phaseDuration", "운영점별 측정 시간 · 초", 1],
-  ["postLoadDuration", "부하 종료 후 전력 기록 시간 · 초", 1],
-  ["requestLifetime", "요청 수명 · 초", 1],
-  ["deliveryMargin", "응답 전달 여유 · 밀리초", 1],
-  ["framedDecodedRequestUpperBytes", "디코딩된 요청 프레임 상한 · 바이트", 1, Number.MAX_SAFE_INTEGER],
-  ["settling", "쉬는 상태 안정 시간 · 초", 1],
-  ["idleDuration", "쉬는 상태 측정 시간 · 초", 1],
-  ["idleWindow", "쉬는 상태 전력 기록 시간 · 초", 1],
-  ["idleInterval", "쉬는 상태 전력 기록 간격 · 밀리초", 1],
-  ["idleTimeout", "쉬는 상태 전력 기록 대기 한도 · 밀리초", 1],
+  ["activeDuration", "측정 시간 (초)", 1],
+  ["activeWindow", "전력 기록 시간 (초)", 1],
+  ["activeInterval", "전력 기록 간격 (밀리초)", 1],
+  ["activeTimeout", "전력 기록 대기 한도 (밀리초)", 1],
+  ["sparseMeanGap", "희소 요청 평균 간격 (밀리초)", 0, Number.MAX_VALUE, "any"],
+  ["phaseDuration", "운영점별 측정 시간 (초)", 1],
+  ["postLoadDuration", "부하 종료 후 전력 기록 시간 (초)", 1],
+  ["requestLifetime", "요청 수명 (초)", 1],
+  ["deliveryMargin", "응답 전달 여유 (밀리초)", 1],
+  ["framedDecodedRequestUpperBytes", "디코딩된 요청 프레임 상한 (바이트)", 1, Number.MAX_SAFE_INTEGER],
+  ["settling", "쉬는 상태 안정 시간 (초)", 1],
+  ["idleDuration", "쉬는 상태 측정 시간 (초)", 1],
+  ["idleWindow", "쉬는 상태 전력 기록 시간 (초)", 1],
+  ["idleInterval", "쉬는 상태 전력 기록 간격 (밀리초)", 1],
+  ["idleTimeout", "쉬는 상태 전력 기록 대기 한도 (밀리초)", 1],
   ["retryLimit", "일시적 인프라 장애 재시도 한도", 0],
 ]
 export type Protocol = { values: Advanced; from: string | null; spec?:MeasurementPlanSpec; target?:string; copied?:boolean }

@@ -16,7 +16,7 @@ import type { ApiError } from "@/lib/client-transport"
 import type { DatasetResource, ModelList, PreprocessorResource, WorkloadSummary } from "@/lib/domain"
 import type { InventoryView, MeasurementCoverageSummaryResponse, ModelCompatibility } from "@/lib/read-types"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
-import { resolveMeasurementPrefill } from "@/lib/measurement-coverage"
+import { deviceLabel, resolveMeasurementPrefill } from "@/lib/measurement-coverage"
 import { begin, emptyDraft, manifest, nodeReason, pathReason, requestCopySource, requestHref, steps, updateDraft, view, type Advanced, type Context, type Draft, type Step } from "@/lib/measurement-request"
 import { advancedIssue, nameIssue, pathLabel, pathSupport, type PathSupport } from "@/lib/measurements-request-form"
 import { useCoverageInventory, useMeasurementCoverage, useMeasurementPlans, useRequestProfileHistory } from "@/hooks/use-measurement-data"
@@ -196,7 +196,7 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
             options={context.classes.map(cls => {
               const ready = cls.nodes.some(item => !nodeReason(item))
               const runnable = !v.model || v.model.spec.executionPaths.some(path => !pathReason(v.model!, path, cls))
-              return { value: cls.name, label: cls.name, disabled: !ready || !runnable, reason: !ready ? "준비된 노드 없음" : !runnable ? "실행 경로 없음" : undefined }
+              return { value: cls.name, label: deviceLabel(cls.name), title: cls.name, disabled: !ready || !runnable, reason: !ready ? "준비된 장치 없음" : !runnable ? "실행 경로 없음" : undefined }
             })}
             onChange={name => {
               const cls = context.classes.find(item => item.name === name)
@@ -209,10 +209,10 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
                 ...(keepPath ? {} : { path: "" }),
               })
             }} />
-          {v.cls && v.cls.nodes.length > 1 && <ChoiceGroup label="노드" disabled={locked} value={d.node} error={show && v.problem("device") ? "준비된 노드 선택" : undefined}
+          {v.cls && v.cls.nodes.length > 1 && <ChoiceGroup label="장치" disabled={locked} value={d.node} error={show && v.problem("device") ? "준비된 장치 선택" : undefined}
             options={v.cls.nodes.map(item => ({ value: item.name, label: item.name, disabled: !!nodeReason(item), reason: item.ready !== "True" ? "준비 안 됨" : item.schedulingDisabled ? "작업 차단" : undefined }))}
             onChange={name => update({ node: name })} />}
-          {v.model && v.cls && <ChoiceGroup label="실행 경로" disabled={locked} value={d.path} error={show && (!v.path || selectedSupport?.state === "unsupported") ? "지원 경로 선택" : undefined}
+          {v.model && v.cls && <ChoiceGroup label="실행 경로" wide disabled={locked} value={d.path} error={show && (!v.path || selectedSupport?.state === "unsupported") ? "지원 경로 선택" : undefined}
             options={v.model.spec.executionPaths.map((path, index) => {
               const state = support(index)
               return { value: path.name, label: pathLabel(v.model, path.name), title: path.name, disabled: state?.state === "unsupported", reason: state?.state === "candidate" ? undefined : state?.reason }
@@ -263,8 +263,8 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
           <Fields columns={3} items={[
             { label: "서비스", value: d.workload },
             { label: "모델", value: d.model },
-            { label: "장치 종류", value: d.deviceClass },
-            { label: "노드", value: d.node },
+            { label: "장치 종류", value: deviceLabel(d.deviceClass) },
+            { label: "장치", value: d.node },
             { label: "실행 경로", value: d.path ? pathLabel(v.model, d.path) : null },
             { label: "전력 모드", value: v.powerMode },
             { label: "전처리기", value: d.preprocessor },

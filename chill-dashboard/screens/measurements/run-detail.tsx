@@ -1,11 +1,13 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { DataTable, EmptyState, Fields, Page, PageHeader, QueryBoundary, RawDialog, Section, StatRow, StatTile, TimeText, type Column } from "@/components/kit"
 import { useChillQuery, useSession } from "@/lib/client"
-import { currentRunCondition, runAttempt, runSpec } from "@/lib/measurement-coverage"
-import { executionPathLabel, exactRun, runFailure } from "@/lib/measurements"
+import { currentRunCondition, deviceLabel, runSpec } from "@/lib/measurement-coverage"
+import { exactRun, runFailure } from "@/lib/measurements"
+import { pathLabel } from "@/lib/measurements-coverage-matrix"
 import { formatNumber } from "@/lib/format"
 import { measurementStatus } from "@/lib/status-labels"
 import type { NativeSample, Passport, ProfilingRun, RunsView } from "@/lib/read-types"
@@ -46,30 +48,28 @@ export function MeasurementRunScreen({ name }: { name: string }) {
             {idle ? (
               <EmptyState title="유휴 측정은 처리 성능이 없음" compact />
             ) : !run.status.evidence ? (
-              <EmptyState title="근거 없음" compact />
+              !currentRunCondition(run, "ExecutionComplete") ? <EmptyState title="측정 중" compact />
+              : currentRunCondition(run, "ExecutionComplete")?.status === "False" ? null : <EmptyState title="근거 없음" compact />
             ) : (
               <QueryBoundary query={passport} skeleton="tiles">
                 {data => {
                   if (!("measurement" in data)) return <EmptyState title="근거 발행 대기" compact />
                   const { runtime, power } = data.measurement
                   return (
-                    <>
-                      <StatRow className="xl:grid-cols-5">
-                        <StatTile label="처리량" value={formatNumber(runtime.throughputItemsPerSecond, 1)} unit="건/s" />
-                        <StatTile label="지연 p50" value={formatNumber(runtime.latencyMilliseconds.p50, 2)} unit="ms" />
-                        <StatTile label="지연 p95" value={formatNumber(runtime.latencyMilliseconds.p95, 2)} unit="ms" />
-                        <StatTile label="지연 p99" value={formatNumber(runtime.latencyMilliseconds.p99, 2)} unit="ms" />
-                        <StatTile label="평균 전력" value={power.watts ? formatNumber(power.watts.mean, 1) : null} unit="W" />
-                      </StatRow>
-                      {!!runtime.nativeSamples?.length && (
-                        <DataTable label="배치 실행" title="배치 실행" rows={runtime.nativeSamples} rowKey={s => String(s.batchID)} columns={sampleColumns} defaultSort={{ key: "id", desc: false }} />
-                      )}
-                    </>
+                    <StatRow columns={4}>
+                      <StatTile label="처리량" value={formatNumber(runtime.throughputItemsPerSecond, 1)} unit="건/s" />
+                      <StatTile label="지연 p50" value={formatNumber(runtime.latencyMilliseconds.p50, 2)} unit="ms" />
+                      <StatTile label="지연 p95" value={formatNumber(runtime.latencyMilliseconds.p95, 2)} unit="ms" sub={`p99 ${formatNumber(runtime.latencyMilliseconds.p99, 2)} ms`} />
+                      <StatTile label="평균 전력" value={power.watts ? formatNumber(power.watts.mean, 1) : null} unit="W" reason="전력 기록 없음" />
+                    </StatRow>
                   )
                 }}
               </QueryBoundary>
             )}
             <Conditions run={run} />
+            {!!body?.measurement.runtime.nativeSamples?.length && (
+              <DataTable label="배치 실행" title="배치 실행" rows={body.measurement.runtime.nativeSamples} rowKey={s => String(s.batchID)} columns={sampleColumns} defaultSort={{ key: "id", desc: false }} />
+            )}
           </>
         )}
       </QueryBoundary>
@@ -81,17 +81,20 @@ export function MeasurementRunScreen({ name }: { name: string }) {
 function Conditions({ run }: { run: ProfilingRun }) {
   const spec = runSpec(run)
   const ended = currentRunCondition(run, "ExecutionComplete")?.lastTransitionTime
+  const parent = run.ownerReferences?.find(owner => owner.kind === "BatchEnergyOptimization")
+  const attempt = run.labels?.["edge.dacs.io/attempt"]
   return (
     <Section title="조건" card>
       <Fields columns={3} items={[
+        { label: "측정 요청", value: parent && <Link className="hover:underline" href={`/measurements/requests/${encodeURIComponent(parent.name)}?uid=${encodeURIComponent(parent.uid)}`}>{parent.name}</Link>, reason: "연결된 요청 없음" },
         { label: "모델", value: spec.candidate?.modelSpec },
-        { label: "장치 종류", value: spec.candidate?.deviceClass },
-        { label: "장비", value: spec.targetNode },
+        { label: "장치 종류", value: spec.candidate && deviceLabel(spec.candidate.deviceClass) },
+        { label: "장치", value: spec.targetNode },
         { label: "전력 모드", value: spec.candidate?.powerMode },
-        { label: "실행 경로", value: spec.candidate && executionPathLabel(spec.candidate.executionPath).replace(/ \(.*\)$/, "") },
+        { label: "실행 경로", value: spec.candidate && pathLabel(spec.candidate.executionPath) },
         { label: "배치", value: spec.measurement?.batch == null ? null : `${spec.measurement.batch}건` },
         { label: "방식", value: spec.measurement?.workloadMode === "idle-model-loaded" ? "유휴" : "부하" },
-        { label: "반복", value: runAttempt(run).replace("회차", "") ? `${runAttempt(run).replace("회차", "")}회차` : null },
+        { label: "반복", value: attempt ? `${attempt}번째` : null, reason: "기록 없음" },
         { label: "생성", value: <TimeText at={run.creationTimestamp} mode="absolute" /> },
         { label: "실행 종료", value: ended ? <TimeText at={ended} mode="absolute" /> : null, reason: "아직 끝나지 않음" },
       ]} />

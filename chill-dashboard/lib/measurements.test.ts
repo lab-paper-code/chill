@@ -98,7 +98,7 @@ test("R10: projection reasons summarize repeated state-effect errors and preserv
 test("failure actions name the measured node model path and smallest-batch limit",()=>{
   const run={spec:{targetNode:"genesis2",candidate:{modelSpec:"smolvlm2",executionPath:"cuda"},measurement:{batch:1}},status:{},assessment:{failureSummary:[{code:"GPUMemoryExhausted"}]}} as unknown as Parameters<typeof runFailure>[0]
   assert.deepEqual(runFailure(run).target,[["노드","genesis2"],["모델","smolvlm2"],["경로","cuda"]])
-  assert.match(runFailure(run).actions.flat().join(" "),/CPU·int8/)
+  assert.match(runFailure(run).actions.flat().join(" "),/CPU 정수 8비트/)
   assert.match(runFailure({...run,spec:{...run.spec,measurement:{batch:8}}}).actions.flat().join(" "),/작은 배치/)
   for(const code of ["HostOOM","PowerObservationTimeout","ImagePullFailed","RuntimeFailed","Other"]) {
     const failure=runFailure({...run,assessment:{...run.assessment!,failureSummary:[{...run.assessment!.failureSummary![0],code}]}})
@@ -116,12 +116,12 @@ test("R13: occupancy quantity cells are unitless while invalid-value reasons rem
 })
 
 test("R13: occupancy issues retain short reasons even when the checklist has no checks",()=>{
-  assert.equal(occupancyReason({...occupancy,status:{perRequestNanos:0,throughput:"0",reason:"Stored occupancy does not match this request and status"}}),"요청·점유시간 근거 불일치")
+  assert.equal(occupancyReason({...occupancy,status:{perRequestNanos:0,throughput:"0",reason:"Stored occupancy does not match this request and status"}}),"요청과 점유시간 근거 불일치")
   assert.equal(occupancyReason({...occupancy,status:{reason:"Signed negative d"}}),"점유시간 음수")
   assert.equal(occupancyReason({...occupancy,status:{reason:"UnknownReason"}}),"UnknownReason")
-  assert.equal(occupancyReason({...occupancy,status:{reason:"TooFewBatches 12; NotSaturated 0.123456; FutureReason 7"}}),"배치 표본 부족 · 부하 미포화 · FutureReason 7")
+  assert.equal(occupancyReason({...occupancy,status:{reason:"TooFewBatches 12; NotSaturated 0.123456; FutureReason 7"}}),"배치 표본 부족, 부하 미포화, FutureReason 7")
   assert.equal(occupancyReason({...occupancy,status:{reason:"UnknownPhysicalContinuity"}}),"실행 연속성 미확인")
-  assert.equal(occupancyReason({...occupancy,status:{},assessment:{...occupancy.assessment!,reasons:[{code:"OccupancyEvidenceMismatch",message:"",label:"",sourceIds:[]}]}}),"요청·점유시간 근거 불일치")
+  assert.equal(occupancyReason({...occupancy,status:{},assessment:{...occupancy.assessment!,reasons:[{code:"OccupancyEvidenceMismatch",message:"",label:"",sourceIds:[]}]}}),"요청과 점유시간 근거 불일치")
 })
 
 test("R14: occupancy evidence and interruption codes use server-grounded Korean statuses",()=>{
@@ -131,11 +131,11 @@ test("R14: occupancy evidence and interruption codes use server-grounded Korean 
 })
 
 test("measurement labels distinguish backend variants while translating workload protocols",()=>{
-  assert.equal(executionPathLabel("firstfloor-ort-cpu-arm64"),"CPU · ARM 64비트 (firstfloor-ort-cpu-arm64)")
+  assert.equal(executionPathLabel("firstfloor-ort-cpu-arm64"),"CPU ARM 64비트 (firstfloor-ort-cpu-arm64)")
   const paths=["firstfloor-ort-cuda-arm64","firstfloor-rnn-ort-cuda-arm64","firstfloor-vlm-ort-cuda-arm64"]
   const labels=paths.map(path=>executionPathLabel(path))
   assert.equal(new Set(labels).size,paths.length)
-  for(const [index,path] of paths.entries())assert.equal(labels[index],`CUDA · ARM 64비트 (${path})`)
+  for(const [index,path] of paths.entries())assert.equal(labels[index],`CUDA ARM 64비트 (${path})`)
   assert.equal(executionPathLabel("new-private-backend",2),"등록 실행 경로 3")
   assert.equal(measurementReasonSummary("No verified catalog profile for current condition"),"현재 조건의 검증된 프로파일 없음")
 })

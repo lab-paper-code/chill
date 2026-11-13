@@ -4,8 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
-import { Button, ConfirmDialog, DataTable, EmptyState, Fields, FilterBar, Hint, LeaveGuard, Page, PageHeader, PageTabs, QueryBoundary, Section, StatusBadge, StatusDot, TimeText, buttonClassName, useToast, type BoundaryQuery } from "@/components/kit"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/custom/blocks/DialogBlock"
+import { Button, ConfirmDialog, DataTable, Dialog, EmptyState, Fields, FilterBar, Hint, LeaveGuard, Page, PageHeader, PageTabs, QueryBoundary, Section, StatusBadge, StatusDot, TimeText, buttonClassName, useToast, type BoundaryQuery } from "@/components/kit"
 import { Textarea } from "@/components/ui/textarea"
 import { useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import { ApiError } from "@/lib/client-transport"
@@ -417,30 +416,29 @@ function Preflight({ answer, stale, pending, error, received }: { answer: Evalua
 }
 
 function RawEditor({ open, onOpenChange, spec, onApply }: { open: boolean; onOpenChange: (open: boolean) => void; spec: Spec; onApply: (spec: Spec) => void }) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="xl">{open && <RawBody spec={spec} onCancel={() => onOpenChange(false)} onApply={next => { onApply(next); onOpenChange(false) }} />}</DialogContent>
-    </Dialog>
-  )
+  // A fresh body each time the dialog opens, so the text starts from the current definition.
+  const [opened, setOpened] = React.useState(0)
+  const [wasOpen, setWasOpen] = React.useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) setOpened(count => count + 1)
+  }
+  return <RawBody key={opened} open={open} spec={spec} onCancel={() => onOpenChange(false)} onApply={next => { onApply(next); onOpenChange(false) }} />
 }
-// Mounted only while open, so the text starts from the current definition each time.
-function RawBody({ spec, onCancel, onApply }: { spec: Spec; onCancel: () => void; onApply: (spec: Spec) => void }) {
+function RawBody({ open, spec, onCancel, onApply }: { open: boolean; spec: Spec; onCancel: () => void; onApply: (spec: Spec) => void }) {
   const [text, setText] = React.useState(() => specJSON(spec))
   const [error, setError] = React.useState("")
   const id = React.useId()
   return (
-    <form className="grid gap-4" onSubmit={event => {
-      event.preventDefault()
-      try { onApply(parseSpec(text)) } catch { setError("JSON 객체 형식 오류") }
-    }}>
-      <DialogHeader><DialogTitle>원문 편집</DialogTitle></DialogHeader>
+    <Dialog open={open} onOpenChange={next => { if (!next) onCancel() }} title="원문 편집" size="xl"
+      onSubmit={() => { try { onApply(parseSpec(text)) } catch { setError("JSON 객체 형식 오류") } }}
+      footer={<>
+        <Button type="button" variant="outline" onClick={onCancel}>취소</Button>
+        <Button type="submit" variant="default">적용</Button>
+      </>}>
       <Textarea id={id} aria-label="실험 정의" aria-invalid={!!error} aria-describedby={`${id}-error`} spellCheck={false} rows={20} wrap="off"
         className="max-h-[60dvh] font-mono text-xs leading-5" value={text} onChange={event => { setText(event.target.value); setError("") }} />
       <p id={`${id}-error`} role="status" className="min-h-5 text-sm text-fail">{error}</p>
-      <DialogFooter>
-        <Button type="button" variant="outline" onClick={onCancel}>취소</Button>
-        <Button type="submit" variant="default">적용</Button>
-      </DialogFooter>
-    </form>
+    </Dialog>
   )
 }

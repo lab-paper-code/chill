@@ -34,7 +34,7 @@ export function MeasurementRequestNewScreen() {
   const bar = (
     <div className="flex flex-wrap items-center gap-2">
       <ToggleGroup type="single" variant="segmented" size="sm" aria-label="측정 종류" value={kind} onValueChange={value => { if (value && value !== kind) go({ kind: value as Kind, method: "form" }) }}>
-        <ToggleGroupItem value="profile">프로파일</ToggleGroupItem>
+        <ToggleGroupItem value="profile">처리 성능</ToggleGroupItem>
         <ToggleGroupItem value="dispatch-occupancy">분배 점유시간</ToggleGroupItem>
       </ToggleGroup>
       {kind === "profile" && (

@@ -148,7 +148,7 @@ Rows by columns (e.g. power modes by execution paths) with a pinned row-header c
 ### DetailDrawer, Dialog
 `DetailDrawer open, onOpenChange, title, status?, actions?, footer?, children`. Native modal dialog from the right; Esc and backdrop close it; focus returns to the row.
 
-`Dialog open, onOpenChange, title, size?="sm"|"md"|"lg"|"xl", footer?, children`: the same native modal for short content that is neither a confirmation nor a row preview (a comparison table). Esc closes it; focus returns to the opener, also when it was opened from a `more` menu item. Never import `DialogBlock` in screens.
+`Dialog open, onOpenChange, title, size?="sm"|"md"|"lg"|"xl", footer?, onSubmit?, busy?, children`: the same native modal for short content that is neither a confirmation nor a row preview (a comparison table, a short form). Esc closes it; focus returns to the opener, also when it was opened from a `more` menu item. `onSubmit` makes the body and `footer` one form (a `type="submit"` button in `footer` submits; the default is prevented). `busy` while a request runs: Esc, backdrop and close do nothing and the close button is hidden; disable the footer's 취소 and give the submit `loading`. Children mount only while open; to reset form state on each open, key the component that owns it by an open counter. Never import `DialogBlock` in screens.
 
 ### ConfirmDialog
 | Prop | Type | Notes |
@@ -172,7 +172,7 @@ Rows by columns (e.g. power modes by execution paths) with a pinned row-header c
 
 ### IdText, TimeText, Fields, Feed, Hint, Missing
 - `IdText value head? tail? copy?`: `5f0c2a9e…5f60` + full value tooltip + copy.
-- `TimeText at mode?="relative"|"absolute" seconds?`: relative ("방금" within 5 s either side, "3분 전", 1 s clock) with KST tooltip, or absolute KST.
+- `TimeText at mode?="relative"|"absolute" seconds?`: relative ("방금" within 5 s either side, "3분 전", 1 s clock) with KST tooltip, or absolute KST. Durations: `formatDurationNanos` from `@/lib/format` ("55.8초" under a minute, "1분 28초" from a minute; "12.3 ms" below a second).
 - `Fields items={[{label, value, reason?, info?}]} columns?={1|2|3}`: label/value list; a cut value shows a tooltip.
 - `Feed items={[{key, title, status?|tone?, secondary?, at?, meta?, href?}]} empty? label?`: one-line rows (status mark, title, secondary text, relative time on the right); rows with `href` link. For side columns ("최근 변경", "진행 중").
 - `Hint text focusable?`: tooltip wrapper; with `focusable` the hint is also the wrapper's description for screen readers. `InfoHint text`: the "i" button (24 px) for a one-sentence definition; `info` props use it. `Missing reason`: the "—" itself. `useNow()`: shared 1 s clock.

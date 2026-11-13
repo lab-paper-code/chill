@@ -37,10 +37,10 @@ export const cellMeasured = (cell: Cell) => measuredText(coverageProgress(cell))
 /** A request the controller has not picked up yet has no phase. */
 export const requestPhase = (phase: string | null | undefined): StatusInfo => phase ? measurementPhaseStatus(phase) : { label: "대기", tone: "idle" }
 
-/** "CPU · ARM 64비트 (firstfloor-ort-cpu-arm64)" → "CPU ARM 64비트"; unknown backends keep the path name. */
+/** "CPU ARM 64비트 (firstfloor-ort-cpu-arm64)" → "CPU ARM 64비트"; unknown backends keep the path name. */
 export function pathLabel(path: string) {
   const label = executionPathLabel(path)
-  return label.endsWith(")") ? label.slice(0, label.lastIndexOf(" (")).replaceAll(" · ", " ") : path
+  return label.endsWith(")") ? label.slice(0, label.lastIndexOf(" (")) : path
 }
 
 /** Matrix columns of a model's cells; paths whose short labels collide keep their names. */

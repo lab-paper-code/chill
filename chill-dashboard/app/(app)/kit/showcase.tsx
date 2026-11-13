@@ -221,7 +221,9 @@ export function KitShowcase() {
       </form>
 
       <RawDialog open={raw} onOpenChange={setRaw} filename="image-classification-tight-slo" value={{ metadata: { name: "image-classification-tight-slo", uid: "5f0c2a9e-41b7-4d3e-9a8f-1c2b3d4e5f60", generation: 7 }, spec: { slo: { percentile: 99.5, targetLatencyNanos: 500000000n }, batchID: 18446744073709551615n } }} />
-      <Dialog open={compare} onOpenChange={setCompare} title="판단 비교" size="lg" footer={<Button variant="outline" onClick={() => setCompare(false)}>닫기</Button>}>
+      <Dialog open={compare} onOpenChange={setCompare} title="판단 비교" size="lg" busy={busy}
+        onSubmit={() => { setBusy(true); window.setTimeout(() => { setBusy(false); setCompare(false); toast({ title: "비교 저장됨", type: "success" }) }, 800) }}
+        footer={<><Button type="button" variant="outline" disabled={busy} onClick={() => setCompare(false)}>닫기</Button><Button type="submit" variant="default" loading={busy}>저장</Button></>}>
         <Fields items={[{ label: "A 예상 전력", value: "214.6 W" }, { label: "B 예상 전력", value: "198.2 W" }]} />
       </Dialog>
       <ConfirmDialog

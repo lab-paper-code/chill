@@ -1,6 +1,13 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { formatRelative, niceTicks, secondTicks, timeTicks } from "./format.ts"
+import { formatDurationNanos, formatRelative, niceTicks, secondTicks, timeTicks } from "./format.ts"
+
+test("formatDurationNanos: one decimal of seconds under a minute, then minutes and seconds", () => {
+  assert.equal(formatDurationNanos(55.77e9), "55.8초")
+  assert.equal(formatDurationNanos(31e9), "31.0초")
+  assert.equal(formatDurationNanos(59.97e9), "1분")
+  assert.equal(formatDurationNanos(88e9), "1분 28초")
+})
 
 test("formatRelative says 방금 around now, either side", () => {
   const now = 1_000_000_000

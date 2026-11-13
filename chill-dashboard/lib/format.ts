@@ -18,14 +18,15 @@ export function formatNumber(value: Num, digits = 0): string {
   return n == null ? DASH : n.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits })
 }
 
-/** Nanoseconds as "850 µs", "12.3 ms", "1.24 s", then "3분 20초" from one minute up. */
+/** Nanoseconds as "850 µs", "12.3 ms", then "55.8초" under a minute and "1분 28초" from one minute up. */
 export function formatDurationNanos(value: Num): string {
   const n = finite(value)
   if (n == null || n < 0) return DASH
   if (n < 1e6) return `${formatNumber(n / 1e3, n < 1e4 ? 1 : 0)} µs`
   if (n < 1e9) return `${formatNumber(n / 1e6, n < 1e7 ? 2 : 1)} ms`
-  if (n < 60e9) return `${formatNumber(n / 1e9, 2)} s`
-  return duration(n / 1e9)
+  // Rounded to one decimal; 59.96 s would read "60.0초", so it moves to the minute form.
+  if (n < 59.95e9) return `${formatNumber(n / 1e9, 1)}초`
+  return duration(Math.round(n / 1e9))
 }
 
 /** Milliseconds, for live latency values. */

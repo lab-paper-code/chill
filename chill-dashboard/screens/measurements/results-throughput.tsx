@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { DataTable, DetailDrawer, EmptyState, FilterBar, Fields, QueryBoundary, RawDialog, Section, StatusBadge, TimeText, Button, type Column, type Segment } from "@/components/kit"
+import { DataTable, DetailDrawer, EmptyState, FilterBar, Fields, Hint, QueryBoundary, RawDialog, Section, StatusBadge, TimeText, Button, type Column, type Segment } from "@/components/kit"
+import { pathLabel, reasonLabel } from "@/lib/measurements-coverage-matrix"
 import { useChillQuery } from "@/lib/client"
 import { formatNumber } from "@/lib/format"
 import { measurementQuality, measurementSchedulerUsed } from "@/lib/measurement-assessment"
@@ -80,7 +81,10 @@ export function MeasurementThroughputResults({ lead }: { lead: Segment }) {
           filterChoice("상태", search.get("status"), filters?.statuses ?? [], value => set({ status: value, offset: null, profile: null }), code => measurementStatus(code).label),
         ]}
       />
-      <QueryBoundary query={list} isEmpty={data => !data.profiles?.length && offset === 0} empty={<EmptyState title="처리 성능 결과 없음" />}>
+      <QueryBoundary query={list} isEmpty={data => !data.profiles?.length && offset === 0}
+        empty={FILTERS.some(key => search.get(key))
+          ? <EmptyState title="조건에 맞는 결과 없음" action={<Button variant="outline" onClick={() => set({ model: null, node: null, status: null, profile: null })}>필터 해제</Button>} />
+          : <EmptyState title="처리 성능 결과 없음" />}>
         {data => (
           <DataTable
             label="처리 성능"
@@ -115,12 +119,18 @@ export function MeasurementThroughputResults({ lead }: { lead: Segment }) {
 }
 
 function ProfileBody({ profile, raw, setRaw }: { profile: Profile; raw: boolean; setRaw: (open: boolean) => void }) {
+  const reasons = [...new Set((profile.assessment?.reasons ?? []).map(reasonLabel))]
   return (
     <>
       <Fields columns={2} items={[
+        { label: "사용 여부", value: measurementSchedulerUsed(profile.assessment) == null ? null : <Usage profile={profile} />, reason: "확인 불가", info: "스케줄러가 지금 이 측정을 쓰는지" },
+        { label: "품질", value: <Quality profile={profile} /> },
+      ]} />
+      {reasons.length > 0 && <Fields columns={1} items={[{ label: "사유", value: reasons.join(", ") }]} />}
+      <Fields columns={2} items={[
         { label: "장치", value: profile.nodeName },
         { label: "전력 모드", value: profile.condition.powerMode },
-        { label: "실행 경로", value: profile.condition.artifact.executionPath },
+        { label: "실행 경로", value: <Hint text={profile.condition.artifact.executionPath}>{pathLabel(profile.condition.artifact.executionPath)}</Hint> },
         { label: "전처리기", value: profile.condition.preprocessor.name, reason: "전처리기 없음" },
         { label: "데이터셋", value: profile.condition.activeProtocol.dataset?.name, reason: "기록 없음" },
         { label: "유휴 전력", value: profile.idleBaselineWatts == null ? null : `${formatNumber(profile.idleBaselineWatts, 1)} W` },
@@ -128,10 +138,10 @@ function ProfileBody({ profile, raw, setRaw }: { profile: Profile; raw: boolean;
       ]} />
       {batchTables.map(({ title, columns }) => (
         <Section key={title} title={title}>
-          <DataTable label={title} rows={[...(profile.resultRows ?? [])].sort((a, b) => a.batch - b.batch)} rowKey={r => r.id} columns={columns} pageSize={0} empty={<EmptyState compact title="배치 결과 없음" />} />
+          <DataTable label={title} density="compact" rows={[...(profile.resultRows ?? [])].sort((a, b) => a.batch - b.batch)} rowKey={r => r.id} columns={columns} pageSize={0} empty={<EmptyState compact title="배치 결과 없음" />} />
         </Section>
       ))}
-      <RawDialog open={raw} onOpenChange={setRaw} value={profile} filename="profile.json" title="프로파일 원본" />
+      <RawDialog open={raw} onOpenChange={setRaw} value={profile} filename="profile.json" title="처리 성능 원본" />
     </>
   )
 }

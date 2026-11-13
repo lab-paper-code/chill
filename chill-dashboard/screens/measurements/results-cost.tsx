@@ -52,12 +52,12 @@ const toRow = (measurement: OperationCostMeasurement, operation: Operation, mode
   ({ key: `${measurement.metadata.uid}/${operation}/${model ?? ""}`, measurement, operation, model, steps, results: steps.flatMap(step => step.results) })
 
 const columns: Column<Row>[] = [
-  { width: "24%", key: "model", header: "모델", cell: row => row.model, missingReason: "모델 없는 동작", sortValue: row => row.model },
-  { width: "14%", key: "node", header: "장치", cell: row => row.measurement.node, sortValue: row => row.measurement.node },
-  { width: "14%", key: "operation", header: "동작", cell: row => operationStageLabels[row.operation] },
+  { width: "22%", key: "model", header: "모델", cell: row => row.model, missingReason: "모델 없는 동작", sortValue: row => row.model },
+  { width: "12%", key: "node", header: "장치", cell: row => row.measurement.node, sortValue: row => row.measurement.node },
+  { width: "12%", key: "operation", header: "동작", cell: row => operationStageLabels[row.operation] },
   { width: "14%", key: "duration", header: "최대 시간", unit: "s", numeric: true, cell: row => { const v = largest(defined(row.results.map(durationOf))); return v === undefined ? null : seconds(v) }, sortValue: row => largest(defined(row.results.map(durationOf))), missingReason: "실측 시간 없음" },
   { width: "15%", key: "energy", header: "최대 에너지", unit: "J", numeric: true, cell: row => { const v = largest(defined(row.results.map(energyOf))); return v === undefined ? null : formatNumber(v, 1) }, sortValue: row => largest(defined(row.results.map(energyOf))), missingReason: "채택된 에너지 없음" },
-  { width: "8%", key: "samples", header: "표본", unit: "회", numeric: true, cell: row => row.results.length, sortValue: row => row.results.length },
+  { width: "11%", key: "samples", header: "표본", unit: "회", numeric: true, cell: row => row.results.length, sortValue: row => row.results.length },
   { key: "status", header: "상태", cell: row => <StatusBadge status={measurementStatus(row.measurement.assessment?.displayStatus)} /> },
 ]
 

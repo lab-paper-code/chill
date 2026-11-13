@@ -42,7 +42,7 @@ test("setting rows name services instead of UIDs and align values per scope", ()
   const name = (uid: string) => ({ u1: "svc" })[uid] ?? "미확인 서비스"
   const rows = settingRows([{ controlIntervalNanos: 10_000_000_000, controls: { power: false }, minimumDemand: { u1: 20 } }, { autonomousWorkloads: ["u1"], unknownKey: 3 }], name)
   const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
-  assert.deepEqual(byKey.controlIntervalNanos.values, ["10.00 s", null])
+  assert.deepEqual(byKey.controlIntervalNanos.values, ["10.0초", null])
   assert.equal(byKey["controls.power"].values[0], "꺼짐")
   assert.equal(byKey["minimumDemand.u1"].label, "최소 수요 svc")
   assert.deepEqual(byKey.autonomousWorkloads.values, [null, "svc"])
