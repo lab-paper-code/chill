@@ -134,7 +134,7 @@ func (p *livePublisher) workloadRows() []live.Workload {
 		rows = append(rows, row)
 	}
 	slices.SortFunc(rows, func(a, b live.Workload) int { return strings.Compare(a.UID, b.UID) })
-	p.metrics.SetWorkloads(rows)
+	p.metrics.SetWorkloads(rows, time.Now().UTC())
 	return rows
 }
 func (p *livePublisher) runtime(runtime *serving.Runtime) {
@@ -261,7 +261,7 @@ func liveReasonExplanation(reason string) string {
 func liveDecisionExplanation(d serving.SchedulerDecision) string {
 	parts := make([]string, 0, len(d.Reasons)+1)
 	switch d.Status {
-	case "Keep":
+	case serving.SchedulerStatusKeep:
 		parts = append(parts, "이번 판단에서는 새 변경을 선택하지 않았어요. 이전에 시작한 변경은 계속될 수 있어요.")
 	case "Pending":
 		parts = append(parts, "운영 판단에 필요한 관측을 기다려요.")
@@ -327,7 +327,7 @@ func (p *livePublisher) request(event serving.RequestEvent) {
 		if event.SLO != nil {
 			slo = event.SLO.TargetLatency
 		}
-		p.metrics.Finished(event.WorkloadUID, event.At, event.ReceivedAt, event.Outcome == "completed", measured, slo)
+		p.metrics.Finished(event.WorkloadUID, event.At, event.Outcome == "completed", measured, slo)
 	}
 }
 func (p *livePublisher) powerScope(meters []servingops.MeterDeclaration, enabled bool) {

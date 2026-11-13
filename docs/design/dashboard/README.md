@@ -106,11 +106,16 @@ UTC 초 bucket의 received는 수신 사건, completed/failed는 종결 사건�
 세지 않는다. 늦은 callback은 최근 10초 bucket을 전체 대체하고 이후는 gap/REST다.
 
 각 서비스 행의 선택 `slo`는 bucket 끝에서 끝나는 scheduler `observationWindowNanos`
-창의 판정이다: `windowSeconds`, 설정 `percentile`/`targetMs`, `samples`,
-`withinTarget`(지연 ≤ 목표), `quantileMs`와 `met`(`quantileMs ≤ targetMs`).
-모집단과 방법은 REST cohort와 같다: 창 안 수신, completed, 양수 지연,
-`gonum/stat.Empirical`. 표본이 없으면 `quantileMs`/`met`가 없고, 양수 목표가 없거나
-첫 scheduler 판단 전이라 창을 모르면 `slo` 전체가 없다. 정정 bucket도 자기 끝의 창을 다시 계산한다.
+창의 판정이다. 모집단은 `[bucket끝-창, bucket끝)`에 종결된 응답 중 completed이고
+지연이 양수이며 현재 SLO 목표로 들어온 것이다. `samples`, `withinTarget`(지연 ≤ 목표),
+`quantileMs`(현재 `percentile`의 `gonum/stat.Empirical`)와 `met`(`quantileMs ≤ targetMs`)는
+모두 이 집합에서 계산한다. 서버는 보존 표본이 완전해지는 시각(프로세스 시작, SLO 변경 시
+이전 표본 폐기, 창 확대 시 직전 보존 하한)을 서비스별로 기록하고, 창 시작이 그보다
+이르거나 표본이 없으면 `quantileMs`/`met`를 생략한다. 양수 목표나 scheduler 설정이 없으면
+`slo` 전체가 없다. 늦은 응답은 자기 bucket만 다시 보내며 그 bucket의 창을 다시 계산하고,
+이후 bucket의 판정은 바꾸지 않는다. 처리 중인 느린 요청은 종결 전 창에 들어가지 않는다.
+REST cohort의 `quantileNanos`는 정의별이고 수신 시각 창이므로 같은 값이 아니다. 초별
+`withinSLO`는 그 초에 종결된 응답만 세며 창을 쓰지 않는다.
 
 관측 가능한 무유입 초는 zero counts, 계측 불가는 gaps다. 분위수 평균, 결손 영 채움/
 직선 보간을 하지 않는다. Node W는 해당 초의 실제 표본 평균이고 이전 W를 복사하지

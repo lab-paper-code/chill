@@ -301,6 +301,8 @@ func initializeServing(ctx context.Context, opts *options,
 		if err != nil {
 			return fmt.Errorf("initialize scheduler service: %w", err)
 		}
+		// Decisions keep it current; seed it so slo needs no first decision.
+		publisher.metrics.SetSLOWindow(scheduler.Controller.Settings().ObservationWindow)
 	}
 	initializeCtx, cancelInitialize := context.WithTimeout(ctx, opts.requestTimeout)
 	err := observer.Refresh(initializeCtx)

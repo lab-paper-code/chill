@@ -216,13 +216,16 @@ type Metric struct {
 	P95MS          *float64 `json:"p95ms"`
 	P99MS          *float64 `json:"p99ms"`
 	// SLO is omitted for a Workload without a positive configured target or
-	// while the scheduler observation window is unknown.
+	// while no scheduler observation window is configured.
 	SLO *SLOWindow `json:"slo,omitempty"`
 }
 
-// SLOWindow judges the configured SLO percentile over the scheduler
-// observation window ending at the bucket end. QuantileMS and Met are omitted
-// when the window holds no samples.
+// SLOWindow judges the Workload's current SLO over responses that finished in
+// [bucketEnd-window, bucketEnd) as completed with positive latency under the
+// current target. QuantileMS (gonum stat.Empirical) and Met are omitted when
+// the window is empty or starts before retained samples are complete (process
+// start, SLO change, window growth). A late response re-emits only its own
+// bucket with that bucket's window recomputed; later buckets keep their verdict.
 type SLOWindow struct {
 	WindowSeconds float64  `json:"windowSeconds"`
 	Percentile    float64  `json:"percentile"`

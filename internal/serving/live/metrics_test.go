@@ -45,7 +45,7 @@ func metricFixture(t *testing.T) (*Metrics, *Subscription, time.Time) {
 
 func TestMetricsUsesResponseFinishedCohortAndIdleZeros(t *testing.T) {
 	metrics, sub, at := metricFixture(t)
-	metrics.SetWorkloads([]Workload{{UID: "one"}, {UID: "idle"}})
+	metrics.SetWorkloads([]Workload{{UID: "one"}, {UID: "idle"}}, at)
 	metrics.Received("one", at.Add(100*time.Millisecond))
 	if err := metrics.Flush(at.Add(time.Second)); err != nil {
 		t.Fatal(err)
@@ -55,9 +55,9 @@ func TestMetricsUsesResponseFinishedCohortAndIdleZeros(t *testing.T) {
 		t.Fatalf("received cohort: %+v", first)
 	}
 	fast, slow := 20*time.Millisecond, 100*time.Millisecond
-	metrics.Finished("one", at.Add(1100*time.Millisecond), at, true, &fast, 50*time.Millisecond)
-	metrics.Finished("one", at.Add(1200*time.Millisecond), at, false, &slow, 50*time.Millisecond)
-	metrics.Finished("one", at.Add(1300*time.Millisecond), at, false, nil, 50*time.Millisecond)
+	metrics.Finished("one", at.Add(1100*time.Millisecond), true, &fast, 50*time.Millisecond)
+	metrics.Finished("one", at.Add(1200*time.Millisecond), false, &slow, 50*time.Millisecond)
+	metrics.Finished("one", at.Add(1300*time.Millisecond), false, nil, 50*time.Millisecond)
 	if err := metrics.Flush(at.Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -73,10 +73,10 @@ func TestMetricsUsesResponseFinishedCohortAndIdleZeros(t *testing.T) {
 
 func TestMetricsP90DoesNotReuseP95(t *testing.T) {
 	metrics, sub, at := metricFixture(t)
-	metrics.SetWorkloads([]Workload{{UID: "one"}})
+	metrics.SetWorkloads([]Workload{{UID: "one"}}, at)
 	for index := 1; index <= 20; index++ {
 		latency := time.Duration(index) * time.Millisecond
-		metrics.Finished("one", at.Add(time.Duration(index)*time.Millisecond), at, true, &latency, time.Second)
+		metrics.Finished("one", at.Add(time.Duration(index)*time.Millisecond), true, &latency, time.Second)
 	}
 	if err := metrics.Flush(at.Add(time.Second)); err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestMetricsP90DoesNotReuseP95(t *testing.T) {
 
 func TestMetricsTenSecondCorrectionAndOlderGap(t *testing.T) {
 	metrics, sub, at := metricFixture(t)
-	metrics.SetWorkloads([]Workload{{UID: "one"}})
+	metrics.SetWorkloads([]Workload{{UID: "one"}}, at)
 	metrics.Received("one", at.Add(time.Millisecond))
 	if err := metrics.Flush(at.Add(time.Second)); err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestMetricsTenSecondCorrectionAndOlderGap(t *testing.T) {
 		_ = nextMetrics(t, sub)
 	}
 	latency := 10 * time.Millisecond
-	metrics.Finished("one", at.Add(time.Millisecond), at, true, &latency, time.Second)
+	metrics.Finished("one", at.Add(time.Millisecond), true, &latency, time.Second)
 	if err := metrics.Flush(at.Add(10 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestMetricsTenSecondCorrectionAndOlderGap(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = nextMetrics(t, sub)
-	metrics.Finished("one", at.Add(time.Millisecond), at, true, &latency, time.Second)
+	metrics.Finished("one", at.Add(time.Millisecond), true, &latency, time.Second)
 	if err := metrics.Flush(at.Add(12 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestPowerMeansRequireCompleteUniqueScopeAndNeverCarryForward(t *testing.T) 
 
 func TestUnobservableIntervalsAreGapsNotZeroTraffic(t *testing.T) {
 	metrics, sub, at := metricFixture(t)
-	metrics.SetWorkloads([]Workload{{UID: "one"}, {UID: "observable"}})
+	metrics.SetWorkloads([]Workload{{UID: "one"}, {UID: "observable"}}, at)
 	metrics.SetPowerScope([]string{"node"}, []string{"node"}, true)
 	metrics.Gap(at, at.Add(time.Second), "workload:one", "source unavailable")
 	metrics.Power("node", at.Add(time.Millisecond), nil)
@@ -249,92 +249,182 @@ func TestMetricsCurrentQueueGauges(t *testing.T) {
 	}
 }
 
-// finishedAfter records a response_finished event received at receivedAt.
-func finishedAfter(metrics *Metrics, receivedAt time.Time, completed bool, latency time.Duration) {
-	metrics.Finished("one", receivedAt.Add(latency), receivedAt, completed, &latency, time.Second)
+func sloWorkload(percentile float64, target time.Duration) Workload {
+	return Workload{UID: "one", SLO: SLO{Percentile: percentile, TargetLatencyNanos: int64(target)}}
 }
 
-func TestMetricsSLOWindowSlidesOverReceivedCompletedRequests(t *testing.T) {
+func sloWorkloads(metrics *Metrics, at time.Time, rows ...Workload) { metrics.SetWorkloads(rows, at) }
+
+// finish records a response_finished event of "one" at finishedAt.
+func finish(metrics *Metrics, finishedAt time.Time, completed bool, latency, target time.Duration) {
+	metrics.Finished("one", finishedAt, completed, &latency, target)
+}
+
+func sloFixture(t *testing.T, percentile float64, target, window time.Duration) (*Metrics, *Subscription, time.Time) {
+	t.Helper()
 	metrics, sub, at := metricFixture(t)
-	metrics.SetWorkloads([]Workload{{UID: "one", SLO: SLO{Percentile: 50, TargetLatencyNanos: int64(25 * time.Millisecond)}}})
-	metrics.SetSLOWindow(3 * time.Second)
-	finishedAfter(metrics, at.Add(500*time.Millisecond), true, 100*time.Millisecond)
-	finishedAfter(metrics, at.Add(1200*time.Millisecond), true, 10*time.Millisecond)
-	finishedAfter(metrics, at.Add(2300*time.Millisecond), true, 20*time.Millisecond)
-	finishedAfter(metrics, at.Add(3100*time.Millisecond), false, 5*time.Millisecond)
-	finishedAfter(metrics, at.Add(3200*time.Millisecond), true, 0)
-	finishedAfter(metrics, at.Add(3400*time.Millisecond), true, 30*time.Millisecond)
-	finishedAfter(metrics, at.Add(3600*time.Millisecond), true, 40*time.Millisecond)
-	if err := metrics.Flush(at.Add(4 * time.Second)); err != nil {
+	sloWorkloads(metrics, at, sloWorkload(percentile, target))
+	metrics.SetSLOWindow(window)
+	return metrics, sub, at
+}
+
+// flushSLO flushes at now and returns the single emitted bucket.
+func flushSLO(t *testing.T, metrics *Metrics, sub *Subscription, now time.Time) (string, *SLOWindow) {
+	t.Helper()
+	if err := metrics.Flush(now); err != nil {
 		t.Fatal(err)
 	}
-	first := nextMetrics(t, sub).Workloads["one"].SLO
-	if first == nil || first.WindowSeconds != 3 || first.Percentile != 50 || first.TargetMS != 25 || first.Samples != 1 || first.WithinTarget != 0 ||
-		first.QuantileMS == nil || *first.QuantileMS != 100 || first.Met == nil || *first.Met {
-		t.Fatalf("first window: %+v", first)
+	frame := nextMetrics(t, sub)
+	return frame.BucketAt, frame.Workloads["one"].SLO
+}
+
+const noVerdict = -1.0
+
+func assertSLO(t *testing.T, label string, got *SLOWindow, samples, within uint64, quantileMS float64) {
+	t.Helper()
+	if got == nil || got.Samples != samples || got.WithinTarget != within {
+		t.Fatalf("%s: samples/within want %d/%d: %+v", label, samples, within, got)
 	}
-	_, _ = nextMetrics(t, sub), nextMetrics(t, sub)
-	last := nextMetrics(t, sub).Workloads["one"].SLO
-	if last == nil || last.Samples != 4 || last.WithinTarget != 2 || last.QuantileMS == nil || *last.QuantileMS != 20 || last.Met == nil || !*last.Met {
-		t.Fatalf("sliding window kept an old, failed or zero-latency sample: %+v", last)
+	if quantileMS == noVerdict {
+		if got.QuantileMS != nil || got.Met != nil {
+			t.Fatalf("%s: verdict without a covered nonempty window: %+v", label, got)
+		}
+		return
 	}
+	if got.QuantileMS == nil || *got.QuantileMS != quantileMS || got.Met == nil || *got.Met != (quantileMS <= got.TargetMS) {
+		t.Fatalf("%s: quantile want %v: %+v", label, quantileMS, got)
+	}
+}
+
+func TestMetricsSLOWindowMembershipIsFinishTime(t *testing.T) {
+	metrics, sub, at := sloFixture(t, 100, time.Second, time.Second)
+	finish(metrics, at.Add(1100*time.Millisecond), true, 200*time.Millisecond, time.Second)
+	finish(metrics, at.Add(1500*time.Millisecond), false, 5*time.Millisecond, time.Second)
+	finish(metrics, at.Add(1600*time.Millisecond), true, 0, time.Second)
+	_, before := flushSLO(t, metrics, sub, at.Add(time.Second))
+	assertSLO(t, "receipt second", before, 0, 0, noVerdict)
+	_, after := flushSLO(t, metrics, sub, at.Add(2*time.Second))
+	assertSLO(t, "finish second", after, 1, 1, 200)
+}
+
+func TestMetricsSLOWindowCountsSlowResponseAtItsFinish(t *testing.T) {
+	metrics, sub, at := sloFixture(t, 95, time.Second, 2*time.Second)
+	finish(metrics, at.Add(500*time.Millisecond), true, 100*time.Millisecond, time.Second)
+	_, _ = flushSLO(t, metrics, sub, at.Add(time.Second))
+	_, b1 := flushSLO(t, metrics, sub, at.Add(2*time.Second))
+	assertSLO(t, "in-flight slow response is not yet a sample", b1, 1, 1, 100)
+	_, b2 := flushSLO(t, metrics, sub, at.Add(3*time.Second))
+	assertSLO(t, "empty window", b2, 0, 0, noVerdict)
+	finish(metrics, at.Add(3200*time.Millisecond), true, 3*time.Second, time.Second)
+	_, b3 := flushSLO(t, metrics, sub, at.Add(4*time.Second))
+	assertSLO(t, "slow response at its finish", b3, 1, 0, 3000)
+}
+
+func TestMetricsSLOChangeDiscardsSamplesUntilCovered(t *testing.T) {
+	metrics, sub, at := sloFixture(t, 50, 100*time.Millisecond, 2*time.Second)
+	finish(metrics, at.Add(500*time.Millisecond), true, 50*time.Millisecond, 100*time.Millisecond)
+	_, _ = flushSLO(t, metrics, sub, at.Add(time.Second))
+	finish(metrics, at.Add(1500*time.Millisecond), true, 60*time.Millisecond, 100*time.Millisecond)
+	_, b1 := flushSLO(t, metrics, sub, at.Add(2*time.Second))
+	assertSLO(t, "old SLO", b1, 2, 2, 50)
+	sloWorkloads(metrics, at.Add(2200*time.Millisecond), sloWorkload(50, 200*time.Millisecond))
+	finish(metrics, at.Add(2500*time.Millisecond), true, 150*time.Millisecond, 200*time.Millisecond)
+	finish(metrics, at.Add(2600*time.Millisecond), true, 70*time.Millisecond, 100*time.Millisecond)
+	_, b2 := flushSLO(t, metrics, sub, at.Add(3*time.Second))
+	assertSLO(t, "old samples and old-target response discarded", b2, 1, 1, noVerdict)
+	if b2.TargetMS != 200 {
+		t.Fatalf("current target not used: %+v", b2)
+	}
+	_, b3 := flushSLO(t, metrics, sub, at.Add(4*time.Second))
+	assertSLO(t, "window starts before the change", b3, 1, 1, noVerdict)
+	finish(metrics, at.Add(4500*time.Millisecond), true, 180*time.Millisecond, 200*time.Millisecond)
+	_, b4 := flushSLO(t, metrics, sub, at.Add(5*time.Second))
+	assertSLO(t, "covered after the change", b4, 1, 1, 180)
+}
+
+func TestMetricsSLOWindowWithoutCoverageHasNoVerdict(t *testing.T) {
+	metrics, sub, at := sloFixture(t, 95, time.Second, time.Minute)
+	finish(metrics, at.Add(500*time.Millisecond), true, 100*time.Millisecond, time.Second)
+	_, slo := flushSLO(t, metrics, sub, at.Add(time.Second))
+	assertSLO(t, "one second of a minute", slo, 1, 1, noVerdict)
+	if slo.WindowSeconds != 60 || slo.Percentile != 95 || slo.TargetMS != 1000 {
+		t.Fatalf("partial window lost its configuration: %+v", slo)
+	}
+}
+
+func TestMetricsSLOWindowGrowthWaitsForRetainedCoverage(t *testing.T) {
+	metrics, sub, at := sloFixture(t, 100, time.Second, 2*time.Second)
+	step := func(second int) *SLOWindow {
+		finish(metrics, at.Add(time.Duration(second)*time.Second+500*time.Millisecond), true, time.Duration(second+1)*time.Millisecond, time.Second)
+		_, slo := flushSLO(t, metrics, sub, at.Add(time.Duration(second+1)*time.Second))
+		return slo
+	}
+	for second := range 15 {
+		_ = step(second)
+	}
+	// Retention covered the 2 s window plus the 10 s correction span: from 3 s.
+	metrics.SetSLOWindow(20 * time.Second)
+	grown := step(15)
+	assertSLO(t, "grown window older than retention", grown, 13, 13, noVerdict)
+	if grown.WindowSeconds != 20 {
+		t.Fatalf("window length not followed: %+v", grown)
+	}
+	for second := 16; second < 21; second++ {
+		_ = step(second)
+	}
+	assertSLO(t, "window still starts before retention", step(21), 19, 19, noVerdict)
+	assertSLO(t, "window covered by retention", step(22), 20, 20, 23)
 }
 
 func TestMetricsSLOWindowWithoutSamplesOmitsQuantile(t *testing.T) {
 	metrics, sub, at := metricFixture(t)
-	metrics.SetWorkloads([]Workload{{UID: "one", SLO: SLO{Percentile: 95, TargetLatencyNanos: int64(time.Second)}}, {UID: "untargeted"}})
-	metrics.SetSLOWindow(time.Minute)
+	sloWorkloads(metrics, at, sloWorkload(95, time.Second), Workload{UID: "untargeted"})
+	metrics.SetSLOWindow(time.Second)
 	if err := metrics.Flush(at.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	frame := nextMetrics(t, sub)
-	slo := frame.Workloads["one"].SLO
-	if slo == nil || slo.WindowSeconds != 60 || slo.TargetMS != 1000 || slo.Samples != 0 || slo.WithinTarget != 0 || slo.QuantileMS != nil || slo.Met != nil {
-		t.Fatalf("empty window: %+v", slo)
-	}
+	assertSLO(t, "covered empty window", frame.Workloads["one"].SLO, 0, 0, noVerdict)
 	if frame.Workloads["untargeted"].SLO != nil {
 		t.Fatalf("Workload without a target was judged: %+v", frame.Workloads["untargeted"].SLO)
 	}
 }
 
 func TestMetricsSLOWindowHonoursConfiguredPercentile(t *testing.T) {
-	metrics, sub, at := metricFixture(t)
-	metrics.SetWorkloads([]Workload{{UID: "one", SLO: SLO{Percentile: 99.5, TargetLatencyNanos: int64(time.Second)}}})
-	metrics.SetSLOWindow(time.Second)
+	metrics, sub, at := sloFixture(t, 99.5, time.Second, time.Second)
 	for index := 1; index <= 200; index++ {
-		finishedAfter(metrics, at, true, time.Duration(index)*time.Millisecond)
+		finish(metrics, at.Add(500*time.Millisecond), true, time.Duration(index)*time.Millisecond, time.Second)
 	}
-	if err := metrics.Flush(at.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	slo := nextMetrics(t, sub).Workloads["one"].SLO
-	if slo == nil || slo.Percentile != 99.5 || slo.Samples != 200 || slo.QuantileMS == nil || *slo.QuantileMS != 199 {
-		t.Fatalf("p99.5 rank: %+v", slo)
+	_, slo := flushSLO(t, metrics, sub, at.Add(time.Second))
+	assertSLO(t, "p99.5 rank", slo, 200, 200, 199)
+	if slo.Percentile != 99.5 {
+		t.Fatalf("percentile: %+v", slo)
 	}
 }
 
-func TestMetricsSLOWindowFollowsConfiguredLengthOnCorrection(t *testing.T) {
-	metrics, sub, at := metricFixture(t)
-	metrics.SetWorkloads([]Workload{{UID: "one", SLO: SLO{Percentile: 100, TargetLatencyNanos: int64(time.Second)}}})
-	metrics.SetSLOWindow(2 * time.Second)
+func TestMetricsSLOWindowLateResponseRecomputesOnlyItsBucket(t *testing.T) {
+	metrics, sub, at := sloFixture(t, 100, time.Second, 2*time.Second)
+	var b2 string
 	for second := range 4 {
-		finishedAfter(metrics, at.Add(time.Duration(second)*time.Second+500*time.Millisecond), true, time.Duration(second+1)*10*time.Millisecond)
+		finish(metrics, at.Add(time.Duration(second)*time.Second+500*time.Millisecond), true, time.Duration(second+1)*10*time.Millisecond, time.Second)
+		bucket, slo := flushSLO(t, metrics, sub, at.Add(time.Duration(second+1)*time.Second))
+		if second == 2 {
+			b2 = bucket
+		}
+		if second == 3 {
+			assertSLO(t, "before correction", slo, 2, 2, 40)
+		}
 	}
-	if err := metrics.Flush(at.Add(4 * time.Second)); err != nil {
-		t.Fatal(err)
+	finish(metrics, at.Add(2700*time.Millisecond), true, 50*time.Millisecond, time.Second)
+	bucket, corrected := flushSLO(t, metrics, sub, at.Add(4*time.Second))
+	if bucket != b2 {
+		t.Fatalf("late response re-emitted %s, want its bucket %s", bucket, b2)
 	}
-	for range 3 {
-		_ = nextMetrics(t, sub)
+	assertSLO(t, "recomputed bucket", corrected, 3, 3, 50)
+	finish(metrics, at.Add(4500*time.Millisecond), true, 5*time.Millisecond, time.Second)
+	bucket, next := flushSLO(t, metrics, sub, at.Add(5*time.Second))
+	if bucket != timestamp(at.Add(4*time.Second)) {
+		t.Fatalf("a later bucket was re-emitted: %s", bucket)
 	}
-	short := nextMetrics(t, sub)
-	metrics.SetSLOWindow(4 * time.Second)
-	metrics.Received("one", at.Add(3900*time.Millisecond))
-	if err := metrics.Flush(at.Add(4 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	long := nextMetrics(t, sub)
-	if long.BucketAt != short.BucketAt || short.Workloads["one"].SLO == nil || short.Workloads["one"].SLO.Samples != 2 ||
-		long.Workloads["one"].SLO == nil || long.Workloads["one"].SLO.Samples != 4 || long.Workloads["one"].SLO.WindowSeconds != 4 {
-		t.Fatalf("window length change: short=%+v long=%+v", short.Workloads["one"].SLO, long.Workloads["one"].SLO)
-	}
+	assertSLO(t, "next window", next, 2, 2, 40)
 }
