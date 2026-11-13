@@ -12,6 +12,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -96,6 +97,10 @@ func (f *KubernetesExecutionFinalizer) Finalize(
 		return FinalizedRunEvidence{}, fmt.Errorf("construct terminal evidence coordinator: %w", err)
 	}
 
+	if err := f.validateMeasurementLoad(ctx, run, job, prepared.RunConfig); err != nil {
+		return FinalizedRunEvidence{}, err
+	}
+
 	observation, err := f.observe(ctx, run, job)
 	if err != nil {
 		return FinalizedRunEvidence{}, err
@@ -159,6 +164,56 @@ func (f *KubernetesExecutionFinalizer) observe(
 		Job: job.DeepCopy(), Pod: pod, Node: node,
 		NodePods: nodePods.Items, ObservedAt: f.now().UTC(),
 	}, nil
+}
+
+// validateMeasurementLoad authenticates the separate live load execution without
+// changing the measurement-only terminal snapshot stored in evidence v1alpha17.
+func (f *KubernetesExecutionFinalizer) validateMeasurementLoad(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	worker *batchv1.Job,
+	config profilingrun.RunConfig,
+) error {
+	if config.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
+		return nil
+	}
+	load := &batchv1.Job{}
+	key := client.ObjectKey{Namespace: run.Namespace, Name: measurementLoadJobName(worker)}
+	if err := f.reader.Get(ctx, key, load); err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("%w: completed measurement has no load Job", profilerevidence.ErrPermanentValidation)
+		}
+		return fmt.Errorf("read load Job: %w", err)
+	}
+	complete, err := measurementLoadOutcome(load, run, config.LoadOriginNode)
+	if err != nil {
+		return fmt.Errorf("%w: validate load Job: %w", profilerevidence.ErrPermanentValidation, err)
+	}
+	if !complete {
+		return errors.New("load Job has not completed")
+	}
+	pods := &corev1.PodList{}
+	if err := f.reader.List(ctx, pods, client.InNamespace(run.Namespace)); err != nil {
+		return fmt.Errorf("list load Pods: %w", err)
+	}
+	var pod *corev1.Pod
+	for i := range pods.Items {
+		owner := metav1.GetControllerOf(&pods.Items[i])
+		if owner == nil || owner.Kind != "Job" || owner.UID != load.UID {
+			continue
+		}
+		if pod != nil {
+			return fmt.Errorf("%w: load Pod ownership is ambiguous", profilerevidence.ErrPermanentValidation)
+		}
+		pod = &pods.Items[i]
+	}
+	if pod == nil {
+		return fmt.Errorf("%w: completed load Job has no load Pod", profilerevidence.ErrPermanentValidation)
+	}
+	if err := evidencekube.ValidateLoadPod(config, load, pod); err != nil {
+		return fmt.Errorf("%w: validate load Pod: %w", profilerevidence.ErrPermanentValidation, err)
+	}
+	return nil
 }
 
 // RuntimeTermination retains the actual failing container and native Job reason.

@@ -138,6 +138,22 @@ request, matching DOM's ChillServer-origin mechanism. The computed
 `runConfig.loadOriginNode` and `loadOriginGatewayPod` (`namespace`, `name`, `uid`)
 freeze that observed origin; there is no public load-node setting.
 
+Measurement Jobs use the same network-namespace isolation as native serving
+Pods: `hostNetwork` is false and no `hostPort` is published. Serving's Kubernetes
+adapter requires that isolation and routes each actor through its Pod-owned
+ClusterIP Service; profiling's one off-node producer instead uses the actual
+measurement Pod IP directly. The native actor keeps Pod-local TCP 8080 and the
+active-only load control keeps Pod-local TCP 8081, so neither competes with
+node-agent health or any other node listener. `FirstfloorSession` reaches the
+same actor on the Pod's loopback port 8080 in active and loaded-idle modes.
+The runtime container declares named `http` and active-only `load-control`
+ports. The TCP readiness probe resolves `load-control` on the Pod IP, and the
+load Job uses that same control port and actual Pod IP. The returned load plan
+publishes that Pod IP's native port 8080. Idle starts no control listener or
+off-node load Job. These are Job/runtime delivery choices; RunConfig, raw and
+execution-evidence schemas stay unchanged, and retained Jobs keep their original
+network shape during recovery and finalization.
+
 The order is **sparse → saturation → utilization ladder**. Sparse Poisson load
 uses the configured mean gap and supplies actual no-backlog batch-B service
 observations. The largest such observed service supplies the existing K formula:
@@ -239,9 +255,9 @@ Store delivery is not scientific input: logical store, internal endpoint/bucket/
 region, immutable credential Secret reference and deterministic raw key. Profiler
 startup knows owning `ChillSystem`; Job creation exact-reads its enabled store
 reference/configuration and system-owned Service, binds allocated ClusterIP/S3
-port (hostNetwork Jobs cannot resolve cluster DNS), derives Secret reference
-without reading bytes. Require current availability and completed Operator-owned
-bootstrap Job attesting exact ConfigMap `resourceVersion`; no operand reconcile
+port directly, and derives Secret reference without reading bytes. Require current
+availability and completed Operator-owned bootstrap Job attesting exact ConfigMap
+`resourceVersion`; no operand reconcile
 or direct probe.
 
 Immutable Job PodSpec retains literal store/endpoint/bucket/region and Secret
@@ -476,6 +492,18 @@ the Run. There is no arbitrary other-node fallback or new topology knob.
 The profiler waits for the measurement Pod's control readiness before creating
 load, waits for load completion/failure before collecting the uploaded result,
 and removes load on normal completion, runtime failure and ExecutionLost.
+Both active and model-loaded-idle measurement Pods have init `artifact` and
+`preprocessor`, plus `runtime`, `metric-observer`, and `workload-observer`.
+The active load Pod alone has init `dataset` and app `load`. Before publishing
+verified evidence, finalization independently checks the load Job's Run owner,
+frozen origin node, unique Job-owned successful Pod, frozen dataset image and
+immutable Job load image, and both containers' successful terminal states.
+Evidence v1alpha17 keeps its measurement-Pod-only terminal snapshot unchanged;
+retained loading does not retrospectively assert a stored load-container snapshot.
+Do not append load containers to the measurement Pod or manufacture missing facts.
+Retained raw and successful measurement/load Pods can finalize after a verifier
+fix without rewriting raw or RunConfig. API/store read failures remain retryable;
+immutable semantic contradictions are terminal `EvidenceInvalid`.
 Load-first failure waits for runtime termination evidence before cleanup, preserving
 typed `MemoryAllocationFailed` discovery completion and the completed batch prefix.
 Profiling load Jobs carry the existing target-Node measurement-load label so

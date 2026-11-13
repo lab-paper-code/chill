@@ -796,9 +796,6 @@ func curveFixtureExecution(
 		container("runtime", config.Images.Runtime), container("artifact", config.Images.Artifact),
 		container("preprocessor", config.State.Preprocessor.Image),
 	}
-	if config.Measurement.Dataset != nil {
-		containers = append(containers, container("dataset", config.Measurement.Dataset.Image))
-	}
 	return profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		RunConfig:     config,

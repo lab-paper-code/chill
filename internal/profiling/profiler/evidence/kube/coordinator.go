@@ -59,7 +59,7 @@ func (c *Coordinator) Finalize(
 	}
 	receipt, err := terminationReceipt(request.Observation.Pod, request.ReceiptContainerName)
 	if err != nil {
-		return evidence.FinalizeResult{}, err
+		return evidence.FinalizeResult{}, fmt.Errorf("%w: %w", evidence.ErrPermanentValidation, err)
 	}
 	if err := request.FinalLocation.Validate(); err != nil {
 		return evidence.FinalizeResult{}, fmt.Errorf("validate final evidence location: %w", err)

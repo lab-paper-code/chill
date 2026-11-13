@@ -347,13 +347,15 @@ func (r *RunReconciler) publishEvidenceFailure(
 	message string,
 ) error {
 	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
+		status := metav1.ConditionUnknown
 		if reason == evidenceReasonInvalid {
+			status = metav1.ConditionFalse
 			desired.JobCleanup = runJobCleanupPending
 		}
 		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionExecutionComplete,
 			metav1.ConditionTrue, "JobSucceeded", "measurement Job completed successfully")
 		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionEvidenceVerified,
-			metav1.ConditionFalse, reason, message)
+			status, reason, message)
 	})
 }
 

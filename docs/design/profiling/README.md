@@ -66,6 +66,13 @@ limit. Fatal or retry-exhausted failures remain `Failed`. Idle-baseline attempt
 limits/publication remain a separate parent policy. This does not
 replace the Profiler's current-generation pre-Job failure check.
 
+Finalization distinguishes immutable evidence contradictions (`EvidenceInvalid`,
+fatal to a campaign) from retryable store/API failures
+(`EvidenceVerified=Unknown/EvidenceVerificationFailed`). The latter retry
+finalization against the recorded Job instead of consuming execution attempts.
+Retained Runs with the previous `False/EvidenceVerificationFailed` condition
+also reverify normally after deployment; they are not terminal failures.
+
 Shared preparation admits the full observer `AttemptTimeout` against the selected
 result and memory budgets before public preflight succeeds or a new Job is built.
 Capacity rejection records current-generation `ExecutionPolicyInvalid`; an owned

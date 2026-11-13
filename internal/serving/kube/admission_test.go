@@ -435,7 +435,7 @@ const (
 // The hand-back requests the lowest mode on the Node it still holds and removes
 // the taint once the agent settled it.
 func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
-	for _, reason := range []string{"", "InvalidRunSpec", "CurvePlanResolutionFailed"} {
+	for _, reason := range []string{"", "InvalidRunSpec", "FatalFailure", "RetryLimitExhausted", "CurvePlanResolutionFailed"} {
 		t.Run("failure="+reason, func(t *testing.T) {
 			h := newAdmissionHarness(t)
 			actuator := edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 2}}

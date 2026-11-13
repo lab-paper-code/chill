@@ -3,7 +3,9 @@ package controller
 import (
 	"context"
 	"errors"
+	"net"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -117,6 +119,42 @@ func TestRunReconcilerCreatesOffNodeLoadThenCollectsWorkerUpload(t *testing.T) {
 	}
 	if err := kube.Get(ctx, client.ObjectKeyFromObject(load), &batchv1.Job{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("load cleanup err=%v", err)
+	}
+}
+
+func TestMeasurementLoadEndpointMatchesControlReadiness(t *testing.T) {
+	for _, address := range []string{"10.42.1.7", "fd00::7"} {
+		t.Run(address, func(t *testing.T) {
+			run := testRun()
+			prepared := currentPreparedRun(t)
+			worker, err := buildExecutionJob(run, resolvedRunForPrepared(t, prepared), testEvidenceStoreBinding(), testExecutionJobOptions(), runReconcilerTestScheme(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			worker.Status.StartTime = ptr.To(metav1.Now())
+			pod := &corev1.Pod{Spec: *worker.Spec.Template.Spec.DeepCopy(), Status: corev1.PodStatus{PodIP: address, HostIP: "192.0.2.10"}}
+			pod.Spec.NodeName = prepared.RunConfig.TargetNode.Name
+			runtime := findContainer(t, pod.Spec.Containers, runtimeContainerName)
+			var controlPort corev1.ContainerPort
+			for _, port := range runtime.Ports {
+				if port.Name == "load-control" {
+					controlPort = port
+				}
+			}
+			if controlPort.ContainerPort == 0 || runtime.ReadinessProbe == nil || runtime.ReadinessProbe.TCPSocket == nil ||
+				runtime.ReadinessProbe.TCPSocket.Port.StrVal != controlPort.Name || runtime.ReadinessProbe.TCPSocket.Host != "" {
+				t.Fatal("control readiness must resolve the declared port on this Pod IP")
+			}
+			gateway := &corev1.Pod{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "serving-entrypoint", Image: "gateway:test"}}}}
+			load, err := buildMeasurementLoadJob(run, worker, pod, gateway, prepared.RunConfig, MeasurementLoadOptions{ServiceAccountName: "load"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "http://" + net.JoinHostPort(address, strconv.Itoa(int(controlPort.ContainerPort)))
+			if !slices.Contains(load.Spec.Template.Spec.Containers[0].Args, want) {
+				t.Fatalf("load must use the same Pod endpoint as readiness: want %s, got %v", want, load.Spec.Template.Spec.Containers[0].Args)
+			}
+		})
 	}
 }
 

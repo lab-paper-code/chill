@@ -47,18 +47,37 @@ func (f TerminalFacts) validate(config profilingrun.RunConfig, rawPodUID string)
 }
 
 func validateContainers(config profilingrun.RunConfig, containers []ContainerTerminal) error {
+	switch config.Measurement.WorkloadMode {
+	case profilingrun.EmpiricalCadenceFixedBatchWorkloadMode, profilingrun.IdleModelLoadedWorkloadMode:
+		// Both modes deliver only model/preprocessor beside the measured actor.
+		// Active dataset delivery belongs to the separate off-node load Pod.
+	default:
+		return fmt.Errorf("unsupported terminal workload mode %q", config.Measurement.WorkloadMode)
+	}
 	expected := map[string]string{
-		"artifact":        config.Images.Artifact,
-		"preprocessor":    config.State.Preprocessor.Image,
-		"runtime":         config.Images.Runtime,
-		"metric-observer": config.Images.MetricObserver,
+		"artifact":          config.Images.Artifact,
+		"preprocessor":      config.State.Preprocessor.Image,
+		"runtime":           config.Images.Runtime,
+		"metric-observer":   config.Images.MetricObserver,
+		"workload-observer": config.Images.WorkloadObserver,
 	}
-	if config.Measurement.Dataset != nil {
-		expected["dataset"] = config.Measurement.Dataset.Image
+	return validateExpectedContainers(expected, containers)
+}
+
+// ValidateLoadContainers checks the independently observed off-node load Pod.
+// These containers do not belong to the stored measurement-Pod terminal facts.
+func ValidateLoadContainers(config profilingrun.RunConfig, loadImage string, containers []ContainerTerminal) error {
+	if config.Measurement.WorkloadMode != profilingrun.EmpiricalCadenceFixedBatchWorkloadMode ||
+		config.Measurement.Dataset == nil || strings.TrimSpace(loadImage) == "" {
+		return errors.New("active load requires a frozen dataset and load image")
 	}
-	if config.Images.WorkloadObserver != "" {
-		expected["workload-observer"] = config.Images.WorkloadObserver
-	}
+	return validateExpectedContainers(map[string]string{
+		"dataset": config.Measurement.Dataset.Image,
+		"load":    loadImage,
+	}, containers)
+}
+
+func validateExpectedContainers(expected map[string]string, containers []ContainerTerminal) error {
 	if len(containers) != len(expected) {
 		return fmt.Errorf("expected %d terminal containers, found %d", len(expected), len(containers))
 	}

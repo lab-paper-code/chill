@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -76,13 +77,25 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	assertExecutionJobIdentityAndRetryBoundary(t, job, run)
 	pod := job.Spec.Template.Spec
 	assertDeliveryTopology(t, pod, prepared.RunConfig)
+	if pod.HostNetwork || pod.DNSPolicy != corev1.DNSClusterFirst {
+		t.Fatal("measurement listeners must use the Pod network, isolated from node listeners")
+	}
+	for _, container := range append(slices.Clone(pod.InitContainers), pod.Containers...) {
+		for _, port := range container.Ports {
+			if port.HostPort != 0 {
+				t.Fatalf("measurement container %s publishes host port %d", container.Name, port.HostPort)
+			}
+		}
+	}
 	if !slices.Contains(pod.Tolerations, corev1.Toleration{Key: "chill.dacs.io/measurement", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}) {
 		t.Fatalf("pod tolerations = %#v, want measurement toleration", pod.Tolerations)
 	}
 	runtimeContainer := findContainer(t, pod.Containers, "runtime")
 	if runtimeContainer.ReadinessProbe == nil || runtimeContainer.ReadinessProbe.TCPSocket == nil ||
-		runtimeContainer.ReadinessProbe.TCPSocket.Port.IntVal != 8081 {
-		t.Fatal("active worker readiness must wait for its off-node load control socket")
+		runtimeContainer.ReadinessProbe.TCPSocket.Port.StrVal != "load-control" ||
+		!slices.Contains(runtimeContainer.Ports, corev1.ContainerPort{Name: "load-control", ContainerPort: 8081, Protocol: corev1.ProtocolTCP}) ||
+		!slices.Contains(runtimeContainer.Ports, corev1.ContainerPort{Name: "http", ContainerPort: 8080, Protocol: corev1.ProtocolTCP}) {
+		t.Fatal("active readiness must use the declared Pod-local control port beside the native listener")
 	}
 	if !slices.ContainsFunc(runtimeContainer.Env, func(env corev1.EnvVar) bool {
 		return env.Name == "POD_IP" && env.ValueFrom != nil && env.ValueFrom.FieldRef != nil && env.ValueFrom.FieldRef.FieldPath == "status.podIP"
@@ -154,6 +167,39 @@ func assertExecutionJobIdentityAndRetryBoundary(t *testing.T, job *batchv1.Job, 
 	if !metav1.IsControlledBy(job, run) ||
 		job.Annotations[executionPolicyAnnotation] == "" {
 		t.Fatalf("Job ownership or execution identity missing: %#v", job.ObjectMeta)
+	}
+}
+
+func TestExecutionJobsFindRetainedHostNetworkJob(t *testing.T) {
+	run := testRun()
+	want := resolvedRunForPrepared(t, currentPreparedRun(t))
+	scheme := executionJobTestScheme(t)
+	retained, err := buildExecutionJob(run, want, testEvidenceStoreBinding(), testExecutionJobOptions(), scheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained.UID = testJobUID
+	retained.Spec.Template.Spec.HostNetwork = true
+	retained.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
+	for i := range retained.Spec.Template.Spec.Containers {
+		container := &retained.Spec.Template.Spec.Containers[i]
+		if container.Name == runtimeContainerName {
+			container.Ports = nil
+			container.ReadinessProbe.TCPSocket.Port = intstr.FromInt32(8081)
+		}
+	}
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(retained).Build()
+	jobs, err := NewExecutionJobs(kube, scheme, staticEvidenceStoreResolver{err: errors.New("retained delivery must not be resolved again")}, testExecutionJobOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, recorded, err := jobs.Find(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual == nil || actual.UID != retained.UID || !actual.Spec.Template.Spec.HostNetwork ||
+		recorded == nil || !reflect.DeepEqual(recorded.Prepared.RunConfig, want.Prepared.RunConfig) {
+		t.Fatal("retained execution must recover its own immutable Job without rebuilding the new network shape")
 	}
 }
 
@@ -239,6 +285,9 @@ func TestServingPodAndMeasurementJobProjectTheSameFrozenConfig(t *testing.T) {
 				t.Fatal(err)
 			}
 			worker := pod.Spec.Containers[0]
+			if pod.Spec.HostNetwork || job.Spec.Template.Spec.HostNetwork {
+				t.Fatal("serving and measurement must isolate native port 8080 from the node network")
+			}
 			measurement := findContainer(t, job.Spec.Template.Spec.Containers, runtimeContainerName)
 			if worker.Image != actor.RuntimeImage || measurement.Image != actor.RuntimeImage ||
 				!reflect.DeepEqual(worker.Resources, measurement.Resources) {
@@ -459,6 +508,12 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 		t.Fatalf("idle Job must deliver the model and preprocessor only: %#v", pod.InitContainers)
 	}
 	runtimeContainer := findContainer(t, job.Spec.Template.Spec.Containers, "runtime")
+	if pod := job.Spec.Template.Spec; pod.HostNetwork || pod.DNSPolicy != corev1.DNSClusterFirst {
+		t.Fatal("idle native port 8080 must also use the isolated Pod network")
+	}
+	if runtimeContainer.ReadinessProbe != nil || !slices.Equal(runtimeContainer.Ports, []corev1.ContainerPort{{Name: "http", ContainerPort: 8080, Protocol: corev1.ProtocolTCP}}) {
+		t.Fatal("loaded idle must expose only its Pod-local native listener, without load control")
+	}
 	assertArgument(t, runtimeContainer.Args, "--attempt-timeout=4m1s")
 	observer := findContainer(t, job.Spec.Template.Spec.Containers, "metric-observer")
 	assertArgument(t, observer.Args, "--start-wait-timeout=3m0s")

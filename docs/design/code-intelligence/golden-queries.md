@@ -117,6 +117,15 @@ controller-owner UID before pure decision logic is called. Required evidence:
 setup and projection source plus the two focused Profiler envtest campaigns.
 The event edge is `framework-derived`, not a direct Go call.
 
+The shared Run terminal-failure interpreter consumes permanent `EvidenceInvalid`
+conditions. Immutable evidence contradictions use that condition and stop the
+campaign under its fatal-failure policy, enabling the normal Node handback.
+Transient finalization failures remain `Unknown/EvidenceVerificationFailed`;
+the recorded Job is reverified without creating another execution attempt.
+Previously retained `False/EvidenceVerificationFailed` Runs take the same
+reverification path. Focused finalizer, Run-recovery, campaign-projection and
+admission handback tests cover those boundaries.
+
 ## Regression commands
 
 ```bash

@@ -921,8 +921,28 @@ func cloneActuationFactsForTest(input *ActuationFacts) *ActuationFacts {
 	return &copy
 }
 
-// terminalContainers mirrors the measurement Job: model, preprocessor and
-// (active only) dataset copies, the runtime, and the observers.
+func TestMeasurementTerminalContainersMatchWorkloadMode(t *testing.T) {
+	for _, config := range []profilingrun.RunConfig{loadRunConfig(t), idleRunConfig(t)} {
+		t.Run(config.Measurement.WorkloadMode, func(t *testing.T) {
+			completed := time.Date(2026, 11, 13, 4, 0, 0, 0, time.UTC)
+			measurement := terminalContainers(config, completed)
+			if len(measurement) != 5 {
+				t.Fatalf("measurement Pod has %d containers, want 5", len(measurement))
+			}
+			if err := validateContainers(config, measurement); err != nil {
+				t.Fatalf("actual measurement Pod rejected: %v", err)
+			}
+			dataset := measurement[0]
+			dataset.Name = "dataset"
+			if err := validateContainers(config, append(measurement, dataset)); err == nil {
+				t.Fatal("measurement evidence accepted off-node dataset container")
+			}
+		})
+	}
+}
+
+// terminalContainers mirrors the measurement Pod in both workload modes:
+// model/preprocessor delivery, runtime, and both observers.
 func terminalContainers(config profilingrun.RunConfig, completed time.Time) []ContainerTerminal {
 	container := func(name, image string) ContainerTerminal {
 		return ContainerTerminal{
@@ -942,9 +962,6 @@ func terminalContainers(config profilingrun.RunConfig, completed time.Time) []Co
 	}
 	if config.Images.WorkloadObserver != "" {
 		containers = append(containers, container("workload-observer", config.Images.WorkloadObserver))
-	}
-	if config.Measurement.Dataset != nil {
-		containers = append(containers, container("dataset", config.Measurement.Dataset.Image))
 	}
 	return containers
 }

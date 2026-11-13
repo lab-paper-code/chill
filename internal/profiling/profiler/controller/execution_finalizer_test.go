@@ -11,6 +11,7 @@ import (
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	"github.com/lab-paper-code/chill/internal/metadata"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -253,5 +254,117 @@ func TestKubernetesExecutionFinalizerUsesFrozenJobStoreBinding(t *testing.T) {
 	}
 	if _, err := finalizer.Finalize(context.Background(), run, prepared, job); !errors.Is(err, want) {
 		t.Fatalf("Finalize() error = %v", err)
+	}
+}
+
+func TestKubernetesExecutionFinalizerRequiresSuccessfulOwnedLoadPod(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*batchv1.Job, *corev1.Pod)
+		match  string
+	}{
+		{name: "valid two-container load"},
+		{name: "missing Job", mutate: func(job *batchv1.Job, _ *corev1.Pod) { job.Name = "other-load" }, match: "load Job"},
+		{name: "foreign Job", mutate: func(job *batchv1.Job, _ *corev1.Pod) { job.OwnerReferences[0].UID = "foreign-run" }, match: "load Job"},
+		{name: "wrong origin", mutate: func(job *batchv1.Job, _ *corev1.Pod) { job.Spec.Template.Spec.NodeName = "wrong-node" }, match: "load Job"},
+		{name: "failed Job", mutate: func(job *batchv1.Job, _ *corev1.Pod) {
+			job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionTrue})
+		}, match: "load Pod"},
+		{name: "missing Pod", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.OwnerReferences[0].UID = "foreign-job" }, match: "load Pod"},
+		{name: "wrong Pod node", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Spec.NodeName = "wrong-node" }, match: "load Pod"},
+		{name: "failed Pod", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Status.Phase = corev1.PodFailed }, match: "load Pod"},
+		{name: "failed dataset", mutate: func(_ *batchv1.Job, pod *corev1.Pod) {
+			pod.Status.InitContainerStatuses[0].State.Terminated.ExitCode = 1
+		}, match: "load Pod"},
+		{name: "failed load", mutate: func(_ *batchv1.Job, pod *corev1.Pod) {
+			pod.Status.ContainerStatuses[0].State.Terminated.ExitCode = 1
+		}, match: "load Pod"},
+		{name: "missing container", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Status.ContainerStatuses = nil }, match: "load Pod"},
+		{name: "wrong dataset image", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Spec.InitContainers[0].Image = "wrong-image" }, match: "load Pod"},
+		{name: "wrong load image", mutate: func(_ *batchv1.Job, pod *corev1.Pod) { pod.Spec.Containers[0].Image = "wrong-image" }, match: "load Pod"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run := testRun()
+			prepared := currentPreparedRun(t)
+			recordRunConfigAndJob(run)
+			binding := testEvidenceStoreBinding()
+			job, err := buildExecutionJob(run, resolvedRunForPrepared(t, prepared), binding, testExecutionJobOptions(), executionJobTestScheme(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			job.UID = types.UID(run.Status.Job.UID)
+			run.Status.Job.Name = job.Name
+			load := completedMeasurementLoad(run, job)
+			load.OwnerReferences = append([]metav1.OwnerReference(nil), job.OwnerReferences...)
+			completed := metav1.NewTime(time.Date(2026, 11, 13, 4, 1, 0, 0, time.UTC))
+			load.Status.CompletionTime = &completed
+			load.Spec.Template.Spec.InitContainers = []corev1.Container{{Name: "dataset", Image: prepared.RunConfig.Measurement.Dataset.Image}}
+			load.Spec.Template.Spec.Containers = []corev1.Container{{Name: "load", Image: "gateway-image"}}
+			status := func(name string) corev1.ContainerStatus {
+				return corev1.ContainerStatus{Name: name, ImageID: name + "-image-id", State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						Reason: "Completed", StartedAt: metav1.NewTime(completed.Add(-time.Minute)), FinishedAt: completed,
+					},
+				}}
+			}
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Namespace: run.Namespace, Name: load.Name + "-pod", UID: "load-pod-uid",
+					OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: load.Name, UID: load.UID, Controller: ptr.To(true)}}},
+				Spec: *load.Spec.Template.Spec.DeepCopy(),
+				Status: corev1.PodStatus{Phase: corev1.PodSucceeded,
+					InitContainerStatuses: []corev1.ContainerStatus{status("dataset")}, ContainerStatuses: []corev1.ContainerStatus{status("load")}},
+			}
+			if test.mutate != nil {
+				test.mutate(load, pod)
+			}
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Namespace: run.Namespace, Name: binding.CredentialsSecretName},
+				Data:       map[string][]byte{component.EvidenceStoreAccessKeyKey: []byte("access"), component.EvidenceStoreSecretKeyKey: []byte("secret")},
+			}
+			reader := fake.NewClientBuilder().WithScheme(executionJobTestScheme(t)).WithObjects(secret, load, pod).Build()
+			finalizer, err := NewKubernetesExecutionFinalizer(reader,
+				func(storekube.Binding, string, string) (profilerevidence.ObjectStore, error) {
+					// Native validation must finish before object-store IO.
+					return struct{ profilerevidence.ObjectStore }{}, nil
+				})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = finalizer.Finalize(context.Background(), run, prepared, job)
+			if test.match == "" {
+				if err == nil || !strings.Contains(err.Error(), "expected one Pod owned by measurement Job, found 0") {
+					t.Fatalf("successful load did not reach measurement observation: %v", err)
+				}
+			} else if !errors.Is(err, profilerevidence.ErrPermanentValidation) || !strings.Contains(err.Error(), test.match) {
+				t.Fatalf("invalid load finalization = %v, want permanent %q failure", err, test.match)
+			}
+		})
+	}
+}
+
+func TestKubernetesExecutionFinalizerKeepsLoadReadFailureRetryable(t *testing.T) {
+	want := errors.New("temporary Kubernetes API transport failure")
+	finalizer, err := NewKubernetesExecutionFinalizer(failingJobReader{err: want}, unusedStoreFactory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := testRun()
+	config := currentPreparedRun(t).RunConfig
+	err = finalizer.validateMeasurementLoad(context.Background(), run, &batchv1.Job{}, config)
+	if !errors.Is(err, want) || errors.Is(err, profilerevidence.ErrPermanentValidation) {
+		t.Fatalf("load API failure = %v, want retryable transport failure", err)
+	}
+}
+
+func TestKubernetesExecutionFinalizerIdleNeedsNoLoadSnapshot(t *testing.T) {
+	finalizer, err := NewKubernetesExecutionFinalizer(failingJobReader{err: errors.New("unexpected API read")}, unusedStoreFactory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := currentPreparedRun(t).RunConfig
+	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+	config.Measurement.Dataset = nil
+	if err := finalizer.validateMeasurementLoad(context.Background(), testRun(), &batchv1.Job{}, config); err != nil {
+		t.Fatal(err)
 	}
 }

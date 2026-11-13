@@ -117,8 +117,24 @@ func TestCoordinatorReturnsFinalizerFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = coordinator.Finalize(context.Background(), validFinalizeObservationRequest(t))
-	if !errors.Is(err, want) || finalizer.calls != 1 {
+	if !errors.Is(err, want) || errors.Is(err, evidence.ErrPermanentValidation) || finalizer.calls != 1 {
 		t.Fatalf("expected wrapped finalizer error, got %v", err)
+	}
+}
+
+func TestCoordinatorClassifiesMalformedTerminalReceiptPermanent(t *testing.T) {
+	finalizer := &recordingFinalizer{}
+	coordinator, err := NewCoordinator(finalizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validFinalizeObservationRequest(t)
+	setTerminationMessage(request.Observation.Pod, `{"schemaVersion":"x","unknown":true}`)
+	if _, err := coordinator.Finalize(context.Background(), request); !errors.Is(err, evidence.ErrPermanentValidation) {
+		t.Fatalf("immutable termination receipt failure = %v, want permanent validation error", err)
+	}
+	if finalizer.calls != 0 {
+		t.Fatal("invalid termination receipt reached finalizer")
 	}
 }
 

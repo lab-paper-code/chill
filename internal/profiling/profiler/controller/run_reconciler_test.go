@@ -359,7 +359,7 @@ func TestRunReconcilerRetriesTransientEvidenceFinalizationFailure(t *testing.T) 
 		t.Fatal(err)
 	}
 	evidence := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceVerified)
-	if actual.Status.Evidence != nil || evidence == nil || evidence.Status != metav1.ConditionFalse ||
+	if actual.Status.Evidence != nil || evidence == nil || evidence.Status != metav1.ConditionUnknown ||
 		evidence.Reason != evidenceReasonVerificationFailed ||
 		evidence.Message != "retained execution evidence could not be verified" {
 		t.Fatalf("retryable finalization status = %#v", actual.Status)
@@ -392,6 +392,12 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	scheme := runReconcilerTestScheme(t)
 	run := testRun()
 	prepared := currentPreparedRun(t)
+	// A retained successful Job must reverify after a verifier fix, including
+	// Runs carrying the previous transient False condition.
+	run.Status.Conditions = []metav1.Condition{
+		{Type: edgev1alpha1.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionTrue, Reason: "JobSucceeded"},
+		{Type: edgev1alpha1.ProfilingRunConditionEvidenceVerified, Status: metav1.ConditionFalse, Reason: evidenceReasonVerificationFailed},
+	}
 	recordRunConfigAndJob(run)
 	job := recordedJob(t, run, resolvedRunForPrepared(t, prepared), &batchv1.JobStatus{
 		Succeeded:  1,

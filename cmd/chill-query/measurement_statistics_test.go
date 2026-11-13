@@ -1299,16 +1299,13 @@ func statisticsTrial(
 	if err != nil {
 		t.Fatal(err)
 	}
-	containers := make([]evidence.ContainerTerminal, 0, 6)
+	containers := make([]evidence.ContainerTerminal, 0, 5)
 	images := map[string]string{
 		"runtime":           config.Images.Runtime,
 		"artifact":          config.Images.Artifact,
 		"preprocessor":      config.State.Preprocessor.Image,
 		"metric-observer":   config.Images.MetricObserver,
 		"workload-observer": config.Images.WorkloadObserver,
-	}
-	if config.Measurement.Dataset != nil {
-		images["dataset"] = config.Measurement.Dataset.Image
 	}
 	for name, image := range images {
 		containers = append(

@@ -78,6 +78,19 @@ func ProjectTerminalFacts(observation Observation) (evidence.TerminalFacts, erro
 }
 
 func validateTerminalObjects(job *batchv1.Job, pod *corev1.Pod, node *corev1.Node, observedAt time.Time) error {
+	if err := validateTerminalJobPod(job, pod); err != nil {
+		return err
+	}
+	if observedAt.IsZero() || observedAt.Before(job.Status.CompletionTime.Time) {
+		return errors.New("Node workload observation predates Job completion")
+	}
+	if node.Name == "" || node.UID == "" || pod.Spec.NodeName == "" || pod.Spec.NodeName != node.Name {
+		return errors.New("Pod binding and observed Node do not match")
+	}
+	return nil
+}
+
+func validateTerminalJobPod(job *batchv1.Job, pod *corev1.Pod) error {
 	if job.Namespace == "" || job.Name == "" || job.UID == "" || job.Status.CompletionTime == nil {
 		return errors.New("Job identity or completion time is incomplete")
 	}
@@ -90,9 +103,6 @@ func validateTerminalObjects(job *batchv1.Job, pod *corev1.Pod, node *corev1.Nod
 	if !complete || failed || job.Status.Succeeded != 1 || job.Status.Failed != 0 {
 		return errors.New("Job is not an unambiguous terminal success")
 	}
-	if observedAt.IsZero() || observedAt.Before(job.Status.CompletionTime.Time) {
-		return errors.New("Node workload observation predates Job completion")
-	}
 	if pod.Namespace == "" || pod.Name == "" || pod.UID == "" || pod.Namespace != job.Namespace ||
 		pod.Status.Phase != corev1.PodSucceeded {
 		return errors.New("Pod identity or terminal phase is invalid")
@@ -100,9 +110,6 @@ func validateTerminalObjects(job *batchv1.Job, pod *corev1.Pod, node *corev1.Nod
 	owner := metav1.GetControllerOf(pod)
 	if owner == nil || owner.Kind != "Job" || owner.UID != job.UID {
 		return errors.New("Pod is not controller-owned by the Job")
-	}
-	if node.Name == "" || node.UID == "" || pod.Spec.NodeName == "" || pod.Spec.NodeName != node.Name {
-		return errors.New("Pod binding and observed Node do not match")
 	}
 	if len(pod.Spec.EphemeralContainers) != 0 || len(pod.Status.EphemeralContainerStatuses) != 0 {
 		return errors.New("profiling Pod contains unexpected ephemeral containers")

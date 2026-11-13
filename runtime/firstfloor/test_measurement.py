@@ -142,6 +142,22 @@ class ExternalLoadConsumerTest(unittest.TestCase):
         self.assertFalse(hasattr(measurement.FirstfloorSession, "prepare_next"))
         self.assertFalse(hasattr(measurement.common, "execute_loaded"))
 
+    def test_native_endpoint_formats_the_same_pod_port_for_ipv6(self):
+        request = coordination_request(Path("/coordination"))
+        with mock.patch.dict(os.environ, {"POD_IP": "fd00::7"}):
+            plan = measurement.load_plan(request)
+        self.assertEqual(plan["nativeEndpoint"], "http://[fd00::7]:8080")
+
+    def test_control_listener_uses_the_declared_pod_control_port(self):
+        request = coordination_request(Path("/coordination"))
+        with mock.patch.dict(os.environ, {"POD_IP": "10.0.0.7"}), \
+                mock.patch.object(measurement.http.server, "ThreadingHTTPServer") as server, \
+                mock.patch.object(measurement.threading, "Thread"):
+            control = measurement.LoadControl(request)
+            self.assertEqual(server.call_args.args[0], ("0.0.0.0", 8081))
+            self.assertEqual(control.plan["nativeEndpoint"], "http://10.0.0.7:8080")
+            control.close()
+
     def test_phase_reader_accepts_distinct_host_clocks_and_rejects_incomplete_evidence(self):
         _, plan = self.make_plan()
         phases = phase_results(plan)
@@ -485,9 +501,9 @@ class ExternalLoadConsumerTest(unittest.TestCase):
             process.poll.return_value = None
             frozen = {"inferenceCount": 2, "cpuContract": {}, "memoryBytes": 123, "memorySource": "frozen"}
             with ExitStack() as stack:
-                stack.enter_context(mock.patch.object(measurement, "FirstfloorSession", return_value=session))
+                native = stack.enter_context(mock.patch.object(measurement, "FirstfloorSession", return_value=session))
                 stack.enter_context(mock.patch.object(measurement, "LoadControl"))
-                stack.enter_context(mock.patch.object(measurement.subprocess, "Popen", return_value=process))
+                popen = stack.enter_context(mock.patch.object(measurement.subprocess, "Popen", return_value=process))
                 stack.enter_context(mock.patch.object(measurement, "wait_ready"))
                 stack.enter_context(mock.patch.object(measurement, "validate_metadata",
                                                      return_value={"intraOpThreads": 1, "interOpThreads": 1}))
@@ -498,6 +514,8 @@ class ExternalLoadConsumerTest(unittest.TestCase):
             self.assertEqual(result["memoryBytes"], 123)
             self.assertEqual(result["memorySource"], "frozen")
             kernel.assert_not_called()
+            native.assert_called_once_with(8080, request)
+            self.assertIn("0.0.0.0:8080", popen.call_args.args[0])
 
     def test_idle_counts_cover_settling_and_window_and_native_listener_is_network_bound(self):
         for changed in (None, "acceptedRequests", "completedRequests", "executions"):
@@ -513,7 +531,7 @@ class ExternalLoadConsumerTest(unittest.TestCase):
                 process = mock.Mock()
                 process.poll.return_value = None
                 with ExitStack() as stack:
-                    stack.enter_context(mock.patch.object(measurement, "FirstfloorSession", return_value=session))
+                    native = stack.enter_context(mock.patch.object(measurement, "FirstfloorSession", return_value=session))
                     control = stack.enter_context(mock.patch.object(measurement, "LoadControl"))
                     popen = stack.enter_context(mock.patch.object(measurement.subprocess, "Popen", return_value=process))
                     stack.enter_context(mock.patch.object(measurement, "wait_ready"))
@@ -527,6 +545,7 @@ class ExternalLoadConsumerTest(unittest.TestCase):
                         result = measurement.execute_sampled(request, Path(directory), request["runConfig"], "amd64", "max 100000", [0], "0", None)
                         self.assertEqual(result["firstfloor"]["inferenceCount"], 0)
                 self.assertIn("0.0.0.0:8080", popen.call_args.args[0])
+                native.assert_called_once_with(8080, request)
                 control.assert_not_called()
 
     def test_control_get_waits_and_phase_timestamps_come_from_measurement_node(self):

@@ -58,6 +58,14 @@ not authorize changes across those ownership boundaries.
 - Finalization independently reads after conditional create and returns the
   validated immutable winner, including after a race. Job/Pod/Node ownership still
   binds reuse; a different valid candidate never overwrites the winner.
+- Evidence v1alpha17 terminal containers describe only the measurement Pod:
+  `artifact`, `preprocessor`, `runtime`, `metric-observer`, `workload-observer`.
+  Active load completion/ownership and its `dataset`/`load` terminal states are
+  independent live finalization prerequisites. No load-Pod snapshot is stored,
+  and the retained loader does not claim one. Existing raw/evidence schemas stay
+  unchanged; successful retained executions can be reverified without edits.
+- Immutable decode/semantic contradictions carry permanent validation failure
+  and terminalize as `EvidenceInvalid`. API/storage IO failures stay retryable.
 - Scientific admission was removed (`788bcf93`); retained evidence supports
   execution and numeric derivation.
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"path"
+	"strconv"
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -74,7 +75,7 @@ func buildMeasurementLoadJob(run *api.ProfilingRun, worker *batchv1.Job, pod, ga
 			InitContainers: []corev1.Container{{Name: "dataset", Image: config.Measurement.Dataset.Image, VolumeMounts: []corev1.VolumeMount{data}, Resources: resources,
 				Command: []string{"sh", "-ec", `cp -R "$1"/. /data/`, "--", path.Join(config.Measurement.Dataset.Path, "profiling")}}},
 			Containers: []corev1.Container{{Name: "load", Image: image, VolumeMounts: []corev1.VolumeMount{data}, Resources: resources,
-				Args: []string{"profiling-load", "--control-endpoint", "http://" + net.JoinHostPort(pod.Status.PodIP, "8081"), "--dataset-dir=/data", "--deadline=" + deadline.UTC().Format(time.RFC3339Nano)}}},
+				Args: []string{"profiling-load", "--control-endpoint", "http://" + net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(measurementLoadControlPort)), "--dataset-dir=/data", "--deadline=" + deadline.UTC().Format(time.RFC3339Nano)}}},
 			Volumes: []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: resource.NewQuantity(1<<30, resource.BinarySI)}}}},
 		}},
 	}}

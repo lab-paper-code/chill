@@ -74,10 +74,10 @@ func (f *Finalizer) validateAndRestoreRawEvidence(
 	request FinalizeRequest,
 ) (rawRecord, error) {
 	if err := request.RawReceipt.Validate(); err != nil {
-		return nil, fmt.Errorf("validate raw receipt: %w", err)
+		return nil, permanentValidationf("validate raw receipt: %w", err)
 	}
 	if request.RawReceipt.Object.Location() == request.FinalLocation {
-		return nil, errors.New("raw and finalized evidence locations must differ")
+		return nil, permanentValidationf("raw and finalized evidence locations must differ")
 	}
 
 	rawBytes, err := readBounded(ctx, f.store, request.RawReceipt.Object.Location(), f.maxObjectBytes)
@@ -86,10 +86,10 @@ func (f *Finalizer) validateAndRestoreRawEvidence(
 	}
 	raw, err := decodeRawRecord(rawBytes)
 	if err != nil {
-		return nil, err
+		return nil, permanentValidationError(err)
 	}
 	if err := raw.validate(); err != nil {
-		return nil, fmt.Errorf("validate raw measurement: %w", err)
+		return nil, permanentValidationf("validate raw measurement: %w", err)
 	}
 	return raw, nil
 }
@@ -107,7 +107,7 @@ func constructVerifiedExecutionEvidence(
 		FinalizedAt:    request.FinalizedAt,
 	}
 	if err := raw.validateExecution(candidate); err != nil {
-		return nil, fmt.Errorf("validate execution evidence: %w", err)
+		return nil, permanentValidationf("validate execution evidence: %w", err)
 	}
 	candidateBytes, err := candidate.canonicalJSON()
 	if err != nil {
@@ -146,7 +146,7 @@ func (f *Finalizer) reuseExisting(
 	identity := identityFor(request.FinalLocation, payload)
 	var existing ExecutionEvidence
 	if err := decodeExact(payload, &existing); err != nil {
-		return FinalizeResult{}, fmt.Errorf("decode existing execution evidence: %w", err)
+		return FinalizeResult{}, permanentValidationf("decode existing execution evidence: %w", err)
 	}
 	loader := Loader{store: f.store, maxObjectBytes: f.maxObjectBytes}
 	existing, _, err := loader.loadRaw(ctx, existing)
@@ -156,7 +156,7 @@ func (f *Finalizer) reuseExisting(
 	if existing.Terminal.Job.UID != request.Terminal.Job.UID ||
 		existing.Terminal.Pod.UID != request.Terminal.Pod.UID ||
 		existing.Terminal.Node.UID != request.Terminal.Node.UID {
-		return FinalizeResult{}, errors.New("existing execution evidence does not belong to this Run")
+		return FinalizeResult{}, permanentValidationf("existing execution evidence does not belong to this Run")
 	}
 	return FinalizeResult{Reference: identity, SchemaVersion: existing.SchemaVersion, Reused: true}, nil
 }

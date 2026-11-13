@@ -59,10 +59,10 @@ func TestTerminallyInvalidRunsFailWithoutRetry(t *testing.T) {
 		if err != nil {
 			t.Fatalf("build attempt %d: %v", attempt, err)
 		}
-		run.Status.Conditions = []metav1.Condition{{
-			Type:   edgev1alpha1.ProfilingRunConditionEvidenceVerified,
-			Status: metav1.ConditionFalse, Reason: "EvidenceInvalid",
-		}}
+		run.Status.Conditions = []metav1.Condition{
+			{Type: edgev1alpha1.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionTrue, Reason: "JobSucceeded"},
+			{Type: edgev1alpha1.ProfilingRunConditionEvidenceVerified, Status: metav1.ConditionFalse, Reason: "EvidenceInvalid"},
+		}
 		runs = append(runs, *run)
 	}
 
@@ -94,6 +94,8 @@ func TestRunOutcomeDrivesCampaignTransition(t *testing.T) {
 		{"running", false, "ExecutionComplete", "JobRunning", batchenergyoptimization.VerdictPending},
 		{"unrelated condition", false, "Unrelated", "JobFailed", batchenergyoptimization.VerdictPending},
 		{"failed execution", false, "ExecutionComplete", "RequiredStateNotConfirmed", batchenergyoptimization.VerdictFailed},
+		{"permanent evidence failure", false, "EvidenceVerified", "EvidenceInvalid", batchenergyoptimization.VerdictFailed},
+		{"retained verification failure can reverify", false, "EvidenceVerified", "EvidenceVerificationFailed", batchenergyoptimization.VerdictPending},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			parent := testParent()

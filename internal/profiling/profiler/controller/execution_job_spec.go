@@ -37,6 +37,9 @@ const (
 
 	artifactCopyMountPath     = "/chill-artifact"
 	preprocessorCopyMountPath = "/chill-preprocessor"
+
+	measurementLoadControlPortName = "load-control"
+	measurementLoadControlPort     = 8081
 )
 
 func buildExecutionJob(
@@ -119,11 +122,11 @@ func buildExecutionJob(
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					// Keep native/control listeners in the Pod network, as serving does.
 					AutomountServiceAccountToken: ptr.To(false),
 					ServiceAccountName:           options.WorkloadObserverServiceAccountName,
 					RestartPolicy:                corev1.RestartPolicyNever,
-					HostNetwork:                  true,
-					DNSPolicy:                    corev1.DNSClusterFirstWithHostNet,
+					DNSPolicy:                    corev1.DNSClusterFirst,
 					NodeSelector: map[string]string{
 						corev1.LabelHostname: prepared.RunConfig.TargetNode.Name,
 					},
@@ -219,9 +222,15 @@ func runtimeContainer(
 	)
 	container.SecurityContext = projection.SecurityContext
 	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		container.Ports = []corev1.ContainerPort{
+			{Name: "http", ContainerPort: 8080, Protocol: corev1.ProtocolTCP},
+			{Name: measurementLoadControlPortName, ContainerPort: measurementLoadControlPort, Protocol: corev1.ProtocolTCP},
+		}
 		container.ReadinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
-			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(8081)},
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString(measurementLoadControlPortName)},
 		}, PeriodSeconds: 1, FailureThreshold: 3}
+	} else {
+		container.Ports = []corev1.ContainerPort{{Name: "http", ContainerPort: 8080, Protocol: corev1.ProtocolTCP}}
 	}
 	container.TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
 	return container

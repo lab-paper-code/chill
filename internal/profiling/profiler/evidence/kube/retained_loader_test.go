@@ -460,9 +460,6 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 		"runtime": config.Images.Runtime, "metric-observer": config.Images.MetricObserver,
 		"workload-observer": config.Images.WorkloadObserver,
 	}
-	if config.Measurement.Dataset != nil {
-		images["dataset"] = config.Measurement.Dataset.Image
-	}
 	template := terminal.Containers[0]
 	template.StartedAt = start.Add(-time.Minute)
 	terminal.Containers = nil
