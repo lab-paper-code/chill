@@ -12,6 +12,7 @@ import (
 	batchcontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -431,10 +432,13 @@ func createBatchEnergyOptimization(
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				Workload:         "mobilenet",
-				WarmupIterations: 20, DurationSeconds: 30,
+				WarmupIterations: 20, DurationSeconds: 120,
 				Dataset: "vqav2-val-subset",
+				OperatingPoints: fixtures.OperatingPoints[edgev1alpha1.MeasurementOperatingPointsSpec](
+					loadRunConfig(t).Measurement.OperatingPoints,
+				),
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
-					IntervalMilliseconds: 1000, TimeoutMilliseconds: 900, DurationSeconds: 31,
+					IntervalMilliseconds: 1000, TimeoutMilliseconds: 900, DurationSeconds: 121,
 				},
 			},
 			IdleProtocol: edgev1alpha1.IdleProtocolSpec{
@@ -667,6 +671,11 @@ func integrationCurvePlan(t *testing.T) profilederivation.CurvePlan {
 		}
 	}
 	active := protocol("empirical-cadence-fixed-batch")
+	active.DurationSeconds = 120
+	active.MetricDurationSeconds = 121
+	active.OperatingPoints = fixtures.OperatingPoints[*profilederivation.OperatingPointsContract](
+		loadRunConfig(t).Measurement.OperatingPoints,
+	)
 	active.StartupWarmupIterations = 20
 	active.WorkloadName = "mobilenet"
 	active.WorkloadUID = "workload-uid"

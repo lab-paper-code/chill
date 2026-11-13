@@ -52,7 +52,7 @@ func TestProposeSLOSplitsFastFromSlowNodes(t *testing.T) {
 	snap := serving.SchedulerSnapshot{}
 	option := func(node string, d bool, uid string, samples ...float64) {
 		ref := serving.NodeReference{Name: node, UID: node + "-uid"}
-		// Power mode scopes d; image differences are measurement history only.
+		// Measured occupancy matches the exact profile cell; image is history only.
 		cond := profilederivation.CurvePlanSpec{PowerMode: fmt.Sprint("mode-", len(snap.Options)), RuntimeImage: "current-image", LogicalModel: "plc"}
 		paired := []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, int64(samples[0]))}
 		for i, service := range samples {
@@ -61,7 +61,9 @@ func TestProposeSLOSplitsFastFromSlowNodes(t *testing.T) {
 		p := &serving.Profile{ID: node, Condition: cond, Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: paired}, {Batch: 2, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 1), fixtures.ServiceSample("physical-trial", 1, 1)}}}}
 		snap.Options = append(snap.Options, serving.SchedulerOption{Instance: serving.SchedulerInstance{Node: ref, Profile: p, MaxBatch: 2}, CompatibleUIDs: []string{uid}})
 		if d {
-			snap.DispatchOccupancy = append(snap.DispatchOccupancy, serving.DispatchOccupancy{Node: ref, PowerMode: cond.PowerMode, RuntimeImage: "historical-image", Model: "plc", PerRequest: time.Millisecond})
+			snap.DispatchOccupancy = append(snap.DispatchOccupancy, serving.DispatchOccupancy{Node: ref, PowerMode: cond.PowerMode, RuntimeImage: "historical-image", Model: "plc",
+				ProfileID: p.ID, ExecutionPath: cond.Artifact.ExecutionPath, Batch: 2, PerRequest: time.Millisecond,
+				Provenance: &serving.DispatchOccupancyProvenance{Source: "measured"}})
 		}
 	}
 	spread := make([]float64, 100)

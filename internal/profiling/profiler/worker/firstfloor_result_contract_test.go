@@ -67,6 +67,7 @@ class FakeControl:
         clock[0] = sum(phase["measurementElapsedSecondsMonotonic"] for phase in uploaded["phases"])
         FakeActor.counter = sum(len(phase["nativeSamples"]) for phase in uploaded["phases"])
         self.post_load_start = self.begin_post_load()
+        self.post_load_end = self.finish_post_load()
         return uploaded
     def close(self):
         pass

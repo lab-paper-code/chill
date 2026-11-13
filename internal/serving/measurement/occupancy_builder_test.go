@@ -200,7 +200,7 @@ func TestOccupancyDerivationRefusesLifetimeIdentityAndSupply(t *testing.T) {
 			f.preprocessor.Spec.Input.Fields[0].MaxBytes = 32 << 20
 		},
 		"native byte cap": func(f *occupancyFixture) { f.preparation.Config.MaxQueueBytes = 8191 },
-		"queue count cap": func(f *occupancyFixture) { f.preparation.Config.MaxQueueRequests = 5 },
+		"queue count cap": func(f *occupancyFixture) { f.preparation.Config.MaxQueueRequests = 7 },
 		"zero service": func(f *occupancyFixture) {
 			f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 0), fixtures.ServiceSample("physical-trial", 1, 0)}
 		},
@@ -233,7 +233,7 @@ func TestOccupancyBurstDoesNotDeriveWorkersWarmupOrDurationFromService(t *testin
 			f.profile.Batches[0].ServiceSamples = append(f.profile.Batches[0].ServiceSamples, fixtures.ServiceSample("physical-trial", uint64(i+1), int64(service)))
 		}
 		f.preparation.Config.MaxQueueBytes = 8 * 1024
-		f.preparation.Config.MaxQueueRequests = 6
+		f.preparation.Config.MaxQueueRequests = 8
 		task, err := f.build()
 		if err != nil {
 			t.Fatal(err)
@@ -257,7 +257,7 @@ func TestOccupancyBurstDoesNotDeriveWorkersWarmupOrDurationFromService(t *testin
 		c := inputs.Computed
 		if c.TailBatchSeconds != population[len(population)-1]/1e9 ||
 			c.MinimumRequestLifetimeSeconds != 2 || c.FramedDecodedRequestUpperBytes != 1024 ||
-			c.QueueRequestCap != 6 || c.QueueBytesCap != 8192 {
+			c.QueueRequestCap != 8 || c.QueueBytesCap != 8192 {
 			t.Fatalf("lost native supply derivation: %+v", c)
 		}
 	}

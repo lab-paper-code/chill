@@ -19,6 +19,7 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -202,6 +203,20 @@ func TestRunReconcilerIsCompleteAfterFinalizationRestart(t *testing.T) {
 	reconcile(t, ctx, finalizing.reconciler, request)
 	afterCreate := getRun(t, ctx, kube, request.NamespacedName)
 	recordedJob := requireRecordedJob(t, afterCreate)
+	load := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Namespace: run.Namespace, Name: recordedJob.Name + "-load"},
+		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			NodeName: resolved.Prepared.RunConfig.LoadOriginNode, RestartPolicy: corev1.RestartPolicyNever,
+			Containers: []corev1.Container{{Name: "load", Image: "example.invalid/chill/load:test"}},
+		}}},
+	}
+	if err := controllerutil.SetControllerReference(run, load, clientgoscheme.Scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := kube.Create(ctx, load); err != nil {
+		t.Fatal(err)
+	}
+	markJobSucceeded(t, ctx, kube, run.Namespace, load.Name)
 	markJobSucceeded(t, ctx, kube, run.Namespace, recordedJob.Name)
 	finalizing.finalizer.err = nil
 	finalizing.finalizer.result = profilercontroller.FinalizedRunEvidence{
@@ -221,9 +236,11 @@ func TestRunReconcilerIsCompleteAfterFinalizationRestart(t *testing.T) {
 	reconcile(t, ctx, finalizing.reconciler, request)
 	afterFinalization := getRun(t, ctx, kube, request.NamespacedName)
 	assertFinalizedEvidence(t, afterFinalization, finalizing.finalizer.result)
-	jobKey := client.ObjectKey{Namespace: run.Namespace, Name: recordedJob.Name}
-	if err := kube.Get(ctx, jobKey, &batchv1.Job{}); !apierrors.IsNotFound(err) {
-		t.Fatalf("finalized measurement Job still exists: %v", err)
+	for _, name := range []string{recordedJob.Name, load.Name} {
+		jobKey := client.ObjectKey{Namespace: run.Namespace, Name: name}
+		if err := kube.Get(ctx, jobKey, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("finalized Job %s still exists: %v", name, err)
+		}
 	}
 	if finalizing.finalizer.calls != 1 {
 		t.Fatalf("finalization calls: %d", finalizing.finalizer.calls)
@@ -359,15 +376,14 @@ func createRunWithResolvedConfig(
 ) (*edgev1alpha1.ProfilingRun, profilercontroller.ResolvedRun) {
 	t.Helper()
 	runConfig := loadRunConfig(t)
-	run := validRun()
+	run := validRun(&runConfig)
 	if err := kube.Create(ctx, run); err != nil {
 		t.Fatal(err)
 	}
 	if err := kube.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
 		t.Fatal(err)
 	}
-	// Build a current Job contract from the admitted request; the scientific raw
-	// fixture predates durationToleranceSeconds and remains unmodified.
+	// Freeze the admitted request's defaulted duration tolerance into the Job contract.
 	request, err := profilercontroller.ProjectRequest(run.Spec)
 	if err != nil {
 		t.Fatal(err)
@@ -713,7 +729,7 @@ func resolvedRun(
 	}
 }
 
-func validRun() *edgev1alpha1.ProfilingRun {
+func validRun(config *profilingrun.RunConfig) *edgev1alpha1.ProfilingRun {
 	return &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "durable-job-identity", Namespace: profilerIntegrationNamespace,
 			Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Now())}},
@@ -726,12 +742,15 @@ func validRun() *edgev1alpha1.ProfilingRun {
 				TargetNode: "lattepanda",
 			},
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
-				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
+				Batch: 1, WarmupIterations: 20, DurationSeconds: int32(config.Measurement.DurationSeconds),
 				WorkloadMode: "empirical-cadence-fixed-batch", Dataset: "vqav2-val-subset",
 				Workload: "mobilenet",
+				OperatingPoints: fixtures.OperatingPoints[*edgev1alpha1.MeasurementOperatingPointsSpec](
+					config.Measurement.OperatingPoints,
+				),
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
-				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
+				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: int32(config.Metrics.DurationSeconds),
 			},
 		},
 	}

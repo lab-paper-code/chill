@@ -135,13 +135,15 @@ os.write(2, b'\xff\x00unterminated')
 
     def worker_source(self, *, fail=False, ignore_term=False):
         worker = ("import os,pathlib,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-                  "pathlib.Path('worker').write_text(str(os.getpid())); time.sleep(60)")
+                  "pathlib.Path('worker.tmp').write_text(str(os.getpid())); "
+                  "pathlib.Path('worker.tmp').replace('worker'); time.sleep(60)")
         return '\n'.join([
             'import os,pathlib,signal,subprocess,sys,time',
             'signal.signal(signal.SIGTERM, signal.SIG_IGN)' if ignore_term else '',
             'subprocess.Popen([sys.executable, "-c", %r])' % worker,
             'while not pathlib.Path("worker").exists(): time.sleep(.01)',
-            'pathlib.Path("wrapper").write_text(str(os.getpid()))',
+            'pathlib.Path("wrapper.tmp").write_text(str(os.getpid()))',
+            'pathlib.Path("wrapper.tmp").replace("wrapper")',
             'raise SystemExit(23)' if fail else 'time.sleep(60)',
         ])
 
