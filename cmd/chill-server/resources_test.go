@@ -44,9 +44,11 @@ func TestLoadGeneratorResourcePodSelected(t *testing.T) {
 // A measurement instance's memory is sampled like a serving instance's: its
 // Pod carries the profile its session publishes.
 func TestMeasurementInstanceResourcePodSelected(t *testing.T) {
+	node := serving.NodeReference{Name: "node", UID: "node-uid"}
 	spec := servingstate.PrepareSpec{Name: "session-batch-1", MemoryBytes: 1 << 30,
-		Instance: serving.SchedulerInstance{Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Allocation: serving.SchedulerAllocation{MemoryBytes: 1 << 30}},
-		Config: native.Config{Mode: servingstate.NativeProfilingMode, BatchSizes: []int{1}, RuntimeImage: "runtime", MemoryRequestBytes: 1 << 20, MemoryLimitBytes: 1 << 30,
+		Instance: serving.SchedulerInstance{Node: node, Allocation: serving.SchedulerAllocation{MemoryBytes: 1 << 30}},
+		Config: native.Config{Mode: servingstate.NativeProfilingMode, BatchSizes: []int{1},
+			RuntimeImage: "runtime", MemoryRequestBytes: 1 << 20, MemoryLimitBytes: 1 << 30,
 			Policy: native.Policy{ProfileID: "system/session/session-uid", FixedBatchSize: 1}}}
 	pod, _, err := (&operations.Operations{Config: operations.OperationConfig{Namespace: "system"}}).PreparationPod(spec)
 	if err != nil {

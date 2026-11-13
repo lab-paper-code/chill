@@ -22,6 +22,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -379,7 +380,7 @@ func TestMeasuredSupplementalGroupsAreReproducible(t *testing.T) {
 	if err != nil || !slices.Equal(spec.Delivery.SupplementalGroups, []int64{44}) || spec.Delivery.RKNNLite != nil {
 		t.Fatalf("measured supplemental groups not delivered: %+v %v", spec.Delivery, err)
 	}
-	profile.Condition.Backend, profile.RuntimeDelivery = "rknnlite", []byte(`{"runtimeAccess":{"privileged":true}}`)
+	profile.Condition.Backend, profile.RuntimeDelivery = profilingrun.FirstfloorRKNNLiteBackend, []byte(`{"runtimeAccess":{"privileged":true}}`)
 	spec, err = service.measuredPreparation(context.Background(), profile, 128<<20)
 	if err != nil || string(spec.Delivery.RKNNLite) != string(profile.RuntimeDelivery) || spec.Delivery.SupplementalGroups != nil {
 		t.Fatalf("measured RKNNLite delivery not delivered: %+v %v", spec.Delivery, err)

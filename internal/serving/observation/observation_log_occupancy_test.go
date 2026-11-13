@@ -102,8 +102,8 @@ func TestNativeRowsWithoutWorkloadReadBackByIdentifier(t *testing.T) {
 	idle := int64(5e6)
 	for i, phase := range []string{"queued", "running", "finished"} {
 		p := serving.BackendProgress{RequestID: "load-1", WorkloadUID: uid, Definition: "session-load", Phase: phase,
-			At: at.Add(time.Duration(i) * 10 * time.Millisecond), BatchID: 9, BatchSize: 2, ExecutionComplete: phase == "finished"}
-		if phase == "finished" {
+			At: at.Add(time.Duration(i) * 10 * time.Millisecond), BatchID: 9, BatchSize: 2, ExecutionComplete: i == 2}
+		if p.ExecutionComplete {
 			p.ServiceSample = &native.ServiceSample{ServiceDurationNanos: 7e6, PrecedingIdleNanos: &idle, TrialID: uid}
 		}
 		if err := runtime.ObserveBackend("pod-uid/containerd://running", p); err != nil {

@@ -65,7 +65,7 @@ func TestMeasurementInstanceIsMeasuredWithoutProfile(t *testing.T) {
 	// The profile only supplies the runner fixture's initialization facts;
 	// the catalog holds no profile.
 	profile.Condition.Preprocessor.Inputs, profile.Condition.Preprocessor.Outputs = []string{"input"}, []string{"output"}
-	profile.RuntimeMetadata.RuntimeVersion = "test-runtime"
+	profile.RuntimeMetadata.RuntimeVersion = observerTestRuntime
 	profile.RuntimeMetadata.Inputs, profile.RuntimeMetadata.Outputs = []string{"input"}, []string{"output"}
 	profile.RuntimeMetadata.InitializedBatches = []int{1}
 	kube := kubefake.NewSimpleClientset(node)
@@ -171,12 +171,12 @@ func TestMeasurementInstanceIsMeasuredWithoutProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, container := range pod.Spec.InitContainers {
-		if container.Name == "profile" {
+		if container.Name == profileInitContainerName {
 			t.Fatal("measurement instance materializes a profile bundle")
 		}
 	}
 	for _, volume := range pod.Spec.Volumes {
-		if volume.Name == "profile" {
+		if volume.Name == profileInitContainerName {
 			t.Fatal("measurement instance mounts a profile volume")
 		}
 	}

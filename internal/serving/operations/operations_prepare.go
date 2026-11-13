@@ -145,9 +145,10 @@ func (o *Operations) PreparationPod(spec servingstate.PrepareSpec) (*core.Pod, [
 		Volumes:    []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "preprocessor", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}},
 	}}
 	if spec.Measurement() {
-		pod.Spec.InitContainers = slices.DeleteFunc(pod.Spec.InitContainers, func(c core.Container) bool { return c.Name == "profile" })
-		pod.Spec.Volumes = slices.DeleteFunc(pod.Spec.Volumes, func(v core.Volume) bool { return v.Name == "profile" })
-		pod.Spec.Containers[0].VolumeMounts = slices.DeleteFunc(pod.Spec.Containers[0].VolumeMounts, func(m core.VolumeMount) bool { return m.Name == "profile" })
+		bundle := func(name string) bool { return name == "profile" }
+		pod.Spec.InitContainers = slices.DeleteFunc(pod.Spec.InitContainers, func(c core.Container) bool { return bundle(c.Name) })
+		pod.Spec.Volumes = slices.DeleteFunc(pod.Spec.Volumes, func(v core.Volume) bool { return bundle(v.Name) })
+		pod.Spec.Containers[0].VolumeMounts = slices.DeleteFunc(pod.Spec.Containers[0].VolumeMounts, func(m core.VolumeMount) bool { return bundle(m.Name) })
 	}
 	o.placeServingPod(pod, spec.Owner, spec.Instance)
 	if delivery != nil {
