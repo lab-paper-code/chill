@@ -394,3 +394,4 @@ Avara UI 레지스트리의 부품을 먼저 쓴다. Avara에 없는 기본 부�
 - 재생 서버(`pnpm replay`)가 저장해 둔 ChillServer 응답과 실시간 스트림을 재생한다. 실제 클러스터를 바꾸지 않는다.
 - 재생 장면 둘: 저장 당시 상태(토큰 `captured`), 서비스가 실행 중인 합성 상태(토큰 `active`).
 - 화면마다 두 장면, 밝은 테마와 어두운 테마, 1440px와 390px 너비에서 확인한다.
+- 웹 표준 점검: Modern Web Guidance 스킬(`npx -y modern-web-guidance@latest search|retrieve`)의 안내와 대조한다. 대상은 공용 부품과 화면의 HTML 구조, 접근성, 폼, 대화상자와 팝오버, 표, 반응형 배치, 성능이다. 기준은 Baseline 2024이며 `chill-dashboard/AGENTS.md`에 적는다.
