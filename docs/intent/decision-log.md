@@ -1,585 +1,71 @@
-# 핵심 결정 일지
+# 현행 사용자 결정
 
-현행 결정만 주제별로 보존한다. 요구사항·수치의 정본은 [spec](../spec/README.md), SRS와 설계다. 뒤집힌 안과 완료 절차는 git 이력에 남긴다. 날짜는 원문의 사용자/실행 시각을 재구성하지 않으며, 커밋 미기재는 `—`로 표시한다.
+사용자 승인과 운영 경계를 보존한다. 세부 요구사항은 [시스템 명세](../spec/README.md), 분야별 SRS와 연결된 설계를 따른다. 실행 일지는 Git 이력과 외부 원시 근거에 남긴다.
 
-## 현행 결정 표
+## 연구 목표
 
-| 주제 | 결정 | 근거·권위 | 커밋 |
-|---|---|---|---|
-| 연구 목표 | 이질 워크로드가 원시 요청→응답 공통 경로를 사용하고, 실측 후보에서 첫 구성을 자동 생성한다. SLO 우선·전환 포함 전체 POOL 에너지 최소화 | 모델별 전용 경로/수동 첫 구성은 일반 제어 주장이 아님; [north-star](north-star.md) | — |
-| 자원 경계 | 워크로드별 인스턴스·POOL, Pod 실물 장부·영향 범위 예약, 무관 자원 판단 지속. 새 서비스·저장소·CRD 없음 | 시연2 중복 준비로 B mobilenet 성공0.67%; [ADR0023](../adr/0023-resource-ledger.md) | — |
-| 관측과 실물 | 정책 ACK 대기/관측 실패를 실물 소실로 해석하지 않고 마지막 확인 상태를 유지한다. 퇴역 source의 늦은 probe는 재생성/게시하지 않는다 | 실물·앎·실행 권한 분리; [사고0002](../postmortems/0002-demo2-duplicate-preparation.md) | — |
-| 빈 출발 | 선택 가능한 용량 근거가 missing/pending이면 Pending과 원인을 유지하며 경과 시간 fallback은 없다 | leximin 및 실제 용량 근거; [ADR0024](../adr/0024-candidate-comparison-and-bootstrap.md) | — |
-| 수요·분배 | 최근 유입·명시 최소 수요를 반영하고 준비된 공급부터 배분한다. 마지막 소유 Workload 키는 명시적으로 비우며 필드 생략은 보존 | 첫 시연 B 성공63.8%, 잔존 staticRouting이 측정 seed를 가림; [scheduler SRS](../spec/scheduler/SRS.md) | — |
-| 후보 비교 | 분배·증설·축소·교체를 매 주기 현재 유효 수요로 비교한다. 정책 시간은 ControlInterval/ObservationWindow/ComparisonPeriod | 사용자 승인 시간 정책 삭제; [ADR0025](../adr/0025-two-tempo-control.md) | — |
-| 하강·빈 Node 절전 | 현재 유효 수요·실제 용량/SLO·headroom·gain/minimumGain/payback을 적용한다. 이력 최대값과 시간 허가는 없다 | 기존 실제 안전·에너지 식 유지; SCH-56·59/AC-42·44 | — |
-| 수동 승인 | 마지막 Tick이 아닌 허가 직전 신선한 상태를 기준으로 승인하며 효과/소유 범위에 따라 예약을 처리한다 | 실제 잘못된 거절2건; [ADR0027](../adr/0027-manual-operation-admission.md) | — |
-| d 정의 | d=1/X−profile 평균시간/B, X·포화는 실제 물리 batch 기준. BatchID/실행 연속성·오류 주변 유휴·창 경계 포함, 결손은 Insufficient | HTTP 성공 행은 만료 요청의 물리 실행을 누락; [측정 설계](../design/serving/measurement-api.md) | — |
-| d 조건 | 대상 분포·SLO로 계산, 정밀도1%·양측95% 계획 근사·공통여유1.25·유휴1ms/요청·본창360초/준비60초 하한·전체3600초 상한 | Smol 실측약15.9초/batch와 손 추정10초 불일치; 95%는 전체 d 보장이 아님 | — |
-| d 공급 | closed-loop K=min(64,bytes cap,floor((L−delivery)/(B×mu_tail))), mu_tail=동일 batch frozen profile.maxObservedSeconds. 최대값 없으면 거부, 평균 배수 대체 금지 | D34 평균 K52는 L1초 여유26ms, 관측최대37.825158ms로 K26. 미래 무실패 보장은 아님 | — |
-| d 유휴·투영 | 식별된 유휴≤동결 maximumIdleFraction(승인.05,[0,1])와1ms/요청. d 차감 없이 dRange=[d−idle/request,d]·κ오차상한=idleFraction. signed raw·Accepted 유지, planner max(d,0) | 유휴는 d를 키우는 보수 오염; 미식별은 계속 탈락, 범위는95%CI 아님; [ADR0028](../adr/0028-identified-idle-acceptance.md) | — |
-| 에너지 이득 | 위상·결측 민감도 B-only, 동일 근거 상쇄·전환 chain·불가능 구성 회복 유지, profile CI 추가 장벽 없음 | 공유 추정원·공분산과 맞지 않는 이중 장벽 제거; 전역95% 보장 아님; [계획기](../design/serving/analytic-planner.md) | — |
-| 전력 정책 | 운영 MaximumGap3s·MinimumCoverage.75·boundary1s; E5 긴 행은 별도1%/30s. raw와 기록정책 불변, override는 표시 | 단발 공백≤2.52s·연속2실패≥3.2s; [측정 명세](../spec/00_measurement.md) | — |
-| PMTC | 비용창 apply→fresh Ready+settlingSeconds(기본60,[0,3600]), 적분J와 목표baseline 차감 같은 창. tau는 Ready까지만, settling 별도 | NVIDIA15/15 PowerWindowInsufficient. 60초는 실측 안정시간 아님; raw/finalized 불변 | `52da1d38` |
-| NVIDIA 모드 | GPU_1500/1200/900 min=max·mode0, fixed 별도. graphics/SM 현재값 일치+settling으로 확인하되 잠금 레지스터 증명은 아님. memory clock/power limit/runtime7 불변 | locked-range getter 없음; application clocks N/A; [PA-NV-01~05](../spec/platform/SRS.md) | — |
-| NVIDIA 권한·복구 | 별도 operand root+SYS_ADMIN·nvidia/utility·read-only host tools, hostPID/privileged/SYS_BOOT 없음. 실패 복원/readback 또는 -rgc cleanup; 재부팅 뒤 조회만 | reset 종료를 unlocked 검증 성공으로 확대하지 않음; [Plan6](../design/profiling/plans/06-execution-support-expansion.md) | — |
-| 측정 창 | NVIDIA idle settling15s+idle30s, 느린 Smol active observer297초+최대추론+여유(당시330초), 측정목표297초 유지 | HTTP keep-alive60초 초과 단절·마지막추론약12초로 observer 종료. 연결 재수립은 runtime 재빌드 시 과제 | — |
-| 프로파일 재사용 | 같은 DeviceClass·frozen 조건, 모든 batch 활성/유휴30초×3 이상·상대차≤.05로 확인. annotation/불변 결과 보존, 거절 시 독립 측정. d/비용/전환은 Node별 | 5%는 screening이지 통계 보장 아님; [PR-01~05](../spec/catalog/SRS.md) | — |
-| genesis2→3 | 공유 거절·독립 측정. 조건/digest/CPU를 완화하지 않는다 | loaded idle108.3W vs71.9W(33.65%), power limit250/300W·max clock2100/2175MHz로 비동등 | — |
-| U2 커버리지 | Jetson 3대 두 모드×세 모델 CPU q1/B1 최소 18조합, 다섯 근거가 있는 후보만 채택한다. 최소안 밖 자동 확대는 없다 | nano 5W CPU0·Smol x 수명 cap 초과는 Infeasible. PLC x4C 두 번 실패·자원 Rejected는 미완; [결과](../plans/2026-10-27-power-mode-coverage.md) | — |
-| 분해능 이하 에너지 | CI가 0을 포함할 때만 명시 0 J/item+energyBelowResolution, 상한도 음수면 측정 오류다. clamp·양수가 나올 때까지 반복 측정은 금지한다 | jetsonx Smol −8.96/−4.90 J/item은 idle 불확실성 아래 | `331624f0` |
-| U5 진행 기록 | native 결손은 Insufficient, 원시 식별자·실패 단계를 보존한다. 측정 중 kubectl logs follow 동시 캡처 금지. emitter 진단은 runtime 재빌드 때 반영한다 | 동시 캡처 unknown 114 vs 0. 정확 소실 단계는 미확정이나 이후 15회 무재발로 종결 | `cf92a845` |
-| U6 발행 충실도 | JSON 직렬화만 stdout lock 밖으로 옮기고 한 줄 write+flush는 보호한다. gap/lateness·planned/issued·결손을 기록하며 별도 writer thread/queue는 없다 | >50ms gap 3541/961435·최대 313~959ms. writer lock이 원인이라고 확정하지 않음 | — |
-| E5 최종 입력 | genesis2 제외 7 Node, p95 MNV 1s/PLC 36ms/Smol 7.034s·m 29ms. R 235.890404/387.365408/1.285195 req/s, rate=α×s×R, s=.45/.1/.45 | PLC 36ms positive 4/7, orangepi κ0·jetsonx 자원 Rejected≠κ0; [E5 보고서](../reports/e5-evaluation-20261030.md) | — |
-| G0·생성기 | #203 174.56 req/s·120초 planned=issued·generator VALID, PLC 14.2ms·CPU 1.60/6·throttle 0으로 비병목 확인. 최대 G/80% 추정치는 입력하지 않는다 | 고정 6배치 Smol 12.47s·94.5%는 별도. Guaranteed 2CPU/1Gi·MNV 3 shard로 lateness 0 | `7e324981`·`e8ed3cff` |
-| E5 시간·품질 | 열린 고리 trace, 수신→응답 SLO·send→수신 입구·예정→send 장비 품질을 분리한다. L 2/1/75초·cap 129초·delivery 10ms·socket L+20ms, 지각으로 L 차감 금지 | lateness>50ms 비율≤1%와 trace 전부 공급 필수. 미달은 INVALID_GENERATOR·결측은 UNKNOWN | — |
-| E5 분모·판정 | planned offered 전체와 첫 준비/전환/차단 요청 유지, 별도 구간 집계를 병기한다. judge는 SLO·에너지·generator·전력만 판정하며 Node 중첩·장부·quiet 재검사는 삭제했다 | 완료-only p95와 D1 필요 rank는 다른 분모다. FAIL/NOT_READY/INCOMPLETE는 기록 후 계속, 운영 오류·INVALID만 중단 | `6f6b28c3`·`158e106c` |
-| E5 에너지 | Node 공백 합≤창 1%·단일≤30s면 선형 보간 J와 공백초×W범위 오차 상한, 초과는 UNKNOWN. 공유 POOL 행 합산 금지, d/비용 3s는 불변 | 긴 행과 짧은 비용 측정의 정책 분리. 오차 상한은 CI가 아님 | `198150d6` |
-| E5 비교·주입 | static은 E5-3 끝 실제 구성·같은 trace. factor 6요소 12행(placement≡membership 제외, batching은 고정 cap 대조). E5-7은 활성 weight>0·직전 assigned>0·서로 다른 Node 2개, 증거 불충분 시 INVALID | 180/360/600초 Pod 삭제·cordon 삭제·uncordon 대리 실험이며 실제 네트워크 단절은 아님. 독립 반복·모든 요소 인과·점진 감소는 미평가 | `9d0a3e13`·`c6c4a80c` |
-| R1~R6 | old-serving 보존·positive-route ACK·known-effect 예약 수렴·route-only handoff·교체 dwell(기본 comparisonPeriod)·batching OFF 투영 | 1회차 원시 22카드/6군집 승인. 과부하·Smol 용량은 결함이 아님 | `75bf0a4f`·`78cf4699`·`0f206bf6`·`d0cea2eb`·`9b237c1c`·`fdb7cb53`·`22296404`·`3433204f` |
-| C1·C2·C3 | parent sibling exact-proof 공유·old 보존+독립 Node 순증. C3는 profile 부재 용량 한계라 코드 변경 0, 측정 등록이 해법 | C1 신규 예약 6/6 반환·Fixed 0(전 560), E5-5 error 10636→1026·p95 1.9s→226ms. BackendUnavailable 99.9%는 native deadline으로 “라우팅 공백” 일반화 반증 | `651cd021`·`0b67b252`·`048624d7`·`8639a569` |
-| 회차 비교 | 2회차 #222+#223은 같은 rev104 합성, 3회차 #224 E5-5/6+#225 E5-1/7은 표적·시작 상태 복원이다. E5-6/7 시작 상태 차이를 C1 효과로 귀속하지 않는다 | 복원 routing 훼손·selector TTL 하네스 수정. E5-7 FAIL은 Smol 용량, 격리는 CAPTURED | `90c58155`·`7d4e812c`·`46ec78be`·`22fa6439`·`cbe51e67` |
-| Job·Pod 수명 | 새 Run은 증거 확정 후 Background Job 삭제·실패 86400초 보존, 생성 TTL 없음. 옛 Job 1012개는 binding 의존 확인 전 보존하고 완료 Pod만 정리한다 | Pod 1049→73·표본 5개 읽기 성공을 전수로 확대하지 않음; [ADR0026](../adr/0026-finished-measurement-pods.md) | — |
-| 정책 불일치 | 성공 4 trial/정책 3인 BEO는 Failed/EnergyObjectivePolicyMismatch, 임의 제외·강제 Complete 금지 | 네 번째 trial 생성 경위는 로그 부재로 미확정; [사고0005](../postmortems/0005-measurement-campaign-stuck.md) | — |
-| 관측 보존 | 로컬 2h·archive 투명 조회, 완료 payload 제거·ID tombstone 유지. 미완료 pin·보존 실패 보호, 수동 파일 삭제·메모리 증설 없음 | rev92 24h 복원 heap 3.7Gi OOM→rev93 회복. 기동·긴 창 메모리 상한 인증은 아님 | `34ec34f7`·`b7ccd4a8` |
-| gateway | 분리 코드 removed @e8344b20, 단일 source·T5 live 유지. 재개 조건 충족 시 최소 설계부터 시작한다 | G0 비병목; [ADR0029](../adr/0029-gateway-control-data-plane-split.md). 과거 UID selector 성능 근거는 [사고0004](../postmortems/0004-gateway-pod-list-regression.md) | `e8344b20` |
-| 증거 API·publication | CHILL 사실은 API-only, raw는 하네스 전용·Dashboard는 가공 조회. resources/cluster·meters/requestTimeout/podName 투영, PUT에서 읽기 전용 필드를 제거한다. publication은 불변이며 coverage·오차·규칙을 기록한다 | [ADR0030](../adr/0030-observation-evidence-api-streams.md), raw·과거 조회는 측정 창 밖. 외부 전력·client·STOP·운영자 명령은 유지 | `8c6bef14`·`c355e3cd`·`2d18dcee`·`85a9cab3`·`d39c9576`·`f75596f6` |
-| Dashboard | WebSocket 첫 메시지 인증·폴링 없음. 개요→POOL→인스턴스/Node/예약→근거. pending은 배정 전·waiting은 배정 후로 합산 금지. 비율 분모는 completed+failed, 0이면 비율 없음 | DB-FR-36~52·[설계](../design/dashboard/README.md). 기록 재생은 별도 deferred, 서버 판정을 다시 계산하지 않음 | `afbf531b`·`9e98194a`·`d65a18ee` |
-| 구성 소유권 | A/B만 기존 settings·CR·annotation·binding, C는 상수·D는 기존 설정 유지. BEO 단일 CI·startup 3필드·capacity 3설정, profileConfidenceLevel 삭제 | [ADR0031](../adr/0031-configuration-ownership-and-freezing.md). 과거 부재를 소급 기본값으로 채우지 않으며 ?10·역사 script 삭제는 미승인 | `58348057`…`30e3a6d6` |
-| 저장 계약 | 옛 Run duration tolerance 0이고 spec nil이면 기본 .5 비교로 기존 profile을 무효화하지 않는다. 명시 불일치는 거부한다 | rev112 profiles/options/κ0 회귀; [ADR0019](../adr/0019-durable-stored-contract-compatibility.md) | `75127da9` |
-| 운영·재현 | main 통합·spec 전체 추적·push 승인. 실험 코드는 hack/에서 관리하고 환경 인자를 분리하며 원시·비밀은 외부 보관. 측정 창 build/test 금지, live 변경은 한 명이 직렬 수행한다 | [사용자 의도](user-intent.md). 승인·배포·검증·원격 실행 증거는 각각 구분 | — |
+- 서로 다른 워크로드가 원시 표본에서 요청별 응답까지 같은 서빙 경로를 사용한다.
+- 실측 프로파일에서 첫 구성을 자동 생성하고 현재 수요로 구성을 비교한다.
+- 워크로드별 SLO를 우선하며 전환을 포함한 전체 자원 풀 에너지를 비교한다.
+- 측정 완료, 배포 성공, 시연 성공과 연구 평가 통과를 각각 보고한다.
 
-## 최근 30일 로그 (2026-10-01~30)
+## 설계와 검토
 
-| 날짜 | 최종 결정·결과와 근거 |
-|---|---|
-| 10-23~24 | d 일반화·signed raw/정책 투영·B-only 확정. 같은 승인 조건 대체·재시도 최대 1회 허용, 새 조건·runtime digest·범위 확대는 별도 승인 |
-| 10-25 | 첫 구성→확장→축소 시연 우선, 최소 수요·Ready 부분 공급 채택. 시연·진단은 연구 평가와 분리 |
-| 10-26 | 장부·예약·leximin·두 박자·H600초·fresh 수동 승인·Job 수명 채택. d 최종 유휴 기준은 식별+≤5%([ADR0028](../adr/0028-identified-idle-acceptance.md)) |
-| 10-27 | d 34/34, U3 실증·U4 공유 거절·U5 무재발 종결. E5 최종 7 Node/R/SLO 승인·열린 고리 G0 비병목·품질 정책 확정. genesis2 Xid79 반복 제외, 하드웨어 원인은 추정 |
-| 10-28 | E5 에너지 1%/30s·단계 FAIL 비치명·factor 6요소 12행 확정. 원시 직접 검증·코드 위치 확정으로 분석 재수행, r1 카드 폐기. gateway 분리 보류 |
-| 10-29 | R1~R6 구현·R4b 보상 추가, 2회차 하네스·환경 중단. 백업 tar 4개 약31GB 삭제 승인·증거 #213/#217 이후 보존. #222 잔여는 새 재개 장치 없이 기존 pre-state 복원 #223으로 보완, 디스크 310GB 미만 정지 |
-| 10-30 | #222+#223 결과 확정·사이클2 C1/C2 승인·구현 후 표적 #224/#225 완료. E5-3 측정 row 부재 용량·BackendUnavailable 포화 해석으로 정정. 보고서 `960d5308`·spec `cbe51e67` |
-| 10-30 | 순서: 환경 절차→미사용 분리 코드 삭제→증거 API→S1/S2. 환경 `94a32e9a`, 분리 삭제 `e8344b20`. 외부 CloudCore Helm drift·디스크·PodGC는 문서와 live 적용을 구분 |
-| 10-30 | rev106~110 배포·리허설, 옛/API KPI 동일. CPU 몫 live 2.5%/수신 7.3%/raw 1.1%/Dashboard 16.8%, agent rasp5 0.24%/nano 4.5% of core. jetsonx identity·orin-nano 수집0 미완, limiter·예약 재발 미해결 |
-| 10-30 | 하네스 API-only `d39c9576`, collector GET RBAC `f75596f6`, NodePort31300 상시 공개 승인 `a7ba73cd`. 하드코딩 7커밋 반영·옛 Run 해석 `75127da9` 수정 |
-| 10-30 | rev114에서 #213/#216/#222+#223/3회차 첫 게시 4건·KPI 46/46 일치. 브라우저 PASS8/FAIL0/미확인5, 전체 수용 완료 아님. [계획의 잔여·근거](../plans/2026-10-26-dashboard-live-stage.md) |
+- 임시 가드와 예외를 덧대기 전에 구조적 원인을 찾는다. 널리 알려진 가장 작은 해법을 사용한다.
+- 구현 전 설계 브리프를 독립 모델 패널과 판정자가 검토한다. 방향과 최종 변경을 구분해 검토한다.
+- 구현은 최소 단위로 나누고 정식 리뷰와 과설계 리뷰를 거쳐 통합한다.
+- 동작 불변 리팩터링은 리뷰와 실행 순서 검증으로 확인한다. 동작 변경은 같은 입력과 설정의 비교 실험으로 판단한다.
+- 한 번의 실행에서 나타난 차이를 확정 효과로 주장하지 않는다. 사전에 정한 모집단과 비교 조건을 보존한다.
+- 같은 원인이 두 번 반복되면 운영을 멈추고 원인을 먼저 분류한다.
 
-## 미해결과 원시 근거
+## 실물과 관측
 
-남은 post-E5 작업은 [로드맵](../plans/2026-10-26-remaining-roadmap.md), Dashboard 재생·브라우저 미확인은 [라이브 무대](../plans/2026-10-26-dashboard-live-stage.md), 설정 ?10/삭제 미승인은 [하드코딩 요약](../plans/2026-10-30-configuration-hardcoding.md)으로 모은다.
+- 실물 자원은 Pod UID 장부로 유지한다. 관측 실패를 실물 소멸로 해석하지 않는다.
+- 작업은 영향 범위를 예약한다. 원격 효과가 미확인이면 예약을 보존하고 그 밖의 자원은 계속 판단한다.
+- 기존 요청과 준비된 공급을 보존한다. 새 용량은 실제 준비와 정책 반영을 확인한 뒤 편입한다.
+- 타임아웃이나 제어 작업 종료만으로 물리 실행 종료와 자원 반환을 추정하지 않는다.
 
-원시: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`의 checkpoints.md·결정/제안 원문과 같은 루트 `audit-20261024/`, `campaign/v2/`, `perf/`, `deployB/`. 원시 immutable 상태·실패·결손을 현재 기본값이나 후속 성공으로 덮어쓰지 않는다.
+## 측정과 증거
 
-## 2026-10-30 — 스케줄러 성능 최적화 사이클 착수(사용자 위임)
+- 원시 값, 실제 시각, 실패와 결손을 보존한다. 후속 성공이나 현재 기본값으로 과거를 다시 쓰지 않는다.
+- 측정 입력과 선택한 정책을 불변 실행 기록에 고정한다. 새 조건과 범위 확대는 승인을 받는다.
+- 완료한 측정을 유리한 결과가 나올 때까지 반복하지 않는다. 정의된 재시도 정책과 도구 결함으로 부하 전 중단된 경우를 구분한다.
+- 프로파일링은 독립 실행을 유지한다. 배포 확인은 선언 probe만으로 끝내지 않고 실제 Job 성공과 결과 생성으로 확인한다.
+- 파일럿은 실행 이미지 계열마다 고르고 가장 무거운 모델과 메모리가 가장 작은 노드 조합을 포함한다.
+- 노드별 연속 실패는 해당 측정 lane을 멈춘다. 시작할 때 pause와 제외 상태를 출력하고 기록한다.
+- 측정 중인 노드의 시스템 Pod를 재시작할 때는 먼저 그 노드의 측정 lane을 멈춘다.
 
-- 사용자 결정: 갭 G1(증가 구간 MNV 공급: rate-limiter 근본 원인 → 빈 Node MNV 프로파일링) → G2(Smol 전환 꼬리) → G3(에너지 Δ) → G4(factor 재실험) 순. **배포·표적 재실행·프로파일링 캠페인은 사전 승인("모두 알아서 승인, 조치 후 보고")**, 방법 제한 없음. 불변: runtime 7 이미지, 측정 재시도 금지, raw 행 판정, 증거 조작 금지, 디스크 guard.
-- 사용자 지침(설계 원칙): 단편 패치(A→A') 금지. 큰 그림에서 구조적 원인을 찾아 쉽고 가볍고 널리 알려진 패턴을 응용해 근본적으로 해결. 각 수정은 구조적 원인·적용 패턴·tradeoff와 재발 방지 invariant를 카드에 기록.
-- 사용자 지침(검증): 해결 방향은 구현 전 타사 모델 패널(fusion: 3 패널 독립 + 판정자) 리뷰를 거쳐 확정. 워크플로우 2단계(본질·설계)와 3단계(구현) 사이에 "설계 브리프 → 패널 리뷰 → 방향 확정" 게이트 추가.
+## 현재 프로파일 선택
 
-## 2026-10-30 — 최적화 사이클 1~3 1차 결과(rev118)
+- 공개 성공 프로파일 이력과 현재 실행 선택은 별도다.
+- 현재 선택은 모델, 기종, 실행 경로와 전력모드 셀의 최신 측정이다. 실패와 부분 결과도 최신 상태로 남기며 과거 성공으로 대체하지 않는다.
+- 동률은 namespace/name/UID의 사전순으로 정한다. 확인된 측정 시각을 쓰고 생성 시각으로 대신하지 않는다.
+- 운영자의 유효 replacement 선언을 먼저 반영한다. 대상 부재, 자기 참조와 조건 차이는 진단으로 드러내며 원시 근거는 보존한다.
+- 실행에는 프로파일을 측정한 이미지를 쓴다. 현재 선언 이미지와의 차이는 별도 진단이다.
 
-- 패널 판정(`.fusion` 기록, local judge-verdict-cycle123): 브리프2(jetsonx 모드 투영) → 브리프1(예약 증명 경계) → 브리프3(D2 terminal tombstone → D1 staged handoff, veto 삭제 금지).
-- 커밋: `d788bd11`(AtMode 정규화·모든 가상 writer 통일), `cde9e4de`/`03193e1e`/`bdce22f0`(owner baseline·route receipt·P1), `532f3240`(Terminated exact tombstone), 선행 `8e54818b`/`1e63512b`. 사이클 1 결론: rate limiter는 E5 원인 아님(E5-3/5 raw limiter 0행; rehearsal 취소는 autonomy-off 정상 취소).
-- rev118(서버 532f3240): jetsonx MNV7·PLC6 rows CapacityRejected→Built, **R MNV 235.89→300.61, Smol 1.285→1.651**(PLC 불변). genesis3 GPU_1500 occupancy 1회 Accepted(6.578ms/req) → MNV b1~b8 κ≈68~72 Built. 두 번째 replay R(302.6/316.4/0.83)은 genesis3가 GPU_1500 상태에서 찍힌 snapshot 영향 — fixed 복귀 후 재replay 필요(수치 채택 금지).
-- 운영 주의: 다른 세션이 rev117(소스 04053ec) 배포함 — 두 세션 동시 클러스터 조작 위험. 증거 디렉터리 충돌로 일부 배포 증거 덮어쓰기(control-236, 재구성 기록).
-- 다음: 4회차 표적 재실행(E5-3/E5-5/E5-7, 3회차와 동일 rate·seed) → 비교; D1 커밋 후 재배포·재실행.
+## 완료된 저장 계약 전환의 보존 경계
 
-## 2026-10-31 — 4회차 표적(#237, rev120 서버 a3d020d6) 결과: 회귀
+- 사용자 승인으로 기존 커버리지 측정 근거를 새 저장 계약으로 한 번 변환했다. 배포 코드에 구형 reader나 호환 경로를 두지 않는다.
+- 당시 quota 조건에서 측정한 프로파일의 공유 실행 재사용은 그 전환의 명시적 예외다. 원래 quota와 스레드 관측은 지우지 않는다.
+- 이 예외 때문에 종단 예측 오차에는 측정 조건과 서빙 조건의 차이가 섞일 수 있다. 새로운 공유 실행 측정과 동등하다고 인증하지 않는다.
+- 원본 저장소의 이전 key, 외부 status 백업과 변환의 dry-run, 소실 집합, 적용 영수증은 보존한다.
+- 완료된 일회용 변환 도구의 보관 의무는 종료됐다. 도구 삭제 승인은 과학 원시나 백업 삭제 승인이 아니다.
+- 해당 구조 변경의 옛 기록 재생 검증 면제는 완료된 전환에 한정한다. 일반 배포 검증 면제로 확대하지 않는다.
 
-- 3회차→4회차(동일 rate/seed): E5-3 MNV 실패 13,563→**44,291**(p95 1,655→1,964ms, INVALID_HARNESS: 창 종료 후 static-freeze STOP — 측정창 자체는 완주); E5-5 MNV 실패 1,059→**12,953**(D1 FAIL), Smol p95 14,093→8,947ms(FAIL 유지); E5-7 Smol 실패 114→0이나 p95 13,173ms(FAIL), MNV p95 94→166ms. E5-5 후 실패 prepare 예약 잔류(>600s, owner plan-594d2726df2f) → takeover 1회.
-- 판단: rev118/120 변경(jetsonx 후보 편입·예약 증명·Terminated)이 **SLO를 악화**시킴. D1(`4b2b4bb0`,`6c268842`) 배포 보류. 사이클 5 = 4회차 raw 기반 결함 추출(bottom-up) 후 패널 리뷰 → 수정.
-- 경로: `control-222-full/full-E5-{3,5,7}-4/`, `tables-4.txt`, `comparison-4-vs-3.{txt,json}`, `O/deployB/control-237-20261030/targeted-r4/`.
-- 사이클 5 추출(카드 `A/cards-r5/`): E5-3 — α=.5 말 정상 ACK된 고κ 구성(jetsonx CUDA+orangepi q4, κ99.6)을 CPU 조합(κ64.3)으로 교체 후 DemandIncreasing/ScaleDownStabilizing이 복귀 차단 → α=.9 포화 실패 36k; E5-5 — CUDA 공급 감소 후 CPU 단독 4분(12:49–12:53) 실패 집중, 예약 잔류 1,353s(신규 Pod ACK로 R4b 제외 + 타 Node 기존 source 증명 receipt 부재 → 반환 불가); E5-7 — D2 복구 확인(Smol 새 dispatch 65s, MNV 9.5s/39s), p95는 복구 공백·큐. jetsonx 편입 자체는 정상 동작(CPU 충돌 0).
-- 구조적 쟁점: (a) 축소 즉시·확장 지연의 **tempo 비대칭**(에너지 목적이 κ 감소 교체를 택하고 stabilizing gate가 복귀를 막음), (b) 예약 반환 증명이 "변경 없는 기존 executor"를 증명할 수단 없음. 둘 다 브리프→패널 게이트.
-- 사이클 5 패널 판정(`local judge-verdict-cycle5`): B ReturnProof(`a3553ccd`,`2516ec0c`: admission baseline+단조 mayTouch, untouched proof) → A Tempo(`855dbe9c`: `scaleDownHeadroomFraction` 기본 0, UID별 증명된 회복의 timing 예외; growing/partial 분리). D1 staged handoff(`4b2b4bb0`,`6c268842`) 포함. gate PASS. **rev121 배포 + 5회차 표적(E5-3/5/7)**, h=.25는 이번 라운드 live ConfigMap 값(binding 기록; 배포 안전값 아님 — 대조 실험값).
+## 운영과 승인
 
-## 2026-10-31 — 5회차 표적(rev124 서버 2516ec0c, h=.25) 결과 + 외부 개입
+- 라이브 배포와 측정은 한 운영 담당이 직렬 수행한다. 다른 작업의 측정 창에 배포하지 않는다.
+- 이미지나 차트 변경은 실제 입력과 의미 있는 렌더 차이를 확인한다. 배포 후 실제 Pod 이미지와 자원 조건을 읽어 확인한다.
+- 측정, 배포, 원격 실행과 검증 승인을 각각 구분한다. 과거 작업의 포괄 승인을 새 작업에 자동 적용하지 않는다.
+- 실험 조종 코드는 저장소에서 관리하고 환경값은 인자로 분리한다. 비밀, 원시 결과와 운영 백업은 저장소 밖에 보관한다.
+- 보고 전 제어 Pod, 디스크, 측정 Pod 정체, lane 진행과 증거 저장 실패를 확인한다. 이상이 있으면 정상이라고 보고하지 않는다.
+- 보고에는 완료, 차단 원인과 다음 작업을 짧게 적는다. 확인하지 않은 검증과 실행은 완료로 쓰지 않는다.
 
-- E5-3(유효): MNV 실패 3회차 13,563 → 4회차 44,291 → **5회차 9,511**(p95 1,655→1,964→1,496ms), 에너지 Δ5−3 −6,836J(CHILL 소비 증가 방향·headroom 비용), D1 FAIL 유지. 사이클 5(ReturnProof+Tempo headroom)가 4회차 회귀를 되돌리고 3회차보다 개선.
-- E5-5: INVALID_HARNESS(상위 명령 3600s clamp 종료) + **타 세션이 측정 중 rev125(소스 27b32273, main 아님) 재배포** → API 거부·수집 누락. E5-7 미실행(live 소스 불일치). producer 3개·serving 잔류 — 정리 필요.
-- 운영 결정 필요(사용자): 두 세션 동시 클러스터 조작 금지 — 배포·측정 권한 단일화.
-- 경로: `control-222-full/full-E5-{3,5}-5/`, `tables-5.txt`, `comparison-5-vs-{3,4}.*`, `O/deployB/control-246-20261030/targeted-r5/report-244.txt`.
-- 에너지 카드(`cards-r5/energy-01.md`, verify 146/146): 5회차 E5-3은 **−6,836J(vs 2회차 재사용 E5-3) 및 고정 대비 +5,197J 절감**과 실패 −4,052 동시 달성(부호 교정: 앞선 "−6,836J 소비 증가" 기술은 오류). **단, 5회차 tick의 `scaleDownHeadroomFraction=0`** — 표적 복원이 3회차 binding settings를 동결해 PUT h=.25가 적용되지 않음 → 5회차 개선은 ReturnProof+회복 timing 예외+D1의 효과이며 h 효과는 미측정. 다음 라운드는 binding settings에 h 명시.
-- 에너지 구조 후보: ① zero-route 준비 인스턴스 장기 잔류(2회차 E5-6 3 Node × 3,600s, Node wall 57.6kJ 노출; E5-5 1,085s), ② 빈 Node(jetsonx) 모드 하향 미실행(E5-6 1시간 9.3W), ③ 전환 비용 회수기간, ④ h frontier. 정적 기준선 κ 119.6→91.9가 2회차 Δ 변화의 70.6%(−20.7kJ) 혼입.
-- 에너지 브리프(`local brief-BriefEnergy`): ① E5-6 zero-route 잔류는 361 tick 전부 ReservedScope/ReservedNode(owned UID Fixed) → idle 회수 차단 = 예약 잔류 계열(사이클 5 ReturnProof가 대상); ② jetsonx 빈 Node는 실측 baseline상 MODE_20W_2CORE가 이미 최저라 하향 후보 없음 → 더 낮은 모드 idle baseline 측정이 선행(코드 아님). 사이클 4 코드 변경 없음; E5-6 재실행으로 ReturnProof 효과 확인 예정.
-- 사용자 결정(2026-10-31): **배포·측정 권한은 이 세션(ops 에이전트)으로 단일화**. 다른 세션은 커밋만, 배포는 요청 경유. 조치: 잔류 정리 → main `2516ec0c` 복귀(rev126) → E5-5/E5-7(h=.25를 binding settings에 명시)·E5-6 재실행.
-- 사용자 요청(2026-10-31): 대시보드 HTTP NodePort 31300 제거(라이브 보드 WebSocket Origin 검사 https 강제 → 403 "연결 끊김"; HTTP Origin 허용은 토큰 평문 노출이라 불가). 조치: live values `dashboard.service.type=ClusterIP`, nodePort 제거(차트만, 이미지 불변), 측정 창 밖에서 적용. 안내 URL https://155.230.35.213:31104/ 통일.
+## 화면과 실험 해석
 
-## 2026-10-31 — 6회차 표적(rev127 서버 2516ec0c, h=.25) 결과
+- 라이브 화면은 WebSocket 첫 메시지로 인증하고 서버 push를 사용한다.
+- 기록 조회는 보존 위치와 무관하게 근거 저장소의 사실을 제공한다. 완료, 측정 판정과 정리 완료를 분리한다.
+- 전체 예정 요청을 평가 분모에 남긴다. 첫 준비 구간과 장애 구간은 전체 결과를 유지한 채 따로 표시한다.
+- 공유 자원 풀 에너지를 워크로드 행마다 합산하지 않는다. 전력 공백 정책과 보간 오차는 해당 측정의 기록된 규칙으로 해석한다.
 
-- E5-7(유효): Smol 실패 114→**2**(D2 복구 작동), p95 1,256→5,671ms(FAIL 유지); MNV p95 94→199ms; Δ6−3 에너지 +6,667J.
-- E5-6(유효): MNV 실패 100→**0**, p95 305→196ms; **PLC 실패 0→413**(신규 회귀, 추출 필요); Smol p95 1,962→2,963ms; 에너지 +7,758J(3회차 351.3kJ→359.1kJ, 고정 367.8kJ 대비 여전히 절감 +8.7kJ) — headroom 비용.
-- E5-5: INVALID_CONFIGURATION(복원이 h=0으로 되돌림). 참고치: MNV 실패 1,059→14,467(h=0에서 4회차와 동급), Smol p95 14,093→3,625(D1 충족). h=.25 유효 재실행 필요.
-- 대시보드 NodePort 31300 제거 완료(ClusterIP, https://155.230.35.213:31104/ 200).
-- 다음: E5-5 h=.25 유효 재실행 1회 + 6회차 raw 결함 추출(PLC 413, Smol E5-7 꼬리, MNV p95 상승, 에너지 귀속).
-
-## 2026-10-31 — 사이클 6 + h 미적용 근본 원인
-
-- E5-5 6b(h=.25 의도): MNV 실패 1,059→11,879, Smol D1 충족(p95 3,749ms), 에너지 −4,588J. 그러나 raw: stage 시작 직전 하네스의 full-settings PUT(S20:5425→5446)이 h를 0으로 되돌림 → **5/6/6b회차 모두 h=0으로 실행**. 근본: 표적 복원이 3회차 pre-settings 전체를 PUT(정책 필드 포함). 수정 `ea47d4ce`: 복원은 토폴로지 제어 키(autonomousWorkloads/excludedNodes/controls)만 pre-state에서, 나머지는 live 정책 유지(self-check 단언).
-- 사이클 6 패널 판정(`local judge-verdict-cycle6`): A EmptyRoute(`ebf7c0bb`,`3f79378d`,`81f1d3df`,`6efea38b`,`4d0377bc`: 무Ready UID 생략·scope 교집합·양수→empty 전이 거절·explicit unroute), B RecoveryDAG(`dc287bd0`,`8ebe8f33`: Terminated 항목 growing 보호 제외·완료 신호로 frozen DAG 전진, 탐색 없음). gate PASS(HEAD 79438382).
-- 7회차: 서버 79438382 + h=.25(첫 유효 적용) E5-3/5/6/7.
-- 7회차 준비 중 발견·수정: (1) κ replay "hang"은 제품 회귀 아님 — κ argv에서 `-workloads/-margin` 누락(기본 all 워크로드) → 장시간 replay; #236 argv로 교정. (2) 다른 세션의 profiles API 변경(decorateProfiles가 `preparations` 삭제 + 기본 25행 paging)이 하네스 복원 계약(SCH-67)을 깨 E5-3 STOP → `d4a933bf`: 기본 응답은 전체 catalog(limit/offset 시에만 paging), `preparations` 유지, raw 표본(measurementFacts/durationNanos)만 생략. 교훈: 공유 API는 계약 테스트가 소비자(하네스) 쪽에 있어야 함 — e5 self-check에 profiles 응답 키 검증 추가 후보.
-
-## 2026-10-31 — 7회차(서버 d4a933bf = 사이클 1~6 전부, h=.25 **첫 유효 적용**) 결과
-
-| 행 | 지표 | 3회차 → 7회차 |
-|---|---|---|
-| E5-3 | MNV 실패 / p95 | 13,563 → **1,345** / 1,655 → **256ms**; D1 2/3 → **3/3**; 전력 220,082 → 213,905J(−6.2kJ) |
-| E5-5 | MNV 실패 / p95 | 1,059 → 5,264 / 226 → 364ms; Smol p95 14,093 → **3,629ms**(D1 충족); PLC 실패 0→7; D1 2/3; 전력 141,732 → 138,004J |
-| E5-7 | Smol 실패 / p95 | 114 → **1** / 1,256 → 2,638ms; MNV p95 94→184ms; D1 2/3 → **3/3**; 전력 +7.4kJ |
-| E5-6 | — | 복원 전 예약 잔류(7)로 STOP, 미측정 |
-
-- 잔류 예약: E5-3 뒤 1개, E5-7 뒤 7개 — 사이클 7 대상(원형 `control-258-20261031/reservation-leftover-*`).
-- 남은 갭: E5-5 MNV(재급증 회복, 5,264), E5-7 MNV p95 상승(jetsonx CPU queue), 예약 잔류, E5-7 전력 증가.
-- 사이클 7 추출(`cards-r7/`): ① E5-7 Smol 복구 85.3→**42.3s**(완료 신호 전진 효과: action 간 대기 32.8→3.4s; cold prepare 26s 잔존). ② 예약 잔류 2유형 — (a) 늦게 Ready/ACK한 orangepi Pod의 exact UID/container가 prepare 효과 신원에 미등록 → 반환·R4b 불가(≥750s); (b) `changedWorkloads=[]`(무Ready UID 전부 생략)인데 부모 예약은 생성되고 child 없음 → 영구 잔류(7개, ≥910~1,550s) = 사이클 6 A의 회귀. ③ E5-5: h=.25 유효(120/120 tick), 저κ 40.4 차단하나 47.8→47.8 교체 허용; 복원은 fast 경로 24s(prepare 03.16→Ready 12.42→route 27.24)로 빨라졌지만 3배 재급증 첫 60s에 BU 5,106 — 과거 저부하 기준 headroom의 구조적 한계. ④ MNV p95 184ms tail의 65.5%는 nano(jetsonx 11.9%).
-- 사이클 7 패널(2인; Gemini quota 소진) 판정(`local judge-verdict-cycle7`): A `1f8e8ca3`(빈 DAG 부모 미생성·no-effect 반환·prepare UID 증거·동일 UID late binding·결정적 blocker reason), B `60009f0f`(퇴역 진입 직전 최신 수요로 guarded commit·Continue에도 수요 관측·미시작 suffix no-effect 중단; raw: 수요 95.1 감지 0.245s 뒤 final route→24s 뒤 stop이 원인). minimumDemand 상향은 별도 설정 실험(보류). gate PASS → 8회차(E5-5/7/6 + E5-3 회귀 확인).
-- 8회차 1차 시도(서버 60009f0f): 재시작 후 **orphan 예약 7개 자동 반환 확인**(사이클 7 A 효과). 그러나 E5-5 중 서버 panic 3회(`SchedulerReductionWorkloads`가 빈 planner로 `kappa(…,0)` 호출 → index out of range; resize 대상에서만 발생, 단위 테스트에 resize 시나리오 부재). 수정 `b620a315`(rows에서 직접 κ 조회, resize 회귀 추가). 교훈: 공유 프로세스(추론 경로 포함)에서 planner panic이 서버를 죽임 — 제어 루프 fail-safe(recover→tick 실패 공개)는 다음 패널 안건.
-- 운영 실수(Main): 디스크 정리 중 `O/harness/e5-*` 동결 하네스 사본(최근 3개 외)을 삭제 → 8b E5-5가 `e5-5f1dc4f1` 참조 실패·archive 수집 불완전 STOP. `git archive <sha>`로 복원(a3d020d6, d45fe66e, 947b50a2, 134f56bb, 5f1dc4f1). 규칙 추가: `O/harness/`는 binding이 참조하는 한 삭제 금지(ops 가이드 반영 필요).
-
-## 2026-10-31 — 8d(서버 b620a315 = 사이클 7) E5-5 결과: 심각 회귀
-
-- E5-5: MNV 실패 **50,994**(7회차 5,264), p95 1,972ms; PLC/Smol 정상(Smol p95 3,820). 사용자 지시로 8d 중단(E5-7/6/3 미측정). 전력 136,195J.
-- 조치: 측정 중단, 워크플로우 전환 — 오프라인 결정 리플레이(`hack/kappa -mode compare`) 1차 + 미니 행(`36c8778c`) 2차, 원클릭 러너(`a0b0422f`). dashboard만 HEAD 36c8778c 배포(조언 세션 요청).
-
-## 2026-10-31 — 워크플로우 전환: 오프라인 리플레이 게이트가 배포 전 필수
-
-- 8d 회귀 원인(리플레이로 확정, 카드 `cards-r8/full-E5-5-8d-01.md` 일치): 사이클 7 B의 `SchedulerReductionCommit`이 **owner 단위**로 거부 — 혼합 target(MNV 회복 103.7↑ + PLC 축소 218→77)을 `ScaleDownWindowCapacityInsufficient`로 통째 거부 → 준비된 인스턴스 route 없이 방치, BU 50,000. 조치: `60009f0f`·`b620a315` revert(`d2831eff`,`e68e1d43`), 사이클 7 A(`1f8e8ca3`)는 유지.
-- 게이트(`79f5fd7f`, `hack/e5/replay-gate.py`+`kappa -mode guard`): 기록 tick(7회차 E5-3/5/7, 8d)을 후보 바이너리로 재결정·guard 재검증, 기준 소스(live)의 bad tick과 `(at, recorded targetID)`로 대응해 후보에만 있는 bad tick이 있으면 FAIL(`newBadTicks` 목록·`fixedTicks` 수 표시, 다른 tick 개선으로 상쇄 금지). 실행 30s/stage. 결과: b620a315 FAIL(6~13 거부), revert HEAD PASS(기준 d4a933bf와 동일). 증거 `O/campaign/v2/replay-gate/2026-10-31*/`.
-- 규칙: 코드 변경 → 게이트 PASS → 미니 행(`36c8778c`) → 정본 전체 행은 릴리스 후보만. 원클릭 러너 `a0b0422f`.
-- 사이클 7 B 재설계는 "UID별 guard(해당 UID 공급이 줄 때만, 회복 UID 미차단)"로 다시 — 게이트에 8d 기록이 있으므로 오프라인에서 검증 가능.
-
-## 2026-10-31 — 사용자 의도 재확인(강제 6항)
-
-1. 리뷰 복구: 사이클 3~7 미리뷰 scheduler 커밋(a3553ccd 855dbe9c dc287bd0 1f8e8ca3 등) 정식+ponytail 리뷰 1회 묶음. 이후 모든 구현: **리뷰 2종 PASS → 리플레이 게이트 PASS → 배포**(하나라도 빠지면 배포 금지).
-2. 덧대기 중단: 새 가드·증명·예외 추가 금지. 다음 사이클은 사이클 3~7 덧댐 전체를 한 장 그림으로 정리 → 알려진 단일 모델(k8s rolling update maxSurge/maxUnavailable+readiness, level-triggered reconcile)로 대체 가능성 판단 → 가능하면 덧댄 코드 삭제. 패널은 방향+최종 diff 검토.
-3. 점수판 고정: 고정 벤치마크(같은 시작 상태·설정·행 = E5-3/5/7 미니 행 + 리플레이 입력). 점수 = ① 전 행 SLO 실패 수 ② 에너지. 기준 버전 = 7회차 d4a933bf.
-4. 측정 전 설정 gate: 첫 tick 실제 설정(h)·서버 digest·외부 배포 없음 확인, 불일치 시 시작 안 함; 측정 창 타 세션 배포 금지 방송.
-5. 멈춤: 같은 원인 2회 → 즉시 정지+본질 1줄. 운영은 round.py 한 명령만(라운드마다 새 에이전트 금지).
-6. 보고: 단계 전환마다 3줄(지금 어디·막힌 것과 본질·다음 하나); 30분 조용하면 진행 1줄.
-순서: revert HEAD 게이트 PASS 확인 후 배포 → 1) 리뷰 → 3) 기준 측정 1회(미니 행) → 2) 구조 검토.
-- 사용자 강제(2026-10-31): **구현 = 최소 커밋 서브에이전트 + 정식 리뷰 + ponytail 리뷰**. 세 가지 모두 거친 커밋만 통합·게이트·배포 대상. Main은 지휘·근거 확인·통합만.
-
-## 최적화 국면 워크플로우(고정, 10/30 09:45~)
-
-0 점수판(미니 행+리플레이, 점수=SLO 실패→에너지, 기준 d4a933bf) → 1 raw 추출 카드 → 2 본질(덧대기 금지; 사이클 3~7 덧댐 한 장 그림→단일 모델 대체→삭제 방향) → 3 패널 3+판정(방향+최종 diff) → 4 구현(최소 커밋 서브에이전트+정식 리뷰+ponytail 리뷰) → 5 게이트(lint/test/arch + 리플레이 게이트 PASS) → 6 round.py 한 명령(측정 전 설정/digest/외부배포 gate, 측정 창 방송, 미니 행). 정지: 같은 원인 2회. 보고: 단계마다 3줄, 30분 침묵 금지.
-
-## 2026-10-31 — 리뷰 복구 결과(사이클 1~7 scheduler 커밋 19개)
-
-- 정식 리뷰 BLOCK: F1(P1) `4b2b4bb0` kube/scheduler.go:571 — 필수 bridge route 실패가 부모 실패로 전파되지 않아 예약 영구 running; F2(P1) `ebf7c0bb`/`1f8e8ca3` scheduler.go:1051 — ready-subset이 선행 ACK하면 필수 bridge가 빈 scope로 생략되고 blocker stop이 존재하지 않는 run을 영원히 대기; F3(P2) `6c268842` scheduler_bridge.go:408 — 보존 UID의 Terminated route가 bridge Ready 검사에 포함되어 복구 후보 상실; `8ebe8f33` late-ack 테스트 미검증. 나머지 15개 통과.
-- ponytail 수정요구 5건(−34줄): returnProofParent/frozenActionParent 재탐색 삭제, releaseObservedScopes terminal 중복, ApplySchedulerWorkloadsTarget UID 중복 검사, scheduledOperation RouteTarget 재선택, operations.go 불가능 fallback. 전환·예약 가드 전체 표는 `agent://ReviewPonytail`(2단계 입력).
-- 조치: F1/F2/F3은 **새 가드 없이** 기존 실패 전파·handoff 소비 경계 수정(덧대기 금지 준수) → 최소 커밋 서브에이전트 → 리뷰 2종 → 리플레이 게이트. 배포 중인 HEAD는 7회차와 동일 코드(기준)이므로 유지.
-- 배포(control-266): 서버만 `4626dc8c`(= 7회차 d4a933bf 동작 + 사이클 7 A + 리플레이 게이트). round.py는 prebuilt publication 전제라 publication 생성은 기존 fast-deploy 경로(빌드+publish)로 Main이 직접 수행; 이후 라운드는 round.py가 그 publication을 소비. 관찰: ops 에이전트 2회 연속 환경/전제 누락 STOP → 규칙 5에 따라 Main 직접 실행.
-
-## 2026-10-31 — 리뷰 복구 수정 배포(control-267 dashboard, control-268 server = b0877c1e)
-
-- 수정 체인(모두 최소 커밋 + 정식·ponytail 리뷰 PASS + 리플레이 게이트 PASS(기준 4626dc8c) + clean Go gate): F1 `7370665d`, F2 `70d1bd76`+`41275915`, F3 `19162c20`, 다단 bridge `922ff34d`+`0e171b06`+`b0877c1e`, late-ack 회귀 `694f6ed0`, StartedAt `1e9aaf7e`(조언 세션), ponytail 삭제 `9ebc5f17`(−26)·`3a6c5e91`(−27). 새 가드·예외 없음(리뷰 확인).
-- live: server·dashboard 모두 `b0877c1e`, restart 0. 07:10Z부터 20~30분 클러스터 무변경(조언 세션 재설문).
-- 다음: 점수판 정의 → 기준 측정 1회(미니 행, round.py) → 2단계 구조 검토(ponytail 가드 표 입력).
-
-## 2026-10-31 — 2단계 구조 판정(패널 3+판정, `local judge-verdict-structure`)
-
-- 채택 모델: **P/R/L 3층 = 인가된 경로를 관측으로 전진시키는 level-triggered rollout** (P Planner: κ·weight·전환 비용·에너지로 목표+경로; R Rollout reconciler: tick·completion 공통 전진; L Effect responsibility: 인가된 쓰기·미확정 실물 책임). Deployment/Argo 도입 아님(κ≠replica, physicalBudget≠maxSurge, ACK·drain 부재).
-- 기각: TTL, 실행 종료 즉시 반환, 단순 orphan GC, 반환 증명 원장 일괄 삭제(코드 확인: ownerReturnTerminal·knownEffectConfirmed·late binding·preparationCreatedSource가 각기 다른 사실을 지킴).
-- 삭제 단계: S0 기준·예약 반사실 진단(도구만) → S1 tick/completion 중복 제거(scheduler_continuation 60줄 범위) → S2 route/퇴역 판단 통합(readySubset·dependenciesComplete 147줄) → S3 no-effect 부모 수명 제거(87줄) → S4 cleanup route 우회로 제거(161줄). 교체 범위 455줄, 순삭제 미확정.
-- 검증: 결정 리플레이는 실행부를 검증하지 못함 → 단계마다 리뷰 2종 → 사건 순서 단위 테스트 → 결정 게이트(계획 불변) → 고정 미니 행 점수판.
-
-## 2026-10-31 — 점수판 기준 측정(round-10, 서버 d4a933bf, h=.25, 미니 행)
-
-- **기준 점수 (F, J) = (7,782, 153,056.668 J)**. E5-3m MNV 실패 5,787 D1 FAIL / E5-5m MNV 1,992 D1 FAIL / E5-7m Smol D1 FAIL(실패 0); PLC·나머지 정상. 전력 complete 3/3. 측정 재시도 0. 증거 `C/full-E5-{3m,5m,7m}-10/`, `O/deployB/round-10-baseline/`.
-- STOP 7: finish의 owned reset 대기 시간 초과(무ACK/잔류 예약) — 8c/8d와 같은 원인(반복 2회↑) = L층 책임 수렴 문제, S1~S4 범위. 측정 데이터는 유효.
-
-## 2026-10-31 — S1 완료(배포 대기)
-
-- S1 `67fe02aa`(Tick/Continue 공통 captureReconciled, 제품 −4줄) + 테스트 정리 `5644b165`(freshness-before-reconcile 단언 fail-before 확인) + lint `1bc385d4`. 정식·ponytail 리뷰 PASS(2회), 패널 2인 diff 검토 "목표 달성·의미 동일·덧댐 없음". 리플레이 게이트(per-tick, 기준 live b0877c1e) PASS, make test PASS.
-- 차단 1건(타 세션): `internal/serving/kube/measurement_projection.go:74 projectOperationStep` gocyclo 31 — 다른 세션이 커밋한 코드로 clean `make lint` 실패. Main은 수정 안 함(소유권). 다른 세션 수정 후 S1 배포·미니 행 측정.
-- live: server b0877c1e(control-270), 잔류 예약 0.
-- 09:09Z control-271: server·dashboard = `288153fd`(조언 세션 p90·커버리지 변경 fd8bde4c + S1 + lint 분리 `288153fd`). 게이트: 리플레이 PASS(기준 b0877c1e, new bad tick 0), clean lint/test/arch/helm PASS, 리뷰 2종 PASS. 09:09Z~09:39Z 클러스터 무변경(조언 세션 재설문). S2 패널 3인 완료(범위 축소 권고: dependenciesComplete 증거·범위 결정 단일화만, readySubset 본문 유지).
-
-## 2026-10-31 — S2 진행
-
-- `245a88b5` S2: dependenciesComplete 소비 범위를 `handoffScope` 한 곳에서 결정하고, 증거 판정을 3갈래로 나눔. 엄격화: 완료되지 않은 dependency run은 별도 ACK로 소비 불가(fail-before 확인). 리뷰 2종 PASS, 패널 2인 "목표 충족·회귀 없음". 패널 1 축소안 적용 예정(순증 +10 → 순감).
-- 미해결 관찰(S2 회귀 아님, 추후 판단) [추정]: subset ACK 뒤 prepare 결과 전에 tick이 하나 더 있으면 run==nil 경로의 stop이 frozen bridge 자신의 prepare 의존을 보지 않고 출발할 수 있음. target_scope.go:173 부모 범위는 S3에서 다룸.
-- 09:40Z round-11(S1, 288153fd) 측정 창. 디스크 guard: control-213/214/216 대형 json을 gzip으로 무손실 압축 → 335GB.
-
-## 2026-10-31 — round-11 점수(S1 포함 live 288153fd) vs 기준
-
-- (F, J): 기준 d4a933bf (7,782, 153,057 J) → 288153fd **(6,099, 152,560 J)**. 사전식으로 개선(F −1,683, −22%). MNV 실패: E5-3m 5,787→4,407, E5-5m 1,992→1,689. E5-7m Smol D1 FAIL은 그대로(실패 0). PLC 정상. 전력 complete 3/3. 측정 재시도 0.
-- 귀속: 288153fd = 리뷰 복구(b0877c1e 계열) + S1. S1 자체는 의미 불변 리팩터이므로 개선은 주로 리뷰 복구분으로 봄 [추정]. 행당 1회 시행이라 잡음 폭은 미측정.
-- STOP 7(최종 상태): round 자신의 cleanup `manual-reset:9742040b` 예약이 확인 시점에 아직 잡혀 있었음. 직후 live는 instances 0·예약 0. round-10의 STOP 7(plan 소유자 잔류)과는 원인이 다름. 첫 발생이라 기록만 함. 측정 데이터는 유효.
-
-## 2026-10-31 — S2 게이트 통과, S2b·S3 방향 결정
-
-- S2 `245a88b5`+`2ea63c10`: 제품 순감 4줄. 리뷰 2종 PASS(2회). 리플레이 게이트 PASS(기준 live 288153fd, new bad tick 0). clean lint/test/arch/helm PASS.
-- S3 패널(2인, Gemini는 quota 소진): 표식(noEffectRoutes)과 partial 특례를 삭제하는 방향은 맞음. 다만 생략 bridge의 완료를 현재 scope로 판정하면 안 됨(stage가 진행되면 다시 관측할 수 없어 부모가 영구 running이 되고, 오래된 bridge가 재실행됨). 대신 frozen edge와 receipt로 판정: 의존 action의 run이 complete면 소비된 것으로 봄. ACK가 없는 retirement-only 선언은 admission에서 제외해 영구 running을 막음.
-- 8c는 실재하는 R 문제로 판정. 생략 bridge의 자기 의존 재귀 검사는 덧댐이 아니라 P 의존 계약의 복원임(2/2). S3보다 먼저 별도 S2b로 진행.
-- 배포 계획: S2+S2b를 한 번에 배포하고 round-12로 측정.
-
-## 2026-10-31 — S2b 배포·round-12, S3 리뷰
-
-- S2b `d1f4b460`(+17, 생략 bridge 자기 의존 재귀; fail-before 확인): 리뷰 2종 PASS, 리플레이 PASS, clean gate PASS. 10:53Z control-272 서버 배포. 10:56Z round-12(S2+S2b) 측정 시작.
-- S3 `702604c7`(제품 순삭제 70줄): 리뷰 2종 PASS, 패널 2인 조건부 승인. 후속 S3b로 처리할 항목:
-  (1) stale bridge 재실행은 기존에 있던 문제. 소비 판정을 launch에도 공유해 차단.
-  (2) admission이 route-only NotReady 계획을 막아 readySubset 회복이 늦어질 위험. 비어 있지 않은 route는 무조건 admission하고, retirement에만 dependenciesReady를 요구.
-  (3) 문서 2곳 상충.
-  잔존 [추정]: 재시작이나 GC로 완료 ACK가 사라지면 prepare→생략 bridge→stop 부모가 영구 running이 될 수 있음. S3 이전부터 있던 문제로, S4 이후 판단.
-
-## 2026-10-31 — round-12 결과·STOP 7 반복 정지
-
-- round-12(S2+S2b, d1f4b460): **(F, J) = (10,235, 153,684 J)**. round-11(6,099)과 기준(7,782)보다 악화. E5-3m MNV 8,162, E5-5m 2,064, PLC 6. E5-7m Smol D1 FAIL은 그대로. 측정 재시도 0. E5-7m 판정 직후 디스크 guard에 걸려 STOP했고, 비입력 judgment를 gzip으로 무손실 압축(320GB 확보)한 뒤 guard 이후 단계만 재개함.
-- STOP 7(최종 상태)이 같은 원인으로 2회째: 확인 시점에 round 자신의 `manual-reset:*` 예약이 아직 남아 있었고, 직후 live는 예약 0. 멈춤 규칙에 따라 운영을 정지함. 사용자 결정에 따라 서버 쪽 원인부터 조사(ResetRelease).
-- S2/S2b 악화 원인 조사 착수(Regress12). 판정이 나오기 전에는 S3/S3b(`702604c7`, `645f7226`, 합계 순삭제 66줄) 배포를 보류.
-- 12:08Z control-273: dashboard만 `b93a14a5`(1b07daa4 포함; 조언 세션 리뷰 2종·tsc/eslint/test 162/162/build PASS 확인)로 배포. server는 d1f4b460 그대로, 게이트웨이 재시작 없음. 12:08Z~12:38Z 클러스터 무변경(조언 세션 재설문).
-- STOP 7 서버 원인: 성공한 reset은 응답 전에 이미 예약을 원자적으로 반환함. State()가 마지막 tick의 Snapshot.Reservations 캐시를 live Actions와 함께 내보내서 생긴 불일치(`local://reset-release.md`). 수정 `b93a14a5`(State 경계에서 재투영 1줄, fail-before 확인). round-10의 STOP 7은 별개(plan owner 600s 정체, reset 미시도).
-
-## 2026-10-31 — round-12 악화 원인 판정: S2/S2b 아님, 1회 측정의 계획 분기 잡음
-
-- 실패 증가분의 97.7%가 E5-3m +180~360초에 몰림. round-11과 12는 +49초에 이미 다른 계획을 골랐음(11은 Keep, 12는 jetsonx CPU 조기 확장). 그 결과 180초 부하 상승 때 12는 CUDA prepare 3개 교체라는 긴 critical path(nano 131초)를 선택함. 첫 분기는 S2/S2b가 영향을 주는 구조(생략 bridge, 미완료 dependency)가 생기기 전임(`local://regress-12.md`).
-- 오프라인 실행부 A/B: 같은 frozen 계획과 사건 순서를 288153fd와 d1f4b460에 넣었을 때 launch·stop 적격·예약 해제 판단이 동일함(`local://ab-12.md`).
-- 입력(요청 38,299개 해시, 송신 지연)은 세 회차 동일. 따라서 **동일 입력에서도 tick 위상 차이로 계획이 분기하며, 행당 1회 측정의 F 변동이 ±40% 이상**임. 10→11(−24%)도 같은 이유로 리뷰 복구 효과라고 확정할 수 없음 [추정].
-- S3+S3b+State 수정 HEAD 61987770: 리뷰 2종 PASS(각각), 리플레이 PASS(기준 d1f4b460), clean gate PASS. 12:38Z 이후 서버 배포.
-- 알려진 한계(S3b 리뷰): route-only 목적지가 계속 NotReady이면 부모 예약이 유한 시간 안에 반환되지 않음. S3 이전에도 같은 동작.
-
-## 2026-10-31 — 측정 방식 변경(Main 자율 결정, 사용자 의도 "SLO 먼저, 그다음 에너지"에 맞춤)
-
-- 근거: 행당 1회 측정은 같은 입력에서도 계획 분기 때문에 F가 ±40% 이상 흔들려 변경의 효과를 판정할 수 없음.
-- 동작 불변 리팩터(S1~S4류): 리뷰 2종 + 리플레이 게이트 + 실행부 A/B로 판정하고, 미니 행 측정은 생략함.
-- 동작을 바꾸는 변경(계획·용량·지연에 영향): 기준과 후보를 교대로 행당 3회 이상 측정함. 판정은 F 중앙값과 범위로 하며, 범위가 겹치면 "차이 없음"으로 봄.
-- 이어서 구조 분석 착수(FailAnatomy: 데이터, LoopStructure: 제어 루프·코드). 사용자 요청 "한발 물러서서 진짜 결함".
-- 정정(조언 세션 의견 반영): round-11의 −22%는 잡음 범위 안이라 효과로 주장하지 않음. round-12 악화도 잡음으로 덮지 않음. E5-3m +180~360초 실패는 3대 교체의 final route가 가장 느린 prepare(nano CUDA 131초)까지 기다리는 동안, 먼저 Ready가 된 rasp5(+208초)와 jetsonx(+245초)를 가중치 0으로 놀린 구조 결함임. 다음 최적화 대상 후보로, 알려진 모델은 readiness 기반 점진 투입(maxUnavailable 0)임. 구조 분석으로 확인한 뒤 확정.
-- 측정 방식 조정: 동작을 바꾸는 변경은 E5-3m만 기준 d4a933bf와 교대로 각 3회 측정하고 평균과 범위로 판정. 다른 행은 최종 후보에서만 측정.
-
-## 2026-10-31 — 구조 분석 결론(`local://fail-anatomy.md`, `local://loop-structure.md`)
-
-- 근본 원인: SLO는 계획의 합격 조건(총합 κ, 전환 W ≤ L)으로만 쓰이고 목적함수는 에너지임. 그래서 계획이 합격선에 붙는데, 합격 판정이 실제 실패 원인(장치별 native 큐 포화, 기존 대기 시간, 준비 중 공급 공백)을 보지 않음. 회차 간 "잡음"(+49초 분기, 에너지 1.26% 차이로 선택이 바뀜)도 같은 구조에서 나옴.
-- 실패 실체: 502의 대부분은 느린 장치의 native queue deadline 초과(queue p50 1.95초, service 40~50ms). 빠른 orangepi는 p95 90ms로 여유가 있었음. 무경로가 아님.
-- 결함 1: 합격 판정이 현실과 다름(장치별 배분이 감당량을 넘는지, 기존 대기 시간을 보지 않음).
-- 결함 2: 준비 장벽(final route가 모든 prepare에 의존, readySubset은 같은 노드 제외). 3m-12 [P,R) 구간 F 6,336.
-- 결함 3: 부하 상승을 버틸 여유 용량이 없음(대응 21~150초). 시작 60초 고정 실패 약 1,430건.
-- 7m Smol D1 FAIL: Pod 삭제 후 재배치 동안 들어온 5건 지연(성공 36 < 기준 39).
-- 결정: 결함 2(readiness 기반 점진 투입, maxUnavailable 0) → 결함 1(장치별 이용률 상한, 대기 시간 반영) 순서로 진행. S4는 후순위이며 게이트로만 판정.
-- 12:40Z control-274: server 61987770(S3+S3b+State 수정) 배포, restart 0.
-
-## 2026-10-31 — 디스크 정리(사용자 지시 "안 쓰는 옛날 것 과감히 삭제")
-
-- 원인: 라운드마다 디스크가 줄어든 주범은 BuildKit 캐시였음(chill-builder 96GB 등). fast-deploy가 빌드할 때마다 쌓이고 정리되지 않음. 증거 디렉터리는 원인이 아니었음.
-- 삭제: (1) 문서·hack·rounds·점수판·리플레이 입력 어디에서도 참조하지 않는 옛 증거 77개 디렉터리, 68GB(목록 `O/deployB/deleted-evidence-20261031.txt`). (2) chill-builder 캐시 79GB(20GB만 유지). 다른 builder는 7일 넘은 캐시 약 44GB 삭제. (3) 등록이 끊긴 firstfloor-experiment buildkit 컨테이너와 볼륨 20GB.
-- 결과: 가용 292GB → 491GB.
-- 유지: 참조되는 증거, O/harness/e5-*, -7·8d·223 행과 tag 10~12 행, registry 볼륨(97GB, runtime 7 digest 보호), 다른 프로젝트의 태그된 docker 이미지(약 200GB).
-
-## 2026-10-31 — 가려운 곳 3건 조사 결과
-
-- κ 보정(`local://kappa-calib.md`): CPU의 계획κ/포화 실행률 0.87/0.99/0.99로 κ는 대체로 맞음. CUDA는 과부하·배치 붕괴 상태에서 1.21/1.32배 낙관이며, 상태에 따라 달라서 고정 보정계수로 쓰면 안 됨.
-- 진짜 결함: `capacityWeights`가 에너지 순으로 각 장치를 κ(p95≤1s 무릎)까지 채움 → 싼 장치가 ρ≈1에 고정되고 빠른 orangepi는 실측 용량의 57%만 받음. 부하가 오르면 재계획 전에 느린 장치가 무너짐. 무실패 실측 ρ 상한은 약 0.88~0.94.
-- 결함 2(점진 투입) 패널(`agent://PanelPa`): 브리프의 κ 비례 투입은 orangepi를 무릎까지 밀어 위험함. 같은 노드·같은 UID 치환으로 범위를 좁혀야 함. 근본은 위의 weight 채움 규칙.
-- 탐색 예산(`local://search-budget.md`): 실험 decision의 62%가 wall-clock BudgetCut이고, 인위적으로 멈추면 결정이 바뀌는 것을 확인(비결정성). 다만 11/12 분기는 30초 무절단 탐색에서도 유지되므로 그 분기의 원인은 아님. 후순위로 평가 수 기준 예산 검토.
-- 디스크: BuildKit 자체 GC로 chill-builder 캐시를 20GB로 제한(`bd7dc822`). 가용 509GB.
-- 다음: capacityWeights를 항상 κ 비례(동일 ρ)로 바꾸고 에너지 순 채움은 삭제하는 방향으로 패널 검토 중.
-
-## 2026-10-31 — control-275 배포, weight 비례화 착수
-
-- 13:11Z control-275: server와 dashboard를 `8a696dc3`(7788ce14 포함, 조언 세션 요청)으로 배포. 두 Pod 모두 restart 0, dashboard 응답 200. 게이트: 리플레이 PASS(기준 61987770), clean lint/test/arch/helm PASS. dashboard 테스트는 작업 트리에서 175/0. clean 사본에서만 2건 실패했는데 환경 문제로 추정. 새 builder 캐시는 3.8GB(GC 설정 동작 중).
-- weight 비례화 패널 2/2 합의: capacityWeights의 에너지 순 채움 삭제, y는 최종 정수 weight로 계산, capacityEnergyLoad의 greedy 분기 삭제, carries/currentWeights 삭제. κ 비례는 SLO 정규화 부하의 minimax임(max λᵢ/κᵢ ≥ λ/Σκ). M/M/1 지연 최적은 아니지만 κ가 이미 장치별 SLO 무릎이라 타당함. 구현 진행 중(ImplWeights). fail-before 확인: 3m-12 결과가 기존 [138 359 216 287], 기대 [114 296 178 412].
-
-## 2026-10-31 — weight A/B 판정 규칙(사용자 제안 채택)
-
-- A/B(E5-3m만, 후보 506cd82a κ 비례 vs 기준 8a696dc3 에너지 순 채움, 교대 각 3회, tag 13~18)는 그대로 진행함.
-- 판정: κ 비례가 SLO를 개선하고 에너지 증가가 잡음 범위 밖이면 → "상한 채우기"로 전환(싼 장치부터 ρ*×κ까지 채우고 넘는 양만 다음 장치로; HPA target utilization 발상). ρ*는 config 값 하나이고, 근거는 재계획 완료 전 예상 부하 증가 배율의 역수(E5-3m 계단 1.27배면 ≤0.78). 같은 ρ*를 결함 3(계획기 여유 용량 ρ*×Σκ ≥ 수요)에도 써서 파라미터 하나로 묶음. 별도 headroom 메커니즘은 추가하지 않음.
-- 에너지 차이가 잡음 범위면 → κ 비례 유지(계획기가 더 적은 장치로 합격할 수 있어 에너지 이득 가능), 결함 3만 진행.
-- A/B 보고에 장치별 요청당 증분 에너지와 유휴 전력 비중을 함께 표시함.
-- 조언 세션 요청: server와 dashboard를 6a5b4742 이후 HEAD로 배포(view=summary API 포함). A/B 측정(약 17:00Z 종료)이 끝나고 조언 세션 게이트 결과를 받은 뒤 배포함. A/B는 서버를 교대로 바꾸므로 중간 배포 금지. 배포 후 20~30분 비워 둠.
-
-## 2026-10-31 — round 14 중단(도구 경합)과 A/B 재배열
-
-- round 13(후보 κ 비례): E5-3m 이미지 F 1,337 / M 2,121, 에너지 58,267 J. COMPLETE이고 STOP 7은 없었음(State 수정 효과).
-- round 14(기준) STOP 5:stage: round.py watch()가 phase.json을 매초 읽는 동안 harness save()가 제자리에 재작성해서 torn read(JSONDecodeError char 307200) 발생. phase.json이 1MB를 넘으면서 경합 창이 커짐. kill된 탓에 phase.json도 잘렸고 cleanup-jobs가 실패함. 우리 측정의 producer job 2개는 kubectl로 직접 삭제(증거 `O/deployB/round-14-ab/abort-cleanup/`).
-- 수정 `2788bdc5`: save()가 같은 디렉터리의 .tmp에 쓰고 os.replace함. fail-before 스모크: 기존 방식 171회 중 166 torn, 수정 후 225회 중 0. 리뷰 PASS. harness e5.py는 b0877c1e와 동일하고 atomic save만 다름 → 측정 동등.
-- 판정 규칙: tag 14는 판정 전에 도구 결함으로 중단된 미완 데이터라 "측정 재시도 금지"의 대상(판정된 결과 재측정)이 아님. A/B 표본 균형을 위해 기준 1회를 tag 19로 보충. 재배열: 15 B, 16 C, 17 B, 18 C, 19 B(harness 2788bdc5). 후보 13·16·18, 기준 15·17·19.
-
-## 2026-10-31 — weight A/B 결과와 판정(E5-3m, 교대 각 3회, 16:00Z 종료)
-
-| 라운드 | 버전 | F | M | 풀 에너지 J |
-|---|---|---|---|---|
-| 13 | 후보 κ 비례 506cd82a | 1,337 | 2,674 | 58,267 |
-| 15 | 기준 8a696dc3 | 3,568 | 7,240 | 57,890 |
-| 16 | 후보 | 3,686 | 7,396 | 미완(lattepanda 미터 공백) |
-| 17 | 기준 | 4,000 | 8,274 | 57,898 |
-| 18 | 후보 | 1,550 | 3,153 | 57,565 |
-| 19 | 기준 | 3,960 | 8,302 | 57,466 |
-
-- SLO: F 중앙값 후보 1,550 vs 기준 3,960(−61%). 범위는 후보 1,337~3,686, 기준 3,568~4,000으로 round 16 하나 때문에 겹침. M(1초 deadline 미달)은 후보 2,674~7,396 vs 기준 7,240~8,302로, 평균 4,408 vs 7,939(−44%). 겹치는 표본은 16 하나. 후보 3회 중 2회는 기준보다 크게 좋고, round 16은 기준 수준이라 원인 확인 필요 [추정: 계획 분기].
-- 에너지: 후보 57,565~58,267 vs 기준 57,466~57,898. 평균 차이 +0.3%로 잡음 범위 안(유휴 70~72%, 배분이 움직일 수 있는 상한 1.4~2.2%, `local://energy-decomp.md`).
-- 판정(사전 규칙): 에너지 차이가 잡음 범위 → κ 비례 유지. 상한 채우기(ρ*)로는 전환하지 않음. 다음은 결함 3(여유 용량). F 범위가 엄격히는 겹치므로 "확정 개선"이 아니라 "개선 경향, 에너지 손실 없음"으로 기록.
-
-## 2026-10-31 — 결함 3 방향(패널 2인, `local://brief-headroom.md`)
-
-- ρ*=0.8 단독은 계단 전 Keep을 통과시켜 선행 증설을 강제하지 못함. 실제 계단은 54→95(1.74배)라 흡수하려면 ρ*≤0.57이 필요. 그런데 Smol은 단일 장치 κ 최대 0.819, D=0.5라 ρ*≥0.61이 필요해 전역 ρ*는 모순(패널 1). 그래서 ρ* 일반화 단독 배포는 보류. 나중에 할 때는 final/feasible/idle 판정에만 넣고 timingReason과 keepInsufficient는 물리 D 기준을 유지.
-- 반응 단축만으로는 실패 창을 못 닫음: 감지+탐색+최단 prepare+ACK ≈ 25~45초 ≫ SLO 1초.
-- warm 비용: SBC 인스턴스당 ΔW ≤ 약 0.3 W, 3개를 추가해도 480초에 ≤430 J(≈0.7%). GPU 서버는 +42~54 W이고 계획기가 이미 반영함.
-- 결정: warm 공급 가설을 코드 변경 없이 먼저 검증함. 기존 per-UID `minimumDemand`(Knative min-scale에 해당)를 image 20→105로 바꿔 오프라인 재결정한 뒤 E5-3m A/B 각 3회. 105는 trace의 peak를 알고 정한 값이므로 보고에 명시함. 계단 전 K≥95인데 계단 F가 줄지 않으면 warm 가설을 기각하고 장치별 큐 쪽을 봄.
-
-## 2026-10-31 — control-277 배포, warm min-scale A/B 준비
-
-- 16:31Z control-277: server와 dashboard를 `f780d19a`(view=summary 포함, 조언 세션 요청)로 배포. 두 Pod 모두 restart 0, dashboard 200. 게이트: 리플레이 PASS, lint/arch/helm PASS, dashboard 184/0. kube에서 부하에 민감한 테스트 1건이 부하 중 실패했으나 단독 30회와 캐시 없는 패키지 재실행 모두 PASS. 16:31~17:01Z 조언 세션 재설문 창.
-- round.py `8311fe9c`: 선택적 config `minimumDemand`(step 3에서 PUT·검증, binding에 동결, 첫 load tick 검증). 리뷰 PASS.
-- 17:01Z부터 A/B 시작: E5-3m, 서버 f780d19a 고정. image minimumDemand 105(tag 20·22·24) vs 20(tag 21·23·25). 105는 trace peak 95/s를 알고 정한 값임.
-
-## 2026-10-31 — round 16 이상치 원인(`local://r16-outlier.md`)
-
-- κ 비례 weight는 실제 route에 적용됨(옛 weight 잔류 아님). round 16의 추가 실패 2,157건 중 2,063건은 jetsonx CUDA 큐 포화임. [350,390) 구간에서 λ 33.4/s가 배정됐는데 실행된 1,022건이 **전부 batch 1**이라 ρ 1.24가 됨. 같은 창에서 round 13은 λ 26.2, batch 1/2/4 혼합, ρ 0.81, F 0.
-- 해석 [추정]: CUDA κ(34.5)는 배치가 정상일 때의 값임. 부하에서 남은 SLO가 짧아지면 런타임 정책이 최소 서비스 배치(b1)를 골라 처리율이 떨어지고, 큐가 쌓여 다시 b1을 고르는 양의 되먹임(배치 붕괴)이 생김. 3m-10의 CUDA 실패(κ/X 1.32)와 같은 계열. 관련 코드 `internal/firstfloor/policy.go:93–154`. 고착의 내부 원인은 미확정.
-- 다음 후보 결함 4: CUDA 배치 붕괴. warm min-scale A/B 뒤에 브리프를 작성함.
-
-## 2026-10-31 16:52Z — warm min-scale A/B 취소(조언 세션 지적 수용)
-
-- 잘못: 다음 실험을 고르기 전에 새 기준선(κ 비례)의 구간별 실패를 확인하지 않음. 이미 가진 `local://r16-outlier.md`만 봐도 13·18의 계단 구간 [180,360) F는 0이었음. MD105가 노리는 구간은 이미 해결돼 있었음.
-- 남은 최대 덩어리는 시작 60초(회차당 약 1,330~1,530건). 시험이 매번 장치 2대로 시작하고 세 번째 장치가 약 40초 뒤에 열리기 때문에 생김. min-scale도 시험이 시작된 뒤에야 작동하므로 이 구간을 못 바꿈.
-- 조치: A/B가 시작되기 전(17:01Z 예정)에 취소함. 측정한 것은 0회. 앞으로는 실험을 고르기 전에 반드시 현재 기준선의 구간별 F를 보고 가장 큰 덩어리를 겨냥함.
-- 다음: (1) 시작 60초는 스케줄러 결함이 아니라 시험의 출발 상태 문제임. 점수판에서 [0,60)을 "개점 준비 구간"으로 따로 표시하고, 정상 구간 F와 나눠 보고함. (2) 남은 변동의 원인인 CUDA 배치 붕괴(round 16)를 결함 4로 브리프 작성.
-
-## 2026-10-31 — 결함 4 (b) runtime 수정 사용자 승인
-
-- 원인(`internal/firstfloor/policy.go:93–157`): 배치 크기 후보가 모두 맨 앞 요청을 포함하는데, 그 요청이 마감을 넘기면 어떤 배치도 batchFeasible이 아니게 됨. DeadlineKeep이면 처리 시간이 가장 짧은 b1(`minimum_service`)을 고름 → 처리율이 하락해 큐가 늘고 다음 맨 앞 요청도 늦어지는 고착.
-- 사용자가 (b) runtime 수정을 승인(firstfloor 이미지 재빌드와 runtime digest 변경 허용). 수정 방향: 마감 불가일 때 항목당 비용이 최소인(처리율 최대) 배치를 고름(Clipper·Triton 방식). 영향 범위(재빌드할 이미지, profile·κ 무효화, replay 공유)를 조사(RuntimeImpact)한 뒤 배포 절차를 정함.
-
-## 2026-10-31 — 조언 세션 작업 인지: Experiment CRD 문서화(spec→SRS→설계/ADR)
-
-- 조언 세션이 오케스트레이터로서 Experiment CRD와 독립 reconciler(기존 측정 컨트롤러 cmd/profiler 안, ChillServer와 분리)의 spec→SRS→설계/ADR 문서를 진행 중. 범위는 문서만이고 경로 한정 커밋. 이 세션의 round.py, rounds/*.json, binding, A/B runner를 참조 입력으로 씀.
-- 이 세션의 조정: (1) docs/spec, SRS, ADR, 새 실험 설계 문서는 건드리지 않음. 내 문서 변경은 docs/intent/decision-log.md, docs/plans/, 스케줄러 설계 문단(analytic-planner, scheduler-implementation)으로 한정. (2) round.py와 rounds 설정 형식은 그쪽이 참조하는 동안 불필요하게 바꾸지 않음. 필요한 변경은 decision-log에 기록. (3) 재현성 지적(설정이 git 밖, 입력 경로 흩어짐, 실험 설계가 셸 스크립트에 있음)은 맞음. CRD가 그 해법이므로 round.py에 임시 보완책을 덧대지 않음.
-
-## 2026-10-31 — 결함 4 실행 결정(Main 자율): (a) 즉시, (b)는 코드만 커밋하고 재프로파일링 계획 보류
-
-- (b) runtime 변경의 실제 비용(PlanReprofile): runtime digest가 profile 식별자·d·declaration에 고정돼 있어, 점수판 후보 공간을 유지하려면 124개 조합 / 259개 batch점(858 Job)과 d 36개 조건, 비용·κ 전량을 재측정해야 함. 노드 병렬·d 직렬 기준 **15~65시간**, 병렬 불가면 40~121시간. 과거 기준선(10~19회차)과 같은 조건 비교도 성립하지 않음.
-- 결정: (a) 서버 κsafe=min(κ, κ_b1)를 먼저 구현·측정. (b) 정책 코드(maximum_throughput)와 테스트는 커밋하되 runtime 이미지 재빌드·배포·재프로파일링은 하지 않음. (b)를 배포하려면 위 캠페인을 별도로 승인받아야 함. 주의: (b) 커밋 후 서버 replay(κ 계산)도 같은 ChooseBatch를 쓰므로, 서버를 재배포하면 서버 replay와 기존 runtime 사이에 불일치가 생김. (b) 커밋은 배포 전에 되돌리거나 보류 브랜치로 둬야 함 → 아래에서 처리.
-
-## 2026-10-31 — 프로파일링 단축(사용자 승인, 바텀업)
-
-- 관찰: 이번 runtime 정책 수정은 측정값을 바꾸지 않음. profiling 모드에는 fixedBatchSize가 없고(config.go:100) d는 고정 배치(occupancy.go:584 → policy.go:110–111)라 동적 분기를 지나지 않음. 15~65시간은 profile 식별자가 이미지 digest 전체에 묶여서 생기는 비용임.
-- 순서: (1) "측정 경로는 동적 배치 선택을 지나지 않음"을 테스트로 고정. (2) 동등성 방식 설계(브리프 → 패널 → ADR 초안): A/A 점검과 증거 연결, 신원 분리, 정책 계층 분리를 비교. 조언 세션의 Experiment CRD 문서와 조율. (3) 프로파일링 구조 단축(장치·모드·모델당 Pod 하나, 정밀도 기준 종료, 노드 병렬)은 별도 과제.
-
-## 2026-10-31 — 프로파일링 목표 재정의: 측정 커버리지를 가장 빨리 채움(사용자 지시)
-
-- 기준: 대시보드 측정 커버리지(`/api/v1/namespaces/chill-system/measurement-coverage`, measurement-coverage.v1). 셀 = (모델, 장치 클래스, 실행 경로, 전력 모드). 17:29Z 기준 지원 셀 162(지원 여부 미확인 67), usable 21(13%), insufficient 14, problem 5, unmeasured 126. 누적 run 1,155개, profile 79개(profile당 약 15 run).
-- 방향: 셀마다 본질 수치(배치별 서비스 시간 분포와 p95, 요청당 증분 J, 유휴 W, d)를 checklist(result-checklist.v1) 기준을 만족하는 최소 측정으로 얻음. 장치·모드·모델당 Pod 하나, 정밀도 기준 종료, 노드 병렬. 바텀업 순서: (1) 기존 run의 시간 분해(준비 오버헤드 vs 측정 창) (2) checklist 기준에서 나오는 최소 표본·시간 (3) 설계 브리프 → 패널 (4) 구현 → 리뷰 → 셀 몇 개로 실측 비교.
-- 동등성 브리프(`local://brief-equiv.md`)는 변형당 1.5~3시간(10 trial × 10,000 표본)으로 과도함. 결정: 동등성 기록·신원 분리 경로(저장 계약 변경, ADR 0019 부담)는 보류함. 대신 **빠른 프로파일링 하나로** runtime 변경 후 재측정과 커버리지 채우기를 함께 해결함. 1단계: 프로파일링 시간 분해와 checklist 최소량 분석(ProfilingAnatomy).
-
-## 2026-10-31 — κ 비례 채택 확인(round 26, 서버 f780d19a)
-
-- E5-5m: F 0 / M 385 / image D1 PASS(처음) / J 56,810. 이전 10~12회차는 F 1,689~2,064, M 2,883~4,169, D1 FAIL, J 57,178~57,530. 1회 측정이지만 이전 범위와 크게 떨어져 있음.
-- E5-7m: F 0 / M 55 / Smol D1 FAIL(그대로) / J 37,390. 이전 M 46~71로 차이 없음. 남은 문제는 Pod 삭제 후 Smol 회복 지연 5건이며 배분과 무관.
-- 결론: κ 비례 채택 유지. 세 행 모두 에너지 손실 없음(오히려 소폭 감소). 결함 지도의 5m 덩어리는 사라졌고, 7m은 Smol 회복(결함 3 계열)이 남음.
-- 17:39Z control-278: dashboard만 `b0917a94`(b0c97ea6 포함, 조언 세션 요청). dashboard 테스트 200/0. server는 f780d19a 그대로(restart 0). 17:39~18:09Z 클러스터 무변경.
-
-## 2026-10-31 — 프로파일링 분해 결과(`local://profiling-anatomy.md`)
-
-- usable 21셀도 criteriaMet은 0: FrozenPowerWindowPolicy 판정이 기록되지 않음(`projection/measurement_facts.go:16-21`이 PolicyPassed를 설정하지 않음). 측정을 늘려서는 해결되지 않는 코드 결손.
-- unknown-support 67셀은 전부 RuntimeDeclarationMissing(CUDA-amd64 21, RKNN 25, CUDA-arm64·rnn·vlm 각 7). 측정이 아니라 선언 생성 운영 단계로 해결할 문제.
-- unmeasured 126셀(MNV 34/PLC 34/Smol 58, Xavier 56·Orin Nano 28): 현재 방식이면 약 102 node-h(최장 lane 44 h). 본질 최소는 core 약 5.8 node-h(Xavier 병목 2.6 h)에 d를 셀당 약 7분 추가. 절감처: Smol 고정 active 창(99~600 s → 약 10 s+, 약 96%), 셀당 Pod·모델 기동 9회 → 1회, 이미 측정된 셀에 쓰던 run을 빈 셀로 재배분. checklist에는 CI 폭·표본 목표가 없어서 3 trial이면 형식상 통과함.
-- 바텀업 순서: (1) power-window 판정 기록(기존 powerObservation.coverage 정책 재사용) (2) runtime declaration 생성 (3) 빠른 프로파일링 프로토콜(본질 창, 셀당 한 세션, 빈 셀 우선, 장치 클래스별 lane 병렬) 브리프 → 패널.
-
-## 2026-10-31 — 빠른 프로파일링 패널 판정과 순서
-
-- 패널 2인: 단일 세션(trial=세션 내 시간 block)은 MLPerf·SPECpower·Google Benchmark 관행과 맞지만, 프로세스 간 분산을 잃는 크기는 미확인. 기존 독립 3-trial run의 raw로 ICC를 먼저 계산해야 함. 순차 정지(α 분배)보다 MLPerf식 "최소 시간·개수 충족 후 한 번 판정"과 pilot 기반 고정 n이 더 단순하고 표준적임.
-- 결정적 발견(패널 1): coverage는 계획된 batch 전체를 요구하는데 quick-energy는 local-min에서 멈춤(LocalMinimum 43/88) → 지금 방식으로는 셀의 약 절반이 insufficient로 끝남.
-- 순서(계약 변경 없음, 즉시): (1) quick-energy v2 전체 batch sweep (2) Smol 창 max(10 s, n·s_b)와 warmup 1(BEO 파라미터, n은 config에 동결) (3) 빈 셀 우선·노드별 lane·runtime declaration 생성(운영) (4) 기존 run raw로 ICC·CV 오프라인 분석. 효과 추정 126셀 약 102 → 23 node-h [추정].
-- E5 종료 뒤 cutover 1회: power 정책 동결과 PolicyPassed, 그리고 (4)가 허락하면 세션 프로토콜까지 한 번에. 새 profiling ADR 필요.
-
-## 2026-10-31 — ICC 분석과 측정 계획(`local://profiling-icc.md`)
-
-- 63 profile-batch, 327 run, native 86,927 표본. 재기동 간 mean 상대 SD 중앙/p90: MNV 0/1.64%, PLC 0.34/2.33%(Orin B1 12.99%), Smol 0/1.52%. Smol idle ICC 0.245. → 단일 세션은 지금 채택 근거가 부족함. 3개 독립 세션을 유지하고, cutover는 power 정책 동결로 축소.
-- 필요 n(p95 ±5%, 상관 보정, 중앙/p90): MNV 162/596, PLC 695/4,238(최대 9,187), Smol 94/649. 지수분포 가정의 3,254는 MNV·Smol에는 비관적이고 PLC에는 낙관적.
-- 셀당 시간: MNV·PLC는 batch당 active 약 2분, Smol은 호출이 수 초라 셀당 약 95분(10 s 창으로는 본질 정밀도 미달). 패널의 Smol 13분 추정은 폐기.
-- 다음: 커버리지 기반 BEO 생성기(hack/measure/gen.py 확장, n은 config). MNV·PLC 빈 셀 68개 먼저, Smol 58개는 나중. quick-energy v2(`537403aa`) 배포 후 파일럿.
-
-## 2026-10-31 — control-279 배포(조언 세션 요청), κsafe는 제외
-
-- 18:44Z control-279: server와 dashboard를 `7415185b`로 배포. 이 커밋은 main HEAD(618e8897 이후, 사건 기록 summary 단회 스캔 포함)에서 κsafe 3커밋(8c546048, 7dba68d7, 65ce9c08)만 되돌린 배포 브랜치 `deploy-20261031-noksafe`임. 이유: κsafe의 리플레이 게이트(v2 입력)가 아직 끝나지 않아 배포 규칙상 함께 올릴 수 없었음. 두 Pod 모두 restart 0, dashboard 200.
-- 게이트: 리플레이 PASS(기준 f780d19a, v1 입력), clean lint/test/arch/helm PASS, dashboard 217/0.
-- 게이트 과정에서 발견해 고친 것: (1) 내 537403aa가 통합 테스트(`TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitRetryAndRestart`)를 깸. 구현자가 internal/profiling만 테스트하고 test/integration은 돌리지 않았음 → `e72e3aa4`로 v2 계약에 맞게 기대를 갱신. (2) 다른 세션 커밋 49f7ee9a의 lll lint → `81e95666`(줄 바꿈만). (3) 로컬 main 커밋이 push되지 않아 배포 브랜치에 빠졌던 문제 → push 후 재빌드.
-- 교훈: 구현 에이전트 검증에 test/integration을 포함하고, 커밋 뒤 push까지 확인할 것.
-
-## 2026-10-31 — 측정 창 단순화(사용자 지시): 모든 모델에 같은 고정 창
-
-- 어떤 모델이든 측정하는 것은 같다(전력×시간÷처리 수, batch별 서비스 시간 분포). 느린 모델은 같은 창에서 표본이 적을 뿐임. Smol은 분포가 매우 좁아서(CV 3.2%, q95/q50 1.07) 약 10표본이면 mean ±2%가 됨(ICC 분석 n_mean 중앙 10). 표본 수 목표로 창을 늘리던 방식이 Smol을 수백 시간으로 만들었음.
-- 규칙: active 창 = max(30 s, 3 × 호출 시간), trials 3, planner batch 집합, SLO-infeasible 단축(batch 1만) 유지. n 목표와 probe 단계는 폐기. 셀별 정밀도(CI)는 측정해서 기록할 뿐 목표치가 아님.
-- 고정 창 계획(`23f5b3a2`): 110셀(MNV 29, PLC 28, Smol 53, SLO-infeasible Smol 20셀은 batch 1만), **30.4 node-h**, 최장 lane jetsonx 15.9 h(Xavier 58셀), 나머지 lane ≤5.7 h. 같은 셀의 이전 추정은 487 h, 최초 "현재 방식" 추정은 126셀 기준 102 node-h. 다음: 19:14Z profiler 배포(7415185b, quick-energy v2 포함) → 파일럿 2셀(orangepi MNV, rasp5 PLC, 예상 약 17분) → 실측 시간으로 계획 보정 → 전 lane 실행.
-
-- 2026-10-31 19:26Z — control-281 예정 배포는 게이트 실패로 **미실행**. 소스 `5342588b066e9f5c7af99439a316eeef32dd4b3f`(`deploy-202610311922-noksafe`, κsafe 3커밋 제외; 7842e35c·ed908c9a 포함), 리플레이(기준 7415185b, v2 입력) PASS, dashboard 222/0.
-- clean Go lint FAIL: evaluationstage_types.go:59 goconst(`uncordon`), evaluationrun_types.go:334/405 gocyclo(32/39), evaluationrun_types_test.go:120 gofmt. 타 세션 변경이므로 수정하지 않았으며 test/arch/helm 및 배포·Pod 확인은 실행하지 않음.
-- 2026-10-31 19:33Z — control-281 재시도: 소스 `6d5aef3941ef551d5b89f3e1f12ee24215700307`(κsafe 제외, lint 수정 6aeef74d 포함), 리플레이(기준 7415185b)·clean lint/test/arch/helm·dashboard 222/0 모두 PASS. fast-deploy는 EvaluationRun/EvaluationStage/LoadScenario CRD 추가에 따른 source chart/live manifest drift를 감지해 변경 전 중단; 승인 없이 우회하지 않음. 증거: `deployB/control-281-20261031/chart-diff.txt`, 배포 완료 시각 없음.
-
-## 2026-10-31 — control-282 배포(새 CRD 포함, 사용자 승인)
-
-- 19:36Z control-282: server와 dashboard를 `6d5aef39`로 배포(main HEAD에서 κsafe 3커밋만 뺀 배포 브랜치. 6aeef74d·ed908c9a·7842e35c 포함). 게이트: 리플레이 PASS(기준 7415185b), clean lint/test/arch/helm PASS, dashboard 222/0. 두 Pod 모두 restart 0, dashboard 200.
-- 차트에 조언 세션의 새 CRD 3종(EvaluationRun, EvaluationStage, LoadScenario)이 추가됨. fast-deploy가 chart diff 승인을 요구해 control-281에서 멈췄고, 사용자 승인 후 diff(추가만 3,120줄, 삭제 0)를 `O/deployB/approvals/chart-diff-6d5aef39-evaluation-crds.txt`로 승인해 적용. CRD 3종 생성 확인.
-- 이전 profiler 배포 작업(bg_103, 7415185b 기준)은 lock 대기 중이었고 control-280을 만들지 않음 → 취소. live 차트와 같은 6d5aef39로 profiler 재배포(control-283) 진행.
-
-## 2026-10-31 — 프로파일링 파일럿 실패 원인과 runtime 재빌드 결정(사용자)
-
-- 파일럿 2셀 모두 측정 전에 실패: ProfilingRun Job의 runtime(measurement-worker)·metric-observer·workload-observer가 `decode RunConfig: json: unknown field "durationToleranceSeconds"`. 10/30 커밋 58348057이 RunConfig에 필드를 추가했지만 그것을 읽는 runtime·observer 이미지는 재빌드되지 않음. 10/27 이후 프로파일링 성공 0건. 저장 계약 변경이 절반만 된 상태(ADR 0019 위반)였음. 이 밖에 feeder-hold.json에 10/23 캠페인의 전 노드 일시정지가 남아 있었음 → 파일럿 노드 2개만 해제(백업 `feeder-hold.json.bak-20261031T1950Z`).
-- 사용자 결정: "최신화 + 배포, 레거시는 없어야 한다." → runtime 7종과 observer 2종을 현재 main(배치 정책 수정 병합 `0cd84ce2` 포함)으로 재빌드하고, 차트의 실행 선언과 이미지 참조를 새 digest로 교체(옛 digest 제거). 커버리지 측정은 새 runtime 기준으로 채움. 기존 profile과 E5 기준선은 옛 runtime 기준이 됨.
-- 배치 정책 수정 `56ef4f7b` 리뷰 2종 PASS 후 main 병합(`0cd84ce2`), firstfloor·serving 테스트 PASS.
-- 측정 기준 단순화(사용자): 모든 셀에 같은 고정 창(60초)과 전체 batch를 쓰고, 창 안에서 호출이 2회 미만인 batch만 "무의미"로 제외. 판정 기준이 막으면 기준을 고치고 보고함.
-
-## 2026-10-31 — 리플레이 게이트 입력 결함 발견과 κsafe 게이트 PASS
-
-- 원본 게이트 입력 `profiles-gate.json`의 78개 profile 전부 service 표본(durationNanos)이 비어 있었음 → stage별 263/473/591/463 tick이 탐색 전 검증에서 Pending으로 끝나 결정이 평가되지 않았음. 즉 지금까지의 리플레이 PASS는 일부 tick만 검증한 것이었음.
-- 수정: 4 stage catalog에서 표본만 복원한 `profiles-gate-v2.json`(259 batch, 702,032 표본, 그 밖의 값 동일, SHA256 aa36747d…dfb9). Pending 0, 기준 bad tick 1/2/2/7 → 0/0/0/1. 점수판 문서의 게이트 입력을 v2로 교체.
-- κsafe(8c546048, 7dba68d7, 65ce9c08) 게이트: 기준 f780d19a 대비 후보 c79ab352, 4 stage 모두 newBadTicks 0 → PASS. 다음 server 배포에 포함함.
-
-## 2026-10-31 — 조언 세션 지적 반영(보고 기준·비교 규칙)
-
-- 보고 기준: 측정은 "Job 성공 + 결과 객체(profile) 생성"을 확인한 뒤에만 시작·완료를 보고함. 19:47Z "측정 시작" 보고는 BEO 생성만 보고 한 잘못된 보고였음(실제로는 RunConfig decode 실패).
-- 비교 규칙: runtime 재빌드(control-284) 이전 profile·E5 기준선(옛 runtime digest)과 이후 측정(새 digest)을 같은 표에서 비교하지 않음. 옛 결과는 옛 runtime 기준 기록으로만 인용함.
-- 108셀 실행 전 feeder-hold.json의 pauseNodes를 전부 해제함(백업 유지).
-- v2 게이트 입력은 독립 검증에 맡김(VerifyGateV2). 결과가 나오기 전에는 κsafe를 배포하지 않음.
-
-## 2026-11-01 — runtime 재빌드 완료, 첫 실측 성공, 전체 커버리지 캠페인 시작
-
-- control-286: runtime 7종과 observer 2종을 f3a56cd8에서 재빌드하고, 차트 선언 15개씩 교체(옛 digest 0건), profiler 배포(`4bb90fcf`). BuildKit 내장 QEMU를 써서 호스트 설정은 바꾸지 않음. 68.7분.
-- 파일럿: rasp5 MNV 셀 18 Job 성공, profile 생성, batch 1~16 전부 측정, 소요 1,340초(계획 1,359초). jetson-nano PLC는 9 성공/1 실패. metric-observer 최종 읽기 결손이 원인: thermal과 power가 같은 500 ms 예산을 공유하고, 창 끝 읽기를 단 한 번만 시도함. 깐깐한 기준으로 판단해 수정 중(ImplMetric).
-- 커버리지 기준 변경(사용자 지시 "레거시 없음"): 셀 상태는 현재 선언된 runtime으로 측정한 variant만 집계하도록 바꾸는 중(ImplCoverageCurrent). 옛 runtime variant가 셀을 insufficient로 붙잡는 문제 때문.
-- feeder: 커버리지 계획에서는 실패한 셀을 기록하고 계속 진행(`83e07ecd`). feeder-hold.json pauseNodes 전부 해제(백업 유지).
-- 전체 108셀 캠페인을 feeder stages 1,2로 시작. 예상 28 node-h, 최장 lane jetsonx 약 15 h.
-
-## 2026-11-01 — profiler 수정 배포와 새 계획(123셀) 캠페인
-
-- control-289 profiler `be1c543e`: idle 측정은 항상 batch 1(계획·projection 양쪽, 리뷰 PASS), metric-observer 수정(thermal 결손이 power를 실패시키지 않음, 최종 읽기 재시도, 리뷰 2종 PASS), 새 observer digest(metric 540db052…, workload 3c4aec4f…).
-- 커버리지 기준(`917645a7`+`a86cf25d`, 리뷰 PASS): 셀 상태는 현재 선언된 runtime variant만 집계. 선언 조회 실패 시에는 분류하지 않음. server 배포 후 반영(DeploySched).
-- 생성기(`49155374`): 60 s 창, 창 안 호출 1회 이상인 batch만 포함, 단조 제외, 옛 runtime으로만 측정된 셀 포함. 새 계획 123셀(old-runtime 35셀 포함, 노드 없음 30, unknown 67), 37.9 node-h, 최장 lane jetsonx 약 20 h. active는 셀마다 batch 1~16 또는 1~32를 모두 측정하고, 제외는 Smol 26항목뿐.
-- 옛 108셀 계획 feeder를 중지(진행 중 셀 7개는 계속)하고 새 계획 feeder 시작. 진행 중 셀과 새 계획의 중복 0 확인.
-
-## 2026-11-01 — 오늘 실패에서 나온 운영 규칙(조언 세션 정리 채택)
-
-- 공통점: 변경을 넣은 직후 실제 장비에서 그 경로를 한 번도 돌려 보지 않고 넓게 돌렸음.
-- 규칙 1: 측정 Job 컨테이너에 노드별 메모리 limit(allocatable × 0.8, config)을 건다. Smol hold는 이것과 warmup 수정이 배포된 뒤에만 푼다(ImplMemLimit, FixFailures).
-- 규칙 2: profiler·runtime·RunConfig 변경 배포는 runtime 이미지 계열마다 실제 측정 1회(Job 성공 + profile 생성)가 확인돼야 완료로 친다. 선언 probe 성공은 이미지 정상의 근거가 아님.
-- 규칙 3: 파일럿은 셀 수가 아니라 "이미지 계열마다 1셀 + 가장 무거운 모델 × 메모리가 가장 작은 노드"로 고른다.
-- 규칙 4: feeder는 같은 lane에서 2회 연속 실패하면 그 lane을 멈추고, Main은 feeder가 도는 동안 턴을 끝내지 않고 실패를 즉시 분류한다.
-- 규칙 5: feeder 시작 시 hold 상태(pause/drop)를 출력·기록한다.
-- jetson-nano는 사용자가 복구함(07:37 KST 재부팅) → 재개. rasp5는 여전히 제외.
-
-## 2026-11-01 — fast-deploy은 live values로 렌더한다: chart values 변경은 `--values` overlay가 필요
-
-- control-291은 `e0da36e0`(values-operating의 runtime 선언 15개 교체)을 배포했지만, `hack/fast-deploy.sh`가 `helm get values`(live)로 렌더하므로 선언은 바뀌지 않았다. plan3의 7셀이 옛 runtime으로 돌았다(RKNN ImportError 재발로 발견).
-- 규칙: values-*.yaml 변경은 해당 키만 담은 overlay를 `--values O/deployB/approvals/values-*.yaml`로 넘기고, chart diff에서 그 변경이 보이는지 확인한다(control-296: runtime `1dee80bf` 선언, control-294: console 512Mi).
-- 배포 확인은 실제 측정 Pod의 이미지 digest와 memory limit으로 한다(23:13Z: 6개 lane 모두 새 digest, limit = allocatable×0.8).
-- 옛 runtime 셀(plan2·plan3)은 레거시로 삭제했다(백업 `O/deployB/failed-cells-20261101/`).
-- console 128Mi OOMKilled → 512Mi. console은 chill-server query·evidence·coverage 경로의 의존성이라 유지한다.
-- jetson-nano 5W 전환이 다시 멈췄다(23:05:38 applyStarted, SSH 무응답, 2회째). nano를 pause하고 5W 셀 7개를 보류했다. 재부팅 뒤 `journalctl -b -1`로 원인을 확인한다.
-
-- 2026-10-31T23:41:20Z — control-297 server·dashboard 배포 SHA `d2891691e227b86fc3ee83ee94a8542be9695ba2`: v2 리플레이(기준 `6d5aef39`, 후보 `83e07ecd`, 4 stage new bad ticks 0) PASS; 이후 internal/serving 변경 없음으로 재사용, 새 HEAD clean lint/test/integration/arch/Helm 및 dashboard 316 tests PASS. 두 Pod Ready·restart 0, dashboard·인증 scheduler state HTTP 200; chart drift 없음, profiler/runtime 미배포.
-
-## 2026-11-01 — 차트가 의도적으로 뺀 정책 6개 추가(사용자 지시)
-
-- jetson-xavier-nx-8g의 cuda-rnn-arm64·cuda-vlm-arm64, jetson-nano-4g의 cuda-vlm-arm64에 agx-orin rnn/vlm 정책을 복제(control-299, overlay `O/deployB/approvals/values-policies-xavier-nano-rnn-vlm.yaml`). values.yaml 주석의 제외 사유(xavier LSTM CUDA 점수가 CPU와 다름 / 8GB 보드 VLM 로드 OOM)는 측정으로 판정한다.
-- 생성기의 정책 필터(`cb0799f1`)는 유지. 정책이 생겨 해당 셀이 다시 계획에 들어온다.
-- vlm 11셀: xavier canary 1셀(`1689a25b6144`, MODE_15W_2CORE)을 먼저 돌리고 나머지는 보류 → lane 끝에 투입. 노드가 멈추면 그 조합만 "측정 불가(메모리)"로 기록.
-- rnn 9셀: 결과에 "CUDA 값이 CPU 결과와 다를 수 있음" 메모를 남긴다.
-
-## 2026-11-01 — orin-nano 재포함, vlm 정책 orin-nano 추가
-
-- `orin-nano 수집0`은 더 이상 사실이 아님(01:30Z 직접 확인: shelly_power_total_watts 5.1W, thermal 46.2°C·observation 1). excludedNodes에서 제거(`8912307f`), cuda-vlm 정책 2개 추가(control-301, overlay `values-policies-rnn-vlm-v2.yaml`).
-- orin-nano MNV CPU canary(`47916f0b610f`) 성공 전까지 나머지 24셀 보류. vlm canary는 jetsonx·orin-nano 각 1셀, lane 끝.
-
-## 2026-11-01 — 커버리지 CPU 크기 = 스케줄 가능한 정수 코어, 전력 모드 online CPU로 상한
-
-- 원시 원인: allocatable 전체(genesis3 12)는 다른 Pod request(3.4) 때문에 스케줄 불가였다(FailedScheduling Insufficient cpu → Job deadline, 3셀 실패). jetsonx 5코어는 MODE_*_2CORE/4CORE에서 "process CPU affinity is smaller than the ORT thread contract"로 실패했다.
-- 수정(생성기 한 곳): `cpuByDeviceClass` = floor(allocatable − 비측정 Pod request − 0.01) (`hack/measure/coverage-plan.json`), 그리고 셀별로 min(그 값, 차트 catalog의 모드별 onlineCPUs). genesis3 8, jetsono 11/8/4, jetsonx 5/4/2, orangepi 7, orin-nano 5/4, lattepanda·rasp5 3, nano 3/2.
-- 옛 코어 수로 잰 셀은 `chill.dacs.io/coverage-cpu=<N>core` 라벨로 남긴다.
-
-## 2026-11-01 — Smol 8GB 보드 batch 상한 1, 실패 셀 재계획
-
-- lattepanda Smol CPU b2가 limit 5.98Gi에서 OOMKilled(exit 137)됐다(b1 peak 5.78Gi). 8GB 보드 4종(lattepanda·rasp5·xavier·orin-nano)의 Smol batch는 1까지만 잰다. 그 위 batch는 "측정 불가(메모리)"로 기록한다(`memoryMaxBatch`, coverage-plan.json).
-- 생성기가 Failed와 "problem" 상태 셀도 다시 계획에 넣는다(원인을 고친 뒤 재측정하는 경로).
-
-## 2026-11-01 — CPU 크기는 모드별 allocatable 기준
-
-- orin-nano 7W(online 4)에서 4코어 요청이 Insufficient cpu였다. kubelet allocatable이 모드의 online CPU를 따라가므로, 크기 = floor(min(full, online) − 다른 Pod request − 0.01)로 바꿨다(`cpuRequestedByOthersByDeviceClass`). jetsonx 2코어 모드 1, 4코어 모드 3; jetsono MODE_15W 3; nano 5W 1.
-
-## 2026-11-01 — orin-nano CPU 3, CurvePlanResolutionFailed는 lease를 영구 점유
-
-- orin-nano는 7W 이후 allocatable이 4로 남는다. 그래서 MAXN_SUPER 5코어 요청이 CurvePlanResolutionFailed가 됐다. 생성기 config에서 orin-nano 크기를 3으로 낮췄다.
-- 결함(미수정): `admission.go:53-55`, `reconciler.go:423-428`가 CurvePlanResolutionFailed를 비종료로 취급해서, measurement lease와 taint가 BEO 삭제 전까지 남는다(09:08–09:39Z, orin lane 31분 정지). BEO 삭제로 handback되는 것을 확인했다. 최소 수정 후보: 결정적 CPU 용량 오류를 terminal 사유로 분류.
-
-## 2026-11-01 — 고정 CPU 표, 장애 복구, lease·시작 timeout 수정
-
-- CPU 크기를 (장비, 전력 모드) 표로 고정했다(`cpuByDeviceClassMode`, `090b33d3`). 계획마다 다시 계산하지 않는다. 기존 측정은 고정값 이상이면 인정한다. edge 노드에서는 다른 Pod request(node-agent 15m 등)가 있어 online−1이 최대이고, 이를 비워서 더 올릴 수는 없다.
-- 11:48–13:05Z genesis1 DiskPressure(빌드 이미지 220GB)로 제어 Pod가 축출됐다. `docker image prune -a`로 복구했다. 빌드 후 prune을 절차로 둔다. 감시에 제어 Pod 상태와 디스크 80%를 추가했다.
-- profiler control-304 `62c90aea`: 결정적 curve-plan 실패는 InvalidRunSpec(terminal)이다 → lease를 반환한다.
-- server control-305 `976d0a19`: cold-start catalog 검증에 operationTimeout(30m)을 쓴다(129s request timeout에 걸려 재시작이 반복되던 문제).
-- Smol CUDA on RTX 2080 Ti는 b2까지만 잰다(b4 warmup Softmax 오류).
-- 시작 검증 대상을 줄이려고 Failed와 옛 runtime coverage BEO 22개(ProfilingRun 168개)를 백업한 뒤 삭제했다(`O/deployB/pruned-beo-20261101/`). 1코어 등 Complete 결과는 남긴다.
-
-- 2026-11-01: cpuRequest=1 / cpuQuota=online 분리는 호환성상 안전(serving operations.go:603-625, scheduler_replay.go:348-368; runtime quota==limit, affinity>=threads)하나, 사용자 결정으로 이번 캠페인은 고정 표 유지. 분리는 다음 캠페인부터.
-
-## 2026-11-01/02 — 장애 후유증: jetsono 정지(11:50–18:00Z)
-
-- 원인 1: 디스크 장애 중에 만든 측정 Pod가 Pending/Terminating에 갇혀 11코어 request를 계속 쥐었다 → 재시도 Pod가 Insufficient cpu. 강제 삭제로 해소했다(15:47Z).
-- 원인 2: 장애 뒤 jetsono의 edgemesh-agent가 evidence store로 터널을 열지 못했다("stream reset") → 매 시도 "evidence store transport failed". edgemesh Pod를 재시작했더니, DaemonSet이 chill measurement taint를 tolerate하지 않아 taint가 걸린 동안은 다시 생성되지 않았다. BEO를 삭제하고 jetsono를 잠시 pause → handback → taint가 해제되자 edgemesh가 재생성됐고 정상화됐다(18:00Z).
-- 교훈: edge 시스템 Pod를 재시작하려면 그 노드의 측정 lane을 먼저 pause한다. 감시에 Pending/Terminating 10분 초과 Pod를 추가했다.
-
-## 2026-11-02 — 보고 전 점검 규칙(같은 실수 반복 금지)
-
-- 12:10Z와 01:43 KST 보고는 장애 중인데 "정상"이라고 했다(셀 상태만 봤음).
-- 규칙: 매 보고 전에 같은 점검 스크립트를 실행하고, 그 출력만 근거로 쓴다. 점검 항목은 feeder 프로세스, 제어 Pod 6종 Running, 디스크, Pending/Terminating 측정 Pod, 셀 시간 초과(생성기 예상 2배), 같은 셀 evidence 저장 실패 3회, lane별 진행이다. 하나라도 이상하면 "정상"이라고 쓰지 않고 그 항목을 먼저 분류한다.
-- 상시 감시: 실패 셀, lane 정지, 노드 유휴, 제어 Pod·디스크 80%, Pending/Terminating 10분, 셀 2배 초과·evidence 실패 3회.
-- 측정 중인 노드에서 시스템 Pod를 재시작하지 않는다(먼저 pause). 보류는 lane 끝 셀에만 쓴다.
-
-## 2026-11-02 — 측정 불가(메모리) 조합, E5 모드 우선, 서버 응답 한도
-
-- 측정 불가(메모리)로 기록하는 조합(`memoryMaxBatch` 값 0): orin-nano cuda-vlm(b1 warmup Softmax RUNTIME_EXCEPTION), xavier Smol FP32 CPU(b1 OOMKilled, limit 5.28Gi). 두 경우 모두 노드는 멈추지 않았다.
-- jetsonx lane에서 E5가 쓰는 전력 모드(2CORE 3종, AGX 15W)를 먼저 잰다(`laneFirstPowerModes`).
-- 커버리지 응답이 server `maxRequestBytes` 8MiB를 넘어 503이 났다 → 32MiB로 올렸다(control-308, overlay `values-server-maxrequest-32Mi.yaml`).
-- API 토큰이 만료돼 401이 났다(19:49Z) → chill-dashboard-user 토큰을 72h로 재발급했다(만료 11/05 00:05Z).
-- jetson-nano는 다시 응답하지 않는다(ssh session 정지, actuation agent 0/1, handback이 MAXN 미도달로 재시도 중). 사용자 지시대로 계속 제외한다.
-
-## 2026-11-02 — 커버리지 캠페인 종료(11:20 KST)
-
-- 커버리지 API: usable 132 / supported 162, problem 11, unmeasured 31(jetson-nano 14 제외 + 측정 불가(메모리) 조합), running 0.
-- 측정 불가(메모리): xavier cuda-vlm(canary b1 runner EOF), orin-nano cuda-vlm, xavier Smol FP32 CPU, Smol CUDA RTX b4.
-- jetson-nano: 응답 없음, 제외(재부팅 뒤 MAXN 7셀만 측정 가능).
-
-## 2026-11-02 — κsafe 동일 HEAD A/B 비교 기준
-
-- `deploy-20261102-noksafe-head`는 HEAD `43b12db7`에서 `7dba68d7`·`8c546048`을 역적용했다(`a78a2cde`); replay 전용 guard 충돌과 API shim은 pre-κsafe로 해소했으며 server 경로 diff는 두 커밋 합산의 정확한 역과 동일하다. control-308 `233ccc6d`와 HEAD의 server 경로 차이는 없다.
-- Main 승인: 원본 `C/full-E5-3-7`은 보존하고 공통 baseline `O/campaign/v2/ksafe-ab-20261102/full-E5-3-223`에서 응답 없는 nano만 제외한다(pre-state SHA256 `ab5800fb587e0d8f7582dbe844dda87f903af8eef4400c1bdb10a55e7fc5bb91`, fingerprint는 `O/deployB/ksafe-ab-20261102/baseline-provenance.json`에 보존). nano의 MNV b2가 빠져 초기 MNV route는 rasp5 b1 하나로 모이며 F_warm 해석에 명시한다. 이번 6회만 비교하고 옛 round 13~26과 섞지 않는다.
-- 실패한 profilingrun Pod 7개를 증거 보존 후 삭제했다(Error·OOMKilled·UnexpectedAdmissionError); 커버리지 problem 11셀 원본은 `O/deployB/ksafe-ab-20261102/problem-classification-evidence.json`에 보존했다. 재측정은 하지 않는다.
-- 02:46Z control-308 `233ccc6d` server-only 재적용(κsafe 첫 회 사전 gate): 실제 Pod 태그·Ready/restarts0 및 scheduler state HTTP200 확인(`O/g2gate/233ccc6d6b934aa0791f107d9faf9cbe9e17e28a/deploy-control-308-20261102T024043483359Z`). 옛 Failed control-303 Pod가 round의 전 Pod gate를 막아서 백업 후 삭제; 부하 전 STOP이며 step 1부터 재개한다(측정 재시도 아님).
-- 03:00Z Main 승인: nano handback 예약(MAXN 미도달)은 그대로 보존하며, 측정 도구의 예약·transition 사전 gate만 baseline 참여 노드(genesis3·lattepanda·rasp5·jetsono)의 0개로 좁힌다(`reservationNodes`); 제외 예약은 raw evidence에 기록하고 노드 미상 예약은 계속 막는다. 서버 코드는 바꾸지 않고 양 arm의 공통 harness로 적용한다.
-- 03:07Z Main 승인: genesis3 측정 Pod 0개 확인 후 actuation-nvidia Pod의 기존 loader/nvidia-smi `-i 0 -rgc`를 1회 실행(exit0); 실측 readback은 GPU_900(900MHz)→300MHz/generation105, 이어 `kubectl label node genesis3 chill.dacs.io/power-mode-`로 끝난 GPU_900 의도를 해제하여 scheduler=fixed 확인(`admission_cpus.go:47-53`). 다른 노드 desired/readback 불일치는 제외된 nano뿐이다. 서버 수정·배포 없음.
-- 공통 baseline을 실제 GPU default 상태로 최종 동결: `O/campaign/v2/ksafe-ab-20261102-default/full-E5-3-223`, pre-state SHA256 `1155188f364fa2aeb50a5d5ac07c738d1f782e2364eb13d7615e0f2901adfdc1`, fingerprint SHA256 `02f87e2d557419a2a85a32d76185f225afc26797bd4e776d4700a7b595d627f4`(`O/deployB/ksafe-ab-20261102/baseline-default-provenance.json`). 앞선 tag27/33은 전부 부하 전 중단, 측정 재시도 아님; 새 tag34~39 교차 6회만 비교한다.
-- Main 결정 변경: runtime `56ef4f7b`의 `maximum_throughput` 정책이 κsafe 대상 b1 붕괴를 근본 해결했으므로, 진행 중 round34만 정상 종료·정리하고 A/B를 중단한다. noksafe는 배포하지 않고 live control-308(κsafe 포함)을 유지하며 round34는 관찰값일 뿐 유지/되돌림 근거로 쓰지 않는다.
-- round34 workflow COMPLETE/관찰 FAIL(재측정0): F_run=33175, F_warm=2757, 전체 POOL=52128.70585130198J(complete), M=40102, D1 MNV/PLC=FAIL·Smol=OBSERVED_THRESHOLD_MET(`O/deployB/ksafe-ab-20261102/round-34-raw-summary.json`). 시작 MNV는 rasp5 b1 하나이며 첫 60초 실패를 운영 구간과 분리한다. 대조군·중앙값·κsafe 효과 판정은 없음.
-- 03:42Z 정리 확인: 측정/serving/producer Pod 0, E5 Pod/Job label 0, 참여 노드 measurement taint 0, scheduler instances0/autonomyoff. 옛 terminal E5 Job 4개·Failed profiler control-291 Pod도 백업 후 삭제. 제외된 nano의 기존 MAXN 의도·measurement taint·handback 예약 1개는 승인대로 보존(전역 0이라고 보고하지 않음). live server control-308 `233ccc6d6b934aa0791f107d9faf9cbe9e17e28a`, Pod Ready/restarts0 및 HTTP200 확인(`O/deployB/ksafe-ab-20261102/final-cleanup.json`).
-- problem 11셀 분류 완료(`O/deployB/ksafe-ab-20261102/problem-classification.csv`): 성공 대체 BEO가 있는 과거 실패 6셀은 재측정 불필요(RTX Smol은 b4만 메모리 제외), 메모리 측정 불가 4셀(orin-nano cuda-vlm, xavier FP32 CPU 2모드, xavier cuda-vlm), nano INT8 CPU 1셀은 관측 timeout이며 메모리 증거 없음·노드 복구 전 제외한다.
-
-- 2026-11-02: κsafe A/B 중단(round-34만 관찰, F_run 33175, nano 제외 시작 상태 영향). κsafe revert + S4 삭제(`81448d64`, 리플레이 4 stage newBadTicks 0)를 server control-309로 배포. E5는 nano 재부팅 뒤 원본 시작 상태로 진행(사용자 결정).
-
-- 2026-11-02: E5 EvaluationRun API 첫 실검증. POST /api/v1/evaluations/load-scenarios가 403 → 코드 결함이 아니라 chill-evaluation-operator ClusterRole을 바인딩한 주체가 없었음(설계상 운영자가 바인딩). 전용 SA chill-system/chill-evaluation-runner를 만들어 chill-evaluation-operator와 chill-serving-manager를 바인딩함(label chill.dacs.io/purpose=e5-evaluation-api, 토큰 O/.token-evaluation 48h). chart 밖 live RBAC이므로 E5 뒤 정리 여부를 정한다.
-- 2026-11-02: EvaluationRun 사전 중단 2건은 자격 증명 미바인딩·KsafeAB의 nano 제외 잔류와 구 하네스(`58ab2ecc`) 게시 오류이며 부하 0회·측정 재시도 0회다. 지원 settings PUT으로 nano 제외만 제거했다. API 간극: `ControlSettings`에 `excludedNodes`가 없어 장비 제외 범위를 Run spec으로 선언할 수 없다(`api/v1alpha1/evaluationrun_types.go:191-199`); 하네스는 Run spec에 고정되므로 Main 승인으로 `57a2eca6` 포함 이미지만 새로 build/push하고 새 Run에서 재개한다(chart diff 0). 상세 `O/campaign/v2/evaluation-api-defects-20261102.md`.
-
-- 2026-11-02 08:10Z: EvaluationRun r2 stage 실패 후 profiler가 evidence를 /tmp(read-only)에 쓰려다 계속 실패한다(`internal/evaluation/controller/adapters.go:30` TempDir 누락). Run이 pool과 measured 인스턴스 5개를 쥔 채 멈춰 있다. 상세는 O/campaign/v2/evaluation-api-defects-20261102.md.
-- 2026-11-02 08:51Z: EvaluationRun r3(하네스 `656677dc`, digest `ae82ef33…`)도 측정 전 stage 중단: producer sampler `sys.argv` 요구(`hack/e5/d2/sample_cgroups.py:17`, 호출 `hack/e5/e5.py:1820`)와 운영 SSH forced-command(`/home/genesis1/.ssh/authorized_keys:5`) 불일치로 cgroup 0줄·IndexError → setup timebox(`e5.py:1999`). 재시도/round.py/코드변경/배포 없이 실패 게시(schema `serving-experiment.v1alpha1`, `serving/experiments.v1alpha1/4473d3f3-6e41-4831-baea-30456992edad/summary.json`); pool Returned·CleanupComplete=True·instances/측정 Pod/taint 모두 0. 상세 `O/campaign/v2/evaluation-api-defects-20261102.md`, 증거 `evaluation-api-20261102/r3-*`.
-
-- 2026-11-02 09:20Z: E5 API r4는 부하·drain까지 끝났으나 harness가 의도적으로 terminate한 SSH sampler의 종료 코드 255를 실패로 판정해 STOP(e5.py:2130@71bd49e8; harness 이미지 ssh가 SIGTERM에 255). 재현 probe 확인. 측정 판정 전 도구 결함이라 재측정 예외. 상세는 O/campaign/v2/evaluation-api-defects-20261102.md.
-- 2026-11-02 10:36Z: E5 API `evaluation-e5-3-7-20261102-n1`(server control-311 `bc5d00c0`, pinned harness `4b0ce1f2`)은 원본 r4 시작 상태로 GO 전 factor reset의 rasp5 lower-power에서 `reset requires actual Node mode and Ready readback`로 중단(`internal/serving/kube/manual_reset.go:411-416`); finish도 동일 실패. Published=True/NOT_EVALUATED, F_warm·F_run·J·M·D1 및 역사 비교 불가. 후속 5-7/7-7/5-8d 미실행·재시도0. instances/measurement Pod/taint/action 0이나 CleanupComplete=False라 pool 점유 유지(`internal/evaluation/controller/run.go:216-220`); 수동 해제하지 않음. 증거 `O/campaign/v2/evaluation-api-20261102/e5-4stage/3-7-failure/`.
-- 2026-11-02: Main의 Node 이벤트 확인으로 n1 직접 원인은 rasp5 NotReady 구간(10:33:55Z–10:37:21Z) 중 실행된 factor/finish reset의 Ready 조건 실패(`manual_reset.go:413-416`)로 확정했다(class·mode 정상); pool은 진단을 위해 그대로 유지한다.
-
-- 2026-11-02 10:55Z: n1 release는 202로 수락됐으나 pool이 반환되지 않음. evaluation controller의 release가 scheduler/state(62.7MiB) 전체를 4MiB 한도로 읽다 실패(run.go:475, adapters.go:62-67, runtime.go:32). 결정 대기.
-- 2026-11-02 12:03Z: `evaluation-e5-3-7-20261102-n2`는 원본 시작 상태(nano MNV b2 포함)·harness `4b0ce1f2`로 GO/Published 및 실행·정리 완료, 측정 FAIL/SLOFailed; MNV/PLC/Smol F_warm=2100/0/0, F_run=32575/2/0, M=38191/1206/0, D1=FAIL/FAIL/MET, J=54776.511133. GO raw 3/3 workload ready/start 확인; 54 결정 모두 Pending/target=null/search.examined=0(CPUBudgetInfeasible nano 54·orin 46), autonomy는 켜져 있음. pool Returned·instances/measurement taint 0; Main 요청으로 후속 stage 보류·진단(실행 실패 아님). 게시 `serving/experiments.v1alpha1/6d24b5a2-9a0b-489e-b692-4275be634b6d/summary.json`, 증거 `O/campaign/v2/evaluation-api-20261102/e5-4stage-n2/`.
-- 2026-11-02: n2 3-7을 **외부 부하 혼입으로 비교 무효**로 정정(API Published/FAIL 원본 유지). Main 확인: 별도 프로젝트 `/home/genesis1/ETRI/cheonbok/ETRI_preview`의 `benchframe.fleet`/`실측_실행기.py`가 측정 중 default/vib-*를 nano·jetsono에 생성(label vib-fleet-run, ownerRef 없음; CPU request nano2/1·jetsono2/4), 비서빙 quota가 reserved CPU를 초과해 계획을 막았다(`kube/scheduler.go:822-844`, `scheduler_replay.go:432-464`; `e5-4stage-n2/3-7-budget-suspect-pods.json`). CHILL a95b4f15/S4 삭제/κsafe revert 회귀로 해석하지 않으며 Main 지시로 후속 5-7/7-7/5-8d 미실행. CHILL pool 반환·instances/measurement taint0이나 외부 fleet는 계속 실행 중이므로 노드 독점 가능 아님. 상세 `O/campaign/v2/evaluation-api-defects-20261102.md:72`.
-- 2026-11-03: 구조 리팩토링(`docs/reports/structural-refactoring-audit-20261102.md` Core·R1–R8, E5 이름 제거) 배포 기준 SHA를 `9ccff96e`로 정한다. 근거: slice별 정식·ponytail 리뷰(`O/deployB/refactor-review-verdicts-20261103.md`), refactor-reviewer 독립 판정 PASS(F1–F6 수정 재확인, `O/deployB/refactor-reviewer-verdict-20261103.md`), 최종 SHA의 make test·lint·arch·gopls·helm·deployment-graph PASS, harness `evaluation-harness:9ccff96e@sha256:75490e96f293fb3e2e3b15fa1bc4cf6fb250ca31f4dbd142977b99ce35f5bc83`, 실행 목록 `O/deployB/refactor-runbook-20261103.md`. **리플레이 게이트는 생략한다(사용자 결정)**: 결정 변화를 의도한 변경이고, 저장 계약 변경으로 옛 기록을 읽을 수 없으며, 변환 입력은 정보 손실이 있다. 변환 산출물은 사용하지 않으므로 삭제했다. 결정 검증은 다음 E5 실행으로 하며, 회귀하면 롤백 기준은 SHA `d4cbc15b`·live control-312/313이다. 저장 계약 4건(RunConfig v1alpha18·curve v1alpha10·finalized v16·raw, binding v2·g0-verdict.v2, κ archive `shared-cpu/`, campaignTrial)은 ADR 0019에 따라 단일 cutover로 처리한다(옛 작업 객체는 이중 reader 없이 삭제, 과거 원시·publication 보존).
-- 2026-11-03: **사용자 결정 A — 기존 프로파일 커버리지 측정 결과를 재측정 없이 새 저장 계약으로 한 번 변환해 재사용한다.** 대상은 usable 132셀, profile 264개, ProfilingRun 약 4,165개, BEO·MLIB evidence이고, 재측정 비용은 약 20시간이다. 변환 범위는 ca9d729a(RunConfig v1alpha18·curve-plan v1alpha10·finalized v16·raw active9/idle7)뿐이다. κ archive(7df19de8)는 캐시이므로 재계산하고, binding v2(d2aee696)는 커버리지와 무관하다. campaignTrial(eaffe053)은 완료된 BEO가 자식을 다시 projection하지 않아 손대지 않는다. hack/ 일회용 도구로 변환하며, 배포 코드에 옛 형식 reader를 두지 않는다(ADR 0019 이중 reader 금지는 유지하고, 데이터 변환만 예외로 한다). 원본 store 객체는 write-once라 옛 key에 그대로 남고, 기록된 원래 실행 조건(quota·threads 관측)은 지우지 않는다. 이 결정은 quota 조건(켜진 코어−1)에서 잰 profile을 공유 실행 근거로 재사용하므로, 구조 리팩토링 감사 보고서 §1 전환 경계(20행)와 R2(128행)의 예외다. 영향: E5 예측 오차에 측정 조건과 서빙 조건의 차이가 섞일 수 있다.
-- 2026-11-03: 커버리지 evidence 변환에서 profile이 259개에서 242개로 17개 줄어드는 것을 의도된 동작으로 승인한다(사용자 결정 A). 9ccff96e의 `internal/serving/kube/catalog.go:233-260` `latestConditionProfiles`는 CPU를 뺀 동일 조건을 최신 측정 하나로 합친다. 줄어드는 17개(12묶음)는 10/22~24에 같은 셀을 코어 수만 바꿔 잰 비최신 측정이다(목록 `O/deployB/coverage-migration-profile-loss-2026-11-03.tsv`). 원본은 store의 옛 key에 남는다. 합격 기준: profile 242개(소실 집합이 위 목록과 정확히 일치), 남은 profile의 energyPerInputJoules와 meanWallWatts 변화 0, usable 유지, 커버리지 usable 셀 132. 도구는 `hack/coverage-migrate`(4a3b47ac)이고 정식 리뷰에서 승인됐다. dry-run 결과 4개 기준 PASS, 객체 8,794개(2.38GB), 실패 0.
-- 2026-11-03: 구조 리팩토링 cutover는 §1 rollback 사전 조건에서 중단했다(클러스터 변경 없음). runbook §1/§9와 기존 결정은 control-312/313의 SHA를 d4cbc15b로 명시하지만, 실제 revision 177의 server/profiler image 태그는 각각 `pools-control-312-da79bb911887`, `pools-control-313-da79bb911887`이다. 이 실제 값은 실행 지시의 live facts와 일치하므로 rollback 대상을 임의로 바꾸지 않았다. 6개 제어 Deployment와 evidence-store는 모두 Ready 1/1, 호스트 디스크 79%(여유 380G). 변환 apply·삭제·scale·CRD/CM 변경·Helm upgrade는 미실행이며 restore/rollback은 불필요하다. acceptance와 §8 gate도 미실행이다. 증거: `O/deployB/refactor-cutover-20261103/stop-rollback-provenance.txt` 및 `stop-prerequisites-{deployments,pods,helm}.json`. 재개 전 rollback SHA 정합성과 §8의 신규 측정 보류 대 단일 gate Job 요구를 명시적으로 정리해야 한다.
-- 2026-11-03: 중단 기록 `1805766b`의 rollback SHA 문제는 Main이 해소했다(d4cbc15b는 da79bb91 대비 문서만 변경; 승인 rollback은 revision 177/control-312·313). 신규 측정 Job은 만들지 않고 CPU 부재 gate는 미실행으로 기록한다. 재개 후 §1 백업과 overlay 생성을 완료했으나 §2.1의 정확한 zero gate가 `AssertionError: ADR 0019: drain/delete blockers before deployment`로 실패했다. blocker는 총 75개: `spec.conditions` 없는 기존 DOM 73개(Complete 49/Failed 20/Insufficient 4)와 삭제 예정 미게시 EvaluationRun 2개. terminal DOM을 임의 삭제하거나 scientific spec을 backfill하지 않고 중단했다. 클러스터 변경·변환·Helm upgrade 없음, restore/rollback 불필요. 정확한 목록/원본과 중단 사유는 `O/deployB/refactor-cutover-20261103/{cutover-blockers.json,cutover-crs.json,stop-zero-gate.txt}`. 최종 배포 및 acceptance는 미실행이다.
-- 2026-11-03: 구조 리팩토링 `9ccff96e`를 Helm revision 178(운영 cutover control-314, image tag `refactor-9ccff96efb1f`)로 전환했다. 이전 중단 `1805766b`(rollback SHA는 문서 차이), `6421ae9b`(terminal DOM 73개 보존)는 Main/runbook 정정으로 해소했다. 미게시 `evaluation-e5-3m-20261102`, `evaluation-identity-mismatch-20261101`만 삭제하고 zero gate 0을 확인했다. `4a3b47ac` coverage-migrate apply는 19:58:58Z→20:55:13Z, 3375초(56분15초), 새 객체 8794개/2380479291 bytes, status 4397개, 실패 0이며 원본과 0600 status backup `O/coverage-migration-status-2026-11-03.json`(13469452 bytes)을 보존했다. 별도 CRD SSA는 Helm `.spec.versions` ownership 충돌 6건으로 중단했으나 Main 승인으로 중복 SSA를 생략하고 scheduler CM→Helm upgrade로 roll-forward했다(restore/CRD·scheduler 원복/rollback 없음). live CRD 15개 Established 및 9ccff96e versions exact 일치, 기존 runtime 선언 15개 exact 보존, console 리소스 10개 제거·query 생성, 실제 Pod container 21개 발행 index/platform digest 일치·Ready·restarts0, DS 10/10·4/4·1/1, Query 무토큰401/기존사용자200, 공개 profiles/coverage200, 실제 HTTPS API acceptance(profile242·소실17개 TSV 집합 일치·모든 batch energyPerInputJoules/meanWallWatts diff0·242 usable 유지·coverage132) PASS. Dashboard HTTP200·브라우저 overview OK이나 `/measurements`는 FAIL `DashboardResponseTooLarge`(coverage 9087217 bytes > 기존 8388608 bound); Main 결정대로 bound를 바꾸지 않고 follow-up `95f64ba0` summary 응답으로 해결한다. 입력 inventory/pagination은 이 UI 실패 뒤 미실행, 신규 측정 CPU 부재 gate도 미실행(새 Job/E5/자율 serving 보류). advisor-1 독립 API 비교는 Main 요청 대기다. 공유 ignored validator와 deployment review artifacts는 9ccff96e에서 재생성했다. 발행 image별 전체 index/platform/config digest·revision은 `O/deployB/refactor-cutover-20261103/published-images.json`, live acceptance는 같은 경로 `coverage-acceptance-live/acceptance.json`, SSA/UI 실패 증거와 최종 결과는 `failure-*`/`final-result.json`; 승인 harness `evaluation-harness:9ccff96e@sha256:75490e96f293fb3e2e3b15fa1bc4cf6fb250ca31f4dbd142977b99ce35f5bc83`는 재빌드하지 않았다. push 후마다 image prune 실행, 최종 호스트 disk79%/여유377G. 브라우저 토큰·임시 trust profile은 정리했고 W/M은 §10대로 제거한다.
-- 사용자 결정: 이미지 버전을 profile 유효 조건에서 제거, 현재 선언 최신 이미지로 실행. profile/raw RuntimeImage는 기록으로 유지. ADR 0019 예외. 위험: 다른 이미지에서 잴 측정값이 현재 이미지의 근거로 쓰임
-- 사용자 결정 A: 공개 profile 기록 242개와 현재 선택을 분리한다. 현재는 셀(model/class/path/powerMode)별 최신 측정 하나(동률 namespace/name/UID 사전순 최소), failed/partial도 그대로 표시하고 과거 성공 fallback은 없다. replacement annotation 우선. 성공 profile.MeasuredAt→MeasurementComplete.LastTransitionTime→zero이며 생성 시각으로 대신하지 않는다. usable 132는 절대 수용 조건이 아니고 실제 변화·원인을 보고한다.
-- 사용자 원칙: CHILL의 판단·거절은 최소화하고 사실을 표시하며 기본은 결정 A, 선택은 운영자에게 맡긴다. replacement spec 차이는 진단만, 대상 부재/자기 참조는 무시·표시; runtime declaration은 마지막 matching 선언으로 덮어쓰고 모호함 거절을 없앤다. coverage usable/problem 및 검증 profile의 catalog 진단은 실행 gate가 아니다. Node/GPU/artifact·데이터 손실·write-once·인증·실행 오류 안전 gate는 유지한다.
-- 유효 replacement 대상 원본은 기존처럼 공개 profile 목록에서만 제외(raw/status 보존)하고, spec 차이·잘못된 target·self 지정은 비차단 진단으로 처리하며, 최신 측정이 failed여도 과거 성공 기록은 공개 목록에서 삭제하지 않는다.
-- 2026-11-03: control-315 배포를 합격으로 판정한다(advisor-1 위임 판단). 새 단일 runner(f1fad9a0)의 첫 실사용이며 source 1b81e0d5, Helm rev 179다. 이미지 10종을 발행했고 runtime 선언 14개를 활성화했다(genesis2 CUDA 제외; GPU allocatable 0은 별도 운영 과제). runner는 accept 단계에서 STOP했다. 원인은 server에 readinessProbe가 없어 TLS listener가 cold start 6–7분 동안 열리지 않았는데 runner가 이를 transport-error로 처리한 것이다(runner 결함, refactor-reviewer가 수정 중). 수동 합격과 advisor-1 독립 대조는 모두 PASS다: profiles 242, 17개 손실 집합 정확히 일치, 측정값 변화 0, coverage usable 141(정책 A), summary route 5개 모두 8MiB 미만. 대시보드 /measurements는 실제 브라우저에서 렌더를 확인했다. 증거: `O/deployB/control-315-runner/main-manual-acceptance.md`.
-- 2026-11-03: control-316을 합격으로 판정한다(advisor-1 위임 판단). source 01969480, Helm rev 180. runner는 check_query에서 STOP했다. 원인은 전체 BEO 목록(13.2MB)이 8MiB 상한을 넘은 것으로, runner 결함이다(수정 70e15fac, 상한은 유지). runner 자동 profile 대조와 summary route 5개는 STOP 전에 PASS했다. advisor-1 독립 대조: profiles 242, 17개 손실 집합 정확히 일치, 측정값 변화 0, usable 141. cold start에서 coverage 200까지 걸린 시간이 343s에서 175s로 줄었다. advisor-3 실브라우저 확인: BEO 목록 호출은 모두 summary였고 4xx와 TooLarge는 0이다. 남은 결함(502 EvidencePassportUnavailable 12건, 1MB 초과 응답 26건)은 R19 c883b5c9 대상이다. 같은 날 대시보드 SA 토큰을 회전했다(노출 대응, 옛 토큰 401). 증거: `O/deployB/control-316-runner/main-manual-acceptance.md`, `O/deployB/token-rotation-20261103/result.txt`.
-- 2026-11-03: control-317을 합격으로 판정한다. source c883b5c9, Helm rev 181, server·query·dashboard, 사용자 승인. 새 runner가 STOP 없이 처음 끝까지 완주했다(346s, cold start에서 coverage 200까지 약 160s). advisor-1 독립 대조 PASS: profiles 242, 17개 손실 집합 정확히 일치, 측정값 변화 0, usable 141. advisor-3 실브라우저: 5xx 12→0, 중복 사용 셀 65→0. 1MB를 넘는 응답 23건은 남아 있다(최대는 BEO summary 1.79MB). 증거: `O/deployB/control-317-runner/main-acceptance.md`.
-- 2026-11-04: Main 승인으로 완료된 일회성 `hack/coverage-migrate`를 삭제한다(원본 도구 SHA `4a3b47ac`는 git history에 보존). control-314 변환 완료·실패 0 및 roll-forward 전용 정책으로 restore 경로의 보관 의무는 종료됐으며, immutable 원본 old keys·외부 status backup `/home/genesis1/.cache/chill-assets/ops/pools-deploy/coverage-migration-status-2026-11-03.json`·`O/deployB/`의 dry-run/loss/apply receipts는 수정·삭제하지 않는다.
+원시 승인과 운영 근거는 저장소 밖의 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`와 연결된 운영 근거에 보존한다.
