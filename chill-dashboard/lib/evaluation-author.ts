@@ -1,5 +1,5 @@
 import { parseSchedulerJSON, stringifySchedulerJSON } from "./scheduler.ts"
-import { evaluationCanSubmit, evaluationSameSpec } from "./evaluation-request.ts"
+import { evaluationSameSpec } from "./evaluation-request.ts"
 
 export type Spec = Record<string, unknown>
 export type LoadScenario = {name:string;uid:string;spec:Spec;inUse:string[];createdAt?:string}
@@ -60,22 +60,6 @@ export function adoptWorkloads(spec:Spec,changes:WorkloadChange[],selected:strin
   })}
 }
 export const canDeleteLoad=(item:LoadScenario)=>Array.isArray(item.inUse)&&item.inUse.length===0&&!!item.uid
-export const canCreateLoad=evaluationCanSubmit
-export function renameLoadWorkload(spec:Spec,index:number,name:string):Spec {
-  const workloads=records(spec.workloads),before=String(workloads[index]?.name??"")
-  if(before===name)return spec
-  const paths:(string|number)[][]=[["arrivalDistribution"],["traceRefs"],["seeds"],["datasetRefs"],...records(spec.parts).map((_,i)=>["parts",i,"rates"])]
-  if(workloads.some((workload,i)=>i!==index&&workload.name===name)||paths.some(path=>Object.hasOwn(object(specValue(spec,path)),name)))return spec
-  let next=patchSpec(spec,["workloads",index,"name"],name)
-  for(const path of paths) {
-    const map=object(specValue(next,path))
-    if(Object.hasOwn(map,before)) {
-      next=patchSpec(next,[...path,name],map[before])
-      next=patchSpec(next,[...path,before],undefined)
-    }
-  }
-  return next
-}
 export function removeLoadWorkload(spec:Spec,index:number):Spec {
   const name=String(records(spec.workloads)[index]?.name??"")
   let next=patchSpec(spec,["workloads"],records(spec.workloads).filter((_,i)=>i!==index))

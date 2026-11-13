@@ -89,7 +89,7 @@ test("provider leaves retention status to the live header instead of placing it 
     "next/navigation":{useSearchParams:()=>new URLSearchParams(),usePathname:()=>"/"},
     "@/lib/client":{useSession:()=>({token:"secret",epoch:1,config:{},signals:new Set()})},
     "@/lib/client-transport":{...transport,relay:()=>{}},
-    "@/lib/live":live,"@/lib/live-fixture":{},"@/lib/live-history":{},
+    "@/lib/live":live,"@/lib/live-history":{},
     "@/components/read-region":{SourceJSON:()=>null},
   }
   const source=readFileSync(new URL("./use-live.tsx",import.meta.url),"utf8")
@@ -153,7 +153,7 @@ test("provider seed reentry uses the current identity and cancels the previous i
       requests.push({path,token:requestToken,signal,resolve});return promise
     }},
     "@/lib/live":{...live,connectLive:()=>({close:()=>{},reconnect:()=>{}})},
-    "@/lib/live-fixture":{},"@/lib/live-history":history,
+"@/lib/live-history":history,
     "@/components/read-region":{SourceJSON:()=>null},
   }
   const source=readFileSync(new URL("./use-live.tsx",import.meta.url),"utf8")
@@ -180,7 +180,7 @@ test("provider seed reentry uses the current identity and cancels the previous i
   requests[1].resolve(response(requests[1]))
   await nextTurn()
   assert.equal([...cache.keys()].some(key=>key.includes('1,')),false,"a detached identity must not recreate its cache")
-  assert.ok(queryClient.getQueryData(["chill-live",2,null])?.eventArchive)
+  assert.ok(queryClient.getQueryData(["chill-live",2])?.eventArchive)
   nextCleanup.forEach(dispose=>dispose?.())
   path="/records"
   const awayCleanup=mount()

@@ -1,4 +1,4 @@
-import { parseSchedulerJSON, stringifySchedulerJSON } from "./scheduler.ts"
+import { parseSchedulerJSON } from "./scheduler.ts"
 import { evaluationDefinition, evaluationComparisons, type EvaluationComparison, type EvaluationDefinition } from "./evaluation-definition.ts"
 
 export type Published = Record<string, unknown>
@@ -49,31 +49,14 @@ function readOutcome(value:unknown):ExperimentOutcome|undefined {
     return [{id:stage.id,...axes(stage),...(injections===undefined?{}:{injections})}]
   }):undefined}
 }
-export function experimentOutcome(run:Experiment,stage?:ExperimentStage) {
-  const matches=stage?run.outcome?.stages?.filter(item=>item.id===stage.id):undefined
-  const source=stage?(matches?.length===1?matches[0]:undefined):run.outcome
-  const axis=(value:OutcomeAxis|undefined,key:"status"|"verdict")=>({value:value?.[key]??"미기록",reason:value?.reason??"미기록"})
-  return {execution:axis(source?.execution,"status"),measurement:axis(source?.measurement,"verdict"),cleanup:axis(source?.cleanup,"status")}
-}
-export function injectionRows(run:Experiment,stage:ExperimentStage) {
-  const plan=definitionStage(run,stage)?.failureInjection??[],matches=run.outcome?.stages?.filter(item=>item.id===stage.id)
-  const results=matches?.length===1?matches[0].injections??[]:[]
-  return [...new Set([...plan,...results].map(i=>i.id))].map(id=>{
-    const planned=plan.find(i=>i.id===id),candidates=results.filter(i=>i.id===id),result=candidates.length===1?candidates[0]:undefined
-    return {id,action:planned?.action??result?.action??"미기록",outcome:result?.outcome??"미기록",reason:result?.reason??"미기록",scheduledOffsetSeconds:result?.scheduledOffsetSeconds??planned?.offsetSeconds??null,actualOffsetSeconds:result?.actualOffsetSeconds??null}
-  })
-}
 export function historicalPublicationIDs(run:Experiment):string[] {
   return [...new Set((recordedComparisons(run)??[]).flatMap(c=>[c.left,c.right].flatMap(ref=>ref.historical?[ref.historical.publicationID]:[])))]
 }
-export const publishedText = (value:unknown):string => value == null ? "" : typeof value === "object" ? stringifySchedulerJSON(value) : String(value)
 export type PublishedMetric = {key:string;label:string;value:unknown;rawValue?:unknown;numerator:unknown;denominator:unknown;population:unknown;reason:unknown;source:string;unit?:string}
-
 
 export type ExperimentSubstage = Published & {alpha:number|null}
 export type ExperimentRow = {name:string;uid:unknown;definition:unknown;identitySource:unknown;missingReasons:Published;substages:ExperimentSubstage[]|null;metrics:PublishedMetric[];source:string;original:Published}
 export const finite = (value:unknown):number|null => typeof value==="number"&&Number.isFinite(value)&&value>=0?value:null
-
 
 export function definitionStage(run:Experiment,stage:Pick<ExperimentStage,"id">) {
   if(run.stages.filter(s=>s.id===stage.id).length!==1)return undefined
@@ -83,10 +66,4 @@ export function recordedComparisons(run:Experiment):EvaluationComparison[]|undef
   return run.definition?run.definition.spec.comparisons??[]:run.comparisons
 }
 
-
 export const experimentPath=(id:string)=>`v1/experiments/${encodeURIComponent(id)}`
-export function selectedExperimentStage(run:Experiment|undefined,id:string,stageID:string|null):ExperimentStage|undefined {
-  if(!id||run?.id!==id)return undefined
-  const stages=run.stages.filter(stage=>stage.id===stageID)
-  return stages.length===1?stages[0]:undefined
-}

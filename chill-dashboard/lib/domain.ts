@@ -51,9 +51,6 @@ export type WorkloadSummary = Omit<WorkloadView, "supportedInputs"> & { supporte
 type InferenceOutput = { outputs: { name: string; data: string[] }[] }
 
 export const resourceHref = (kind: string, name: string, uid: string, action = "") => `/${kind}/${encodeURIComponent(name)}${action ? `/${action}` : ""}?uid=${encodeURIComponent(uid)}`
-export const sloTarget = (spec: WorkloadSpec) => `${spec.slo.percentile}%의 요청을 ${spec.slo.targetLatency} 안에 처리`
-// Matches serving.Definition.Identity(): uid/generation/modelUID/modelGeneration/preprocessorUID/preprocessorGeneration.
-export const definitionIdentity = (applied: AppliedDefinition) => `${applied.uid}/${applied.generation}/${applied.model.uid}/${applied.model.generation}/${applied.preprocessor.uid}/${applied.preprocessor.generation}`
 
 // An empty dataset leaves datasetRef out; the service registers and waits with MissingDataset.
 export function workloadSpec(model: string, preprocessor: string, dataset: string, percentile: string, latency: string, admission: { policy: string; maxQueuedRequests: number }, requestLifetime = ""): WorkloadSpec {
@@ -67,11 +64,6 @@ export function workloadSpec(model: string, preprocessor: string, dataset: strin
   // Go duration syntax; the server checks lifetime bounds against the SLO and 129s.
   if (requestLifetime && !/^[+-]?(?:0|(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))+)$/.test(requestLifetime)) throw new Error("요청 최종 기한은 시간과 단위로 적어 주세요. 예: 2s, 1m30s")
   return { modelRef: { name: model }, preprocessorRef: { name: preprocessor }, ...(dataset ? { datasetRef: { name: dataset } } : {}), slo: { percentile: p, targetLatency: latency }, admission: { policy: admission.policy, maxQueuedRequests: admission.maxQueuedRequests }, ...(requestLifetime ? { requestLifetime } : {}) }
-}
-export function positiveIntegers(text: string): number[] {
-  const parts = text.split(/[\s,]+/).filter(Boolean)
-  if (!parts.length || parts.some(p => !/^\d+$/.test(p) || Number(p) < 1 || Number(p) > 2147483647)) throw new Error("1부터 2147483647까지 정수 목록이 필요합니다.")
-  return parts.map(Number)
 }
 function base64(bytes: Uint8Array): string {
   let text = ""

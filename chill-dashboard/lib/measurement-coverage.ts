@@ -1,36 +1,12 @@
 import type { ExecutionPath, ModelSpec } from "./domain.ts"
-import type { BatchProgress, InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementDisplayStatus, MeasurementFailure, MeasurementPlanSpec, ModelCompatibility, ProfilingRun } from "./read-types.ts"
+import type { BatchProgress, InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementDisplayStatus, MeasurementPlanSpec, ProfilingRun } from "./read-types.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
-import { measurementQuality, measurementSchedulerUsed } from "./measurement-assessment.ts"
 
 export function deviceLabel(name:string) {
   return name.replace(/^edge-server-/,"").replace(/^jetson-agx-orin-/,"AGX Orin ").replace(/^jetson-orin-nano-/,"Orin Nano ").replace(/-/g," ")
 }
-export function conditionLabel(condition:Record<string,unknown>) {
-  const source=condition.metricSource as {nodeName?:string}|undefined
-  const state=condition.state as {targetNode?:string}|undefined
-  const active=condition.activeProtocol as {dataset?:{name?:string}|string}|undefined
-  return `Node ${source?.nodeName??state?.targetNode??condition.nodeUID??"미지정"} / 데이터셋 ${typeof active?.dataset==="string"?active.dataset:active?.dataset?.name??"미지정"}`
-}
-export function powerModeLabel(name:string,activeWatts:readonly number[]=[]) {
-  const watts=activeWatts.filter(Number.isFinite)
-  return watts.length?`${name} · 실측 ${Math.min(...watts).toFixed(1)}${Math.min(...watts)!==Math.max(...watts)?`–${Math.max(...watts).toFixed(1)}`:""} W`:`${name} · 전력 미확인`
-}
-export function measurementAge(value:string,now=Date.now()) {
-  const timestamp=Date.parse(value)
-  if(!Number.isFinite(timestamp))return "시각 미기록"
-  const days=Math.floor((now-timestamp)/86400000)
-  return days<0?"시각 확인 필요":days===0?"오늘":`${days}일 전`
-}
 
 export type CoverageModel = InventoryView["models"][number] & {spec:ModelSpec}
-export function coverageSelection(search:string,cell:{id:string;model:{uid:string};deviceClass:{uid:string}}|undefined,open:boolean) {
-  const next=new URLSearchParams(search)
-  if(cell)next.set("group",`${cell.model.uid}/${cell.deviceClass.uid}`)
-  if(open&&cell)next.set("cell",cell.id);else next.delete("cell")
-  next.delete("variant")
-  return next
-}
 
 // Hide only proven declaration conflicts; a missing runtime declaration remains unknown.
 export function coveragePathVisible(cell:MeasurementCoverageCell,inventory?:InventoryView) {
@@ -40,31 +16,14 @@ export function coveragePathVisible(cell:MeasurementCoverageCell,inventory?:Inve
   if(model&&path&&cls&&staticCompatibility(model,path,cls).state==="unsupported")return false
   return cell.support.verdict!=="Incompatible"&&!cell.support.reasons.some(reason=>reason.code==="ArtifactArchitectureMismatch")
 }
-export function coverageFilterVisible(cell:MeasurementCoverageCell,inventory?:InventoryView,status="",reason="") {
-  const supported=coveragePathVisible(cell,inventory)
-  return status==="unsupported"?!supported&&(!reason||coverageSupportReasons(cell).some(item=>item.code===reason)):supported
-}
 export function coverageSupportReasons(cell:MeasurementCoverageCell) {
   return cell.support.reasons.length?cell.support.reasons:[{code:"DeclarationMismatch",message:"장치·실행 경로 불일치"}]
-}
-export function coverageWatts(cells:MeasurementCoverageCell[]) {
-  return cells.flatMap(cell=>cell.variants.flatMap(variant=>variant.resultRows.flatMap(row=>row.activeWatts!==null&&Number.isFinite(row.activeWatts)?[row.activeWatts]:[])))
-}
-export function coverageModes(cells:MeasurementCoverageCell[]) {
-  return [...new Set(cells.map(cell=>cell.powerMode))].sort((a,b)=>{
-    const left=coverageWatts(cells.filter(cell=>cell.powerMode===a)),right=coverageWatts(cells.filter(cell=>cell.powerMode===b))
-    return (left.length?Math.min(...left):Infinity)-(right.length?Math.min(...right):Infinity)||a.localeCompare(b)
-  })
 }
 export function coverageVariant(cell:MeasurementCoverageCell,id?:string) {
   return cell.variants.find(variant=>variant.id===id)
     ??cell.variants.find(variant=>variant.assessment.displayStatus===cell.assessment.displayStatus)
     ??cell.variants.find(variant=>variant.id===cell.representative?.variantId)
     ??cell.variants[0]
-}
-export function coverageRepresentative(cell:MeasurementCoverageCell):MeasurementCoverageCell["representative"] {
-  const variant=coverageVariant(cell),row=variant?.resultRows.find(row=>row.batch===1)??variant?.resultRows[0]
-  return variant&&row?{variantId:variant.id,batch:row.batch,incrementalJoulesPerItem:row.incrementalJoulesPerItem,p95Milliseconds:row.p95Milliseconds}:null
 }
 export function coverageProgress(cell:MeasurementCoverageCell) {
   const variant=coverageVariant(cell)
@@ -77,45 +36,6 @@ export function coverageMeasurementStatus(cell:MeasurementCoverageCell,inventory
   if(status!=="usable")return status
   return progress?.target.length&&!progress.target.every(batch=>progress.measured.includes(batch))?"insufficient":"usable"
 }
-export function coverageQuality(cell:MeasurementCoverageCell) {
-  const assessments=cell.variants.length?cell.variants.map(variant=>variant.assessment):[cell.assessment]
-  const checks=assessments.flatMap(assessment=>assessment.checklist?.checks??[])
-  const labels:Record<string,string>={ActiveTrials:"실행 반복 부족",IdleTrials:"유휴 반복 부족",IncrementalConfidence:"오차 범위 미확인",ClientLatency:"지연 표본 미확인",PowerSource:"전력 출처 미확인",FrozenPowerWindowPolicy:"전력 기록 기준 미확인",ExactConditionLineage:"측정 조건 연결 미확인",TargetBatch:"배치 근거 미확인",DatasetInputContract:"입력 연결 미확인"}
-  const reasons=[...new Map(checks.filter(check=>check.result!=="pass").map(check=>{const code=check.reason==="PolicyUnset"&&check.result==="unknown"?"PolicyUnset":check.code;return [code,{code,label:code==="PolicyUnset"?"전력 기록 정책 미설정":labels[check.code]??"기타 품질 확인"}]})).values()]
-  if(!checks.length)reasons.push({code:"QualityUnavailable",label:"품질 근거 없음"})
-  return {...measurementQuality(assessments),reasons}
-}
-export function coverageQualityReasons(cells:MeasurementCoverageCell[]) {
-  const counts=new Map<string,{code:string;label:string;count:number}>()
-  for(const cell of cells)for(const reason of coverageQuality(cell).reasons) {
-    const prior=counts.get(reason.code)
-    if(prior)prior.count++;else counts.set(reason.code,{...reason,count:1})
-  }
-  return [...counts.values()].sort((a,b)=>b.count-a.count)
-}
-
-export function coverageHasEvidence(cell:MeasurementCoverageCell) {
-  return cell.assessment.evidence?.available||cell.variants.some(variant=>variant.assessment.evidence?.available||variant.resultRows.length>0||variant.assessment.checklist?.checks.length>0)
-}
-export function coverageScopeCounts(scope:MeasurementCoverageCell[],inventory?:InventoryView) {
-  const cells=scope.filter(cell=>coveragePathVisible(cell,inventory))
-  let measuredCells=0,measuredBatches=0,targetBatches=0
-  for(const cell of cells) {
-    const progress=coverageProgress(cell)
-    if(coverageMeasurementStatus(cell,inventory)==="usable")measuredCells++
-    if(progress?.target.length) {
-      measuredBatches+=progress.measured.filter(batch=>progress.target.includes(batch)).length
-      targetBatches+=progress.target.length
-    }
-  }
-  return {cells:cells.length,unsupportedCells:scope.length-cells.length,measuredCells,measuredBatches,targetBatches,
-    missingTargetCells:cells.filter(cell=>!coverageProgress(cell)?.target.length).length,
-    usedCells:cells.filter(cell=>measurementSchedulerUsed(cell.assessment)===true).length,
-    unknownQualityCells:cells.filter(cell=>coverageHasEvidence(cell)&&coverageQuality(cell).state==="unknown").length,
-    noEvidenceCells:cells.filter(cell=>!coverageHasEvidence(cell)).length,
-    policyUnsetCells:cells.filter(cell=>coverageHasEvidence(cell)&&coverageQuality(cell).state==="unknown"&&coverageQuality(cell).reasons.some(reason=>reason.code==="PolicyUnset")).length,
-    failedCells:cells.filter(cell=>coverageMeasurementStatus(cell,inventory)==="problem").length}
-}
 export function coverageBatchState(progress:BatchProgress|null,batch:number) {
   if(!progress)return "unknown"
   if(progress.measured.includes(batch))return "measured"
@@ -123,15 +43,6 @@ export function coverageBatchState(progress:BatchProgress|null,batch:number) {
   if(progress.missing.includes(batch))return "missing"
   if(progress.unknown.includes(batch))return "unknown"
   return progress.target.includes(batch)?"missing":"outside"
-}
-
-export function coverageProfileQuery(cell:MeasurementCoverageCell) {
-  return new URLSearchParams({view:"summary",summary:"v2",model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"50"})
-}
-export function coverageFailureHref(failure:MeasurementFailure,namespace:string,returnTo:string) {
-  if(failure.runName)return `/measurements/requests?${new URLSearchParams({namespace:failure.runNamespace||namespace,run:failure.runName,uid:failure.runId.split("/").at(-1)??"",returnTo})}`
-  const [requestNamespace,requestName,uid]=failure.requestId.split("/")
-  return `/measurements/requests/${encodeURIComponent(requestName)}?${new URLSearchParams({namespace:requestNamespace||namespace,uid:uid??"",returnTo})}`
 }
 export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:string,returnTo:string,variantId?:string) {
   const variant=cell.variants.find(variant=>variant.id===variantId),condition=variant?.condition
@@ -146,43 +57,16 @@ export function staticCompatibility(model:Pick<CoverageModel,"spec">, path:Execu
   if(path.runtime.backend==="rknnlite"&&cls.accelerator&&cls.accelerator!=="rk3588-npu")return {state:"unsupported",reason:`RKNNLite는 rk3588-npu 전용입니다. 장치 가속기: ${cls.accelerator}`}
   return {state:"candidate",reason:"선언상 후보 · 실제 runtime 지원 미확인"}
 }
-export type CompatibilityRead = {node:string;selection?:ModelCompatibility["selection"];data?:ModelCompatibility;error?:string}
-export function serverCompatibility(fallback:Compatibility, reads:CompatibilityRead[]):Compatibility {
-  if(fallback.state==="unsupported")return fallback
-  if (!reads.length) return fallback
-  const reason=reads.map(read=>`${read.node}: ${read.error??read.data?.reasons.map(reason=>`${reason.message} (${reason.code})`).join(" / ")??"미조회"}`).join(" · ")
-  if (reads.some(read=>read.error||!read.data)) return {state:"unknown",reason:`지원 확인 불가 — ${reason}`}
-  if (reads.every(read=>read.data?.verdict==="Compatible")) return {state:"candidate",reason:"정적 실행 지원 확인 · 측정 완료·Ready·admission 보장 아님"}
-  if (reads.every(read=>read.data?.verdict==="Incompatible")) return {state:"unsupported",reason:`지원 안 함 — ${reason}`}
-  return {state:"unknown",reason:`지원 확인 불가 — ${reason}`}
-}
 
 export function runAttempt(run:ProfilingRun) {
   const raw=run.labels?.["edge.dacs.io/attempt"]
   return raw&&/^[1-9]\d*$/.test(raw)&&Number.isSafeInteger(Number(raw))?`${raw}회차`:"회차 기록 없음"
 }
-
-
-export function stableCondition(value:unknown):string {
-  return JSON.stringify(value, (_key,item) => typeof item === "bigint" ? item.toString() : item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item)
-}
-export function planVariant(spec:MeasurementPlanSpec) {
-  return stableCondition({state:spec.state,activeProtocol:spec.activeProtocol,idleProtocol:spec.idleProtocol})
-}
 export type RunSpec = {candidate?:MeasurementPlanSpec["state"]["candidate"];targetNode?:string;measurement?:{batch?:number;workloadMode?:string;dataset?:string;[key:string]:unknown};metricObservation?:unknown}
 export const runSpec = (run:ProfilingRun) => run.spec as RunSpec
-export function runGroupKey(run:ProfilingRun) {
-  const spec = runSpec(run), {batch:_batch,...measurement} = spec.measurement ?? {}
-  void _batch
-  return stableCondition({namespace:run.namespace,candidate:spec.candidate,targetNode:spec.targetNode,measurement,metricObservation:spec.metricObservation})
-}
 export function currentRunCondition(run:ProfilingRun,type:string) {
   return run.status.conditions?.find(condition => condition.type === type && condition.observedGeneration === run.generation)
 }
-
-
-
-
 
 export type MeasurementPrefill = {active:boolean;values:Record<string,string>;errors:string[];returnTo:string;node:string}
 export function resolveMeasurementPrefill(params:URLSearchParams,namespace:string,inventory:InventoryView):MeasurementPrefill {

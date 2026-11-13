@@ -23,22 +23,6 @@ function nanosTimestamp(at:bigint):string {
   return new Date(Number(seconds)*1000).toISOString().replace(".000Z",`${fraction?`.${fraction}`:""}Z`)
 }
 
-/** Split only between UTC buckets, never through a measured bucket. */
-export function powerSeriesPaths(from:string,to:string,bucket:PowerBucket="5s"):string[]|null {
-  if(!powerSeriesPath(from,to,bucket))return null
-  const width=BigInt(POWER_BUCKETS[bucket])*1000000n,limit=900000000000n,end=timestampNanos(to)!
-  let left=timestampNanos(from)!,start=from
-  const paths:string[]=[]
-  while(left<end) {
-    // A coarse 1h bucket has at most two rows: keep it whole rather than change its resolution.
-    const right=end-left<=limit||width>limit?end:(left+limit)/width*width
-    const finish=right===end?to:nanosTimestamp(right)
-    paths.push(powerSeriesPath(start,finish,bucket)!)
-    left=right;start=finish
-  }
-  return paths
-}
-
 const windowKeys=["scope","wholePoolJoules","wholePoolMeanWatts","activePoolJoules","activePoolMeanWatts","complete","readFailures","maximumSampleGapSeconds","reasons","gapUntil","coverage"] as const
 const nodeKeys=["node","meter","scope","meterJoules","meterComplete","gapSeconds","gapFraction","sourceIdentity","joules","meanWatts","samples","readFailures","maximumSampleGapSeconds","sourceTimestampAbsent","observedSamples","firstObservedAt","lastObservedAt","reasons"] as const
 const optionalNodeKeys:Record<string,true>={observedSamples:true,firstObservedAt:true,lastObservedAt:true}
@@ -82,13 +66,6 @@ export function parsePowerSeriesJSON(text:string):OperatingPowerSeries {
   return {from,to,bucketNanos,buckets}
 }
 
-/** No partial timeline: every requested chunk must have succeeded. */
-export function mergePowerSeriesChunks(chunks:readonly (OperatingPowerSeries|undefined)[]):OperatingPowerSeries|undefined {
-  if(!chunks.length||chunks.some(chunk=>!chunk))return undefined
-  const complete=chunks as OperatingPowerSeries[]
-  return {from:complete[0].from,to:complete.at(-1)!.to,bucketNanos:complete[0].bucketNanos,buckets:complete.flatMap(chunk=>chunk.buckets)}
-}
-
 /** Keep true historical intervals only where they do not overlap a live interval. */
 export function mergePowerSeries(seed:OperatingPowerSeries|undefined,metrics:LiveMetrics[],end:number,retentionMS=900000):PowerPoint[] {
   const live:PowerPoint[]=metrics.map(row=>({from:Date.parse(row.bucketAt),to:Date.parse(row.bucketAt)+1000,wholeWatts:row.pool.wholeWatts,activeWatts:row.pool.activeWatts,nodes:Object.fromEntries(Object.entries(row.nodes).map(([uid,node])=>[uid,node.watts]))})).filter(row=>row.to>end-retentionMS&&row.to<=end).sort((a,b)=>a.from-b.from)
@@ -99,17 +76,4 @@ export function mergePowerSeries(seed:OperatingPowerSeries|undefined,metrics:Liv
     return liveIndex===live.length||live[liveIndex].from>=row.to
   })
   return [...history,...live].sort((a,b)=>a.from-b.from).slice(-900)
-}
-
-/** Null intervals and missing time both break the line. Measured zero is not missing. */
-export function powerSegments(points:PowerPoint[],nodeUID?:string):PowerPoint[][] {
-  const segments:PowerPoint[][]=[]
-  let current:PowerPoint[]=[]
-  for(const point of points){
-    const watts=nodeUID?point.nodes[nodeUID]:point.wholeWatts
-    if(watts==null){current=[];continue}
-    if(!current.length||current.at(-1)!.to!==point.from){current=[];segments.push(current)}
-    current.push(point)
-  }
-  return segments
 }

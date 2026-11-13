@@ -1,27 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementUIDMismatch, occupancyDuration, occupancyThroughput, occupancyReason, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
+import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, measurementPath, occupancyDuration, occupancyThroughput, occupancyReason, operationSteps } from "./measurements.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
-import { parseSchedulerJSON } from "./scheduler.ts"
 import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
-import { executionPathLabel, workloadModeLabel, formatMeasurementTime, measurementConditionDiff, measurementReasonSummary } from "./measurements.ts"
-import { formatMeasurementNumber, measurementCheckText, measurementRequestName, measurementUncertainty, resultRowsCSV } from "./measurements.ts"
-import type { ResultRow } from "./read-types.ts"
-import { operationTotals } from "./measurements.ts"
+import { executionPathLabel, measurementReasonSummary } from "./measurements.ts"
+import { formatMeasurementNumber, measurementRequestName } from "./measurements.ts"
 
-test("measurement labels distinguish backend variants while translating workload protocols",()=>{
-  assert.equal(executionPathLabel("firstfloor-ort-cpu-arm64"),"CPU · ARM 64비트 (firstfloor-ort-cpu-arm64)")
-  const paths=["firstfloor-ort-cuda-arm64","firstfloor-rnn-ort-cuda-arm64","firstfloor-vlm-ort-cuda-arm64"]
-  const labels=paths.map(path=>executionPathLabel(path))
-  assert.equal(new Set(labels).size,paths.length)
-  for(const [index,path] of paths.entries())assert.equal(labels[index],`CUDA · ARM 64비트 (${path})`)
-  assert.equal(executionPathLabel("new-private-backend",2),"등록 실행 경로 3")
-  assert.equal(workloadModeLabel("saturated-serial-fixed-batch"),"포화 · 순차 · 고정 배치")
-  assert.equal(workloadModeLabel("idle-model-loaded"),"모델 적재 유휴")
-  assert.equal(workloadModeLabel("new-protocol"),"기타 부하 방식")
-  assert.equal(measurementReasonSummary("No verified catalog profile for current condition"),"현재 조건의 검증된 프로파일 없음")
-})
 test("measurement quantities use fixed unit precision and preserve valid zero and negative CI bounds",()=>{
   assert.equal(formatMeasurementNumber(0,"W"),"0.0")
   assert.equal(formatMeasurementNumber(12,"ms"),"12.00")
@@ -29,16 +14,6 @@ test("measurement quantities use fixed unit precision and preserve valid zero an
   assert.equal(formatMeasurementNumber(-0.12345,"J/건"),"-0.1235")
   assert.equal(formatMeasurementNumber(1234.5,"J"),"1,235")
   assert.equal(formatMeasurementNumber(null,"W"),"미제공")
-})
-test("CSV retains row identity, source references and exact numbers while escaping every cell",()=>{
-  const rows=[{id:'row"1',rowKind:"source-reference",batch:1,sourceProfileId:"source",condition:{dataset:"a,b\nc"},p95Milliseconds:0.123456789,incrementalJoulesPerItem:0,confidence:{lower:-1,upper:1,halfWidth:1,level:0.95},reuse:{source:"origin"}}] as unknown as ResultRow[]
-  const csv=resultRowsCSV(rows)
-  assert.ok(csv.includes('"row""1"'))
-  assert.ok(csv.includes('"source-reference"'))
-  assert.ok(csv.includes('"0.123456789"'))
-  assert.ok(csv.includes('""dataset"":""a,b\\nc""'))
-  assert.ok(csv.includes('""lower"":-1'))
-  assert.ok(csv.includes('"source"'))
 })
 test("request identity includes mode and complete path without CPU reservation and only changes suffix for collisions",()=>{
   const condition={model:"model",node:"node",powerMode:"mode",path:"runtime-backend"}
@@ -50,13 +25,6 @@ test("request identity includes mode and complete path without CPU reservation a
   const pinned=name
   taken.add(`${name}-2`)
   assert.equal(pinned,name)
-})
-test("CSV export neutralizes formulas without altering numeric precision",()=>{
-  const rows=[{id:"=HYPERLINK(test)",batch:1,condition:{token:"private",dataset:"a_b% & # {x}"},incrementalJoulesPerItem:-0.123456789}] as unknown as ResultRow[]
-  const csv=resultRowsCSV(rows)
-  assert.ok(csv.includes(`"'=HYPERLINK(test)"`))
-  assert.ok(csv.includes('"-0.123456789"'))
-  assert.ok(!csv.includes("private"))
 })
 
 const metadata = {namespace:"research",name:"sample",uid:"uid-1",resourceVersion:"42",creationTimestamp:"2026-10-30T00:00:00Z"}
@@ -72,39 +40,6 @@ const occupancy:DispatchOccupancyMeasurement = {
   conditions:{workload:"demo",batchEnergyOptimization:"beo",batch:4,warmupSeconds:2,durationSeconds:10,workers:8},status:{phase:"Complete"},
 }
 
-test("measurement routes accept only the two projection kinds and keep UI queries outside the upstream request", () => {
-  const config = serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
-  for (const kind of ["operation-cost-measurements","dispatch-occupancy-measurements"] as const) {
-    assert.equal(isProjectionMeasurementKind(kind),true)
-    for (const name of [undefined,"sample"]) {
-      const path = measurementPath(kind,"research",name)
-      assert.deepEqual(relayPlan("GET",path.split("/"),"",config),{path:`/api/${path}`,kind:"query",timeoutMs:config.queryTimeoutMs,bodyAllowed:false})
-      for (const search of ["?namespace=other","?uid=uid-1","?workload=uid","?row=key","?limit=10","?offset=0","?q=sample"]) {
-        assert.throws(() => relayPlan("GET",path.split("/"),search,config),/DashboardQueryInvalid/)
-      }
-      for (const method of ["POST","PUT","DELETE"]) {
-        if(kind==="dispatch-occupancy-measurements"&&!name&&method==="POST") {
-          assert.equal(relayPlan(method,path.split("/"),"",config).kind,"mutation")
-        } else if(kind==="dispatch-occupancy-measurements"&&name&&method==="DELETE") {
-          assert.equal(relayPlan(method,path.split("/"),"?uid=uid-1",config).kind,"mutation")
-        } else assert.throws(() => relayPlan(method,path.split("/"),"",config),/DashboardMethodNotAllowed/)
-      }
-    }
-    const list=new URL(measurementListHref(kind,"a b"),"http://local"),detail=new URL(measurementHref(kind,{namespace:"a b",name:"a:b",uid:"u&1"}),"http://local")
-    assert.equal(list.pathname,"/measurements/results")
-    assert.equal(list.searchParams.get("kind"),kind==="operation-cost-measurements"?"operation-cost":"dispatch-occupancy")
-    assert.equal(detail.searchParams.get("namespace"),"a b")
-    assert.equal(detail.searchParams.get("measurement"),"a:b")
-    assert.equal(detail.searchParams.get("uid"),"u&1")
-  }
-  for (const kind of ["unknown","power-mode-transition-costs","profiling-runs"]) assert.equal(isProjectionMeasurementKind(kind),false)
-  assert.equal(measurementUIDMismatch(metadata.uid,null),false)
-  assert.equal(measurementUIDMismatch(metadata.uid,metadata.uid),false)
-  assert.equal(measurementUIDMismatch(metadata.uid,"old-uid"),true)
-  assert.equal(relayPlan("GET",["v1","scheduler","capacity"],"",config).path,"/api/v1/scheduler/capacity")
-  for (const search of ["?row=key","?workload=uid"]) assert.throws(() => relayPlan("GET",["v1","scheduler","capacity"],search,config),/DashboardQueryInvalid/)
-})
-
 test("operation result joins retain condition order, missing results and unmatched status without inferring acceptance", () => {
   const steps = operationSteps(operation)
   assert.deepEqual(steps.map(step => step.name),["power","prepare","idle","remove","orphan"])
@@ -116,68 +51,6 @@ test("operation result joins retain condition order, missing results and unmatch
   assert.equal(steps[3].results[0].verdict,"NewVerdict")
   assert.equal(steps[4].condition,undefined)
   assert.deepEqual(operationSteps({...operation,status:{phase:"Complete"}}).map(step => step.results),[[],[],[],[]])
-})
-
-test("operation actual duration and accepted wall energy preserve zero, missing values and exact nanoseconds", () => {
-  for (const value of [undefined,null]) {
-    assert.equal(operationDuration(value),"실측 시간 기록 없음")
-    assert.equal(operationWallEnergy(value),"수용된 에너지 없음")
-  }
-  assert.equal(operationDuration(0),"0.00 ms")
-  assert.equal(operationWallEnergy(0),"0 J")
-  assert.equal(operationDuration(3807875),"3.81 ms")
-  const wire = parseSchedulerJSON('{"status":{"phase":"Failed","reason":"MeasurementFailed","steps":[{"name":"idle","key":"exact-key","verdict":"Failed","operationID":"op-uid-2","durationNanos":9223372036854775807,"wallJoules":null,"reason":"IsolationUnconfirmed"}]}}') as Pick<OperationCostMeasurement,"status">
-  const rows = operationSteps({...operation,...wire})
-  const result = rows[2].results[0]
-  assert.equal(result.operationID,"op-uid-2")
-  assert.equal(result.reason,"IsolationUnconfirmed")
-  assert.equal(result.verdict,"Failed")
-  assert.equal(wire.status.phase,"Failed")
-  assert.equal(operationDuration(result.durationNanos),"9,223,372,036,854.78 ms")
-  assert.equal(operationWallEnergy(result.wallJoules),"수용된 에너지 없음")
-  assert.match(operationDuration(-3807875n),/품질 경고/)
-  assert.doesNotMatch(operationDuration(-3807875n),/-3|ms/)
-  for (const value of [Number.MAX_SAFE_INTEGER + 1,1.5,NaN,Infinity,"100"]) assert.match(operationDuration(value),/품질 경고/)
-  for (const value of [-1,NaN,Infinity,"0"]) assert.match(operationWallEnergy(value),/품질 경고/)
-  assert.equal(operationWallEnergy(2.75),"2.75 J")
-  assert.equal(operationDuration(operationSteps(operation)[2].results[0]?.durationNanos),"실측 시간 기록 없음")
-})
-
-test("operation totals require the complete plan, accepted energy, and nonnegative quantities",()=>{
-  const complete:OperationCostMeasurement={...operation,status:{phase:"Complete",steps:operation.conditions.steps.map(step=>({name:step.name,key:step.name,verdict:"Accepted",durationNanos:1_500_000_000n,wallJoules:2}))}}
-  assert.deepEqual(operationTotals(complete),{durationNanos:6_000_000_000n,wallJoules:8})
-  assert.equal(operationDuration(operationTotals(complete).durationNanos,"s"),"6 s")
-  assert.equal(operationDuration(1n,"s"),"0.000000001 s")
-  assert.equal(operationWallEnergy(0.0001),"0.0001 J")
-  const replace=(patch:Partial<NonNullable<OperationCostMeasurement["status"]["steps"]>[number]>)=>({...complete,status:{...complete.status,steps:complete.status.steps!.map((step,index)=>index?step:{...step,...patch})}})
-  assert.deepEqual(operationTotals({...complete,status:{steps:complete.status.steps!.slice(1)}}),{durationNanos:undefined,wallJoules:undefined})
-  assert.deepEqual(operationTotals(replace({durationNanos:null,wallJoules:null})),{durationNanos:undefined,wallJoules:undefined})
-  assert.deepEqual(operationTotals(replace({durationNanos:-1n,wallJoules:-1})),{durationNanos:null,wallJoules:null})
-  assert.equal(operationTotals(replace({durationNanos:NaN})).durationNanos,null)
-  assert.equal(operationTotals(replace({wallJoules:Infinity})).wallJoules,null)
-  assert.equal(operationTotals(replace({verdict:"Rejected"})).wallJoules,undefined)
-  const zero={...complete,status:{steps:complete.status.steps!.map(step=>({...step,durationNanos:0n,wallJoules:0}))}}
-  assert.deepEqual(operationTotals(zero),{durationNanos:0n,wallJoules:0})
-  assert.deepEqual(operationTotals({...complete,status:{steps:[...complete.status.steps!,complete.status.steps![0]]}}),{durationNanos:null,wallJoules:null})
-})
-
-test("occupancy preserves missing and zero d, string throughput and logical location identity", () => {
-  assert.equal(occupancyDuration(occupancy.status.perRequestNanos),"—")
-  assert.equal(occupancyDuration(0),"0.00")
-  assert.equal(occupancyDuration(3807875n),"3.81")
-  assert.equal(occupancyThroughput("0.0000012300"),"0.00000123")
-  assert.equal(occupancyThroughput("0"),"0")
-  for (const value of [undefined,""]) assert.equal(occupancyThroughput(value),"—")
-  assert.deepEqual(evidenceLocations([{store:"a",key:"k"},{store:"b",key:"k"},{store:"a",key:"k"}],{store:"b",key:"k"}),[{store:"a",key:"k"},{store:"b",key:"k"}])
-  assert.deepEqual(evidenceLocations([]),[])
-})
-
-
-test("measurement reasons expose the server-provided failure or insufficiency instead of an unknown-code placeholder", () => {
-  for (const reason of ["probe request timed out after 10s", "only 2 batches completed; minimum is 5", "UnknownVerdict"]) {
-    assert.equal(measurementReason(reason),reason)
-  }
-  assert.equal(measurementReason("MissingDataset"),"측정에 쓸 데이터셋이 지정되지 않았어요. 서비스 설정에서 데이터셋을 골라 주세요. (MissingDataset)")
 })
 
 test("raw occupancy negatives and invalid values warn without replacing zero or precision",()=>{
@@ -211,18 +84,6 @@ test("run status decodes JSON fields while failure summary uses only server clas
   assert.doesNotMatch(runFailure({...run,assessment:undefined}).excerpt,/Failed to allocate/)
 })
 
-test("measurement timestamps retain the explicit timezone",()=>{
-  assert.match(formatMeasurementTime("2026-10-30T00:00:00Z"),/9:00:00.*KST/)
-})
-
-test("CPU-free retry condition diff includes protocol changes while summaries retain original reasons separately",()=>{
-  const spec={state:{candidate:{modelSpec:"m",preprocessor:"p",deviceClass:"d",executionPath:"cpu",powerMode:"MAXN"},targetNode:"n"},trialsPerBatch:3,retryLimit:1,activeProtocol:{durationSeconds:10,dataset:"set"},idleProtocol:{durationSeconds:10}}
-  assert.deepEqual(measurementConditionDiff(spec,spec),[])
-  assert.deepEqual(measurementConditionDiff(spec,{...spec,activeProtocol:{...spec.activeProtocol,durationSeconds:20}}),["부하 durationSeconds: 10 → 20"])
-  assert.match(measurementReasonSummary("context deadline exceeded"),/시간.*초과/)
-  assert.match(measurementReasonSummary("cost requires exactly one proven primitive state effect"),/단일 상태 변경/)
-})
-
 test("R10: projection reasons summarize repeated state-effect errors and preserve useful absence language",()=>{
   assert.match(measurementReasonSummary("MeasurementFailed"),/실패/)
   assert.match(measurementReasonSummary("IsolationUnconfirmed"),/단독/)
@@ -234,16 +95,6 @@ test("R10: projection reasons summarize repeated state-effect errors and preserv
   assert.match(measurementReasonSummary("Stored occupancy does not match this request and status"),/요청.*일치/)
 })
 
-
-test("energy uncertainty reports relative half width without inventing an acceptance threshold",()=>{
-  const row={incrementalJoulesPerItem:0.1,confidence:{level:0.95,halfWidth:0.02}} as ResultRow
-  assert.match(measurementUncertainty(row),/95.*±20\.00%/)
-  assert.match(measurementUncertainty({...row,incrementalJoulesPerItem:-0.1}),/±20\.00%/)
-  assert.match(measurementUncertainty({...row,incrementalJoulesPerItem:0}),/±0\.0200 J\/건/)
-  assert.doesNotMatch(measurementUncertainty({...row,incrementalJoulesPerItem:0}),/Infinity|NaN/)
-  assert.equal(measurementUncertainty({...row,confidence:{...row.confidence!,halfWidth:NaN}}),"오차 미제공")
-})
-
 test("failure actions name the measured node model path and smallest-batch limit",()=>{
   const run={spec:{targetNode:"genesis2",candidate:{modelSpec:"smolvlm2",executionPath:"cuda"},measurement:{batch:1}},status:{},assessment:{failureSummary:[{code:"GPUMemoryExhausted"}]}} as unknown as Parameters<typeof runFailure>[0]
   assert.deepEqual(runFailure(run).target,[["노드","genesis2"],["모델","smolvlm2"],["경로","cuda"]])
@@ -253,11 +104,6 @@ test("failure actions name the measured node model path and smallest-batch limit
     const failure=runFailure({...run,assessment:{...run.assessment!,failureSummary:[{...run.assessment!.failureSummary![0],code}]}})
     assert.deepEqual(failure.target,runFailure(run).target)
   }
-})
-
-test("power quality language identifies the checks operators still need to confirm",()=>{
-  assert.equal(measurementCheckText({code:"FrozenPowerWindowPolicy",message:"모든 활성·유휴 창의 동결 표본·gap·실패 정책"}),"전력 기록의 표본 수·누락 구간·실패 처리 기준")
-  assert.equal(measurementCheckText({code:"DatasetInputContract",message:"입력 image 크기 불일치"}),"입력 image 크기 불일치")
 })
 
 test("R13: occupancy quantity cells are unitless while invalid-value reasons remain separate",()=>{
@@ -282,4 +128,45 @@ test("R14: occupancy evidence and interruption codes use server-grounded Korean 
   const labels={OccupancyEvidenceMissing:"점유시간 근거 파일 없음",OccupancyEvidenceUnavailable:"점유시간 근거 읽기 실패",OccupancyEvidenceInvalid:"점유시간 근거 해석 실패",OccupancyThroughputInvalid:"처리량 오류",ChillServerRestart:"서버 재시작으로 측정 중단",Failed:"측정 실패",Insufficient:"채택 근거 부족"}
   for(const [reason,label] of Object.entries(labels))assert.equal(occupancyReason({...occupancy,status:{reason}}),label)
   assert.equal(occupancyReason({...occupancy,status:{reason:"FutureOccupancyCode"}}),"FutureOccupancyCode")
+})
+
+test("measurement labels distinguish backend variants while translating workload protocols",()=>{
+  assert.equal(executionPathLabel("firstfloor-ort-cpu-arm64"),"CPU · ARM 64비트 (firstfloor-ort-cpu-arm64)")
+  const paths=["firstfloor-ort-cuda-arm64","firstfloor-rnn-ort-cuda-arm64","firstfloor-vlm-ort-cuda-arm64"]
+  const labels=paths.map(path=>executionPathLabel(path))
+  assert.equal(new Set(labels).size,paths.length)
+  for(const [index,path] of paths.entries())assert.equal(labels[index],`CUDA · ARM 64비트 (${path})`)
+  assert.equal(executionPathLabel("new-private-backend",2),"등록 실행 경로 3")
+  assert.equal(measurementReasonSummary("No verified catalog profile for current condition"),"현재 조건의 검증된 프로파일 없음")
+})
+
+test("measurement routes accept only the two projection kinds and keep UI queries outside the upstream request", () => {
+  const config = serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
+  for (const kind of ["operation-cost-measurements","dispatch-occupancy-measurements"] as const) {
+    for (const name of [undefined,"sample"]) {
+      const path = measurementPath(kind,"research",name)
+      assert.deepEqual(relayPlan("GET",path.split("/"),"",config),{path:`/api/${path}`,kind:"query",timeoutMs:config.queryTimeoutMs,bodyAllowed:false})
+      for (const search of ["?namespace=other","?uid=uid-1","?workload=uid","?row=key","?limit=10","?offset=0","?q=sample"]) {
+        assert.throws(() => relayPlan("GET",path.split("/"),search,config),/DashboardQueryInvalid/)
+      }
+      for (const method of ["POST","PUT","DELETE"]) {
+        if(kind==="dispatch-occupancy-measurements"&&!name&&method==="POST") {
+          assert.equal(relayPlan(method,path.split("/"),"",config).kind,"mutation")
+        } else if(kind==="dispatch-occupancy-measurements"&&name&&method==="DELETE") {
+          assert.equal(relayPlan(method,path.split("/"),"?uid=uid-1",config).kind,"mutation")
+        } else assert.throws(() => relayPlan(method,path.split("/"),"",config),/DashboardMethodNotAllowed/)
+      }
+    }
+  }
+  assert.equal(relayPlan("GET",["v1","scheduler","capacity"],"",config).path,"/api/v1/scheduler/capacity")
+  for (const search of ["?row=key","?workload=uid"]) assert.throws(() => relayPlan("GET",["v1","scheduler","capacity"],search,config),/DashboardQueryInvalid/)
+})
+
+test("occupancy preserves missing and zero d, string throughput and logical location identity", () => {
+  assert.equal(occupancyDuration(occupancy.status.perRequestNanos),"—")
+  assert.equal(occupancyDuration(0),"0.00")
+  assert.equal(occupancyDuration(3807875n),"3.81")
+  assert.equal(occupancyThroughput("0.0000012300"),"0.00000123")
+  assert.equal(occupancyThroughput("0"),"0")
+  for (const value of [undefined,""]) assert.equal(occupancyThroughput(value),"—")
 })

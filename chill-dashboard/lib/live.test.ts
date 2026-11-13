@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import { test, type TestContext } from "node:test"
 import { applyLiveMessage, connectLive, initialLiveState, isLiveActionActive, liveActionKey, parseLiveMessage, type LiveMetric, type LiveSnapshot, type LiveState } from "./live.ts"
-import { fixtureMessages } from "./live-fixture.ts"
 import * as live from "./live.ts"
 
 const at="2026-10-30T12:00:00.123456789Z"
@@ -231,22 +230,6 @@ test("unchanged Keep traffic cannot evict the last actual change",()=>{
   for(let seq=2;seq<=1002;seq++) state=apply(state,{type:"event",seq,at:time(seq),kind:"decision",decision:{at:time(seq),state:"Keep",reason:"",explanation:"유지"}})
   assert.equal(state.events.length,1000)
   assert.equal(state.events[0].seq,1)
-})
-
-test("all synthetic scenes use the real DTO parser/reducer",()=>{
-  for (const scene of ["empty","first","expand","shrink"]) {
-    let state=initialLiveState()
-    for (const message of fixtureMessages(scene,time(0))) state=apply(state,message)
-    assert.ok(state.snapshot)
-    assert.equal(state.resyncRequired,false)
-    if (scene === "empty") assert.equal(state.snapshot.workloads.length,0)
-    if (scene === "shrink") {
-      assert.equal(state.snapshot.instances[0].running["pool-alpha"],1)
-      assert.equal(state.snapshot.instances[0].routable["pool-beta"],true)
-      assert.equal(state.snapshot.reservations.length,1)
-      assert.equal(state.events.at(-1)?.kind,"cluster")
-    }
-  }
 })
 
 class FakeSocket {

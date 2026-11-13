@@ -1,11 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { LiveEvent } from "./live.ts"
-import { evaluationInjectionMatch, evaluationRemaining, type ActiveEvaluation } from "./evaluation-active.ts"
+
+import { evaluationRemaining, type ActiveEvaluation } from "./evaluation-active.ts"
 
 const at="2026-11-01T00:00:00Z",now=Date.parse(at)
 const run:ActiveEvaluation={name:"evaluation",uid:"uid-1",stageIndex:1,stagesTotal:3,stage:{id:"base",plannedSeconds:300,injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:120,nodeName:"node-1",podName:"serving-1"}]}}
-const cluster=(pod:{uid:string;name?:string;node?:string}):LiveEvent=>({seq:1,at,type:"event",kind:"cluster",cluster:{kind:"pod",at,event:"deleted",pod}})
 
 test("remaining duration uses load goAt, not stage start, and waits before goAt exists",()=>{
   assert.equal(evaluationRemaining(undefined,now),null)
@@ -14,16 +13,4 @@ test("remaining duration uses load goAt, not stage start, and waits before goAt 
   assert.equal(evaluationRemaining(stage,now),300)
   assert.equal(evaluationRemaining(stage,now+1001),299)
   assert.equal(evaluationRemaining(stage,now+301000),0)
-})
-
-test("injection tags require exact node or pod names from actual event fields",()=>{
-  assert.equal(evaluationInjectionMatch(cluster({uid:"other",name:"serving-1"}),[run]),true)
-  assert.equal(evaluationInjectionMatch(cluster({uid:"other",node:"node-1"}),[run]),true)
-  for(const pod of [{uid:"serving-1"},{uid:"node-1"},{uid:"other",name:"serving-10",node:"node-10"},{uid:"other",name:"Serving-1",node:"Node-1"},{uid:"other",name:"",node:""}])assert.equal(evaluationInjectionMatch(cluster(pod),[run]),false)
-  assert.equal(evaluationInjectionMatch(cluster({uid:"other",name:"serving-1"}),[]),false)
-  const action:LiveEvent={seq:2,at,type:"event",kind:"action",action:{id:"a",kind:"start",node:{uid:"different",name:"node-1"},workloadUID:"w",status:"running",phase:"started",startedAt:at,expectedSeconds:null,expectedSource:null}}
-  assert.equal(evaluationInjectionMatch(action,[run]),true)
-  assert.equal(evaluationInjectionMatch({...action,action:{...action.action,node:{uid:"node-1",name:"different"}}},[run]),false)
-  assert.equal(evaluationInjectionMatch({seq:3,at,type:"event",kind:"decision",decision:{at,state:"Changed",reason:"node-1",explanation:"serving-1"}},[run]),false)
-  assert.equal(evaluationInjectionMatch(cluster({uid:"other",name:"serving-1"}),[{...run,stage:undefined}]),false)
 })

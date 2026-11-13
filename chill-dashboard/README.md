@@ -91,7 +91,6 @@ Server runtime environment:
 | `CHILL_MAX_WINDOW_HOURS` | Default `24` |
 | `CHILL_POLL_INTERVAL_MS` | Default `5000`; minimum `1000` |
 | `CHILL_PUBLIC_ORIGIN` | Optional HTTPS origin the browser uses; the WebSocket `Origin` must equal it. Without it the request `Host` decides |
-| `CHILL_DEMO_REPLAY` | Exact `1` exposes `liveFixture` in `/api/config`, which allows the live scene override |
 | `NODE_EXTRA_CA_CERTS` | Trusted custom CA PEM file |
 | `HOSTNAME` / `PORT` | Live proxy bind address and port; default `0.0.0.0` / `3000` |
 
@@ -137,7 +136,7 @@ format and mutation behaviour.
 
 ```sh
 pnpm install --frozen-lockfile
-node --experimental-strip-types server/replay.mjs --capture <dir> --port 3600
+pnpm replay --capture <dir> --port 3600
 ```
 
 Open `https://localhost:3600/` and accept the self-signed certificate. The Bearer

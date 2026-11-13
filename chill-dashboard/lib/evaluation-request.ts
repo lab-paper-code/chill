@@ -33,11 +33,3 @@ export function evaluationReleaseBody(uid:string,reason:string):{uid:string;reas
   if(!uid.trim()||!reason.trim())throw new Error("UID·확인 사유 필수")
   return {uid,reason:reason.trim()}
 }
-
-// An uncertain mutation is never retried. Read both active and retained publications.
-export async function evaluationOperation<T>(send:()=>Promise<T>,refresh:()=>Promise<unknown>):Promise<T> {
-  try {return await send()} catch(error) {
-    if(record(error)&&(error.unknownOutcome===true||error.status===0))await refresh().catch(()=>undefined)
-    throw error
-  }
-}

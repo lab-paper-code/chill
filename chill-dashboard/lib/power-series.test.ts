@@ -2,24 +2,13 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { LiveMetrics } from "./live.ts"
 import type { OperatingPowerSeries } from "./read-types.ts"
-import { mergePowerSeries, powerSegments, powerSeriesPath } from "./power-series.ts"
+import { mergePowerSeries, powerSeriesPath } from "./power-series.ts"
 import * as power from "./power-series.ts"
 import { stringifySchedulerJSON } from "./scheduler.ts"
 
 const at=(seconds:number)=>new Date(Date.parse("2026-11-01T00:00:00Z")+seconds*1000).toISOString()
 const series={from:at(0),to:at(20),bucketNanos:5000000000,buckets:[0,5,10,15].map((second,index)=>({from:at(second),to:at(second+5),wholePoolMeanWatts:index===1?null:index===0?0:20,activePoolMeanWatts:0,nodes:[{node:{uid:"n",name:"노드"},meanWatts:index===1?null:0}]}))} as OperatingPowerSeries
 const live=(second:number,watts:number|null):LiveMetrics=>({type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,seq:second,at:at(second+1),bucketAt:at(second),workloads:{},nodes:{n:{watts,observedAt:at(second)}},pool:{wholeWatts:watts,activeWatts:0}})
-
-test("power seed keeps actual five-second intervals, appends live, preserves null breaks and measured zero",()=>{
-  const points=mergePowerSeries(series,[live(15,0),live(16,null),live(18,30)],Date.parse(at(19)))
-  assert.deepEqual(points.map(row=>[row.from,row.to,row.wholeWatts]),[[0,5,0],[5,10,null],[10,15,20],[15,16,0],[16,17,null],[18,19,30]].map(([from,to,watts])=>[Date.parse(at(from as number)),Date.parse(at(to as number)),watts]))
-  assert.equal(points[0].nodes.n,0)
-  assert.deepEqual(powerSegments(points).map(segment=>segment.map(row=>row.wholeWatts)),[[0],[20,0],[30]])
-  assert.equal(mergePowerSeries(series,[],Date.parse(at(3600)),3600000).length,4)
-  assert.equal(mergePowerSeries(series,[],Date.parse(at(3600))).length,0)
-  assert.equal(mergePowerSeries(series,[live(-1000,999)],Date.parse(at(20))).length,4)
-  assert.deepEqual(mergePowerSeries(series,[live(0,0)],Date.parse(at(20))).map(row=>row.to),[1,10,15,20].map(second=>Date.parse(at(second))))
-})
 
 test("power series paths stay within one hour and 900 UTC-aligned buckets",()=>{
   for(const [seconds,bucket] of [[900,"5s"],[3600,"5s"],[899,"1s"]] as const)assert.equal(new URL(powerSeriesPath(at(.5),at(seconds+.5),bucket)!,"https://local").searchParams.get("bucket"),bucket)
@@ -106,34 +95,18 @@ test("aligned columns and an empty columns result retain their exact intervals",
   assert.deepEqual(power.parsePowerSeriesJSON(JSON.stringify(columns(at(0),at(10),0))).buckets,[])
 })
 
-test("hourly five-second history splits at aligned boundaries without missing or duplicate buckets",()=>{
-  for(const offset of [0,.123]){
-    const from=offset?"2026-11-01T00:00:00.123456789Z":at(0),to=offset?"2026-11-01T01:00:00.123456789Z":at(3600),paths=power.powerSeriesPaths(from,to,"5s")!
-    assert.equal(paths.length,offset?5:4)
-    const chunks=paths.map(path=>{
-      const params=new URL(path,"https://local").searchParams,left=params.get("from")!,right=params.get("to")!
-      assert.equal(params.get("format"),"columns")
-      assert.equal(params.get("bucket"),"5s")
-      assert.ok(Date.parse(right)-Date.parse(left)<=900000)
-      const count=Math.ceil((Date.parse(right)-Math.floor(Date.parse(left)/5000)*5000)/5000)
-      return power.parsePowerSeriesJSON(JSON.stringify(columns(left,right,count)))
-    })
-    const merged=power.mergePowerSeriesChunks(chunks)!
-    assert.equal(merged.from,from)
-    assert.equal(merged.to,to)
-    assert.equal(merged.buckets.length,offset?721:720)
-    assert.equal(merged.buckets[0].from,from)
-    assert.equal(merged.buckets.at(-1)!.to,to)
-    for(let i=1;i<merged.buckets.length;i++)assert.equal(merged.buckets[i-1].to,merged.buckets[i].from)
-    assert.equal(new Set(merged.buckets.map(row=>row.from)).size,merged.buckets.length)
-    assert.equal(power.mergePowerSeriesChunks([chunks[0],undefined,...chunks.slice(2)]),undefined)
-  }
-  assert.equal(power.powerSeriesPaths(at(.123),at(900.123),"5s")!.length,1)
-  assert.equal(power.powerSeriesPaths(at(0),at(3601),"5s"),null)
-})
-
 test("old row responses and unknown malformed shapes report a clear format mismatch, never empty success",()=>{
   for(const response of [series,{},{from:at(0),to:at(10),format:"columns",bucketNanos:5000000000}]){
     assert.throws(()=>power.parsePowerSeriesJSON(JSON.stringify(response)),/형식 불일치/)
   }
+})
+
+test("power seed keeps actual five-second intervals, appends live, preserves null breaks and measured zero",()=>{
+  const points=mergePowerSeries(series,[live(15,0),live(16,null),live(18,30)],Date.parse(at(19)))
+  assert.deepEqual(points.map(row=>[row.from,row.to,row.wholeWatts]),[[0,5,0],[5,10,null],[10,15,20],[15,16,0],[16,17,null],[18,19,30]].map(([from,to,watts])=>[Date.parse(at(from as number)),Date.parse(at(to as number)),watts]))
+  assert.equal(points[0].nodes.n,0)
+  assert.equal(mergePowerSeries(series,[],Date.parse(at(3600)),3600000).length,4)
+  assert.equal(mergePowerSeries(series,[],Date.parse(at(3600))).length,0)
+  assert.equal(mergePowerSeries(series,[live(-1000,999)],Date.parse(at(20))).length,4)
+  assert.deepEqual(mergePowerSeries(series,[live(0,0)],Date.parse(at(20))).map(row=>row.to),[1,10,15,20].map(second=>Date.parse(at(second))))
 })

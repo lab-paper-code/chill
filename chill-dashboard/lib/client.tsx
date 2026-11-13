@@ -5,8 +5,7 @@ import { MutationCache, QueryCache, QueryClient, QueryClientProvider, useIsFetch
 import type { UseQueryOptions } from "@tanstack/react-query"
 import { useRouter } from "next/navigation"
 import type { PublicConfig } from "@/lib/server-config"
-import type { ObservationResult } from "@/lib/read-types"
-import { parseSchedulerJSON } from "@/lib/scheduler"
+
 import { readTabToken, storeTabToken } from "@/lib/session-token"
 import { ApiError, decodeResponse, relay, isCoverageWarming, warmingRetry, warmingDelay, type RelayResponse } from "@/lib/client-transport"
 
@@ -123,18 +122,6 @@ export function useChillQueries<T>(paths:readonly string[],options:{enabled?:boo
     },
     staleTime:Infinity,
   }))}).map(query=>({...query,data:query.error instanceof ApiError&&[401,403].includes(query.error.status)?undefined:query.data}))
-}
-
-// Load summaries omit definitions: read the retained catalog through the existing per-UID API.
-export function useWorkloadDefinitions(uids:readonly string[],range:{from:string;to:string}) {
-  const {token} = useSession()
-  return useQueries({queries:[...new Set(uids)].filter(Boolean).map(uid => {
-    const path = `v1/observations/workloads/${encodeURIComponent(uid)}?${new URLSearchParams({...range,limit:"1"})}`
-    return {queryKey:["chill",path],enabled:!!token,queryFn:async ({signal}:{signal:AbortSignal}) => {
-      const response = await relay(path,token,signal)
-      return parseSchedulerJSON(response.body) as ObservationResult
-    }}
-  })}).flatMap(query => query.error instanceof ApiError && [401,403].includes(query.error.status) ? [] : query.data?.definitions ?? [])
 }
 export type ChillMutationInput = {path:string;method:"POST"|"PUT"|"DELETE";body?:unknown;version?:string;timeout?:string}
 export function useChillMutation() {

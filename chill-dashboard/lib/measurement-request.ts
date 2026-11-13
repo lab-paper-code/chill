@@ -1,6 +1,6 @@
 import type { DatasetResource, DatasetSpec, PreprocessorResource, PreprocessorSpec, ModelResource, WorkloadSummary, ExecutionPath } from "./domain.ts"
-import type { ActiveProtocol, Condition, MeasurementCoverageCell, MeasurementPlan, MeasurementPlanSpec, ProfilesView, InventoryClass, InventoryNode } from "./read-types.ts"
-import { safeMeasurementReturn, measurementRequestName } from "./measurements.ts"
+import type { ActiveProtocol, MeasurementPlan, MeasurementPlanSpec, ProfilesView, InventoryClass, InventoryNode } from "./read-types.ts"
+import { measurementRequestName } from "./measurements.ts"
 import { staticCompatibility } from "./measurement-coverage.ts"
 
 export type RequestCondition = { model:string; deviceClass:string; node:string; path:string; powerMode:string }
@@ -9,36 +9,12 @@ export type RequestDefaults = { spec:MeasurementPlanSpec; source:string; exact:b
 export function requestHref(namespace:string,name:string,uid?:string) {
   return `/measurements/requests/${encodeURIComponent(name)}?${new URLSearchParams({namespace,...(uid?{uid}:{})})}`
 }
-export function requestRunHref(namespace:string,name:string,uid?:string,parent?:{name:string;uid:string},returnTo?:string) {
-  const back=parent?requestHref(namespace,parent.name,parent.uid):`/measurements/requests?${new URLSearchParams({namespace,view:"runs"})}`
-  const query=new URLSearchParams({namespace,...(uid?{uid}:{}),...(parent?{requestUID:parent.uid}:{run:name}),returnTo:safeMeasurementReturn(returnTo??null,back)})
-  return parent?`/measurements/requests/${encodeURIComponent(parent.name)}/runs/${encodeURIComponent(name)}?${query}`:`/measurements/requests?${query}`
-}
-export function requestExecutionStatus(phase?:string) {
-  return phase==="Complete"?"종료":phase==="Failed"?"실패":phase==="Measuring"?"진행 중":"미확인"
-}
 
 export function requestCopySource(name:string,namespace:string,uid:string|null,plans:MeasurementPlan[]) {
   const source=plans.find(plan=>plan.metadata.name===name&&plan.metadata.namespace===namespace)
   return !source?.metadata.uid||uid&&source.metadata.uid!==uid
     ?{source:undefined,error:"복사 원본의 저장 영역·식별자를 확인할 수 없어요. 같은 이름의 다른 요청으로 대체하지 않아요."}
     :{source,error:""}
-}
-
-export function requestCopyQuery(params:URLSearchParams,source:MeasurementPlan) {
-  const query=new URLSearchParams(params)
-  query.set("namespace",source.metadata.namespace)
-  query.set("fromNamespace",source.metadata.namespace)
-  query.set("fromUID",source.metadata.uid)
-  return query.toString()
-}
-
-export function requestUsedResults(cells:MeasurementCoverageCell[],spec:MeasurementPlanSpec) {
-  const candidate=spec.state.candidate
-  return cells.filter(cell=>cell.model.name===candidate.modelSpec&&cell.deviceClass.name===candidate.deviceClass&&cell.executionPath===candidate.executionPath&&cell.powerMode===candidate.powerMode).flatMap(cell=>cell.variants.filter(variant=>{
-    const condition=variant.condition,node=(condition.metricSource as {nodeName?:string}|undefined)?.nodeName??(condition.state as {targetNode?:string}|undefined)?.targetNode
-    return node===spec.state.targetNode&&variant.assessment.scope.schedulerUsed===true
-  }).flatMap(variant=>variant.resultRows))
 }
 
 // Reuse actual server values, never invent protocol constants.
@@ -63,7 +39,6 @@ export function requestDefaults(condition:RequestCondition, plans:MeasurementPla
   }}
 }
 
-
 // Mirror modelcatalog.Compatible: the preprocessor's inputs may be a subset of the dataset fields.
 export function datasetGap(dataset:DatasetSpec,preprocessor:PreprocessorSpec|undefined) {
   const records=new Map(dataset.fields.map(field=>[field.name,field]))
@@ -72,8 +47,6 @@ export function datasetGap(dataset:DatasetSpec,preprocessor:PreprocessorSpec|und
     return !record?`${field.name} 필드가 없어요`:record.format!==field.format?`${field.name} 형식이 달라요 (${field.format} 필요)`:record.maxBytes>field.maxBytes?`${field.name} 크기가 최대 ${field.maxBytes} B보다 클 수 있어요`:""
   }).filter(Boolean).join(" · ")
 }
-
-export const requestNumber=(value:number)=>Number.isFinite(value)?String(value):"—"
 
 // Catalog contracts, not names, select the preprocessor and dataset.
 export function requestInputs(model:string,artifact:string,preprocessor:string,dataset:string,context:{preprocessors:PreprocessorResource[];datasets:DatasetResource[];plans?:MeasurementPlan[];profiles?:ProfilesView["profiles"]},inherited:{preprocessor?:boolean;dataset?:boolean}={}) {
@@ -96,34 +69,6 @@ export function requestInputs(model:string,artifact:string,preprocessor:string,d
   return {preprocessor:pre?.metadata.name??"",dataset:selected?.metadata.name??"",warning}
 }
 
-// Compare retained facts only: absent fields are unknown, not proof of a change.
-export function requestConditionChanges(previous:Record<string,unknown>,current:Record<string,unknown>|undefined) {
-  const changes:{field:string;label:string;before:string;after:string}[]=[]
-  const labels:Record<string,string>={nodeUID:"Node UID",runtimeImage:"실행 이미지",powerMode:"전력 모드","artifact.executionPath":"실행 경로","activeProtocol.dataset.name":"데이터셋","preprocessor.name":"전처리기"}
-  function compare(before:Record<string,unknown>,after:Record<string,unknown>,prefix="") {
-    for(const [key,value] of Object.entries(before)) {
-      if(key==="name"&&!prefix||key==="plannedBatchSizes"&&!prefix||value===undefined||value===null||after[key]===undefined||after[key]===null)continue
-      const field=prefix?`${prefix}.${key}`:key,next=after[key]
-      if(typeof value==="object"&&!Array.isArray(value)&&typeof next==="object"&&!Array.isArray(next))compare(value as Record<string,unknown>,next as Record<string,unknown>,field)
-      else if(JSON.stringify(value)!==JSON.stringify(next))changes.push({field,label:labels[field]??field,before:typeof value==="string"?value:JSON.stringify(value),after:typeof next==="string"?next:JSON.stringify(next)})
-    }
-  }
-  if(current)compare(previous,current)
-  return changes
-}
-
-export function requestPreflightReason(reason:{code:string;message:string}) {
-  const messages:Record<string,string>={
-    VariantConditionChanged:"기존 결과와 현재 동결 실행 조건의 일치를 확인하지 못해 기존 배치 제외를 적용하지 않았어요. 기존 결과가 삭제되거나 미측정으로 바뀐 것은 아니며, 이 요청에서의 재사용만 확인되지 않았어요.",
-    DeclarationUIDsNotRetained:"보관된 동결 식별자는 일치하지만 당시 모델·장치 종류·전처리기 선언 UID가 남아 있지 않아요.",
-    AutomaticBatchDiscovery:"배치는 1건부터 자동 탐색해요. 계획은 탐색 상한이며 완료 측정 범위는 더 작을 수 있어요.",
-    PlannedRequestOverlap:"같은 요청 조건으로 계획된 기존 요청이 있어요. 계획의 중복만으로 실제 실행이나 측정 완료를 확인할 수는 없어요.",
-    RequestListUnconfirmed:"진행 중인 요청 목록을 확인하지 못했어요. 측정 중 배치가 비어 있어도 겹치는 대기 요청이 없다고 확정할 수는 없어요.",
-    PlanUnresolved:"실행 계획을 확정하지 못해 기존 결과의 재사용과 추가 측정 범위를 확인할 수 없어요.",
-  }
-  return messages[reason.code]??reason.message.replace(/\s*\(FixtureOnly\)/g,"")
-}
-
 export type RequestRejectionGuidance={target:string;fields:string[];message:string;constraints:[string,string][]}
 export function requestRejectionGuidance(reason:string):RequestRejectionGuidance|null {
   if(/model-loaded idle measurement protocol is invalid|curve plan idle.*protocol is invalid/i.test(reason))return {target:"measurement-settling",fields:["settling"],message:"유휴 측정 조건 확인",constraints:[["안정 시간 (s)","≥ 1"],["자동 유휴 예열 (회)","0"],["자동 유휴 데이터셋","없음"],["서버 유휴 배치 · ORT","1"]]}
@@ -133,19 +78,6 @@ export function requestRejectionGuidance(reason:string):RequestRejectionGuidance
   if(/dataset|preprocessor/i.test(reason))return {target:"request-input-guidance",fields:[],message:"입력 연결 확인",constraints:[["전처리기","모델 파일 연결"],["데이터셋","입력 이름·형식 일치 · 크기 상한 이하"],["UID·이미지 누락","카탈로그 등록 수정"]]}
   if(/power.?mode|target.?node|candidate.*compatible|executionPath/i.test(reason))return {target:"measurement-device",fields:[],message:"실행 장비 조건 확인",constraints:[["실행 노드","준비 상태"],["전력 모드","장치 등록값"],["실행 경로","호환 선언"]]}
   return null
-}
-
-export function requestOperationalSummary(answer?:unknown,pools?:unknown) {
-  const value=answer as {resolves?:boolean;campaign?:{spec?:MeasurementPlanSpec}}|undefined
-  const spec=value?.campaign?.spec
-  const view=pools as {workloads?:{workload:{uid:string};instances?:{node:{name:string};stopped:boolean}[]|null}[]|null;issues?:unknown[]|null}|undefined
-  const servingImpact=value?.resolves===true&&spec?.state.targetNode&&view&&Array.isArray(view.workloads)&&!view.issues?.length&&view.workloads.every(pool=>Array.isArray(pool.instances))
-    ?new Set(view.workloads.filter(pool=>pool.instances!.some(instance=>!instance.stopped&&instance.node.name===spec.state.targetNode)).map(pool=>pool.workload.uid)).size:null
-  return {servingImpact,estimatedDurationSeconds:null}
-}
-
-export function requestFailureFacts(conditions:Condition[]=[]):[string,string][] {
-  return conditions.length?conditions.flatMap(condition=>[["서버 상태",`${condition.type}: ${condition.status}`],["서버 사유",condition.reason||"미제공"],["서버 메시지",condition.message||"미제공"]] as [string,string][]):[["서버 사유","미제공"],["서버 메시지","미제공"]]
 }
 export const steps = ["workload", "device", "run", "size", "advanced", "name", "review"] as const
 export type Step = typeof steps[number]

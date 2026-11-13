@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { evaluationActions, evaluationCanSubmit, evaluationOperation, evaluationPreflight, evaluationReleaseBody, evaluationSameSpec } from "./evaluation-request.ts"
+import { evaluationActions, evaluationCanSubmit, evaluationPreflight, evaluationReleaseBody, evaluationSameSpec } from "./evaluation-request.ts"
 
 test("evaluation submission requires successful checks for the unchanged body",()=>{
   const body='{"name":"new","spec":{}}'
@@ -31,16 +31,6 @@ test("evaluation phases restrict modification and expose blocked release",()=>{
   for(const phase of ["Running","Finishing"])assert.deepEqual(evaluationActions(phase),{edit:false,remove:"중지",release:false})
   assert.deepEqual(evaluationActions("Done"),{edit:false,remove:"삭제",release:false})
   assert.deepEqual(evaluationActions("Blocked"),{edit:false,remove:"중지",release:true})
-})
-
-
-test("unknown evaluation result re-reads once without retrying the mutation",async()=>{
-  let sends=0,reads=0
-  const error=Object.assign(new Error("lost"),{unknownOutcome:true,status:504})
-  await assert.rejects(evaluationOperation(async()=>{sends++;throw error},async()=>{reads++}),error)
-  assert.equal(sends,1);assert.equal(reads,1)
-  await assert.rejects(evaluationOperation(async()=>{throw Object.assign(new Error("denied"),{status:403})},async()=>{reads++}),/denied/)
-  assert.equal(reads,1)
 })
 
 test("release confirmation requires a UID and nonblank operator reason",()=>{

@@ -1,12 +1,7 @@
-import type { MeasurementAssessment, ResultRow } from "./read-types.ts"
-import { measurementCheckText, measurementReasonSummary } from "./measurements.ts"
+import type { MeasurementAssessment } from "./read-types.ts"
 
 export function measurementSchedulerUsed(assessment?:MeasurementAssessment|null) {
   return assessment?.scope?.schedulerUsed??null
-}
-export function measurementUsage(assessment?:MeasurementAssessment|null) {
-  const used=measurementSchedulerUsed(assessment)
-  return used===true?"스케줄러 사용 중":used===false?"스케줄러 미사용":"스케줄러 사용 여부 미확인"
 }
 
 export function measurementQuality(assessments:(MeasurementAssessment|null|undefined)[]) {
@@ -16,25 +11,4 @@ export function measurementQuality(assessments:(MeasurementAssessment|null|undef
   const noEvidence=assessments.length>0&&assessments.every(assessment=>assessment?.evidence?.available===false)&&checks.length===0
   const policyUnset=checks.some(check=>check.result==="unknown"&&check.reason==="PolicyUnset")
   return {label:failed?"기준 미충족":passed?"기준 충족":noEvidence?"측정 근거 없음":policyUnset?"정책 미설정":"판정 불가",state:failed?"fail":passed?"pass":"unknown"}
-}
-
-export type MeasurementEvidenceCheck={label:string;value:string|number;unit:string}
-export function measurementEvidenceChecks(assessment?:MeasurementAssessment|null,rows:ResultRow[]=[]) {
-  const checks=assessment?.checklist?.checks??[],row=rows.find(row=>row.batch===1)??rows[0]
-  const measured=!!row||checks.some(check=>["IncrementalConfidence","PowerSource","FrozenPowerWindowPolicy"].includes(check.code))
-  const notes:MeasurementEvidenceCheck[]=[]
-  if(measured) {
-    const protocol=row?.condition.activeProtocol as {dataset?:{name?:string}}|undefined,ci=row?.confidence,mean=row?.incrementalJoulesPerItem
-    const valid=ci&&Number.isFinite(ci.halfWidth)&&ci.halfWidth>=0&&ci.level>0&&ci.level<1
-    const relative=typeof mean==="number"&&Number.isFinite(mean)&&mean!==0
-    notes.push({label:"오차 반폭",value:valid?(relative?100*ci.halfWidth/Math.abs(mean!):ci.halfWidth):"미제공",unit:relative?"%":"J/건"})
-    notes.push({label:"노드 전체 전력",value:row?.powerSource?.kind&&row.powerSource.nodeName?"장치 단독 전력 아님":"출처·범위 미제공",unit:""})
-    notes.push({label:"데이터셋 메모 · 용도 일치 미검증",value:String(protocol?.dataset?.name??row?.condition.dataset??"상세 조건"),unit:""})
-  }
-  for(const check of checks.filter(check=>check.result!=="pass"&&!(check.code==="IncrementalConfidence"&&measured)))notes.push({label:measurementCheckText(check),value:check.result==="fail"?"불일치":check.reason==="PolicyUnset"?"정책 미설정":check.result==="unknown"?"미확인":"참고",unit:""})
-  return [...new Map(notes.map(note=>[`${note.label}/${note.value}/${note.unit}`,note])).values()]
-}
-
-export function assessmentReasons(assessment?:MeasurementAssessment|null) {
-  return [...new Set((assessment?.reasons??[]).map(reason=>reason.label&&/[가-힣]/.test(reason.label)?reason.label:measurementReasonSummary(reason.message||reason.code)))]
 }

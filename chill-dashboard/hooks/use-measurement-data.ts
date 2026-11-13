@@ -1,10 +1,10 @@
 "use client"
 import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
-import { useChillQuery, useSession } from "@/lib/client"
+import { useSession } from "@/lib/client"
 import { ApiError, decodeResponse, relay, warmingRetry, warmingDelay } from "@/lib/client-transport"
-import { coverageProfileQuery, coverageMeasurementStatus, type CompatibilityRead } from "@/lib/measurement-coverage"
-import type { InventoryView, MeasurementPlanList, ModelCompatibility, MeasurementCoverageSummaryResponse as MeasurementCoverageResponse, MeasurementCoverageCell, ProfilesView, RunsView } from "@/lib/read-types"
+
+import type { InventoryView, MeasurementPlanList, MeasurementCoverageSummaryResponse as MeasurementCoverageResponse, ProfilesView } from "@/lib/read-types"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
 async function readPage<T>(path:string,token:string,signal:AbortSignal):Promise<T> {
   const response=await relay(path,token,signal)
@@ -45,25 +45,6 @@ export function useCoverageInventory() {
   }})
   return {...query,data:query.error&&[401,403].includes(query.error.status)?undefined:query.data}
 }
-export function useModelCompatibility(modelSpec:string,executionPath:string,deviceClass:string,nodes:{name:string;uid:string;resourceVersion:string}[],modelUID?:string,classUID?:string) {
-  const {token}=useSession()
-  return useQuery({queryKey:["chill","model-compatibility",modelSpec,modelUID,executionPath,deviceClass,classUID,nodes],enabled:!!token&&!!modelSpec&&!!executionPath&&!!deviceClass&&nodes.length>0,retry:false,queryFn:async({signal})=>{
-    const reads:CompatibilityRead[]=[]
-    // Only an opened cell's Nodes (or the single request Node), one GET at a time; power modes share this query.
-    for (const node of nodes) {
-      const selection={modelSpec,executionPath,deviceClass,node:node.name}
-      try {
-        const data=await readPage<ModelCompatibility>(`v1/model-compatibility?${new URLSearchParams(selection)}`,token,signal)
-        if (Object.entries(selection).some(([key,value])=>data.selection[key as keyof typeof selection]!==value)||data.inputs.node.uid!==node.uid||(modelUID&&data.inputs.modelSpec.uid!==modelUID)||(classUID&&data.inputs.deviceClass.uid!==classUID)) throw new Error("현재 선택 identity와 응답이 달라요")
-        reads.push({node:node.name,selection,data})
-      } catch(error) {
-        if(signal.aborted) throw error
-        reads.push({node:node.name,selection,error:error instanceof Error?error.message:"호환성 조회 실패"})
-      }
-    }
-    return reads
-  }})
-}
 
 export function useMeasurementCoverage(namespace:string,enabled=true) {
   const {token,config}=useSession(),params=useSearchParams()
@@ -87,26 +68,4 @@ export function useRequestProfileHistory() {
       offset=page.page.nextOffset
     }
   }})
-}
-
-export function useCoverageProfiles(cell:MeasurementCoverageCell,enabled:boolean) {
-  const {token}=useSession()
-  const filters=coverageProfileQuery(cell)
-  return useQuery<ProfilesView,ApiError>({queryKey:["chill","coverage-profile-times",filters.toString()],enabled:!!token&&enabled,retry:warmingRetry,retryDelay:warmingDelay,queryFn:async({signal})=>{
-    const all:NonNullable<ProfilesView["profiles"]>=[]
-    let offset=0
-    for(;;) {
-      filters.set("offset",String(offset))
-      const page=await readPage<ProfilesView>(`v1/scheduler/profiles?${filters}`,token,signal)
-      all.push(...page.profiles??[])
-      if(page.page?.nextOffset===undefined)return {...page,profiles:all}
-      if(page.page.nextOffset<=offset)throw new ApiError(0,"프로파일 페이지가 전진하지 않습니다",null)
-      offset=page.page.nextOffset
-    }
-  }})
-}
-
-export function useCoverageRuns(cell:MeasurementCoverageCell,namespace:string) {
-  const running=coverageMeasurementStatus(cell)==="running"
-  return useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${new URLSearchParams({model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"200",...(running?{}:{status:"problem"})})}`,{enabled:running||cell.failureSummary.length>0})
 }

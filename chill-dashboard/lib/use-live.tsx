@@ -2,11 +2,10 @@
 
 import * as React from "react"
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query"
-import { usePathname, useSearchParams } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { useSession } from "@/lib/client"
 import { ApiError, errorDetails, relay, warmingRetry, warmingDelay, isCoverageWarming } from "@/lib/client-transport"
-import { applyLiveMessage, connectLive, initialLiveState, parseLiveMessage, type LiveConnection, type LiveState } from "@/lib/live"
-import { fixtureMessages } from "@/lib/live-fixture"
+import { connectLive, initialLiveState, type LiveConnection, type LiveState } from "@/lib/live"
 import { seedRecentLiveEvents } from "@/lib/live-history"
 
 /**
@@ -17,13 +16,10 @@ type LiveContextValue = {state:LiveState;status:string;lastReceivedAt:number|nul
 const LiveContext=React.createContext<LiveContextValue|null>(null)
 
 export function LiveProvider({children}:{children:React.ReactNode}) {
-  const {token,epoch,config,signals}=useSession()
+  const {token,epoch,signals}=useSession()
   const queryClient=useQueryClient()
-  const search=useSearchParams()
   const operating=usePathname()==="/"
-  const requested=search.get("fixture")
-  const scene=config.liveFixture && requested && ["empty","first","expand","shrink"].includes(requested) ? requested : null
-  const liveKey=React.useMemo(()=>["chill-live",epoch,scene] as const,[epoch,scene])
+  const liveKey=React.useMemo(()=>["chill-live",epoch] as const,[epoch])
   const {data}=useQuery<LiveState>({queryKey:liveKey,queryFn:skipToken,enabled:false,initialData:initialLiveState,staleTime:Infinity,gcTime:Infinity})
   // skipToken's overload permits undefined; initialData always seeds this cache-only query.
   const state=data!
@@ -40,20 +36,7 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
     signals.add(abort)
     const update=(change:(state:LiveState)=>LiveState)=>{if(abort.signal.aborted)return;queryClient.setQueryData<LiveState>(liveKey,state=>change(state ?? initialLiveState()));if(queryClient.getQueryData<LiveState>(liveKey)?.status==="unauthorized")window.dispatchEvent(new Event("chill-unauthorized"))}
     const read=()=>queryClient.getQueryData<LiveState>(liveKey) ?? initialLiveState()
-    let connection:LiveConnection
-    if (scene) {
-      const replay=()=>{
-        let next=initialLiveState()
-        for (const payload of fixtureMessages(scene)) {
-          const message=parseLiveMessage(payload)
-          if (!message) { next={...initialLiveState(),status:"protocol-error"};break }
-          next=applyLiveMessage(next,message)
-        }
-        queryClient.setQueryData(liveKey,{...next,status:next.status === "protocol-error" ? next.status : "fixture"})
-      }
-      replay()
-      connection={reconnect:replay,close:()=>{}}
-    } else connection=connectLive(token,read,update)
+    const connection=connectLive(token,read,update)
     control.current=connection
     const dispose=()=>{
       connection.close()
@@ -64,10 +47,10 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
       abort.abort()
       signals.delete(abort)
     }
-  },[scene,token,epoch,signals,queryClient,liveKey])
+  },[token,epoch,signals,queryClient,liveKey])
 
   React.useEffect(()=>{
-    if(!token || scene || !operating)return
+    if(!token || !operating)return
     const abort=new AbortController()
     signals.add(abort)
     const update=(change:(state:LiveState)=>LiveState)=>{
@@ -94,7 +77,7 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
       update(state=>["unauthorized","forbidden"].includes(state.status) ? state : {...state,eventArchiveError:isCoverageWarming(error)?"초기화 중":"최근 사건 기록 조회 실패",eventArchiveErrorDetail:errorDetails(error)})
     })
     return ()=>{abort.abort();signals.delete(abort)}
-  },[operating,scene,token,epoch,signals,queryClient,liveKey,archiveAttempt])
+  },[operating,token,epoch,signals,queryClient,liveKey,archiveAttempt])
 
   const value=React.useMemo(()=>({state:frozen??state,status:state.status,lastReceivedAt:state.lastReceivedAt,paused:frozen!==null,pause,resume,reconnect}),[frozen,state,pause,resume,reconnect])
   return <LiveContext.Provider value={value}>

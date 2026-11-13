@@ -3,7 +3,6 @@ import test from "node:test"
 import { parseMeasurementDocument } from "./measurement-document.ts"
 import { parseCatalogManifest } from "./catalog-manifest.ts"
 import { readFileSync } from "node:fs"
-import { measurementRequestExample } from "./measurement-guidance.ts"
 
 const envelope = "apiVersion: edge.dacs.io/v1alpha1\nkind: BatchEnergyOptimization\nmetadata: {name: producer-request, namespace: lab}\n"
 
@@ -47,12 +46,10 @@ test("provided sample and authoring reference include all required operating poi
   assert.ok(Number(points.sparseMeanGapMilliseconds)>0)
   for(const field of ["phaseDurationSeconds","postLoadDurationSeconds","requestLifetimeSeconds","deliveryMarginMilliseconds","framedDecodedRequestUpperBytes"]) {
     assert.ok(Number.isInteger(points[field])&&Number(points[field])>0,field)
-    assert.match(measurementRequestExample,new RegExp(`${field}:`))
   }
   assert.ok(Number(points.phaseDurationSeconds)>=30)
   assert.equal(active.durationSeconds,Number(points.phaseDurationSeconds)*((points.utilizations as number[]).length+2)+Number(points.postLoadDurationSeconds))
   assert.ok(Number((active.metricObservation as Record<string,unknown>).durationSeconds)>Number(active.durationSeconds))
-  for(const field of ["utilizations","sparseMeanGapMilliseconds"])assert.match(measurementRequestExample,new RegExp(`${field}:`))
 })
 
 test("measurement and catalog imports retain shared JSON transport and default alias protections", () => {

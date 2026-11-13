@@ -52,9 +52,3 @@ export function deviceInstances(row:DeviceRow,state:LiveState,resources?:Schedul
     return {id,live,pool,actual,ready:live?.ready??pool?.ready??actual?.ready??null,stopped:live?.stopped??pool?.stopped??actual?.stopped??null,services:[...services.values()]}
   })
 }
-
-export function deviceImageName(image:string|undefined):string {
-  if(!image)return "미기록"
-  if(/^(sha256|sha512):/.test(image))return "이미지 식별자"
-  return image.split("@")[0].split("/").at(-1)||"미기록"
-}

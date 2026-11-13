@@ -80,7 +80,7 @@ Dataset 자체는 독립적으로 등록할 수 있다.
 대시보드 파일 선택과 붙여넣기는 초안 입력이다. 문서를 검토한 뒤 명시적으로 등록하고
 목록 또는 단건 GET으로 저장 결과를 확인한다. 응답 유실 시 먼저 조회하고 자동 재제출하지 않는다.
 등록 이후 이미지 pull, 코드 적재, 장치 호환성과 측정 결과를 별도로 확인한다.
-[대시보드 시작 안내](../../../chill-dashboard/README.md#카탈로그-등록-시작)와
+[대시보드 카탈로그 설계](../../../docs/design/dashboard/renewal.md#77-카탈로그)와
 [API 등록 절차](#validate-and-register)를 따른다.
 
 카탈로그의 `source.image`는 OCI carrier 참조를 받는다.

@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test lib/*.test.ts hooks/*.test.ts server/*.test.mjs",
     "test:live": "node --test server/*.test.mjs",
-    "fixture:live": "node --experimental-strip-types server/live-fixture-server.mjs"
+    "replay": "node --experimental-strip-types server/replay.mjs"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.3.1",

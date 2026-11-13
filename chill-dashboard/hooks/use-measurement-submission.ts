@@ -1,41 +1,16 @@
 "use client"
-
-import { useRef, useState, type Dispatch, type SetStateAction } from "react"
+import { useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useChillMutation } from "@/lib/client"
 import { ApiError } from "@/lib/client-transport"
 import type { MeasurementMutation, MeasurementPreflight } from "@/lib/read-types"
-import { updateDraft, manifest, requestHref, steps, view, type Context, type Draft } from "@/lib/measurement-request"
+import { requestHref, type Context } from "@/lib/measurement-request"
 import type { Compatibility } from "@/lib/measurement-coverage"
 import type { MeasurementRequestDocument } from "@/lib/measurement-document"
 
 export function failure(error: ApiError) {
   const data = (error.data && typeof error.data === "object" ? error.data : {}) as { code?: string }
   return { code:data.code, message:data.code==="DashboardOriginDenied"?"현재 접속 주소에서 검사할 수 없어요. 관리자에게 허용 주소 설정을 요청하세요.":error.status===403?"측정 요청 권한이 없어요. 계정의 권한을 확인하세요.":error.status===401?"로그인이 만료됐어요. 다시 로그인하세요.":error.status===409?"같은 이름의 요청이나 조건이 변경됐어요. 목록을 확인하고 다시 검사하세요.":error.status===400||error.status===422?"측정 조건을 처리할 수 없어요. 모델·장치·측정 방식 값을 확인하세요.":"서버 응답을 확인하지 못했어요. 연결 상태를 확인한 뒤 다시 검사하세요." }
-}
-
-export function useMeasurementSubmission({ d, setD, context, namespace, variantId, verdict, refetchPlans }: {
-  d:Draft; setD:Dispatch<SetStateAction<Draft>>; context:Context; namespace:string; variantId:string;
-  verdict?:Compatibility; refetchPlans:()=>Promise<{error:ApiError|null}>;
-}) {
-  const v=view(d,context)
-  const submission=useMeasurementDocumentSubmission({
-    body:manifest(d,context,namespace),namespace,plans:context.plans,refetchPlans,variantId,verdict,
-    validate:()=>steps.filter(step=>step!=="review").map(step=>v.problem(step)).find(Boolean)||"",
-    onInvalid:():void=>{submission.setStage(v.problem("workload")?0:1)},
-    onSubmit:()=>setD({...d,name:v.name}),
-  })
-  const update=(patch:Partial<Draft>)=>{
-    if(submission.unknown||submission.pending||submission.send.isPending)return
-    setD(current=>updateDraft(current,patch,context))
-    submission.invalidate()
-  }
-  function next() {
-    const issue=submission.stage===0?v.problem("workload"):steps.filter(step=>step!=="workload"&&step!=="review").map(step=>v.problem(step)).find(Boolean)
-    if(issue){submission.setError(issue);return}
-    submission.setError("");submission.setStage(submission.stage+1)
-  }
-  return {...submission,update,next}
 }
 
 export function useMeasurementDocumentSubmission({body,namespace,plans,refetchPlans,variantId="",verdict,validate,onInvalid,onSubmit}:{
