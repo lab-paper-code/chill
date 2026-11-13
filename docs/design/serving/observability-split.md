@@ -108,7 +108,7 @@ decoded request/client cache는 설정 rolling span과 log retention 이내 minu
 
 scheduler full/compact/summary와 filter, uid와 offset은 [설정과 관측 API](scheduler-api.md#이력과-compact-조회)를 따른다. compact의 projection과 omitted 목록은 원본과 다른 공개 범위를 표시한다. stored journal과 원본 상세는 유지한다.
 
-workloads/{uid}는 from, to, definition, outcome, limit, cursor와 order를 받는다. order는 asc(기본)와 desc이며 그 밖의 값과 중복은 InvalidQuery다. asc는 수신 시각과 requestID 오름차순, desc는 그 정확한 역순이다. scheduler history처럼 cursor는 선택한 순서의 requests offset이고 nextCursor는 같은 방향으로 이어진다. total, selected, outcomes, cohorts, definitions와 management는 order와 무관하다.
+workloads/{uid}는 from, to, definition, outcome, limit, cursor와 order를 받는다. order는 asc(기본)와 desc이며 그 밖의 값과 중복은 InvalidQuery다. asc는 수신 시각과 requestID 오름차순, desc는 그 정확한 역순이다. scheduler history처럼 cursor는 선택한 순서의 requests offset이고 nextCursor는 같은 방향으로 이어진다. total, selected, outcomes, cohorts, definitions와 management는 order와 무관하다. desc로 여러 쪽을 읽을 때는 to를 고정한다. to를 생략하면 구간 끝이 계속 늘어나 새 행이 앞에 붙고 다음 쪽이 같은 행을 다시 보인다.
 
 action expectedSeconds와 expectedSource는 선택된 측정 trial의 평균 시간과 근거다. 근거 부재는 null이며 과거 action에 현재 cost를 대입하지 않는다.
 
