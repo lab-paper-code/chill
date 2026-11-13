@@ -3,6 +3,7 @@ package profilingrun
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -34,22 +35,20 @@ func firstfloorFrozenConfig(backend string) RunConfig {
 	return config
 }
 
-func TestActorRecipeSeparatesCapabilitiesFromMeasuredWarmup(t *testing.T) {
+// Warmup covers every initialized batch, whatever subset the measurement
+// protocol names.
+func TestActorRecipeWarmsEveryInitializedBatch(t *testing.T) {
 	config := firstfloorFrozenConfig(FirstfloorORTCPUBackend)
 	config.Measurement.WarmupBatchSizes = []int{1, 4}
 	actor := config.ActorConfig()
-	if len(actor.BatchSizes) != 4 || actor.BatchSizes[2] != 3 ||
-		len(actor.WarmupBatchSizes) != 2 || actor.WarmupBatchSizes[1] != 4 {
-		t.Fatalf("capability and measured warmup domains were conflated: %+v", actor)
+	if !slices.Equal(actor.BatchSizes, []int{1, 2, 3, 4}) || !slices.Equal(actor.WarmupBatchSizes, actor.BatchSizes) {
+		t.Fatalf("initialized batches %v, warmup %v", actor.BatchSizes, actor.WarmupBatchSizes)
 	}
-	command := strings.Join(actor.RunnerCommand, " ")
-	if !strings.Contains(command, "--warmup-batch 1 --warmup-batch 4") ||
-		strings.Contains(command, "--warmup-batch 3") {
-		t.Fatalf("runner did not receive exactly the measured warmup domain: %s", command)
+	if command := strings.Join(actor.RunnerCommand, " "); !strings.Contains(command, "--warmup-batch 1 --warmup-batch 2 --warmup-batch 3 --warmup-batch 4") {
+		t.Fatalf("runner does not warm every initialized batch: %s", command)
 	}
-	config.Measurement.WarmupBatchSizes[1] = 2
 	config.State.Preprocessor.Inputs[0] = mutatedInputName
-	if actor.WarmupBatchSizes[1] != 4 || actor.Inputs[0] != "image" {
+	if actor.Inputs[0] != "image" {
 		t.Fatal("frozen actor recipe aliases mutable preparation inputs")
 	}
 }

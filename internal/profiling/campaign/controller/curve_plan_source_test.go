@@ -273,7 +273,7 @@ func assertFrozenWorkloadStartup(t *testing.T, shared profilederivation.CurvePla
 	if shared.Actor.WarmupIterations != int(parent.Spec.ActiveProtocol.WarmupIterations) ||
 		shared.ActiveProtocol.StartupWarmupIterations != shared.Actor.WarmupIterations ||
 		shared.IdleProtocol.StartupWarmupIterations != shared.Actor.WarmupIterations ||
-		!slices.Equal(shared.Actor.WarmupBatchSizes, []int{1}) {
+		len(shared.Actor.BatchSizes) == 0 || !slices.Equal(shared.Actor.WarmupBatchSizes, shared.Actor.BatchSizes) {
 		t.Fatalf("recorded common startup = %+v, active=%+v, idle=%+v",
 			shared.Actor, shared.ActiveProtocol, shared.IdleProtocol)
 	}

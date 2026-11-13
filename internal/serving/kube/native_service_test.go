@@ -24,7 +24,6 @@ import (
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
@@ -440,7 +439,9 @@ func preparationNativeHTTPClient(t *testing.T, ctx context.Context, config nativ
 	actorConfig.MaxQueueRequests, actorConfig.MaxQueueBytes, actorConfig.MaxRequestBytes = 4, 1<<20, 1<<20
 	actorConfig.RunnerTimeoutMS = 3000
 	actorConfig.RunnerCommand = []string{"env", "CHILL_NATIVE_STATE_RUNNER=" + string(runtimeJSON), os.Args[0], "-test.run=^TestNativeStateRunnerProcess$"}
-	actorConfig.Policy.Batches = []native.BatchProfile{{Size: 1, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 1000000), fixtures.ServiceSample("physical-trial", 1, 1000000)}, EnergyPerItemJ: 1}}
+	if config.Mode == servingstate.NativeServingMode {
+		actorConfig.Policy.Batches = []native.BatchProfile{{Size: 1, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 1000000), fixtures.ServiceSample("physical-trial", 1, 1000000)}, EnergyPerItemJ: 1}}
+	}
 	if err := native.ValidateConfig(&actorConfig); err != nil {
 		t.Fatal(err)
 	}
@@ -540,7 +541,6 @@ func assertOperationCostPreparedPhysicalIdentity(t *testing.T, ctx context.Conte
 func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 	ctx := context.Background()
 	_, node, profile, _ := observerSourceFixture()
-	profile.Condition.RuntimeAccess = &profilederivation.CurveRuntimeAccessContract{SupplementalGroups: []int64{44}}
 	desiredImage := "registry/native@sha256:" + strings.Repeat("c", 64)
 	profile.Condition.RuntimeImage = "registry/native@sha256:" + strings.Repeat("b", 64)
 	var err error
@@ -573,6 +573,7 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 			Policy:        native.Policy{ProfileID: profile.ID},
 		},
 		MemoryBytes: 1 << 20,
+		Delivery:    servingstate.PrepareDelivery{SupplementalGroups: []int64{44}},
 	}
 	if _, err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
 		t.Fatalf("preparation did not reach Pod creation: %v", err)
@@ -657,7 +658,6 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile.RuntimeDelivery = delivery
 	scheme := runtime.NewScheme()
 	if err = core.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -687,6 +687,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 			Policy:        native.Policy{ProfileID: profile.ID},
 		},
 		MemoryBytes: 1 << 20,
+		Delivery:    servingstate.PrepareDelivery{RKNNLite: delivery},
 	}
 	if _, err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
 		t.Fatalf("preparation did not reach Pod creation: %v", err)

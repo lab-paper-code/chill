@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,6 +22,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -153,30 +155,24 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 	if _, err = service.measuredPreparation(context.Background(), profile, 2); err == nil {
 		t.Fatal("missing measured memory accepted")
 	}
-	for _, allowed := range [][]int{{1}, {1, 2}, {1, 4}} {
-		t.Run(fmt.Sprint(allowed), func(t *testing.T) {
+	// A profile measured with a command that warmed fewer batches does not
+	// restrict serving: serving warms every initialized batch.
+	for _, measured := range [][]int{{1}, {1, 2}, {1, 4}} {
+		t.Run(fmt.Sprint(measured), func(t *testing.T) {
 			profile := measuredAdoptionProfile()
-			profile.Batches = profile.Batches[:len(allowed)]
-			var want []string
-			for i, k := range allowed {
-				profile.Batches[i].Batch = k
-				want = append(want, fmt.Sprint(k))
+			profile.Condition.Actor.RunnerCommand = profile.Condition.Actor.RunnerCommand[:9] // through --warmup-iterations N
+			for _, k := range measured {
+				profile.Condition.Actor.RunnerCommand = append(profile.Condition.Actor.RunnerCommand, "--warmup-batch", fmt.Sprint(k))
 			}
-			profile.Condition.Actor.WarmupBatchSizes = allowed
-			profile.Condition.Actor.BuildRunnerCommand()
+			profile.Condition.Actor.WarmupBatchSizes = measured
 			spec, err := service.measuredPreparation(context.Background(), profile, 2)
 			if err != nil {
 				t.Fatal(err)
 			}
-			var warmed []string
-			for i, arg := range spec.Config.RunnerCommand {
-				if arg == "--warmup-batch" {
-					warmed = append(warmed, spec.Config.RunnerCommand[i+1])
-				}
-			}
-			if !reflect.DeepEqual(warmed, want) ||
+			command := strings.Join(spec.Config.RunnerCommand, " ")
+			if !strings.Contains(command, "--warmup-batch 1 --warmup-batch 2 --warmup-batch 4") || !reflect.DeepEqual(spec.Config.WarmupBatchSizes, []int{1, 2, 4}) ||
 				!reflect.DeepEqual(spec.Config.BatchSizes, []int{1, 2, 4}) {
-				t.Fatalf("warmup %v, want measured %v; initialized %v", warmed, want, spec.Config.BatchSizes)
+				t.Fatalf("serving warms %v of initialized %v", spec.Config.RunnerCommand, spec.Config.BatchSizes)
 			}
 		})
 	}
@@ -367,11 +363,27 @@ func TestMeasuredPreparationUsesSharedCPUWithoutAllocation(t *testing.T) {
 	}
 }
 
+// Serving takes the Pod's runtime delivery from the measured profile: the
+// supplemental groups of its runtime access, or the frozen RKNNLite delivery.
 func TestMeasuredSupplementalGroupsAreReproducible(t *testing.T) {
 	profile := measuredAdoptionProfile()
 	profile.Condition.RuntimeAccess = &derivation.CurveRuntimeAccessContract{SupplementalGroups: []int64{44}}
 	if err := reproducibleRuntimeAccess(profile); err != nil {
 		t.Fatalf("measured supplemental groups refused: %v", err)
+	}
+	service := &SchedulerService{
+		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}),
+		opts: Options{StoreName: "store", StoreEndpoint: "http://store", StoreBucket: "bucket", StoreRegion: "region",
+			StoreCredentialsSecret: "actual-secret", OperationTimeout: time.Hour, MaxRequestBytes: 8 << 20},
+	}
+	spec, err := service.measuredPreparation(context.Background(), profile, 128<<20)
+	if err != nil || !slices.Equal(spec.Delivery.SupplementalGroups, []int64{44}) || spec.Delivery.RKNNLite != nil {
+		t.Fatalf("measured supplemental groups not delivered: %+v %v", spec.Delivery, err)
+	}
+	profile.Condition.Backend, profile.RuntimeDelivery = profilingrun.FirstfloorRKNNLiteBackend, []byte(`{"runtimeAccess":{"privileged":true}}`)
+	spec, err = service.measuredPreparation(context.Background(), profile, 128<<20)
+	if err != nil || string(spec.Delivery.RKNNLite) != string(profile.RuntimeDelivery) || spec.Delivery.SupplementalGroups != nil {
+		t.Fatalf("measured RKNNLite delivery not delivered: %+v %v", spec.Delivery, err)
 	}
 }
 

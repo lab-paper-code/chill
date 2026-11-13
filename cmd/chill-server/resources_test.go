@@ -9,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	"github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -35,6 +38,24 @@ func TestLoadGeneratorResourcePodSelected(t *testing.T) {
 	pod.Labels[loadGeneratorRoleLabel] = "system"
 	if loadGeneratorResourcePodSelected(pod, "system") {
 		t.Fatal("different role selected")
+	}
+}
+
+// A measurement instance's memory is sampled like a serving instance's: its
+// Pod carries the profile its session publishes.
+func TestMeasurementInstanceResourcePodSelected(t *testing.T) {
+	node := serving.NodeReference{Name: "node", UID: "node-uid"}
+	spec := servingstate.PrepareSpec{Name: "session-batch-1", MemoryBytes: 1 << 30,
+		Instance: serving.SchedulerInstance{Node: node, Allocation: serving.SchedulerAllocation{MemoryBytes: 1 << 30}},
+		Config: native.Config{Mode: servingstate.NativeProfilingMode, BatchSizes: []int{1},
+			RuntimeImage: "runtime", MemoryRequestBytes: 1 << 20, MemoryLimitBytes: 1 << 30,
+			Policy: native.Policy{ProfileID: "system/session/session-uid", FixedBatchSize: 1}}}
+	pod, _, err := (&operations.Operations{Config: operations.OperationConfig{Namespace: "system"}}).PreparationPod(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resourcePodSelected(pod, "system", "", nil) {
+		t.Fatalf("measurement instance not sampled: %v", pod.Annotations)
 	}
 }
 

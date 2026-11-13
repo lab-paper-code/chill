@@ -119,6 +119,23 @@ opcost는 승인 Node에서 production primitive를 순차 Measure한다. ID는 
 
 종료 witness는 exact Node와 taint, Workload census와 예상 power generation이다. prepare/remove는 실제 한 state 차이와 무추론 proof, 빈 power 전환은 실제 from/to와 양쪽 empty state를 요구한다. 실패와 Insufficient를0J 성공으로 바꾸지 않는다.
 
+## 측정 인스턴스
+
+[프로파일 측정 세션](profile-session.md)은 서빙의 준비 동작으로 프로파일 없는 고정 배치 인스턴스를 띄운다. `Instance.Profile`이 없고 native mode가 `profiling`이며 `Policy.FixedBatchSize`가 양수인 준비 요청이 측정 인스턴스다. 그 밖의 프로파일 없는 준비 요청은 지금처럼 거절한다.
+
+| 항목 | serving 인스턴스 | 측정 인스턴스 |
+|---|---|---|
+| 준비 검증 | 측정 프로파일, 묶음 객체, serving mode, 이름, Node, 메모리 | 이름, Node, 메모리, 공개할 프로파일 식별자(`Policy.ProfileID`) |
+| Pod | artifact, preprocessor, profile 초기화 컨테이너 | artifact, preprocessor 초기화 컨테이너. profile 볼륨 없음 |
+| `edge.dacs.io/serving-profile` | 프로파일 ID | 세션이 공개할 프로파일 ID |
+| 준비 완료 | runtime Ready | Pod 소유 Service로 읽은 native 상태의 Ready |
+
+실행기 전달 정보는 준비 요청의 `Delivery`에서만 읽는다. RKNNLite는 고정된 전달 문서를 runner의 `delivery.json`으로 두고 host 접근으로 투영한다. 다른 backend는 보조 그룹만 쓴다. serving은 프로파일에서, 측정 세션은 자기 실행 조건에서 채운다.
+
+runner는 초기화한 배치 크기를 모두 warmup한다. 어느 배치 크기의 첫 실행도 cold start가 아니다. serving은 측정 때 명령이 일부 배치만 warmup했더라도 같은 recipe(`BuildRunnerCommand`)로 명령을 다시 만든다. 측정 인스턴스는 자기 고정 배치 B 하나만 초기화한다(`BatchSizes == [B]`). profiling mode는 배치 1을 요구하지 않는다.
+
+catalog 프로파일이 없으므로 runtime은 측정 인스턴스를 Ready로 두지 않고 route하지 않는다. 제거는 serving 인스턴스와 같다. 측정 동작은 이 준비 요청에 catalog 프로파일을 요구하지 않는다. 자원 표본 대상 선택은 같은 표식으로 이 Pod를 고르므로 메모리 기록이 남는다.
+
 ## 실클러스터 수용 기준
 
 에너지 비교는 같은 trace, seed, SLO, 최소 수요와 시작 배치를 사용한다. 자율 제어를 끈 정적 stage와 CHILL stage의 전환 포함 전체 풀 에너지를 비교한다. 전체 풀에는 genesis1의 제품 제어 비용을 포함하고 비제품 작업을 섞지 않는다.

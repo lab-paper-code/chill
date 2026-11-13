@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -22,6 +23,7 @@ const (
 	NativeOperationFailed    = "failed"
 	NativeOperationPartial   = "partial"
 	NativeServingMode        = "serving"
+	NativeProfilingMode      = "profiling"
 	OperationStop            = "stop"
 	OperationDrain           = "drain"
 	OperationResize          = "resize"
@@ -59,6 +61,24 @@ type PrepareSpec struct {
 	Config      native.Config                `json:"config"`
 	MemoryBytes uint64                       `json:"memoryBytes"`
 	Owner       *serving.WorkloadReference   `json:"owner,omitempty"`
+	// Delivery is omitted from records like the profile delivery it copies.
+	Delivery PrepareDelivery `json:"-"`
+}
+
+// PrepareDelivery is the measured runtime delivery the prepared Pod
+// reproduces. RKNNLite carries the frozen delivery document the runner reads
+// and the Pod projects to host access; other backends carry only the
+// supplemental groups of their runtime access.
+type PrepareDelivery struct {
+	RKNNLite           json.RawMessage
+	SupplementalGroups []int64
+}
+
+// Measurement reports a measurement instance: a fixed-batch native runtime in
+// profiling mode prepared without a catalog profile. Its Policy.ProfileID
+// names the profile the measurement will publish.
+func (s PrepareSpec) Measurement() bool {
+	return s.Instance.Profile == nil && s.Config.Mode == NativeProfilingMode && s.Config.Policy.FixedBatchSize > 0
 }
 
 type Operation struct {

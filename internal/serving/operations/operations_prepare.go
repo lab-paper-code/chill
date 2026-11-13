@@ -15,6 +15,7 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	serving "github.com/lab-paper-code/chill/internal/serving"
+	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -96,21 +97,26 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.Prep
 			return evidence, err
 		}
 	}
-	return evidence, o.Wait(ctx, func() (bool, error) { return o.PrepareObserved(ctx, pod) })
+	observed := o.PrepareObserved
+	if spec.Measurement() {
+		observed = o.prepareNativeReady
+	}
+	return evidence, o.Wait(ctx, func() (bool, error) { return observed(ctx, pod) })
 }
 
 // PreparationPod builds the actual serving Pod from the frozen actor recipe.
 // The returned delivery body is mounted with the actor config, not re-resolved.
+// A measurement instance starts without a profile bundle.
 func (o *Operations) PreparationPod(spec servingstate.PrepareSpec) (*core.Pod, []byte, error) {
 	if err := ValidatePreparation(spec); err != nil {
 		return nil, nil, err
 	}
-	p := spec.Instance.Profile
 	node := spec.Instance.Node
-	host, delivery, err := measuredRuntimeDelivery(p)
+	host, err := measuredRuntimeDelivery(spec.Delivery)
 	if err != nil {
 		return nil, nil, err
 	}
+	delivery := []byte(spec.Delivery.RKNNLite)
 	runtime, err := native.RuntimeContainer(&spec.Config)
 	if err != nil {
 		return nil, nil, err
@@ -128,7 +134,7 @@ func (o *Operations) PreparationPod(spec servingstate.PrepareSpec) (*core.Pod, [
 		core.VolumeMount{Name: "config", MountPath: "/config", ReadOnly: true})
 	runtime.TerminationMessagePolicy = core.TerminationMessageFallbackToLogsOnError
 	runtime.ReadinessProbe = &core.Probe{ProbeHandler: core.ProbeHandler{HTTPGet: &core.HTTPGetAction{Path: "/v2/health/ready", Port: port8080()}}, PeriodSeconds: 1}
-	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.Config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent, profilingrun.MeasurementWorkloadLabelKey: profilingrun.ServingInstanceRole}, Annotations: map[string]string{servingstate.ServingProfileAnnotation: p.ID, servingstate.ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), servingstate.ServingPolicyAnnotation: spec.Config.Policy.DecisionID, servingstate.ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{servingstate.SourceFinalizer}}, Spec: core.PodSpec{
+	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.Config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent, profilingrun.MeasurementWorkloadLabelKey: profilingrun.ServingInstanceRole}, Annotations: map[string]string{servingstate.ServingProfileAnnotation: spec.Config.Policy.ProfileID, servingstate.ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), servingstate.ServingPolicyAnnotation: spec.Config.Policy.DecisionID, servingstate.ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{servingstate.SourceFinalizer}}, Spec: core.PodSpec{
 		NodeName: node.Name, RestartPolicy: core.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false),
 		InitContainers: []core.Container{
 			{Name: "artifact", Image: spec.Config.ArtifactImage, Command: []string{"sh", "-ec"}, Args: append([]string{`cp "$@" /chill-artifact/`, "--"}, spec.Config.ArtifactFiles...), Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}},
@@ -138,34 +144,29 @@ func (o *Operations) PreparationPod(spec servingstate.PrepareSpec) (*core.Pod, [
 		Containers: []core.Container{runtime},
 		Volumes:    []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "preprocessor", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}},
 	}}
+	if spec.Measurement() {
+		bundle := func(name string) bool { return name == "profile" }
+		pod.Spec.InitContainers = slices.DeleteFunc(pod.Spec.InitContainers, func(c core.Container) bool { return bundle(c.Name) })
+		pod.Spec.Volumes = slices.DeleteFunc(pod.Spec.Volumes, func(v core.Volume) bool { return bundle(v.Name) })
+		pod.Spec.Containers[0].VolumeMounts = slices.DeleteFunc(pod.Spec.Containers[0].VolumeMounts, func(m core.VolumeMount) bool { return bundle(m.Name) })
+	}
 	o.placeServingPod(pod, spec.Owner, spec.Instance)
 	if delivery != nil {
 		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, host.VolumeMounts...)
 		pod.Spec.Containers[0].SecurityContext = &core.SecurityContext{Privileged: ptr.To(host.Privileged), AllowPrivilegeEscalation: ptr.To(host.Privileged)}
 		pod.Spec.Volumes = append(pod.Spec.Volumes, host.Volumes...)
 		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: host.SupplementalGroups}
-	} else if access := p.Condition.RuntimeAccess; access != nil && len(access.SupplementalGroups) != 0 {
-		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: slices.Clone(access.SupplementalGroups)}
+	} else if groups := spec.Delivery.SupplementalGroups; len(groups) != 0 {
+		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: slices.Clone(groups)}
 	}
 	return pod, delivery, nil
 }
 
 // PrepareObserved reports whether the runtime holds the prepared Pod's
-// executor Ready; a failed Pod ends the preparation. It reuses an observer
-// refresh from within the poll interval (the server's source refresh).
+// executor Ready; a failed Pod ends the preparation.
 func (o *Operations) PrepareObserved(ctx context.Context, pod *core.Pod) (bool, error) {
-	if err := o.Observer.RefreshWithin(ctx, o.Config.PollInterval); err != nil {
+	if _, err := o.preparedPod(ctx, pod); err != nil {
 		return false, err
-	}
-	current, err := o.Kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{})
-	if err != nil {
-		return false, err
-	}
-	if current.UID != pod.UID {
-		return false, errors.New("prepared Pod identity changed")
-	}
-	if failure, failed := servingstate.ClassifyPreparationFailure(current, nil, nil, nil, true); failed {
-		return false, &servingstate.PreparationPodError{Pod: current, Reason: fmt.Sprintf("native preparation failed: %s", failure.Reason)}
 	}
 	for _, i := range o.Runtime.Instances() {
 		if strings.HasPrefix(i.ID, string(pod.UID)+"/") && i.Ready {
@@ -173,6 +174,50 @@ func (o *Operations) PrepareObserved(ctx context.Context, pod *core.Pod) (bool, 
 		}
 	}
 	return false, nil
+}
+
+// prepareNativeReady reports whether a measurement instance's native runtime
+// is Ready, read through its Pod-owned Service as Capture reads it. Without a
+// catalog profile the runtime never holds the instance Ready. A runtime that
+// does not answer yet is not ready.
+func (o *Operations) prepareNativeReady(ctx context.Context, pod *core.Pod) (bool, error) {
+	current, err := o.preparedPod(ctx, pod)
+	if err != nil {
+		return false, err
+	}
+	if status := servingstate.FirstfloorStatus(current); status == nil || status.State.Running == nil || status.ContainerID == "" {
+		return false, nil
+	}
+	endpoint, err := servingstate.NativeInstanceEndpoint(ctx, o.Kube, current)
+	if err != nil {
+		return false, err
+	}
+	model, err := servingstate.NativeModel(ctx, o.Store.Client(), current)
+	if err != nil {
+		return false, err
+	}
+	state, err := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: model})
+	return err == nil && state.Ready, nil
+}
+
+// preparedPod reads the prepared Pod after an observer refresh from within
+// the poll interval (the server's source refresh); a failed Pod ends the
+// preparation.
+func (o *Operations) preparedPod(ctx context.Context, pod *core.Pod) (*core.Pod, error) {
+	if err := o.Observer.RefreshWithin(ctx, o.Config.PollInterval); err != nil {
+		return nil, err
+	}
+	current, err := o.Kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if current.UID != pod.UID {
+		return nil, errors.New("prepared Pod identity changed")
+	}
+	if failure, failed := servingstate.ClassifyPreparationFailure(current, nil, nil, nil, true); failed {
+		return nil, &servingstate.PreparationPodError{Pod: current, Reason: fmt.Sprintf("native preparation failed: %s", failure.Reason)}
+	}
+	return current, nil
 }
 
 func (o *Operations) EnsurePreparationConfig(ctx context.Context, spec servingstate.PrepareSpec, delivery []byte) (string, error) {

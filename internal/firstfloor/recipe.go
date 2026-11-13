@@ -1,10 +1,16 @@
 package firstfloor
 
-import "strconv"
+import (
+	"slices"
+	"strconv"
+)
 
 // BuildRunnerCommand projects the frozen execution recipe. Mode, fixed batch
 // dispatch and profile delivery do not change runner initialization or warmup.
+// Warmup covers every initialized batch size, so no first execution at any
+// of them is a cold start.
 func (c *Config) BuildRunnerCommand() {
+	c.WarmupBatchSizes = slices.Clone(c.BatchSizes)
 	c.RunnerCommand = []string{
 		"python3", "/opt/chill/runtime/firstfloor/runner.py", "--runtime", c.Backend,
 		"--model-dir", "/model", "--preprocessor", "/preprocessor",

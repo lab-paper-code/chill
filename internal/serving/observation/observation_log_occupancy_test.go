@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	serving "github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -81,6 +82,49 @@ func TestScanOccupancyRowsKeepsErrorsOpenAndLateNative(t *testing.T) {
 		if r.Kind == serving.RequestRowNative {
 			t.Fatal("native supplement replaced HTTP row")
 		}
+	}
+}
+
+// Load sent straight to a measurement instance has no registered Workload or
+// gateway call. Its native progress is still recorded and read back by the
+// request context's Workload identifier and the native running time.
+func TestNativeRowsWithoutWorkloadReadBackByIdentifier(t *testing.T) {
+	l, clock := clockedObservationLog(t, ObservationLogConfig{OccupancyTail: time.Minute}, observationTestHour)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: l})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const uid = "chill-system/session/session-uid/2/saturation"
+	at := observationTestHour.Add(time.Second)
+	clock.set(at)
+	idle := int64(5e6)
+	for i, phase := range []string{"queued", "running", "finished"} {
+		p := serving.BackendProgress{RequestID: "load-1", WorkloadUID: uid, Definition: "session-load", Phase: phase,
+			At: at.Add(time.Duration(i) * 10 * time.Millisecond), BatchID: 9, BatchSize: 2, ExecutionComplete: i == 2}
+		if p.ExecutionComplete {
+			p.ServiceSample = &native.ServiceSample{ServiceDurationNanos: 7e6, PrecedingIdleNanos: &idle, TrialID: uid}
+		}
+		if err := runtime.ObserveBackend("pod-uid/containerd://running", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var running, finished *serving.RequestRow
+	if _, err := l.ScanOccupancyRows(ctx, uid, "", at, at.Add(time.Second), func(r serving.RequestRow) {
+		if r.Kind == serving.RequestRowNative && r.NativeRunningAt != nil {
+			running = &r
+		}
+		if r.Kind == serving.RequestRowNative && r.NativeFinishedAt != nil {
+			finished = &r
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if running == nil || finished == nil || finished.BatchID != 9 || finished.BatchSize != 2 || finished.ServiceDurationNanos != 7e6 ||
+		finished.PrecedingIdleNanos == nil || *finished.PrecedingIdleNanos != idle || finished.NativeTrialID != uid ||
+		!running.NativeRunningAt.Equal(at.Add(10*time.Millisecond)) {
+		t.Fatalf("native rows not read back: running %+v finished %+v", running, finished)
 	}
 }
 
