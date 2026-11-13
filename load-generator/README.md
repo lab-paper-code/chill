@@ -81,10 +81,10 @@ chill-loadgen replay \
   --request-lifetime 75 --delivery-margin .01 > smol-d.jsonl
 ```
 
-`--duration` bounds new sends, not the last response: all outstanding requests
-are joined after sending stops. Closed-loop `scheduledOffsetNs` is its actual
-refill offset and `delayed` is false. This is a supply shape, not proof of native
-saturation or physical completion; rejected requests and missing native evidence
+`--duration` bounds new sends. All outstanding requests are joined after sending
+stops. Closed-loop `scheduledOffsetNs` is its actual refill offset and `delayed`
+is false. This mode defines the supply shape. Native saturation and physical
+completion require native evidence; rejected requests and missing native evidence
 remain visible to the measurement controller.
 
 `--request-lifetime L` (seconds, optional) sends the existing
@@ -98,8 +98,8 @@ unchanged. The Python API exposes the same header as
 The dispatch-occupancy controller freezes warmup, burst duration, workers,
 minimum pairs, lifetime, delivery margin, setup, preparation, drain and collection
 conditions. Its finite Job budget includes post-window supply extension as well
-as burst and drain. Use the server-built task rather than reconstructing its
-budget in a client. Lifetime expiry does not interrupt a running physical batch.
+as burst and drain. Use the server-built task. Lifetime expiry does not interrupt
+a running physical batch.
 
 ChillServer's `--request-timeout` caps the header and HTTP context.
 `--drain-timeout` bounds shutdown drain; configure Pod termination grace to
@@ -155,13 +155,12 @@ transport-error handling on the same process clock. They are not socket-write,
 gateway-receipt or stdout timestamps. Sort send timestamps across workers to
 measure issuance gaps; completion/JSONL order is not send order. JSON encoding
 runs outside the shared output lock, while one whole line plus flush remains
-locked. Workers still wait for their own output before refilling; this is not
-an asynchronous logger or a claim that observed long gaps have been cured.
+locked. Workers still wait for their own output before refilling.
 
 Each issued exchange gets an opaque `observationID` before inference. Replay
 queues its immutable evidence after measurement to one reporting worker using
 a separate connection and the existing socket timeout. Its bounded queue reuses
-the existing `workers` budget in every replay process; there is no new knob.
+the existing `workers` budget in every replay process.
 Enqueue never waits for space. If full, the inference row retains its exact E,
 IDs, status and outcome with `feedbackStatus:"not_reported"` and
 `feedbackError:"ReporterBackpressure"`; that feedback is not sent or retried.
@@ -169,8 +168,8 @@ IDs, status and outcome with `feedbackStatus:"not_reported"` and
 Scheduled arrivals and closed-loop refills do not await feedback HTTP.
 Shutdown drains inference workers, then the bounded feedback backlog, including
 when scheduling raises. Repeated reporter close is safe.
-Reporting never changes inference outcome. `feedbackStatus:"queued"` means
-queued, not acknowledged; a failed attempt immediately emits a separate
+Reporting never changes inference outcome. `feedbackStatus:"queued"` records
+queue acceptance; a failed attempt immediately emits a separate
 `clientFeedbackEvent:"failed"` JSONL event with `observationID`, `workload`
 and `error` through the existing thread-safe output boundary. Normal JSONL
 output backpressure still applies. These events are not inference rows.
@@ -214,8 +213,8 @@ offered-row evidence stays unknown. See the
 ## Workload inference
 
 Use `WorkloadHTTPClient` against the trusted HTTPS origin of the gateway.
-The Workload must already be registered through the management API. Its ID,
-not a model name, selects the registered model, preprocessor and SLO. A request
+The Workload must already be registered through the management API. Its ID
+selects the registered model, preprocessor and SLO. A request
 is one raw sample: a mapping from every input field name of the Workload's
 preprocessor to that field's bytes (a JPEG file or UTF-8 text). The client sends
 each field as `BYTES` with base64 data. Routing and batching remain server-side.

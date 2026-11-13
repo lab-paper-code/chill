@@ -138,7 +138,7 @@ docker buildx build \
   --push /tmp/chill-model-carrier
 ```
 
-Use the image index digest returned by the registry or build, not `BUILD-ID`, in
+Use the image index digest returned by the registry or build in
 the `ModelSpec`. On a host of each declared architecture, verify the immutable
 carrier and the exact catalogued path before registration:
 
@@ -190,8 +190,8 @@ complete operational document in the environment JSON's `samples` entry.
 ## Validate and register
 
 Confirm through the deployed CHILL read API/dashboard that the intended
-DeviceClass and runtime declaration exist. Register through HTTPS ChillServer,
-not a direct Kubernetes managed-resource write. With `jq`, select the complete
+DeviceClass and runtime declaration exist. Register through HTTPS ChillServer.
+Do not write Kubernetes managed resources directly. With `jq`, select the complete
 environment document by its existing repository-relative path and extract only
 the accepted API fields. Selection must succeed before starting the request:
 
@@ -213,9 +213,9 @@ curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
 For a newly prepared manifest, the existing
 `yq -o=json '.' "$Manifest" | jq '{name: .metadata.name, spec: .spec}'`
 conversion still supplies the same request body. The checked-in
-`registry.example.invalid` locations are illustrative, not published-image
-or inspection evidence. Environment selection never rewrites image references
-inside YAML.
+`registry.example.invalid` locations are illustrative. Verify published images
+and collect inspection evidence for the actual environment. Environment selection
+never rewrites image references inside YAML.
 
 POST returns `201`. PUT accepts `{"spec": ...}` and DELETE has no body; both
 require the queried ModelSpec `metadata.resourceVersion` in `If-Match`.
@@ -224,7 +224,7 @@ deleted (`409`), and a change that removes an artifact targeted by a
 Preprocessor returns `409 ModelArtifactReferenced`. Changing a shared model
 drains all referring Workloads before publishing the new immutable definitions.
 Bearer auth uses TokenReview and path/verb SubjectAccessReview. Managers need
-HTTP non-resource permissions, not direct managed-resource write permissions.
+HTTP non-resource permissions.
 
 Preprocessors and Datasets use the same request shape and `If-Match` rule at
 `$OWNER/api/v1/preprocessors` and `$OWNER/api/v1/datasets`. Register the target

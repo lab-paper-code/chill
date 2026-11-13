@@ -1,8 +1,7 @@
 # Internal package map
 
 CHILL groups production packages by measured capability first and uses technical
-layers only inside that capability. Start from a capability below instead of
-treating every directory under `internal/` as an equal entry point.
+layers only inside that capability. Start from a capability below.
 
 ## Capability entry points
 
@@ -20,8 +19,7 @@ treating every directory under `internal/` as an equal entry point.
 | Scheduler search | [`scheduler/`](scheduler/) | Search protocol and selectable search implementations |
 | Evaluation | [`evaluation/`](evaluation/) | Experiment lifecycle and execution services |
 
-Small support packages remain at the top level because they do not define a
-separate product capability: `component` owns stable component names,
+Small support packages remain at the top level: `component` owns stable component names,
 `metadata` owns shared Kubernetes metadata, `kubeconfig` owns client
 configuration, and `nodeprobe` owns bounded host discovery.
 
@@ -75,8 +73,8 @@ serving/                  scheduler, admission, queues and runtime contracts
 ```
 
 [`../cmd/chill-server/`](../cmd/chill-server/) assembles concrete
-adapters. The `serving` root imports profiling derivation, not Profiler
-controllers or candidate resolvers. Subpackages such as `application` and
+adapters. The `serving` root imports profiling derivation. It must not import
+Profiler controllers or candidate resolvers. Subpackages such as `application` and
 `kube` also consume Profiler execution and evidence adapters.
 The native runtime is firstfloor with explicit ORT CPU/CUDA or RKNN execution,
 per-UID/definition batch isolation and shared actor/replay batching decisions.
@@ -98,7 +96,7 @@ and scopes; `serving/operations` owns preparation and lifecycle.
 
 - Capability contracts and decisions remain independent of Kubernetes where
   practical. `profiling/run` also contains a Node grant reader and Kubernetes
-  value projections; a capability-root location alone does not imply purity.
+  value projections.
 - `controller` contains controller-runtime reconciliation and durable writes.
 - `kube` contains Kubernetes-backed readers, repositories, or projections that
   implement a consumer-owned contract.

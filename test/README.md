@@ -1,7 +1,6 @@
 # Test Layout
 
-CHILL separates tests by execution boundary rather than placing every test in
-one central directory.
+CHILL separates tests by execution boundary.
 
 | Location | Responsibility |
 |---|---|

@@ -75,7 +75,7 @@ For discrete NVIDIA clock modes, the structural manual class sample is
 `manual/edge_v1alpha1_deviceclass_nvidia.yaml`; do not apply a manual class
 alongside a Helm-owned class of the same name. The CampaignOps-only pair-cost
 sample is `profiling/edge_v1alpha1_powermodetransitioncost_nvidia.yaml`. Select
-the actual environment documents, rather than applying these example files:
+the actual environment documents. Do not apply these example files:
 
 ```sh
 set -e
