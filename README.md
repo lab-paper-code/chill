@@ -4,10 +4,9 @@
 research operator that serves edge inference at minimal measured energy while
 meeting per-request tail-latency SLOs.
 
-CHILL profiles each model × device × power-mode condition on the real hardware,
-turns the completed measurements into a scheduler catalog, and places inference
-Pools across heterogeneous nodes (x86, Jetson, Raspberry Pi, RK3588) using
-measured energy and transition costs rather than static assumptions.
+CHILL profiles each model, device and power-mode condition on real hardware,
+turns completed measurements into a scheduler catalog, and places inference
+Pools across heterogeneous nodes using measured energy and transition costs.
 
 ## Components
 
@@ -18,7 +17,7 @@ measured energy and transition costs rather than static assumptions.
 | ChillServer (`cmd/chill-server`) | Single HTTPS entry point: Model/Workload registration, inference, measured-profile scheduler, observation and evidence APIs |
 | Node agent (`cmd/node-agent`) | Publishes hardware facts per Node and applies requested power modes |
 | Dashboard (`chill-dashboard/`) | Operator web UI over the native ChillServer APIs |
-| CLI (`cmd/chill`, binary `kubectl-chill`) | Read-only inventory, system, and run inspection |
+| CLI (`cmd/chill`, binary `kubectl-chill`) | Inventory, system and run inspection; explicit measurement submission and deletion |
 
 API group: `edge.dacs.io/v1alpha1`. Key CRDs: `ChillSystem`, `DeviceClass`,
 `ModelSpec`, `Workload`, `ProfilingRun`, `BatchEnergyOptimization`, `PowerModeTransitionCost`.
@@ -26,7 +25,7 @@ API group: `edge.dacs.io/v1alpha1`. Key CRDs: `ChillSystem`, `DeviceClass`,
 ## Requirements
 
 - Kubernetes 1.31 (KubeEdge-attached edge nodes supported)
-- Go 1.22+, Helm 3, Docker (for image builds)
+- Go 1.22.12 or newer, Helm 3, Docker (for image builds)
 - An S3-compatible Evidence Store and a TLS Secret for ChillServer
 - Kubebuilder v4.2.0 tooling (`make manifests generate`)
 
@@ -78,15 +77,15 @@ NumPy, Pillow and ONNX Runtime match the default firstfloor image; ONNX builds
 the genuine model fixture, and PyYAML supports deployment and rendered RBAC tests.
 Use a virtual environment for local installation. SmolVLM preprocessor tests
 retain their optional runtime-image dependency skip; CI does not install those extras.
-Deployment CLI smoke tests also require full Git history to archive the pinned
-historical power-source commit; CI checks out with `fetch-depth: 0`.
-Set `TEST_PYTHON=/path/to/python3` for `make test-loadgen` (also used by `make test`); load-generator tests require Python 3.10+.
+Deployment CLI fixtures require full Git history for pinned source archives.
+Set `TEST_PYTHON=/path/to/python3` for `make test-loadgen` (also used by `make test`);
+load-generator tests require Python 3.10 or newer.
 
 ```sh
 make lint                 # golangci-lint
-make test                 # generate, vet, unit + envtest (no e2e)
-make test-native          # real firstfloor profiling trials (~6 min; profiler/firstfloor changes)
-make test-deploy          # deployment CLI + evaluation fixtures, one process per test (8 parallel)
+make test                 # generation, formatting, vet, Python, unit and envtest checks; no e2e
+make test-native          # real firstfloor profiling integration
+make test-deploy          # offline deployment and evaluation fixtures
 make helm-lint helm-template
 make arch-check           # package dependency rules (.go-arch-lint.yml)
 make build                # bin/chill-server, bin/kubectl-chill, ...
@@ -123,9 +122,8 @@ Images (`daclab/chill-operator`, `chill-node-agent`, `chill-serving-entrypoint`,
 
 ## Status
 
-Research prototype. The scheduler, evidence pipeline, and dashboard are
-exercised on a live heterogeneous testbed; interfaces may change between
-measurement campaigns without compatibility shims.
+Research prototype. Interfaces may change between measurement campaigns
+without compatibility shims.
 
 ## License
 

@@ -17,6 +17,8 @@ treating every directory under `internal/` as an equal entry point.
 | Observation | [`metricobserver/`](metricobserver/) and [`workloadobserver/`](workloadobserver/) | Bounded metric and workload evidence collection |
 | Model registration | [`modelcatalog/`](modelcatalog/) | Shared API-to-model projection and registration validation |
 | Serving | [`serving/`](serving/) | Immutable applied definitions, admission, bounded queues, instance routing, physical drain and private ObservationLog |
+| Scheduler search | [`scheduler/`](scheduler/) | Search protocol and selectable search implementations |
+| Evaluation | [`evaluation/`](evaluation/) | Experiment lifecycle and execution services |
 
 Small support packages remain at the top level because they do not define a
 separate product capability: `component` owns stable component names,
@@ -78,55 +80,19 @@ controllers or candidate resolvers. Subpackages such as `application` and
 `kube` also consume Profiler execution and evidence adapters.
 The native runtime is firstfloor with explicit ORT CPU/CUDA or RKNN execution,
 per-UID/definition batch isolation and shared actor/replay batching decisions.
-Reviewed allowed directions and current `go list` edges are recorded in the
-[architecture contract](../docs/design/code-intelligence/README.md#package-architecture-contract).
+Reviewed allowed directions are recorded in the
+[architecture contract](../docs/design/code-intelligence/README.md).
 
-The serving root keeps capacity judgments in `scheduler_capacity_*`, search in
-`scheduler_capacity_search.go`, and shared costs in `scheduler_capacity_cost.go`
-and `scheduler_cost_baseline.go`. `scheduler_replay_*` owns replay simulation,
-with shared snapshot checks in `scheduler_validate.go`.
-In `serving/kube`, `scheduler_application_capture.go` assembles live sources,
-`scheduler_state_*` projects and reconciles Kubernetes state and effect proofs,
-`scheduler_operations_launch.go` launches operations, and
-`scheduler_capacity_admission.go` judges the physical budget.
-`serving/state` owns operation state and scopes; `serving/operations` owns
-planning and lifecycle, with preparation contracts in
-`operations_prepare_contract.go`. In `serving/observation`, `observation_log_*`
-separates records, query reduction, durable storage and archiving; local capture
-and scanning use `observation_log_read.go`. Legacy DOM evidence and
-operation-cost measurement paths remain supported.
+The serving scheduler adapts measured capacity and cost judgments to the search
+protocol in [`scheduler/protocol/`](scheduler/protocol/). Search implementations
+live in [`scheduler/v1/`](scheduler/v1/) and [`scheduler/v2/`](scheduler/v2/);
+`planSearchStrategy` selects one. Persisted diagnostics describe the selected
+algorithm's actual search and termination.
 
-Capacity decisions retain the live search trajectory at
-`schedulerLine.decision.capacity.search.steps` in the existing ObservationLog
-scheduler JSONL stream (no separate log or schema bump).
-Each `keep`/`empty` start has an origin (`k: 0`, `evaluated: 0`); the unchanged
-aggregate excludes initial evaluations. Later entries are accepted moves only.
-Across both starts, sum of step `evaluated` plus `search.trailingEvaluated`
-equals `search.evaluated`: trailing counts every unaccepted sweep, including
-intermediate k=2 local optima. Both origins precede k=2 then k=3 moves; a
-neighborhood without an accepted move has no entry.
-
-Step fields are `start`, `k`, `changedNodes` (existing name/UID references),
-`joules`, `feasible`, `final`, `evaluated`, `durationNanos`, and optional
-`budgetCut`. Times are measured on the main goroutine around each origin
-evaluation or accepting sweep; their sum is at most `search.durationNanos`.
-Compare consecutive points of the same start using the actual `better` order
-(feasible, final, descending exceedances, then joules/keep/key), not energy
-alone. Energy cannot increase between feasible points but may increase when
-improving infeasible points. `final` means final-capacity feasible, not the
-selected endpoint. `terminationReason` is `noImprovement` or `budgetCut`;
-errors return no persisted decision. The last recorded point alone carries
-`budgetCut: true` when the search is cut, even if another start wins. Cuts
-retain the prefix, including improvements accepted from partial sweeps.
-
-`TestCapacitySearchStepRecordSize` measures the existing eight-Node,
-three-Workload evaluation fixture (two power modes on the Jetson stand-ins):
-15 steps added 3,021 JSON bytes per decision (3,083 bytes total search JSON).
-Timing digit counts vary between runs. At one decision every 10 seconds,
-this is approximately 26.1 MB/day of additional uncompressed JSON.
-This is not a size cap: accepted moves are retained through the search budget,
-and larger trajectories increase serialization/write work under the
-ObservationLog lock at every decision (normally every 10 seconds).
+`serving/kube` captures live inputs, reconciles state and effect proofs, launches
+operations, and checks the physical budget. `serving/state` owns operation state
+and scopes; `serving/operations` owns preparation and lifecycle.
+`serving/observation` owns retained records, queries, storage and archiving.
 
 ## Layer vocabulary
 

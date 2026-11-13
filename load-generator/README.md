@@ -24,81 +24,37 @@ same send times.
 
 ### Evaluation scheduled-time replay
 
-With the evaluation contract (`--workload-slo` and `--gateway-timeout`), every frozen
-arrival starts an independent request on the original timeline; `--workers`
-caps pending feedback reports per process, not in-flight evaluation requests.
-The injected `hack/evaluation/producer.py` uses
-the same dispatcher for its frozen segmented trace. Late arrivals are still
-sent and drained, not silently dropped at the issue-window boundary.
-Endpoint/token validation and TLS context/CA loading occur once before replay
-or the E5 release barrier. Independent per-request HTTPS connections reuse this
-immutable context; TLS preparation is not repeated on arrival threads.
-EvaluationRun and EvaluationStage freeze the load Job's memory requests and limits
-in `spec.loadGenerator.resources` (for example, `requests.memory: 1Gi` and
-`limits.memory: 1Gi`); change those quantities in the Run input, not the Job template.
-`spec.loadGenerator.shards` maps each workload name to its count of
-independent process shards, initialized before its ready event. The parent
-releases every shard against one shared start clock. Each shard sends only
-global indexes `index % shardCount == shardIndex` from the already-frozen
-trace; offsets, record assignment and offered denominator never change.
-Shard JSONL rows are merged under one process-shared output lock, retaining
-`requestIndex`, `shardIndex` and `shardCount`. Rebuild the load-generator image
-for the shared shard dispatcher; runtime images are unchanged.
-Results are written and flushed as JSONL on completion, without retaining rows
-or completed request threads. A condition counter tracks active requests and
-drains them even when scheduling raises; the arrival path never joins a thread.
-The counter has its own lock, so blocked output does not block later arrivals.
-Workers are daemon threads to avoid Python 3.8 interpreter shutdown-lock
-retention, but replay always waits for their output and connection cleanup.
-Inference bookkeeping retains concurrent requests, not completed request threads.
-The feedback FIFO retains at most `workers` pending reports plus one active
-exchange per process; failures stream directly to JSONL without a retained
-failure list. The frozen offset trace, per-shard schedule and dataset remain resident.
-A failed process shard prevents a complete `drained` event: its missing planned
-requests cannot be silently removed from the SLO denominator; already streamed
-rows from every shard remain evidence.
-`scheduledMonotonicNS` anchors the request; `latenessNs` is actual send minus
-scheduled time, a generator-quality metric rather than SLO time.
-`latencyMs` and `serviceLatencyMs` retain the caller-bracket duration;
-`scheduledLatencyMs` is scheduled-to-completion reference latency only.
-`elapsedNanos` is the exact client E2E duration measured inside `infer`, immediately
-before sending the prepared request through full response-body read. Preparation,
-result formatting and feedback reporting are outside that interval.
-`sentAtUnixNS` and `finishedAtUnixNS` support joining server `receivedAt` by
-request ID. Send→receipt retains cross-host clock uncertainty; server elapsed
-is a separate diagnostic, not the client SLO interval.
-Existing fields remain. Offered is the entire planned trace, including failures
-and missing issuance. Generator lateness tolerance and allowed exceedance
-fraction belong to the frozen experiment config; exceeding them invalidates
-generator quality, not the workload SLO.
-The native lifetime header always carries the configured `L`: lateness neither
-reduces it nor suppresses a send. Thread creation failures produce
-`issued=false`, `GeneratorThreadStartError` rows and do not stop later arrivals
-or the producer's drained event. They remain in the planned denominator and
-fail full-supply judging.
+Paired `--workload-slo` and `--gateway-timeout` enable independent scheduled
+arrivals. Each frozen arrival starts on its original timeline, including late
+arrivals. `--workers` bounds pending feedback per process; inference concurrency
+follows the offered trace. `hack/evaluation/producer.py` uses the same dispatcher.
+Endpoint/token validation and TLS preparation occur once before replay.
 
-Producer JSONL uses stdout; Python exceptions/tracebacks use stderr. Kubernetes
-`logs -f` merges the container's two streams, even when kubectl's own stderr is
-captured separately. E5 retains those original client-log lines, skips malformed
-or non-object JSON rows during collection/judging, and reports their count and
-first line number/content (first 80 characters) in `judgment.json`'s `coverage`.
-Missing end counters remain missing evidence; they are never synthesized.
+EvaluationRun and EvaluationStage freeze load Job memory requests and limits in
+`spec.loadGenerator.resources`, and per-Workload process counts in
+`spec.loadGenerator.shards`. Each shard sends indexes
+`index % shardCount == shardIndex` against one shared clock. Offsets, record
+assignment and offered denominator stay frozen. JSONL rows retain `requestIndex`,
+`shardIndex` and `shardCount`. A failed shard prevents a complete drained event;
+partial rows remain evidence.
 
-The `feat/loadgen-async` branch was inspected before this cutover: it dispatches
-independent asyncio tasks, but caps attempts at `workers`, marks excess arrivals
-`not_issued`, stops late sends at the issue boundary, and measures latency from
-actual issue time. Its aiohttp/scenario API also removes the current occupancy
-and E5 lifetime contract. The minimal port retains its independent-timeline
-dispatch design using stdlib request threads, without importing that incompatible
-client/API or its cap. Closed-loop occupancy replay is unchanged.
-Inspection baseline: branch tip `f419192e`; `main...feat/loadgen-async`
-contains 47 changed files (+7411/-610). A three-way merge against base
-`9c29bf96` reports conflicts in README, CLI, HTTP client, CLI tests and HTTP
-client tests. No branch merge or compatibility shim is introduced.
+Results stream on completion. Replay drains active requests and feedback even
+when scheduling raises. Thread-start failures record `issued=false` and
+`GeneratorThreadStartError`, remain in the planned denominator, and do not stop
+later arrivals. Generator lateness neither reduces the configured native lifetime
+nor suppresses an arrival.
 
-Rebuild and publish the **load-generator image** after this change; producer
-injection alone cannot install the new dispatcher. No runtime-7 image rebuild
-is required.
+`scheduledMonotonicNS` anchors the request; `latenessNs` records send lateness.
+`latencyMs` and `serviceLatencyMs` bracket the caller; `scheduledLatencyMs` is
+scheduled-to-completion reference latency. `elapsedNanos` measures send through
+full response-body read inside `infer`. Preparation, formatting and feedback are
+outside this exact interval. `sentAtUnixNS` and `finishedAtUnixNS` support
+request-ID joins; cross-host differences retain clock uncertainty.
+
+Producer JSONL uses stdout; Python exceptions use stderr. Kubernetes logs may
+merge them. Evaluation preserves raw lines and reports malformed/non-object
+counts. Missing end counters remain missing.
+
 
 ```sh
 chill-loadgen replay \
@@ -139,38 +95,25 @@ Without a lifetime the existing 30-second socket default and absent header are
 unchanged. The Python API exposes the same header as
 `request_lifetime_seconds`; `timeout_seconds` must exceed it.
 
-The DispatchOccupancyMeasurement controller consumes the frozen CR conditions:
-`workers=K`, `warmupSeconds=W_load`, `durationSeconds=T`,
-`requestLifetimeSeconds=L`, `deliveryMarginMillis`, `drainSeconds=D`,
-`preparationSeconds=ceil(P)`, `jobSetupSeconds` and `collectionSeconds`.
-It sends for `W_load + T` after preparation/readiness, records only the
-measurement interval after priming, and gives the Job the finite sum
-`setup + preparation + W_load + T + D + collection`. The profile/SLO calculation
-and empirical tail assumptions belong to the immutable CR/evidence, not a
-second calculation in this CLI. A socket or lifetime expiry is not an
-interruption of an already running native physical batch.
+The dispatch-occupancy controller freezes warmup, burst duration, workers,
+minimum pairs, lifetime, delivery margin, setup, preparation, drain and collection
+conditions. Its finite Job budget includes post-window supply extension as well
+as burst and drain. Use the server-built task rather than reconstructing its
+budget in a client. Lifetime expiry does not interrupt a running physical batch.
 
-Existing serving consumers need configuration alignment, not a wire change:
-ChillServer's `--request-timeout` caps the explicit header and its outer HTTP
-context; the existing native adapter already forwards the selected lifetime,
-sender elapsed time, margin and separate SLO. `--drain-timeout` bounds manager
-and process shutdown drain; Pod termination grace must exceed it. For the
-approved largest scenario, cap 129s and drain at least 164s must be reflected in
-the serving chart. The dashboard's existing `CHILL_INFER_TIMEOUT_MS` accepts
-129000ms; its relay adds the unchanged query budget for delivery and the browser
-has no independent 30/60-second inference cap. Metadata query and asynchronous
-management-mutation budgets remain independent. No firstfloor/runtime change
-or rebuild is required.
+ChillServer's `--request-timeout` caps the header and HTTP context.
+`--drain-timeout` bounds shutdown drain; configure Pod termination grace to
+exceed it. Align dashboard `CHILL_INFER_TIMEOUT_MS` with the server cap; the relay
+adds its query budget for delivery.
 
-### Workload-bound E5 Poisson replay
+### Workload-bound evaluation replay
 
-E5 uses the same executable with explicit frozen Workload SLO, request
-lifetime, gateway cap and socket delivery budget. The paired
-`--workload-slo` and `--gateway-timeout` options require an explicit
-`--request-lifetime`. Before loading records or sending traffic the CLI checks
-`L >= SLO`, `cap >= L` and `socket > L + delivery-margin`. When omitted, the
-E5 socket default is `L + 2*delivery-margin`. Measurement replay retains its
-frozen `L + delivery-margin` default.
+Supply explicit Workload SLO, request lifetime, gateway cap and socket delivery
+budget in frozen evaluation input. The CLI requires `--workload-slo` and
+`--gateway-timeout` together. If `--request-lifetime` is supplied, it checks
+`L >= SLO`, `cap >= L` and `socket > L + delivery-margin`. The paired options
+themselves do not require a lifetime. With lifetime supplied, evaluation socket
+default is `L + 2*delivery-margin`; ordinary replay uses `L + delivery-margin`.
 
 ```sh
 chill-loadgen replay \
@@ -182,14 +125,8 @@ chill-loadgen replay \
   --delivery-margin .01 --timeout 2.02
 ```
 
-The campaign freezes these declared values against the actual Workload
-UID/generation and deployed gateway settings. The CLI validates their
-relationship; it does not fetch or infer server configuration. Every full,
-static and control-element comparison reuses the same bound lifetime tuple.
-PLC/Smol values come from their approved E5 inputs. Generic replay without the
-E5 options keeps its existing defaults. Native delivery forwards original L,
-sender elapsed, separate SLO and m; remaining lifetime subtracts sender elapsed
-and m once.
+The campaign binds declared values to actual Workload UID/generation and gateway
+settings. The CLI checks numeric relationships without fetching server settings.
 
 
 
@@ -269,14 +206,10 @@ Unsent generator work stays a quality fact. Previously stored judgments and
 raw evidence are not rewritten or reinterpreted.
 
 
-E5 retains boundary-inclusive actual/planned gaps, intervals over 50 ms, and
-send lateness as `issuanceFidelity` in its judgment, campaign summary and
-published KPIs. Intended sparse Poisson/zero-load gaps are not automatically
-stalls; missing timing or incomplete offered-row evidence is unknown.
-See [observability design §16](../docs/design/serving/observability-split.md#16-u6-부하-발행-공백과-trace-충실도)
-for the retained batch-3 findings and interpretation limits. Using the changed
-CLI requires rebuilding the **load-generator image** and updating its pinned
-digest/receipt; it does **not** require rebuilding the seven runtime images.
+Evaluation retains actual/planned gaps and send lateness as `issuanceFidelity`.
+Sparse planned arrivals alone do not imply a stall. Missing timing or incomplete
+offered-row evidence stays unknown. See the
+[observability design](../docs/design/serving/observability-split.md).
 
 ## Workload inference
 
@@ -287,13 +220,9 @@ is one raw sample: a mapping from every input field name of the Workload's
 preprocessor to that field's bytes (a JPEG file or UTF-8 text). The client sends
 each field as `BYTES` with base64 data. Routing and batching remain server-side.
 
-Call `encode_inputs` once when loading each record, then reuse its immutable body
-with `infer`. Replay consumes the raw record list during preparation before its
-start clock; evaluation retains field sizes/hashes, drops raw bytes, and prepares
-all bodies before fork so children share the bytes copy-on-write. No base64 or
-JSON serialization of sample payloads runs in request threads (which would retain
-large glibc malloc arenas under overload). Input fields are validated once during
-preparation; JSON field order, spacing and base64 wire bytes are unchanged.
+Call `encode_inputs` once while loading each record and reuse the immutable body
+with `infer`. Replay prepares inputs before its start clock; payload encoding
+does not run on arrival threads.
 
 ```python
 import os
@@ -337,6 +266,8 @@ The client performs no redirects or retries. Use one client per sequential
 worker and close it when finished.
 
 ## Development
+
+Run the installation commands from `load-generator/`:
 
 ```sh
 python3 -m venv .venv

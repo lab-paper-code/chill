@@ -1,123 +1,92 @@
 # 카탈로그 등록 준비
 
-`ModelSpec`·`Preprocessor`·`Dataset`은 **이미 준비하고 게시한 자산의 선언**이다.
-CHILL은 로컬 파일을 업로드하거나 모델을 변환·빌드하지 않는다.
-아래 안내는 해당 기능이 포함된 ChillServer와 대시보드가 실제 배포된 뒤 사용한다.
-브랜치 변경이나 `main` 병합만으로 운영 화면·서버가 바뀌지는 않는다.
+`ModelSpec`, `Preprocessor`, `Dataset`은 준비하고 게시한 자산을 선언한다.
+자산 작성자가 모델 변환과 OCI 빌드를 완료하고 등록 운영자가 HTTPS API로 선언을 등록한다.
 
 ## 처음 등록하는 운영자
 
-### 1. 담당자에게 준비물을 받기
+### 준비물
 
-| 담당 | 등록 전에 준비할 것 |
+| 담당 | 준비할 것 |
 |---|---|
-| 모델·입력 처리·데이터 작성자 | 사용할 권한이 있는 원본, 고정 revision, 실행 가능한 모델 파일, `preprocessor.py`와 보조 파일, 분리된 측정/평가 레코드. 모델 변환과 OCI 빌드·push는 외부 도구로 완료한다. |
-| 플랫폼 관리자 | 배포된 HTTPS API/대시보드 주소와 신뢰 CA, 승인된 계정과 기존 경로·verb 권한, 설치된 firstfloor 실행 선언과 발견된 DeviceClass. 사설 registry 접근과 필요한 image pull 자격증명은 실제 init/실행 Pod가 이미지를 받을 수 있도록 클러스터 측에서 구성한다. |
-| 카탈로그 등록 운영자 | 작성자에게 받은 게시 완료 OCI digest·아키텍처·이미지 내부 경로·입출력 계약과 등록 문서. 아래 순서로 검토·등록하고 GET으로 저장 결과를 확인한다. |
+| 자산 작성자 | 사용 권한과 고정 revision, 실행 모델 전체, 전처리 모듈과 보조 파일, 분리된 측정 및 평가 레코드 |
+| 플랫폼 관리자 | HTTPS 주소와 신뢰 CA, 승인된 계정 권한, 설치된 실행 선언과 DeviceClass, Pod의 사설 이미지 접근 설정 |
+| 등록 운영자 | 게시된 OCI digest, 아키텍처, 이미지 내부 경로, 입출력 계약과 등록 문서 |
 
-이는 준비 책임의 구분이지 새 역할·권한 규칙이 아니다. 실제 허용 여부는 기존
-ChillServer TokenReview/경로·verb SubjectAccessReview가 결정한다.
-`403`이면 서버의 원래 `message`를 확인해 관리자에게 요청한다.
-화면이나 이 문서에서 별도 역할을 추정하지 않는다.
-Bearer token, registry 비밀번호, HF token, access key, Secret 내용은 YAML/JSON에
-붙여넣거나 carrier에 넣지 않는다. 인증은 승인된 로그인·빌드 환경·클러스터 설정으로 분리한다.
+ChillServer는 TokenReview와 경로별 verb SubjectAccessReview로 권한을 판정한다.
+`403`이면 서버 `message`를 확인해 관리자에게 요청한다.
+Bearer token, registry 비밀번호, HF token, access key와 Secret 내용은 등록 문서나 carrier에 넣지 않는다.
 
-### 2. 세 종류의 예제에서 시작하기
+### 구조 예제
 
-| 종류 | 기존 구조 예제 | 직접 채울 값 |
+| 종류 | 예제 | 채울 값 |
 |---|---|---|
-| 모델 `ModelSpec` | [mobilenet 모델](edge_v1alpha1_modelspec.yaml) | 실제 `artifacts[].source.image`, `architecture`, `files`와 설치된 `executionPaths[].runtime` |
-| 모델 입출력 처리 `Preprocessor` | [SmolVLM 입력 처리](edge_v1alpha1_preprocessor_smolvlm2-vqa.yaml) | 등록된 모델/산출물 `target`, 코드 carrier, 입력/출력 필드 |
-| 데이터셋 `Dataset` | [VQAv2 레코드](edge_v1alpha1_dataset.yaml) | 데이터 carrier, 루트 `source.path`, 레코드 `fields` |
+| ModelSpec | [mobilenet 모델](edge_v1alpha1_modelspec.yaml) | 게시된 image, architecture, files와 설치된 runtime |
+| Preprocessor | [SmolVLM 입력 처리](edge_v1alpha1_preprocessor_smolvlm2-vqa.yaml) | 대상 모델 산출물, 코드 carrier와 입출력 필드 |
+| Dataset | [VQAv2 레코드](edge_v1alpha1_dataset.yaml) | 데이터 carrier, 내부 루트와 레코드 필드 |
 
-**예제는 실행 준비된 자산이 아니다.** 체크인된 `registry.example.invalid` 주소와
-digest는 게시·접근·실행을 증명하지 않는다. 실행 경로도 설치 환경과 대조해야 한다.
-새 문서의 `<registry>/<repository>@sha256:<published-digest>`,
-`<architecture>`, `<absolute-path>`는 모두 **교체 필수 자리표시자**이며 유효한 값이 아니다.
-아래 기존 빌드 명령의 `REGISTRY`, `BUILD-ID`, `INDEX-DIGEST`, `/path/to/...`도
-사용자 환경의 실제 값으로 바꾼다. 예제 값을 그대로 제출하지 않는다.
-문서는 `apiVersion: edge.dacs.io/v1alpha1`, 위 세 `kind`, `metadata.name`, `spec`을
-사용한다. API 본문은 기존 `{name,spec}`이며 새로운 업로드 필드는 없다.
+`registry.example.invalid` 주소와 예제 digest는 실제 게시 증거가 없다.
+`<registry>`, `<published-digest>`, `<architecture>`, `<absolute-path>`와 아래 명령의
+`REGISTRY`, `BUILD-ID`, `INDEX-DIGEST`, `/path/to/...`를 실제 값으로 바꾼다.
+등록 문서는 `edge.dacs.io/v1alpha1`의 해당 kind, `metadata.name`, `spec`을 사용한다.
+API 요청 본문은 `{name,spec}`다.
 
-### 3. 파일과 코드가 실제로 있는지 확인하기
+### 파일과 입력 계약
 
-다음은 [기존 carrier Dockerfile](../../../build/docker/derived-model-artifact.Dockerfile)이
-빌드 컨텍스트의 `artifact/`를 `/artifact/`로 복사한 뒤의 내부 배치다.
-서로 다른 carrier에 들어갈 수 있으며, 컴퓨터의 로컬 경로가 아니다.
+[carrier Dockerfile](../../../build/docker/derived-model-artifact.Dockerfile)은
+빌드 컨텍스트의 `artifact/`를 이미지의 `/artifact/`로 복사한다.
 
 ```text
 /artifact/
-  mobilenet-v2-050.onnx                 # ModelSpec source.files의 파일
+  mobilenet-v2-050.onnx
   mobilenet-nchw/
-    preprocessor.py                    # Preprocessor source.path의 디렉터리
-  vqav2-val-subset/                     # Dataset source.path의 루트
+    preprocessor.py
+  vqav2-val-subset/
     profiling/
       <record-id>/
-        image                          # 확장자 없는 JPEG 원문 파일
-        question                       # 확장자 없는 UTF-8 원문 파일
+        image
+        question
     evaluation/
       <different-record-id>/
         image
         question
 ```
 
-- 모델은 사용할 ONNX/RKNN **실행 파일 전체**를 `source.files`의 clean absolute
-  경로로 적는다. 파일 basename과 확장자를 뺀 stem은 각각 중복되지 않아야 한다.
-  RKNN 변환은 [아래 기존 변환 target 안내](#before-registration)를 재사용한다.
-- 입력 처리 파일명은 `processor.py`가 아니라 **`preprocessor.py`**다.
-  [실제 예제 모듈](../../../build/model-artifacts/preprocessors/mobilenet-nchw/preprocessor.py),
-  [runner의 적재·결과 검사](../../../runtime/firstfloor/runner.py),
-  [정확한 함수 계약](../../../docs/design/serving/heterogeneous-workloads.md#nativeipc)을 따른다:
-  `WARMUP_SAMPLE`, `preprocess`, `infer`, `postprocess`가 필요하다.
-  원시 필드 값은 `bytes`, 전처리 보고는 요청별 성공 단위/실패 사유,
-  후처리 결과는 성공 요청별 출력 필드→`bytes`다. 모델 session key는 파일 stem이다.
-  tokenizer/config·`stats.json` 같은 보조 파일도 같은 디렉터리에 넣는다.
-  라이브러리는 carrier가 아니라 설치된 firstfloor runtime image에서 제공한다.
-- Dataset은 `<source.path>/{profiling,evaluation}/<record-id>/<field-name>`이다.
-  필드명은 선언과 파일명이 같아야 하며 JPEG 또는 UTF8 원문을 저장한다
-  (base64 JSON이나 CSV 목록이 아님). `maxBytes`는 **필드 파일 하나의 원문 바이트 상한**이며
-  1 이상이다. [VQAv2 builder](../../../build/model-artifacts/vqav2/build_subset.py)는
-  `image: JPEG, maxBytes: 1048576`, `question: UTF8, maxBytes: 512`를 사용한다.
-  대상 전처리의 같은 이름·형식 입력이 모두 있어야 하고 Dataset 상한은 전처리 입력 상한
-  이하여야 한다(예제 입력 상한은 각각 4194304/1024). 출력 `answer`는 입력 레코드 파일이 아니다.
-  작성자가 profiling/evaluation을 분리한다. 등록만으로 중복·내용·품질을 검사하지 않는다.
+- 모델이 사용하는 실행 파일 전체를 `source.files`의 clean absolute 경로로 적는다.
+  파일 basename과 확장자를 뺀 stem은 각각 유일해야 한다.
+- 전처리 디렉터리는 `preprocessor.py`와 필요한 tokenizer/config 또는 `stats.json`을 포함한다.
+  [예제 모듈](../../../build/model-artifacts/preprocessors/mobilenet-nchw/preprocessor.py)과
+  [runner](../../../runtime/firstfloor/runner.py)를 기준으로 `WARMUP_SAMPLE`, `preprocess`,
+  `infer`, `postprocess`를 제공한다. 원시 필드와 후처리 출력값은 `bytes`다.
+  모델 session key는 파일 stem이다. 라이브러리는 설치된 firstfloor runtime image가 제공한다.
+- Dataset은 `<source.path>/{profiling,evaluation}/<record-id>/<field-name>` 배치다.
+  선언과 같은 이름의 파일에 JPEG 또는 UTF8 원문을 저장한다.
+  `maxBytes`는 필드 파일 하나의 원문 바이트 상한이며 1 이상이다.
+  Dataset에는 전처리가 요구하는 같은 이름과 형식의 입력이 모두 있어야 하며
+  각 상한은 전처리 입력 상한 이하여야 한다.
+  [VQAv2 builder](../../../build/model-artifacts/vqav2/build_subset.py)는 이미지 상한 1048576,
+  질문 상한 512를 사용한다. 작성자가 profiling과 evaluation을 분리한다.
 
-### 4. 게시 증거를 받은 뒤 등록하기
+### 게시 확인과 등록 순서
 
-작성자는 [아래 기존 carrier 빌드·확인 절차](#before-registration)와
-[전처리/데이터 준비 절차](#preprocessor-smolvlm-model-and-dataset-carriers)를 사용한다.
-빌드/push 또는 registry가 반환한 **게시된 digest**를 받아 `source.image`에 기록한다.
-태그만 기록하거나 임의 digest를 만들지 않는다. 모델·전처리의 `architecture`는 실제
-carrier와 대상 Kubernetes 아키텍처(`amd64`/`arm64`)에 맞춘다. Dataset은 사용할 양쪽
-아키텍처를 담은 multi-arch index digest를 사용한다.
-각 플랫폼에서 해당 digest를 pull/run하여 `sh`·`cp`, 선언된 파일/디렉터리와 읽기 권한을
-확인한다. init container는 이 도구로 자산을 복사하므로 파일만 있는 scratch image는 충분하지 않다.
-사설 이미지의 로컬 pull 성공과 클러스터 pull 가능 여부도 별도로 확인한다.
+빌드 또는 registry가 반환한 게시 digest를 `source.image`에 넣는다.
+모델과 전처리 carrier의 architecture를 대상 `amd64` 또는 `arm64`와 맞춘다.
+Dataset은 사용할 아키텍처를 모두 포함한 index digest를 사용한다.
+각 플랫폼에서 해당 digest를 pull/run하여 `sh`와 `cp`, 선언한 파일의 존재와 읽기 권한을 확인한다.
+실제 Pod의 registry 접근도 확인한다.
 
-등록 순서는 **ModelSpec → 해당 모델 산출물을 가리키는 Preprocessor → Dataset →
-Workload → 별도 측정 요청·결과 확인**이다. Dataset 자체는 앞의 두 선언과 독립적으로
-등록할 수 있지만 Workload 연결 전에 입력 계약을 맞춘다.
-대시보드의 파일 선택·붙여넣기·예제 불러오기는 초안 입력일 뿐이다.
-자리표시자를 바꾸고 **문서 검토 → 명시적인 등록 → 목록/단건 GET으로 저장 확인**을 거친다.
-응답 유실 시 자동 재제출하지 말고 기존 결과 조회 동작을 사용한다.
-등록 성공은 이미지 pull·코드 import·장치 호환·측정 완료·서빙 준비 성공이 아니다.
-CHILL은 이후 실제 준비와 측정 근거를 통해 판정한다.
+ModelSpec, 대상 Preprocessor, Dataset, Workload 순서로 등록하고 별도 측정을 진행한다.
+Dataset 자체는 독립적으로 등록할 수 있다.
+대시보드 파일 선택과 붙여넣기는 초안 입력이다. 문서를 검토한 뒤 명시적으로 등록하고
+목록 또는 단건 GET으로 저장 결과를 확인한다. 응답 유실 시 먼저 조회하고 자동 재제출하지 않는다.
+등록 이후 이미지 pull, 코드 적재, 장치 호환성과 측정 결과를 별도로 확인한다.
 [대시보드 시작 안내](../../../chill-dashboard/README.md#카탈로그-등록-시작)와
-[기존 API 등록 절차](#validate-and-register)를 사용하며 Kubernetes 직접 쓰기로 우회하지 않는다.
+[API 등록 절차](#validate-and-register)를 따른다.
 
-### 참고한 외부 패턴과 CHILL 경계
+카탈로그의 `source.image`는 OCI carrier 참조를 받는다.
+외부 도구로 파일을 확보하고 변환한 뒤 게시한다. 로컬 경로나 HF, S3, GCS, HTTP,
+PVC, MLflow 주소를 이 필드에 넣어도 자산을 가져오지 않는다.
 
-다음 링크는 `external_repo`에서 확인한 소스의 고정 commit이다. 설치 의존성이나 CHILL
-입력 형식이 아니라 **자산 준비·게시와 선언 등록을 분리하는 참고 근거**다.
-
-- [Hugging Face Hub 파일/폴더 업로드](https://github.com/huggingface/huggingface_hub/blob/3739729b86489e4ae28b5a62e622be320b141493/docs/source/en/guides/upload.md): 로컬 경로·저장소 내부 경로·repo/revision을 구분한다. HF에서 자료를 구한다면 외부 작성 단계에서 revision을 고정하고 준비한다.
-- [KServe v0.16 storage](https://github.com/kserve/website/blob/f1405c7703fb82db3ca8c3e16c7d380503a24145/versioned_docs/version-0.16/model-serving/storage/overview.md): 저장 위치·인증·initializer가 별도 책임이다. KServe의 `storageUri`, S3/GCS/PVC/HTTP/HF 지원을 CHILL 기능으로 해석하지 않는다.
-- [BentoML packaging](https://github.com/bentoml/BentoML/blob/1ddd7e782f1ce74a0a37f51c70a44474eb58d5e1/docs/source/get-started/packaging-for-deployment.rst): 코드·모델·환경을 준비한 뒤 패키징하고 OCI containerize하는 단계를 구분한다. Bento를 CHILL에 직접 넣는 기능은 없다.
-- [MLflow ModelVersion identity](https://github.com/mlflow/mlflow/blob/d393a0c2bd1a2dcd1ffab4784af3579266a78dc0/mlflow/entities/model_registry/model_version.py): 등록 이름/버전과 원본 `source`/`run_id`를 분리한다. MLflow URI를 CHILL에서 해석하지 않는다.
-
-CHILL 카탈로그는 현재 OCI carrier의 image와 내부 경로를 받는다.
-`hf://`, `s3://`, `gs://`, HTTP 다운로드 주소, PVC 경로, MLflow URI나 로컬 모델 경로를
-`source.image`에 넣어도 가져오지 않는다. 필요하면 외부 도구로 파일을 확보·변환·게시한 뒤 등록한다.
 
 ## Before registration
 
@@ -286,12 +255,11 @@ each architecture (`firstfloor-ort-cpu-arm64`, `firstfloor-ort-cpu-amd64`,
 `firstfloor-rknnlite`, and SmolVLM adds the int8 CPU paths
 `firstfloor-ort-cpu-int8-arm64` and `firstfloor-ort-cpu-int8-amd64`. PLC names
 its arm64 CUDA path `firstfloor-ort-cuda-rnn-arm64` and SmolVLM names its fp32
-arm64 CUDA path `firstfloor-ort-cuda-vlm-arm64`; the chart's
-`profiling.executionPolicies` list only the DeviceClasses on which those paths
-produce correct results (design 7.1). A path binds one artifact of one
-architecture; profiling measures through the same firstfloor paths. Native
-serving consumes a completed firstfloor campaign with every initialized
-measured batch size.
+arm64 CUDA path `firstfloor-ort-cuda-vlm-arm64`. The chart's
+`profiling.executionPolicies` limits path eligibility by DeviceClass.
+Verify execution and result quality through measurements on the actual device.
+A path binds one artifact of one architecture; profiling and native serving
+use the corresponding firstfloor execution path and retained measurements.
 
 ## Preprocessor, SmolVLM model and dataset carriers
 
@@ -343,11 +311,8 @@ their pinned input and output names. The int8 carrier holds the artifacts
 `onnx-int8-arm64` and `onnx-int8-amd64`: the revision's `*_int8.onnx` files,
 which have the same inputs and outputs, staged under the same three names. Their
 Preprocessor directory `smolvlm2-vqa-1tile` turns image splitting off, so each
-image is one 512 tile of 64 tokens and one unit. On ORT 1.27 CPU with 4 threads
-the int8 one-tile runner peaks at 1.0 GiB resident for one sample and 1.8 GiB for
-four, which fits `jetson-nano-4g`. ORT 1.23.2 CUDA cannot initialize the int8
-`vision_encoder`, so the int8 artifacts have CPU paths only. The mobilenet ONNX
-carrier holds its single file at `/artifact/mobilenet-v2-050.onnx`.
+image is one 512 tile of 64 tokens and one unit. The int8 artifacts declare CPU
+paths. The mobilenet ONNX carrier holds `/artifact/mobilenet-v2-050.onnx`.
 
 After the ModelSpecs, Preprocessors and Dataset, register the two Workloads in
 [`../manual/edge_v1alpha1_workload_mobilenet.yaml`](../manual/edge_v1alpha1_workload_mobilenet.yaml)
