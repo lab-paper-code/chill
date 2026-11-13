@@ -3,15 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"math"
-	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -29,8 +26,6 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	gateway "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 )
-
-var profilingResponseBuffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
 const (
 	profilingLoadResultPath   = "/measurement/load-result"
@@ -71,11 +66,6 @@ type profilingOperatingPoints struct {
 	DeliveryMarginMilliseconds     float64   `json:"deliveryMarginMilliseconds"`
 	FramedDecodedRequestUpperBytes int64     `json:"framedDecodedRequestUpperBytes"`
 	QueueBytesCap                  int64     `json:"queueBytesCap"`
-}
-
-type profilingRecord struct {
-	ID        string
-	directory string
 }
 
 type profilingLoadResult struct {
@@ -340,36 +330,7 @@ func profilingNonnegative(value float64) bool {
 }
 
 func loadProfilingRecords(ctx context.Context, directory string, plan profilingLoadPlan) ([]profilingRecord, error) {
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		return nil, err
-	}
-	records := make([]profilingRecord, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		record := profilingRecord{ID: entry.Name(), directory: filepath.Join(directory, entry.Name())}
-		var framed int64
-		for _, field := range plan.Fields {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			info, err := os.Stat(filepath.Join(record.directory, field))
-			if err != nil {
-				return nil, err
-			}
-			if !info.Mode().IsRegular() || info.Size() > plan.OperatingPoints.FramedDecodedRequestUpperBytes-framed-4 {
-				return nil, errors.New("dataset record exceeds frozen framed decoded request upper bytes or is not a regular file")
-			}
-			framed += 4 + info.Size()
-		}
-		records = append(records, record)
-	}
-	if len(records) == 0 {
-		return nil, errors.New("profiling dataset contains no records")
-	}
-	return records, ctx.Err()
+	return readProfilingRecords(ctx, directory, plan.Fields, plan.OperatingPoints.FramedDecodedRequestUpperBytes)
 }
 
 type profilingLoadDriver struct {
@@ -388,30 +349,20 @@ type profilingLoadDriver struct {
 	metadataValid     bool
 	budgetBytes       atomic.Int64
 	resultBudgetBytes int64
-	cache             struct {
-		sync.Mutex
-		id     string
-		inputs gateway.PreparedNativeInputs
-	}
+	profilingRecordSource
 }
 
 func newProfilingLoadDriver(plan profilingLoadPlan, records []profilingRecord, endpoint string) *profilingLoadDriver {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	// Native admission owns the explicit FIFO. HTTP pooling must not add a
-	// second, unobserved dispatch queue behind those frozen native slots.
-	transport.MaxIdleConnsPerHost = max(plan.MaxQueueRequests, 64)
-	transport.MaxIdleConns = transport.MaxIdleConnsPerHost
+	points := plan.OperatingPoints
+	client, transport := newNativeLoadClient(plan.MaxQueueRequests,
+		time.Duration((points.RequestLifetimeSeconds+points.DeliveryMarginMilliseconds/1000)*1e9))
 	driver := &profilingLoadDriver{
 		plan: plan, records: records, endpoint: endpoint,
 		inferURL:  strings.TrimRight(plan.NativeEndpoint, "/") + plan.InferPath,
-		transport: transport, control: &http.Client{},
-		native: &gateway.Client{HTTPClient: &http.Client{
-			Transport: transport,
-			Timeout: time.Duration((plan.OperatingPoints.RequestLifetimeSeconds +
-				plan.OperatingPoints.DeliveryMarginMilliseconds/1000) * 1e9),
-		}},
+		transport: transport, control: &http.Client{}, native: client,
 		result: profilingLoadResult{Status: "Succeeded", Phases: []profilingrun.Phase{}},
 	}
+	driver.fields, driver.upperBytes = plan.Fields, plan.OperatingPoints.FramedDecodedRequestUpperBytes
 	if len(records) > 0 {
 		driver.dataDir = filepath.Dir(records[0].directory)
 	}
@@ -551,21 +502,16 @@ func (d *profilingLoadDriver) send(
 	var idBuffer [64]byte
 	id := string(strconv.AppendInt(append(append(idBuffer[:0], spec.ID...), '-'), int64(index), 10))
 	points := d.plan.OperatingPoints
+	requestContext := loadRequestContext{
+		workloadUID: d.plan.PodUID, definition: d.plan.WorkloadResourceVersion,
+		slo:      native.SLO{Percentile: d.plan.SLOPercentile, TargetMS: float64(d.plan.SLOTargetLatencyNanos) / 1e6},
+		marginMS: points.DeliveryMarginMilliseconds, lifetimeMS: points.RequestLifetimeSeconds * 1000,
+	}
 	response := profilingResponseBuffers.Get().(*bytes.Buffer)
 	defer profilingResponseBuffers.Put(response)
-	// The gateway's client clock starts at arrival. Admission-slot waiting is
-	// sender elapsed time and belongs to the end-to-end client latency.
 	sent := time.Now()
 	issued()
-	request := native.Request{ID: id, Context: native.RequestContext{
-		RequestID: id, WorkloadUID: d.plan.PodUID, Definition: d.plan.WorkloadResourceVersion,
-		AdmissionPolicy: "Delay", ReceivedAt: scheduled.UTC(), SenderElapsedMS: float64(sent.Sub(scheduled)) / 1e6,
-		CompletionMarginMS: points.DeliveryMarginMilliseconds,
-		SLO: native.SLO{
-			Percentile: d.plan.SLOPercentile, TargetMS: float64(d.plan.SLOTargetLatencyNanos) / 1e6,
-		},
-		LifetimeMS: points.RequestLifetimeSeconds * 1000,
-	}}
+	request := requestContext.nativeRequest(id, scheduled, sent)
 	status, err := d.native.InferNative(ctx, d.inferURL, request, inputs, response)
 	// HTTP completion releases the outstanding slot before JSON decoding and
 	// native-proof collection, neither of which may reshape Poisson issuance.
@@ -908,11 +854,7 @@ func (q *profilingArrivalQueue) produce(
 	ctx context.Context, stop <-chan struct{}, cancel context.CancelFunc, phase *profilingrun.Phase,
 	start, endFloor time.Time, known *atomic.Int64, issued *int, limit int,
 ) profilingProducerResult {
-	hash := fnv.New128a()
-	_, _ = io.WriteString(hash, phase.ArrivalSeed)
-	var seed [16]byte
-	sum := hash.Sum(seed[:0])
-	rng := rand.New(rand.NewPCG(binary.BigEndian.Uint64(sum[:8]), binary.BigEndian.Uint64(sum[8:])))
+	rng := arrivalRNG(phase.ArrivalSeed)
 	produced := profilingProducerResult{}
 	next := start
 	advance := func() {
