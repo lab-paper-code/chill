@@ -1,29 +1,20 @@
-# 0003 Helm CRD Upgrade Strategy
+# Helm CRD Upgrade Strategy
 
 ## Status
 
 Accepted
 
-## Context
-
-During `v1alpha1`, frequent schema changes require Helm upgrades; top-level `crds/` only installs CRDs initially.
-
 ## Decision
 
-Keep `v1alpha1` CRDs under `charts/chill/templates/crds/` so the single CHILL Helm release manages alpha CRD updates.
+Keep `v1alpha1` CRDs under `charts/chill/templates/crds/` so the single CHILL Helm release manages alpha schema updates.
 
-Add `helm.sh/resource-policy: keep` to CRDs to reduce accidental deletion risk.
+CRDs carry `helm.sh/resource-policy: keep`. `crds.enabled` supports installs where CRDs remain owned separately.
 
-Keep `crds.enabled` available for install-only smoke tests and migration windows where existing CRDs are owned by another release.
+Before a full Helm install against a real cluster, use `make helm-crd-check`. Use `make helm-adopt-crds` only after confirming that the previous release should relinquish ownership. Adoption is an explicit operator action.
 
-Use `make helm-crd-check` before a full Helm install against a real cluster. Use `make helm-adopt-crds` only when an operator has confirmed that the previous Helm release should no longer own the CRDs.
-
-Move CRDs to the chart-level `crds/` directory only when the API is promoted toward `v1beta1` and schema churn is no longer routine.
+Move CRDs to the chart-level `crds/` directory only with an API-promotion decision that ends routine schema updates through Helm.
 
 ## Consequences
 
-Alpha installs are easier to iterate and test through Helm.
+Helm upgrades can update alpha schemas. Keep annotations, ownership and uninstall behavior require review because CRD deletion destroys stored objects.
 
-The chart must be reviewed carefully because templated CRDs can be deleted by Helm if resource policy or lifecycle handling is wrong.
-
-CRD ownership is an explicit operational step during release renames. The chart should not silently take over CRDs from another Helm release.

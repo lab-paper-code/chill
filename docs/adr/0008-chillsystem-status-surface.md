@@ -1,4 +1,4 @@
-# 0008 ChillSystem Status Surface
+# ChillSystem Status Surface
 
 ## Status
 
@@ -6,38 +6,26 @@ Accepted
 
 ## Context
 
-`ChillSystem` is the cluster-scoped root for the runtime resources reconciled by CHILL. Operators need one Kubernetes-native answer to whether the desired CHILL runtime represented by that root resource is ready.
-
-Kubernetes workloads and Nodes already expose their own lifecycle, health, replica, and resource status. Copying those APIs into parallel phase fields, component records, messages, or aggregate counts would create duplicate and eventually inconsistent representations. The CHILL operator also cannot provide a reliable self-liveness report through a status that stops updating when the operator itself is unavailable.
+`ChillSystem` is the cluster-scoped root for operator-managed runtime resources. Its status summarizes the availability of those resources.
 
 ## Decision
 
-Keep `ChillSystem.status` limited to:
+Keep status to `observedGeneration` and standard type-keyed conditions. Enabled managed components publish:
 
-- `observedGeneration`, identifying the latest reconciled `ChillSystem` spec
-- a standard `Ready` condition with status, reason, message, `observedGeneration`, and transition time
+- `NodeAgentAvailable`
+- `NodeAgentActuationAvailable`, covering the configured Jetson and NVIDIA actuation operands
+- `ProfilerAvailable`
+- `EvidenceStoreAvailable`, including the store's bootstrap state
 
-`Ready` reports whether the runtime resources currently required by the `ChillSystem` spec are ready. The initial implementation owns node discovery:
+`Ready` aggregates these observations. A false component makes it false; otherwise an unknown component makes it unknown. It is true when every enabled component is available, including when all components are disabled.
 
-- node discovery disabled: `Ready=True`
-- required node-discovery DaemonSet fully Ready: `Ready=True`
-- DaemonSet missing, pending, progressing, or degraded: `Ready=False`
-- DaemonSet observation failed: `Ready=Unknown`
+Conditions carry reason, message, observed generation and transition time. Preserve transition time when condition status remains unchanged. Write the status subresource only when the resulting status differs.
 
-The condition reason and message explain progress or failure. Separate phase, ready mirror, top-level message, Progressing/Degraded conditions, component records, and Node or `DeviceClass` counts are not part of the status API.
+Owned DaemonSets, Deployments and Jobs, together with mapped Pod watches, request framework-derived reconciliation. Finalization and completed-Pod cleanup may requeue while work remains.
 
-The default `kubectl get chillsystem` view exposes only `READY` from the Ready condition and `AGE`. Detailed diagnostics remain available from `kubectl describe chillsystem` and the authoritative Kubernetes resources.
-
-The operator Deployment is not summarized in `ChillSystem.status`. Kubernetes Deployment status and the operator health/readiness probes remain authoritative for the operator itself.
-
-The reconciler is level-based. It observes the current desired runtime and writes the status subresource only when the resulting condition changes. Watches on owned runtime resources request reconciliation; periodic status polling is not required for normal operation.
-
-Future CHILL modules extend readiness only when the `ChillSystem` spec owns their desired lifecycle and their reconciler can report an observable condition. New status fields are not added solely for dashboard convenience.
+The operator Deployment uses its own Deployment status and health probes. `ChillSystem.status` does not report operator self-liveness or mirror Node and DeviceClass inventory.
 
 ## Consequences
 
-`ChillSystem` provides one compact readiness contract without re-modeling Deployments, DaemonSets, Nodes, or domain resources. Reason and message retain the information needed to distinguish disabled, progressing, missing, degraded, and unobservable runtime states.
+Operators use `Ready` for installation availability and component conditions for its cause. Kubernetes resources remain authoritative for replica counts, Pod lifecycle, Node health and detailed diagnostics.
 
-Removing duplicated fields is an intentional `v1alpha1` API change. Existing stored status is replaced by the minimal condition on the next successful reconciliation, and generated CRDs and printer columns follow the reduced API.
-
-Operators use standard Kubernetes queries for component replica details, Node health, and domain-resource inventory. CHILL status remains reserved for state owned by CHILL reconciliation.

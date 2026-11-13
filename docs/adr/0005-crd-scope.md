@@ -1,28 +1,16 @@
-# 0005 CRD Scope
+# CRD Scope
 
 ## Status
 
 Accepted
 
-## Context
-
-CRD scope changes require CRD recreation and stored-object migration, not an in-place update.
-
-The first API set is:
-
-- `DeviceClass`
-- `ModelSpec`
-
 ## Decision
 
-Generate both first-wave CRDs as cluster-scoped resources.
+`DeviceClass` and `ModelSpec` are cluster-scoped resources.
 
-`DeviceClass` describes node/device infrastructure, similar in role to `StorageClass` or `RuntimeClass`.
-
-`ModelSpec` is the only ambiguous resource. It could become tenant-owned in a multi-tenant serving platform, but CHILL starts as a single research-cluster controller where a cluster-scoped catalog is simpler and avoids namespace duplication.
+`DeviceClass` describes shared node/device capabilities. `ModelSpec` is a cluster-wide model catalog for the research testbed.
 
 ## Consequences
 
-The initial controller can reconcile cluster infrastructure through one global API surface.
+Changing resource scope requires recreation and an explicit stored-object cutover. A future tenant-owned model catalog requires a new namespaced kind or an API-promotion decision; do not mutate the scope of stored `ModelSpec` objects in place.
 
-If multi-tenancy becomes a real requirement, do not mutate `ModelSpec` scope in place. Introduce a new namespaced kind or a `v1beta1` API migration plan and keep the breaking scope change explicit.

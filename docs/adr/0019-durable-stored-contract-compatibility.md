@@ -1,4 +1,4 @@
-# 0019 Durable Stored-Contract Compatibility
+# Durable Stored-Contract Compatibility
 
 ## Status
 
@@ -6,35 +6,21 @@ Accepted
 
 ## Context
 
-Durable CHILL state outlives the release that wrote it. Kubernetes objects remain in the API server and execution evidence remains in its store, so a current reader encounters forms written under an earlier contract.
-
-CHILL is a research prototype on a single testbed. Its stored objects are measurement working state, not records anyone else depends on, and the testbed is cleaned deliberately. Building compatibility machinery for that state would cost more than re-running the measurement it protects.
+CHILL's Kubernetes objects and stored evidence outlive the release that wrote them. Measurement working state on the research testbed is disposable; scientific raw archives and published records remain preserved.
 
 ## Decision
 
-Keep readers strict and single-version. Do not add dual decoders, conversion paths, stored-version migration, or a general compatibility framework.
+Keep readers strict and single-version. Do not add dual decoders, conversion paths, stored-version migration or a general compatibility framework.
 
-A stored form that the current reader cannot decode is deleted, not migrated. An operator removes the affected objects; where a finalizer guards an external mutation, strict validation of unrelated fields must not make the object undeletable.
+An operator deletes affected working objects that current readers cannot decode. A finalizer protecting an external mutation must remain usable when unrelated stored fields are invalid.
 
-Change a stored contract at most once per work unit, and not while a measurement campaign depends on it. Bumping a version strands every object written before it, so a bump that no reader needs is pure cost.
+Change a stored contract at most once per work unit, outside campaigns that depend on it. Avoid version bumps without a reader requirement.
 
-2026-10-28 schedule: add serving-profile `energyBelowResolution` once before E5; keep the frozen native-bundle schema unchanged (zero energy only) and retain the marker in serving records/API/replay inputs, without changing active U2 raw/result contracts.
+Finalization validates raw execution evidence once. Retained execution readers bound object bytes and decode the current schema. Contract cutovers never rewrite archived scientific raw records or published results.
 
-2026-11-03 pre-7-7 policy boundary: failurePolicy v2 cuts over once to
-`e5-binding.v4`, `e5-judgment.v3`, and `e5-summary.v4`. These store independent
-metric availability/quality and partial observed energy. Readers reject the old
-versions; existing evidence is retained unchanged, not migrated or reinterpreted.
-
-Execution evidence v1alpha18 removes container terminal records and Node workload
-snapshots. Finalization validates raw evidence once; retained execution readers
-only bound bytes and decode the current schema. Operators delete affected old
-working objects before new measurements. No v1alpha17 compatibility reader,
-stored-object migration or archived scientific raw-record rewrite is provided.
-
-A reader that meets a form it cannot decode reaches one operator-visible terminal outcome rather than returning an ordinary error that reconciles without bound. The `ProfilingRun` evidence path is the implemented shape: its [reconciler](../../internal/profiling/profiler/controller/run_reconciler.go) publishes `EvidenceVerified=False` with reason `EvidenceInvalid`, and its [lifecycle](../../internal/profiling/profiler/lifecycle.go) then selects the terminal `ActionComplete`.
+An undecodable object must reach one operator-visible terminal outcome. ProfilingRun publishes `EvidenceVerified=False` with reason `EvidenceInvalid`; its lifecycle selects `ActionComplete`.
 
 ## Consequences
 
-Stored measurement state is disposable. Re-running a measurement is the recovery path, and the raw evidence archive outside the cluster is the durable scientific record.
+Re-running a measurement recovers disposable working state. An unbounded reconcile loop on undecodable evidence is a defect because it blocks the owning campaign.
 
-An unbounded reconcile loop on an undecodable object is a defect, because it stalls the campaign that owns the object. A terminal outcome is required; a compatibility layer is not.

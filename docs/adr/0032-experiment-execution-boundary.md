@@ -1,77 +1,62 @@
-# 0032 EvaluationRun Execution Boundary
+# EvaluationRun Execution Boundary
 
 ## Status
 
-Accepted (2026-10-31, 사용자 승인).
+Accepted
 
 ## Context
 
-E5의 조건·순서·비교 관계는 CHILL 밖 `.cache/chill-assets/ops/pools-deploy`의 round JSON·binding·`run-ab-*.sh`에 있다. CHILL에는 결과 요약만 게시되고 KPI는 의미를 해석하지 않는 JSON이다. 대시보드는 단계 이름과 요청률로 정책·비교 관계를 추측한다. 조건, 결과, 화면의 해석이 세 곳으로 갈려 같은 실험을 재현하기 어렵다.
-
-조사 근거는 `exp-terrain`(지형 조사 §4~7, `local://exp-terrain.md`)과 `exp-usage`(운영 명령·STOP·입력 목록, `local://exp-usage.md`)다. 아래 운영 경로는 위 `.cache` 디렉터리 기준이다.
-
-- 입력 파일이 사라지면 기록만으로 복원할 수 없다. 실제 `campaign/v2/d-20261027/control-214-factors/STOP.json`에는 `initial` 파일 부재가 남았다(`exp-usage` STOP 표). 파일이 없다는 사실과 삭제 원인 확인은 구별한다.
-- 혼합 운영 STOP **17건**은 정리·반환 실패 **6**, 정리 Job 부재 **1**, 입력 부재·구계약 **2**, 증거 JSON 읽기 **2**, 수집기 기동 **1**, runtime/Service/Pod 준비 **3**, 완료 측정의 소비 투영 누락 **1**, 디스크 가드 **1**이다(`exp-usage` STOP 표, `exp-terrain` §7). 전부 E5 실행 실패는 아니며 배포 drift·digest 불일치 STOP은 이 표에서 관측되지 않았다.
-- round·binding·환경 파일과 단계별 명령을 함께 알아야 하므로 운영 에이전트가 라운드마다 실행 절차를 다시 조합한다(`exp-usage` 라운드 설정·실제 argv 절). 선언된 정의와 실행 상태를 한곳에서 읽을 수 없다.
-- E5-7은 외부 하네스가 대상을 선택해 Kubernetes 명령을 주입한다. 실제 round-26의 `E5-7m-injection-0-0.command.json`은 Pod 삭제 API 호출이다(`exp-terrain` §5). 운영자·하네스의 수동 절차를 CHILL의 선언된 실행 계약으로 옮길 필요가 있다.
-
-검토한 대안과 기각 이유:
-
-| 대안 | 기각 이유 |
-|---|---|
-| A. 파일을 저장소로 옮기기 | 보관 위치만 바뀌며 조건과 실행은 여전히 CHILL 밖이다. |
-| B. API로 조건 등록 | 다른 측정의 CR 기반 정의·상태 계약과 일관되지 않는다. |
-| B′. CRD만 추가 | 정의는 남지만 실행은 여전히 수동 하네스에 의존한다. |
-| ChillServer 내부 실행기 | 측정 주체가 시험 대상 생명주기에 들어간다. `AGENTS.md`의 측정 분리 원칙에 어긋난다. |
-| 새 독립 프로세스 | 기존 profiler가 이미 분리된 측정 주체이므로 별도 서비스는 불필요하다. |
-| EvaluationRun 전용 Lease | 기존 leader election·단일 worker·캐시 아닌 목록 읽기로 현재 단일 풀을 직렬화한다. 추가 Lease도 퇴임 leader의 늦은 명령을 fencing하지 못한다. |
-| 판정·단계 프로토콜을 Go로 이식 | 기존 계산식과 실행 절차를 다시 쓰면 판정·측정 의미가 바뀔 위험이 있다. |
-| Katib | 탐색·튜닝용이며 이번 고정 evaluation 절차 실행에는 맞지 않는다. kind는 Katib Experiment와의 이름 충돌을 피해 EvaluationRun으로 정한다. |
-| Tekton | CI 중심의 별도 실행 체계를 도입할 이유가 부족하다. |
-| Argo Workflows | 이번 단순 순차 실행에서 새 의존성을 들일 만큼 이점이 크지 않다. |
-| FaultInjection·ControlProfile·Snapshot CR | 독립 생명주기·소유자 근거 없음. |
+실험 정의, 실행 상태와 측정 판정은 같은 불변 입력을 참조해야 한다. 실행 주체는 시험 대상 ChillServer의 생명주기 밖에 둔다.
 
 ## Decision
 
-상세 필드·단계·실패 처리는 [실행 설계](../design/profiling/experiment-execution.md)가 소유한다. 요구사항은 [실험 SRS](../spec/experiments/SRS.md) EXP-01~15를 따른다.
+namespaced `LoadScenario`, `EvaluationRun`, `EvaluationStage` 세 CR을 사용한다. spec 전체는 불변이며 정정에는 새 CR을 만든다.
 
-1. namespaced 세 CR(개정 이력 참조)에 질문·조건·순서·비교·장애 주입·불변 입력 참조를 선언한다. spec 전체는 CEL `self == oldSelf`로 불변이며 정정은 새 CR이다. 실행 두 CR(EvaluationRun·EvaluationStage)의 status는 `observedGeneration`과 type-keyed `metav1.Condition`을 사용하고 실행 완료·측정 판정·정리 완료를 구분한다.
-2. 기존 profiler manager에 reconciler를 둔다. controller는 단계 순서·Job 채택·compact status만 소유한다. 기존 다른 측정 CR 실행 위치는 이 결정으로 옮기지 않는다.
-3. 배포·업그레이드는 하지 않는다. 선언한 대상 resource와 Workload/Node UID·소유권으로 대상을 고정한다. 관측한 image digest·source SHA·준비 상태는 실행 증거이며 기대값과의 비교로 시작을 막지 않는다. 실제 인증·실행 입력과 측정 writer 소유권 경계는 유지한다.
-4. 시험 대상 제어·관측에는 ChillServer 공개 API와 Kubernetes API만 쓴다. failure 주입도 선언된 계획에 따라 Kubernetes API로 수행하며 ChillServer 내부 호출이나 장애 주입 API를 만들지 않는다.
-5. profiler leader election(Helm 기본 활성)·단일 worker·캐시 아닌 목록 읽기로 생성 순서에 따라 한 실험만 실행한다. leader election이 꺼지면 이 reconciler만 등록하지 않는다. 실험 시작 표시는 한 번 조건부 갱신하되 명령별 선점 장부는 만들지 않는다. 반환 미확인 실험은 다음 실행을 막으며 별도 Lease·우선순위 큐는 없다. 실제 노드 예약은 기존 ChillServer admission이 소유한다. 퇴임 leader의 늦은 명령 가능성은 알려진 한계이며 fencing을 보장한다고 주장하지 않는다.
-6. 재개는 결정적 이름으로 기존 Job을 조회하거나 AlreadyExists 결과를 채택하는 것이다. 기록된 Job/Pod UID를 관측할 뿐 재발행·재측정하지 않는다. Job 소실은 `ExecutionLost`, 원격 효과 불명은 미확인 상태로 중단하며 원 사유·증거·예약을 보존한다. 자동 물리 복구하지 않는다.
-7. 기존 `conductor.py` 단계 명령(`factor`/`stage`/`judge`/`cleanup-jobs`)을 결정적 이름의 단발 Job으로 실행하고 마지막에는 표·게시 Job을 둔다. 부하·drain·수집·판정 등 단계 프로토콜과 계산식을 Go로 옮기지 않는다. 각 Job은 Pod attempt 하나이며 자동 재시도하지 않고 Job 성공을 측정 PASS나 증거 완료로 간주하지 않는다. 단계 정리는 자기 Job 삭제만 하며 원 설정 복구·owned reset·반환 대기는 실험 끝에 한 번 수행한다. 오류 시 하네스의 자동 설정 복구는 끈다. 정리 실패도 측정 결과는 게시하고, 운영자가 실제 상태를 확인한 뒤 metadata annotation으로 해제하면 controller가 status에 기록하고 점유를 해제한다.
-8. `ExperimentSummary`의 선택 필드 `definition`은 EvaluationRun spec + 해석된 LoadScenario spec snapshot을 담는 additive 확장이다. prepare가 해석한 Workload 적용 정의(SLO 정본)와 고정된 게시 형태는 [실행 설계 §8](../design/profiling/experiment-execution.md#8-증거게시조회)을 따른다. 실제 관측 신원·동결 운영 설정·완료 축·실행 증거 참조는 실행 기록에 둔다. 게시 ID는 EvaluationRun UID다. ChillServer는 불변 게시물만 읽고 CR은 읽지 않는다. reader(서버·대시보드)를 먼저 배포한 뒤 publisher를 전환한다. 대시보드는 완료 게시의 명시된 정책·비교 관계·SLO만 읽고 진행 중 조회는 kubectl로 한다. 옛 게시는 비교 관계 미기록으로 표시되며 추측 함수 삭제로 과거 비교가 사라지는 가시적 변화를 알린다.
-9. 운영 상한 등 설정값은 profiler config에서 선택하고 실제값과 읽은 출처를 점유 시작 시 `status.frozenConfig`와 실행 증거에 동결한다. 실행 중 설정 재조회로 조건을 바꾸지 않는다.
+- LoadScenario는 재사용 가능한 부하 정의다. 실행 status나 consumer ownerReference를 두지 않는다.
+- EvaluationRun은 질문, 조건 조립, 비교, 단일 풀 점유, 최종 정리와 게시를 소유한다.
+- EvaluationStage는 부모가 순차 생성하는 자식이며 한 행의 복원, 부하, drain, 수집, 판정과 단계 정리 Job을 소유한다. controller ownerReference가 부모의 정본이다. 단독 Stage 실행은 허용하지 않는다.
 
-## 개정 이력
+기존 profiler manager가 두 실행 reconciler를 소유한다. leader election이 켜진 경우에만 등록하고 단일 worker와 비캐시 목록 읽기로 한 실험을 실행한다. 반환 미확인 실험은 다음 실행을 막는다. 퇴임 leader의 늦은 원격 명령을 fencing한다고 보장하지 않는다.
 
-### 2026-11-02 producer cgroup을 node-agent raw로(사용자 결정)
+풀 점유와 반환은 부모가 소유한다. 자식은 외부 효과 직전에 비캐시 APIReader로 부모의 점유와 active child 신원을 확인한다. 실제 Node 예약은 ChillServer admission이 소유한다.
 
-- evaluation의 SSH sampler·producer SSH Secret·호스트 계정/authorized_keys·sudo crictl 요구를 제거한다. node-agent가 producer cgroup을 수집하고 기존 resources raw의 닫힌 분을 폴링하여 정확한 Pod UID/load containerID로 GO 전·종료 counter·판정을 연결한다. 별도 API·폴백·local client 병합은 없다.
-- 서버 namespace의 일반 계약 라벨 `edge.dacs.io/workload-role=load-generator`는 **자원 표본만** 선택한다. cluster observer 선택은 유지하고 서버는 evaluation 전용 라벨에 결합하지 않는다.
-- 과거 “node-agent 대체 불가” 결정을 폐기한다. 닫힌 분 지연 ≤82초 + 기존 API 상한 129초를 기존 startup 예산 194초에 더해 chart setup 기본을 405초로 조정한다. 근거·상한·실패 의미는 [실행 설계 §12](../design/profiling/experiment-execution.md#12-결정2026-11-02-사용자-개정)를 따른다. raw 저장 형식/ADR 0019는 변경하지 않으며 D2 sampler 도구는 유지한다.
+시험 대상은 선언된 resource, Workload/Node UID와 소유권으로 고정한다. 공개 ChillServer API와 Kubernetes API로 제어하고 관측하며, 장애 주입도 선언한 계획에 따라 Kubernetes API로 수행한다. 배포나 업그레이드는 수행하지 않는다.
 
-### 2026-10-31 (사용자 승인) 하위 데이터 모델 분해
+관측한 image digest, source 정보와 준비 상태는 실행 증거다. 이미지나 프로파일의 exact-match 및 토큰 TTL 비교를 접수 관문으로 추가하지 않는다. 실제 인증, 숫자 입력과 평가자 Job/Pod 소유권은 검증한다.
 
-- `LoadScenario` CR은 재사용 가능한 불변 부하 정의이며 실행 status나 consumer ownerReference를 두지 않는다.
-- `EvaluationRun` CR은 질문·조립·비교·단일 풀 세션·실험 끝 정리·게시를 소유한다.
-- `EvaluationStage` CR은 부모가 순차 생성하는 자식이며 한 행의 복원→부하→drain→수집→판정→단계 정리 Job, producer Job과 주입 기록을 소유한다.
-- StageTemplate·ControlSettings·TargetIdentity·Judgment·Generator·PowerMeasurement·FaultInjectionPlan/Record는 값 타입이며 StartState/StageResult는 불변 증거다. 별도 CR을 만들지 않는다.
-- 단독 EvaluationStage 실행은 금지한다. controller ownerReference가 부모의 정본이며 micro 단독 실행도 1단계 EvaluationRun으로 표현한다.
-- 풀 점유·finish·release·게시는 부모만 수행한다. 자식은 Job 생성·주입 등 외부 효과 직전에 비캐시 APIReader로 부모의 점유와 자신이 active child인지 확인하며 fencing을 보장한다고 주장하지 않는다.
-- background 삭제만 지원한다. foreground/orphan 삭제로 Job이 사라지면 `ExecutionLost`와 잔류를 기록하며 finalizer가 Job을 지킨다고 주장하지 않는다.
-- LoadScenario·카탈로그는 prepare에서 1회 해석하여 부하 정의와 Workload 적용 정의를 snapshot으로 동결하고 자식은 snapshot만 사용한다. SLO는 고정된 Workload generation에서 얻으며 Judgment에 복사하지 않는다.
+운영 상한과 선택한 설정의 실제값 및 출처를 점유 시작 때 `status.frozenConfig`와 실행 증거에 동결한다. Prepare는 LoadScenario와 카탈로그를 한 번 해석하고 부하 및 Workload 적용 정의를 snapshot으로 고정한다. SLO는 고정한 Workload generation에서 얻는다.
+
+절대 요청률, seed와 Dataset carrier를 동결한다. Prepare가 도착 간격을 한 번 고정해 workspace PVC의 읽기 전용 파일로 producer에 전달한다. Producer가 다시 생성하지 않으며 SHA/count metadata를 접수 조건으로 삼지 않는다.
+
+### Job과 증거 경계
+
+결정적 이름의 단발 Job이 `evaluation.py`의 `prepare`, `factor`, `stage`, `judge`, `cleanup-jobs`, `finish`, `publish`를 실행한다. 단계 프로토콜과 계산식을 Go로 복제하지 않는다. Job은 Pod attempt 하나이며 자동 재시도하지 않는다.
+
+재개는 기존 Job을 조회하거나 AlreadyExists 결과를 채택하는 것이다. 기록한 Job/Pod UID를 관측하며 재발행하거나 재측정하지 않는다. Job 소실은 `ExecutionLost`, 원격 효과 불명은 미확인 상태로 중단하고 원인, 증거와 예약을 보존한다. 자동 물리 복구는 하지 않는다.
+
+Job 성공과 실행 완료, 측정 PASS, 증거 완료 및 정리 완료를 구분한다. 실행 CR status는 `observedGeneration`과 type-keyed conditions를 사용한다.
+
+단계 정리는 자기 Job을 삭제한다. 원 설정 복원, owned reset과 반환 대기는 실험 끝에 한 번 수행한다. 선언한 `settingsPatch`만 공개 settings API로 적용하고 read-back 및 원복한다. 정리 실패도 측정 결과는 게시하며, 실제 상태를 확인한 운영자의 metadata annotation 해제를 status에 기록한 뒤 점유를 해제한다.
+
+Background 삭제를 지원한다. Foreground/orphan 삭제로 Job이 사라지면 실행 소실과 잔류를 기록한다. finalizer가 Job 보존을 보장한다고 주장하지 않는다.
+
+node-agent가 producer cgroup을 수집한다. 기존 `resources` raw의 닫힌 분에서 정확한 Pod UID와 load containerID로 시작 전후 counter 및 판정을 연결한다. 서버 namespace의 `edge.dacs.io/workload-role=load-generator`는 자원 표본만 선택한다. 별도 SSH 수집기나 폴백은 없다.
+
+### 게시와 조회
+
+게시 ID는 EvaluationRun UID다. `ExperimentSummary.definition`은 Run spec과 해석된 LoadScenario snapshot을 담는다. 실행 기록에는 관측 신원, 동결 설정, 완료 축과 증거 참조를 둔다. `tables.py`가 표를 조립한다.
+
+ChillServer는 불변 게시물을 읽는다. 대시보드는 명시한 정책, 비교 관계와 SLO를 표시하며 이름이나 요청률로 누락된 의미를 추측하지 않는다. 진행 중 조회는 Kubernetes 실행 객체를 사용한다.
 
 ## Consequences
 
-정의·실행·판정의 연결과 재현 가능한 입력 참조를 얻고, 화면의 비교 추측과 운영자의 명령 조합을 없앤다. 수행 오류·측정 불합격·반환 실패를 구별하며 불확실한 원격 효과를 성공으로 감추지 않는다.
+수행 오류, 측정 불합격과 반환 실패를 독립적으로 보고한다. 범위 제한 RBAC, 실제 인증, 유한 drain과 writer 소유권을 유지한다. 기존 과학 원시, 실행 기록과 게시물은 변경하거나 재게시하지 않는다.
 
-비용은 새 하네스 이미지의 빌드·배포, EvaluationRun과 Job/Pod·주입 대상에 대한 범위 제한 RBAC 확장, profiler leader election 유지다. 조건·상태·증거 연결을 끝까지 구현해야 하며 반환 미확인은 운영자 확인·해제 전까지 후속 실행을 막는다.
+저장 계약은 [Durable Stored-Contract Compatibility](0019-durable-stored-contract-compatibility.md), 관측 스트림은 [Observation Evidence API Streams](0030-observation-evidence-api-streams.md)를 따른다. 상세 동작은 [실험 실행 설계](../design/profiling/experiment-execution.md)가 소유한다.
 
-평가 실행은 EvaluationRun/Stage controller와 `evaluation.py`의 factor/stage/judge/cleanup/finish/publish Job 경계로 통합한다. 절대 요청률·inline seed·Dataset carrier를 동결하고, prepare가 generated·explicit arrival offsets를 한 번 고정하여 기존 workspace PVC의 읽기 전용 파일로 producer에 전달한다. producer는 재생성하지 않으며 SHA/count metadata를 접수 조건으로 삼지 않는다. 실제 숫자 입력·응답 품질·유한 drain과 소유 writer 정리 경계는 유지한다. 선언한 `settingsPatch`만 공개 settings API로 적용·readback·원복하며 표 조립은 `tables.py`가 맡는다. 기존 로컬 deployment/calibration/restoration orchestration은 제거했다. 대상·Node 준비 상태와 이미지/source 정보는 관측하고 평가자 Job/Pod UID·소유권은 유지한다. CHILL image/profile exact-match·토큰 TTL 비교·내부 상태 복원은 실행 조건이 아니다. 과거 필드 부재는 미기록이며 이름·요청률로 복원하지 않는다.
+정의와 설정 요구사항은 [불변 실험 정의](../spec/experiments/SRS.md#불변-실험-정의), [실험 정의의 필수 내용](../spec/experiments/SRS.md#실험-정의의-필수-내용), [설정 선택과 동결](../spec/experiments/SRS.md#설정-선택과-동결)을 따른다.
 
-과거 게시·과학 원시·실행 기록은 수정·삭제·재게시하지 않는다. [ADR 0019](0019-durable-stored-contract-compatibility.md)의 단일 버전 원칙을 유지하고 구계약 reader·dual decoder·호환 shim은 두지 않는다. 영향받는 작업용 객체만 의존 캠페인이 없는 전환 시점에 운영자가 정리한다. 과거 과학 기록 보존과 혼동하지 않는다.
+실행 요구사항은 [독립 실행 경계](../spec/experiments/SRS.md#독립-실행-경계), [시험 대상 신원 확인](../spec/experiments/SRS.md#시험-대상-신원-확인), [자원 풀 상호 배제](../spec/experiments/SRS.md#자원-풀-상호-배제), [단계별 수행 순서](../spec/experiments/SRS.md#단계별-수행-순서), [수행 기록과 재시작](../spec/experiments/SRS.md#수행-기록과-재시작)을 따른다.
 
-[ADR 0030](0030-observation-evidence-api-streams.md)은 관측 스트림 결정이다. 이 ADR은 이를 변경하지 않으며 기존 archive/publication 불변 계약을 유지한다.
+결과 요구사항은 [완료 상태의 분리](../spec/experiments/SRS.md#완료-상태의-분리), [기존 판정 규칙](../spec/experiments/SRS.md#기존-판정-규칙), [중단과 정리](../spec/experiments/SRS.md#중단과-정리), [장애 주입](../spec/experiments/SRS.md#장애-주입), [불변 증거와 참조 보호](../spec/experiments/SRS.md#불변-증거와-참조-보호), [실행 결과와 게시](../spec/experiments/SRS.md#실행-결과와-게시), [조회와 해석 경계](../spec/experiments/SRS.md#조회와-해석-경계)를 따른다.
+

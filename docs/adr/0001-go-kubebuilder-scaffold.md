@@ -1,18 +1,14 @@
-# 0001 Go and Kubebuilder Scaffold
+# Go and Kubebuilder Scaffold
 
 ## Status
 
 Accepted
 
-## Context
-
-CHILL needs Kubernetes-native CRD generation, controller-runtime, envtest and Helm packaging without required OLM.
-
-The testbed API server is Kubernetes `v1.31.13`.
-
 ## Decision
 
-Use Go with Kubebuilder. Scaffold with Kubebuilder `v4.2.0`, which generates the tested Kubernetes `1.31` dependency set:
+Use Go and Kubebuilder for Kubernetes API generation, controllers and development manifests. Helm is the supported deployment interface; OLM is not required.
+
+The repository pins:
 
 - Go module: `github.com/lab-paper-code/chill`
 - Go directive: `1.22.12`
@@ -20,10 +16,9 @@ Use Go with Kubebuilder. Scaffold with Kubebuilder `v4.2.0`, which generates the
 - controller-runtime: `v0.19.0`
 - envtest assets: `1.31.0`
 
-Use Kubebuilder's generated `config/` kustomize tree for development, but treat Helm as the eventual deployment interface.
+Use the generated `config/` kustomize tree for development and `charts/chill` for deployment.
 
 ## Consequences
 
-The first implementation follows the Kubernetes `1.31` API surface. CI starts with this single supported minor version; a minimum/latest matrix is deferred until MVP-2.
+Module-path and Kubernetes-minor changes affect imports, generated manifests and verification assets. Review those boundaries together when changing them.
 
-Changing the module path or the Kubernetes minor version after code grows will require import-path or generated-manifest churn, so both require a new ADR.

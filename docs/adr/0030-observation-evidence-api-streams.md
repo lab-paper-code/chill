@@ -1,42 +1,38 @@
-# 0030 Observation Evidence API Streams
+# Observation Evidence API Streams
 
 ## Status
 
-Accepted (2026-10-30) — 문서 계약 채택. 구현·승인 배포·리허설 완료 주장이 아니다.
-
-2026-11-12 A1은 요청별 판단·전송 기록을 위해 observation만 `v1alpha6`으로 한 번 전환한다([측정 계약](../design/serving/scheduler-runtime-measurement.md#a1-요청별-판단전송-근거), ADR 0019). 아래 `v1alpha5` 유지 결정은 당시 stream 추가의 범위다. 과학 원시·기존 publication은 보존하며 현재 reader의 이중 버전·변환은 추가하지 않는다.
-
-2026-11-12 E1/C1/V1은 observation만 `v1alpha6→v1alpha7`로 한 번 cutover한다(ADR 0019). 현행 로컬은 `<directory>/v1alpha7/<YYYYMMDDTHH>/<stream>.<MM>.jsonl`과 `v1alpha7/definitions.jsonl`, archive는 `serving/observations.v1alpha7/<YYYYMMDDTHH>/<stream>.jsonl.gz`다. profiling·transition 버전은 바꾸지 않는다. 기존 과학 원시·publication은 보존하며 이중 reader·변환·소급 재기록은 추가하지 않는다.
-
-기존 capacity의 전체 node-plan inventory와 기존 필드는 보존한다. `idleCosts`의 phase별 `powerMode/state`, `requestWatts`, profile ID `requestReferences`와 `actionCosts`의 예측 `seconds/joules`는 keep 및 선택된 target node plan에만 투영한다. 모든 plan의 기존 idle `source/watts/references`와 action 출처는 유지한다. 선택된 예측의 0W·0J도 기록하며, `powerMode/requestWatts`가 있는 선택된 phase에서 생략된 `state`는 빈 loaded-state multiset이다. 내부 planner의 실제 상태 metadata는 바꾸지 않는다.
-
-`capacity.missingCells`는 판단별 중복 없는 셀 표다. `energyComparison{status,missingCellRefs}`의 status는 `decidable|undecidable|not-applicable`이며, `undecidableCandidates[{key,missingCellRefs,excluded}]`와 `search.excludedUndecidable`로 제외 후보도 기록한다. 두 `missingCellRefs`는 같은 표의 0-based 정수 index이며, 셀·참조 순서는 결정적이고 각 참조 목록에 중복이 없다. 직렬화된 비교·후보에 inline `missingCells`는 없다. 누락 셀은 Node·phase 또는 kind·mode 또는 from/to·loaded state·required 조건을 식별한다. 이 정리는 미배포 `v1alpha7` 계약 안에서 완료하며 추가 버전 전환은 없다. 고정 H=600초, exact 셀 적격성·공통 노출 소거·SLO 회복 계약은 [scheduler operations](../design/serving/scheduler-operations.md#operation-and-idle-estimates)를 따른다. 아래 v1alpha5 결정은 당시 stream 추가 이력이다.
-
-## Context
-
-[evaluation 증거 API 계획](../plans/2026-10-28-e5-evidence-api.md) §1~6은 CHILL 내부 사실을 CHILL API로 수집하도록 바꾼다. 기존 ObservationLog의 요청·판단·정의·관리 기록에 컨테이너 자원과 Pod/observer issue 기록을 추가해야 한다. #213의 보관된 관측은 `serving/observations.v1alpha5/`에 있고, 새 API로 그 실험도 다시 읽어야 한다.
-
-기존 네 stream의 행 의미·encoding은 유지한다. 여기서 저장 버전을 올리면 현재 단일 버전 reader가 #213 보관본을 찾거나 읽지 못한다. 새 stream 두 개를 이유로 기존 실험을 폐기하거나 다중 버전 reader를 만드는 것은 [ADR 0019](0019-durable-stored-contract-compatibility.md)의 비용 원칙에 어긋난다.
+Accepted
 
 ## Decision
 
-1. **같은 prefix에 stream 두 개만 추가한다.** 로컬은 `<directory>/v1alpha5/<YYYYMMDDTHH>/{resources,cluster}.<MM>.jsonl`, 보관본은 `serving/observations.v1alpha5/<YYYYMMDDTHH>/{resources,cluster}.jsonl.gz`다. 기존 `requests`, `scheduler`, `catalog`, `management`와 루트 `definitions.jsonl`의 계약·버전·객체를 유지한다. 새 stream도 기존 분 경계·torn-tail 복구·archive·삭제·append health 경로를 사용한다.
-2. **버전은 `v1alpha5` 하나다.** 버전 증가, 다른 prefix로의 복사·변환, 다중 버전 reader와 구형 decoding 분기는 추가하지 않는다. 기존 불변 archive와 publication(#213~#225)을 수정·재게시하지 않는다. 이번 추가와 무관한 행 변경은 이 결정으로 승인하지 않는다.
-3. **배포 이전의 새 stream 부재는 결손이 아니다.** 과거 시간에 `resources` 또는 `cluster` 객체가 없는 것은 당시 기록 기능이 없었다는 뜻이며, 그 시간의 기존 네 stream을 읽는 데 장애가 되지 않는다. reader는 모든 여섯 stream의 존재를 시간 유효성 조건으로 삼지 않는다. 원시 목록은 stream별 존재/부재를 그대로 제공하고, 필요한 stream과 실제 수집 적용 구간에 대해서만 소비자가 coverage를 판정한다. 배포 이후 부재도 무조건 0건/정상으로 바꾸지 않는다. 새 manifest·소급 채움·합성 표본은 만들지 않는다.
-4. **기록과 전달의 출처는 하나다.** `resources`는 node-agent의 외부 cgroup/thermal 표본과 서버 in-process 누적값, `cluster`는 서버가 관측한 Pod/issue 사실이다. `cluster` append 성공 뒤 같은 행을 composition-root callback으로 라이브 hub에 투영한다. 실패한 append는 발행하지 않는다. core가 HTTP·Kubernetes·live를 역참조하지 않는다.
-5. **읽기는 기존 로컬 우선 → 보관본 경로다.** 원시 API는 닫힌 로컬 분의 JSONL 또는 저장된 gzip을 전송하고 즉석 압축하지 않는다. 가공 조회를 없애지 않으며, 원시는 하네스 전용 권한으로 격리한다. 처리/쓰기 마감은 분리한다.
+ObservationLog는 `requests`, `scheduler`, `catalog`, `management`, `resources`, `cluster` 스트림과 `definitions.jsonl`을 소유한다. 현재 저장 버전은 `v1alpha7` 하나다.
+
+로컬 행은 `<directory>/v1alpha7/<YYYYMMDDTHH>/<stream>.<MM>.jsonl`, 정의는 `v1alpha7/definitions.jsonl`에 둔다. 보관본은 `serving/observations.v1alpha7/<YYYYMMDDTHH>/<stream>.jsonl.gz`다. 같은 분 경계, torn-tail 복구, 보관과 append 상태 경로를 사용한다.
+
+원시 API는 닫힌 로컬 분을 우선하고 보관본을 읽는다. JSONL 또는 저장된 gzip을 전송하며 즉석 압축하지 않는다. 원시 읽기는 하네스 전용 권한으로 격리하고 처리 마감과 전송 마감을 구분한다.
+
+스트림별 존재 여부와 coverage를 공개한다. 필요한 수집 구간의 부재나 읽기 실패를 정상 0건으로 채우지 않는다. 모든 스트림의 존재를 공통 시간 유효성 조건으로 삼거나, 기록 기능이 없던 구간을 합성 표본으로 채우지 않는다.
+
+`resources`는 node-agent의 외부 cgroup 및 온도 표본과 서버 내부 누적값을 기록한다. `cluster`는 서버가 관측한 Pod와 observer issue를 기록한다. `cluster` append 성공 뒤 같은 행을 composition-root callback으로 라이브 hub에 전달한다. 실패한 append는 발행하지 않는다.
+
+GC는 `runtime/metrics` 누적 CPU와 사이클의 차로 보고한다. 측정 결과는 이 출처와 의미를 보존한다. node-agent 전송 실패 구간은 결손이며 재시도나 spool로 감추지 않는다.
+
+### 판단 근거의 저장
+
+용량 기록은 전체 node-plan 목록을 유지한다. 선택한 target과 keep에는 단계별 전력모드, loaded state, 요청 전력, 프로파일 참조와 예측 동작 시간 및 에너지를 투영한다. 선택한 예측의 0W와 0J도 기록한다. 해당 선택 단계에서 생략한 loaded state는 빈 multiset이다.
+
+`capacity.missingCells`는 판단별 중복 없는 누락 셀 표다. 에너지 비교와 제외 후보는 같은 표의 `missingCellRefs`를 사용한다. 참조는 0부터 시작하는 정수 인덱스이며 순서가 결정적이고 중복이 없다. 비교 상태는 `decidable`, `undecidable`, `not-applicable`로 구분한다.
+
+누락 셀은 필요한 Node, 단계, 동작 종류, 전력모드와 loaded state 조건을 식별한다. 비교 불가 후보와 검색 제외 수를 보존한다. 실제 planner 상태를 바꾸거나 누락 비용을 0으로 대체하지 않는다.
 
 ## Consequences
 
-- 기존 #213의 한 시간을 새 API로 읽는 것이 전환 리허설의 필수 항목이다. 과거 자원/클러스터 값을 채우거나 새 GC 의미로 과거 게시값을 다시 쓰지 않는다.
-- 새 stream 등록은 구현 1이 한 곳에서 맡고, 자원/클러스터 생산자는 각각 독립 파일에 붙인다. 저장 형식은 하나이고 병렬 구현을 위해 두 번째 logger나 broker를 만들지 않는다.
-- GC는 `runtime/metrics`의 누적 CPU·사이클 차로 보고하며 기존 gctrace 사이클 분포와 의미가 다르다. 새 publication의 측정 규칙에 출처와 의미를 기록하되 비교 가능성 관문은 만들지 않는다.
-- node-agent 전송 재시도·spool은 없고 실패 구간은 결손이다. 새 기능 배포 전 부재와 수집 실패를 같은 정상 빈 값으로 숨기지 않는다.
-- 원시 전송도 이제 측정 대상 서버에서 일어난다. evaluation 측정 창 밖에서만 원시 내보내기와 대시보드 과거 조회를 실행하고, 한 번의 리허설에서 추가 CPU 몫을 기록한다.
+한 저장 경로가 원시 API, 가공 조회와 라이브 발행의 출처다. 서버의 요청 처리와 제어가 같은 프로세스에 있으므로 평가 측정 창 밖에서 원시 내보내기와 대시보드 과거 조회를 실행한다.
 
-## References
+기존 과학 원시와 게시물은 수정하거나 재게시하지 않는다. 현재 단일 버전 reader와 작업용 객체 정리는 [Durable Stored-Contract Compatibility](0019-durable-stored-contract-compatibility.md)를 따른다.
 
-- [Serving 관측 명세](../spec/00_measurement.md#측정의-단위)
-- [Scheduler SRS](../spec/scheduler/SRS.md): SCH-67~70, SCH-AC-52~55
-- [관측 설계 §17](../design/serving/observability-split.md#17-evaluation-증거-api-2026-10-30): API·행·권한·세 구현 슬라이스
-- [ADR 0029](0029-gateway-control-data-plane-split.md): 게이트웨이 분리는 보류이며 이 API에 router 차원을 추가하지 않는다.
+요구사항은 [관측 원시 기록 내보내기](../spec/scheduler/SRS.md#관측-원시-기록-내보내기), [외부 자원과 온도 관측](../spec/scheduler/SRS.md#외부-자원과-온도-관측), [Pod와 장애 사건 기록](../spec/scheduler/SRS.md#pod와-장애-사건-기록), [읽기 전용 전력계 선언](../spec/scheduler/SRS.md#읽기-전용-전력계-선언)을 따른다.
+
+수용 기준은 [완결 원시와 보관본 조회 검증](../spec/scheduler/SRS.md#완결-원시와-보관본-조회-검증), [외부 자원 표본과 누적값 검증](../spec/scheduler/SRS.md#외부-자원-표본과-누적값-검증), [Pod와 장애 기록 후 발행 검증](../spec/scheduler/SRS.md#pod와-장애-기록-후-발행-검증), [읽기 전용 전력계 설정 검증](../spec/scheduler/SRS.md#읽기-전용-전력계-설정-검증)을 따른다. 상세 구조는 [관측 설계](../design/serving/observability-split.md)가 소유한다.
+

@@ -1,31 +1,18 @@
-# 0006 Rename Project to CHILL
+# CHILL Project Identity
 
 ## Status
 
 Accepted
 
-## Context
-
-The initial project name, GearEdge, described edge-oriented operating-point control but did not clearly expose the current research framing in `docs/spec/README.md`: cost-aware heterogeneous inference under latency and load constraints, with energy minimization as the primary objective.
-
-The early scaffold makes renaming display/module/chart/development defaults cheaper than later migration.
-
 ## Decision
 
-Rename the project to `CHILL`, expanded as `Cost-aware Heterogeneous Inference for Latency and Load`.
+Use `CHILL`, expanded as `Cost-aware Heterogeneous Inference for Latency and Load`, for the research project.
 
-Use `CHILL` for display text and `chill` for code/package identifiers, including the Go module path, Helm chart, default image repositories, Kubernetes namespace, kind cluster, and local kubeconfig.
+Use `CHILL` in display text and `chill` in code and packaging identifiers, including the module, chart, image repositories and development defaults. The repository slug is `lab-paper-code/chill`.
 
-Use `lab-paper-code/chill` as the GitHub repository slug and `/home/genesis1/ETRI/chill` as the local checkout path.
-
-Keep the API group `edge.dacs.io/v1alpha1`. The API group represents the CRD domain and existing alpha resource surface, not the product name.
+Keep the API group `edge.dacs.io/v1alpha1` as defined by [API Group and Version](0002-api-group-and-version.md).
 
 ## Consequences
 
-Local imports, Helm paths, README examples, default image repositories, and e2e namespaces move from `gearedge` to `chill`.
+A project rename changes imports, generated manifests, chart paths and user-facing instructions. Review those changes as one explicit naming decision.
 
-The local checkout and Git remote should move to the `chill` slug. The GitHub repository itself must be renamed before pushes to `git@github.com:lab-paper-code/chill.git` can succeed.
-
-Existing local kind clusters and kubeconfig paths created under the old name are not reused automatically.
-
-Any future project rename requires a new ADR because it will churn generated manifests, import paths, chart paths, and user-facing documentation.

@@ -1,4 +1,4 @@
-# 0004 Derivation Purity Boundary
+# Derivation Purity Boundary
 
 ## Status
 

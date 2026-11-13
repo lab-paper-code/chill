@@ -1,4 +1,4 @@
-# 0011 DeviceClass Status Boundary
+# DeviceClass Status Boundary
 
 ## Status
 
@@ -6,37 +6,19 @@ Accepted
 
 ## Context
 
-CHILL discovers hardware facts on Kubernetes Nodes, assigns a device-class label, and reconciles `DeviceClass` resources from the device catalog. A `DeviceClass` describes the shared capabilities of one device type and provides the selector that maps Kubernetes Nodes to that class.
-
-Kubernetes already owns Node lifecycle, health, readiness, schedulability, and resource observations. Controllers and users can obtain the current members of a `DeviceClass` by applying `spec.nodeSelector` to the live Node set. Copying member names, `NodeReady`, or derived Ready counts into `DeviceClass.status` would create a second, eventually consistent representation of Kubernetes-owned state without adding a CHILL-specific control meaning.
-
-The research design will eventually require CHILL-owned runtime state, including desired/current configuration convergence and actuation progress. Those states are per-node execution concerns, while `DeviceClass` is a class-level capability resource. Defining their complete API before the corresponding observer, actuator, and scheduler exist would introduce speculative fields with no controller able to report them truthfully.
+`DeviceClass` holds shared hardware capabilities and a Node selector. Kubernetes Nodes expose membership, health, schedulability and current resources.
 
 ## Decision
 
-Keep Kubernetes Nodes authoritative for class membership and Kubernetes-native Node state. CHILL components that need current members or health list Nodes with `DeviceClass.spec.nodeSelector` and inspect the Node API directly.
+Keep `DeviceClass.status` empty. Consumers apply `spec.nodeSelector` to current Nodes. Do not duplicate member names, readiness, counts, taints or per-node execution state in the class resource.
 
-Keep `DeviceClass` focused on class-level capabilities. Its status does not mirror:
+CHILL power control stores per-node intent and observation on the Node. The desired power-mode label identifies intent; read-back, boot ID, generation, state and the last transition record identify observed execution state. The dedicated actuator owns host mutation and observation under [Node Power Actuation Boundary](0015-node-power-actuation-boundary.md).
 
-- member Node names
-- Node readiness, conditions, taints, or schedulability
-- total or Ready Node counts
-- per-node model, power mode, batching, telemetry, or transition state
+Keep model/runtime installation and compatibility outside stable class capabilities. Derive scheduling eligibility at decision time from the requested workload, measured profiles, execution state and current Kubernetes resources.
 
-`DeviceClass.status` remains empty until CHILL has a class-level observed property that cannot be obtained directly from Kubernetes and a controller that owns and continuously reconciles that property. New status fields are added with the controller that can reconstruct them from observable state; fields are not reserved with placeholder or permanently `unknown` values.
-
-If CHILL introduces per-node control, its desired and observed execution state belongs to a separate CHILL-owned resource. That resource follows the Kubernetes `spec`/`status` contract: user or planner intent is stored in `spec`, and the responsible observer or actuator reports current state and convergence through `status`. `DeviceClass` may later expose a small class-level summary of that CHILL-owned state when an operational consumer requires it, but it does not become the owner of per-node state.
-
-Scheduling eligibility is derived at decision time rather than persisted as an intrinsic `DeviceClass` or Node condition. It can depend on a target model, profile availability, current execution state, cluster headroom, and workload, so a single stored eligibility value would be incomplete without that context.
-
-Each status field has one owning controller. Controllers remain level-based and reconstruct status from current observations rather than event history. Status is written through the status subresource only when the owning controller has a meaningful observation to publish.
-
-`ChillSystem.status` remains the installation-level health surface established by ADR 0008. It reports CHILL-owned runtime readiness and does not replace queries to authoritative Node state when making a scheduling or actuation decision.
+Each observed field has one owner. Status owners publish meaningful current observations through their status boundary. Installation availability follows [ChillSystem Status Surface](0008-chillsystem-status-surface.md).
 
 ## Consequences
 
-The current Node discovery and `DeviceClass` reconciliation path is sufficient to establish the device inventory boundary without an additional inventory status controller. Model catalog and compatibility work can consume the same Node and `DeviceClass` sources without waiting for duplicated Ready counts.
+Class inventory remains independent of runtime control. Node and workload consumers use authoritative observations without a fan-out controller maintaining duplicated membership or Ready counts.
 
-The API stays small and truthful: Kubernetes reports Kubernetes state, while CHILL reports only state produced by CHILL-specific control loops. Per-node execution state can evolve independently from the stable class capability API, and future controllers gain explicit status ownership without competing writes.
-
-Operators who need class membership or current Kubernetes health use standard Node queries with the class selector. CHILL-specific summaries are introduced only when their semantics, producer, and consumer exist together.
