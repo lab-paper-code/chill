@@ -2,9 +2,8 @@
 
 import * as React from "react"
 import { ArrowDown, ArrowUp, ChevronDown, Plus, Trash2 } from "lucide-react"
-import { Button, FormSection, Section } from "@/components/kit"
+import { Button, FormSection, Section, Select } from "@/components/kit"
 import { InputBlock } from "@/components/custom/blocks/InputBlock"
-import { SelectBlock } from "@/components/custom/blocks/SelectBlock"
 import { ToggleGroup, ToggleGroupItem } from "@/components/custom/blocks/ToggleGroupBlock"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -39,7 +38,7 @@ export function BasicSection({ spec, edit, context, name, setName, nameError, lo
           <Textarea id={questionId} rows={3} value={text(spec.question)} onChange={event => edit(["question"], event.target.value)} />
         </div>
         <div className="sm:w-80">
-          <SelectBlock label="부하 발생 장치" searchable placeholder="선택" value={node}
+          <Select label="부하 발생 장치" searchable placeholder="선택" value={node}
             options={[...new Set([...context.nodes, ...(node ? [node] : [])])].map(item => ({ value: item, label: item }))}
             onChange={value => edit(["loadGenerator", "nodeName"], value)} />
         </div>
@@ -75,7 +74,7 @@ export function StagesSection({ spec, edit, context, restructure }: Props & { re
                 <InputBlock label="단계 ID" value={id} autoComplete="off" spellCheck={false} error={duplicate ? "중복" : undefined} aria-invalid={duplicate} onChange={event => edit([...path, "id"], event.target.value.trim())} />
                 <InputBlock label="구분" value={text(stage.row)} autoComplete="off" onChange={event => edit([...path, "row"], event.target.value)} />
               </div>
-              <SelectBlock label="부하 시나리오" searchable placeholder="선택" value={scenario || !uid ? uid : STORED}
+              <Select label="부하 시나리오" searchable placeholder="선택" value={scenario || !uid ? uid : STORED}
                 helperText={scenario ? `구간 ${records(scenario.spec.parts).length}개, ${formatDurationNanos(scenarioSeconds(scenario.spec) * 1e9)}` : uid ? "목록에 없는 시나리오" : undefined}
                 options={[...(uid && !scenario ? [{ value: STORED, label: `${text(ref.name) || "이름 없음"} (저장된 참조)` }] : []), ...context.scenarios.map(item => ({ value: item.uid, label: item.name }))]}
                 onChange={value => { const item = context.scenarios.find(entry => entry.uid === value); if (item) edit([...path, "loadScenarioRef"], { ...ref, name: item.name, uid: item.uid }) }} />
@@ -154,11 +153,11 @@ function ComparisonSide({ label, value, stageIds, published, onChange }: { label
         <ToggleGroupItem value="past">과거 결과</ToggleGroupItem>
       </ToggleGroup>
       {historical && (
-        <SelectBlock label="결과" searchable placeholder="선택" value={publicationID}
+        <Select label="결과" searchable placeholder="선택" value={publicationID}
           options={[...(publicationID && !source ? [{ value: publicationID, label: `${publicationID.slice(0, 8)} (저장된 참조)` }] : []), ...published.map(item => ({ value: item.id, label: item.name }))]}
           onChange={id => onChange({ historical: { publicationID: id, stageID: "" } })} />
       )}
-      <SelectBlock label="단계" placeholder="선택" value={stage} disabled={historical && !publicationID} options={withStored(stageOptions)}
+      <Select label="단계" placeholder="선택" value={stage} disabled={historical && !publicationID} options={withStored(stageOptions)}
         onChange={id => onChange(historical ? { historical: { ...past, stageID: id } } : { stageID: id })} />
     </fieldset>
   )

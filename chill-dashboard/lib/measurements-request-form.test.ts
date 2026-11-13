@@ -16,18 +16,19 @@ const model = { spec: {
 } }
 const orin = { name: "orin", uid: "u", resourceVersion: "1", nodeSelector: {}, architecture: "arm64", memory: "", powerModes: [], nodes: [] } as InventoryClass
 
-test("path labels are backend, INT8 and architecture", () => {
-  assert.equal(pathLabel(model, "ort-cuda-arm64"), "CUDA ARM64")
-  assert.equal(pathLabel(model, "ort-cpu-int8-amd64"), "CPU INT8 AMD64")
+test("path labels are backend, 정수 8비트 and architecture in the matrix words", () => {
+  assert.equal(pathLabel(model, "ort-cuda-arm64"), "CUDA ARM 64비트")
+  assert.equal(pathLabel(model, "ort-cpu-int8-amd64"), "CPU 정수 8비트 x86 64비트")
   assert.equal(pathLabel(model, "missing"), "missing")
 })
 
 test("path support: static mismatch blocks, server verdict decides the rest", () => {
-  assert.deepEqual(pathSupport(model, model.spec.executionPaths[1], orin, "n"), { state: "unsupported", reason: "AMD64 전용" })
+  assert.deepEqual(pathSupport(model, model.spec.executionPaths[1], orin, "n"), { state: "unsupported", reason: "x86 64비트 전용" })
   assert.equal(pathSupport(model, model.spec.executionPaths[0], orin, "n").state, "unknown")
-  const read = (verdict: ModelCompatibility["verdict"], node = "n") => ({ data: { selection: { modelSpec: "m", executionPath: "ort-cuda-arm64", deviceClass: "orin", node }, verdict, reasons: [{ kind: "k", code: "c", message: "no cuda" }] } as unknown as ModelCompatibility })
+  const read = (verdict: ModelCompatibility["verdict"], node = "n", code = "RuntimeDeclarationMissing") => ({ data: { selection: { modelSpec: "m", executionPath: "ort-cuda-arm64", deviceClass: "orin", node }, verdict, reasons: [{ kind: "k", code, message: "no cuda" }] } as unknown as ModelCompatibility })
   assert.equal(pathSupport(model, model.spec.executionPaths[0], orin, "n", read("Compatible")).state, "candidate")
-  assert.deepEqual(pathSupport(model, model.spec.executionPaths[0], orin, "n", read("Incompatible")), { state: "unsupported", reason: "no cuda" })
+  assert.deepEqual(pathSupport(model, model.spec.executionPaths[0], orin, "n", read("Incompatible")), { state: "unsupported", reason: "실행 환경 선언 없음" })
+  assert.deepEqual(pathSupport(model, model.spec.executionPaths[0], orin, "n", read("Unknown", "n", "SomethingNew")), { state: "unknown", reason: "기타 사유" })
   assert.equal(pathSupport(model, model.spec.executionPaths[0], orin, "n", read("Compatible", "other")).state, "unknown")
 })
 

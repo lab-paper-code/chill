@@ -67,7 +67,7 @@ function DefinitionFields({ definition }: { definition: Definition }) {
       { label: "모델", value: catalogLink("models", definition.model) },
       { label: "전처리기", value: catalogLink("preprocessors", definition.preprocessor) },
       { label: "데이터셋", value: catalogLink("datasets", definition.dataset), reason: "지정하지 않음" },
-      { label: "목표", value: `${definition.percentile}% 요청을 ${definition.target} 안에` },
+      { label: "목표", value: `p${definition.percentile} ${definition.target}` },
       { label: "과부하 정책", value: policyLabel[definition.policy] },
       { label: "대기 상한", value: formatNumber(definition.maxQueued) },
       { label: "최종 기한", value: definition.lifetime, reason: "지정하지 않음" },

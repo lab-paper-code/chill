@@ -1,8 +1,8 @@
 import type { SchedulerActionObservation, SchedulerObservationSummary } from "./read-types.ts"
-import { actionStatus, type StatusInfo } from "./status-labels.ts"
+import { actionStatus, schedulerReason, type StatusInfo } from "./status-labels.ts"
 import { formatDurationNanos } from "./format.ts"
-import { liveReason, incidentDiagnosis } from "./live-display.ts"
-import type { LiveCluster } from "./live.ts"
+import { liveReason, incidentDiagnosis, reservationReason } from "./live-display.ts"
+import type { LiveCluster, LiveReservation } from "./live.ts"
 
 const kindLabels: Record<string, string> = {
   prepare: "실행 준비", route: "요청 분배 변경", unroute: "요청 분배 해제", release: "자원 예약 해제", reset: "서비스 초기화",
@@ -44,11 +44,12 @@ type Obj = Record<string, unknown>
 const obj = (v: unknown): Obj | undefined => (v !== null && typeof v === "object" && !Array.isArray(v) ? v as Obj : undefined)
 
 /** Plan versus observed result of a full action record; empty when the record carries neither. */
-export function planVsActual(action: SchedulerActionObservation): { label: string; plan: string | null; actual: string | null }[] {
+export function planVsActual(action: SchedulerActionObservation & { expectedSeconds?: number | null }): { label: string; plan: string | null; actual: string | null }[] {
   const op = obj(action.expected), result = obj(action.actual)
   const plan = (Array.isArray(obj(op?.target)?.actions) ? obj(op?.target)?.actions as unknown[] : []).map(obj).find(a => a?.id === action.id)
   const rows: { label: string; plan: string | null; actual: string | null }[] = []
-  const planned = typeof plan?.elapsedNanos === "number" || typeof plan?.elapsedNanos === "bigint" ? formatDurationNanos(Number(plan.elapsedNanos)) : null
+  const planned = action.expectedSeconds != null ? formatDurationNanos(action.expectedSeconds * 1e9)
+    : typeof plan?.elapsedNanos === "number" || typeof plan?.elapsedNanos === "bigint" ? formatDurationNanos(Number(plan.elapsedNanos)) : null
   const ended = typeof result?.endedAt === "string" ? result.endedAt : action.completedAt
   const took = ended && !ended.startsWith("0001-") ? formatDurationNanos(Math.max(0, Date.parse(ended) - Date.parse(action.startedAt)) * 1e6) : null
   if (planned || took) rows.push({ label: "소요", plan: planned, actual: took })
@@ -60,9 +61,27 @@ export function planVsActual(action: SchedulerActionObservation): { label: strin
   return rows
 }
 
-/** Cluster event row: kind, target and content in display words. */
-export function clusterRow(c: LiveCluster): { kind: string; target: string | null; content: string } {
-  const target = c.pod?.name ?? c.source ?? null
-  if (c.kind === "issue") return { kind: "문제", target, content: `${liveReason(c.event)}${c.reason ? `: ${incidentDiagnosis(c.reason).reason}` : ""}` }
+/** Label of an action error that starts with a known reason code ("PreparationFailed: …"); null otherwise (the screen shows "—" with the text). */
+export function actionErrorLabel(error: string): string | null {
+  const reason = schedulerReason(error.split(":", 1)[0].trim())
+  return reason.code ? null : reason.label
+}
+
+/** Why a reservation holds its devices. */
+export function reservationText(r: Pick<LiveReservation, "owner" | "reason">): string | null {
+  if (r.owner.startsWith("measurement-lease") || r.reason.endsWith("profiling run in progress")) return "측정 실행 중"
+  if (r.reason) return reservationReason(r.reason)
+  return r.owner.startsWith("decision/") ? "판단에 따른 변경" : null
+}
+
+/** Cluster event row in display words. An issue whose reason has no label gives `content` null and the server text as `detail`. */
+export function clusterRow(c: LiveCluster): { kind: string; target: string | null; content: string | null; detail?: string } {
+  // Namespaced sources ("chill-system/chill-node-agent-x") read better by their name.
+  const target = c.pod?.name ?? c.source?.split("/").at(-1) ?? null
+  if (c.kind === "issue") {
+    const reason = c.event === "resolved" ? c.previousReason ?? c.reason : c.reason
+    const label = reason?.includes("power sample gap") ? "전력 표본 공백" : reason ? incidentDiagnosis(reason).reason : null
+    return { kind: c.event === "resolved" ? "문제 해소" : "문제 발생", target, content: label && label !== reason ? label : null, detail: reason || undefined }
+  }
   return { kind: "파드", target, content: `${liveReason(c.event)}${c.pod?.phase ? `: ${liveReason(c.pod.phase)}` : ""}` }
 }

@@ -8,7 +8,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/custom/blocks/ToggleG
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { settingControls } from "@/lib/scheduler-settings"
+import { settingControls, settingTargets } from "@/lib/scheduler-settings"
 import { schedulerOptions } from "@/lib/scheduler-selection"
 import { fieldUnit, fields, settingsGroups, type FieldKey, type SettingsForm, type SettingsGroup } from "@/lib/scheduler-settings-form"
 
@@ -111,12 +111,7 @@ function CheckRow({ checked, onChange, changed, children }: { checked: boolean; 
   )
 }
 
-const help = {
-  autonomous: "선택한 서비스의 구성을 스케줄러가 바꿈",
-  demand: "서비스별 계획 수요의 하한, 비우면 미설정",
-  excluded: "스케줄러가 배치, 제거, 전력 모드를 바꾸지 않는 장치",
-  priority: "목표를 동시에 지킬 수 없을 때 먼저 지킬 서비스를 고르는 기준",
-}
+const [autonomousTarget, demandTarget, excludedTarget] = settingTargets
 
 function Targets({ form, errors, changed, update, services: serviceState, nodes: nodeState }: Props) {
   const services = typeof serviceState === "string" ? [] : serviceState, nodes = typeof nodeState === "string" ? [] : nodeState
@@ -135,7 +130,7 @@ function Targets({ form, errors, changed, update, services: serviceState, nodes:
   const empty = (what: string, state: unknown[] | string) => <p className="text-sm text-muted-foreground">{typeof state === "string" ? `${what} ${state}` : `${what} 없음`}</p>
   return (
     <div className="grid gap-4">
-      <FormSection title="자동 제어 서비스" info={help.autonomous}>
+      <FormSection title={autonomousTarget.label} info={autonomousTarget.help}>
         {uniqueUIDs.length ? (
           <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
             {uniqueUIDs.map(uid => (
@@ -146,7 +141,7 @@ function Targets({ form, errors, changed, update, services: serviceState, nodes:
         ) : empty("서비스", serviceState)}
       </FormSection>
 
-      <FormSection title="최소 수요" info={help.demand}>
+      <FormSection title={demandTarget.label} info={demandTarget.help}>
         {uniqueUIDs.length ? (
           <div className="grid gap-x-10 gap-y-3 sm:grid-cols-2">
             {uniqueUIDs.map(uid => (
@@ -157,7 +152,7 @@ function Targets({ form, errors, changed, update, services: serviceState, nodes:
         ) : empty("서비스", serviceState)}
       </FormSection>
 
-      <FormSection title="제외 장치" info={help.excluded}>
+      <FormSection title={excludedTarget.label} info={excludedTarget.help}>
         {nodeNames.length ? (
           <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
             {nodeNames.map(node => (
@@ -168,7 +163,7 @@ function Targets({ form, errors, changed, update, services: serviceState, nodes:
         ) : empty("장치", nodeState)}
       </FormSection>
 
-      <FormSection title="우선순위" info={help.priority}>
+      <FormSection title="우선순위" info="목표를 동시에 지킬 수 없을 때 먼저 지킬 서비스를 고르는 기준">
         <div className="grid gap-x-10 sm:grid-cols-2"><div className="flex min-h-9 items-center justify-between gap-4">
           <FieldLabel label="기준" changed={changed.has("sloPriorityStrategy")} />
           <ToggleGroup type="single" variant="segmented" size="sm" aria-label="우선순위 기준" value={form.priorityStrategy}

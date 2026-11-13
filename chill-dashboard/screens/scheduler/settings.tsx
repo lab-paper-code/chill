@@ -4,15 +4,14 @@ import * as React from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { sectionTabs } from "@/lib/routes"
-import { cn } from "@/lib/utils"
 import { useChillMutation, useChillQuery } from "@/lib/client"
 import { ApiError } from "@/lib/client-transport"
 import type { WorkloadSummary } from "@/lib/domain"
 import type { PoolsView, SchedulerSettings } from "@/lib/read-types"
 import { parseSchedulerJSON, settingsEqual, stringifySchedulerJSON } from "@/lib/scheduler"
-import { writableSettingKeys } from "@/lib/scheduler-settings"
-import { changeRows, fieldMeta, formOf, rebase, settingsGroups, settingsOf, type FieldKey, type SettingsForm, type SettingsGroup } from "@/lib/scheduler-settings-form"
-import { Button, ConfirmDialog, Fields, FormActions, LeaveGuard, Page, PageHeader, PageTabs, QueryBoundary, RawDialog, Section, StatusBadge, useToast } from "@/components/kit"
+import { settingFields, writableSettingKeys } from "@/lib/scheduler-settings"
+import { changeRows, formOf, rebase, settingsGroups, settingsOf, type SettingsForm, type SettingsGroup } from "@/lib/scheduler-settings-form"
+import { Button, ConfirmDialog, Fields, FormActions, LeaveGuard, Page, PageHeader, PageTabs, QueryBoundary, RawDialog, Rail, Section, StatusBadge, useToast } from "@/components/kit"
 import { SettingsGroupView, type Service } from "./settings-fields"
 import { SettingsHistory } from "./settings-history"
 
@@ -95,7 +94,7 @@ export function SchedulerSettingsScreen() {
         } else setConflict({ base, latest, mine })
       } else {
         const data = error.data as { field?: unknown } | null
-        const field = typeof data?.field === "string" ? fieldMeta[data.field as FieldKey]?.label : undefined
+        const field = typeof data?.field === "string" ? settingFields.find(item => item.key === data.field)?.label : undefined
         toast({ title: status === 403 ? "변경 권한 없음" : "적용 실패", description: field ?? `HTTP ${status}`, type: "error" })
       }
     } finally {
@@ -124,26 +123,10 @@ export function SchedulerSettingsScreen() {
         {current => {
           const form = draft?.form ?? formOf(current)
           return (
-            <div className="grid gap-6 lg:grid-cols-[11rem_minmax(0,1fr)]">
-              <nav aria-label="설정 묶음" className="min-w-0 lg:sticky lg:top-4 lg:self-start">
-                <ul className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none] lg:mx-0 lg:flex-col lg:px-0">
-                  {settingsGroups.map(item => {
-                    const active = item.value === group, count = groupCount(item.value)
-                    return (
-                      <li key={item.value}>
-                        <button type="button" aria-current={active || undefined} onClick={() => setParam("group", item.value === "targets" ? null : item.value)}
-                          className={cn("flex h-9 w-full items-center justify-between gap-2 whitespace-nowrap rounded-md px-3 text-sm transition-colors",
-                            active ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground")}>
-                          {item.label}
-                          {count > 0 && <span className="rounded bg-primary-soft px-1.5 text-xs tabular-nums text-primary" aria-label={`변경 ${count}건`}>{count}</span>}
-                        </button>
-                      </li>
-                    )
-                  })}
-                </ul>
-              </nav>
+            <Rail label="설정 묶음" value={group} onChange={value => setParam("group", value === "targets" ? null : value)}
+              items={settingsGroups.map(item => ({ value: item.value, label: item.label, count: groupCount(item.value) || undefined }))}>
               <SettingsGroupView group={group} form={form} errors={result?.errors ?? {}} changed={changed} update={update} services={services} nodes={nodes} />
-            </div>
+            </Rail>
           )
         }}
       </QueryBoundary>

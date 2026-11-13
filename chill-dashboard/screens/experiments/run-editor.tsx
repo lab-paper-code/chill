@@ -19,6 +19,7 @@ import { decodeExperimentPage, type ExperimentPage } from "@/lib/experiments"
 import { copyAuthorDraft, evaluationReplacement, object, parseSpec, patchSpec, records, specJSON, type LoadScenario, type Spec } from "@/lib/evaluation-author"
 import { evaluationCanSubmit, evaluationPreflight, evaluationSameSpec, type EvaluationPreflight } from "@/lib/evaluation-request"
 import { checkLabel, checkReason, runNameError, scenarioSeconds, specChanges } from "@/lib/experiments-run-editor"
+import { serviceNames } from "@/lib/experiments-run"
 import { InvalidContext } from "./run-editor-settings"
 import { BasicSection, ComparisonsSection, CriteriaSection, StagesSection, type EditorContext, type Path } from "./run-editor-sections"
 
@@ -224,13 +225,18 @@ function Editor({ title, source, missing = [] }: { title: string; source: Source
   const runs = useChillQuery<{ items: Run[] }>("v1/evaluations", { decoder: decode, enabled: tab === "compare" || comparisons.length > 0 })
   const lookup = useChillQuery<Run>(`v1/evaluations/${encodeURIComponent(name || "_")}`, { decoder: decode, enabled: false })
 
-  const context: EditorContext = React.useMemo(() => ({
-    services: (workloads.data ?? []).map(item => ({ uid: item.desired.metadata.uid, name: item.desired.metadata.name })),
-    nodes: (inventory.data?.classes ?? []).flatMap(item => item.nodes.map(node => node.name)),
-    current: settings.data,
-    scenarios: scenarios.data?.items ?? [],
-    published: (runs.data?.items ?? []).filter(run => run.publicationID).map(run => ({ id: run.publicationID!, name: run.name, stages: records(run.spec.stages).map(stage => String(stage.id ?? "")) })),
-  }), [workloads.data, inventory.data, settings.data, scenarios.data, runs.data])
+  const context: EditorContext = React.useMemo(() => {
+    const live = (workloads.data ?? []).map(item => ({ uid: item.desired.metadata.uid, name: item.desired.metadata.name }))
+    const liveUIDs = new Set(live.map(item => item.uid))
+    const retired = [...serviceNames(scenarios.data?.items ?? [])].filter(([uid]) => !liveUIDs.has(uid)).map(([uid, name]) => ({ uid, name, retired: true }))
+    return {
+      services: [...live, ...retired],
+      nodes: (inventory.data?.classes ?? []).flatMap(item => item.nodes.map(node => node.name)),
+      current: settings.data,
+      scenarios: scenarios.data?.items ?? [],
+      published: (runs.data?.items ?? []).filter(run => run.publicationID).map(run => ({ id: run.publicationID!, name: run.name, stages: records(run.spec.stages).map(stage => String(stage.id ?? "")) })),
+    }
+  }, [workloads.data, inventory.data, settings.data, scenarios.data, runs.data])
 
   const report = React.useCallback((id: string, bad: boolean) => setInvalid(current => {
     if (current.has(id) === bad) return current
@@ -371,12 +377,16 @@ function Preflight({ answer, stale, pending, error, received }: { answer: Evalua
   if (!answer) return received && !pending
     ? <StatusBadge tone="fail" label="점검 결과 없음" reason="서버가 점검 항목을 보내지 않음" />
     : <p className="text-sm text-muted-foreground">{pending ? "점검 중" : "점검 전"}</p>
-  const failed = answer.checks.filter(item => !item.passed).length
+  const failed = answer.checks.filter(item => !item.passed)
+  const passed = answer.checks.length - failed.length
   return (
     <div className={stale ? "grid gap-3 opacity-60" : "grid gap-3"}>
-      <StatusBadge className="justify-self-start" tone={stale ? "idle" : failed ? "fail" : "ok"} label={stale ? "변경 후 다시 점검" : failed ? `실패 ${failed}건` : "모두 통과"} />
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge tone={stale ? "idle" : failed.length ? "fail" : "ok"} label={stale ? "변경 후 다시 점검" : failed.length ? `실패 ${failed.length}건` : "모두 통과"} />
+        <Hint text={answer.checks.filter(item => item.passed).map(item => checkLabel(item.id).label).join(", ")} focusable className="text-sm text-muted-foreground tabular-nums">통과 {passed}건</Hint>
+      </div>
       <ul className="grid gap-1.5 text-sm">
-        {answer.checks.map((item, index) => {
+        {failed.map((item, index) => {
           const { label, code } = checkLabel(item.id)
           const reason = [!item.passed && checkReason(item.reason), code && `코드 ${code}`].filter(Boolean).join(" ")
           return (

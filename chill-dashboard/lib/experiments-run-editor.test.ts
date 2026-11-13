@@ -5,6 +5,7 @@ import { checkLabel, checkReason, patchDefault, runNameError, scenarioSeconds, s
 test("preflight check ids map to labels; unknown ids keep the code", () => {
   assert.deepEqual(checkLabel("pool"), { label: "장치 풀" })
   assert.deepEqual(checkLabel("settingsPatch/run"), { label: "공통 설정 변경" })
+  assert.deepEqual(checkLabel("settingsPatch/excludedNodes"), { label: "설정 변경 제외 장치" })
   assert.deepEqual(checkLabel("loadScenario/e5-a"), { label: "부하 시나리오 e5-a" })
   assert.deepEqual(checkLabel("coverage/x/y"), { label: "서비스 포함 x/y" })
   assert.equal(checkReason("another EvaluationRun occupies the pool"), "다른 실험이 사용 중")

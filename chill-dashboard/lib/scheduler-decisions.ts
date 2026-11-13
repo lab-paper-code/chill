@@ -1,7 +1,8 @@
-// Scheduler decision screen helpers: record paths, tick timing rows and the two-decision comparison.
-import type { SchedulerCandidate, SchedulerDecision, SchedulerWorkloadState, WireInteger } from "./read-types.ts"
+// Scheduler decision screen helpers: record paths, the reason headline, tick timing rows and the two-decision comparison.
+import type { SchedulerAction, SchedulerCandidate, SchedulerDecision, SchedulerWorkloadState, WireInteger } from "./read-types.ts"
 import { decisionRange } from "./scheduler-history.ts"
-import { formatKst } from "./format.ts"
+import { formatKst, formatNumber } from "./format.ts"
+import { candidateStatus } from "./status-labels.ts"
 
 /** internal/serving/observation SchedulerControlObservation, as served in every view. */
 export type ControlObservation = {
@@ -11,10 +12,10 @@ export type ControlObservation = {
   evaluateNanos: WireInteger; publishNanos: WireInteger; recordNanos: WireInteger; launchNanos: WireInteger
   evaluation?: { preparationNanos: WireInteger; searchNanos: WireInteger; paybackNanos: WireInteger; ratesNanos: WireInteger; projectionNanos: WireInteger }
 }
-/** A view=summary row. `reasons` and `targetKeep` are absent on older servers. */
+/** A view=summary row. `reasons`, `targetKeep` and `evaluationElapsedNanos` are absent on older servers. */
 export type DecisionRow = {
   at: string; offset?: WireInteger; control?: ControlObservation
-  decision?: { at: string; status: string; workloads?: SchedulerWorkloadState[] | null; reasons?: string[] | null; targetKeep?: boolean }
+  decision?: { at: string; status: string; workloads?: SchedulerWorkloadState[] | null; reasons?: string[] | null; targetKeep?: boolean; evaluationElapsedNanos?: WireInteger }
 }
 export type DecisionPage = { from: string; to: string; events: DecisionRow[] | null; nextCursor?: string; gapUntil?: string }
 
@@ -42,17 +43,13 @@ export function decisionControlPath(at: string, intervalNanos: WireInteger): str
   return `v1/observations/scheduler?${query({ view: "summary", filter: "other", order: "asc", from: range.from, to: new Date(start + Number(intervalNanos) / 1e6 + 1000).toISOString(), limit: "6" })}`
 }
 
-/** Recent control rows; `to` runs one hour past the mount so polling sees new ticks under one query key. */
-export function latestControlPath(mountedAt: number): string {
-  return `v1/observations/scheduler?${query({ view: "summary", filter: "other", order: "desc", from: new Date(mountedAt - 300_000).toISOString(), to: new Date(mountedAt + 3_600_000).toISOString(), limit: "10" })}`
+/** The newest decision row; `to` runs one hour past the mount so polling sees new decisions under one query key. */
+export function latestDecisionPath(mountedAt: number): string {
+  return `v1/observations/scheduler?${query({ view: "summary", filter: "decision", order: "desc", from: new Date(mountedAt - 3_600_000).toISOString(), to: new Date(mountedAt + 3_600_000).toISOString(), limit: "1" })}`
 }
 
 export const controlFor = (page: DecisionPage | undefined, at: string): ControlObservation | undefined =>
   page?.events?.find(row => row.control?.decisionAt === at)?.control
-
-/** The newest tick that produced a decision. */
-export const latestTick = (page: DecisionPage | undefined): ControlObservation | undefined =>
-  page?.events?.find(row => row.control && row.control.scope !== "round" && !row.control.decisionAt.startsWith("0001-"))?.control
 
 export type Phase = { key: string; label: string; nanos: number; part: boolean }
 /** Tick phases in order, each followed by its parts. Zero rows are dropped. */
@@ -82,6 +79,29 @@ export function tickPhases(control: ControlObservation): Phase[] {
 export const changedTarget = (decision: SchedulerDecision): SchedulerCandidate | null =>
   decision.target && !decision.target.keep && decision.target.id !== decision.keep.id ? decision.target : null
 
+/** A planned action as recorded on a decision target (the wire row carries the service and expected time). */
+export type PlannedAction = SchedulerAction & { workloadUID?: string; expectedSeconds?: number | null }
+
+/**
+ * Why the decision came out as it did, in one line: the server's reason codes when it gave any;
+ * else, for a change, the keep plan's failing status or the expected energy it saves (difference of two server values);
+ * else, for a keep, that no service is under automatic control or that no candidate beat the current plan.
+ */
+export function decisionHeadline(decision: SchedulerDecision): { reasons: string[] } | { text: string } | null {
+  if (decision.reasons?.length) return { reasons: decision.reasons }
+  const target = changedTarget(decision)
+  if (!target && decision.workloads?.length && decision.workloads.every(w => w.state !== "Controlled")) return { text: "자동 제어 서비스 없음" }
+  if (!target) return decision.target ? { text: "더 나은 후보 없음" } : null
+  if (decision.keep.status !== "Feasible") return { text: `유지안 ${candidateStatus(decision.keep.status).label}` }
+  const saving = savingJoules(decision)
+  return saving != null && saving > 0 ? { text: `예상 에너지 ${formatNumber(saving, 1)} J 절감` } : null
+}
+/** Keep minus change expected energy, in J; null without a change or either value. */
+export function savingJoules(decision: SchedulerDecision): number | null {
+  const target = changedTarget(decision), keep = decision.keep.expectedJoules
+  return target?.expectedJoules == null || keep == null ? null : keep - target.expectedJoules
+}
+
 export type LatencyRow = { uid: string; percentile: number | null; targetMs: number | null; keepMs: number | null; changeMs: number | null }
 /** Expected latency per service under the keep plan and the changed plan, in ms. */
 export function latencyRows(decision: SchedulerDecision): LatencyRow[] {
@@ -98,9 +118,9 @@ export function latencyRows(decision: SchedulerDecision): LatencyRow[] {
   return [...rows.values()]
 }
 
-/** Status code of a decision's result: a changed target reads as Feasible (변경), the keep target as Keep (유지). */
+/** Status code of a decision's result: for Feasible and Keep the target-keep marker decides (변경 or 유지); other statuses stand. */
 export const decisionResult = (status: string | undefined, targetKeep: boolean | undefined): string | undefined =>
-  targetKeep === false ? "Feasible" : targetKeep === true ? "Keep" : status
+  status !== "Feasible" && status !== "Keep" ? status : targetKeep === false ? "Feasible" : targetKeep === true ? "Keep" : status
 /** decisionResult of a full record, where the target itself is present. */
 export const recordResult = (d: SchedulerDecision): string | undefined => decisionResult(d.status, d.target ? !changedTarget(d) : undefined)
 

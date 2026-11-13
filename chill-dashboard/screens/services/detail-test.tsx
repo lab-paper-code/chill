@@ -1,20 +1,19 @@
 "use client"
 
 import * as React from "react"
-import { MoreHorizontal } from "lucide-react"
-import { Button, EmptyState, Fields, Hint, RawDialog, Section, StatusBadge, FormSection, buttonClassName, useNow, useToast, type FieldItem } from "@/components/kit"
+import { Button, EmptyState, Fields, RawDialog, Section, StatusBadge, FormSection, useNow, useToast, type FieldItem } from "@/components/kit"
 import { InputBlock } from "@/components/custom/blocks/InputBlock"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import type { UseMutationResult } from "@tanstack/react-query"
 import { useChillMutation, useChillQuery, useSession, type ChillMutationInput } from "@/lib/client"
 import { errorDetails, type ApiError, type RelayResponse } from "@/lib/client-transport"
 import { formatText, rawInferenceBody, rawOutputs, type RawField, type WorkloadView } from "@/lib/domain"
-import { formatBytes, formatDurationNanos, formatMs } from "@/lib/format"
-import { codeText, explain, statusLabel } from "@/lib/labels"
+import { formatBytes, formatDurationNanos } from "@/lib/format"
+import { statusLabel } from "@/lib/labels"
 import type { ObservationResult, RequestRow } from "@/lib/read-types"
-import type { StatusTone } from "@/lib/status-labels"
+import { requestError, requestResult } from "@/lib/services-records"
+import { StageBars } from "./stage-bars"
 
 export type ServiceTabProps = { name: string; uid: string | undefined; workload: WorkloadView | undefined }
 
@@ -39,9 +38,6 @@ const readDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
   reader.onerror = () => reject(reader.error)
   reader.readAsDataURL(file)
 })
-
-const outcomeTone = (outcome: string | undefined): StatusTone =>
-  outcome === "completed" || outcome === "onTime" ? "ok" : outcome === "late" || outcome === "deferred" ? "warn" : "fail"
 
 export function ServiceTestTab({ workload }: ServiceTabProps) {
   if (!workload) return <EmptyState title="서비스 정보 없음" />
@@ -68,7 +64,7 @@ function TestForm({ workload }: { workload: WorkloadView }) {
   const title = (field: RawField) => duplicate(field) ? `${formatText(field.format)} ${field.name}` : formatText(field.format)
 
   const blocked = !fields.length ? "모델 입출력 처리 없음"
-    : !workload.admission ? `접수 차단${workload.desired.status?.admission.reason ? `: ${statusLabel(workload.desired.status.admission.reason)}` : ""}` : ""
+    : !workload.admission ? `접수 중지${workload.desired.status?.admission.reason ? `: ${statusLabel(workload.desired.status.admission.reason)}` : ""}` : ""
   const missing = fields.some(field => !values[field.name]?.length)
   const disabledReason = blocked || (missing ? "입력을 채워 주세요" : "") || timeoutProblem || Object.values(problems).find(Boolean) || ""
 
@@ -110,7 +106,7 @@ function TestForm({ workload }: { workload: WorkloadView }) {
     poll: data => !data?.requests?.some(row => row.requestID === requestID && row.kind === "final") && Date.now() - Date.parse(span?.to ?? "") < RECORD_WAIT_MS,
   })
   const record = observation.data?.requests?.find(row => row.requestID === requestID && row.kind === "final")
-  const waiting = !record && finished && now - Date.parse(span?.to ?? "") < RECORD_WAIT_MS
+  const waiting = !!requestID && !record && finished && now - Date.parse(span?.to ?? "") < RECORD_WAIT_MS
 
   const form = (
     <FormSection title="요청">
@@ -140,9 +136,7 @@ function TestForm({ workload }: { workload: WorkloadView }) {
       })}
       <InputBlock label="응답 대기 시간" value={timeout} onChange={event => setTimeoutText(event.target.value)} error={timeoutProblem || undefined} autoComplete="off" spellCheck={false} />
       <div className="flex justify-end">
-        <Hint text={disabledReason} focusable={!!disabledReason}>
-          <Button variant="default" loading={mutation.isPending} disabled={!!disabledReason} onClick={send}>전송</Button>
-        </Hint>
+        <Button variant="default" loading={mutation.isPending} disabled={!!disabledReason} disabledReason={disabledReason || undefined} onClick={send}>전송</Button>
       </div>
     </FormSection>
   )
@@ -150,27 +144,18 @@ function TestForm({ workload }: { workload: WorkloadView }) {
   return (
     <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
       {form}
-      <Section title="결과" actions={received && !mutation.isPending ? <ResultMenu onRaw={() => setRaw(true)} /> : undefined} card>
-        <Result mutation={mutation} outputFields={outputFields} record={record} waiting={waiting} requestID={requestID} generative={!!workload.appliedDefinition?.preprocessor.maxNewTokens} sloMs={workload.appliedDefinition ? workload.appliedDefinition.slo.targetLatencyNanos / 1e6 : undefined} />
+      <Section title="결과" actions={received && !mutation.isPending ? <Button size="sm" variant="outline" onClick={() => setRaw(true)}>원본 보기</Button> : undefined} card>
+        <Result mutation={mutation} outputFields={outputFields} record={record} waiting={waiting} generative={!!workload.appliedDefinition?.preprocessor.maxNewTokens} sloMs={workload.appliedDefinition ? workload.appliedDefinition.slo.targetLatencyNanos / 1e6 : undefined} />
       </Section>
       <RawDialog open={raw} onOpenChange={setRaw} value={mutation.data?.data ?? mutation.error?.data ?? null} filename={`${workload.desired.metadata.name}-infer`} />
     </div>
   )
 }
 
-function ResultMenu({ onRaw }: { onRaw: () => void }) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger className={buttonClassName({ variant: "outline", size: "icon" })} aria-label="더보기"><MoreHorizontal className="size-4" aria-hidden="true" /></DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-40"><DropdownMenuItem onSelect={onRaw}>원본 보기</DropdownMenuItem></DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 type Mutation = UseMutationResult<RelayResponse, ApiError, ChillMutationInput>
 
-function Result({ mutation, outputFields, record, waiting, requestID, generative, sloMs }: {
-  mutation: Mutation; outputFields: Omit<RawField, "maxBytes">[]; record: RequestRow | undefined; waiting: boolean; requestID: string | null | undefined; generative: boolean; sloMs: number | undefined
+function Result({ mutation, outputFields, record, waiting, generative, sloMs }: {
+  mutation: Mutation; outputFields: Omit<RawField, "maxBytes">[]; record: RequestRow | undefined; waiting: boolean; generative: boolean; sloMs: number | undefined
 }) {
   if (mutation.isPending) return <div className="grid gap-3"><StatusBadge tone="progress" label="기다리는 중" /></div>
   if (mutation.isIdle) return <EmptyState compact title="아직 보내지 않음" />
@@ -178,10 +163,10 @@ function Result({ mutation, outputFields, record, waiting, requestID, generative
   if (error) {
     const code = errorDetails(error)?.code
     return (
-      <div className="grid gap-3">
+      <div className="grid gap-4">
         <div><StatusBadge tone={error.unknownOutcome ? "warn" : "fail"} label={error.unknownOutcome ? "결과 미확인" : "실패"} /></div>
-        <p role="alert" className="text-sm">{error.unknownOutcome ? "자동으로 다시 보내지 않음" : code && code in codeText ? explain(code)[0] : "요청이 처리되지 않음"}</p>
-        <Timing record={record} waiting={waiting} requestID={requestID} generative={generative} sloMs={sloMs} rtt={error.status ? error.browserRTT : null} />
+        {!error.unknownOutcome && <Fields items={[{ label: "오류", value: requestError(code), reason: code ? `코드 ${code}` : `HTTP ${error.status}` }]} />}
+        <Timing record={record} waiting={waiting} generative={generative} sloMs={sloMs} rtt={error.status ? error.browserRTT : null} />
       </div>
     )
   }
@@ -197,34 +182,20 @@ function Result({ mutation, outputFields, record, waiting, requestID, generative
   return (
     <div className="grid gap-5">
       {outputs.some(output => output.value != null) && <Fields items={outputs} />}
-      <Timing record={record} waiting={waiting} requestID={requestID} generative={generative} sloMs={sloMs} rtt={mutation.data?.browserRTT ?? null} />
+      <Timing record={record} waiting={waiting} generative={generative} sloMs={sloMs} rtt={mutation.data?.browserRTT ?? null} />
     </div>
   )
 }
 
-function Timing({ record, waiting, generative, sloMs, rtt }: { record: RequestRow | undefined; waiting: boolean; requestID: string | null | undefined; generative: boolean; sloMs: number | undefined; rtt: number | null }) {
-  const stages: [string, number | undefined][] = record?.nativeElapsedMS === undefined ? [] : [
-    ["대기", record.queueMS], ["전처리", record.preprocessMS], [generative ? "답 생성" : "추론", record.backendMS], ["후처리", record.postprocessMS],
-  ]
-  const total = stages.reduce((sum, [, value]) => sum + Math.max(value ?? 0, 0), 0)
+function Timing({ record, waiting, generative, sloMs, rtt }: { record: RequestRow | undefined; waiting: boolean; generative: boolean; sloMs: number | undefined; rtt: number | null }) {
   return (
     <div className="grid gap-4">
       <Fields items={[
-        { label: "결과", value: record ? <StatusBadge tone={outcomeTone(record.outcome)} label={statusLabel(record.outcome)} /> : waiting ? <span className="text-muted-foreground">기록 확인 중</span> : null, reason: "완료 기록 없음" },
-        { label: "소요 시간", value: record?.elapsedNanos != null ? formatDurationNanos(record.elapsedNanos) : rtt != null ? formatDurationNanos(rtt * 1e6) : null, reason: "시간 정보 없음", info: record ? undefined : "서비스 완료 기록이 없어 화면에서 잰 왕복 시간" },
+        { label: "결과", value: record ? <StatusBadge status={requestResult(record)} /> : waiting ? <span className="text-muted-foreground">기록 확인 중</span> : null, reason: "완료 기록 없음" },
+        { label: "소요 시간", value: record?.elapsedNanos != null ? formatDurationNanos(record.elapsedNanos) : rtt != null ? formatDurationNanos(rtt * 1e6) : null, reason: "시간 정보 없음", info: record ? undefined : "완료 기록이 없어 브라우저에서 잰 왕복 시간" },
         { label: "응답 목표", value: sloMs !== undefined ? formatDurationNanos(sloMs * 1e6) : null, reason: "적용된 정의 없음" },
       ]} columns={3} />
-      {stages.length > 0 && (
-        <dl aria-label="단계별 시간" className="grid gap-2.5">
-          {stages.map(([label, value]) => (
-            <div key={label} className="grid grid-cols-[4.5rem_1fr_5rem] items-center gap-3 text-sm">
-              <dt className="text-muted-foreground">{label}</dt>
-              <div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-muted">{total > 0 && (value ?? 0) > 0 && <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(((value ?? 0) / total) * 100, 2)}%` }} />}</div>
-              <dd className="text-right tabular-nums">{formatMs(value ?? 0)}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
+      {record?.nativeElapsedMS !== undefined && <StageBars row={record} backendLabel={generative ? "답 생성" : undefined} />}
     </div>
   )
 }

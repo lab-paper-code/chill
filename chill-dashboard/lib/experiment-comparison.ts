@@ -2,7 +2,8 @@ import { definitionStage, finite, object, recordedComparisons, type Experiment, 
 import type { ComparisonReference } from "./evaluation-definition.ts"
 import { stringifySchedulerJSON } from "./scheduler.ts"
 import { formatMeasurementNumber } from "./measurements.ts"
-import { settingControls, settingFields, settingTargets } from "./scheduler-settings.ts"
+import { settingControls } from "./scheduler-settings.ts"
+import { patchKeyLabel } from "./experiments-run-editor.ts"
 
 // Exactly the two publisher shapes. No current registration or live terminal buckets enter these rows.
 export function experimentRows(stage:Pick<ExperimentStage,"kpis">):ExperimentRow[] {
@@ -65,12 +66,14 @@ function sameDisplayedDuration(a:ExperimentStage,b:ExperimentStage):boolean {
   return stageSeconds(a)!==null&&stageSeconds(b)!==null&&formatResult(stageSeconds(a),"s")===formatResult(stageSeconds(b),"s")
 }
 const canonical=(value:unknown):string=>stringifySchedulerJSON(value&&typeof value==="object"&&!Array.isArray(value)?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>[key,canonical(item)])):value??null)
+// Publishers write the stage's measurement rules as `measurementContract`; older ones as `measurementRules`.
+const measurementRules=(stage:ExperimentStage)=>object(stage.kpis.measurementContract??stage.kpis.measurementRules)
 export function differentMeasurementRules(a:ExperimentStage,b:ExperimentStage):string[] {
-  const left=object(a.kpis.measurementRules),right=object(b.kpis.measurementRules)
+  const left=measurementRules(a),right=measurementRules(b)
   return [...new Set([...Object.keys(left),...Object.keys(right)])].filter(key=>canonical(left[key])!==canonical(right[key]))
 }
 export function comparisonValidity(a:ExperimentStage,b:ExperimentStage,leftRun?:Experiment,rightRun?:Experiment) {
-  const rows=comparisonRows(a,b),left=stageSeconds(a),right=stageSeconds(b)
+  const rows=comparisonRows(a,b)
   const x=leftRun?definitionStage(leftRun,a):undefined,y=rightRun?definitionStage(rightRun,b):undefined
   const sameLoad=x&&y&&leftRun?.definition&&rightRun?.definition?x.loadScenarioRef.uid===y.loadScenarioRef.uid&&canonical(leftRun.definition.spec.loadGenerator)===canonical(rightRun.definition.spec.loadGenerator):null
   let unknown=0,changed=0
@@ -80,24 +83,16 @@ export function comparisonValidity(a:ExperimentStage,b:ExperimentStage,leftRun?:
     else if(x.uid!==y.uid||x.definition!==y.definition)changed++
   }
   const ruleKeys=differentMeasurementRules(a,b)
-  const rulesMissing=!Object.keys(object(a.kpis.measurementRules)).length||!Object.keys(object(b.kpis.measurementRules)).length
+  const rulesMissing=!Object.keys(measurementRules(a)).length||!Object.keys(measurementRules(b)).length
   return {
     conditions:{load:sameLoad===null?"미기록":sameLoad?"같음":"다름",identity:changed?"다름":unknown||!rows.length?"미확인":"같음",rules:rulesMissing?"미확인":ruleKeys.length?"다름":"같음"},
-    identityUnknown:unknown>0||!rows.length,identityDifferent:changed>0,
-    load:sameLoad===null?"미기록":sameLoad?"같음":"다름",
-    duration:`구간 길이 ${left===null||right===null?"미제공":sameDisplayedDuration(a,b)?"같음":"다름"} · A ${formatResult(left,"s")} / B ${formatResult(right,"s")}`,
-    rules:`측정 규칙 ${rulesMissing?"미기록 항목 있음":ruleKeys.length?"차이 있음":"기록된 항목 차이 없음"}${ruleKeys.length?` · 다른 항목: ${ruleKeys.join(", ")}`:""}`,
-    identity:rows.length?`서비스 등록·정의: 미확인 ${unknown} / 다름 ${changed} / 같은 등록·정의 ${rows.length-unknown-changed}개`:"서비스 등록·정의: 서비스 기록 없어 미확인",
     limited:rulesMissing||!!ruleKeys.length||!sameDisplayedDuration(a,b)||!rows.length||unknown>0||changed>0||sameLoad!==true,
   }
 }
+/** Label of a settings patch path ("controls.power", "minimumDemand.<uid>"), the same words as the scheduler settings screen. */
 export function settingsPatchKeyLabel(path:string):string {
-  const field=settingFields.find(field=>field.key===path)??settingTargets.find(field=>field.key===path)
-  if(field)return field.label
   const control=settingControls.find(control=>`controls.${control.key}`===path)
-  if(control)return control.label
-  const demand=settingTargets.find(field=>field.key==="minimumDemand")!
-  return path.startsWith("minimumDemand.")?`${demand.label} · ${path.slice("minimumDemand.".length)}`:path
+  return control?control.label:patchKeyLabel(path.split(".",1)[0])
 }
 export function settingsPatchEntries(patch:Published,prefix=""):[string,unknown][] {
   return Object.entries(patch).sort(([a],[b])=>a.localeCompare(b)).flatMap(([key,value])=>{
@@ -115,7 +110,7 @@ export function definitionPolicy(stage:Pick<ExperimentStage,"id">,run:Experiment
     if(spec)keys=settingsPatchEntries(spec.settingsPatch??run.definition?.spec.settingsPatch??{}).map(([key])=>key)
   }
   if(!Array.isArray(keys)||!keys.every(key=>typeof key==="string"))return "미기록"
-  return keys.length?keys.map(settingsPatchKeyLabel).join(", "):"변경 없음"
+  return keys.length?[...new Set(keys.map(settingsPatchKeyLabel))].join(", "):"변경 없음"
 }
 function resolveComparison(run:Experiment,ref:ComparisonReference,runs:Experiment[]) {
   const matches=ref.historical?runs.filter(other=>other.id===ref.historical!.publicationID):[run]

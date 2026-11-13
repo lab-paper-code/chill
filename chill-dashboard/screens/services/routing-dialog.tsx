@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { useChillMutation, type ChillMutationInput } from "@/lib/client"
 import type { ApiError, RelayResponse } from "@/lib/client-transport"
 import { formatNumber } from "@/lib/format"
+import { codeText, explain } from "@/lib/labels"
 import { routingShare } from "@/lib/live-display"
 import type { OperationResult } from "@/lib/read-types"
 import { actionStatus } from "@/lib/status-labels"
@@ -25,10 +26,11 @@ const MAX_WEIGHT = 2147483647
 export function failureToast(error: ApiError): { title: string; description?: string; type: "warning" | "error" } {
   if (error.unknownOutcome || error.status === 0) return { title: "결과 미확인", type: "warning" }
   const code = (error.data as { code?: unknown } | null)?.code
-  const description = typeof code === "string" ? code : `HTTP ${error.status}`
-  if (error.status === 409) return { title: "다른 변경과 충돌", description, type: "error" }
+  // A known code reads as its sentence; an unknown one stays out of the layout (원본 is in the response).
+  const description = typeof code === "string" && Object.hasOwn(codeText, code) ? explain(code)[0] : undefined
+  if (error.status === 409) return { title: "다른 변경과 충돌", description: description ?? "최신 상태를 다시 읽음", type: "error" }
   if (error.status === 401 || error.status === 403) return { title: "권한 없음", description, type: "error" }
-  return { title: "실패", description, type: "error" }
+  return { title: "실패", description: description ?? `HTTP ${error.status}`, type: "error" }
 }
 
 /** Per-instance weights, block new requests, or return to the scheduler's routing; POST v1/scheduler/operations. */
@@ -107,7 +109,7 @@ function RoutingForm({ onOpenChange, name, uid, targets, declared, mutation }: R
         <RadioGroup value={mode} onValueChange={value => setMode(value as Mode)} className="flex flex-wrap gap-x-5 gap-y-2" aria-label="분배 방식" disabled={mutation.isPending}>
           <Label><RadioGroupItem value="route" disabled={!targets.length} />{modeLabels.route}</Label>
           <Label><RadioGroupItem value="unroute" />{modeLabels.unroute}</Label>
-          <Label><RadioGroupItem value="release" disabled={!declared} />기본 분배로</Label>
+          <Label><RadioGroupItem value="release" disabled={!declared} />{modeLabels.release}</Label>
         </RadioGroup>
         <Fields columns={3} items={[
           { label: "대상", value: name },

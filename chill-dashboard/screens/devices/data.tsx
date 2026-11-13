@@ -32,10 +32,13 @@ export function useDevices() {
 }
 
 const LIVE_REACH_MS = 60_000
+// The server retains power samples a moment after they are taken; a window ending at "now" reads as incomplete.
+const RETAINED_MS = 5_000
 
 /**
  * Power over a range: server buckets merged with the live per-second watts.
- * A recent range re-reads the server every minute so the history always meets the 10-minute live buffer.
+ * A recent range re-reads the server every minute so the history always meets the 10-minute live buffer;
+ * its server reads end a few seconds back so the window is fully retained.
  * `window` is the server's own total for the same range (energy, mean power, gaps).
  */
 export function usePower(range: TimeRangeValue) {
@@ -45,7 +48,7 @@ export function usePower(range: TimeRangeValue) {
   const recent = "preset" in range
   if (recent && now && now - anchor >= LIVE_REACH_MS) setAnchor(now)
   const span = recent ? TIME_PRESETS[range.preset].ms : range.to - range.from
-  const end = recent ? anchor : range.to
+  const end = recent ? anchor && anchor - RETAINED_MS : range.to
   const from = new Date(end - span).toISOString(), to = new Date(end).toISOString()
   const seriesPath = end ? powerSeriesPath(from, to, span <= 900_000 ? "5s" : "30s") : null
   const series = useChillQuery<OperatingPowerSeries>(seriesPath ?? "v1/observations/power", { enabled: !!seriesPath, decoder: parsePowerSeriesJSON })
@@ -63,18 +66,5 @@ export function PowerChart({ points, domain, series, values, label, height }: {
   values: (point: PowerPoint) => Record<string, number | null>; label: string; height?: number
 }) {
   const data = React.useMemo(() => chartRows(points, values), [points, values])
-  return (
-    <div className="grid gap-2">
-      {series.length > 1 && (
-        <ul className="flex items-center gap-4 text-xs text-muted-foreground" aria-hidden="true">
-          {series.map((item, index) => (
-            <li key={item.key} className="inline-flex items-center gap-1.5">
-              <span className="h-0.5 w-3 rounded-full" style={{ background: `var(--chart-${item.color ?? index + 1})` }} />{item.label}
-            </li>
-          ))}
-        </ul>
-      )}
-      <TimeSeries data={data} series={series} unit="W" domain={domain} label={label} height={height} />
-    </div>
-  )
+  return <TimeSeries data={data} series={series} unit="W" domain={domain} label={label} height={height} legend={series.length > 1} />
 }

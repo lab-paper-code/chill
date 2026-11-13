@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { decodeExperiment } from "./experiments.ts"
-import { baselineChoices, energyDelta, failedServices, partRows, serviceSummaries } from "./experiments-results.ts"
+import { baselineChoices, comparisonConditions, energyDelta, failedServices, partRows, serviceSummaries } from "./experiments-results.ts"
 
 const request = (success: number, p95: number) => ({
   offered: 100, deadlineSuccessFraction: success, goodputRequestsPerSecond: 1.5, D1: success < 0.95 ? "FAIL" : "OBSERVED_THRESHOLD_MET",
@@ -28,4 +28,15 @@ test("results read model keeps server values and only converts or subtracts them
   assert.equal(rows[1].from - rows[0].from, 60_000)
   assert.equal(rows[0].joules, null)
   assert.deepEqual(baselineChoices(run, [run], x).map(item => item.label), ["y"])
+})
+
+test("measurement rules are read from measurementContract", () => {
+  const contract = (judgment: string) => ({ judgment, energyCoverage: { maxGapFraction: 0.01 } })
+  const withRules = (judgment: string) => decodeExperiment(JSON.stringify({ id: judgment, from: "", to: "", status: "", sources: [], stages: [
+    { ...stage("x", "2026-01-01T00:00:00Z", "2026-01-01T00:01:40Z", 1000, 1), kpis: { ...stage("x", "", "", 1000, 1).kpis, measurementContract: contract(judgment) } },
+  ] }))
+  const a = withRules("v4"), b = withRules("v4"), c = withRules("v5")
+  assert.equal(comparisonConditions({ run: a, stage: a.stages[0] }, { run: b, stage: b.stages[0] }).rules, "같음")
+  assert.equal(comparisonConditions({ run: a, stage: a.stages[0] }, { run: c, stage: c.stages[0] }).rules, "다름")
+  assert.equal(comparisonConditions({ run: run, stage: run.stages[0] }, { run, stage: run.stages[1] }).rules, "미확인")
 })

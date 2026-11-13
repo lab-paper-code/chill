@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { planRows, provisionalRows, runSteps, settingRows, stageSteps, type Run, type RunStage } from "./experiments-run.ts"
+import { cleanupState, planRows, provisionalRows, runSteps, settingRows, stageProgress, stageSteps, type Run, type RunStage } from "./experiments-run.ts"
 
 const t = (minute: number) => `2026-11-11T21:${String(minute).padStart(2, "0")}:00Z`
 const stage = (over: Partial<RunStage>): RunStage => ({ id: "a", name: "s0", uid: "u0", ...over })
@@ -49,4 +49,17 @@ test("setting rows name services instead of UIDs and align values per scope", ()
   assert.equal(byKey.unknownKey.label, null)
   const all = settingRows([{ controls: { placement: true, resources: true, replicas: true, routing: true, batching: true, power: true, membership: true } }], name)
   assert.deepEqual(all.map(r => [r.key, r.values[0]]), [["controls", "모두 켜짐"]])
+})
+
+test("list cells: stage position and one cleanup word", () => {
+  const spec = { stages: [{ id: "a" }, { id: "b" }, { id: "c" }] }
+  assert.equal(stageProgress({ spec, currentStage: "b", startedAt: null }), null)
+  assert.deepEqual(stageProgress({ spec, currentStage: "b", startedAt: t(0) }), { index: 2, total: 3, id: "b" })
+  assert.equal(stageProgress({ spec, currentStage: null, startedAt: t(0) })?.index, 0)
+  const held = [{ type: "PoolAcquired", status: "True" }, { type: "CleanupComplete", status: "False", reason: "ResidualState" }]
+  assert.equal(cleanupState({ conditions: held })?.status.label, "점유 중")
+  const released = [{ type: "PoolAcquired", status: "False", reason: "OperatorReleased" }, { type: "CleanupComplete", status: "False", reason: "ResidualState" }]
+  assert.deepEqual([cleanupState({ conditions: released })?.status.label, cleanupState({ conditions: released })?.reason], ["잔여 자원", "잔여 자원 있음"])
+  assert.equal(cleanupState({ conditions: [{ type: "PoolAcquired", status: "False", reason: "Returned" }, { type: "CleanupComplete", status: "True" }] })?.status.label, "반환됨")
+  assert.equal(cleanupState({ conditions: [] }), null)
 })

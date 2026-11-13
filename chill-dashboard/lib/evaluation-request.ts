@@ -30,6 +30,6 @@ export function evaluationCanSubmit(answer:EvaluationPreflight|null,checkedBody:
 }
 
 export function evaluationReleaseBody(uid:string,reason:string):{uid:string;reason:string} {
-  if(!uid.trim()||!reason.trim())throw new Error("UID·확인 사유 필수")
+  if(!uid.trim()||!reason.trim())throw new Error("확인 사유 필수")
   return {uid,reason:reason.trim()}
 }

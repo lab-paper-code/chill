@@ -109,4 +109,6 @@ test("power seed keeps actual five-second intervals, appends live, preserves nul
   assert.equal(mergePowerSeries(series,[],Date.parse(at(3600))).length,0)
   assert.equal(mergePowerSeries(series,[live(-1000,999)],Date.parse(at(20))).length,4)
   assert.deepEqual(mergePowerSeries(series,[live(0,0)],Date.parse(at(20))).map(row=>row.to),[1,10,15,20].map(second=>Date.parse(at(second))))
+  // A bucket running into live data ends where live starts: no gap between the two.
+  assert.deepEqual(mergePowerSeries(series,[live(12,1)],Date.parse(at(20))).map(row=>[row.from,row.to]),[[0,5],[5,10],[10,12],[12,13],[15,20]].map(([from,to])=>[Date.parse(at(from)),Date.parse(at(to))]))
 })

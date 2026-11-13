@@ -2,17 +2,16 @@
 
 import * as React from "react"
 import { ArrowDown, ArrowUp, X } from "lucide-react"
-import { Button, Hint } from "@/components/kit"
+import { Button, Hint, Select } from "@/components/kit"
 import { InputBlock } from "@/components/custom/blocks/InputBlock"
-import { SelectBlock } from "@/components/custom/blocks/SelectBlock"
 import { ToggleGroup, ToggleGroupItem } from "@/components/custom/blocks/ToggleGroupBlock"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import type { SchedulerSettings } from "@/lib/read-types"
-import { settingControls } from "@/lib/scheduler-settings"
+import { settingControls, settingFields } from "@/lib/scheduler-settings"
 import { schedulerOptions } from "@/lib/scheduler-selection"
-import { fieldInput, fieldUnit, fields, parseField, type FieldKey } from "@/lib/scheduler-settings-form"
+import { fieldInput, fieldUnit, parseField, type FieldKey } from "@/lib/scheduler-settings-form"
 import { object, type Spec } from "@/lib/evaluation-author"
 import { isPatchKey, patchDefault, patchKeyLabel, patchKeys, type PatchKey } from "@/lib/experiments-run-editor"
 
@@ -43,10 +42,14 @@ export function CodecInput({ id, label, initial, parse, onValue, unit, hideLabel
   )
 }
 
-export type Service = { uid: string; name: string }
+/** A live service, or a retired registration a stored definition still names (from the load scenario snapshots). */
+export type Service = { uid: string; name: string; retired?: boolean }
 type Context = { services: Service[]; nodes: string[]; current?: SchedulerSettings }
 
-const serviceName = (services: Service[], uid: string) => services.find(service => service.uid === uid)?.name ?? `없는 서비스 ${uid.slice(0, 8)}`
+function serviceName(services: Service[], uid: string): string {
+  const service = services.find(item => item.uid === uid)
+  return !service ? "미확인 서비스" : service.retired ? `${service.name} (이전 등록)` : service.name
+}
 const fieldText = (key: FieldKey, value: unknown) => {
   const text = fieldInput(key, { [key]: value } as unknown as SchedulerSettings)
   return typeof text === "string" ? text : ""
@@ -82,7 +85,7 @@ export function SettingsPatchEditor({ id, patch, onChange, context }: { id: stri
       )}
       {free.length > 0 && (
         <div className="sm:w-64">
-          <SelectBlock inputSize="sm" searchable placeholder="설정 추가" value="" options={free.map(key => ({ value: key, label: patchKeyLabel(key) }))}
+          <Select inputSize="sm" searchable placeholder="설정 추가" value="" options={free.map(key => ({ value: key, label: patchKeyLabel(key) }))}
             onChange={key => { if (isPatchKey(key)) set(key, patchDefault(key, context.current)) }} />
         </div>
       )}
@@ -97,7 +100,7 @@ function PatchValue({ id, name, value, onChange, context }: { id: string; name: 
       const chosen = Array.isArray(value) ? value.map(String) : []
       const options = name === "excludedNodes"
         ? [...new Set([...context.nodes, ...chosen])].map(node => ({ value: node, label: node }))
-        : [...new Set([...context.services.map(service => service.uid), ...chosen])].map(uid => ({ value: uid, label: serviceName(context.services, uid) }))
+        : [...new Set([...context.services.filter(service => !service.retired).map(service => service.uid), ...chosen])].map(uid => ({ value: uid, label: serviceName(context.services, uid) }))
       return (
         <div role="group" aria-label={label} className={`grid gap-x-4 gap-y-1 sm:grid-cols-2 xl:grid-cols-3 ${name === "excludedNodes" ? "grid-cols-2" : "grid-cols-1"}`}>
           {options.map(option => (
@@ -132,7 +135,7 @@ function PatchValue({ id, name, value, onChange, context }: { id: string; name: 
     case "minimumDemand": return <DemandEditor id={id} value={object(value)} onChange={onChange} services={context.services} />
     case "workloadPriority": return <PriorityEditor value={Array.isArray(value) ? value.map(String) : []} onChange={onChange} services={context.services} />
   }
-  const field = fields.find(item => item.key === name)!
+  const field = settingFields.find(item => item.key === name)!
   if (field.kind === "boolean") return (
     <Label className="min-h-8 font-normal"><Switch checked={value === true} onCheckedChange={on => onChange(on)} />{value === true ? "켜짐" : "꺼짐"}</Label>
   )
@@ -150,7 +153,7 @@ function PatchValue({ id, name, value, onChange, context }: { id: string; name: 
 
 function DemandEditor({ id, value, onChange, services }: { id: string; value: Spec; onChange: (value: Spec) => void; services: Service[] }) {
   const uids = Object.keys(value)
-  const free = services.filter(service => !uids.includes(service.uid))
+  const free = services.filter(service => !service.retired && !uids.includes(service.uid))
   return (
     <div className="grid gap-2">
       {uids.map(uid => (
@@ -162,7 +165,7 @@ function DemandEditor({ id, value, onChange, services }: { id: string; value: Sp
       ))}
       {free.length > 0 && (
         <div className="sm:w-64">
-          <SelectBlock inputSize="sm" searchable placeholder="서비스 추가" value="" options={free.map(service => ({ value: service.uid, label: service.name }))} onChange={uid => onChange({ ...value, [uid]: 0 })} />
+          <Select inputSize="sm" searchable placeholder="서비스 추가" value="" options={free.map(service => ({ value: service.uid, label: service.name }))} onChange={uid => onChange({ ...value, [uid]: 0 })} />
         </div>
       )}
     </div>
@@ -170,7 +173,7 @@ function DemandEditor({ id, value, onChange, services }: { id: string; value: Sp
 }
 
 function PriorityEditor({ value, onChange, services }: { value: string[]; onChange: (value: string[]) => void; services: Service[] }) {
-  const free = services.filter(service => !value.includes(service.uid))
+  const free = services.filter(service => !service.retired && !value.includes(service.uid))
   const move = (from: number, to: number) => { const next = [...value]; [next[from], next[to]] = [next[to], next[from]]; onChange(next) }
   return (
     <div className="grid gap-2">
@@ -189,7 +192,7 @@ function PriorityEditor({ value, onChange, services }: { value: string[]; onChan
       )}
       {free.length > 0 && (
         <div className="sm:w-64">
-          <SelectBlock inputSize="sm" searchable placeholder="서비스 추가" value="" options={free.map(service => ({ value: service.uid, label: service.name }))} onChange={uid => onChange([...value, uid])} />
+          <Select inputSize="sm" searchable placeholder="서비스 추가" value="" options={free.map(service => ({ value: service.uid, label: service.name }))} onChange={uid => onChange([...value, uid])} />
         </div>
       )}
     </div>

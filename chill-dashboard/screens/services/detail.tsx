@@ -135,15 +135,17 @@ export function ServiceDetailScreen({ name }: { name: string }) {
         </Alert>
       )}
       <PageTabs param="tab" defaultValue="overview" tabs={tabs} />
-      <QueryBoundary query={detail} skeleton="tiles">
-        {view => {
-          const props = { name, uid: urlUID ?? view.desired.metadata.uid, workload: view }
-          return tab === "requests" ? <ServiceRequestsTab {...props} />
-            : tab === "definition" ? <ServiceDefinitionTab {...props} />
-            : tab === "test" ? <ServiceTestTab {...props} />
-            : <ServiceStatusTab {...props} />
-        }}
-      </QueryBoundary>
+      {/* 현황 reads the live state, which is usually connected already; it does not wait for the definition read. */}
+      {tab === "overview" || !["requests", "definition", "test"].includes(tab) ? <ServiceStatusTab name={name} uid={urlUID ?? current} workload={workload} /> : (
+        <QueryBoundary query={detail} skeleton="tiles">
+          {view => {
+            const props = { name, uid: urlUID ?? view.desired.metadata.uid, workload: view }
+            return tab === "requests" ? <ServiceRequestsTab {...props} />
+              : tab === "definition" ? <ServiceDefinitionTab {...props} />
+              : <ServiceTestTab {...props} />
+          }}
+        </QueryBoundary>
+      )}
 
       <ConfirmDialog
         open={!!autonomy} onOpenChange={open => { if (!open) setAutonomy(null) }}
@@ -151,7 +153,9 @@ export function ServiceDetailScreen({ name }: { name: string }) {
         changes={autonomy ? [{ label: "자동 제어", before: autonomyEnabled(autonomy.base.autonomousWorkloads?.includes(current ?? "") ?? false).label, after: autonomyEnabled(autonomy.next).label }] : []}
         onConfirm={applyAutonomy}
       />
-      <ConfirmDialog open={deleting} onOpenChange={setDeleting} title="서비스 삭제" target={name} tone="destructive" confirmLabel="삭제" pending={mutation.isPending} onConfirm={remove} />
+      <ConfirmDialog open={deleting} onOpenChange={setDeleting} title="서비스 삭제" target={name} tone="destructive" confirmLabel="삭제" pending={mutation.isPending} onConfirm={remove}>
+        새 요청 접수를 멈추고 배치를 정리함. 요청과 정의 기록은 남음.
+      </ConfirmDialog>
       <RawDialog open={raw} onOpenChange={setRaw} value={workload} filename={`workload-${name}`} />
     </Page>
   )

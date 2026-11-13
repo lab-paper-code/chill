@@ -13,7 +13,7 @@ import { admissionStatus, autonomyEnabled, serviceReadiness } from "@/lib/status
 
 const statuses = ["all", "ready", "preparing", "blocked"] as const
 type Status = (typeof statuses)[number]
-const statusLabels: Record<Status, string> = { all: "전체", ready: "준비됨", preparing: "준비 중", blocked: "접수 차단" }
+const statusLabels: Record<Status, string> = { all: "전체", ready: "준비됨", preparing: "준비 중", blocked: "접수 중지" }
 
 const matches: Record<Status, (w: WorkloadSummary) => boolean> = {
   all: () => true,
@@ -58,10 +58,10 @@ export function ServiceListScreen() {
             .sort((a, b) => a.desired.metadata.name.localeCompare(b.desired.metadata.name))
           const autonomous = settings.data?.autonomousWorkloads ?? []
           const columns: Column<WorkloadSummary>[] = [
-            { key: "status", header: "상태", cell: w => <StatusBadge status={serviceReadiness(w.readiness)} reason={w.reason && w.reason !== w.readiness ? statusLabel(w.reason) : undefined} />, sortValue: w => serviceReadiness(w.readiness).label, width: "8rem" },
             { key: "name", header: "서비스", cell: w => w.desired.metadata.name, sortValue: w => w.desired.metadata.name, width: "16rem" },
+            { key: "status", header: "상태", cell: w => <StatusBadge status={serviceReadiness(w.readiness)} reason={w.reason && w.reason !== w.readiness ? statusLabel(w.reason) : undefined} />, sortValue: w => serviceReadiness(w.readiness).label, width: "8rem" },
             { key: "model", header: "모델", cell: w => w.desired.spec.modelRef.name, sortValue: w => w.desired.spec.modelRef.name, width: "16rem" },
-            { key: "target", header: "목표", cell: w => `${w.desired.spec.slo.percentile}% ${w.desired.spec.slo.targetLatency}`, width: "8rem" },
+            { key: "target", header: "목표", cell: w => `p${w.desired.spec.slo.percentile} ${w.desired.spec.slo.targetLatency}`, width: "8rem" },
             { key: "admission", header: "접수", cell: w => <StatusBadge status={admissionStatus(w.admission)} />, sortValue: w => (w.admission ? 1 : 0), width: "8rem" },
             {
               key: "autonomy",

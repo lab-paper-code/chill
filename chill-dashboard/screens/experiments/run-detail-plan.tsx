@@ -58,13 +58,13 @@ function PlanTables({ run, scenarios, extra }: { run: Run; scenarios: readonly S
           ...rateColumns,
         ]}
       />
-      {/* ponytail: one column per stage; past six stages this breaks the 7-column rule, switch to a stage select then. */}
+      {/* ponytail: one column per stage that changes settings; past six such stages this breaks the 7-column rule, switch to a stage select then. */}
       <DataTable<SettingRow>
         label="설정 변경" title="설정 변경" rows={settings} rowKey={row => row.key} pageSize={0}
         empty={<EmptyState compact title="설정 변경 없음" />}
         columns={[
           { key: "label", header: "항목", cell: row => row.label ?? <Missing reason={`설정 ${row.key}`} />, width: "28%" },
-          ...["실험 전체", ...stageIDs].map((scope, index): Column<SettingRow> => ({ key: `scope:${index}`, header: scope, cell: row => row.values[index], missingReason: "변경 없음" })),
+          ...["실험 전체", ...stageIDs].flatMap((scope, index): Column<SettingRow>[] => settings.some(row => row.values[index] !== null) ? [{ key: `scope:${index}`, header: scope, cell: row => row.values[index], missingReason: "변경 없음" }] : []),
         ]}
       />
     </div>

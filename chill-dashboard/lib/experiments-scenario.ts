@@ -6,6 +6,9 @@ const finite = (value: unknown): number | null => (typeof value === "number" && 
 
 export const scenarioServices = (spec: Spec): string[] => records(spec.workloads).map(workload => String(workload.name ?? ""))
 
+/** Korean names of the arrival distributions the load generator supports. */
+export const arrivalLabels: Record<string, string> = { poisson: "포아송" }
+
 export function scenarioParts(spec: Spec): ScenarioPart[] {
   return records(spec.parts).map(part => ({
     id: String(part.id ?? ""),

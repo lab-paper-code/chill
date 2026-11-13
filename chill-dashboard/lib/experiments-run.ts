@@ -3,8 +3,10 @@ import type { EvaluationProgressEvent } from "./evaluation-active.ts"
 import type { EvaluationLiveTarget, EvaluationSpec } from "./evaluation-request.ts"
 import { object, records } from "./evaluation-author.ts"
 import { formatDurationNanos } from "./format.ts"
-import { settingControls, settingFields, settingTargets } from "./scheduler-settings.ts"
+import { settingControls, settingFields } from "./scheduler-settings.ts"
 import { schedulerLabel } from "./scheduler-selection.ts"
+import { patchKeyLabel } from "./experiments-run-editor.ts"
+import { evaluationCleanup, evaluationPool, evaluationReason, type StatusInfo } from "./status-labels.ts"
 
 export type RunCondition = { type: string; status: string; reason?: string; message?: string; lastTransitionTime?: string }
 export type RunProcedure = { step: string; startedAt: string | null; finishedAt: string | null; reason?: string; measurementVerdict?: string }
@@ -30,6 +32,26 @@ export const condition = (list: RunCondition[] | null | undefined, type: string)
 export const isFinished = (run: Pick<Run, "phase" | "finishedAt">) => run.phase === "Done" || !!run.finishedAt
 /** Planned stage ids in run order. */
 export const specStages = (spec: EvaluationSpec) => records(spec.stages).flatMap(stage => typeof stage.id === "string" ? [stage.id] : [])
+
+/** Position of the current stage in the plan ("2/3"); 0 when the run ended before its first stage; null before the start. */
+export function stageProgress(run: Pick<Run, "spec" | "currentStage" | "startedAt">): { index: number; total: number; id: string | null } | null {
+  if (!run.startedAt) return null
+  const ids = specStages(run.spec), id = typeof run.currentStage === "string" ? run.currentStage : null
+  return { index: id ? ids.indexOf(id) + 1 : 0, total: ids.length, id }
+}
+
+/** Cleanup state of a run in one word: the pool while held, then residual cleanup, then how the pool came back. */
+export function cleanupState(run: Pick<Run, "conditions">): { status: StatusInfo; reason?: string } | null {
+  const pool = condition(run.conditions, "PoolAcquired"), cleanup = condition(run.conditions, "CleanupComplete")
+  if (pool?.status !== "True" && cleanup && cleanup.status !== "True") return { status: evaluationCleanup(cleanup), reason: reasonText(cleanup.reason) }
+  return pool ? { status: evaluationPool(pool), reason: reasonText(pool.reason) } : null
+}
+/** Tooltip text of a reason code: its label, or the code when the label is unknown. */
+export function reasonText(code: string | null | undefined): string | undefined {
+  if (!code) return undefined
+  const reason = evaluationReason(code)
+  return reason.code ? `코드 ${reason.code}` : reason.label
+}
 
 export const injectionActions: Record<string, string> = { "delete-serving-pod": "서비스 파드 삭제", "cordon-delete": "노드 차단 후 파드 삭제", uncordon: "노드 차단 해제" }
 
@@ -136,10 +158,10 @@ function settingEntries(patch: Record<string, unknown>, name: (uid: string) => s
       if (controls.length === settingControls.length && controls.every(([, on]) => on === controls[0][1])) return [["controls", "자동 조정 항목", `모두 ${onOff(controls[0][1])}`]]
       return controls.map(([control, on]) => [`controls.${control}`, settingControls.find(item => item.key === control)?.label ?? null, onOff(on)])
     }
-    if (key === "minimumDemand") return Object.entries(object(value)).map(([uid, rate]) => [`minimumDemand.${uid}`, `최소 수요 ${name(uid)}`, `${plain(rate)} req/s`])
-    if (key === "autonomousWorkloads" || key === "workloadPriority") return [[key, key === "autonomousWorkloads" ? settingTargets[0].label : "서비스 순위", list(value, name)]]
-    if (key === "excludedNodes") return [[key, settingTargets[2].label, list(value)]]
-    if (key === "sloPriorityStrategy") return [[key, "우선순위 기준", value === "workload" ? "서비스 순위" : "목표 초과 정도"]]
+    if (key === "minimumDemand") return Object.entries(object(value)).map(([uid, rate]) => [`minimumDemand.${uid}`, `${patchKeyLabel(key)} ${name(uid)}`, `${plain(rate)} req/s`])
+    if (key === "autonomousWorkloads" || key === "workloadPriority") return [[key, patchKeyLabel(key), list(value, name)]]
+    if (key === "excludedNodes") return [[key, patchKeyLabel(key), list(value)]]
+    if (key === "sloPriorityStrategy") return [[key, patchKeyLabel(key), value === "workload" ? "서비스 순위" : "목표 초과 정도"]]
     const field = settingFields.find(item => item.key === key)
     if (!field) return [[key, null, plain(value)]]
     const text = typeof value === "boolean" ? onOff(value) : key === "planSearchStrategy" && typeof value === "string" ? schedulerLabel(value) : key.endsWith("Nanos") ? formatDurationNanos(value as number | bigint) : `${plain(value)}${field.unit ? ` ${field.unit}` : ""}`

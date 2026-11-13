@@ -8,11 +8,10 @@ import { useChillMutation, useChillQuery } from "@/lib/client"
 import { ApiError } from "@/lib/client-transport"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { canDeleteLoad, object, type LoadScenario } from "@/lib/evaluation-author"
-import { scenarioParts, scenarioSeconds, scenarioServices } from "@/lib/experiments-scenario"
+import { arrivalLabels, scenarioParts, scenarioSeconds, scenarioServices } from "@/lib/experiments-scenario"
 import { duration } from "@/lib/live-display"
 import { formatBytes, formatNumber } from "@/lib/format"
-import { buttonClassName, ConfirmDialog, DataTable, EmptyState, Hint, Page, PageHeader, QueryBoundary, RawDialog, Section, StatRow, StatTile, useToast } from "@/components/kit"
-import Button from "@/components/custom/blocks/Button"
+import { Button, buttonClassName, ConfirmDialog, DataTable, EmptyState, Fields, Missing, Page, PageHeader, QueryBoundary, RawDialog, Section, TimeText, useToast } from "@/components/kit"
 import { RateChart } from "./scenario-chart"
 import { SCENARIOS_PATH } from "./scenarios"
 
@@ -25,7 +24,7 @@ export function ScenarioDetailScreen({ name }: { name: string }) {
   const query = useChillQuery<LoadScenario>(scenarioPath(name), { decoder: parseSchedulerJSON })
   return (
     <Page>
-      <QueryBoundary query={query} skeleton="block">{item => <Body item={item} />}</QueryBoundary>
+      <QueryBoundary query={query} skeleton="block">{item => <Page><Body item={item} /></Page>}</QueryBoundary>
     </Page>
   )
 }
@@ -64,27 +63,23 @@ function Body({ item }: { item: LoadScenario }) {
       <PageHeader
         title={item.name}
         actions={inUse
-          ? <Hint text="사용 중인 실험이 있어 수정할 수 없음"><Button variant="default" disabled>수정</Button></Hint>
+          ? <Button variant="default" disabled disabledReason="사용 중인 실험이 있어 수정할 수 없음">수정</Button>
           : <Link href={`/experiments/scenarios/${encodeURIComponent(item.name)}/edit${search({ uid: item.uid })}`} className={buttonClassName({ variant: "default" })}>수정</Link>}
         more={[
           { label: "복사", onSelect: () => router.push(`/experiments/scenarios/new${search({ copy: item.name })}`) },
           { label: "원본 보기", onSelect: () => setRaw(true) },
-          { label: "삭제", destructive: true, disabled: inUse, onSelect: () => setRemoving(true) },
+          { label: "삭제", destructive: true, disabled: inUse, disabledReason: "사용 중인 실험이 있어 삭제할 수 없음", onSelect: () => setRemoving(true) },
         ]}
       />
-      <StatRow>
-        <StatTile label="구간 수" value={formatNumber(parts.length)} />
-        <StatTile label="전체 길이" value={duration(scenarioSeconds(item.spec))} />
-        <StatTile label="서비스" value={formatNumber(services.length)} />
-        <StatTile label="사용 중 실험" value={formatNumber(item.inUse.length)} />
-      </StatRow>
-      {item.inUse.length > 0 && (
-        <Section title="사용 중 실험">
-          <ul className="flex flex-wrap gap-2">
-            {item.inUse.map(run => <li key={run}><Link href={`/experiments/runs/${encodeURIComponent(run)}`} className={buttonClassName({ variant: "outline", size: "sm" })}>{run}</Link></li>)}
-          </ul>
-        </Section>
-      )}
+      <Section card>
+        <Fields columns={3} items={[
+          { label: "전체 길이", value: `${duration(scenarioSeconds(item.spec))} (구간 ${parts.length}개)` },
+          { label: "생성", value: item.createdAt ? <TimeText at={item.createdAt} mode="absolute" seconds={false} /> : null, reason: "미기록" },
+          { label: "사용 중 실험", value: item.inUse.length
+            ? <span className="flex min-w-0 flex-wrap gap-x-3">{item.inUse.map(run => <Link key={run} href={`/experiments/runs/${encodeURIComponent(run)}`} className="truncate text-primary hover:underline">{run}</Link>)}</span>
+            : "없음" },
+        ]} />
+      </Section>
       <Section title="요청률" card><RateChart spec={item.spec} /></Section>
       <DataTable
         label="구간" title="구간 (요청률 req/s)" rows={parts.map((part, index) => ({ ...part, index }))} rowKey={row => String(row.index)} pageSize={0}
@@ -98,10 +93,11 @@ function Body({ item }: { item: LoadScenario }) {
         label="서비스 입력" title="서비스 입력" rows={services.map(service => ({ service }))} rowKey={row => row.service} pageSize={0}
         columns={[
           { key: "service", header: "서비스", cell: ({ service }) => service },
-          { key: "arrival", header: "도착 분포", cell: ({ service }) => String(arrivals[service] ?? "") || null },
+          { key: "arrival", header: "도착 분포", cell: ({ service }) => { const code = String(arrivals[service] ?? ""); return code ? arrivalLabels[code] ?? <Missing reason={`코드 ${code}`} /> : null } },
           { key: "dataset", header: "데이터셋", cell: ({ service }) => String(object(datasets[service]).name ?? "") || null },
           { key: "seed", header: "난수 씨앗", numeric: true, cell: ({ service }) => String(seeds[service] ?? "") || null },
-          { key: "trace", header: "기록 입력", cell: ({ service }) => traces[service] ? `${String(object(traces[service]).key)} (${formatBytes(Number(object(traces[service]).size))})` : null },
+          { key: "trace", header: "기록 입력", missingReason: "사용 안 함",
+            cell: ({ service }) => traces[service] ? `${String(object(traces[service]).key).split("/").pop()} (${formatBytes(Number(object(traces[service]).size))})` : null },
         ]}
       />
       <RawDialog open={raw} onOpenChange={setRaw} value={item} filename={`scenario-${item.name}.json`} title={item.name} />

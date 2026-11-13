@@ -12,8 +12,7 @@ import {
 import { formatKst, formatNumber } from "@/lib/format"
 import { duration } from "@/lib/live-display"
 import { energyStatus, experimentVerdict, type StatusInfo } from "@/lib/status-labels"
-import { buttonClassName, DataTable, EmptyState, Fields, HeadroomBar, Hint, Missing, Section, StatRow, StatTile, StatusBadge, StatusDot, TimeText } from "@/components/kit"
-import { SelectBlock } from "@/components/custom/blocks/SelectBlock"
+import { buttonClassName, DataTable, EmptyState, Fields, HeadroomBar, Hint, MeterBar, Missing, Section, Select, StatRow, StatTile, StatusBadge, StatusDot, TimeText } from "@/components/kit"
 
 export const CONDITION_LABELS = { load: "부하", identity: "서비스 정의", rules: "측정 규칙", duration: "구간 길이" } as const
 
@@ -42,16 +41,9 @@ function Delta({ value, digits, unit = "" }: { value: number | null | undefined;
 }
 
 /** Value with a bar scaled to the largest value in its column. */
-function Metered({ value, max, text }: { value: number | null; max: number; text: string | null }) {
+function Metered({ value, max, text, label }: { value: number | null; max: number; text: string | null; label: string }) {
   if (value === null || text === null) return null
-  return (
-    <span className="inline-flex items-center gap-2">
-      <span aria-hidden="true" className="relative hidden h-1.5 w-12 shrink-0 overflow-hidden rounded-full bg-muted sm:inline-block">
-        <span className="absolute inset-y-0 left-0 rounded-full bg-chart-1" style={{ width: `${max > 0 ? (value / max) * 100 : 0}%` }} />
-      </span>
-      {text}
-    </span>
-  )
+  return <span className="inline-flex items-center gap-2"><MeterBar value={value} max={max} label={`${label} ${text}`} className="hidden sm:inline-block" />{text}</span>
 }
 
 const conditionTone = (word: ConditionWord): StatusInfo => ({ label: word, tone: word === "같음" ? "ok" : word === "다름" ? "warn" : "idle" })
@@ -61,6 +53,7 @@ export function ResultSummary({ run, stage, base }: { run: Experiment; stage: Ex
   const services = serviceSummaries(stage, run), baseline = base ? serviceSummaries(base.stage, base.run) : []
   const seconds = stageSeconds(stage)
   const met = services.filter(item => experimentVerdict(item.verdict).tone === "ok").length
+  const judged = services.some(item => item.verdict && item.verdict !== "NOT_EVALUATED")
   return (
     <>
       <StatRow>
@@ -69,7 +62,7 @@ export function ResultSummary({ run, stage, base }: { run: Experiment; stage: Ex
         <StatTile label="평균 전력" unit="W" value={energy.watts === null ? null : formatNumber(energy.watts, 1)} reason="게시 없음"
           sub={baseEnergy?.watts != null && !baseEnergy.partial ? `기준 ${formatNumber(baseEnergy.watts, 1)} W` : undefined} />
         <StatTile label="길이" value={seconds === null ? null : duration(seconds)} sub={`${formatKst(stage.from, false)} 시작`} />
-        <StatTile label="목표 충족 서비스" value={services.length ? `${met} / ${services.length}` : null} reason="서비스 기록 없음" />
+        <StatTile label="목표 충족 서비스" value={judged ? `${met} / ${services.length}` : null} reason={services.length ? "판정 없음" : "서비스 기록 없음"} />
       </StatRow>
       {services.length === 0 ? <EmptyState title="서비스 기록 없음" /> : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -120,18 +113,18 @@ export function ResultParts({ run, stage }: { run: Experiment; stage: Experiment
       pageSize={0}
       selectedKey={rows.find(row => row.stage === stage.id)?.key ?? null}
       toolbar={services.length > 1 && (
-        <SelectBlock className="w-full sm:w-72" inputSize="sm" icon={<span className="text-xs">서비스</span>}
+        <Select className="w-full sm:w-72" inputSize="sm" icon={<span className="text-xs">서비스</span>}
           options={services.map(name => ({ value: name, label: name }))} value={service} onChange={value => update({ svc: value })} />
       )}
       columns={[
         { key: "stage", header: "단계", width: "18%", cell: row => row.stage },
         { key: "part", header: "부하 구간", width: "10%", cell: row => row.part || null, missingReason: "구간 기록 없음" },
-        { key: "rate", header: "요청률", unit: "req/s", numeric: true, cell: row => <Metered value={row.rate} max={maxRate} text={row.rate === null ? null : formatNumber(row.rate, row.rate < 10 ? 2 : 1)} />, missingReason: "계획 없음" },
+        { key: "rate", header: "요청률", unit: "req/s", numeric: true, cell: row => <Metered value={row.rate} max={maxRate} text={row.rate === null ? null : formatNumber(row.rate, row.rate < 10 ? 2 : 1)} label="요청률" />, missingReason: "계획 없음" },
         { key: "p95", header: "지연 p95", unit: "ms", numeric: true, missingReason: "게시 없음",
           cell: row => row.p95 === null ? null : <span className="inline-flex items-center gap-2"><HeadroomBar observed={row.p95} target={row.target} className="hidden sm:inline-block" />{latency(row.p95)}</span> },
         { key: "success", header: "기한 내 성공", unit: "%", numeric: true, missingReason: "게시 없음",
           cell: row => row.success === null ? null : <span className="inline-flex items-center gap-1.5">{row.success === worst && <StatusDot tone="warn" label="최저" />}{formatNumber(row.success * 100, 1)}</span> },
-        { key: "energy", header: "에너지", unit: "kJ", numeric: true, missingReason: "단계 단위로만 게시", cell: row => <Metered value={row.joules} max={maxEnergy} text={kilo(row.joules)} /> },
+        { key: "energy", header: "에너지", unit: "kJ", numeric: true, missingReason: "단계 단위로만 게시", cell: row => <Metered value={row.joules} max={maxEnergy} text={kilo(row.joules)} label="에너지" /> },
         { key: "log", header: "스케줄러", width: "7rem", cell: row => <Link href={`/scheduler/decisions?from=${row.from}&to=${row.to}`} className={buttonClassName({ variant: "link", size: "sm" })}>판단 기록</Link> },
       ]}
     />

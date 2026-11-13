@@ -1,10 +1,10 @@
 "use client"
 
-import { DataTable, EmptyState, Page, PageHeader, QueryBoundary, Section, StatRow, StatTile, StatusDot, TimeRange, useTimeRangeParam, type Column } from "@/components/kit"
+import { DataTable, EmptyState, MeterBar, Page, PageHeader, QueryBoundary, Section, StatRow, StatTile, StatusDot, TimeRange, useTimeRangeParam, type Column } from "@/components/kit"
 import { deviceRole, energyParts, readiness } from "@/lib/devices-view"
 import { formatNumber, formatWatts } from "@/lib/format"
 import type { PowerPoint } from "@/lib/power-series"
-import { devicePowerPercent, devicePowerScale, type DeviceRow } from "@/lib/resources-data"
+import { devicePowerScale, type DeviceRow } from "@/lib/resources-data"
 import { PowerChart, useDevices, usePower } from "./data"
 
 const HOUR = 3_600_000
@@ -35,9 +35,7 @@ export function DeviceListScreen() {
       key: "watts", header: "전력", unit: "W", numeric: true, width: "9rem",
       cell: row => row.watts == null ? null : (
         <span className="inline-flex items-center gap-2">
-          <span className="relative h-1.5 w-12 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-            <span className="absolute inset-y-0 left-0 rounded-full bg-primary" style={{ width: `${devicePowerPercent(row, scale) ?? 0}%` }} />
-          </span>
+          <MeterBar value={row.watts} max={scale} label={`전력 ${formatNumber(row.watts, 1)} W`} className="w-12" />
           {formatNumber(row.watts, 1)}
         </span>
       ),
@@ -53,7 +51,7 @@ export function DeviceListScreen() {
   return (
     <Page>
       <PageHeader title="장치" />
-      <StatRow className="grid-cols-2">
+      <StatRow columns={4}>
         <StatTile label="전체 풀" value={pool?.wholeWatts == null ? null : formatNumber(pool.wholeWatts, 1)} unit="W" reason={waiting} />
         <StatTile label="활성 풀" value={pool?.activeWatts == null ? null : formatNumber(pool.activeWatts, 1)} unit="W" reason={waiting} />
         <StatTile

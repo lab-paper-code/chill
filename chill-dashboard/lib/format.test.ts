@@ -1,6 +1,14 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { niceTicks, secondTicks, timeTicks } from "./format.ts"
+import { formatRelative, niceTicks, secondTicks, timeTicks } from "./format.ts"
+
+test("formatRelative says 방금 around now, either side", () => {
+  const now = 1_000_000_000
+  assert.equal(formatRelative(now + 1500, now), "방금")
+  assert.equal(formatRelative(now - 4000, now), "방금")
+  assert.equal(formatRelative(now - 12_000, now), "12초 전")
+  assert.equal(formatRelative(now + 30_000, now), "곧")
+})
 
 test("niceTicks keeps low ranges apart", () => {
   const low = niceTicks(0, 1.2)

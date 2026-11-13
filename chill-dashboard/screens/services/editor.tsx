@@ -3,10 +3,9 @@
 import { useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
-import { Button, ConfirmDialog, DataTable, Fields, FormActions, FormSection, LeaveGuard, Page, PageHeader, QueryBoundary, Section, useToast, type Change } from "@/components/kit"
+import { Button, ConfirmDialog, DataTable, Fields, FormActions, FormSection, LeaveGuard, Page, PageHeader, QueryBoundary, Section, Select, useToast, type Change } from "@/components/kit"
 import { Alert } from "@/components/custom/blocks/Alerts"
 import { InputBlock } from "@/components/custom/blocks/InputBlock"
-import { SelectBlock } from "@/components/custom/blocks/SelectBlock"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { useChillMutation, useChillQuery } from "@/lib/client"
@@ -180,7 +179,11 @@ function Editor({ name, catalog, base, reload }: { name?: string; catalog: Catal
         {failure && <Alert type="danger" message={failure} />}
         {latest && lastValues && (
           <Section title="다른 변경이 먼저 저장됨" card actions={<>
-            <Button type="button" variant="outline" size="sm" onClick={() => { setOriginal(latest); setSaved(lastValues); setLatest(null) }}>최신 값을 기준으로 계속</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => {
+              // Keep only my edits on top of the latest values, so the other change is not silently reverted.
+              setDraft(Object.fromEntries(Object.keys(lastValues).map(key => [key, draft[key as Field] !== saved[key as Field] ? draft[key as Field] : lastValues[key as Field]])) as Draft)
+              setOriginal(latest); setSaved(lastValues); setLatest(null)
+            }}>최신 값을 기준으로 계속</Button>
             <Button type="button" variant="outline" size="sm" onClick={() => { setDraft(lastValues); setSaved(lastValues); setOriginal(latest); setLatest(null) }}>최신 값으로 바꾸기</Button>
           </>}>
             <DataTable label="충돌한 항목" pageSize={0} rowKey={r => r.field}
@@ -196,16 +199,12 @@ function Editor({ name, catalog, base, reload }: { name?: string; catalog: Catal
           <div className="grid gap-4">
             <FormSection title="이름">{text("name", "서비스 이름", { disabled: !creating })}</FormSection>
             <FormSection title="모델">
-              <SelectBlock label="모델 선택" searchable placeholder="선택" options={modelOptions} value={draft.model} error={errors.model} onChange={value => set({ model: value })} />
-            </FormSection>
-            <FormSection title="전처리기" info="선택한 모델에서 실행할 수 있는 전처리기만 보여요.">
-              <SelectBlock label="전처리기 선택" placeholder={draft.model ? "선택" : "모델을 먼저 선택"} disabled={!draft.model} options={preOptions} value={draft.preprocessor} error={errors.preprocessor} onChange={value => set({ preprocessor: value })} />
-            </FormSection>
-            <FormSection title="데이터셋" info="전처리기 입력을 담은 데이터셋만 보여요.">
-              <SelectBlock label="데이터셋 선택" placeholder={draft.preprocessor ? "선택" : "전처리기를 먼저 선택"} disabled={!draft.preprocessor} options={dataOptions}
+              <Select label="모델" searchable placeholder="선택" options={modelOptions} value={draft.model} error={errors.model} onChange={value => set({ model: value })} />
+              <Select label="전처리기" placeholder={draft.model ? "선택" : "모델을 먼저 선택"} disabled={!draft.model} options={preOptions} value={draft.preprocessor} error={errors.preprocessor} onChange={value => set({ preprocessor: value })} />
+              <Select label="데이터셋" placeholder={draft.preprocessor ? "선택" : "전처리기를 먼저 선택"} disabled={!draft.preprocessor} options={dataOptions}
                 value={draft.dataset || (draft.preprocessor ? NONE : "")} error={errors.dataset} onChange={value => set({ dataset: value === NONE ? "" : value })} />
             </FormSection>
-            <FormSection title="응답 목표" info="요청 중 분위수 비율이 목표 지연 안에 끝나야 해요.">
+            <FormSection title="응답 목표" info="분위수 비율의 요청이 목표 지연 안에 끝나야 함">
               <div className="grid gap-4 sm:grid-cols-2">
                 {text("percentile", "분위수 (%)", { type: "number" })}
                 {text("latency", "목표 지연", { helperText: "예: 100ms" })}
@@ -226,7 +225,7 @@ function Editor({ name, catalog, base, reload }: { name?: string; catalog: Catal
               </div>
             </FormSection>
           </div>
-          <aside className="lg:sticky lg:top-4">
+          <aside className="lg:sticky lg:top-20">
             <Section title="입력 요약" card>
               <Fields columns={1} items={rows.filter(r => creating || r.field !== "name").map(r => ({ label: r.label, value: r.show(draft) }))} />
             </Section>
@@ -237,10 +236,10 @@ function Editor({ name, catalog, base, reload }: { name?: string; catalog: Catal
           <Button type="submit" variant="default" disabled={!creating && dirty === 0}>검토</Button>
         </FormActions>
       </form>
-        <ConfirmDialog open={review} onOpenChange={setReview} title={creating ? "서비스 등록" : "서비스 수정"} target={draft.name} changes={creating ? undefined : changes}
-          confirmLabel={creating ? "등록" : "저장"} pending={mutation.isPending} onConfirm={() => void submit()}>
-          {creating && <Fields items={rows.filter(r => r.field !== "name").map(r => ({ label: r.label, value: r.show(draft) }))} />}
-        </ConfirmDialog>
+      <ConfirmDialog open={review} onOpenChange={setReview} title={creating ? "서비스 등록" : "서비스 수정"} target={draft.name} changes={creating ? undefined : changes}
+        confirmLabel={creating ? "등록" : "저장"} pending={mutation.isPending} onConfirm={() => void submit()}>
+        {creating && <Fields items={rows.filter(r => r.field !== "name").map(r => ({ label: r.label, value: r.show(draft) }))} />}
+      </ConfirmDialog>
     </>
   )
 }

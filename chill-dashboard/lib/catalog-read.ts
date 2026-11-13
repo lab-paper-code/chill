@@ -16,16 +16,15 @@ export function servicesUsing(list: readonly WorkloadSummary[] | undefined, kind
 
 const names = (items: { name: string }[]) => items.map(item => item.name).join(", ")
 
-// One-line list summary per kind.
-export function catalogSummary(kind: CatalogKind, resource: CatalogResource): string {
-  if (kind === "models") {
-    const spec = (resource as ModelResource).spec
-    const formats = [...new Set(spec.artifacts.map(a => a.format.toUpperCase()))].join(", ")
-    return `${formats || "—"} 실행 경로 ${spec.executionPaths.length}개`
-  }
-  if (kind === "preprocessors") {
-    const spec = (resource as PreprocessorResource).spec
-    return `입력 ${names(spec.input.fields) || "—"} 출력 ${names(spec.output.fields) || "—"}`
-  }
-  return names((resource as DatasetResource).spec.fields) || "—"
+/** List summary columns per kind: header and one value each. */
+export function catalogSummaryColumns(kind: CatalogKind): { key: string; header: string; numeric?: boolean; value: (resource: CatalogResource) => string | number | null }[] {
+  if (kind === "models") return [
+    { key: "formats", header: "파일 형식", value: r => [...new Set((r as ModelResource).spec.artifacts.map(a => a.format.toUpperCase()))].join(", ") || null },
+    { key: "paths", header: "실행 경로", numeric: true, value: r => (r as ModelResource).spec.executionPaths.length },
+  ]
+  if (kind === "preprocessors") return [
+    { key: "input", header: "입력", value: r => names((r as PreprocessorResource).spec.input.fields) || null },
+    { key: "output", header: "출력", value: r => names((r as PreprocessorResource).spec.output.fields) || null },
+  ]
+  return [{ key: "fields", header: "필드", value: r => names((r as DatasetResource).spec.fields) || null }]
 }

@@ -1,23 +1,24 @@
 // Experiment run editor: labels and pure checks over the evaluation spec tree (lib/evaluation-author.ts).
 import type { SchedulerSettings } from "./read-types.ts"
-import { settingControls } from "./scheduler-settings.ts"
-import { fields, type FieldKey } from "./scheduler-settings-form.ts"
+import { settingControls, settingFields, settingTargets, type SettingField } from "./scheduler-settings.ts"
 import { evaluationSameSpec } from "./evaluation-request.ts"
 import { object, records, type Spec } from "./evaluation-author.ts"
 
+type FieldKey = SettingField["key"]
 /** Patch keys with a dedicated input beyond the scalar scheduler fields. */
 export const targetKeys = ["autonomousWorkloads", "minimumDemand", "excludedNodes", "controls", "sloPriorityStrategy", "workloadPriority"] as const
 export type TargetKey = typeof targetKeys[number]
 export type PatchKey = FieldKey | TargetKey
+// The same words as the scheduler settings screen (lib/scheduler-settings.ts and its 우선순위 group).
 const targetLabels: Record<TargetKey, string> = {
-  autonomousWorkloads: "자동 제어 서비스", minimumDemand: "최소 수요", excludedNodes: "제외 장치",
+  ...Object.fromEntries(settingTargets.map(target => [target.key, target.label])) as Record<(typeof settingTargets)[number]["key"], string>,
   controls: "자동 조정 항목", sloPriorityStrategy: "우선순위 기준", workloadPriority: "서비스 순위",
 }
-export const patchKeys: PatchKey[] = [...targetKeys, ...fields.map(field => field.key)]
+export const patchKeys: PatchKey[] = [...targetKeys, ...settingFields.map(field => field.key)]
 export const isPatchKey = (key: string): key is PatchKey => (patchKeys as string[]).includes(key)
 export function patchKeyLabel(key: string): string {
   if (Object.hasOwn(targetLabels, key)) return targetLabels[key as TargetKey]
-  return fields.find(field => field.key === key)?.label ?? key
+  return settingFields.find(field => field.key === key)?.label ?? key
 }
 
 /** The value a newly added patch key starts from: the current scheduler setting, else a neutral default. */
@@ -30,7 +31,7 @@ export function patchDefault(key: PatchKey, current: SchedulerSettings | undefin
     case "minimumDemand": return {}
     case "sloPriorityStrategy": return "excess"
   }
-  const field = fields.find(item => item.key === key)!
+  const field = settingFields.find(item => item.key === key)!
   return field.defaultValue ?? (field.kind === "boolean" ? false : field.kind === "strategy" ? "v2" : undefined)
 }
 
@@ -43,7 +44,8 @@ const stageCheckNames: Record<string, string> = { loadScenario: "부하 시나�
 export function checkLabel(id: string): { label: string; code?: string } {
   if (Object.hasOwn(checkNames, id)) return { label: checkNames[id] }
   const slash = id.indexOf("/"), head = id.slice(0, slash), stage = id.slice(slash + 1)
-  if (slash > 0 && Object.hasOwn(stageCheckNames, head)) return { label: head === "settingsPatch" && stage === "run" ? "공통 설정 변경" : `${stageCheckNames[head]} ${stage}` }
+  if (head === "settingsPatch" && (stage === "run" || isPatchKey(stage))) return { label: stage === "run" ? "공통 설정 변경" : `설정 변경 ${patchKeyLabel(stage)}` }
+  if (slash > 0 && Object.hasOwn(stageCheckNames, head)) return { label: `${stageCheckNames[head]} ${stage}` }
   return { label: "기타 점검", code: id }
 }
 const knownReasons: Record<string, string> = {
@@ -70,7 +72,7 @@ const specLabels: Record<string, string> = {
 }
 function summary(key: string, value: unknown): string {
   if (value === undefined || value === null) return "없음"
-  if (key === "question" && typeof value === "string") return value.length > 40 ? `${value.slice(0, 40)}…` : value
+  if (key === "question" && typeof value === "string") return value
   if (key === "loadGenerator") return String(object(value).nodeName ?? "—")
   if (Array.isArray(value)) return `${value.length}개`
   if (key === "settingsPatch") return `${Object.keys(object(value)).length}개 항목`

@@ -2,9 +2,8 @@
 
 import { useState, type ReactNode } from "react"
 import { Plus, Trash2 } from "lucide-react"
-import { Button } from "@/components/kit"
+import { Button, Select } from "@/components/kit"
 import { InputBlock } from "@/components/custom/blocks/InputBlock"
-import { SelectBlock } from "@/components/custom/blocks/SelectBlock"
 import type { Errors } from "@/lib/catalog-editor"
 
 
@@ -18,7 +17,7 @@ export function Num({ label, value, onChange, error, min = 1 }: { label: string;
 }
 
 export function Pick({ label, value, options, onChange, error, placeholder = "선택" }: { label: string; value: string; options: { value: string; label?: string }[]; onChange: (value: string) => void; error?: string; placeholder?: string }) {
-  return <SelectBlock label={label} value={value} options={options.map(o => ({ value: o.value, label: o.label ?? o.value }))} onChange={onChange} error={error} placeholder={placeholder} />
+  return <Select label={label} value={value} options={options.map(o => ({ value: o.value, label: o.label ?? o.value }))} onChange={onChange} error={error} placeholder={placeholder} />
 }
 
 /** Positive integers typed as "1, 224, 224"; an unreadable text reports an empty list. */

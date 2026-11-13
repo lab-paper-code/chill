@@ -10,18 +10,19 @@ import { ApiError } from "@/lib/client-transport"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { adoptWorkloads, canDeleteLoad, copyAuthorDraft, object, patchSpec, removeLoadWorkload, specJSON, workloadChanges, type EvidenceInput, type LoadScenario, type Spec } from "@/lib/evaluation-author"
 import { evaluationCanSubmit, evaluationPreflight, evaluationSameSpec, type EvaluationPreflight } from "@/lib/evaluation-request"
-import { loadCheckLabel, scenarioParts, scenarioProblems, scenarioServices } from "@/lib/experiments-scenario"
+import { arrivalLabels, loadCheckLabel, scenarioParts, scenarioProblems, scenarioServices, type ScenarioPart } from "@/lib/experiments-scenario"
 import type { DatasetResource, WorkloadSummary } from "@/lib/domain"
 import { formatBytes } from "@/lib/format"
-import { Button, DataTable, EmptyState, FormActions, FormSection, Hint, LeaveGuard, Page, PageHeader, QueryBoundary, Section, StatusBadge, useToast } from "@/components/kit"
+import { Button, DataTable, EmptyState, FormActions, FormSection, Hint, LeaveGuard, Page, PageHeader, QueryBoundary, Section, Select, StatusBadge, useToast } from "@/components/kit"
 import { InputBlock } from "@/components/custom/blocks/InputBlock"
-import { SelectBlock } from "@/components/custom/blocks/SelectBlock"
 import { RateChart } from "./scenario-chart"
 import { SCENARIOS_PATH, scenarioHref } from "./scenarios"
 import { scenarioPath, scenarioQuery } from "./scenario-detail"
 
 const emptySpec: Spec = { workloads: [], parts: [], arrivalDistribution: {}, seeds: {}, datasetRefs: {} }
-const arrivalOptions = [{ value: "poisson", label: "포아송" }]
+const arrivalOptions = Object.entries(arrivalLabels).map(([value, label]) => ({ value, label }))
+// A part table holds 구간, 길이, delete and one 9rem rate column per service; past three services it no longer fits the form column.
+const TABLE_SERVICES = 3
 const TRACE_PAGE = 25
 
 export function ScenarioEditorScreen({ name }: { name?: string }) {
@@ -139,16 +140,20 @@ function Editor({ source, editing = false }: { source?: LoadScenario; editing?: 
             )}
           </FormSection>
           <FormSection title="구간" info="길이 초, 요청률 req/s">
-            <DataTable
-              label="구간" rows={parts.map((part, index) => ({ ...part, index }))} rowKey={row => String(row.index)} pageSize={0}
-              empty={<EmptyState compact title="구간 없음" />}
-              columns={[
-                { key: "id", header: "구간", width: "10rem", cell: row => <InputBlock inputSize="sm" aria-label={`구간 ${row.index + 1} 이름`} value={row.id} onChange={event => edit(["parts", row.index, "id"], event.target.value)} /> },
-                { key: "seconds", header: "길이", unit: "초", width: "8rem", numeric: true, cell: row => <NumberInput label={`구간 ${row.index + 1} 길이`} value={row.seconds} onChange={value => edit(["parts", row.index, "durationSeconds"], value)} /> },
-                ...services.map((service, i) => ({ key: `r${i}`, header: service, width: "13rem", numeric: true, cell: (row: { index: number; rates: Record<string, number | null> }) => <NumberInput label={`구간 ${row.index + 1} ${service} 요청률`} value={row.rates[service] ?? null} onChange={value => edit(["parts", row.index, "rates", service], value)} /> })),
-                { key: "remove", header: "", width: "3rem", cell: row => <Button variant="ghost" size="icon" aria-label={`구간 ${row.index + 1} 삭제`} onClick={() => removePart(row.index)}><Trash2 aria-hidden="true" /></Button> },
-              ]}
-            />
+            {services.length > TABLE_SERVICES ? (
+              <PartCards parts={parts} services={services} edit={edit} removePart={removePart} />
+            ) : (
+              <DataTable
+                label="구간" rows={parts.map((part, index) => ({ ...part, index }))} rowKey={row => String(row.index)} pageSize={0}
+                empty={<EmptyState compact title="구간 없음" />}
+                columns={[
+                  { key: "id", header: "구간", width: "10rem", cell: row => <InputBlock inputSize="sm" aria-label={`구간 ${row.index + 1} 이름`} value={row.id} onChange={event => edit(["parts", row.index, "id"], event.target.value)} /> },
+                  { key: "seconds", header: "길이", unit: "초", width: "8rem", numeric: true, cell: row => <NumberInput label={`구간 ${row.index + 1} 길이`} value={row.seconds} onChange={value => edit(["parts", row.index, "durationSeconds"], value)} /> },
+                  ...services.map((service, i) => ({ key: `r${i}`, header: service, width: "9rem", numeric: true, cell: (row: { index: number; rates: Record<string, number | null> }) => <NumberInput label={`구간 ${row.index + 1} ${service} 요청률`} value={row.rates[service] ?? null} onChange={value => edit(["parts", row.index, "rates", service], value)} /> })),
+                  { key: "remove", header: "", width: "3rem", cell: row => <Button variant="ghost" size="icon" aria-label={`구간 ${row.index + 1} 삭제`} onClick={() => removePart(row.index)}><Trash2 aria-hidden="true" /></Button> },
+                ]}
+              />
+            )}
             <div><Button variant="outline" size="sm" disabled={!services.length} onClick={addPart}>구간 추가</Button></div>
           </FormSection>
           <FormSection title="서비스">
@@ -156,7 +161,7 @@ function Editor({ source, editing = false }: { source?: LoadScenario; editing?: 
               <ServiceInputs key={service} spec={spec} service={service} datasets={datasets.data?.items ?? []} onEdit={edit} onRemove={() => setSpec(current => removeLoadWorkload(current, scenarioServices(current).indexOf(service)))} />
             ))}
             <div className="max-w-xs">
-              <SelectBlock
+              <Select
                 inputSize="sm" label="서비스 추가" placeholder={workloads.isPending ? "불러오는 중" : "서비스 선택"} value="" searchable
                 options={(workloads.data ?? []).filter(item => !services.includes(item.desired.metadata.name)).map(item => ({ value: item.desired.metadata.uid, label: item.desired.metadata.name }))}
                 onChange={addService}
@@ -166,26 +171,32 @@ function Editor({ source, editing = false }: { source?: LoadScenario; editing?: 
         </div>
         <aside className="grid min-w-0 gap-4 lg:sticky lg:top-4">
           <Section title="요청률 미리보기" card>
-            {parts.length && services.length ? <RateChart spec={spec} height={180} /> : <EmptyState compact title="구간과 서비스를 추가하세요" />}
+            {parts.length && services.length ? <RateChart spec={spec} height={180} /> : <EmptyState compact title={services.length ? "구간 없음" : "서비스 없음"} />}
           </Section>
           <Section title="사전 점검" card>
             {problems.length > 0 ? (
               <ul className="grid gap-1.5 text-sm">{problems.map(problem => <li key={problem}><StatusBadge tone="warn" label={problem} /></li>)}</ul>
             ) : !checked ? (
               <StatusBadge tone="idle" label={answer ? "변경됨, 다시 점검" : "점검 전"} />
-            ) : (
-              <ul className="grid gap-2 text-sm">
-                {checked.result.checks.map(check => (
-                  <li key={check.id} className="flex min-w-0 items-center justify-between gap-2">
-                    <Hint text={check.reason}><span className="truncate">{loadCheckLabel(check.id)}</span></Hint>
-                    <StatusBadge tone={check.passed ? "ok" : "fail"} label={check.passed ? "통과" : "실패"} />
-                  </li>
-                ))}
-              </ul>
-            )}
+            ) : (() => {
+              const failed = checked.result.checks.filter(check => !check.passed), passed = checked.result.checks.filter(check => check.passed)
+              return (
+                <div className="grid gap-2 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge tone={failed.length ? "fail" : "ok"} label={failed.length ? `실패 ${failed.length}건` : "모두 통과"} />
+                    <Hint text={passed.map(check => loadCheckLabel(check.id)).join(", ")} focusable className="text-muted-foreground tabular-nums">통과 {passed.length}건</Hint>
+                  </div>
+                  {failed.length > 0 && (
+                    <ul className="grid gap-1.5">
+                      {failed.map(check => <li key={check.id} className="min-w-0"><Hint text={check.reason} focusable className="block min-w-0 truncate text-left">{loadCheckLabel(check.id)}</Hint></li>)}
+                    </ul>
+                  )}
+                </div>
+              )
+            })()}
             {changes.length > 0 && (
               <div className="flex items-center justify-between gap-2 text-sm">
-                <span className="truncate">서비스 정의 변경 {changes.length}개</span>
+                <span className="truncate">서비스 정의 바뀜 {changes.length}개</span>
                 <Button variant="outline" size="sm" onClick={() => { setSpec(adoptWorkloads(spec, changes, changes.map(change => change.name))); setAnswer(null) }}>현재 값 반영</Button>
               </div>
             )}
@@ -198,6 +209,32 @@ function Editor({ source, editing = false }: { source?: LoadScenario; editing?: 
         <Button variant="default" disabled={!canSave} loading={mutation.isPending && canSave} onClick={() => void save()}>저장</Button>
       </FormActions>
     </>
+  )
+}
+
+/** Parts as rows of fields when the services do not fit a seven-column table. */
+function PartCards({ parts, services, edit, removePart }: { parts: ScenarioPart[]; services: string[]; edit: (path: (string | number)[], value: unknown) => void; removePart: (index: number) => void }) {
+  if (!parts.length) return <EmptyState compact title="구간 없음" />
+  return (
+    <ol className="grid gap-3">
+      {parts.map((part, index) => (
+        <li key={index} aria-label={`구간 ${index + 1}`} className="grid min-w-0 gap-3 rounded-lg border border-border p-3">
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1"><InputBlock inputSize="sm" label="구간" value={part.id} onChange={event => edit(["parts", index, "id"], event.target.value)} /></div>
+            <div className="grid gap-1.5"><span className="text-sm font-medium">길이 (초)</span><NumberInput label={`구간 ${index + 1} 길이`} value={part.seconds} onChange={value => edit(["parts", index, "durationSeconds"], value)} /></div>
+            <Button variant="ghost" size="icon" aria-label={`구간 ${index + 1} 삭제`} onClick={() => removePart(index)}><Trash2 aria-hidden="true" /></Button>
+          </div>
+          <div className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 xl:grid-cols-3">
+            {services.map(service => (
+              <div key={service} className="grid min-w-0 gap-1">
+                <Hint text={service} className="block min-w-0 truncate text-left text-xs text-muted-foreground">{service}</Hint>
+                <NumberInput className="w-full" label={`구간 ${index + 1} ${service} 요청률`} value={part.rates[service] ?? null} onChange={value => edit(["parts", index, "rates", service], value)} />
+              </div>
+            ))}
+          </div>
+        </li>
+      ))}
+    </ol>
   )
 }
 
@@ -217,9 +254,9 @@ function ServiceInputs({ spec, service, datasets, onEdit, onRemove }: {
         <Button variant="ghost" size="sm" iconLeft={<Trash2 aria-hidden="true" />} onClick={onRemove}>서비스 제거</Button>
       </div>
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-        <SelectBlock inputSize="sm" label="도착 분포" options={arrivals} value={arrival} onChange={value => onEdit(["arrivalDistribution", service], value)} />
+        <Select inputSize="sm" label="도착 분포" options={arrivals} value={arrival} onChange={value => onEdit(["arrivalDistribution", service], value)} />
         <InputBlock inputSize="sm" label="난수 씨앗" inputMode="numeric" value={seed} onChange={event => onEdit(["seeds", service], event.target.value.trim())} />
-        <SelectBlock
+        <Select
           inputSize="sm" label="데이터셋" placeholder="선택" searchable options={datasetOptions} value={String(dataset.uid ?? "")}
           onChange={uid => { const item = datasets.find(entry => entry.metadata.uid === uid); onEdit(["datasetRefs", service], item ? { name: item.metadata.name, uid: item.metadata.uid } : String(dataset.uid) === uid ? dataset : undefined) }}
         />
@@ -239,7 +276,7 @@ function TracePicker({ value, onChange }: { value: Spec; onChange: (value: Spec 
   if (current && !options.some(option => option.value === current)) options.unshift({ value: current, label: String(value.key), group: undefined })
   return (
     <div className="grid min-w-0 gap-1.5">
-      <SelectBlock
+      <Select
         inputSize="sm" label="기록 입력" searchable options={[{ value: "", label: "사용 안 함" }, ...options]} value={current}
         placeholder={query.isPending ? "불러오는 중" : items.length ? "선택" : "입력 없음"}
         onChange={key => { const item = items.find(entry => identity(entry) === key); onChange(item ? { store: item.store, key: item.key, size: item.size } : key === current ? value : undefined) }}
@@ -260,13 +297,13 @@ function TracePicker({ value, onChange }: { value: Spec; onChange: (value: Spec 
 }
 
 /** Number field with its own text, so "1." and "" can be typed; the spec only receives finite numbers (or nothing). */
-function NumberInput({ label, value, onChange }: { label: string; value: number | null; onChange: (value: number | undefined) => void }) {
+function NumberInput({ label, value, onChange, className = "ml-auto w-24" }: { label: string; value: number | null; onChange: (value: number | undefined) => void; className?: string }) {
   const [text, setText] = React.useState(value == null ? "" : String(value))
   const parsed = text.trim() === "" ? undefined : Number(text)
   const typed = parsed != null && Number.isFinite(parsed) ? parsed : undefined
   if (typed !== (value ?? undefined)) setText(value == null ? "" : String(value))
   return (
-    <div className="ml-auto w-24">
+    <div className={className}>
       <InputBlock
         type="number" inputSize="sm" aria-label={label} min={0} step="any" value={text}
         onChange={event => {

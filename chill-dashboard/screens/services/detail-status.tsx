@@ -34,7 +34,7 @@ export function ServiceStatusTab({ name, uid, workload }: ServiceTabProps) {
   const blocked = state.status === "unauthorized" || state.status === "forbidden"
   const query = {
     data: state.snapshot ?? undefined,
-    error: blocked ? new ApiError(state.status === "unauthorized" ? 401 : 403, "", null) : state.status === "protocol-error" ? new ApiError(0, "", { code: "LiveProtocolError" }) : null,
+    error: blocked ? new ApiError(state.status === "unauthorized" ? 401 : 403, "", null) : state.status === "protocol-error" ? new ApiError(0, "", { code: "실시간 형식 오류" }) : null,
     isPending: !state.snapshot,
     refetch: reconnect,
   }
@@ -42,7 +42,7 @@ export function ServiceStatusTab({ name, uid, workload }: ServiceTabProps) {
   return (
     <QueryBoundary query={query} skeleton="tiles">
       {snapshot => {
-        const live = snapshot.workloads.find(row => row.uid === serviceUID)
+        const live = snapshot.workloads.find(row => serviceUID ? row.uid === serviceUID : row.name === name)
         return live ? <LiveStatus name={name} snapshot={snapshot} live={live} locked={!!uid && uid !== live.uid} /> : <EmptyState title="실시간 관측 없음" />
       }}
     </QueryBoundary>
@@ -103,7 +103,7 @@ function LiveStatus({ name, snapshot, live, locked }: { name: string; snapshot: 
     { key: "status", header: "상태", cell: row => <StatusDot status={row.status} showLabel /> },
   ]
   const placementActions = <>
-    {declared && <StatusBadge status={Object.keys(declared).length ? { label: "직접 지정", tone: "progress" } : { label: "새 요청 차단", tone: "warn" }} />}
+    {declared && <StatusBadge status={Object.keys(declared).length ? { label: "분배 직접 지정", tone: "progress" } : { label: "새 요청 차단", tone: "warn" }} reason="스케줄러 설정에 저장된 분배" />}
     <Button size="sm" variant="outline" disabled={locked || (!rows.length && !declared)} onClick={() => setEditing(true)}>분배 수정</Button>
   </>
 
@@ -114,7 +114,7 @@ function LiveStatus({ name, snapshot, live, locked }: { name: string; snapshot: 
         <StatTile
           label="지연" unit="ms" info={slo ? `최근 ${slo.windowSeconds}초 완료 요청의 p${percentile}` : `완료 요청의 p${percentile}`}
           value={slo?.quantileMs != null ? formatNumber(slo.quantileMs, slo.quantileMs < 100 ? 1 : 0) : null}
-          reason={!slo ? "관측 없음" : slo.samples === 0 ? "표본 없음" : "창이 아직 차지 않음"}
+          reason={!slo ? "관측 없음" : slo.samples === 0 ? "표본 없음" : "표본 부족"}
           status={slo?.met != null ? sloVerdict(slo.met) : undefined}
           sub={<span className="inline-flex items-center gap-2">{slo?.quantileMs != null && <HeadroomBar observed={slo.quantileMs} target={slo.targetMs} />}목표 {formatNumber(targetMs)} ms</span>}
         />

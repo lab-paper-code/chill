@@ -66,12 +66,11 @@ export function CatalogDetailScreen({ kind, name }: { kind: CatalogKind; name: s
       />
       <QueryBoundary query={detail} skeleton="block">
         {data => (
-          <>
+          <Page>
             <Section card>
               <Fields columns={3} items={[
-                { label: "종류", value: label },
                 { label: "등록", value: data.metadata.creationTimestamp ? <TimeText at={data.metadata.creationTimestamp} mode="absolute" /> : null },
-                { label: "사용하는 서비스", value: workloads.data ? `${users.length}개` : null, reason: "서비스 목록을 불러오지 못했어요" },
+                { label: "사용하는 서비스", value: workloads.data ? `${users.length}개` : null, reason: "서비스 목록 조회 실패" },
                 ...(kind === "datasets" ? [
                   { label: "이미지", value: <IdText value={(data as DatasetResource).spec.source.image} /> },
                   { label: "경로", value: (data as DatasetResource).spec.source.path },
@@ -94,7 +93,7 @@ export function CatalogDetailScreen({ kind, name }: { kind: CatalogKind; name: s
                   <DialogHeader><DialogTitle>삭제할 수 없음</DialogTitle></DialogHeader>
                   <div className="grid gap-3">
                     <div className="text-sm"><span className="text-muted-foreground">대상 </span><span className="font-medium">{name}</span></div>
-                    <UsersTable users={users} />
+                    <UsersTable users={users} compact />
                   </div>
                   <DialogFooter><Button variant="outline" onClick={() => setDeleting(false)}>닫기</Button></DialogFooter>
                 </DialogContent>
@@ -102,14 +101,14 @@ export function CatalogDetailScreen({ kind, name }: { kind: CatalogKind; name: s
             ) : (
               <ConfirmDialog open={deleting} onOpenChange={setDeleting} title={`${label} 삭제`} target={name} tone="destructive" confirmLabel="삭제" pending={mutation.isPending} onConfirm={remove} />
             )}
-          </>
+          </Page>
         )}
       </QueryBoundary>
     </Page>
   )
 }
 
-function UsersTable({ users }: { users: WorkloadSummary[] }) {
+function UsersTable({ users, compact = false }: { users: WorkloadSummary[]; compact?: boolean }) {
   return (
     <DataTable
       label="사용하는 서비스"
@@ -118,6 +117,7 @@ function UsersTable({ users }: { users: WorkloadSummary[] }) {
       rowHref={w => resourceHref("services", w.desired.metadata.name, w.desired.metadata.uid)}
       empty={none}
       pageSize={0}
+      density={compact ? "compact" : "default"}
       columns={[
         { key: "name", header: "서비스", cell: w => w.desired.metadata.name, sortValue: w => w.desired.metadata.name },
         { key: "status", header: "상태", cell: w => <StatusBadge status={serviceReadiness(w.readiness)} /> },

@@ -33,11 +33,11 @@ export function ScenariosScreen() {
               toolbar={<FilterBar search={{ value: q, onChange: setQ, placeholder: "이름 검색" }} />}
               empty={<EmptyState compact title="일치하는 시나리오 없음" action={<Button variant="outline" size="sm" onClick={() => setQ("")}>검색 지우기</Button>} />}
               columns={[
-                { key: "name", header: "이름", cell: row => row.name, sortValue: row => row.name },
+                { key: "name", header: "이름", cell: row => row.name, sortValue: row => row.name, width: "34%" },
                 { key: "parts", header: "구간 수", numeric: true, cell: row => scenarioParts(row.spec).length, sortValue: row => scenarioParts(row.spec).length },
                 { key: "length", header: "전체 길이", numeric: true, cell: row => duration(scenarioSeconds(row.spec)), sortValue: row => scenarioSeconds(row.spec), csv: row => scenarioSeconds(row.spec) },
                 { key: "services", header: "서비스", numeric: true, cell: row => <Hint text={scenarioServices(row.spec).join(", ")} focusable>{scenarioServices(row.spec).length}</Hint>, sortValue: row => scenarioServices(row.spec).length },
-                { key: "inUse", header: "사용 중", numeric: true, cell: row => row.inUse.length, sortValue: row => row.inUse.length },
+                { key: "inUse", header: "사용 중 실험", numeric: true, cell: row => row.inUse.length, sortValue: row => row.inUse.length },
                 { key: "created", header: "생성", cell: row => row.createdAt ? <TimeText at={row.createdAt} mode="absolute" seconds={false} /> : null, sortValue: row => row.createdAt ? Date.parse(row.createdAt) : null, csv: row => row.createdAt ?? "" },
               ]}
             />

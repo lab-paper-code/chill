@@ -21,14 +21,26 @@ export function requestResult(row: Pick<RequestRow, "outcome" | "kind">): Status
 }
 export const outcomeLabel = (code: string) => (Object.hasOwn(outcome, code) ? outcome[code].label : "—")
 
+// Request error codes (request rows, infer responses) as short labels; unknown codes stay null so the screen shows "—" with the code.
+const requestErrors: Record<string, string> = {
+  QueueFull: "대기열 가득 참", RequestTimeout: "응답 시간 초과", RequestCanceled: "요청 취소", DeadlineInfeasible: "기한 내 처리 불가",
+  ServiceUnavailable: "처리 불가", GatewayOverloaded: "서버 메모리 한도", PreprocessFailed: "전처리 실패", BackendError: "모델 실행 오류",
+  BackendUnavailable: "실행기 연결 실패", BackendResponseInvalid: "실행기 응답 오류", BackendResponseTooLarge: "응답 크기 초과",
+  BackendContextMismatch: "실행기 응답 불일치", ResponseDeliveryFailed: "응답 전달 실패", DefinitionChanged: "정의 변경됨", WorkloadChanged: "서비스 변경됨",
+}
+export function requestError(code: string | null | undefined): string | null {
+  const key = code?.split(":", 1)[0] ?? ""
+  return Object.hasOwn(requestErrors, key) ? requestErrors[key] : null
+}
+
 export const nanosToMs = (value: WireInteger | null | undefined) => (value == null ? null : Number(value) / 1e6)
 
-/** The batch stage durations the server measured; null until the execution record arrived. */
-export function requestStages(row: RequestRow): { key: string; label: string; ms: number }[] | null {
+/** The batch stage durations the server measured; null until the execution record arrived. Generative models name the model stage "답 생성". */
+export function requestStages(row: RequestRow, backendLabel = "추론"): { key: string; label: string; ms: number }[] | null {
   const stages = [
     { key: "queue", label: "대기", ms: row.queueMS },
     { key: "preprocess", label: "전처리", ms: row.preprocessMS },
-    { key: "backend", label: "추론", ms: row.backendMS },
+    { key: "backend", label: backendLabel, ms: row.backendMS },
     { key: "postprocess", label: "후처리", ms: row.postprocessMS },
   ]
   const known = stages.filter((stage): stage is { key: string; label: string; ms: number } => stage.ms !== undefined)

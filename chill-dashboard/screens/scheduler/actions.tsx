@@ -5,15 +5,15 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { sectionTabs } from "@/lib/routes"
 import { useChillQuery, useChillQueries } from "@/lib/client"
 import { useLive } from "@/lib/use-live"
-import { actionProgress, reservationReason } from "@/lib/live-display"
+import { actionProgress } from "@/lib/live-display"
 import { isLiveActionActive, liveActionKey, type LiveAction, type LiveEvent, type LiveReservation } from "@/lib/live"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { schedulerRecordMatches, schedulerRecordPath, schedulerRecordRef } from "@/lib/scheduler-history"
-import { actionElapsedNanos, actionKindLabel, clusterRow, groupActions, phaseStatus, planVsActual, type ActionRow } from "@/lib/scheduler-actions"
+import { actionElapsedNanos, actionErrorLabel, actionKindLabel, clusterRow, groupActions, phaseStatus, planVsActual, reservationText, type ActionRow } from "@/lib/scheduler-actions"
 import { formatDurationNanos, formatKst } from "@/lib/format"
 import type { SchedulerObservation, SchedulerObservationSummaryPage } from "@/lib/read-types"
 import {
-  Button, DataTable, DetailDrawer, EmptyState, FilterBar, Fields, HeadroomBar, Page, PageHeader, PageTabs, QueryBoundary, RawDialog,
+  Button, DataTable, DetailDrawer, EmptyState, FilterBar, Fields, HeadroomBar, Hint, Page, PageHeader, PageTabs, QueryBoundary, RawDialog,
   Section, StatusBadge, TimeRange, TimeText, resolveTimeRange, useNow, useTimeRangeParam, type Column, type TimeRangeValue,
 } from "@/components/kit"
 
@@ -164,17 +164,18 @@ function ActionDrawer({ row, page, onClose, onRaw }: { row: ActionRow; page: Sch
   const record = full?.action && schedulerRecordMatches(ref, { at: full.at, offset: full.offset, action: full.action }) ? full.action : null
   const took = actionElapsedNanos(row)
   const compare = record ? planVsActual(record) : []
+  const op = record?.expected as { workloadUID?: string } | undefined
+  const names = useServiceNames()
   return (
-    <DetailDrawer open onOpenChange={open => { if (!open) onClose() }} title={kindText(row.kind) ?? "작업"} status={phaseStatus(row.phase)} actions={<Button size="sm" variant="outline" onClick={onRaw}>원본 보기</Button>}>
+    <DetailDrawer open onOpenChange={open => { if (!open) onClose() }} title={kindText(row.kind) ?? "작업"} status={phaseStatus(row.phase)} actions={<Button size="sm" variant="ghost" onClick={onRaw}>원본 보기</Button>}>
       <div className="grid gap-6">
         <Fields columns={2} items={[
           { label: "장치", value: nodeText(row.node) },
+          { label: "서비스", value: op?.workloadUID ? names.get(op.workloadUID) ?? null : null, reason: op?.workloadUID ? "현재 없는 서비스" : "서비스 없음" },
           { label: "시작", value: formatKst(row.startedAt) },
           { label: "종료", value: took == null ? null : formatKst(row.at), reason: "진행 중" },
-          { label: "소요", value: took == null ? null : formatDurationNanos(took) },
-          ...(record?.instance ? [{ label: "인스턴스", value: record.instance }] : []),
+          ...(record?.error ? [{ label: "오류", value: <Hint text={record.error} focusable>{actionErrorLabel(record.error) ?? "원인 미분류"}</Hint> }] : []),
         ]} />
-        {record?.error && <Fields columns={1} items={[{ label: "오류", value: record.error }]} />}
         <Section title="계획과 실제">
           <QueryBoundary query={query} skeleton="block" isEmpty={() => !compare.length} empty={<EmptyState compact title="계획 기록 없음" />}>
             {() => (
@@ -196,9 +197,9 @@ function Reservations() {
   const { state } = useLive(), names = useServiceNames()
   const rows = React.useMemo(() => (state.snapshot?.reservations ?? []).map((r, i) => ({ ...r, key: `${r.owner}/${i}` })), [state.snapshot?.reservations])
   const columns: Column<LiveReservation & { key: string }>[] = [
-    { key: "service", header: "서비스", cell: r => r.workloadUIDs.map(uid => names.get(uid)).filter(Boolean).join(", ") || (r.reason.startsWith("measurement-lease") ? "측정 장치 예약" : null), csv: r => r.workloadUIDs.map(uid => names.get(uid)).join(", "), width: "16rem" },
+    { key: "service", header: "서비스", cell: r => r.workloadUIDs.map(uid => names.get(uid)).filter(Boolean).join(", ") || (r.owner.startsWith("measurement-lease") ? "측정 장치" : null), csv: r => r.workloadUIDs.map(uid => names.get(uid)).join(", "), width: "16rem", missingReason: "서비스 없음" },
     { key: "nodes", header: "장치 수", numeric: true, cell: r => r.nodes.length, csv: r => r.nodes.length, width: "8rem" },
-    { key: "reason", header: "사유", cell: r => (r.reason.endsWith("profiling run in progress") ? "측정 실행 중" : r.reason ? reservationReason(r.reason) : null), csv: r => r.reason },
+    { key: "reason", header: "사유", missingReason: "사유 없음", cell: r => reservationText(r), csv: r => reservationText(r) },
   ]
   return (
     <Section title="예약">
@@ -207,13 +208,19 @@ function Reservations() {
   )
 }
 
-type EventsPage = { events: LiveEvent[]; nextCursor?: string }
+type EventsPage = { events: LiveEvent[] | null; nextCursor?: string }
+type EventsSlice = { from: number; to: number; cursor: string }
+const SLICE = 15 * 60_000
 
+/** The events API pages forward in time, so newest-first walks back in 15-minute slices, each read to its end. */
 function ClusterEvents({ window }: { window: { from: number; to: number } }) {
-  const [cursors, setCursors] = React.useState([""])
-  const paths = cursors.map(cursor => `v1/observations/events?${new URLSearchParams({ from: new Date(window.from).toISOString(), to: new Date(window.to).toISOString(), limit: "100", ...(cursor ? { cursor } : {}) })}`)
+  const [slices, setSlices] = React.useState<EventsSlice[]>([{ from: Math.max(window.from, window.to - SLICE), to: window.to, cursor: "" }])
+  const paths = slices.map(s => `v1/observations/events?${new URLSearchParams({ from: new Date(s.from).toISOString(), to: new Date(s.to).toISOString(), limit: "500", ...(s.cursor ? { cursor: s.cursor } : {}) })}`)
   const pages = useChillQueries<EventsPage>(paths)
-  const last = pages[pages.length - 1]
+  const last = pages[pages.length - 1], lastSlice = slices[slices.length - 1]
+  const next: EventsSlice | null = !last.data ? null
+    : last.data.nextCursor ? { ...lastSlice, cursor: last.data.nextCursor }
+    : lastSlice.from > window.from ? { from: Math.max(window.from, lastSlice.from - SLICE), to: lastSlice.from, cursor: "" } : null
   const rows = React.useMemo(
     () => pages.flatMap(p => p.data?.events ?? []).flatMap(e => (e.kind === "cluster" ? [{ at: e.at, ...clusterRow(e.cluster) }] : []))
       .sort((a, b) => b.at.localeCompare(a.at)).map((r, i) => ({ ...r, key: `${r.at}/${i}` })),
@@ -221,21 +228,22 @@ function ClusterEvents({ window }: { window: { from: number; to: number } }) {
   )
   const columns: Column<(typeof rows)[number]>[] = [
     { key: "at", header: "시각", cell: r => <TimeText at={r.at} mode="absolute" />, csv: r => r.at, width: "11rem" },
-    { key: "kind", header: "종류", cell: r => r.kind, csv: r => r.kind, width: "6rem" },
+    { key: "kind", header: "종류", cell: r => r.kind, csv: r => r.kind, width: "7rem" },
     { key: "target", header: "대상", cell: r => r.target, csv: r => r.target },
-    { key: "content", header: "내용", cell: r => r.content, csv: r => r.content },
+    { key: "content", header: "내용", cell: r => r.content, missing: r => r.detail ?? "내용 없음", csv: r => r.content ?? r.detail },
   ]
+  // Nothing found yet: keep reading earlier slices instead of showing an empty table with a button.
+  if (!rows.length && next) setSlices(list => [...list, next])
+  const loading = !last.data && last.isFetching
+  const more = slices.length > 1 || rows.length ? (next || loading) && <Button variant="outline" loading={loading} onClick={() => { if (next) setSlices(list => [...list, next]) }}>이전 기록 더 보기</Button> : null
   return (
     <Section title="사건">
-      <QueryBoundary query={pages[0]} isEmpty={() => !rows.length} empty={<EmptyState title="사건 없음" />}>
+      <QueryBoundary query={pages[0]}>
         {() => (
           <div className="grid gap-3">
-            <DataTable label="사건" rows={rows} rowKey={r => r.key} columns={columns} pageSize={0} download={{ filename: "cluster-events" }} />
-            {pages.at(-1)?.data?.nextCursor && (
-              <div className="flex justify-center">
-                <Button variant="outline" loading={last.isFetching} onClick={() => setCursors(c => [...c, last.data!.nextCursor!])}>이전 기록 더 보기</Button>
-              </div>
-            )}
+            <DataTable label="사건" rows={rows} rowKey={r => r.key} columns={columns} pageSize={0} download={{ filename: "cluster-events" }}
+              empty={<EmptyState compact title={loading ? "조회 중" : "사건 없음"} />} />
+            {more && <div className="flex justify-center">{more}</div>}
           </div>
         )}
       </QueryBoundary>

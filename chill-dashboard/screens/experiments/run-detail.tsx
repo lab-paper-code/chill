@@ -8,18 +8,19 @@ import { buttonClassName, ConfirmDialog, DataTable, EmptyState, Fields, IdText, 
 import { useChillMutation, useChillQuery } from "@/lib/client"
 import { evaluationActions, type EvaluationLiveTarget } from "@/lib/evaluation-request"
 import { decodeExperiment, experimentPath, type Experiment } from "@/lib/experiments"
-import { condition, isFinished, runHref, runPath, type Run } from "@/lib/experiments-run"
+import { condition, isFinished, reasonText, runHref, runPath, type Run } from "@/lib/experiments-run"
+import { explain } from "@/lib/labels"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { evaluationExecution, evaluationPhase, evaluationVerdict } from "@/lib/status-labels"
-import { RunCleanup } from "./run-detail-cleanup"
+import { releasable, ReleaseAction, RunCleanup } from "./run-detail-cleanup"
 import { RunPlan } from "./run-detail-plan"
-import { Elapsed, reasonHint, RunProgress } from "./run-detail-progress"
+import { Elapsed, RunProgress } from "./run-detail-progress"
 
 const tabs = [{ value: "progress", label: "진행" }, { value: "plan", label: "계획" }, { value: "cleanup", label: "정리" }, { value: "target", label: "대상" }]
 
 export function ExperimentRunDetailScreen({ name }: { name: string }) {
   const params = useSearchParams()
-  const tab = params.get("tab") ?? "progress"
+  const tab = params.get("tab")
   const detail = useChillQuery<Run>(runPath(name), { poll: data => !!data && !isFinished(data), decoder: parseSchedulerJSON })
   const run = detail.data
   const urlUID = params.get("uid")
@@ -42,8 +43,11 @@ export function ExperimentRunDetailScreen({ name }: { name: string }) {
       <QueryBoundary query={detail} skeleton="block">{() => null}</QueryBoundary>
     </Page>
   )
-  return <RunScreen key={run.uid} run={run} tab={tab} refetch={() => void detail.refetch()} />
+  return <RunScreen key={run.uid} run={run} tab={tab ?? defaultTab(run)} refetch={() => void detail.refetch()} />
 }
+
+// A run that has not started has no progress yet: open on its plan.
+const defaultTab = (run: Run) => run.phase === "Pending" ? "plan" : "progress"
 
 function RunScreen({ run, tab, refetch }: { run: Run; tab: string; refetch: () => void }) {
   const router = useRouter()
@@ -59,11 +63,11 @@ function RunScreen({ run, tab, refetch }: { run: Run; tab: string; refetch: () =
   const execution = condition(run.conditions, "ExecutionComplete")
   const edit = `/experiments/runs/${encodeURIComponent(run.name)}`
 
+  const editHref = `${edit}/edit?uid=${encodeURIComponent(run.uid)}`
   const more: MoreAction[] = [
-    ...(actions.edit ? [{ label: "수정", onSelect: () => router.push(`${edit}/edit?uid=${encodeURIComponent(run.uid)}`) }] : []),
     { label: "다시 실행", onSelect: () => router.push(`/experiments/runs/new?copy=${encodeURIComponent(run.name)}`) },
     { label: "원본 보기", onSelect: () => setRaw(true) },
-    { label: actions.remove, destructive: true, disabled: actions.remove === "중지" && !!run.stopRequested, onSelect: () => setRemoving(true) },
+    { label: actions.remove, destructive: true, disabled: actions.remove === "중지" && !!run.stopRequested, disabledReason: "중지 요청됨", onSelect: () => setRemoving(true) },
   ]
   const confirmRemove = () => remove.mutate(
     { path: `${runPath(run.name)}?uid=${encodeURIComponent(run.uid)}`, method: "DELETE" },
@@ -78,7 +82,7 @@ function RunScreen({ run, tab, refetch }: { run: Run; tab: string; refetch: () =
       onError: error => {
         setRemoving(false)
         const code = (error.data as { code?: unknown } | null)?.code
-        toast(error.unknownOutcome || error.status === 0 ? { title: "결과 미확인", type: "warning" } : { title: `${actions.remove} 실패`, description: typeof code === "string" ? code : `HTTP ${error.status}`, type: "error" })
+        toast(error.unknownOutcome || error.status === 0 ? { title: "결과 미확인", type: "warning" } : { title: `${actions.remove} 실패`, description: typeof code === "string" ? explain(code)[0] : `HTTP ${error.status}`, type: "error" })
         refetch()
       },
     },
@@ -91,22 +95,27 @@ function RunScreen({ run, tab, refetch }: { run: Run; tab: string; refetch: () =
         status={evaluationPhase(run.phase)}
         badges={<>
           {run.stopRequested && !finished && <StatusBadge tone="warn" label="중지 요청됨" reason={run.stopRequested.by || undefined} />}
-          {execution?.status === "False" && <StatusBadge status={evaluationExecution(execution)} reason={reasonHint(execution.reason)} />}
-          {verdict && <StatusBadge status={evaluationVerdict(verdict)} reason={reasonHint(verdict.reason)} />}
+          {execution?.status === "False" && <StatusBadge status={evaluationExecution(execution)} reason={reasonText(execution.reason)} />}
+          {verdict && <StatusBadge status={evaluationVerdict(verdict)} reason={reasonText(verdict.reason)} />}
         </>}
-        actions={run.publicationID && <Link href={`/experiments/results/${encodeURIComponent(run.publicationID)}`} className={buttonClassName({ variant: "default" })}>결과 보기</Link>}
+        actions={run.publicationID
+          ? <Link href={`/experiments/results/${encodeURIComponent(run.publicationID)}`} className={buttonClassName({ variant: "default" })}>결과 보기</Link>
+          : actions.edit ? <Link href={editHref} className={buttonClassName({ variant: "default" })}>수정</Link>
+          : releasable(run) && <ReleaseAction run={run} onChanged={refetch} />}
         more={more}
       />
-      <Section card>
-        <Fields columns={3} items={[
-          { label: "시작", value: run.startedAt ? <TimeText at={run.startedAt} mode="absolute" /> : null, reason: "시작 전" },
-          { label: "종료", value: run.finishedAt ? <TimeText at={run.finishedAt} mode="absolute" /> : null, reason: finished ? "미기록" : "실행 중" },
-          { label: "소요", value: run.startedAt ? <Elapsed from={run.startedAt} to={run.finishedAt} /> : null, reason: "시작 전" },
-        ]} />
-      </Section>
-      <PageTabs param="tab" defaultValue="progress" tabs={tabs} />
+      {run.startedAt && (
+        <Section card>
+          <Fields columns={3} items={[
+            { label: "시작", value: <TimeText at={run.startedAt} mode="absolute" /> },
+            { label: "종료", value: run.finishedAt ? <TimeText at={run.finishedAt} mode="absolute" /> : null, reason: finished ? "미기록" : "진행 중" },
+            { label: "소요", value: <Elapsed from={run.startedAt} to={run.finishedAt} /> },
+          ]} />
+        </Section>
+      )}
+      <PageTabs param="tab" defaultValue={defaultTab(run)} tabs={tabs} />
       {tab === "plan" ? <RunPlan run={run} publication={publication.data} />
-        : tab === "cleanup" ? <RunCleanup run={run} publication={run.publicationID ? publication : null} onChanged={refetch} />
+        : tab === "cleanup" ? <RunCleanup run={run} publication={run.publicationID ? publication : null} />
         : tab === "target" ? <RunTargets targets={run.liveTarget} />
         : <RunProgress run={run} />}
       <RawDialog open={raw} onOpenChange={setRaw} value={run} filename={run.name} />
@@ -124,7 +133,7 @@ type TargetRow = { key: string; component: string; resource: string; image: stri
 function RunTargets({ targets }: { targets: EvaluationLiveTarget[] | null | undefined }) {
   const rows: TargetRow[] = (targets ?? []).flatMap((target, index) => (target.liveImageIDs.length ? target.liveImageIDs : [""]).map((id, image) => {
     const [ref, digest] = id.split("@")
-    return { key: `${index}/${image}`, component: target.component, resource: `${target.resource.kind} ${target.resource.name}`, image: ref ? ref.slice(ref.lastIndexOf("/") + 1) : null, digest: digest ?? null, ready: target.ready }
+    return { key: `${index}/${image}`, component: target.component, resource: target.resource.name, image: ref ? ref.slice(ref.lastIndexOf("/") + 1) : null, digest: digest ?? null, ready: target.ready }
   }))
   return (
     <DataTable<TargetRow>

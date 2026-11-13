@@ -66,14 +66,16 @@ export function parsePowerSeriesJSON(text:string):OperatingPowerSeries {
   return {from,to,bucketNanos,buckets}
 }
 
-/** Keep true historical intervals only where they do not overlap a live interval. */
+/** Historical intervals where no live interval covers them; one that runs into a live interval ends where that one starts, so the line meets live data without a gap. */
 export function mergePowerSeries(seed:OperatingPowerSeries|undefined,metrics:LiveMetrics[],end:number,retentionMS=900000):PowerPoint[] {
   const live:PowerPoint[]=metrics.map(row=>({from:Date.parse(row.bucketAt),to:Date.parse(row.bucketAt)+1000,wholeWatts:row.pool.wholeWatts,activeWatts:row.pool.activeWatts,nodes:Object.fromEntries(Object.entries(row.nodes).map(([uid,node])=>[uid,node.watts]))})).filter(row=>row.to>end-retentionMS&&row.to<=end).sort((a,b)=>a.from-b.from)
   let liveIndex=0
-  const history:PowerPoint[]=(seed?.buckets??[]).map(row=>({from:Date.parse(row.from),to:Date.parse(row.to),wholeWatts:row.wholePoolMeanWatts,activeWatts:row.activePoolMeanWatts,nodes:Object.fromEntries((row.nodes??[]).map(node=>[node.node.uid,node.meanWatts]))})).filter(row=>{
-    if(row.to<=end-retentionMS||row.to>end)return false
+  const history:PowerPoint[]=(seed?.buckets??[]).map(row=>({from:Date.parse(row.from),to:Date.parse(row.to),wholeWatts:row.wholePoolMeanWatts,activeWatts:row.activePoolMeanWatts,nodes:Object.fromEntries((row.nodes??[]).map(node=>[node.node.uid,node.meanWatts]))})).flatMap(row=>{
+    if(row.to<=end-retentionMS||row.to>end)return []
     while(liveIndex<live.length&&live[liveIndex].to<=row.from)liveIndex++
-    return liveIndex===live.length||live[liveIndex].from>=row.to
+    const next=live[liveIndex]
+    if(!next||next.from>=row.to)return [row]
+    return next.from>row.from?[{...row,to:next.from}]:[]
   })
   return [...history,...live].sort((a,b)=>a.from-b.from).slice(-900)
 }

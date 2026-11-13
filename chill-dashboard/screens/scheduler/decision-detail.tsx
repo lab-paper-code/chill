@@ -1,15 +1,18 @@
 "use client"
 
-import * as React from "react"
 import Link from "next/link"
 import { useChillQuery } from "@/lib/client"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { schedulerLabel } from "@/lib/scheduler-selection"
+import { schedulerLabel, schedulerOptions } from "@/lib/scheduler-selection"
 import { formatDurationNanos, formatKst, formatNumber } from "@/lib/format"
 import { autonomyState, candidateStatus, decisionStatus, schedulerReason } from "@/lib/status-labels"
-import { changedTarget, controlFor, decisionControlPath, decisionRecordPath, latencyRows, recordResult, tickPhases, type ControlObservation, type DecisionPage, type LatencyRow } from "@/lib/scheduler-decisions"
+import { actionKindLabel } from "@/lib/scheduler-actions"
+import {
+  changedTarget, controlFor, decisionControlPath, decisionHeadline, decisionRecordPath, latencyRows, recordResult, savingJoules, tickPhases,
+  type ControlObservation, type DecisionPage, type LatencyRow, type PlannedAction,
+} from "@/lib/scheduler-decisions"
 import type { SchedulerCandidate, SchedulerDecision, SchedulerNodePlan, SchedulerObservation, SchedulerObservationPage, SchedulerWorkloadState, WireInteger } from "@/lib/read-types"
-import { buttonClassName, DataTable, EmptyState, Fields, Hint, IdText, QueryBoundary, Section, StatusBadge, StatusDot, type Column } from "@/components/kit"
+import { buttonClassName, DataTable, EmptyState, Feed, Fields, Hint, IdText, MeterBar, QueryBoundary, Section, StatusBadge, StatusDot, type Column } from "@/components/kit"
 
 const decoder = { decoder: parseSchedulerJSON }
 type Names = (uid: string) => string | undefined
@@ -45,50 +48,80 @@ export function DecisionDetail({ at, names, intervalNanos }: { at: string; names
   )
 }
 
+/** Reading order: what was decided and why, keep versus change, then the evidence. */
 function Detail({ event, names, intervalNanos }: { event: SchedulerObservation; names: Map<string, string>; intervalNanos: WireInteger | undefined }) {
   const decision = event.decision!
   // Names as recorded with the decision first; deleted services keep theirs.
   const name: Names = uid => event.snapshot?.workloads?.find(w => w?.uid === uid)?.name ?? names.get(uid)
   return (
     <div className="grid gap-6">
-      <Summary decision={decision} />
-      <Candidates decision={decision} name={name} />
+      <Summary decision={decision} name={name} />
+      <Latency decision={decision} name={name} />
+      <Inputs decision={decision} name={name} />
       <Autonomy workloads={decision.workloads ?? []} name={name} />
-      <Demand decision={decision} name={name} />
       <Capacity decision={decision} />
       <Timing at={decision.at} intervalNanos={intervalNanos} />
     </div>
   )
 }
 
-function Summary({ decision }: { decision: SchedulerDecision }) {
-  const s = decision.search
-  const reasons = decision.reasons ?? []
+/** The reason line: server reason labels (unknown codes folded into "기타 n건"), else the headline the record supports. */
+function Headline({ decision }: { decision: SchedulerDecision }) {
+  const headline = decisionHeadline(decision)
+  if (!headline) return <p className="text-base text-muted-foreground">기록된 사유 없음</p>
+  if ("text" in headline) return <p className="text-base font-semibold">{headline.text}</p>
+  const labels = headline.reasons.map(code => schedulerReason(code))
+  const known = [...new Set(labels.flatMap(item => (item.code ? [] : [item.label])))]
+  const unknown = labels.flatMap(item => (item.code ? [item.code] : []))
+  return (
+    <p className="text-base font-semibold">
+      {known.join(", ")}
+      {unknown.length > 0 && <>{known.length > 0 && ", "}<Hint text={unknown.join(", ")} focusable>{`기타 ${unknown.length}건`}</Hint></>}
+    </p>
+  )
+}
+
+type Plan = { label: string; plan: SchedulerCandidate; diff: number | null }
+function Summary({ decision, name }: { decision: SchedulerDecision; name: Names }) {
+  const target = changedTarget(decision)
+  const saving = savingJoules(decision)
+  const plans: Plan[] = [{ label: "유지안", plan: decision.keep, diff: null }]
+  if (target) plans.push({ label: "변경안", plan: target, diff: saving == null ? null : -saving })
+  const actions = (target?.actions ?? []) as PlannedAction[]
   return (
     <Section card title={formatKst(decision.at)} actions={<>
       <Link href={`/scheduler/actions?at=${encodeURIComponent(decision.at)}`} className={buttonClassName({ variant: "ghost", size: "sm" })}>작업 보기</Link>
       <StatusBadge status={decisionStatus(recordResult(decision))} />
     </>}>
-      <Fields columns={3} items={[
-        { label: "사유", value: reasons.length ? <ReasonSummary codes={reasons} /> : null, reason: "사유 없음" },
-        { label: "입력 구간", value: s ? `${formatKst(s.windowStart).slice(11)} ~ ${formatKst(s.windowEnd).slice(11)}` : null, reason: "기록 없음" },
-        { label: "판단 계산", value: decision.evaluationElapsedNanos == null ? null : formatDurationNanos(decision.evaluationElapsedNanos), reason: "기록 없음", info: "후보를 만들고 비교하는 데 걸린 시간" },
-        { label: "받은 요청", value: s ? `${formatNumber(s.received)}건` : null, reason: "기록 없음" },
-        { label: "접수 요청", value: s ? `${formatNumber(s.accepted)}건` : null, reason: "기록 없음" },
-        { label: "검토한 후보", value: s ? `${formatNumber(s.examined)}개` : null, reason: "기록 없음" },
-      ]} />
+      <div className="grid gap-4">
+        <Headline decision={decision} />
+        <DataTable label="유지안과 변경안" rows={plans} rowKey={row => row.label} pageSize={0} density="compact" columns={[
+          { key: "plan", header: "후보", cell: row => row.label },
+          { key: "status", header: "판정", cell: row => <StatusDot status={candidateStatus(row.plan.status)} showLabel /> },
+          { key: "energy", header: "예상 에너지", unit: "J", numeric: true, missingReason: "판정 불가", cell: row => row.plan.expectedJoules == null ? null : formatNumber(row.plan.expectedJoules, 1) },
+          { key: "diff", header: "차이", unit: "J", numeric: true, missing: row => (row.label === "유지안" ? "기준" : "판정 불가"), cell: row => row.diff == null ? null : `${row.diff > 0 ? "+" : ""}${formatNumber(row.diff, 1)}` },
+          {
+            key: "over", header: "목표 초과", unit: "개", numeric: true, missingReason: "예측 없음",
+            cell: row => row.plan.slo?.length ? formatNumber(row.plan.slo.filter(estimate => estimate.normalizedExceedance > 0).length) : null,
+          },
+        ]} />
+        {target && (
+          <Section title="변경 작업">
+            <Feed label="변경 작업" empty="작업 없음" items={actions.map(action => ({
+              key: action.id, title: actionKindLabel(action.kind) ?? "—", secondary: action.node.name || undefined,
+              meta: action.workloadUID ? name(action.workloadUID) : undefined,
+            }))} />
+          </Section>
+        )}
+      </div>
     </Section>
   )
 }
 
-type Plan = { label: string; plan: SchedulerCandidate; diff: number | null }
-function Candidates({ decision, name }: { decision: SchedulerDecision; name: Names }) {
+function Latency({ decision, name }: { decision: SchedulerDecision; name: Names }) {
   const target = changedTarget(decision)
-  const keepJ = decision.keep.expectedJoules
-  const plans: Plan[] = [{ label: "유지안", plan: decision.keep, diff: null }]
-  if (target) plans.push({ label: "변경안", plan: target, diff: target.expectedJoules != null && keepJ != null ? target.expectedJoules - keepJ : null })
   const latency = latencyRows(decision).sort((a, b) => (name(a.uid) ?? a.uid).localeCompare(name(b.uid) ?? b.uid))
-  const latencyColumns: Column<LatencyRow>[] = [
+  const columns: Column<LatencyRow>[] = [
     { key: "service", header: "서비스", width: "34%", cell: row => <Service uid={row.uid} name={name} /> },
     { key: "percentile", header: "분위수", cell: row => row.percentile == null ? null : `p${row.percentile}` },
     { key: "target", header: "목표", unit: "ms", numeric: true, cell: row => formatNumber(row.targetMs, 1) },
@@ -96,54 +129,49 @@ function Candidates({ decision, name }: { decision: SchedulerDecision; name: Nam
     ...(target ? [{ key: "change", header: "변경안", unit: "ms", numeric: true, missingReason: "예측 불가", cell: (row: LatencyRow) => row.changeMs == null ? null : formatNumber(row.changeMs, 1) }] : []),
   ]
   return (
-    <>
-      <Section title="후보 비교">
-        <DataTable label="후보별 예상 에너지" rows={plans} rowKey={row => row.label} pageSize={0} columns={[
-          { key: "plan", header: "후보", cell: row => row.label },
-          { key: "status", header: "판정", cell: row => <StatusDot status={candidateStatus(row.plan.status)} showLabel /> },
-          { key: "energy", header: "예상 에너지", unit: "J", numeric: true, missingReason: "판정 불가", cell: row => row.plan.expectedJoules == null ? null : formatNumber(row.plan.expectedJoules, 1) },
-          { key: "diff", header: "유지안 대비", unit: "J", numeric: true, missingReason: "해당 없음", cell: row => row.diff == null ? null : `${row.diff > 0 ? "+" : ""}${formatNumber(row.diff, 1)}` },
-          { key: "actions", header: "작업", unit: "건", numeric: true, cell: row => formatNumber(row.plan.actions?.length ?? 0) },
+    <DataTable title="서비스별 예상 지연" label="서비스별 예상 지연" rows={latency} rowKey={row => row.uid} pageSize={0} columns={columns}
+      empty={<EmptyState compact title="예상 지연 없음" />} />
+  )
+}
+
+type DemandRow = { uid: string; received: number | null; accepted: number | null; inputs: number | null; planned: number | null }
+function Inputs({ decision, name }: { decision: SchedulerDecision; name: Names }) {
+  const s = decision.search
+  const rows = new Map<string, DemandRow>()
+  const row = (uid: string) => rows.get(uid) ?? rows.set(uid, { uid, received: null, accepted: null, inputs: null, planned: null }).get(uid)!
+  for (const load of s?.loads ?? []) Object.assign(row(load.uid), { received: load.received, accepted: load.accepted, inputs: load.inputsPerSecond })
+  for (const workload of decision.capacity?.workloads ?? []) row(workload.uid).planned = workload.rate
+  const list = [...rows.values()].sort((a, b) => (name(a.uid) ?? a.uid).localeCompare(name(b.uid) ?? b.uid))
+  return (
+    <Section title="입력 수요">
+      <div className="grid gap-3">
+        <Section card>
+          <Fields columns={3} items={[
+            { label: "입력 구간", value: s ? `${formatKst(s.windowStart).slice(11)} ~ ${formatKst(s.windowEnd).slice(11)}` : null, reason: "기록 없음" },
+            { label: "받은 요청", value: s ? `${formatNumber(s.received)}건` : null, reason: "기록 없음" },
+            { label: "접수 요청", value: s ? `${formatNumber(s.accepted)}건` : null, reason: "기록 없음" },
+          ]} />
+        </Section>
+        <DataTable label="서비스별 입력 수요" rows={list} rowKey={item => item.uid} pageSize={0} empty={<EmptyState compact title="입력 없음" />} columns={[
+          { key: "service", header: "서비스", width: "32%", cell: item => <Service uid={item.uid} name={name} /> },
+          { key: "received", header: "받은 요청", unit: "건", numeric: true, cell: item => item.received == null ? null : formatNumber(item.received) },
+          { key: "accepted", header: "접수", unit: "건", numeric: true, cell: item => item.accepted == null ? null : formatNumber(item.accepted) },
+          { key: "inputs", header: "입력률", unit: "개/s", numeric: true, cell: item => item.inputs == null ? null : formatNumber(item.inputs, 2) },
+          { key: "planned", header: "계획 수요", unit: "req/s", numeric: true, missingReason: "용량 계산 없음", cell: item => item.planned == null ? null : formatNumber(item.planned, 2) },
         ]} />
-      </Section>
-      <Section title="서비스별 예상 지연">
-        <DataTable label="서비스별 예상 지연" rows={latency} rowKey={row => row.uid} pageSize={0} columns={latencyColumns}
-          empty={<EmptyState compact title="예상 지연 없음" />} />
-      </Section>
-    </>
+      </div>
+    </Section>
   )
 }
 
 function Autonomy({ workloads, name }: { workloads: SchedulerWorkloadState[]; name: Names }) {
   const rows = [...workloads].sort((a, b) => (name(a.uid) ?? a.uid).localeCompare(name(b.uid) ?? b.uid))
   return (
-    <Section title="서비스별 자동 제어">
-      <DataTable label="서비스별 자동 제어" rows={rows} rowKey={row => row.uid} pageSize={0} empty={<EmptyState compact title="서비스 없음" />} columns={[
-        { key: "service", header: "서비스", width: "40%", cell: row => <Service uid={row.uid} name={name} /> },
-        { key: "state", header: "상태", cell: row => <StatusDot status={autonomyState(row.state)} showLabel /> },
-        { key: "reason", header: "사유", missingReason: "사유 없음", cell: row => row.reason ? <Reason code={row.reason} /> : null },
-      ]} />
-    </Section>
-  )
-}
-
-type DemandRow = { uid: string; received: number | null; accepted: number | null; inputs: number | null; planned: number | null }
-function Demand({ decision, name }: { decision: SchedulerDecision; name: Names }) {
-  const rows = new Map<string, DemandRow>()
-  const row = (uid: string) => rows.get(uid) ?? rows.set(uid, { uid, received: null, accepted: null, inputs: null, planned: null }).get(uid)!
-  for (const load of decision.search?.loads ?? []) Object.assign(row(load.uid), { received: load.received, accepted: load.accepted, inputs: load.inputsPerSecond })
-  for (const workload of decision.capacity?.workloads ?? []) row(workload.uid).planned = workload.rate
-  const list = [...rows.values()].sort((a, b) => (name(a.uid) ?? a.uid).localeCompare(name(b.uid) ?? b.uid))
-  return (
-    <Section title="입력 수요">
-      <DataTable label="입력 수요" rows={list} rowKey={item => item.uid} pageSize={0} empty={<EmptyState compact title="입력 없음" />} columns={[
-        { key: "service", header: "서비스", width: "32%", cell: item => <Service uid={item.uid} name={name} /> },
-        { key: "received", header: "받은 요청", unit: "건", numeric: true, cell: item => item.received == null ? null : formatNumber(item.received) },
-        { key: "accepted", header: "접수", unit: "건", numeric: true, cell: item => item.accepted == null ? null : formatNumber(item.accepted) },
-        { key: "inputs", header: "입력률", unit: "/s", numeric: true, cell: item => item.inputs == null ? null : formatNumber(item.inputs, 2) },
-        { key: "planned", header: "계획 수요", unit: "req/s", numeric: true, missingReason: "용량 계산 없음", cell: item => item.planned == null ? null : formatNumber(item.planned, 2) },
-      ]} />
-    </Section>
+    <DataTable title="서비스별 자동 제어" label="서비스별 자동 제어" rows={rows} rowKey={row => row.uid} pageSize={0} empty={<EmptyState compact title="서비스 없음" />} columns={[
+      { key: "service", header: "서비스", width: "40%", cell: row => <Service uid={row.uid} name={name} /> },
+      { key: "state", header: "상태", cell: row => <StatusDot status={autonomyState(row.state)} showLabel /> },
+      { key: "reason", header: "사유", missingReason: "사유 없음", cell: row => row.reason ? <Reason code={row.reason} /> : null },
+    ]} />
   )
 }
 
@@ -151,23 +179,25 @@ function Capacity({ decision }: { decision: SchedulerDecision }) {
   const capacity = decision.capacity
   if (!capacity) return <Section title="용량 근거"><EmptyState compact title="용량 근거 없음" className="rounded-xl border border-dashed border-border" /></Section>
   const search = capacity.search
+  const strategy = search?.strategy
+  const known = schedulerOptions.some(option => option.value === strategy)
   return (
     <Section title="용량 근거">
       <div className="grid gap-3">
         <Section card>
           <Fields columns={3} items={[
-            { label: "탐색 방식", value: search?.strategy ? schedulerLabel(search.strategy) : null, reason: "기록 없음" },
+            { label: "스케줄러", value: known ? schedulerLabel(strategy) : null, reason: strategy ? `코드 ${strategy}` : "기록 없음" },
             { label: "평가한 구성", value: search ? `${formatNumber(search.evaluated)}개` : null, reason: "기록 없음" },
             { label: "탐색 시간", value: search ? formatDurationNanos(search.durationNanos) : null, reason: "기록 없음" },
-            { label: "시간 마감 종료", value: search?.budgetCut == null ? null : search.budgetCut ? "예" : "아니요", reason: "기록 없음" },
+            { label: "평가 예산 소진", value: search?.budgetCut == null ? null : search.budgetCut ? "예" : "아니요", reason: "기록 없음" },
             { label: "에너지 비교 기간", value: formatDurationNanos(capacity.periodNanos) },
             { label: "분배 계산 기간", value: formatDurationNanos(capacity.routeNanos) },
           ]} />
         </Section>
-        <DataTable<SchedulerNodePlan> label="장치별 계획" rows={capacity.plans ?? []} rowKey={plan => `${plan.node.uid}/${plan.key}`} pageSize={8}
+        <DataTable<SchedulerNodePlan> label="장치별 계획" rows={capacity.plans ?? []} rowKey={plan => `${plan.node.uid}/${plan.key}`} pageSize={0}
           empty={<EmptyState compact title="계획 없음" />} columns={[
             { key: "node", header: "장치", cell: plan => plan.node.name || null },
-            { key: "eligible", header: "적격", cell: plan => <StatusDot status={plan.eligible ? { label: "적격", tone: "ok" } : { label: "제외", tone: "idle" }} showLabel /> },
+            { key: "eligible", header: "후보", cell: plan => <StatusDot status={plan.eligible ? { label: "포함", tone: "ok" } : { label: "빠짐", tone: "idle" }} showLabel /> },
             { key: "reason", header: "사유", missingReason: "사유 없음", cell: plan => plan.reason ? <Reason code={plan.reason} /> : null },
             { key: "joules", header: "예상 에너지", unit: "J", numeric: true, cell: plan => formatNumber(plan.joules, 1) },
           ]} />
@@ -203,9 +233,7 @@ function Phases({ control, intervalNanos }: { control: ControlObservation; inter
             <li key={phase.key} className="grid grid-cols-[minmax(0,9rem)_5.5rem_minmax(0,1fr)] items-center gap-3">
               <span className={phase.part ? "truncate pl-4 text-muted-foreground" : "truncate"}>{phase.label}</span>
               <span className="text-right tabular-nums">{formatDurationNanos(phase.nanos)}</span>
-              <span className="h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-                <span className={phase.part ? "block h-full bg-primary/45" : "block h-full bg-primary"} style={{ width: `${Math.min(phase.nanos / total, 1) * 100}%` }} />
-              </span>
+              <MeterBar value={phase.nanos} max={total} width="full" tone={phase.part ? "idle" : "progress"} label={`${phase.label} ${formatDurationNanos(phase.nanos)}`} />
             </li>
           ))}
         </ul>

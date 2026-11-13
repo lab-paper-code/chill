@@ -42,7 +42,8 @@ function Editor({ kind, r, name, title }: { kind: CatalogKind; r: ResourceState;
   const [review, setReview] = useState(false)
 
   const result = r.result, error = r.mutation.error
-  const target = isNew ? newName.trim() : name
+  const [imported, setImported] = useState("")
+  const target = !isNew ? name : importing ? imported : newName.trim()
   useEffect(() => {
     if (!result) return
     toast({ title: isNew ? "등록됨" : "적용됨", description: target, type: "success" })
@@ -92,7 +93,7 @@ function Editor({ kind, r, name, title }: { kind: CatalogKind; r: ResourceState;
         </Alert>
       )}
       {importing ? (
-        <ImportTab kind={kind} text={docText} onText={setDocText} locked={locked} pending={r.mutation.isPending} onRegister={registration => void send(registration)} />
+        <ImportTab kind={kind} text={docText} onText={setDocText} locked={locked} pending={r.mutation.isPending} onRegister={registration => { setImported(registration.name); void send(registration) }} />
       ) : (
         <form className="grid gap-4" onSubmit={submit} noValidate>
           {isNew && (

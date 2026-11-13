@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { compareRows, decisionControlPath, decisionRecordPath, decisionResult, latencyRows, tickPhases, type ControlObservation } from "./scheduler-decisions.ts"
+import { compareRows, decisionControlPath, decisionHeadline, decisionRecordPath, decisionResult, latencyRows, tickPhases, type ControlObservation } from "./scheduler-decisions.ts"
 import type { SchedulerCandidate, SchedulerDecision } from "./read-types.ts"
 
 const plan = (id: string, keep: boolean, joules: number | null, expected: number | null): SchedulerCandidate =>
@@ -18,10 +18,24 @@ test("record and control paths select the exact decision instant", () => {
   assert.equal(control.get("to"), "2026-11-13T15:06:22.000Z")
 })
 
-test("result reads the target-keep marker before the status", () => {
+test("result reads the target-keep marker for Feasible and Keep only", () => {
   assert.equal(decisionResult("Feasible", true), "Keep")
   assert.equal(decisionResult("Keep", false), "Feasible")
   assert.equal(decisionResult("Overload", undefined), "Overload")
+  assert.equal(decisionResult("Overload", true), "Overload")
+  assert.equal(decisionResult("Pending", undefined), "Pending")
+})
+
+test("headline gives server reasons first, then the keep plan's status or the energy saved", () => {
+  const changed = decision("2026-11-13T15:00:00Z", plan("c1", false, 80, 45_000_000))
+  assert.deepEqual(decisionHeadline(changed), { text: "예상 에너지 20.0 J 절감" })
+  assert.deepEqual(decisionHeadline({ ...changed, reasons: ["NoPlanMeetsSLO"] }), { reasons: ["NoPlanMeetsSLO"] })
+  assert.deepEqual(decisionHeadline({ ...changed, keep: { ...changed.keep, status: "Overload" } }), { text: "유지안 과부하" })
+  assert.deepEqual(decisionHeadline(decision("2026-11-13T15:00:00Z", plan("keep", true, 100, 40_000_000))), { text: "더 나은 후보 없음" })
+  const idle = decision("2026-11-13T15:00:00Z", plan("keep", true, 0, null))
+  assert.deepEqual(decisionHeadline({ ...idle, workloads: [{ uid: "u1", state: "Disabled", reason: "AutonomousControlOff" }] }), { text: "자동 제어 서비스 없음" })
+  assert.equal(decisionHeadline(decision("2026-11-13T15:00:00Z", null)), null)
+  assert.equal(decisionHeadline(decision("2026-11-13T15:00:00Z", plan("c2", false, 120, 45_000_000))), null)
 })
 
 test("latency and comparison use the selected plan's server values", () => {
