@@ -362,18 +362,19 @@ func TestMetricsSLOWindowGrowthWaitsForRetainedCoverage(t *testing.T) {
 	for second := range 15 {
 		_ = step(second)
 	}
-	// Retention covered the 2 s window plus the 10 s correction span: from 3 s.
+	// The last flush retained finishes from its pre-advance next (14 s) minus
+	// the 10 s correction span and the 2 s window: from 2 s.
 	metrics.SetSLOWindow(20 * time.Second)
 	grown := step(15)
-	assertSLO(t, "grown window older than retention", grown, 13, 13, noVerdict)
+	assertSLO(t, "grown window older than retention", grown, 14, 14, noVerdict)
 	if grown.WindowSeconds != 20 {
 		t.Fatalf("window length not followed: %+v", grown)
 	}
-	for second := 16; second < 21; second++ {
+	for second := 16; second < 20; second++ {
 		_ = step(second)
 	}
-	assertSLO(t, "window still starts before retention", step(21), 19, 19, noVerdict)
-	assertSLO(t, "window covered by retention", step(22), 20, 20, 23)
+	assertSLO(t, "window still starts before retention", step(20), 19, 19, noVerdict)
+	assertSLO(t, "window covered by retention", step(21), 20, 20, 22)
 }
 
 func TestMetricsSLOWindowWithoutSamplesOmitsQuantile(t *testing.T) {
@@ -427,4 +428,19 @@ func TestMetricsSLOWindowLateResponseRecomputesOnlyItsBucket(t *testing.T) {
 		t.Fatalf("a later bucket was re-emitted: %s", bucket)
 	}
 	assertSLO(t, "next window", next, 2, 2, 40)
+}
+
+func TestMetricsSLOWindowKeepsOldestCorrectionAcrossMultiSecondFlush(t *testing.T) {
+	metrics, sub, at := sloFixture(t, 100, time.Second, 2*time.Second)
+	for second := range 12 {
+		finish(metrics, at.Add(time.Duration(second)*time.Second+500*time.Millisecond), true, time.Duration(second+1)*time.Millisecond, time.Second)
+		_, _ = flushSLO(t, metrics, sub, at.Add(time.Duration(second+1)*time.Second))
+	}
+	// The oldest correctable bucket (2 s) is corrected while one flush advances 2 s.
+	finish(metrics, at.Add(2700*time.Millisecond), true, 50*time.Millisecond, time.Second)
+	bucket, corrected := flushSLO(t, metrics, sub, at.Add(14*time.Second))
+	if bucket != timestamp(at.Add(2*time.Second)) {
+		t.Fatalf("first frame %s is not the corrected bucket", bucket)
+	}
+	assertSLO(t, "corrected bucket keeps its whole window", corrected, 3, 3, 50)
 }

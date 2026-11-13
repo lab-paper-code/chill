@@ -45,7 +45,7 @@ func (m *Metrics) SetSLOWindow(window time.Duration) {
 }
 
 // merge folds drained samples into the latency order in place, from the back,
-// then drops samples that finished before floor.
+// then drops samples that finished before floor and releases a shrunk buffer.
 func (s *sloSeries) merge(floor int64) {
 	added := s.drained
 	slices.SortFunc(added, func(a, b sloSample) int { return cmp.Compare(a.ms, b.ms) })
@@ -59,6 +59,9 @@ func (s *sloSeries) merge(floor int64) {
 		}
 	}
 	s.sorted = slices.DeleteFunc(s.sorted, func(sample sloSample) bool { return sample.finishedAt < floor })
+	if cap(s.sorted) > 4*len(s.sorted) {
+		s.sorted = slices.Clone(s.sorted)
+	}
 }
 
 // judge reads responses that finished in [end-window,end). A window starting

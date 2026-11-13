@@ -335,8 +335,13 @@ func (m *Metrics) Flush(now time.Time) error {
 	m.flushMu.Lock()
 	defer m.flushMu.Unlock()
 	work := m.collect(now)
+	retained := 0
 	for _, view := range m.sloViews {
 		view.series.merge(work.floor.UnixNano())
+		retained = max(retained, len(view.series.sorted))
+	}
+	if cap(m.sloScratch) > 4*retained {
+		m.sloScratch = nil // release a shrunk window's buffer
 	}
 	for i, frame := range work.frames {
 		if work.window > 0 {
@@ -394,6 +399,9 @@ func (m *Metrics) collect(now time.Time) metricsFlush {
 		bucket.dirty = false
 		work.frames, work.ends = append(work.frames, message), append(work.ends, bucket.at.Add(time.Second))
 	}
+	// Retain samples for the window of the oldest bucket this flush can emit,
+	// before next advances: every later correction is newer than it.
+	m.sloFloor = m.next.Add(-10*time.Second - m.sloWindow)
 	if boundary.After(m.next) {
 		m.next = boundary
 	}
@@ -402,8 +410,6 @@ func (m *Metrics) collect(now time.Time) metricsFlush {
 			delete(m.buckets, key)
 		}
 	}
-	// Retain samples for the window of the oldest correctable bucket.
-	m.sloFloor = m.next.Add(-10*time.Second - m.sloWindow)
 	work.window, work.floor = m.sloWindow, m.sloFloor
 	clear(m.sloViews)
 	for uid, series := range m.slo {
