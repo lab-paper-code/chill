@@ -36,7 +36,7 @@ namespace별 여섯 kind를 metadata-only List로 읽는다. UID와 opaque resou
 | root별 profile와 runner 부적격 | 해당 사유 거절 또는 catalog 갱신 대기 |
 | 나머지 | root UID taint와 Granted 시각. 전환 비용은 runner 준비 뒤 Granted |
 
-CPU affinity/quota와 online−reserved는 gate가 아니다. Node identity, 실제 power, owner와 격리 proof는 유지한다. 외부 Pod는 삭제하지 않고 census에 남긴다.
+Node identity, 실제 power, owner와 격리 proof는 유지한다. 외부 Pod는 삭제하지 않고 census에 남긴다.
 
 taint는 resourceVersion merge patch이며 충돌은 재관측한다. 승인 Node는 capture와 실행 직전 검사에서 서빙 배치와 전력 변경 대상에서 제외한다. power pending 기한은 요청과 정책에서 구하고 누락 시 임의 추정하지 않는다.
 

@@ -173,7 +173,7 @@ BEO의 trialsPerBatch는 active와 idle 각각 3으로 고정한다. 같은 acto
   호환성, 입력 UID/resourceVersion와 출처, 판정 사유를 읽기 전용 API로 제공해야 한다.
   Compatible/Incompatible/Unknown을 구분하고 누락과 모호한 선언이나 조회 실패를 미지원으로
   바꾸지 않아야 한다. 같은 기종이라는 이유로 Node-bound 선언을 모든 Node로 확대하지 않는다.
-  정적 호환성은 전처리/데이터셋과 모드/CPU admission와 현재 준비 상태와 측정 완료를 보장하지 않는다.
+  전처리/데이터셋과 모드/CPU admission, 현재 준비 상태와 측정 완료는 각각 별도로 확인해야 한다.
 #### 실패 측정의 정확한 소유 회차
 finalized result가 없는 실패 BEO에서도 기존 Run의 controller owner apiVersion/kind/name/UID와
   기록된 batch/workload mode/attempt를 공개 조회로 연결할 수 있어야 한다. 같은 namespace와

@@ -15,7 +15,7 @@ exact prepare/remove는 같은 Node와 profile 조건, exact power는 같은 Nod
 
 `costProvenance.source`는 exact, node, deviceClass 또는 default이며 costRef나 configured value를 남긴다. 전이 추정과 default로 에너지 이동을 허가하지 않는다.
 
-각 before/mid/after는 자기 mode와 loaded state의 idle을 쓴다. 정확한 node-state wall baseline, 또는 단일 인스턴스의 같은 Node/mode/meter profile idle이 exact다. 독립 profile idle 여러 개의 합은 exact 공존 실측이 아니다.
+각 before/mid/after는 자기 mode와 loaded state의 idle을 쓴다. 정확한 node-state wall baseline, 또는 단일 인스턴스의 같은 Node/mode/meter profile idle이 exact다. 공존 상태의 exact 비용은 해당 공존 상태를 직접 측정한다.
 
 defaultIdlePower와 defaultOperationCost는 명시 필수다. 같은 고정 `comparisonPeriodNanos`를 keep과 후보에 적용한다. sample600초를 상수로 고정하지 않는다. 긴 사슬의 완결 operation J와 H 안 baseline/Serving을 구분한다.
 
@@ -27,7 +27,7 @@ keep와 선택 계획에는 phase별 idle, requestWatts와 profile references, a
 
 실제 Node의 비어 있지 않은 boot ID가 바뀌면 `(Node UID,from,to)` 방향을 process-local 사실로 남긴다. 그 방향만 old actor 전체 stop/drain/remove 뒤 power/settling, prepare, route를 사용한다.
 
-unknown과 in-place 방향은 stop/drain, loaded-process witness로 power, remove, prepare, route 순이다. unknown은 재부팅 없음의 증거가 아니다. 사실은 재시작이나 대체 Node UID로 이월하지 않는다. 장비별 hardcoded mode 표는 없다.
+unknown과 in-place 방향은 stop/drain, loaded-process witness로 power, remove, prepare, route 순이다. unknown 방향의 재부팅 여부는 실제 boot ID 변경으로 확인한다. 사실은 재시작이나 대체 Node UID로 이월하지 않는다. 장비별 hardcoded mode 표는 없다.
 
 예상 밖 reboot라도 mode outcome이 성공이면 power를 완료하고 기존 DAG가 cleanup과 재구성을 이어 간다. actuator/readback과 capture, non-reboot loaded-state 무결성 실패는 그대로 실패다.
 
@@ -103,7 +103,7 @@ mode 동률은 이름순이다. policy가 없으면 현재가 측정 최저이�
 
 terminal owner의 전체 UID와 책임 Node가 reset의 실제 cleanup scope 안일 때만 책임을 원자 인계한다. active/cancel, measurement와 범위 밖 책임은 인계하지 않는다. 인계한 identity 연결과 미확정 Create 의무는 이전 receipt GC로 지워지지 않는다.
 
-관련 writer 종료 뒤 fresh 전체 Pod List의 실제 부재와 power non-pending으로 노드별 반환한다. terminal Pod도 포함한다. 현재 desired mode와 requested-at에 맞는 transition이 필요하며 오래된 success는 proof가 아니다.
+관련 writer 종료 뒤 fresh 전체 Pod List의 실제 부재와 power non-pending으로 노드별 반환한다. terminal Pod도 포함한다. 현재 desired mode와 requested-at에 맞는 transition을 확인한다.
 
 최저 mode 측정 부재로 reset이 partial이어도 독립적으로 입증된 빈 노드는 반환할 수 있다. 생성 UID와 receipt를 못 얻은 possibly-effectful Create의 노드는 old Pod 부재만으로 반환하지 않는다.
 

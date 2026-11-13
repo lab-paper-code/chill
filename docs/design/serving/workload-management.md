@@ -108,7 +108,7 @@ Workload 삭제는 drain과 분배 해제, 소유 실물 종료와 정리 뒤 fi
 | `--drain-timeout` | 기본2분. SLO와 별개 |
 | serving memory | frozen Actor request/limit 유지. queue는 그 envelope 안에서 계산 |
 | ChillServer memory | chart limit4Gi, GOMEMLIMIT3GiB. CPU request/limit 없음 |
-| observation retention | 기본2시간 private PVC와 immutable archive |
+| observation retention | 기본 2시간 private PVC와 immutable archive |
 | profile namespaces | 측정 조회와 제출 범위. 생략 시 serving namespace |
 | kube API budget | QPS200/burst400. 별도 client limiter의 프로세스 총합 상한이 아님 |
 

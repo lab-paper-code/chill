@@ -78,7 +78,7 @@ Complete는 모든 read/close와 gzip.Close 성공 뒤다. immutable complete의
 
 request timeout은 각 SDK 호출의 retry/backoff 포함 상한이다. Flush 전체에 같은 짧은 deadline을 씌우지 않는다. archive는 serve loop 밖에서 실행하고 종료 때 cancel과 join한다. 종료 Close는 로컬 Sync/Close를 하며 실패 raw는 다음 boot에서 게시한다.
 
-retention은 hour 시작 기준 양수 duration, 기본2시간이다. 모든 stream이 Created/Existing이고 미완료 assigned pin이 없을 때만 삭제한다. upload 실패 hour와 이후, 미완료가 참조한 hour를 유지한다. S3 지연이 PVC를 채우면 append 실패와 health 오류로 드러난다.
+retention은 hour 시작 기준 양수 duration, 기본 2시간이다. 모든 stream이 Created/Existing이고 미완료 assigned pin이 없을 때만 삭제한다. upload 실패 hour와 이후, 미완료가 참조한 hour를 유지한다. S3 지연이 PVC를 채우면 append 실패와 health 오류로 드러난다.
 
 ## Capture와 읽기 일관성
 
@@ -160,7 +160,7 @@ raw 전용 caller는 `/chill/api/v1/observations/raw`와 `/chill/api/v1/observat
 
 `POST /api/v1/internal/observations/resources`는 `{node:{name,uid},samples:[...]}`를 받아 다음 targets를 반환한다. 최초 빈 handshake는 기록 없이 대상만 얻는다. 현재/직전 발급 identity를 검증하며 교체 UID를 연결하지 않는다.
 
-TLS와 projected token, 정확한 POST SAR를 사용한다. 공유 SA는 Node별 암호학적 identity를 보증하지 않는다. 기본 sample1초와 batch10초는 설정이며 실패 묶음은 버린다. 재전송과 spool, 소급 표본은 없다.
+TLS와 projected token, 정확한 POST SAR를 사용한다. 인증 범위는 공유 SA의 권한이다. 기본 sample 1초와 batch 10초는 설정이며 실패 묶음은 버린다. 재전송과 spool, 소급 표본은 없다.
 
 CPU usage와 throttling은 누적 ns, periods는 횟수, memory는 bytes, thermal은 milliCelsius다. 미지원과 읽기 실패는 부재와 errors이며0을 만들지 않는다. sampledAt과 receivedAt을 둘 다 유지하고 시계를 보정하지 않는다.
 
@@ -172,7 +172,7 @@ issue는 raised/changed/resolved이고 반복 성공/실패를 새 원인으로 
 
 ## Live와 평가 소비
 
-live hub는600프레임/8MiB ring,602프레임/2MiB queue와1MiB frame 상한을 사용한다. snapshot history의 retained sequence 범위는 보존 frame metadata다. REST 사건에 가짜 WS sequence를 붙이지 않는다.
+live hub는 600프레임/8MiB ring, 602프레임/2MiB queue와 1MiB frame 상한을 사용한다. snapshot history의 retained sequence 범위는 보존 frame metadata다. REST 사건에 가짜 WS sequence를 붙이지 않는다.
 
 mutation의 started/completed/failed와 원 status를 함께 읽는다. 오류 없는 NOT_SUBMITTED, Accepted와 DeletionRequested의 completed는 각각 사전 검사와 접수/삭제 요청의 종결이다. physical 측정 완료와 과학적 수용으로 세지 않는다.
 

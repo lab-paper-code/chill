@@ -41,9 +41,9 @@ admission과 같은 제어 경계에서 run과 Measuring을 등록하고 product
 - 확장 support와 교차하는 실패/누락과 maximumGap 초과 원 gap의 전체 폭 합집합을 한 번 센다.
 - `G=최대 관측 W × min(b−a,원 gap 합집합 길이)`, `B=S+G`.
 
-energyUncertaintyJoules, phaseSensitivityJoules와 missingGapJoules는 각각 B, S와 G다. `B/abs(Ehat)`는 보고 비율이며0과 비유한 비율은 undefined다.10%는 Accepted gate가 아니다.
+energyUncertaintyJoules, phaseSensitivityJoules와 missingGapJoules는 각각 B, S와 G다. `B/abs(Ehat)`는 보고 비율이며 0과 비유한 비율은 undefined다.
 
-Accepted는 실제 effect와 격리, 무추론, boundary와 확장 support, 유효 sample을 요구한다. 이 민감도는 관측 support와 Pmax 조건부다. 센서 교정이나 전체 물리 오차의95% 구간을 보증하지 않는다.
+Accepted는 실제 effect와 격리, 무추론, boundary와 확장 support, 유효 sample을 요구한다. 이 민감도는 관측 support와 Pmax 조건부다.
 
 planner는 nominal 평균을 유지하고 동일 immutable reference/trial의 signed 노출을 먼저 상쇄한다. 잔여 B 절댓값 합보다 이득이 클 때 에너지 이동한다. 같으면 keep이며 keep 미충족 회복은 별도 순서를 따른다. profile 통계 CI를 이 문턱에 더하지 않는다.
 
@@ -73,7 +73,7 @@ BEO 생성과 삭제도 같은 두 권한 층과 producer/evidence 보호를 사
 
 batchEnergyOptimization, node, workload와 batch는 exact profile과 현재 물리 Node, Dataset evaluation 입력을 연결한다. supplyMode와 workers, warmupSeconds, durationSeconds와 minimumPairs는 명시 정책이다.
 
-request lifetime과 delivery, preparation과 Job setup, collection과 drain, planned elapsed cap을 동결한다. sample의 burst15초, warmup5초, workers8과 minimumPairs100은 보편적 정밀도 보증이 아니다.
+request lifetime과 delivery, preparation과 Job setup, collection과 drain, planned elapsed cap을 동결한다. sample은 burst 15초, warmup 5초, workers 8과 minimumPairs 100을 사용한다. 정밀도는 실제 trial 결과로 판단한다.
 
 고정 B와 maxBatchWaitMS0의 accepted instance를 준비하고 공통 TLS gateway와 projected token, CA로 부하를 공급한다. native queue와 수명, profile tail과 전체 예산을 대조한다. 공급과 watchdog의 모든 구간이 frozen cap에 맞아야 하며 자동 clamp와 retry, 연장은 없다.
 
@@ -116,7 +116,7 @@ Tick은 atomic cache만 읽는다. source, pairs와 window, updatedAt과 value�
 
 `GET /api/v1/observations/occupancy?from=...&to=...`는 fresh 진단이다. from과 to 각각 하나, 양수 구간이며 accepted aggregationWindowSeconds 이하여야 한다. 초과는 scan 전400과 정수 maximumWindowSeconds다. 긴 과거 분석은 raw export와 offline reducer를 쓴다.
 
-bounded scan은 수명 cap과 drain allowance의 tail 안 segment만 두 번 읽어 선택 ID와 supplement를 연결한다. raw granularity는 minute나 gzip hour이며 밖 evidence를 가짜 완료로 만들지 않는다. operation timeout과 caller 취소를 지킨다. request count cap은 byte/RSS ceiling이 아니다.
+bounded scan은 수명 cap과 drain allowance의 tail 안 segment만 두 번 읽어 선택 ID와 supplement를 연결한다. raw granularity는 minute나 gzip hour이며 밖 evidence를 가짜 완료로 만들지 않는다. operation timeout과 caller 취소를 지킨다. request count cap은 요청 수에 적용한다.
 
 private `GET /api/v1/scheduler/catalog-read`의 accepted.dispatchOccupancy가 실제 d 선택의 권위다. accepted.occupancyEstimates는 signed 관측이며 accepted.occupancy는 legacy evidence다. burst Observed 자체를 scalar Accepted나 scheduler 채택으로 승격하지 않는다.
 
@@ -166,7 +166,7 @@ Run의 controller owner는 같은 namespace, apiVersion과 kind, exact BEO UID�
 
 BEO result의 sealed detail은 바꾸지 않는다. statistics와 measurementFacts를 형제로 제공하고 retained verified trial과 CurvePlan의 기존 derivation을 사용한다.
 
-batch별 incremental J/item은 독립 trial 추정의 산술 평균이다. 기존 shared-idle와 Student-t CI의 level과 halfWidth, 음수 하한과0폭을 보존한다. latencyP95Milliseconds는 같은 batch의 모든 active client 호출 sample을 pool한 empirical p95다. trial percentile 평균이나 native S로 대체하지 않는다.
+batch별 incremental J/item은 독립 trial 추정의 산술 평균이다. 기존 shared-idle와 Student-t CI의 level과 halfWidth, 음수 하한과 0폭을 보존한다. latencyP95Milliseconds는 같은 batch의 모든 active client 호출 sample을 pool한 empirical p95다. trial percentile 평균이나 native S로 대체하지 않는다.
 
 NoPublishedResult, RetainedEvidenceMissing과 StatisticsNotRecorded를 구분한다. 실제 권한과 transport, store와 identity 오류를 미기록으로 숨기지 않는다. 단건 통계 때문에 coverage 전체의 raw를 다시 내려받지 않는다.
 
@@ -202,9 +202,9 @@ namespace cache는 fresh30초, stale 최대5분이며 갱신 하나를 공유한
 
 profiles는 기본25, 최대50의 limit와 offset을 사용한다. 정확 model/deviceClass/profile와 전체 snapshot 필터/정렬 뒤 page를 만든다. 선택지와 resultRows, 출처를 유지하고 raw duration vector는 공개하지 않는다.
 
-BEO native 목록은 limit 또는 offset을 명시할 때만 page를 제공한다. limit1..50, 기본25, offset0..1000000이다. 무페이지 요청은 전체 목록이다. 중간 실패와 취소를 완전 목록 성공으로 표시하지 않는다.
+BEO native 목록은 limit 또는 offset을 명시할 때만 page를 제공한다. limit 1..50, 기본 25, offset 0..1000000이다. 무페이지 요청은 전체 목록이다. 중간 실패와 취소를 완전 목록 성공으로 표시하지 않는다.
 
-`view=summary&summary=v2`는 명시한 무손실 dictionary 인코딩이며 기본 v1과 구분한다. 정밀 정수와 null, 실제0과 모든 유지 필드를 복원한다. profile `$ref`와 measurement summary dictionary를 같은 계약으로 해석하지 않는다.
+`view=summary&summary=v2`는 명시한 무손실 dictionary 인코딩이며 기본 v1과 구분한다. 정밀 정수와 null, 실제 0과 모든 유지 필드를 복원한다. profile `$ref`와 measurement summary dictionary를 같은 계약으로 해석하지 않는다.
 
 ## 실험 조회와 저장 계약
 

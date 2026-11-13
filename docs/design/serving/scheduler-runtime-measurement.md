@@ -42,7 +42,7 @@ gateway normal과 deferred 합은 maxQueuedRequests 기본1024다. native count/
 | pre-decode semaphore QueueFull | notAdmitted=true. 가짜 policy와 progress를 만들지 않음 |
 | 최종 수명 만료 |408 RequestTimeout. active이면 executionComplete=false와 점유 유지 |
 
-executorWaitNanos는 native enqueue부터 running이나 큐 종료까지다. receipt부터 queueMS와 다르다. HTTP timeout이나 전송 실패는 실행 완료가 아니다. backendDone과 transportDone을 모두 유지한다.
+executorWaitNanos는 native enqueue부터 running이나 큐 종료까지다. queueMS는 receipt부터 센다. 실행 완료는 backendDone으로 판정한다. HTTP timeout과 전송 실패는 transportDone에만 기록한다. backendDone과 transportDone을 모두 유지한다.
 
 완료와 미실행 proof는 exact executor, Node와 요청 identity를 요구한다. multi-member batch는 마지막 member의 완료 proof까지 running이다. IPC 전 running이나 실행 여부 없는 완료는 unknown과 idleUnknown으로 유지한다.
 
@@ -66,7 +66,7 @@ Serving과 Profiling은 같은 serving-worker, persistent IPC runner와 firstflo
 
 Actor의 measured runtime image reference와 실제 관측 version이 실행 조건이다. 태그와 digest reference 모두 plain string으로 허용하며 pinning과 imageID gate는 없다. 현재 declaration image로 frozen image를 대입하지 않는다.
 
-memory request/limit은 CurvePlan 준비 전에 동결한 Actor envelope를 유지한다. request는 peak의 하한이 아니다. queue는 같은 limit의 measured peak 뒤 양의 headroom 안에 둔다. worker와 init에는 CPU resource를 주입하지 않는다.
+memory request/limit은 CurvePlan 준비 전에 동결한 Actor envelope를 유지한다. peak는 실제 측정값을 사용한다. queue는 같은 limit의 measured peak 뒤 양의 headroom 안에 둔다. worker와 init에는 CPU resource를 주입하지 않는다.
 
 ORT는 기본 자동 병렬성을 사용한다. affinity와 cgroup, quota와 실제 thread 값은 관측이다. GPU UUID, RKNN delivery와 host library, initialized batch와 실제 runtime identity는 검증한다.
 
@@ -80,7 +80,7 @@ PerformanceCondition은 실제 모델과 전처리, 표본 recipe, runtime image
 
 catalog는 현재 source UID/RV와 terminal 적격성을 읽는다. immutable source의 검증 raw는 재사용하고 변경과 삭제, pending은 cache에서 제거한다. 오류에 이전 success로 fallback하지 않는다.
 
-cold trial load는 입력 순서의 작은 window에서 최대8개의 execution/raw read를 병렬 처리한다. 완료 뒤 원래 순서로 도출하고 첫 오류도 결정적이다. 실제 byte cap과 실행/관측, Run/Job/Pod binding을 검증하며 invalid profile을 publish하지 않는다. 이 동시성은 전체 profile heap 상한이 아니다.
+cold trial load는 입력 순서의 작은 window에서 최대 8개의 execution/raw read를 병렬 처리한다. 완료 뒤 원래 순서로 도출하고 첫 오류도 결정적이다. 실제 byte cap과 실행/관측, Run/Job/Pod binding을 검증하며 invalid profile을 publish하지 않는다. 동시성 제한은 진행 중인 execution/raw read 수에 적용한다.
 
 ## 실제 S와 G의 조건부 법칙
 
@@ -94,7 +94,7 @@ replay의 arrival과 실행 완료가 g를 결정하므로 측정 G를 지연에
 
 running residual은 원래 nearest/trial mixture에서 `S > elapsed`로 조건화하고 생존 비율의 posterior trial mass를 유지한다. nearest 집합에 생존이 전혀 없을 때만 trial별 생존 표본 안의 같은 nearest 규칙으로 재선택한다.
 
-모든 표본이 이미 elapsed 이하이면 원래 같은-gap service를 남은 시간으로 새로 뽑는 `same-gap-service-restart` 대체를 사용한다. 실제 잔여는 더 짧거나 길 수 있고 순위 bias도 양방향이다. 보수 bound가 아니다. RunningResidualBeyondSupport와 조건부 근거를 기록한다. 원래 gap support 부재는 이 대체로 숨기지 않는다.
+모든 표본이 이미 elapsed 이하이면 원래 같은-gap service를 남은 시간으로 새로 뽑는 `same-gap-service-restart` 대체를 사용한다. 실제 잔여는 더 짧거나 길 수 있고 순위 bias도 양방향이다. RunningResidualBeyondSupport와 조건부 근거를 기록한다. 원래 gap support 부재는 이 대체로 숨기지 않는다.
 
 gateway가 관측한 service 종료는 HTTP 시작/dispatch와 최초 완료 수신 사이에 있다. native lastServiceEndAge의 하한/상한을 유지하고 admission은 범위 전체의 조건부 분위수 최댓값을 쓴다. gap 단조성은 가정하지 않는다. fill wait는 양 끝을 전진시키고 가상 service 완료 뒤 gap을 재설정한다.
 
@@ -122,7 +122,7 @@ prepare/remove는 정확히 한 state의 추가/제거와 무추론 proof, 빈 p
 
 실물 장부는 같은 slot의 중복과 준비/정리 실물을 모두 보존한다. 현행 계획과 route는 노드당 인스턴스 하나와 인스턴스당 UID 하나다. generic 공존 표현을 현재 다중 Workload 공유 허가로 해석하지 않는다.
 
-memory와 whole GPU UUID는 물리 안전 제약이다. CPU는 공유이며 자원 적합성이 SLO 적합성을 보장하지 않는다. timeout과 논리 stop은 할당 반환 proof가 아니다.
+memory와 whole GPU UUID는 물리 안전 제약이다. CPU는 공유한다. SLO 적합성은 요청 재생으로 별도 판정한다. 할당 반환은 실제 실물 종료와 정리 증거로 확인한다.
 
 과부하 정책과 큐 한도는 applied Definition과 요청의 저장 계약이다. 저장 Definition의 정책 부재를 현재 기본 Reject/1024로 소급 채우지 않는다. protocol과 replay, 관측과 client, 평가 소비자는 같은 계약을 사용한다.
 

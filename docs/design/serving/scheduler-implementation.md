@@ -44,7 +44,7 @@ Serving의 Reject와 Delay는 요청 정책이다. Reject는 불가능한 head�
 
 `observationEnd`는 historical cutoff, `at`은 blocking I/O 뒤 Runtime lock에서 outstanding과 정의, routing과 credits를 함께 동결한 원점이다. source 시각을 at으로 다시 쓰지 않는다. 미상과 미래 시각, 실제 capture 실패는 사유로 남기며 고정 age TTL은 없다.
 
-완료 signal은 buffer1 nonblocking이다. Continue는 현재 owner의 capture, reconciliation과 후속 launch만 수행하며 신규 평가나 decision을 만들지 않는다. 주기 timer를 재설정하지 않는다. 실패 기록, 취소 parent, 바뀐 controls와 해제 UID는 전진 허가가 아니다.
+완료 signal은 buffer 1 nonblocking이다. Continue는 현재 owner의 capture, reconciliation과 후속 launch만 수행하며 신규 평가나 decision을 만들지 않는다. 주기 timer를 재설정하지 않는다. 후속 launch는 기록 상태와 parent, 현재 controls와 UID 자격을 다시 확인한다.
 
 ## 실물 장부
 
@@ -59,13 +59,13 @@ Pod UID가 유일한 실물 장부 key다. Runtime은 실행과 binding/routing 
 | 관측 | 마지막 성공, 원래 시각과 최근 실패를 분리. 실패로 성공 시각을 갱신하지 않음 |
 | 수명 | exact container 종료, finalizer와 삭제 확인. 논리 stop과 물리 반환은 별개 |
 
-Create 응답, watch와 초기/복구 전체 List로 UID를 발견한다. container 이전 Pod도 보존한다. terminal, terminating과 label drift, profile/Service/read 오류는 삭제 proof가 아니다.
+Create 응답, watch와 초기/복구 전체 List로 UID를 발견한다. container 이전 Pod도 보존한다. terminal, terminating과 label drift, profile/Service/read 오류에도 실물 장부를 유지한다.
 
 실제 native 오류와 Pod unready는 dispatch를 닫는다. probe 진행 중에는 판정을 기다린다. 복구는 native 성공과 동일 UID/container, 단일 Service 검증을 요구한다. 제한된 Service나 후속 Pod List의 첫 실패 때만 검증된 이전 Ready를 한 refresh 유지하고 issue를 남긴다.
 
 desired/native DecisionID만 다르면 PolicyAckPending이다. 실제 identity와 Ready, allocation과 owner, 요청과 정책을 보존한다. desired로 actual을 덮거나 pending을 완료 ACK로 바꾸지 않는다.
 
-unknown 실물은 Ready 공급이 아니며 해당 노드 새 physical 작업을 막는다. 독립 노드 판단은 계속한다. route-only의 양수 목적지는 정확한 executor 확인을 사용하므로 다른 co-resident의 unknown을 전체 목적지 거절로 확대하지 않는다.
+Ready 공급은 Ready로 확인한 실물만 센다. unknown 실물은 해당 노드 새 physical 작업을 막는다. 독립 노드 판단은 계속한다. route-only의 양수 목적지는 정확한 executor 확인을 사용하므로 다른 co-resident의 unknown을 전체 목적지 거절로 확대하지 않는다.
 
 retirement는 exact 종료 뒤 finalizer와 Service/config cleanup, 정확한 UID 삭제 확인이다. Pod 없음, GET 실패와 DeletionTimestamp만으로 종료를 추정하지 않는다. Pending Pod의 executor 흔적이 전혀 없는 경우 DELETE 요청은 가능해도 반환 proof는 별도다.
 
@@ -75,7 +75,7 @@ retirement는 exact 종료 뒤 finalizer와 Service/config cleanup, 정확한 UI
 
 memory와 whole GPU UUID를 실제 실물과 create 전 target에서 owner/identity 중복 없이 센다. init, sidecar, overhead와 non-serving memory도 포함한다. 외부 GPU owner 불명은 해당 노드 배치를 닫는다. CPU request/quota/mask와 thread matching은 없다.
 
-준비 중 실물과 미생성 예약은 maxReplicas/maxInstances와 bridge peak에 한 번 포함한다. Ready 공급은 아니다. unavailable 분기가 pending 점유를 지우지 않는다.
+준비 중 실물과 미생성 예약은 maxReplicas/maxInstances와 bridge peak에 한 번 포함한다. Ready 공급은 Ready로 확인한 실물만 센다. unavailable 분기가 pending 점유를 지우지 않는다.
 
 공통 admission은 `tickMu → mu` 순서로 영향 집합, 전체 충돌, 원자 등록, live 재확인과 시작을 연결한다. mutation 직전 route/outstanding, exact UID와 optimistic precondition을 검사한다. 범위 확대는 effect 전에 재승인한다.
 
@@ -87,7 +87,7 @@ route dispatch는 현재 routing과 touched 목적지를 사용해 rebase한다.
 
 ## 효과와 책임 반환
 
-goroutine 종료, timeout, 취소와 기록 실패는 원격 effect 부재의 증거가 아니다. effect 전 확정 실패는 멱등 반환하며 첫 API write 결과 불명과 부분 성공은 unknown 책임을 유지한다.
+goroutine 종료, timeout, 취소와 기록 실패 뒤에도 원격 effect 확인 책임을 유지한다. effect 전 확정 실패는 멱등 반환하며 첫 API write 결과 불명과 부분 성공은 unknown 책임을 유지한다.
 
 prepare는 error와 함께 Create 또는 existing GET의 exact Pod/Node/Decision 증거를 반환한다. 마지막 capture 실패로 이 증거를 지우지 않으며 terminal 공개 전 owner에 편입한다. 같은 RestartPolicyNever UID의 첫 container만 결합하고 교체 container를 재결합하지 않는다.
 
@@ -97,9 +97,9 @@ prepare는 error와 함께 Create 또는 existing GET의 exact Pod/Node/Decision
 - 같은 frozen parent의 정확한 terminal sibling receipt. 관측은 child와 sibling, parent 종료 뒤여야 한다.
 - admission baseline에 존재하고 may-touch에 없는 executor의 fresh Ready와 이전 정책. dirty executor에는 적용하지 않는다.
 
-may-touch는 reserveRun과 같은 mutex에서 Execute 전에 단조 기록한다. 실패와 child GC로 지우지 않으며 owner 책임 전체 반환까지 baseline과 receipt를 유지한다. untouched 반환은 제거 성공이나 allocation 반환을 뜻하지 않는다.
+may-touch는 reserveRun과 같은 mutex에서 Execute 전에 단조 기록한다. 실패와 child GC로 지우지 않으며 owner 책임 전체 반환까지 baseline과 receipt를 유지한다. untouched 반환 뒤에도 제거 성공과 allocation 반환은 각각 확인한다.
 
-failed prepare가 직접 만든 unclaimed Ready 실물만 모든 관련 run 종료와 exact 확인 뒤 기존 stop/drain/remove로 보상 정리할 수 있다. reused, serving, 다른 owner, identity unknown과 pending power는 대상이 아니다. 원래 failed receipt를 성공으로 바꾸지 않는다.
+failed prepare가 직접 만든 unclaimed Ready 실물만 모든 관련 run 종료와 exact 확인 뒤 기존 stop/drain/remove로 보상 정리할 수 있다. reused, serving, 다른 owner, identity unknown과 pending power는 보상 정리에서 제외한다. 원래 failed receipt를 성공으로 바꾸지 않는다.
 
 자기 생성 UID나 API receipt 없는 possibly-effectful Create는 이전 occupant가 전부 사라져도 unknown이다. reset도 이 책임을 인계하며 다른 노드의 cleanup으로 해소하지 않는다.
 

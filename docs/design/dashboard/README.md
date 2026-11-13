@@ -89,7 +89,7 @@ Head capture와 구독 등록은 한 lock이고 조기 resume은 하나만 보�
 중복은 버리고 순번 gap이면 미적용 후 재동기화한다.
 
 Hub는 600메시지/8 MiB, 연결 큐는 602메시지/2 MiB, 프레임은 1 MiB 상한이다.
-600개가 10분을 보장하지 않는다. 큰 snapshot은 자르지 않고 1009다. 느린 연결은
+보존 시간은 600개 메시지의 실제 발생 시각 범위로 확인한다. 큰 snapshot은 자르지 않고 1009다. 느린 연결은
 metrics drop 뒤 snapshot barrier로 상태를 회복하며 write 정체는 1013이다.
 Producer는 socket을 기다리지 않는다. Handshake/write timeout은 10초/5초다.
 

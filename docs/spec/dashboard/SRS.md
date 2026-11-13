@@ -449,7 +449,7 @@ ChillServer의 실험 결과 조회로 실험 ID, 단계 경계, 단계별 결�
   셀 진입 시 variantId/목표 batch를 전달하고 조건 변경은 기존 missing 자동 제외/검사를 무효화해야 한다.
   preflight에서 최신 exact/planned-only/unknown 대조와 **요청 가능 범위/실제 실행 예정 범위**를 제공해야 한다.
   부분집합 가능 경로만 ‘부족 배치만 요청’, declaredBatchSizes 경로는 읽기 전용 batch/기존 batchSizes 생략,
-  중복과 전체 탐색과 조기 종료 가능성을 명시해야 한다. 모든 batch 실행을 보장하지 않아야 한다.
+  중복과 전체 탐색과 조기 종료 가능성을 명시하고 실제 실행한 batch 범위를 표시해야 한다.
   Compatible 기본/Incompatible 숨긴 이유/Unknown 담당 조치, 입력 프리셋의 복수 후보 선택을 제공해야 한다.
   active/idle 시간, 반복과 warmup/settling와 계측 주기/timeout과 실제 기본/복사값은 숨기지 않아야 한다.
   mode/path 포함 자동 이름의 suffix는 검사 통과 때 고정하고 응답 미확인 뒤 재생성하지 않아야 한다.

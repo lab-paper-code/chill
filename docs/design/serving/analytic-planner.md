@@ -89,7 +89,7 @@ snapshot과 검사 입력은 선택 tuple, source와 `provenance{source,pairs,wi
 
 노드마다 keep과 측정 option 변형 하나를 후보로 만든다. 노드당 serving 인스턴스 하나, 인스턴스당 Workload 하나다. 같은 모델의 Workload도 각각의 부하와 SLO를 유지한다. 비자율 Workload 소유 노드는 keep으로 고정한다. 실제 중복 실물은 점유로 모두 보존하고 정상 반환 전 예산에서 빼지 않는다.
 
-배치에는 Node Ready, 측정 격리, owner와 예약, 실제 memory 예산, whole-GPU inventory와 UUID 중복 검사가 필요하다. CPU mask나 quota, mode별 online CPU는 배치 관문이 아니다. `maxReplicas`와 `maxInstances`에는 준비 중 실물과 미생성 예약 target도 한 번만 센다. 이들은 Ready 공급이 아니다.
+배치에는 Node Ready, 측정 격리, owner와 예약, 실제 memory 예산, whole-GPU inventory와 UUID 중복 검사가 필요하다. `maxReplicas`와 `maxInstances`에는 준비 중 실물과 미생성 예약 target도 한 번만 센다. Ready 공급은 Ready로 확인한 실물만 센다.
 
 placement, resources, replicas, routing, batching, power, membership은 각 제어 범위를 제한한다. batching이 꺼져 있으면 현재 `(MaxBatch,MaxWait)` 정책 집합 안의 측정 변형만 허가한다. membership이 꺼져 있으면 해당 Workload의 기존 노드 범위에서 선택한다.
 
@@ -103,7 +103,7 @@ placement, resources, replicas, routing, batching, power, membership은 각 제�
 
 최종 prepare가 남아 있어도 검증된 Ready 목적지를 먼저 편입할 수 있다. current 공급이 있으면 기존 공급을 보존하고 독립 노드 공급만 더한다. 빈 출발에서는 Ready 부분집합 weight를 1000으로 정규화한다. stopped, retiring이나 이번 Tick에 stop 가능한 경로는 되살리지 않는다.
 
-부분 배분도 현재 수요와 timing의 직접 재생, 정확한 identity, native 정책 ACK와 accepted work 보호를 거친다. 미확인 물리 상태나 support이면 current를 유지한다. 부분 route는 최종 목표 완료나 전체 SLO 보장이 아니다.
+부분 배분도 현재 수요와 timing의 직접 재생, 정확한 identity, native 정책 ACK와 accepted work 보호를 거친다. 미확인 물리 상태나 support이면 current를 유지한다. 최종 목표 완료와 전체 SLO 충족은 전체 목표 구성에서 별도로 판정한다.
 
 ## 고정 비교 기간과 에너지
 
@@ -115,7 +115,7 @@ keep의 노드 에너지는 `P_before × H`다. 전환은 전체 pre/post operat
 
 동작 평균 시간을 baseline 구간에, trial 최대 시간을 전환 schedule에 사용한다. operation은 완결 비용을 전부 부과하며 H 뒤 Serving baseline과 요청 에너지는 0이다. 사슬이 H를 넘으면 `TransitionExceedsHorizon`을 기록한다. bridge 시작 전 대기는 H 안에서 이전 baseline으로 센다.
 
-요청 에너지는 route 전 retained 처리와 overflow, route 뒤 최종 정수 분배로 나눈다. 비교 집합 밖의 동일 노드 항은 소거한다. 비교 집합은 keep 외 적격 계획이 있는 노드이며 전체 풀 실측 범위와 다르다.
+요청 에너지는 route 전 retained 처리와 overflow, route 뒤 최종 정수 분배로 나눈다. 비교 집합 밖의 동일 노드 항은 소거한다. 비교 집합에는 keep 외 적격 계획이 있는 노드만 포함한다.
 
 동작 시간 추정은 exact, 같은 Node, 같은 DeviceClass, 명시 default 순으로 고른다. SLO 회복은 이 추정을 사용할 수 있다. 에너지 이동은 공통 미지 항을 signed 상쇄한 뒤 남은 필수 셀이 모두 결정 가능해야 한다. keep가 SLO 충족이고 새 비-exact operation 셀이 필요한 후보는 replay 전에 `EnergyUndecidable`로 제외할 수 있다. 누락 측정은 결정의 `missingCells`로 연결한다.
 
@@ -146,7 +146,7 @@ minimumGain은 선택 operation의 `energyUncertaintyJoules`와 baseline의 `wat
 
 모든 정밀 후보가 거절되면 전체 적격 변형의 한 노드 정밀 탐색을 시도하고, 이어 공통 selector가 이웃 탐색 fallback을 연결한다. 후처리를 이미 적용한 결과에 호출부가 다시 적용하지 않는다.
 
-탐색 벽시계 마감은 판단 시작부터 제어 주기 절반이다. 증분 평가 수와 마감은 순회 중단 기준이며 전처리, 가격 반복과 정밀 funnel을 포함한 Tick 전체의 엄격한 상한은 아니다. 취소된 계산은 이전 값이나 실패 검사로 대체하지 않는다.
+탐색 벽시계 마감은 판단 시작부터 제어 주기 절반이다. 증분 평가 수와 마감은 순회 중단에 적용한다. Tick은 전처리, 가격 반복과 정밀 funnel까지 수행한다. 취소된 계산은 이전 값이나 실패 검사로 대체하지 않는다.
 
 ## 기록과 증거 경계
 

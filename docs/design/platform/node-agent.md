@@ -14,7 +14,6 @@ Node agent는 hardware/online CPU 관측과 host 전력 적용을 소유한다.
 | Wall meter | Profiler metricSources의 meter ID, Node 신원과 전력 source |
 | Reserved | 운영자 선언 memory/GPU 예산 |
 
-Online CPU는 SchedulerNode의 할당/배치 적격성 필드가 아니다.
 현재 scheduler allocation은 memoryBytes와 GPUUUID를 사용한다.
 GPU 미측정 장치는 후보에 나오지 않는다. Meter ID/source를 노드 이름으로 대체하면
 기존 비용 근거와 연결할 수 없으므로 원래 신원을 보존한다.

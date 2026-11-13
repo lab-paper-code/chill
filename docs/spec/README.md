@@ -234,8 +234,8 @@ CHILL은 자신이 배치한 파드만 관리한다. 다른 파드가 있는 노
 - 표 수치는 1회차 tables.txt와 2회차 tables-223.txt의 소수 셋째 자리 표시를 그대로 옮겼다(반올림 표시); 새 판정 규칙은 적용하지 않는다. MEASURED_DESCRIPTIVE/결과 연결만으로 PASS나 완전 커버리지를 판정하지 않는다.
 - 점진 증가은 증가만 평가했으며 급감 후 재증가는 급감과 재급증으로 점진 감소는 미평가다. 버스트는 Smol만, 실패 주입은 서빙 손실/cordon 대리 실험만이다. 물리 네트워크와 전원 손실과 모든 제어 실패 유형은 미측정이다. 한 paired seed 집합이며 독립 반복은 없다.
 - static 기준 배치는 각 회차 점진 증가 종료 상태에서 독립적으로 선택되어 MNV 공급 κ가 119.601→91.907 req/s로 달랐다. 처리 한계 초과와 급감 후 재증가의 실패와 에너지 차이는 이 배치 차이와 함께 해석해야 하며, 수정된 CHILL이 점진 증가 종료 시 MNV 공급을 수요 미만(κ 91.907 < 약 95.5 req/s)으로 남긴 관측은 당시 실행의 한계다. 근거는 각 회차 `static-selection.json` 및 2회차 `comparison-control-213-223.txt/.json`이다.
-- 장애 주입 주입은 1회차 실제 형식인 UID 사전조건부 Pod 삭제(강제 삭제와 gracePeriodSeconds=0 아님), 180초 삭제와 360초 cordon+삭제와 600초 uncordon을 재사용했다. 대상은 1회차 genesis3/lattepanda → 2회차 jetson-nano/orangepi로 달랐다(원래 대상에 현재 서빙 Pod 없음). 각 회차 `failure-seven[/ -223]/targets.json` 및 명령, 응답과 복구 read-back이 근거이며 물리 전원과 네트워크 장애나 완전 복구를 보장하지 않는다.
-- #225 장애 주입 FAIL은 Smol 전체 예정 요청의 기한 내 성공 판정(용량)만이다. 주입은 180.7/360.7/600.1s에 활성 Pod 대상으로 실행되어 exit0이며 주입 실패와 구분한다. 완료-only Smol p95가 낮아도 실패 114(RequestTimeout)와 전체 예정 요청의 기한 내 성공 판정 FAIL(26/133)을 배제하지 않는다. 물리 전원과 네트워크 장애나 완전 복구를 보장하지 않는다.
+- 장애 주입은 1회차 실제 형식인 UID 사전조건부 Pod 삭제(강제 삭제와 gracePeriodSeconds=0 아님), 180초 삭제와 360초 cordon+삭제와 600초 uncordon을 재사용했다. 대상은 1회차 genesis3/lattepanda → 2회차 jetson-nano/orangepi로 달랐다(원래 대상에 현재 서빙 Pod 없음). 각 회차 `failure-seven[/ -223]/targets.json` 및 명령, 응답과 복구 read-back이 근거이며 확인 범위는 해당 Pod 삭제와 cordon/uncordon의 실행 및 read-back이다.
+- #225 장애 주입 FAIL은 Smol 전체 예정 요청의 기한 내 성공 판정(용량)만이다. 주입은 180.7/360.7/600.1s에 활성 Pod 대상으로 실행되어 exit0이며 주입 실패와 구분한다. 완료-only Smol p95가 낮아도 실패 114(RequestTimeout)와 전체 예정 요청의 기한 내 성공 판정 FAIL(26/133)을 배제하지 않는다.
 
 두 회차 각각 평가 시나리오 결과 연결은 7/7이며 정적 비교 1행은 별도다. 시나리오의 완전 평가 여부와 PASS 수는 별도로 판단한다.
 제어요소 비교의 조건은 [자원 풀 설계](../design/serving/workload-pools.md)를 따른다.

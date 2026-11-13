@@ -47,7 +47,7 @@ profile 후보와 PrepareSpec, 비용과 wall meter는 검증 측정과 metricSo
 
 ## 설정 수락과 동시성
 
-GET의 settings와 staticRouting, powerObservation과 ETag는 같은 ConfigMap 응답이다. meters와 accepted catalog는 별도 수락 revision이다. 이들이 GET의 desired와 같은 적용 시점을 보장하지 않는다.
+GET의 settings와 staticRouting, powerObservation과 ETag는 같은 ConfigMap 응답이다. meters와 accepted catalog는 별도 수락 revision이다. 적용 시점은 각 수락 revision에서 확인한다.
 
 PUT은 `SchedulerSettings`만 받는다. `staticRouting`과 `staticRoutingValidatedAt`은 null을 포함한 존재 자체를 `400 InvalidBody`로 거절한다. 미선언 reason도 거절한다. 배분은 [operations](scheduler-operations.md#수동-원자-실행)의 route/unroute/release만 쓴다.
 
