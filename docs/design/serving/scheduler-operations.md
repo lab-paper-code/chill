@@ -15,7 +15,7 @@ exact prepare/remove는 같은 Node와 profile 조건, exact power는 같은 Nod
 
 `costProvenance.source`는 exact, node, deviceClass 또는 default이며 costRef나 configured value를 남긴다. 전이 추정과 default로 에너지 이동을 허가하지 않는다.
 
-각 before/mid/after는 자기 mode와 loaded state의 idle을 쓴다. 정확한 node-state wall baseline, 또는 단일 인스턴스의 같은 Node/mode/meter profile idle이 exact다. 공존 상태의 exact 비용은 해당 공존 상태를 직접 측정한다.
+각 before/mid/after는 자기 mode와 loaded state의 idle을 쓴다. 정확한 node-state wall baseline, 또는 단일 인스턴스의 같은 Node/mode/meter profile의 정착한 유휴 전력이 exact다. 공존 상태의 exact 비용은 해당 공존 상태를 직접 측정한다.
 
 defaultIdlePower와 defaultOperationCost는 명시 필수다. 같은 고정 `comparisonPeriodNanos`를 keep과 후보에 적용한다. sample600초를 상수로 고정하지 않는다. 긴 사슬의 완결 operation J와 H 안 baseline/Serving을 구분한다.
 
@@ -115,7 +115,7 @@ terminal owner의 전체 UID와 책임 Node가 reset의 실제 cleanup scope 안
 
 ## 측정 격리
 
-opcost는 승인 Node에서 production primitive를 순차 Measure한다. ID는 `<CR UID>.<순번>.<단계이름>`이며 같은 Runtime과 Observer, meter와 store를 사용한다. 일반 serving은 taint로 제외한다.
+opcost는 승인 Node에서 production primitive를 순차 Measure한다. ID는 `<CR UID>.<순번>.<단계이름>`이며 같은 Runtime과 Observer, meter와 store를 사용한다. 프로파일 측정 세션도 승인 Node에서 같은 primitive로 준비와 제거를 실행한다. 일반 serving은 taint로 제외한다.
 
 종료 witness는 exact Node와 taint, Workload census와 예상 power generation이다. prepare/remove는 실제 한 state 차이와 무추론 proof, 빈 power 전환은 실제 from/to와 양쪽 empty state를 요구한다. 실패와 Insufficient를0J 성공으로 바꾸지 않는다.
 

@@ -31,15 +31,12 @@
 | 소유자 | 입력과 현재 경계 |
 |---|---|
 | `ProfilingRun.spec.measurement.durationToleranceSeconds` | finite ≥0이며 측정 duration 미만. 생략 기본값 0.5초, 명시한 0은 유지. RunConfig와 측정 조건에 동결 |
-| `BatchEnergyOptimization.spec.trialsPerBatch` | 활성 및 독립 유휴 관측 각각 3회로 고정 |
-| `BatchEnergyOptimization.spec.pointPolicy.confidenceLevel` | (0,1) 십진 문자열, 생략 `"0.95"`. 해당 측정의 유휴 기준과 증분 에너지 CI에 사용 |
+| `BatchEnergyOptimization.spec.session` | 필수. 전력계 지연, 최소 전력 관측 시간, 중간 수준의 비율, 저부하 유휴 간격의 평균, 수준 시간 한도, 부하 뒤 관측 시간(선택), 요청 수명, 전달 여유, 요청 크기 상한과 동작 측정의 관찰 설정을 소유한다. 모두 결과에 함께 남는다. 수준이 끝나는 최소 표본 수는 `activeProtocol.workload`의 분위수에서 정한다 |
+| `BatchEnergyOptimization.spec.session.confidenceLevel` | [0.5, 1) 십진 문자열. 세션 계산의 모든 통계 판단에 사용 |
 | `ModelLoadedIdleBaseline.spec.pointPolicy` | 해당 측정이 최소 반복 수와 신뢰수준을 소유. 최소 반복 수 ≥2, attempt limit은 최소 반복 수 이상 |
 | 전환 측정의 `acceptedCountTarget` | 방향별 정수 ≥2이며 attempt limit 이하 |
-| profile reuse annotation | 확인 창의 최소 길이와 최소 trial 수 |
 
 전역 `energyConfidenceLevel` 또는 `profileConfidenceLevel` 별칭은 없다. Profile은 실제 유도에 쓴 신뢰수준을 기록한다.
-
-`chill.dacs.io/profile-reuse` JSON은 `sourceProfileID`, `maximumRelativeDifference`, `minimumMeasurementSeconds`, `minimumTrials`를 받는다. 최소 측정 길이는 finite >0이고 생략 기본값은 30초다. 최소 trial 수는 정수 ≥2이고 기본값은 3이다. 길이 조건은 active와 idle 각각에 적용한다. 선택값과 실제 길이 및 trial 수는 `ProfileReuseCheck`에 기록하며 reuse identity에도 포함한다. 전역 settings 변경은 기존 reuse 요청의 정책을 바꾸지 않는다.
 
 ## 기동 설정
 
@@ -124,6 +121,6 @@ coverage helper의 목표 선택은 curve와 evidence schema를 비교하며 run
 
 ## 저장 계약
 
-현재 reader가 수락하는 단일 계약을 사용한다. 과거 행의 필드 부재는 당시 기록되지 않은 사실이며 현재 기본값으로 소급 채우지 않는다. 저장 형식 변경은 campaign 사이에 한 번 수행한다. 읽을 수 없어진 작업용 CR과 파생 객체의 정리는 게시된 과학 원시 archive의 보존과 구분한다.
+현재 reader가 수락하는 단일 계약을 사용한다. 과거 행의 필드 부재는 당시 기록되지 않은 사실이며 현재 기본값으로 소급 채우지 않는다. 저장 형식 변경은 측정과 측정 사이에 한 번 수행한다. 읽을 수 없어진 작업용 CR과 파생 객체의 정리는 게시된 과학 원시 archive의 보존과 구분한다.
 
 관측 stream과 API의 경계는 [Observation Evidence API Streams](../../adr/0030-observation-evidence-api-streams.md)와 [관측 설계](observability-split.md), 현재 측정 계약은 [측정 API](measurement-api.md)를 따른다.

@@ -6,14 +6,14 @@ ChillServer가 `chill.dacs.io/measurement:NoSchedule` taint와 측정 예약을 
 
 | 루트 | 대상 | terminal |
 |---|---|---|
-| BatchEnergyOptimization | `spec.state.targetNode` | Complete, Failed. CurvePlanResolutionFailed는 재시도 |
+| BatchEnergyOptimization | `spec.state.targetNode` | Complete, Failed. 세션 준비 정보 해석이 재시도 대상이면 승인 전 대기 |
 | ModelLoadedIdleBaseline | `spec.state.targetNode` | Complete, Insufficient |
 | 독립 ProfilingRun | `spec.targetNode` | ExecutionComplete True 또는 False |
 | PowerModeTransitionCost | `spec.targetNode` | Complete, Failed |
 | OperationCostMeasurement | `spec.node` | Complete, Insufficient, Failed |
 | DispatchOccupancyMeasurement | `spec.node` | Complete, Insufficient, Failed |
 
-BEO와 idle 자식 ProfilingRun은 승인된 root 아래 생성한다. 일시 Kubernetes와 evidence 오류를 측정 조건의 terminal 실패로 바꾸지 않는다.
+BEO 세션은 ChillServer가 승인된 노드에서 직접 실행하며 ProfilingRun을 만들지 않는다. 모델 적재 유휴 기준선의 자식 ProfilingRun은 승인된 root 아래 생성한다. 일시 Kubernetes와 evidence 오류를 측정 조건의 terminal 실패로 바꾸지 않는다.
 
 ## 직렬화와 현재 입력
 
@@ -34,6 +34,7 @@ namespace별 여섯 kind를 metadata-only List로 읽는다. UID와 opaque resou
 | CHILL serving Pod 존재 | Refused NodeServing. terminal Pod도 삭제 전 점유 |
 | executor recovery unknown | Refused NodeServing |
 | root별 profile와 runner 부적격 | 해당 사유 거절 또는 catalog 갱신 대기 |
+| 세션 요청의 부적격(`SessionSettingsMissing`, `SessionUnresolved`, `MeterUndeclared`, `PowerModeUnknown`) | 해당 사유로 Failed. 부하 생성기가 도는 노드는 `SessionUnresolved` |
 | 나머지 | root UID taint와 Granted 시각. 전환 비용은 runner 준비 뒤 Granted |
 
 Node identity, 실제 power, owner와 격리 proof는 유지한다. 외부 Pod는 삭제하지 않고 census에 남긴다.
@@ -48,9 +49,9 @@ taint 뒤 runner를 준비하고 Node UID label의 Service를 정확한 serving 
 
 opcost는 meter와 요청 가능한 power mode, BEO 상태와 대상 Node를 확인한다. catalog에 profile와 issue 모두 없거나 준비 근거가 아직 없으면 기다린다. ProfileMissing, NodeMismatch, PowerModeUnknown, MeterUndeclared를 사유로 남긴다.
 
-steps는 production Measure로 순서 실행한다. ID는 `<CR UID>.<순번>.<단계이름>`이다. prepare의 정확한 실물을 remove에 쓴다. 첫 오류나 non-Accepted에서 중단하고 partial과 개별 verdict를 보존한다.
+steps는 production Measure로 순서 실행한다. ID는 `<CR UID>.<순번>.<단계이름>`이다. prepare의 정확한 실물을 remove에 쓴다. 첫 오류나 non-Accepted에서 중단하고 partial과 개별 verdict를 보존한다. 세션의 전력 모드 변경, 준비, 제거도 같은 Measure로 실행하며 ID는 `<BEO UID>.<순번>.<단계이름>`이다. 비용을 얻지 못해도 세션은 계속한다([프로파일 측정 세션](profile-session.md)).
 
-미완료 sequence는 `serving/operation-sequences/<CR UID>.json`이다. 재시작으로 끊긴 Granted/nonterminal opcost는 ChillServerRestart와 저장 step 목록을 남기고 반환한다. terminal 결과는 다시 쓰지 않는다.
+미완료 sequence는 `serving/operation-sequences/<CR UID>.json`이다. 재시작으로 끊긴 Granted/nonterminal opcost는 ChillServerRestart와 저장 step 목록을 남기고 반환한다. 재시작으로 끊긴 세션은 ChillServerRestart로 Failed가 되고 반환한다. terminal 결과는 다시 쓰지 않는다.
 
 DOM은 비자율 Workload, serving 충돌, batch 근거와 frozen native queue/부하 한도를 확인한다. burst 판정, signed 통계와 scheduler 채택은 [측정 API](measurement-api.md)의 별도 경계다.
 
@@ -65,9 +66,9 @@ terminal이나 삭제 root, 살아 있는 root/run이 없는 taint와 종료 ope
 5. 요청 가능한 최신 unloaded baseline의 최저 모드로 변경하고 독립 readback을 확인한다. Fixed나 근거 부재는 전력 단계를 건너뛴다.
 6. 현재 RV로 taint를 제거하고 예약을 반환한다.
 
-실패하면 taint와 미확인 책임을 유지하고 다음 round에서 반환을 재시도한다. goroutine 종료나 root 삭제만으로 반환을 주장하지 않는다. root 삭제는 Interrupted holder다.
+실패하면 taint와 미확인 책임을 유지하고 다음 round에서 반환을 재시도한다. 세션의 반환 실패는 BEO의 `NodeReturned=False` 조건에 원문을 남기고 측정의 terminal 결과는 유지한다. goroutine 종료나 root 삭제만으로 반환을 주장하지 않는다. root 삭제는 Interrupted holder다.
 
-record의 power generation과 자기 전환 수로 예상 밖 power 변경을 판단한다. MeasurementInvalid는 catalog, cost, baseline과 curve 소비에서 제외하고 이유를 노출한다.
+record의 power generation과 자기 전환 수로 예상 밖 power 변경을 판단한다. MeasurementInvalid는 catalog, cost와 baseline 소비에서 제외하고 이유를 노출한다.
 
 ## 저장 경계
 
