@@ -54,7 +54,7 @@ func TestMeasurementNamespaceEscapeAndListActualNativeState(t *testing.T) {
 	}
 	complete := &api.BatchEnergyOptimization{
 		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "complete"},
-		Status:     api.BatchEnergyOptimizationStatus{Phase: "Complete", CompletedTrials: 9},
+		Status:     api.BatchEnergyOptimizationStatus{Phase: "Complete"},
 	}
 	escaped := &api.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Namespace: "outside", Name: "hidden"}}
 	native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).

@@ -42,7 +42,6 @@ func firstProfileInputs(t *testing.T) ([]client.Object, *api.BatchEnergyOptimiza
 			Spec: core.PodSpec{NodeName: "gateway-node"}, Status: core.PodStatus{Phase: core.PodRunning,
 				Conditions: []core.PodCondition{{Type: core.PodReady, Status: core.ConditionTrue}}}},
 	)
-	observation := api.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31}
 	intent := &api.BatchEnergyOptimization{
 		TypeMeta:   meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimization"},
 		ObjectMeta: meta.ObjectMeta{Namespace: testSystemNamespace, Name: "first-profile"},
@@ -53,11 +52,7 @@ func firstProfileInputs(t *testing.T) ([]client.Object, *api.BatchEnergyOptimiza
 					ExecutionPath: "ort-cpu", PowerMode: "fixed"}, TargetNode: node.Name,
 			},
 			ActiveProtocol: api.ActiveProtocolSpec{Workload: workload.Name, Dataset: workload.Spec.DatasetRef.Name,
-				WarmupIterations: 1, DurationSeconds: 30, MetricObservation: observation,
-				OperatingPoints: api.MeasurementOperatingPointsSpec{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
-					PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024}},
-			IdleProtocol:   api.IdleProtocolSpec{SettlingDurationSeconds: 1, DurationSeconds: 30, MetricObservation: observation},
-			TrialsPerBatch: 3,
+				WarmupIterations: 1},
 		},
 	}
 	return objects, intent

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -81,24 +80,13 @@ func (p *authorityPreparationPorts) Resolve(
 
 func authorityRoot(config profilingrun.RunConfig) (*edge.BatchEnergyOptimization, *core.Node) {
 	selected := testRun()
-	points := config.Measurement.OperatingPoints
 	root := &edge.BatchEnergyOptimization{
 		ObjectMeta: metav1.ObjectMeta{Namespace: selected.Namespace, Name: "frozen-plan", UID: "plan-uid",
 			Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}},
 		Spec: edge.BatchEnergyOptimizationSpec{
-			State: selected.Spec.MeasurementStateSpec, TrialsPerBatch: 3, RetryLimit: 1,
+			State: selected.Spec.MeasurementStateSpec,
 			ActiveProtocol: edge.ActiveProtocolSpec{Workload: config.Measurement.WorkloadName,
-				Dataset: config.Measurement.Dataset.Name, WarmupIterations: 20, DurationSeconds: 30,
-				OperatingPoints: edge.MeasurementOperatingPointsSpec{
-					Utilizations: slices.Clone(points.Utilizations), SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds,
-					PhaseDurationSeconds: int32(points.PhaseDurationSeconds), RequestLifetimeSeconds: int32(points.RequestLifetimeSeconds),
-					PostLoadDurationSeconds:        int32(points.PostLoadDurationSeconds),
-					DeliveryMarginMilliseconds:     int32(points.DeliveryMarginMilliseconds),
-					FramedDecodedRequestUpperBytes: points.FramedDecodedRequestUpperBytes,
-				},
-				MetricObservation: selected.Spec.MetricObservation},
-			IdleProtocol: edge.IdleProtocolSpec{SettlingDurationSeconds: 5, DurationSeconds: 30,
-				MetricObservation: selected.Spec.MetricObservation},
+				Dataset: config.Measurement.Dataset.Name, WarmupIterations: 20},
 		},
 	}
 	node := &core.Node{ObjectMeta: metav1.ObjectMeta{Name: config.TargetNode.Name, UID: types.UID(config.TargetNode.UID)},
@@ -150,7 +138,9 @@ func TestRealAdmittedIdleBaselineRootRemainsExecutable(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Namespace: campaignRoot.Namespace, Name: "idle-baseline", UID: "idle-root-uid",
 			Annotations: campaignRoot.Annotations},
 		Spec: edge.ModelLoadedIdleBaselineSpec{
-			State: campaignRoot.Spec.State, Batch: 1, Protocol: campaignRoot.Spec.IdleProtocol,
+			State: campaignRoot.Spec.State, Batch: 1,
+			Protocol: edge.IdleProtocolSpec{SettlingDurationSeconds: 5, DurationSeconds: 30,
+				MetricObservation: testRun().Spec.MetricObservation},
 			PointPolicy: edge.ModelLoadedIdleBaselinePointPolicySpec{
 				Version: "idle-point-v1", MinimumRuns: 3, ConfidenceLevel: "0.95"},
 			AttemptLimit: 5,

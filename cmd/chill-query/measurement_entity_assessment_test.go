@@ -117,7 +117,7 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		Batches: []serving.BatchProfile{{Batch: 1}},
 	}}
 	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "allowed/old/old-uid"}}
-	condition := profilederivation.CurvePlanSpec{PlannedBatchSizes: []int{1, 2}}
+	condition := profilederivation.CurvePlanSpec{PlannedBatchSizes: []int{1}}
 	view.Profiles[0].Condition = condition
 	zero, passed := 0.0, true
 	view.MeasurementFacts = map[string]serving.MeasurementFacts{"allowed/old/old-uid": {
@@ -136,14 +136,6 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 	}}
 	if got := queryapi.AssessMeasurementRequest(
 		task, queryCoverageCatalog(view), queryCoverageCatalog(view),
-	); got.Status != queryapi.MeasurementPartial || !got.Evidence.Accepted {
-		t.Fatalf("retained fixed-sweep plan lost: %+v", got)
-	}
-	task.Status.Outcome = "BatchDiscoveryComplete"
-	if got := queryapi.AssessMeasurementRequest(
-		task,
-		queryCoverageCatalog(view),
-		queryCoverageCatalog(view),
 	); (got.Status != queryapi.MeasurementComplete && got.Status != queryapi.MeasurementCriteriaMet) ||
 		got.Scope.SchedulerUsed == nil || !*got.Scope.SchedulerUsed {
 		t.Fatalf("published evidence: %+v", got)
@@ -455,7 +447,7 @@ func TestNativeRequestListSurvivesUnavailableCatalog(t *testing.T) {
 						Generation: 2, ResourceVersion: "native-version",
 					},
 					Status: api.BatchEnergyOptimizationStatus{
-						Phase: phase, ObservedGeneration: 2, CompletedTrials: 3,
+						Phase: phase, ObservedGeneration: 2,
 						Conditions: []meta.Condition{
 							{Type: "Progress", Status: meta.ConditionTrue, Reason: "NativeFact"},
 						},

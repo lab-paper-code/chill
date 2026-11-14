@@ -33,7 +33,7 @@ func coverageOccupancyFixture(t *testing.T) (
 		},
 		Spec: api.DispatchOccupancyMeasurementSpec{
 			Node: coverageSizeNode, BatchEnergyOptimization: strings.Split(selected.CurrentMeasurement.ID, "/")[1],
-			Batch: int32(selected.Variants[0].BatchProgress.Target[0]),
+			Batch: int32(selected.Variants[0].BatchProgress.Measured[0]),
 		},
 	}
 	task.Spec.Conditions.ProfileID = selected.Variants[0].ProfileIDs[0]

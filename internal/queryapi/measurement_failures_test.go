@@ -100,7 +100,6 @@ func TestMeasurementFailureClassificationIsSharedAndSafe(t *testing.T) {
 			for _, failures := range [][]MeasurementFailure{
 				assessment.FailureSummary,
 				list.Runs[0].Assessment.FailureSummary,
-				MeasurementRequestFailures(task, []api.ProfilingRun{run}, assessment),
 			} {
 				if len(failures) != 1 {
 					t.Fatalf("failure summary = %+v", failures)

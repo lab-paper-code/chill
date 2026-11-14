@@ -2,7 +2,6 @@ package queryapi
 
 import (
 	"regexp"
-	"sort"
 	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -26,50 +25,20 @@ var (
 	runtimeErrorTime        = regexp.MustCompile(`^(?:\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T[0-9:.]+(?:Z|[+-]\d{2}:\d{2}))`)
 )
 
-// MeasurementRequestFailures joins only exact native controller owners. A
-// session request owns no Run: its one failure is its outcome and sentence.
-func MeasurementRequestFailures(task api.BatchEnergyOptimization, runs []api.ProfilingRun, assessment MeasurementAssessment) []MeasurementFailure {
-	if task.Spec.Session != nil {
-		return sessionRequestFailures(task, assessment)
+// MeasurementRequestFailures is a failed session's one failure: its outcome and
+// the MeasurementComplete sentence. A session owns no Run to inspect.
+func MeasurementRequestFailures(task api.BatchEnergyOptimization, assessment MeasurementAssessment) []MeasurementFailure {
+	if assessment.DisplayStatus != MeasurementProblem {
+		return []MeasurementFailure{}
 	}
-	failures := []MeasurementFailure{}
-	owned := make([]*api.ProfilingRun, 0, len(runs))
-	for i := range runs {
-		run := &runs[i]
-		if run.Namespace != task.Namespace {
-			continue
-		}
-		for _, owner := range run.OwnerReferences {
-			if owner.Controller != nil && *owner.Controller && owner.APIVersion == api.GroupVersion.String() &&
-				owner.Kind == "BatchEnergyOptimization" && owner.Name == task.Name && owner.UID == task.UID {
-				owned = append(owned, run)
-				break
-			}
-		}
+	label, known := sessionFailureLabels[task.Status.Outcome]
+	if !known {
+		label = "실패"
 	}
-	sort.Slice(owned, func(i, j int) bool {
-		if owned[i].CreationTimestamp.Equal(&owned[j].CreationTimestamp) {
-			return owned[i].Name > owned[j].Name
-		}
-		return owned[j].CreationTimestamp.Before(&owned[i].CreationTimestamp)
-	})
-	requestID := task.Namespace + "/" + task.Name + "/" + string(task.UID)
-	for _, run := range owned {
-		runAssessment := AssessProfilingRun(*run)
-		if runAssessment.DisplayStatus != MeasurementProblem {
-			continue
-		}
-		failure := runAssessment.FailureSummary[0]
-		failure.RequestID = requestID
-		failures = append(failures, failure)
-	}
-	if len(failures) == 0 && assessment.DisplayStatus == MeasurementProblem {
-		reason := classifyMeasurementFailure(nil, task.Status.Conditions, task.Generation, task.Spec.State.Candidate.ExecutionPath)
-		failures = append(failures, MeasurementFailure{
-			RequestID: requestID, Code: reason.Code, Label: reason.Label, Message: reason.Message, Relation: "unresolved",
-		})
-	}
-	return failures
+	return []MeasurementFailure{{
+		RequestID: CoverageRequestID(task), Code: task.Status.Outcome, Label: label,
+		Message: MeasurementReasonSentence(task), Relation: "unresolved",
+	}}
 }
 
 // classifyMeasurementFailure prefers the typed terminal cause. Legacy log

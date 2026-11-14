@@ -1,11 +1,7 @@
 package queryapi
 
 import (
-	"reflect"
-	"slices"
-
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 // Each request retains its own execution state. A newer failed request never
@@ -40,7 +36,7 @@ func AssessMeasurementRequest(
 			measured[batch] = true
 		}
 		if facts, found := view.MeasurementFacts[profile.ID]; found {
-			planned = measurementProfileTargets(&task, &facts, &profile)
+			planned = facts.Condition.PlannedBatchSizes
 			for _, batch := range facts.Batches {
 				assessment := AssessMeasurementBatch(batch, facts.PointPolicy.MinimumTrials, reused, used)
 				input.Checks = append(input.Checks, assessment.Checklist.Checks...)
@@ -64,8 +60,7 @@ func AssessMeasurementRequest(
 				"Verified retained result: "+facts.ResultReference.Store+"/"+facts.ResultReference.Key,
 				"Retained result is not in the current scheduler profile selection",
 			)
-			profile := CoverageProfile{Condition: facts.Condition}
-			planned = measurementProfileTargets(&task, &facts, &profile)
+			planned = facts.Condition.PlannedBatchSizes
 			for _, batch := range facts.Batches {
 				measured[batch.Batch] = true
 				assessment := AssessMeasurementBatch(
@@ -105,29 +100,6 @@ func AssessMeasurementRequest(
 		})
 	}
 	return AssessMeasurement(input)
-}
-
-// measurementProfileTargets narrows only a current completed discovery whose
-// verified facts and profile share the same retained condition and batch prefix.
-func measurementProfileTargets(task *api.BatchEnergyOptimization, facts *profilederivation.MeasurementFacts, profile *CoverageProfile) []int {
-	planned := facts.Condition.PlannedBatchSizes
-	if task.Status.Phase != string(api.MeasurementPhaseComplete) || task.Status.ObservedGeneration != task.Generation ||
-		task.Status.Outcome != "BatchDiscoveryComplete" || profile.Reuse != nil ||
-		facts.Request.Namespace != task.Namespace || facts.Request.Name != task.Name || facts.Request.UID != string(task.UID) ||
-		facts.ResultReference.Key == "" || len(facts.Batches) == 0 || len(facts.Batches) > len(planned) ||
-		!reflect.DeepEqual(&profile.Condition, &facts.Condition) {
-		return planned
-	}
-	for i := range facts.Batches {
-		if facts.Batches[i].Batch != planned[i] {
-			return planned
-		}
-	}
-	prefix := planned[:len(facts.Batches)]
-	if len(profile.Batches) > 0 && !slices.Equal(profile.Batches, prefix) {
-		return planned
-	}
-	return prefix
 }
 
 func AssessCatalogProfile(

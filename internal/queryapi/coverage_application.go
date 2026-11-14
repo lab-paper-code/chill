@@ -17,7 +17,6 @@ type coverageProjection struct {
 	query     CoverageQuery
 	out       MeasurementCoverageResponse
 	indices   map[string]int
-	owners    map[string][]api.ProfilingRun
 	profiles  map[string][]CoverageProfile
 	adopted   map[string]bool
 	replaced  map[string]bool
@@ -177,7 +176,6 @@ func (p *coverageProjection) addCells() {
 }
 
 func (p *coverageProjection) indexEvidence() {
-	p.owners = CoverageOwnedRuns(p.base.Requests.Items, p.base.Runs.Items)
 	p.profiles = map[string][]CoverageProfile{}
 	p.adopted = map[string]bool{}
 	byName := make(map[string]string, len(p.base.Requests.Items))
@@ -225,7 +223,7 @@ func (p *coverageProjection) addRequest(task api.BatchEnergyOptimization) {
 	index, exists := p.indices[id]
 	requestID := CoverageRequestID(task)
 	assessment := AssessMeasurementRequest(task, p.base.Catalog, p.base.Catalog)
-	failures := MeasurementRequestFailures(task, p.owners[string(task.UID)], assessment)
+	failures := MeasurementRequestFailures(task, assessment)
 	if assessment.Evidence.Accepted {
 		used := false
 		for _, profile := range p.profiles[requestID] {
@@ -252,16 +250,7 @@ func (p *coverageProjection) addRequest(task api.BatchEnergyOptimization) {
 	cell.History = append(cell.History, MeasurementHistory{
 		RequestID: requestID, Status: assessment.Status,
 	})
-	switch {
-	case task.Spec.Session != nil:
-		p.addSessionVariant(cell, task, assessment)
-	case len(p.profiles[requestID]) == 0:
-		p.addPlannedVariant(cell, task, assessment)
-	default:
-		for _, profile := range p.profiles[requestID] {
-			p.addProfile(cell, task, profile)
-		}
-	}
+	p.addSessionVariant(cell, task, assessment)
 	cell.FailureSummary = append(cell.FailureSummary, failures...)
 }
 
@@ -290,83 +279,6 @@ func (p *coverageProjection) addSessionVariant(
 		variant.ProfileIDs = append(variant.ProfileIDs, profile.ID)
 		variant.BatchProgress.Measured = append(variant.BatchProgress.Measured, profile.Batches...)
 		variant.PowerIdentified = profile.PowerIdentified
-	}
-}
-
-func (p *coverageProjection) addPlannedVariant(
-	cell *MeasurementCoverageCell, task api.BatchEnergyOptimization,
-	assessment MeasurementAssessment,
-) {
-	variant := CoverageFindVariant(cell, CoverageRequestID(task), task.Spec, p.out.Scope.GoalBasis)
-	variant.MeasuredAt = CoverageMeasurementTime(task, time.Time{})
-	variant.RequestIDs = append(variant.RequestIDs, CoverageRequestID(task))
-	variant.Assessment = assessment
-	variant.Assessment.Reasons = append(variant.Assessment.Reasons, CoverageReason(
-		"PlannedConditionUnconfirmed", "요청 spec만 확인했으며 동결 실행 조건의 중복 여부는 검사에서 확인해야 합니다",
-	))
-	for _, run := range p.owners[string(task.UID)] {
-		variant.RunIDs = append(variant.RunIDs, string(run.UID))
-	}
-}
-
-func (p *coverageProjection) addProfile(
-	cell *MeasurementCoverageCell, task api.BatchEnergyOptimization, profile CoverageProfile,
-) {
-	facts := p.base.Catalog.MeasurementFacts[profile.ID]
-	variant := CoverageFindVariant(cell, CoverageRequestID(task), facts.Condition, p.out.Scope.GoalBasis)
-	variant.MeasuredAt = CoverageMeasurementTime(task, profile.MeasuredAt)
-	variant.RequestIDs = append(variant.RequestIDs, CoverageRequestID(task))
-	variant.ProfileIDs = append(variant.ProfileIDs, profile.ID)
-	targets := measurementProfileTargets(&task, &facts, &profile)
-	variant.BatchProgress.Target = CoverageBatches(append(variant.BatchProgress.Target, targets...))
-	for _, run := range p.owners[string(task.UID)] {
-		variant.RunIDs = append(variant.RunIDs, string(run.UID))
-	}
-	for _, batch := range facts.Batches {
-		row := CoverageResultRow(profile, facts, batch, "direct")
-		row.Assessment.Scope.SchedulerUsed = ptr.To(p.adopted[profile.ID])
-		if !p.adopted[profile.ID] {
-			row.Assessment.Scope.Facts = append(row.Assessment.Scope.Facts, "현재 스케줄러 미사용")
-		}
-		if profile.Reuse != nil {
-			row.RowKind = ResultRowConfirmation
-			row.SourceProfileID = ptr.To(profile.Reuse.SourceProfileID)
-			row.Reuse = profile.ReusePayload
-		}
-		variant.ResultRows = append(variant.ResultRows, row)
-		variant.BatchProgress.Measured = append(variant.BatchProgress.Measured, batch.Batch)
-		if row.Assessment.Status == MeasurementCriteriaMet {
-			variant.BatchProgress.CriteriaMet = append(variant.BatchProgress.CriteriaMet, batch.Batch)
-		}
-	}
-	p.addReuseSource(variant, profile)
-	used := p.adopted[profile.ID]
-	assessment := AssessMeasurement(MeasurementAssessmentInput{
-		Accepted: true, Available: true, Reused: profile.Reuse != nil, SchedulerUsed: &used,
-	})
-	p.out.Entities.Profiles = append(p.out.Entities.Profiles, MeasurementEntity{
-		UID: facts.Request.UID, ID: profile.ID, Status: assessment.DisplayStatus, Label: assessment.Label,
-		CellIDs: []string{cell.ID},
-	})
-}
-
-func (p *coverageProjection) addReuseSource(
-	variant *MeasurementCoverageVariant, profile CoverageProfile,
-) {
-	if profile.Reuse == nil {
-		return
-	}
-	source, ok := p.base.Catalog.MeasurementFacts[profile.Reuse.SourceProfileID]
-	if !ok || source.Request.Namespace != p.namespace {
-		return
-	}
-	for _, batch := range source.Batches {
-		row := CoverageResultRow(profile, source, batch, ResultRowSourceReference)
-		row.ProfileID = profile.Reuse.SourceProfileID
-		row.SourceProfileID = ptr.To(profile.Reuse.SourceProfileID)
-		row.TotalJoulesPerItem = nil
-		row.Reuse = profile.ReusePayload
-		variant.ResultRows = append(variant.ResultRows, row)
 	}
 }
 

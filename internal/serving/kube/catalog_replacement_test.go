@@ -21,13 +21,13 @@ const replacementTestNode = "node"
 func TestReplacementSelectionPreservesOriginalsAndReportsSpecDifferences(t *testing.T) {
 	for _, name := range []string{"jetsono-012-smolvlm-fp32-q4-maxn", "orangepi-017-plc-cpu-q4"} {
 		t.Run(name, func(t *testing.T) {
-			original := edge.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "chill-system"}, Spec: edge.BatchEnergyOptimizationSpec{TrialsPerBatch: 3, RetryLimit: 3}}
+			original := edge.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "chill-system"}, Spec: edge.BatchEnergyOptimizationSpec{ActiveProtocol: edge.ActiveProtocolSpec{WarmupIterations: 3}}}
 			original.Spec.State.TargetNode = replacementTestNode
 			before := original.DeepCopy()
 			replacement := *original.DeepCopy()
 			replacement.Name += replacementSuffix
 			replacement.Annotations = map[string]string{profilederivation.ReplacesMeasurementAnnotation: original.Name}
-			replacement.Spec.ActiveProtocol.MetricObservation.DurationSeconds = 1800
+			replacement.Spec.ActiveProtocol.WarmupIterations = 1800
 			items := []edge.BatchEnergyOptimization{original, replacement}
 			selection := replacementCampaignSelection(items)
 			if selection[original.Name] == "" || selection[replacement.Name] == "" {
@@ -36,10 +36,10 @@ func TestReplacementSelectionPreservesOriginalsAndReportsSpecDifferences(t *test
 			if !reflect.DeepEqual(&items[0], before) {
 				t.Fatal("original was modified")
 			}
-			items[1].Spec.TrialsPerBatch = 4
+			items[1].Spec.ActiveProtocol.WarmupIterations = 4
 			selection = replacementCampaignSelection(items)
 			if selection[original.Name] == "" || selection[replacement.Name] == "" {
-				t.Fatalf("changed trial policy was not diagnosed: %+v", selection)
+				t.Fatalf("changed warmup was not diagnosed: %+v", selection)
 			}
 			items[1] = replacement
 			items[1].Spec.State.TargetNode = "other-node"
@@ -144,7 +144,7 @@ func TestOperatorReplacementDiagnosticsDoNotRejectVerifiedProfile(t *testing.T) 
 			if target == "different-spec" {
 				original := replacement.DeepCopy()
 				original.Name, original.UID, original.ResourceVersion = target, "old-uid", ""
-				original.Spec.TrialsPerBatch++
+				original.Spec.ActiveProtocol.WarmupIterations++
 				original.Status = edge.BatchEnergyOptimizationStatus{Phase: "Failed"}
 				if err := catalog.store.client.Create(ctx, original); err != nil {
 					t.Fatal(err)

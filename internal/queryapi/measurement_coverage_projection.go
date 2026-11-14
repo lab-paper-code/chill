@@ -10,8 +10,6 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
-const measurementRequestKind = "BatchEnergyOptimization"
-
 func CoverageCellID(model, class, path, mode string) string {
 	return strings.Join([]string{model, class, path, mode}, "/")
 }
@@ -24,9 +22,6 @@ func CoverageBatches(values []int) []int {
 	return slices.Compact(out)
 }
 func CoverageContains(values []int, batch int) bool { return slices.Contains(values, batch) }
-func CoverageReason(code, message string) MeasurementReason {
-	return MeasurementReason{Code: code, Message: message, SourceIDs: []string{}}
-}
 func CoverageNewCell(
 	group MeasurementCoverageGroup, path, mode string,
 	support map[string]ModelCompatibilityView,
@@ -54,29 +49,6 @@ func CoverageNewCell(
 		cell.Support.Node = &MeasurementIdentity{Name: row.Inputs.Node.Name, UID: row.Inputs.Node.UID}
 	}
 	return cell
-}
-func CoverageOwnedRuns(tasks []api.BatchEnergyOptimization, runs []api.ProfilingRun) map[string][]api.ProfilingRun {
-	owners := map[string][]api.ProfilingRun{}
-	requests := map[string]api.BatchEnergyOptimization{}
-	for _, task := range tasks {
-		requests[string(task.UID)] = task
-	}
-	for _, run := range runs {
-		for _, owner := range run.OwnerReferences {
-			task, exists := requests[string(owner.UID)]
-			if !exists || run.Namespace != task.Namespace || owner.Name != task.Name {
-				continue
-			}
-			if owner.Controller == nil || !*owner.Controller || owner.APIVersion != api.GroupVersion.String() {
-				continue
-			}
-			if owner.Kind == measurementRequestKind {
-				owners[string(owner.UID)] = append(owners[string(owner.UID)], run)
-				break
-			}
-		}
-	}
-	return owners
 }
 func CoverageMeasurementTime(task api.BatchEnergyOptimization, measuredAt time.Time) time.Time {
 	if task.Status.Phase != string(api.MeasurementPhaseComplete) {

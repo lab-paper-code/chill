@@ -3,7 +3,6 @@ package v1alpha1
 import (
 	"fmt"
 	"math"
-	"regexp"
 	"strconv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -11,28 +10,11 @@ import (
 
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="BatchEnergyOptimization spec is immutable"
 type BatchEnergyOptimizationSpec struct {
-	State MeasurementStateSpec `json:"state"`
-	// +optional
-	ActiveProtocol ActiveProtocolSpec `json:"activeProtocol,omitempty,omitzero"`
-	// +optional
-	IdleProtocol IdleProtocolSpec `json:"idleProtocol,omitempty,omitzero"`
-
-	// TrialsPerBatch is the number of completed active and idle observations used
-	// to compare each batch under the minimum-energy objective.
-	// +optional
-	TrialsPerBatch int32 `json:"trialsPerBatch,omitempty"`
-
-	// +optional
-	PointPolicy BatchEnergyOptimizationPointPolicySpec `json:"pointPolicy,omitempty,omitzero"`
-
-	// RetryLimit bounds retries at the same batch after retryable infrastructure
-	// failures. Runtime OOM, execution failures and invalid evidence do not retry.
-	// +optional
-	RetryLimit int32 `json:"retryLimit,omitempty"`
+	State          MeasurementStateSpec `json:"state"`
+	ActiveProtocol ActiveProtocolSpec   `json:"activeProtocol"`
 
 	// Session holds the settings of a ChillServer measurement session.
-	// +optional
-	Session *BatchEnergyOptimizationSessionSpec `json:"session,omitempty"`
+	Session *BatchEnergyOptimizationSessionSpec `json:"session"`
 }
 
 // BatchEnergyOptimizationSessionSpec holds the measurement request's session
@@ -85,28 +67,6 @@ func (s BatchEnergyOptimizationSessionSpec) Confidence() (float64, error) {
 	return confidence, nil
 }
 
-// BatchEnergyOptimizationPointPolicySpec owns the confidence of both idle and
-// incremental-energy estimates for this measurement.
-type BatchEnergyOptimizationPointPolicySpec struct {
-	// +optional
-	ConfidenceLevel string `json:"confidenceLevel,omitempty"`
-}
-
-var pointConfidenceDecimal = regexp.MustCompile(`^0\.[0-9]*[1-9][0-9]*$`)
-
-func (p BatchEnergyOptimizationPointPolicySpec) Confidence() (float64, error) {
-	value := p.ConfidenceLevel
-	if value == "" {
-		value = "0.95"
-	}
-	confidence, err := strconv.ParseFloat(value, 64)
-	if err != nil || !pointConfidenceDecimal.MatchString(value) ||
-		math.IsNaN(confidence) || math.IsInf(confidence, 0) || confidence <= 0 || confidence >= 1 {
-		return 0, fmt.Errorf("pointPolicy.confidenceLevel must be a decimal in (0, 1)")
-	}
-	return confidence, nil
-}
-
 type ActiveProtocolSpec struct {
 	// Workload supplies the actual SLO percentile and latency for this sweep.
 	Workload string `json:"workload"`
@@ -114,20 +74,9 @@ type ActiveProtocolSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	WarmupIterations int32 `json:"warmupIterations"`
 
-	// +optional
-	DurationSeconds int32 `json:"durationSeconds,omitempty"`
-
-	// +optional
-	DurationToleranceSeconds *float64 `json:"durationToleranceSeconds,omitempty"`
-
 	// Dataset names the cluster-scoped Dataset whose profiling records every
 	// active child Run samples.
 	Dataset string `json:"dataset"`
-
-	// +optional
-	MetricObservation ProfilingRunMetricObservationSpec `json:"metricObservation,omitempty,omitzero"`
-	// +optional
-	OperatingPoints MeasurementOperatingPointsSpec `json:"operatingPoints,omitempty,omitzero"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"
@@ -160,9 +109,6 @@ type BatchEnergyOptimizationStatus struct {
 	// +optional
 	Phase string `json:"phase,omitempty"`
 
-	// +optional
-	CompletedTrials int32 `json:"completedTrials,omitempty"`
-
 	// CompletedBatches counts the batch sizes a session measured.
 	// +optional
 	CompletedBatches int32 `json:"completedBatches,omitempty"`
@@ -185,7 +131,6 @@ func (s BatchEnergyOptimizationStatus) Terminal(generation int64) bool {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=beo
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Trials",type=integer,JSONPath=`.status.completedTrials`
 // +kubebuilder:printcolumn:name="Outcome",type=string,JSONPath=`.status.outcome`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

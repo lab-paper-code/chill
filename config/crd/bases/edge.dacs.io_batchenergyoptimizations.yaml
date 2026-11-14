@@ -20,9 +20,6 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
-    - jsonPath: .status.completedTrials
-      name: Trials
-      type: integer
     - jsonPath: .status.outcome
       name: Outcome
       type: string
@@ -63,83 +60,6 @@ spec:
                       Dataset names the cluster-scoped Dataset whose profiling records every
                       active child Run samples.
                     type: string
-                  durationSeconds:
-                    format: int32
-                    type: integer
-                  durationToleranceSeconds:
-                    type: number
-                  metricObservation:
-                    description: ProfilingRunMetricObservationSpec contains policy
-                      only, never an endpoint.
-                    properties:
-                      durationSeconds:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      intervalMilliseconds:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      timeoutMilliseconds:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                    required:
-                    - durationSeconds
-                    - intervalMilliseconds
-                    - timeoutMilliseconds
-                    type: object
-                    x-kubernetes-validations:
-                    - message: timeoutMilliseconds must be less than intervalMilliseconds
-                      rule: self.timeoutMilliseconds < self.intervalMilliseconds
-                  operatingPoints:
-                    description: MeasurementOperatingPointsSpec selects reproducible
-                      off-node native load.
-                    properties:
-                      deliveryMarginMilliseconds:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      framedDecodedRequestUpperBytes:
-                        format: int64
-                        minimum: 1
-                        type: integer
-                      phaseDurationSeconds:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      postLoadDurationSeconds:
-                        description: PostLoadDurationSeconds observes the same loaded
-                          actor without inference after the final load phase.
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      requestLifetimeSeconds:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      sparseMeanGapMilliseconds:
-                        exclusiveMinimum: true
-                        minimum: 0
-                        type: number
-                      utilizations:
-                        items:
-                          exclusiveMaximum: true
-                          exclusiveMinimum: true
-                          maximum: 1
-                          minimum: 0
-                          type: number
-                        minItems: 1
-                        type: array
-                    required:
-                    - deliveryMarginMilliseconds
-                    - framedDecodedRequestUpperBytes
-                    - phaseDurationSeconds
-                    - postLoadDurationSeconds
-                    - requestLifetimeSeconds
-                    - sparseMeanGapMilliseconds
-                    - utilizations
-                    type: object
                   warmupIterations:
                     format: int32
                     minimum: 0
@@ -153,69 +73,6 @@ spec:
                 - warmupIterations
                 - workload
                 type: object
-              idleProtocol:
-                properties:
-                  durationSeconds:
-                    format: int32
-                    minimum: 1
-                    type: integer
-                  durationToleranceSeconds:
-                    default: 0.5
-                    minimum: 0
-                    type: number
-                  metricObservation:
-                    description: ProfilingRunMetricObservationSpec contains policy
-                      only, never an endpoint.
-                    properties:
-                      durationSeconds:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      intervalMilliseconds:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      timeoutMilliseconds:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                    required:
-                    - durationSeconds
-                    - intervalMilliseconds
-                    - timeoutMilliseconds
-                    type: object
-                    x-kubernetes-validations:
-                    - message: timeoutMilliseconds must be less than intervalMilliseconds
-                      rule: self.timeoutMilliseconds < self.intervalMilliseconds
-                  settlingDurationSeconds:
-                    format: int32
-                    minimum: 1
-                    type: integer
-                required:
-                - durationSeconds
-                - metricObservation
-                - settlingDurationSeconds
-                type: object
-                x-kubernetes-validations:
-                - message: duration tolerance must be less than duration
-                  rule: '!has(self.durationToleranceSeconds) || self.durationToleranceSeconds
-                    < double(self.durationSeconds)'
-                - message: metricObservation.durationSeconds must cover durationSeconds
-                  rule: self.metricObservation.durationSeconds >= self.durationSeconds
-              pointPolicy:
-                description: |-
-                  BatchEnergyOptimizationPointPolicySpec owns the confidence of both idle and
-                  incremental-energy estimates for this measurement.
-                properties:
-                  confidenceLevel:
-                    type: string
-                type: object
-              retryLimit:
-                description: |-
-                  RetryLimit bounds retries at the same batch after retryable infrastructure
-                  failures. Runtime OOM, execution failures and invalid evidence do not retry.
-                format: int32
-                type: integer
               session:
                 description: Session holds the settings of a ChillServer measurement
                   session.
@@ -401,13 +258,9 @@ spec:
                 - candidate
                 - targetNode
                 type: object
-              trialsPerBatch:
-                description: |-
-                  TrialsPerBatch is the number of completed active and idle observations used
-                  to compare each batch under the minimum-energy objective.
-                format: int32
-                type: integer
             required:
+            - activeProtocol
+            - session
             - state
             type: object
             x-kubernetes-validations:
@@ -417,9 +270,6 @@ spec:
             properties:
               completedBatches:
                 description: CompletedBatches counts the batch sizes a session measured.
-                format: int32
-                type: integer
-              completedTrials:
                 format: int32
                 type: integer
               conditions:

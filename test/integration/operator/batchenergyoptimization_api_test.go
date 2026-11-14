@@ -34,15 +34,21 @@ var _ = Describe("BatchEnergyOptimization API", func() {
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
 	})
 
+	It("requires a session", func() {
+		campaign := validBatchEnergyOptimization(uniqueBatchEnergyOptimizationName("no-session"))
+		campaign.Spec.Session = nil
+		err := k8sClient.Create(context.Background(), campaign)
+		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "%v", err)
+		Expect(err.Error()).To(ContainSubstring("spec.session"))
+	})
+
 	It("requires the session's operation observation settings", func() {
 		ctx := context.Background()
 		campaign := validBatchEnergyOptimization(uniqueBatchEnergyOptimizationName("session"))
-		campaign.Spec.Session = validSession()
 		Expect(k8sClient.Create(ctx, campaign)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, campaign) })
 
 		missing := validBatchEnergyOptimization(uniqueBatchEnergyOptimizationName("session-unobserved"))
-		missing.Spec.Session = validSession()
 		missing.Spec.Session.Observation = edgev1alpha1.MeasurementObservationSpec{}
 		err := k8sClient.Create(ctx, missing)
 		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "%v", err)
@@ -71,30 +77,9 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				Workload:         "mobilenet",
 				WarmupIterations: 20,
-				DurationSeconds:  120,
 				Dataset:          "vqav2-val-subset",
-				OperatingPoints: edgev1alpha1.MeasurementOperatingPointsSpec{
-					Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
-					PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30, RequestLifetimeSeconds: 30,
-					DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024,
-				},
-				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
-					IntervalMilliseconds: 1000,
-					TimeoutMilliseconds:  500,
-					DurationSeconds:      121,
-				},
 			},
-			IdleProtocol: edgev1alpha1.IdleProtocolSpec{
-				SettlingDurationSeconds: 60,
-				DurationSeconds:         30,
-				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
-					IntervalMilliseconds: 1000,
-					TimeoutMilliseconds:  500,
-					DurationSeconds:      31,
-				},
-			},
-			TrialsPerBatch: 3,
-			RetryLimit:     2,
+			Session: validSession(),
 		},
 	}
 }

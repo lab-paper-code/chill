@@ -10,7 +10,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/queryapi"
-	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	"github.com/lab-paper-code/chill/test/fixtures"
@@ -73,89 +72,5 @@ func TestR6MissingOccupancyEvidenceDoesNotHideWholeList(t *testing.T) {
 		assessment.Evidence.Available || len(assessment.Reasons) == 0 ||
 		assessment.Reasons[0].Code != "OccupancyEvidenceMissing" {
 		t.Fatalf("missing evidence falsely accepted or hidden: %+v", assessment)
-	}
-}
-
-func TestR6FailureSummaryClassifiesOwnedRuntimeLog(t *testing.T) {
-	controller := true
-	task := api.BatchEnergyOptimization{
-		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "request", UID: "request-uid", Generation: 1},
-		Status:     api.BatchEnergyOptimizationStatus{Phase: "Failed", ObservedGeneration: 1},
-	}
-	run := api.ProfilingRun{
-		ObjectMeta: meta.ObjectMeta{
-			Namespace: task.Namespace, Name: "run", UID: "run-uid", Generation: 1,
-			OwnerReferences: []meta.OwnerReference{{
-				APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimization",
-				Name: task.Name, UID: task.UID, Controller: &controller,
-			}},
-		},
-		Status: api.ProfilingRunStatus{
-			ObservedGeneration: 1, Conditions: []meta.Condition{{
-				Type: "ExecutionComplete", Status: meta.ConditionFalse, Reason: "JobFailed",
-				Message: "Job failed", ObservedGeneration: 1,
-			}},
-			RuntimeTermination: &api.ProfilingRunRuntimeTermination{
-				ExitCode: 4,
-				LogTail:  "starting\nmetric observation failed: wait for metric result file: context deadline exceeded\n",
-			},
-		},
-	}
-	base := &queryapi.CoverageBase{
-		Requests: api.BatchEnergyOptimizationList{Items: []api.BatchEnergyOptimization{task}},
-		Runs:     api.ProfilingRunList{Items: []api.ProfilingRun{run}},
-		Inventory: queryapi.InventoryView{
-			Models: []queryapi.InventoryModelView{
-				{Spec: api.ModelSpecSpec{ExecutionPaths: []api.ModelExecutionPath{{}}}},
-			},
-			Classes: []queryapi.InventoryClassView{{PowerModes: []queryapi.InventoryPowerModeView{{}}}},
-		},
-	}
-	assessment := queryapi.AssessMeasurementRequest(task, queryapi.CoverageCatalog{}, queryapi.CoverageCatalog{})
-	failures := queryapi.MeasurementRequestFailures(
-		task, queryapi.CoverageOwnedRuns(base.Requests.Items, base.Runs.Items)[string(task.UID)], assessment,
-	)
-	projection := queryapi.BuildMeasurementCoverage(base, task.Namespace, queryapi.CoverageQuery{})
-	cell := projection.Cells[0]
-	foreign := *run.DeepCopy()
-	foreign.Namespace = "outside"
-	got := queryapi.MeasurementRequestFailures(task, []api.ProfilingRun{foreign}, assessment)
-	if len(got) != 1 || got[0].RunID != "" {
-		t.Fatalf("foreign Run borrowed as failure cause: %+v", got)
-	}
-	if len(cell.FailureSummary) == 0 {
-		t.Fatal("failure summary absent")
-	}
-	last := cell.FailureSummary[len(cell.FailureSummary)-1]
-	if last.RunID != string(run.UID) || last.ExitCode == nil || *last.ExitCode != 4 ||
-		last.Code != "PowerObservationTimeout" || last.Label != "전력 관측 시간 초과" ||
-		last.Message != "제한 시간 안에 전력 관측을 완료하지 못했습니다." {
-		t.Fatalf("lost runtime cause: %+v", last)
-	}
-	service := &measurementService{
-		client: fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(&run).Build(),
-	}
-	list, err := querykube.AssessMeasurementRequests(
-		context.Background(),
-		service.client,
-		queryCatalogSource(service.catalog),
-		base.Requests,
-	)
-	if err != nil || len(list) != 1 {
-		t.Fatalf("request list assessment = %s, %v", list, err)
-	}
-	var listAssessment queryapi.MeasurementAssessment
-	if err := json.Unmarshal(list[0], &listAssessment); err != nil {
-		t.Fatal(err)
-	}
-	for _, summary := range [][]queryapi.MeasurementFailure{
-		failures, projection.Entities.Requests[0].FailureSummary,
-		listAssessment.FailureSummary,
-		queryapi.AssessProfilingRun(run).FailureSummary,
-	} {
-		if len(summary) != 1 || summary[0].Code != last.Code || summary[0].Label != last.Label ||
-			summary[0].Message != last.Message || summary[0].RunID != last.RunID {
-			t.Fatalf("failure classification differs across projections: %+v; want %+v", summary, last)
-		}
 	}
 }

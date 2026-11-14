@@ -7,24 +7,6 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
-func TestMeasurementPointConfidenceDefaultAndRange(t *testing.T) {
-	for _, value := range []string{"", "0.95", "0.8"} {
-		got, err := (edge.BatchEnergyOptimizationPointPolicySpec{ConfidenceLevel: value}).Confidence()
-		want := .95
-		if value == "0.8" {
-			want = .8
-		}
-		if err != nil || got != want {
-			t.Fatalf("confidence %q = %g, %v", value, got, err)
-		}
-	}
-	for _, value := range []string{"0", "1", "NaN", "Inf", " 0.95"} {
-		if _, err := (edge.BatchEnergyOptimizationPointPolicySpec{ConfidenceLevel: value}).Confidence(); err == nil {
-			t.Fatalf("invalid confidence accepted: %q", value)
-		}
-	}
-}
-
 func burstSpec() edge.DispatchOccupancyMeasurementSpec {
 	return edge.DispatchOccupancyMeasurementSpec{
 		Batch: 2, Workers: 8, SupplyMode: "closed-loop", MinimumPairs: 100,

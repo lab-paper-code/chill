@@ -56,6 +56,7 @@ func coverageSizeBase() *queryapi.CoverageBase {
 					PowerMode:     "fixed",
 				},
 			},
+			Session: &api.BatchEnergyOptimizationSessionSpec{},
 		},
 		Status: api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
 	}
@@ -112,7 +113,7 @@ func coverageOccupancyFixture(
 		Spec: api.DispatchOccupancyMeasurementSpec{
 			Node:                    coverageSizeNode,
 			BatchEnergyOptimization: strings.Split(selected.CurrentMeasurement.ID, "/")[1],
-			Batch:                   int32(selected.Variants[0].BatchProgress.Target[0]),
+			Batch:                   int32(selected.Variants[0].BatchProgress.Measured[0]),
 		},
 	}
 	task.Spec.Conditions.ProfileID = selected.Variants[0].ProfileIDs[0]

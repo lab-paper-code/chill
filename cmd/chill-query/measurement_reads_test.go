@@ -163,7 +163,6 @@ func TestMeasurementResultFailureRetainsNativeRequestWithoutInventingEvidence(t 
 					ObservedGeneration: 1,
 					Phase:              phase,
 					Outcome:            "RetryLimitExhausted",
-					CompletedTrials:    3,
 					Result: &api.ProfilingRunEvidenceReference{
 						Store: "store",
 						Key:   "result.json",
@@ -198,7 +197,6 @@ func TestMeasurementResultFailureRetainsNativeRequestWithoutInventingEvidence(t 
 				!strings.Contains(body.Reason, "completed Run measurement contradicts result") ||
 				body.Campaign.UID != string(task.UID) ||
 				body.Campaign.Phase != phase ||
-				body.Campaign.CompletedTrials != 3 ||
 				body.Campaign.Conditions[0].Message != "runtime failed repeatedly" ||
 				body.Assessment.Evidence.Accepted {
 				t.Fatalf("native failure or original error lost: %d %s", response.Code, response.Body.String())
@@ -208,12 +206,11 @@ func TestMeasurementResultFailureRetainsNativeRequestWithoutInventingEvidence(t 
 				t.Fatalf("failure cause lost: %+v", body.Assessment)
 			}
 			t.Logf(
-				"evidence-error: status=%d code=%s uid=%s phase=%s trials=%d result=null reason=%s",
+				"evidence-error: status=%d code=%s uid=%s phase=%s result=null reason=%s",
 				response.Code,
 				body.Code,
 				body.Campaign.UID,
 				body.Campaign.Phase,
-				body.Campaign.CompletedTrials,
 				body.Reason,
 			)
 		})

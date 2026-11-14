@@ -146,7 +146,6 @@ func resultCampaign(task *api.BatchEnergyOptimization) BatchEnergyOptimizationRe
 		ResourceVersion: task.ResourceVersion, Generation: task.Generation,
 		Spec:  task.Spec,
 		Phase: task.Status.Phase, Outcome: task.Status.Outcome,
-		CompletedTrials:  task.Status.CompletedTrials,
 		CompletedBatches: task.Status.CompletedBatches,
 		Reason:           MeasurementReasonSentence(*task),
 		Conditions:       append([]metav1.Condition(nil), task.Status.Conditions...),
@@ -160,20 +159,4 @@ var sessionFailureLabels = map[string]string{
 	"SessionSettingsMissing": "설정 없음",
 	"MeterUndeclared":        "전력계 미선언",
 	"SessionUnresolved":      "준비 정보 해석 실패",
-}
-
-// sessionRequestFailures is a failed session's one failure: its outcome and
-// the MeasurementComplete sentence. A session owns no Run to inspect.
-func sessionRequestFailures(task api.BatchEnergyOptimization, assessment MeasurementAssessment) []MeasurementFailure {
-	if assessment.DisplayStatus != MeasurementProblem {
-		return []MeasurementFailure{}
-	}
-	label, known := sessionFailureLabels[task.Status.Outcome]
-	if !known {
-		label = "실패"
-	}
-	return []MeasurementFailure{{
-		RequestID: CoverageRequestID(task), Code: task.Status.Outcome, Label: label,
-		Message: MeasurementReasonSentence(task), Relation: "unresolved",
-	}}
 }

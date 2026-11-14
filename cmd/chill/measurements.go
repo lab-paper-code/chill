@@ -191,14 +191,14 @@ func executeMeasurements(ctx context.Context, args []string, stdout, stderr io.W
 		if opts.output == outputFormatJSON {
 			return writeOperationJSON(stdout, tasks)
 		}
-		if _, err := fmt.Fprintln(table, "NAMESPACE\tMEASUREMENT_TASK\tPHASE\tBATCHES\tTRIALS\tOUTCOME\tREASON"); err != nil {
+		if _, err := fmt.Fprintln(table, "NAMESPACE\tMEASUREMENT_TASK\tPHASE\tBATCHES\tOUTCOME\tREASON"); err != nil {
 			return err
 		}
 		for i := range tasks.Items {
 			task := &tasks.Items[i]
-			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
+			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%s\t%s\n",
 				task.Namespace, task.Name, display(task.Status.Phase), task.Status.CompletedBatches,
-				task.Status.CompletedTrials, display(task.Status.Outcome),
+				display(task.Status.Outcome),
 				display(queryapi.MeasurementReasonSentence(*task))); err != nil {
 				return err
 			}
@@ -220,9 +220,9 @@ func executeMeasurements(ctx context.Context, args []string, stdout, stderr io.W
 
 func renderMeasurementResult(table io.Writer, result queryapi.BatchEnergyOptimizationResult) error {
 	task := result.Campaign
-	const taskHeader = "NAMESPACE\tMEASUREMENT_TASK\tPHASE\tBATCHES\tTRIALS\tOUTCOME\tREASON\n"
-	if _, err := fmt.Fprintf(table, taskHeader+"%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
-		task.Namespace, task.Name, display(task.Phase), task.CompletedBatches, task.CompletedTrials,
+	const taskHeader = "NAMESPACE\tMEASUREMENT_TASK\tPHASE\tBATCHES\tOUTCOME\tREASON\n"
+	if _, err := fmt.Fprintf(table, taskHeader+"%s\t%s\t%s\t%d\t%s\t%s\n",
+		task.Namespace, task.Name, display(task.Phase), task.CompletedBatches,
 		display(task.Outcome), display(task.Reason)); err != nil {
 		return err
 	}

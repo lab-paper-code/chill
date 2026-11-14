@@ -131,7 +131,7 @@ func (o *measurementService) register(mux *http.ServeMux) {
 				list.Items = list.Items[start:end]
 			}
 			assessments, err := querykube.AssessMeasurementRequests(
-				r.Context(), o.client, queryCatalogSource(o.catalog), list,
+				r.Context(), queryCatalogSource(o.catalog), list,
 			)
 			if err != nil {
 				httpapi.SendQueryError(w, err)

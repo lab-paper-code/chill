@@ -31,37 +31,23 @@ func TestMeasurementCoverageCampaignFitsResponseBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("coverage bytes=%d profiles=%d requests=%d runs=%d",
-		len(raw), len(got.Entities.Profiles), len(got.Entities.Requests), len(got.Entities.Runs))
+	t.Logf("coverage bytes=%d requests=%d runs=%d", len(raw), len(got.Entities.Requests), len(got.Entities.Runs))
 	if len(raw) >= (8<<20)/2 {
 		t.Errorf("coverage uses %d bytes; must remain below half the 8MiB response limit", len(raw))
 	}
-	if len(got.Entities.Runs) != 1200 || len(got.Entities.Requests) != 90 || len(got.Entities.Profiles) != 80 {
-		t.Fatalf("entities truncated: runs=%d requests=%d profiles=%d",
-			len(got.Entities.Runs), len(got.Entities.Requests), len(got.Entities.Profiles))
+	if len(got.Entities.Runs) != 1200 || len(got.Entities.Requests) != 90 {
+		t.Fatalf("entities truncated: runs=%d requests=%d", len(got.Entities.Runs), len(got.Entities.Requests))
 	}
 	coverageSizeAssertWire(t, raw)
-	rows, history := 0, 0
-	seen := map[string]bool{}
+	history := 0
 	for _, cell := range got.Cells {
 		history += len(cell.History)
 		if len(cell.Assessment.Checklist.Checks) != 0 {
 			t.Errorf("cell %s repeats checklist checks", cell.ID)
 		}
-		for _, variant := range cell.Variants {
-			rows += len(variant.ResultRows)
-			coverageSizeAssertVariant(t, base, variant, seen)
-		}
 	}
-	// Eighty retained profiles cover four cells. Each cell exposes only its
-	// current measurement's three batches; all requests and facts survive.
-	if rows != 12 || len(seen) != 12 || history != 90 || len(base.Catalog.MeasurementFacts) != 80 {
-		t.Fatalf(
-			"current conditions or retained history changed: rows=%d unique=%d history=%d",
-			rows,
-			len(seen),
-			history,
-		)
+	if history != 90 || len(base.Catalog.MeasurementFacts) != 80 {
+		t.Fatalf("retained history changed: history=%d", history)
 	}
 }
 
@@ -132,6 +118,7 @@ func coverageSizeRequest(index int) api.BatchEnergyOptimization {
 					PowerMode: []string{"performance", "powersave"}[(index/4)%2],
 				}, TargetNode: coverageSizeNode,
 			},
+			Session: &api.BatchEnergyOptimizationSessionSpec{},
 		},
 		Status: api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
 	}
@@ -245,125 +232,5 @@ func coverageSizeAssertWire(t *testing.T, raw []byte) {
 				t.Fatalf("%s entity keys=%v, want %v", kind, keys, want)
 			}
 		}
-	}
-}
-
-type coverageSizeCheckKey struct {
-	code, result, message string
-}
-
-func coverageSizeAssertVariant(
-	t *testing.T, base *CoverageBase, variant MeasurementCoverageVariant, seen map[string]bool,
-) {
-	t.Helper()
-	expected := map[coverageSizeCheckKey][]string{}
-	if len(variant.BatchProgress.Missing) == 0 {
-		if condition, ok := variant.Condition.(profilederivation.CurvePlanSpec); ok {
-			check := coverageDatasetCheck(base, condition)
-			ids := []string{}
-			for _, row := range variant.ResultRows {
-				if row.RowKind != ResultRowSourceReference &&
-					CoverageContains(variant.BatchProgress.Target, row.Batch) {
-					ids = append(ids, row.ID)
-				}
-			}
-			expected[coverageSizeCheckKey{check.Code, check.Result, check.Message}] = ids
-		}
-	}
-	for _, row := range variant.ResultRows {
-		if seen[row.ID] {
-			t.Fatalf("duplicate row %s", row.ID)
-		}
-		seen[row.ID] = true
-		facts := base.Catalog.MeasurementFacts[row.ProfileID]
-		if !reflect.DeepEqual(variant.Condition, facts.Condition) ||
-			!reflect.DeepEqual(row.Condition, facts.Condition) {
-			t.Fatalf("row %s frozen conditions changed", row.ID)
-		}
-		for _, batch := range facts.Batches {
-			if batch.Batch != row.Batch {
-				continue
-			}
-			original := AssessMeasurementBatch(batch, facts.PointPolicy.MinimumTrials, false, true)
-			coverageSizeAssertRow(t, row, batch, original)
-			for _, check := range original.Checklist.Checks {
-				key := coverageSizeCheckKey{check.Code, check.Result, check.Message}
-				expected[key] = append(expected[key], row.ID)
-			}
-		}
-	}
-	if len(variant.Assessment.Checklist.Checks) != len(expected) {
-		t.Fatalf("variant checks=%d want %d unique checks", len(variant.Assessment.Checklist.Checks), len(expected))
-	}
-	for _, check := range variant.Assessment.Checklist.Checks {
-		key := coverageSizeCheckKey{check.Code, check.Result, check.Message}
-		want := expected[key]
-		actual := append([]string(nil), check.SourceIDs...)
-		slices.Sort(want)
-		slices.Sort(actual)
-		if len(want) == 0 || !reflect.DeepEqual(actual, want) {
-			t.Fatalf("check %s contributors=%v want exact ResultRow IDs %v", check.Code, actual, want)
-		}
-		delete(expected, key)
-	}
-	if len(expected) != 0 {
-		t.Fatalf("variant omitted %d checks", len(expected))
-	}
-}
-
-func coverageSizeAssertRow(
-	t *testing.T, row ResultRow, batch profilederivation.MeasurementBatchFacts,
-	original MeasurementAssessment,
-) {
-	t.Helper()
-	wantAssessment := original
-	wantAssessment.Checklist.Checks = []MeasurementCheck{}
-	if !reflect.DeepEqual(row.Assessment, wantAssessment) {
-		t.Fatalf("row %s assessment summary changed: got=%+v want=%+v", row.ID, row.Assessment, wantAssessment)
-	}
-	if row.Assessment.Status != MeasurementCriteriaMet ||
-		row.P95Milliseconds == nil || *row.P95Milliseconds != 0 ||
-		row.TotalJoulesPerItem == nil || *row.TotalJoulesPerItem != 0 ||
-		row.IdleWatts == nil || *row.IdleWatts != 0 ||
-		row.Confidence == nil || row.Confidence.Lower != -3 || row.Confidence.Upper != 1 {
-		t.Fatalf("row %s lost criteria, zero, or signed CI: %+v", row.ID, row)
-	}
-	wantSources := make([]string, 0, len(batch.Sources))
-	for _, source := range batch.Sources {
-		wantSources = append(wantSources, source.Store+"/"+source.Key)
-	}
-	if !reflect.DeepEqual(row.Sources, wantSources) {
-		t.Fatalf("row %s raw sources changed: got=%v want=%v", row.ID, row.Sources, wantSources)
-	}
-}
-
-func TestMeasurementCoverageChecklistKeepsRequestedBatchProvenance(t *testing.T) {
-	response := BuildMeasurementCoverage(
-		coverageSizeBase(), coverageSizeNamespace, CoverageQuery{Batches: []int{4}},
-	)
-	rows := 0
-	for _, cell := range response.Cells {
-		for _, variant := range cell.Variants {
-			rows += len(variant.ResultRows)
-			selected := map[string]bool{}
-			for _, row := range variant.ResultRows {
-				if row.Batch == 4 {
-					selected[row.ID] = true
-				}
-			}
-			for _, check := range variant.Assessment.Checklist.Checks {
-				if len(check.SourceIDs) != len(selected) {
-					t.Fatalf("check %s does not retain every selected result row", check.Code)
-				}
-				for _, id := range check.SourceIDs {
-					if !selected[id] {
-						t.Fatalf("check %s references a batch outside the requested goal: %s", check.Code, id)
-					}
-				}
-			}
-		}
-	}
-	if rows != 12 {
-		t.Fatalf("goal projection changed current-measurement result rows: %d", rows)
 	}
 }

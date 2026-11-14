@@ -48,7 +48,6 @@ type BatchEnergyOptimizationResultCampaign struct {
 	Spec            edgev1alpha1.BatchEnergyOptimizationSpec `json:"spec"`
 	Phase           string                                   `json:"phase,omitempty"`
 	Outcome         string                                   `json:"outcome,omitempty"`
-	CompletedTrials int32                                    `json:"completedTrials"`
 	// CompletedBatches counts the batch sizes a session measured.
 	CompletedBatches int32 `json:"completedBatches"`
 	// Reason is the current MeasurementComplete condition's message.
@@ -76,7 +75,7 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 	if reference := campaign.Status.Result; reference != nil {
 		view.Campaign.StoredResult = &evidencestore.ObjectIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size}
 	}
-	view.Assessment.FailureSummary = MeasurementRequestFailures(*campaign, nil, view.Assessment)
+	view.Assessment.FailureSummary = MeasurementRequestFailures(*campaign, view.Assessment)
 	return view, nil
 }
 
@@ -98,6 +97,6 @@ func buildSessionResult(snapshot BatchEnergyOptimizationResultSnapshot) (BatchEn
 		}),
 	}
 	view.Campaign.StoredResult = &evidencestore.ObjectIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size}
-	view.Assessment.FailureSummary = MeasurementRequestFailures(*campaign, nil, view.Assessment)
+	view.Assessment.FailureSummary = MeasurementRequestFailures(*campaign, view.Assessment)
 	return view, nil
 }

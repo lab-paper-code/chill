@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
@@ -185,22 +184,13 @@ func sampleStopConfiguration(t *testing.T, directory string) (options, profiling
 	if err := json.Unmarshal([]byte(opts.runConfig), &config); err != nil {
 		t.Fatal(err)
 	}
-	sample, err := os.ReadFile("../../config/samples/profiling/edge_v1alpha1_batchenergyoptimization.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var campaign edgev1alpha1.BatchEnergyOptimization
-	if err := yaml.Unmarshal(sample, &campaign); err != nil {
-		t.Fatal(err)
-	}
-	protocol := campaign.Spec.ActiveProtocol
-	config.Measurement.OperatingPoints.PhaseDurationSeconds = int(protocol.OperatingPoints.PhaseDurationSeconds)
-	config.Measurement.OperatingPoints.PostLoadDurationSeconds = int(protocol.OperatingPoints.PostLoadDurationSeconds)
+	config.Measurement.OperatingPoints.PhaseDurationSeconds = 30
+	config.Measurement.OperatingPoints.PostLoadDurationSeconds = 30
 	config.Measurement.DurationSeconds = config.Measurement.OperatingPoints.PhaseDurationSeconds*
 		(len(config.Measurement.OperatingPoints.Utilizations)+2) + config.Measurement.OperatingPoints.PostLoadDurationSeconds
 	config.Metrics.DurationSeconds = config.Measurement.DurationSeconds + 1
-	config.Metrics.IntervalMilliseconds = int(protocol.MetricObservation.IntervalMilliseconds)
-	config.Metrics.TimeoutMilliseconds = int(protocol.MetricObservation.TimeoutMilliseconds)
+	config.Metrics.IntervalMilliseconds = 1000
+	config.Metrics.TimeoutMilliseconds = 500
 	config.Measurement.OperatingPoints.QueueBytesCap = 64 << 20
 	config.Measurement.OperatingPoints.FramedDecodedRequestUpperBytes = (64 << 20) / 32
 	if config.Measurement.DurationSeconds != 120 || config.Metrics.DurationSeconds != 121 ||
