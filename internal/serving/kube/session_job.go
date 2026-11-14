@@ -227,6 +227,10 @@ func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job
 	if refused != "" {
 		return sessionLevelTable{}, errors.New(refused)
 	}
+	return c.sessionLoadResult(ctx, job, ended)
+}
+
+func (c *SchedulerController) sessionLoadResult(ctx context.Context, job *batch.Job, ended *batch.JobCondition) (sessionLevelTable, error) {
 	pod, err := c.sessionLoadPod(ctx, job)
 	if err != nil {
 		return sessionLevelTable{}, err

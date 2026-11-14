@@ -35,7 +35,8 @@ func TestSessionResolutionClassification(t *testing.T) {
 			original := fmt.Errorf("resolve static candidate: %w", test.err)
 			classified := sessionResolutionError(original)
 			var retry *servingkube.SessionResolutionRetry
-			if errors.As(classified, &retry) != test.retry || classified.Error() != original.Error() || !errors.Is(classified, test.err) {
+			if errors.As(classified, &retry) != test.retry || classified.Error() != original.Error() ||
+				!errors.Is(classified, test.err) {
 				t.Fatalf("classified %T %v retry %v", classified, classified, test.retry)
 			}
 		})

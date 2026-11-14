@@ -204,8 +204,8 @@ func runSessionLoad(ctx context.Context, c sessionLoadConfig) ([]sessionLevel, e
 		}
 		level, err := s.level(ctx, kind, rate)
 		levels = append(levels, level)
-		if err != nil || level.EndReason != sessionSamplesReached &&
-			!(kind != sessionSaturation && (level.EndReason == sessionPredictedOverLimit || level.EndReason == sessionRequestLifetimeExpired)) {
+		endedEarly := level.EndReason == sessionPredictedOverLimit || level.EndReason == sessionRequestLifetimeExpired
+		if err != nil || level.EndReason != sessionSamplesReached && (kind == sessionSaturation || !endedEarly) {
 			return levels, err
 		}
 	}
