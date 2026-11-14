@@ -26,9 +26,9 @@ type AdmissionSnapshot struct {
 	ContainerID           string                    `json:"containerID,omitempty"`
 	Node                  NodeReference             `json:"node"`
 	ProfileID             string                    `json:"profileID,omitempty"`
-	ObservedAt            time.Time                 `json:"observedAt,omitzero"`
-	NativeAt              time.Time                 `json:"nativeAt,omitzero"`
-	NativeSpanAt          time.Time                 `json:"nativeSpanAt,omitzero"`
+	ObservedAt            time.Time                 `json:"observedAt"`
+	NativeAt              time.Time                 `json:"nativeAt"`
+	NativeSpanAt          time.Time                 `json:"nativeSpanAt"`
 	SnapshotAgeNanos      *int64                    `json:"snapshotAgeNanos"`
 	ObservedAgeNanos      *int64                    `json:"observedAgeNanos"`
 	ACKPolicy             *firstfloor.Policy        `json:"ackPolicy,omitempty"`

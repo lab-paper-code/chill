@@ -158,6 +158,8 @@ func testBatchEnergyOptimizationPreflight(resolves bool) queryapi.BatchEnergyOpt
 		preflight.Reason = "referenced DeviceClass does not exist"
 		return preflight
 	}
-	preflight.Session = &queryapi.SessionPreflightPlan{PlannedBatchSizes: []int{1, 2, 4}, MinimumSamples: 59, SLOPercentile: 95}
+	preflight.Session = &queryapi.SessionPreflightPlan{
+		PlannedBatchSizes: []int{1, 2, 4}, MinimumSamples: 59, SLOPercentile: 95,
+	}
 	return preflight
 }

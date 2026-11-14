@@ -355,7 +355,7 @@ type InstanceState struct {
 	Native          *firstfloor.State `json:"native,omitempty"`
 	// NativeSpanAt is the local anchor of Native's derived spans after owned
 	// completion reconciliation. Zero means the unchanged probe's ObservedAt.
-	NativeSpanAt time.Time `json:"nativeSpanAt,omitzero"`
+	NativeSpanAt time.Time `json:"nativeSpanAt"`
 	// A gateway completion bounds the last service end rather than inventing
 	// its timestamp. Native.LastServiceEndAgeNanos is the lower idle age.
 	LastServiceEndAgeUpperNanos *int64 `json:"lastServiceEndAgeUpperNanos,omitempty"`

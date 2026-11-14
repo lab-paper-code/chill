@@ -339,7 +339,7 @@ type SchedulerInstance struct {
 	ObservedAt     time.Time                      `json:"observedAt"`
 	// NativeSpanAt anchors derived native idle/arrival spans. Zero means the
 	// unchanged physical observation; ObservedAt always retains probe provenance.
-	NativeSpanAt                time.Time `json:"nativeSpanAt,omitzero"`
+	NativeSpanAt                time.Time `json:"nativeSpanAt"`
 	LastServiceEndAgeUpperNanos *int64    `json:"lastServiceEndAgeUpperNanos,omitempty"`
 	AdmissionIdleUnknown        bool      `json:"admissionIdleUnknown,omitempty"`
 	// LastServiceEndAgeNanos is worker-clock idle age at the native span anchor.
