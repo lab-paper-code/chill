@@ -58,6 +58,9 @@ func terminatedPodController(t *testing.T) (*SchedulerController, serving.Schedu
 
 func TestTerminatedPodOnlyPlannerReachesNormalRemovePrepareAndRoute(t *testing.T) {
 	c, old := terminatedPodController(t)
+	// Exercise the lifecycle without a 0.5 ms search cutoff that can expire
+	// before any candidate is tested. Keep the existing observation window.
+	c.config.Settings.ControlInterval = c.config.Settings.ObservationWindow
 	goal, remove, prepare, route := terminatedPodReplacementPlan(t, c, old)
 	reached, release := holdTerminatedPodReturn(t, c, old)
 	c.launch(c.ctx, *goal, c.config)
@@ -96,7 +99,7 @@ func terminatedPodReplacementPlan(t *testing.T, c *SchedulerController, old serv
 		t.Fatal(err)
 	}
 	if decision.Target == nil || decision.Target.Keep {
-		t.Fatalf("planner did not replace terminated occupancy: reasons=%v capacity=%+v", decision.Reasons, decision.Capacity)
+		t.Fatalf("planner did not replace terminated occupancy: reasons=%v search=%+v capacity=%+v", decision.Reasons, decision.Capacity.Search, decision.Capacity)
 	}
 	goal := decision.Target
 	var remove, prepare, route serving.Action

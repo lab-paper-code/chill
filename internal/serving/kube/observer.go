@@ -616,8 +616,9 @@ func (o *Observer) physicalSourceSpec(ctx context.Context, pod *corev1.Pod, node
 func matchesNativeSource(pod *corev1.Pod, model string, instance *serving.InstanceState) bool {
 	observed := instance.Native
 	profileID := pod.Annotations[servingstate.ServingProfileAnnotation]
+	// Both native modes report the same executor request inventory. Serving
+	// admission validates mode separately; it does not strengthen empty proof.
 	return observed != nil && observed.Ready && observed.Metadata.Model == model &&
-		observed.Metadata.Mode == servingstate.NativeServingMode &&
 		profileID != "" && observed.Metadata.ProfileID == profileID
 }
 
@@ -772,7 +773,11 @@ func (o *Observer) refreshFailure(err error) error {
 
 // Declared images are diagnostics; measured images govern preparations and execution.
 func (o *Observer) recordRuntimeDeclaration(ctx context.Context, pod *corev1.Pod, profile *serving.Profile) {
-	desiredImage, err := o.CurrentRuntimeImage(ctx, profile)
+	var desiredImage string
+	var err error
+	if profile != nil {
+		desiredImage, err = o.CurrentRuntimeImage(ctx, profile)
+	}
 	o.issue("runtime-declaration/"+string(pod.UID), err)
 	source := o.sources[string(pod.UID)]
 	if source == nil {

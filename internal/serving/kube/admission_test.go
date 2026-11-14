@@ -18,6 +18,8 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -390,6 +392,156 @@ func TestAdmitKeepsLiveGrantAcrossRestart(t *testing.T) {
 	restarted.admit()
 	if h.holder() != string(root.UID) || len(restarted.controller.State().Results) != 0 {
 		t.Fatal("live measurement handed back after restart")
+	}
+}
+
+// A failed session owns its leftover profiling Pod after restart. Physical
+// termination and deletion release the Node without a successful native read.
+func TestHandBackFailedSessionAfterRestartWithMeasurementInstance(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fixture, node, profile, class := observerSourceFixture()
+	profile.Condition.Preprocessor.Inputs, profile.Condition.Preprocessor.Outputs = []string{"input"}, []string{"output"}
+	profile.RuntimeMetadata.RuntimeVersion = observerTestRuntime
+	profile.RuntimeMetadata.Inputs, profile.RuntimeMetadata.Outputs = []string{"input"}, []string{"output"}
+	profile.RuntimeMetadata.InitializedBatches = []int{1}
+	spec := measurementInstanceSpec(node, profile)
+	nativeClient, _ := preparationNativeHTTPClient(t, ctx, spec.Config, profile)
+	manager, kube, measure := measurementOperations(t, ctx, fixture, node, class, spec, nativeClient)
+	manager.store.client = beoStatusClient{Client: manager.store.client}
+	prepared := measure(servingstate.Operation{ID: "session.1.prepare", Kind: servingstate.OperationPrepare, Node: spec.Instance.Node, Prepare: &spec})
+	pod := &core.Pod{}
+	if err := manager.store.client.Get(ctx, types.NamespacedName{Namespace: fixture.Namespace, Name: spec.Name}, pod); err != nil {
+		t.Fatal(err)
+	}
+	assertMeasurementInstance(t, ctx, kube, pod, prepared, 1)
+	id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
+	root := &edge.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{
+		Namespace: fixture.Namespace, Name: "session", UID: "session-uid", Generation: 1,
+		Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Now())}},
+		Status: edge.BatchEnergyOptimizationStatus{Phase: string(edge.MeasurementPhaseFailed), Outcome: "FatalFailure", ObservedGeneration: 1}}
+	root.Spec.State.TargetNode = node.Name
+	root.Spec.Session = sessionSettingsFixture()
+	if err := manager.store.client.Create(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	runnerService := &core.Service{ObjectMeta: meta.ObjectMeta{Namespace: fixture.Namespace, Name: "session-runner",
+		Labels: map[string]string{runnerNodeLabel: string(node.UID)}}}
+	if _, err := kube.CoreV1().Services(fixture.Namespace).Create(ctx, runnerService, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	operations, err := servingops.NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+		servingops.OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, err := NewSchedulerController(manager.reservations, manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
+		SchedulerControllerConfig{
+			Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1,
+				CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
+				PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4,
+				CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1}),
+			MeasurementNamespaces: []string{fixture.Namespace},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(controller.Close)
+	recoveryBootRuntime(t, controller)
+	controller.measurement.Runtime = controller.runtime
+	h := &admissionHarness{t: t, controller: controller, kube: kube, node: node}
+	manager.observer.mu.Lock()
+	source := manager.observer.sources[string(pod.UID)]
+	if source == nil {
+		manager.observer.mu.Unlock()
+		t.Fatal("leftover profiling source was not retained")
+	}
+	source.instance.State.NativeVerified = false
+	source.instance.State.Native = nil
+	manager.observer.mu.Unlock()
+	if !controller.runtime.Recovery().Unknown || !controller.runtime.InstanceRecoveryUnknown(id) {
+		t.Fatal("restart did not fence the leftover physical executor")
+	}
+	for _, kind := range []string{servingstate.OperationRemove, servingstate.OperationStop, servingstate.OperationDrain} {
+		operation := servingstate.Operation{Kind: kind, Node: spec.Instance.Node, PodUID: string(pod.UID), Instance: id}
+		if err := operations.ValidateOperationBinding(ctx, operation); err == nil {
+			t.Fatalf("ordinary serving %s admitted an unverified executor", kind)
+		}
+	}
+	owned := servingstate.Operation{Kind: servingstate.OperationRemove, Node: spec.Instance.Node, PodUID: string(pod.UID)}
+	if err := operations.ValidateOperationBinding(ctx, owned); err == nil {
+		t.Fatal("ordinary serving Pod-only removal bypassed recovery")
+	}
+	if err := controller.measurement.ValidateOperationBinding(ctx, owned); err != nil {
+		t.Fatalf("measurement-owned removal required native recovery: %v", err)
+	}
+	wrongNode := owned
+	wrongNode.Node.UID = "replacement-node"
+	if err := controller.measurement.ValidateOperationBinding(ctx, wrongNode); err == nil {
+		t.Fatal("measurement-owned removal admitted a changed Node UID")
+	}
+	wrongPod := owned
+	wrongPod.PodUID = "another-pod"
+	if err := controller.measurement.ValidateOperationBinding(ctx, wrongPod); err == nil {
+		t.Fatal("measurement-owned removal admitted a different Pod UID")
+	}
+	if _, err := operations.AdmittedNode(ctx, spec.Instance.Node); err != servingops.ErrNodeInMeasurement {
+		t.Fatalf("serving operation admitted to measurement pool: %v", err)
+	}
+	if _, err := controller.measurement.AdmittedNode(ctx, spec.Instance.Node); err != nil {
+		t.Fatalf("measurement operation refused its held Node: %v", err)
+	}
+	h.admit()
+	if h.holder() != "" {
+		t.Fatalf("failed session kept its taint without native verification: %+v", controller.State().Results)
+	}
+	if _, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("leftover measurement Pod survived hand-back: %v", err)
+	}
+	for _, name := range []string{servingstate.InstanceServicePrefix + string(pod.UID), runnerService.Name} {
+		if _, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("Service %s survived hand-back: %v", name, err)
+		}
+	}
+	if physical := schedulerPhysicalState(id, controller.runtime.Instances()); physical != nil {
+		t.Fatalf("removed executor retained by runtime: %+v", physical)
+	}
+	if err := manager.store.client.Get(ctx, client.ObjectKeyFromObject(root), root); err != nil {
+		t.Fatal(err)
+	}
+	if root.Status.Phase != string(edge.MeasurementPhaseFailed) || root.Status.Outcome != "FatalFailure" {
+		t.Fatalf("terminal session was restarted: %+v", root.Status)
+	}
+	if condition := apimeta.FindStatusCondition(root.Status.Conditions, "NodeReturned"); condition == nil ||
+		condition.Status != meta.ConditionTrue {
+		t.Fatalf("terminal session still reports its Node held: %+v", root.Status.Conditions)
+	}
+	completed := slices.ContainsFunc(controller.State().Results, func(result servingstate.OperationResult) bool {
+		return result.Operation.Kind == handBackKind && result.Status == servingstate.NativeOperationComplete &&
+			slices.Contains(result.Progress, "serving Pods removed") && slices.Contains(result.Progress, "taint removed")
+	})
+	if !completed {
+		t.Fatalf("hand-back did not complete: %+v", controller.State().Results)
+	}
+}
+
+func TestOwnedMeasurementRemovalCostDoesNotFailPhysicalResult(t *testing.T) {
+	started := time.Now().UTC()
+	record := servingops.OperationMeasurement{
+		Request: servingops.MeasurementRequest{Operation: servingstate.Operation{Kind: servingstate.OperationRemove, PodUID: "owned-pod"}},
+		Result: servingstate.OperationResult{
+			Status: servingstate.NativeOperationComplete, StartedAt: started, EndedAt: started.Add(time.Second),
+			Before: servingstate.OperationState{Reasons: []string{"executor recovery unknown"}},
+		},
+	}
+	if err := record.Judge(nil, nil); err != nil {
+		t.Fatalf("missing native cost proof failed physical removal: %v", err)
+	}
+	if record.Verdict != servingops.MeasurementInsufficient || !strings.Contains(record.Reason, "executor recovery unknown") {
+		t.Fatalf("missing native cost proof did not explain Insufficient: %+v", record)
+	}
+	if record.Result.Status != servingstate.NativeOperationComplete || record.Result.Error != "" || record.WallJoules != nil {
+		t.Fatalf("cost judgment changed physical result or invented energy: %+v", record)
 	}
 }
 

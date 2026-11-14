@@ -84,7 +84,11 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 		return errors.New("physical source disappeared without retained termination proof")
 	}
 	status := servingstate.FirstfloorStatus(pod)
-	if err := o.Observer.RestoreRemovalSource(pod, id, containerID); err != nil {
+	restoreID, restoreContainerID := id, containerID
+	if o.Config.Measurement && id == "" && status != nil && status.ContainerID != "" {
+		restoreID, restoreContainerID = servingstate.PhysicalID(pod.UID, status.ContainerID), status.ContainerID
+	}
+	if err := o.Observer.RestoreRemovalSource(pod, restoreID, restoreContainerID); err != nil {
 		return err
 	}
 	if id != "" && status.State.Terminated == nil {
@@ -111,6 +115,23 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 		}); err != nil {
 			return err
 		}
+	}
+	if o.Config.Measurement && id == "" {
+		// A single optional cost read never waits for native drain or gates DELETE.
+		if proof != nil && status != nil && status.ContainerID != "" && status.State.Running != nil {
+			if model, e := servingstate.NativeModel(ctx, o.Store.Client(), pod); e == nil {
+				if endpoint, e := servingstate.NativeInstanceEndpoint(ctx, o.Kube, pod); e == nil {
+					if state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: model}); e == nil {
+						proof[servingstate.PhysicalID(pod.UID, status.ContainerID)] = state
+					}
+				}
+			}
+		}
+		// A failed cost read may have consumed its context. Physical cleanup
+		// still gets a bounded opportunity to observe kubelet termination.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		ctx = cleanupCtx
 	}
 	if err = servingstate.PatchSourceFinalizer(ctx, o.Store.Client(), pod, true); err != nil {
 		return err

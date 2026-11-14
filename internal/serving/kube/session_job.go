@@ -155,10 +155,10 @@ func (l sessionLevelWire) row() profilederivation.DriverLevelRow {
 }
 
 // runSessionLoad creates the load Job, waits for it to end and returns the
-// load container's level table. The Job is deleted on every path. A Job that
-// ends without a level table fails with its Pod's failure reason.
+// load container's level table. Cleanup deletes the Job on every exit.
+// A Job that ends without a level table fails with its Pod's failure reason.
 // prestartTimeout bounds creation and startup only, until the load container runs.
-func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job, prestartTimeout time.Duration) (sessionLevelTable, error) {
+func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job, prestartTimeout time.Duration) (table sessionLevelTable, err error) {
 	startCtx, cancelStart := context.WithTimeout(ctx, prestartTimeout)
 	defer cancelStart()
 	jobs := c.kube.BatchV1().Jobs(job.Namespace)
@@ -166,10 +166,9 @@ func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job
 		return sessionLevelTable{}, err
 	}
 	defer func() {
-		// Background propagation removes the Pod; the default orphans it.
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		_ = servingstate.IgnoreNotFound(jobs.Delete(cleanupCtx, job.Name, meta.DeleteOptions{PropagationPolicy: ptr.To(meta.DeletePropagationBackground)}))
+		err = errors.Join(err, servingstate.IgnoreNotFound(jobs.Delete(cleanupCtx, job.Name, meta.DeleteOptions{PropagationPolicy: ptr.To(meta.DeletePropagationBackground)})))
 	}()
 	var ended *batch.JobCondition
 	var refused string
@@ -207,7 +206,7 @@ func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job
 			return untilStarted && started, nil
 		})
 	}
-	err := wait(startCtx, true)
+	err = wait(startCtx, true)
 	cancelStart()
 	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 		var detail strings.Builder

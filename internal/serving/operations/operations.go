@@ -146,14 +146,36 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (s
 
 func (o *Operations) Execute(ctx context.Context, operation servingstate.Operation) (servingstate.OperationResult, error) {
 	result := servingstate.OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: servingstate.NativeOperationRunning}
-	before := servingstate.OperationState{At: result.StartedAt}
+	measurementSnapshots := o.Config.Measurement && (operation.Kind == servingstate.OperationPrepare || o.measurementPodRemoval(operation))
+	var physicalBudget time.Duration
+	if measurementSnapshots {
+		if deadline, ok := ctx.Deadline(); ok {
+			if remaining := time.Until(deadline); remaining > 0 {
+				physicalBudget = remaining
+			}
+		}
+	}
+	before := servingstate.OperationState{At: result.StartedAt, Node: operation.Node}
 	err := o.ValidateOperationBinding(ctx, operation)
 	if err == nil && !servingstate.IsRoutingOperation(operation.Kind) {
-		before, err = o.Capture(ctx, operation.Node)
+		var captureErr error
+		before, captureErr = o.Capture(ctx, operation.Node)
+		if captureErr != nil {
+			before.Reasons = append(before.Reasons, captureErr.Error())
+			if !measurementSnapshots {
+				err = captureErr
+			}
+		}
 	}
 	result.Before = before
 	if err == nil {
-		err = o.executeOperation(ctx, operation, &result)
+		operationCtx := ctx
+		if measurementSnapshots && physicalBudget > 0 {
+			var cancel context.CancelFunc
+			operationCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), physicalBudget)
+			defer cancel()
+		}
+		err = o.executeOperation(operationCtx, operation, &result)
 	}
 	actual := result.Actual
 	actual.At = time.Now().UTC()
@@ -173,7 +195,13 @@ func (o *Operations) Execute(ctx context.Context, operation servingstate.Operati
 		}
 	}
 	result.Actual = actual
-	err = errors.Join(err, captureErr)
+	if measurementSnapshots {
+		if captureErr != nil {
+			result.Actual.Reasons = append(result.Actual.Reasons, captureErr.Error())
+		}
+	} else {
+		err = errors.Join(err, captureErr)
+	}
 	result.EndedAt = time.Now().UTC()
 	if err == nil {
 		result.Status = servingstate.NativeOperationComplete
@@ -248,6 +276,11 @@ func (o *Operations) executeOperation(ctx context.Context, operation servingstat
 	return err
 }
 
+// measurementPodRemoval owns the exact Pod, without draining serving traffic.
+func (o *Operations) measurementPodRemoval(operation servingstate.Operation) bool {
+	return o.Config.Measurement && operation.Kind == servingstate.OperationRemove && operation.PodUID != "" && operation.Instance == ""
+}
+
 func (o *Operations) ValidateOperationBinding(ctx context.Context, operation servingstate.Operation) error {
 	if servingstate.IsRoutingOperation(operation.Kind) {
 		return nil
@@ -259,10 +292,12 @@ func (o *Operations) ValidateOperationBinding(ctx context.Context, operation ser
 			podUID, _, _ = strings.Cut(operation.Instance, "/")
 		}
 	}
-	if err := o.checkRecovery(ctx, operation.Node, podUID); err != nil {
-		return err
+	if !o.measurementPodRemoval(operation) {
+		if err := o.checkRecovery(ctx, operation.Node, podUID); err != nil {
+			return err
+		}
 	}
-	if operation.Kind == servingstate.OperationRemove && operation.WorkloadUID != "" {
+	if operation.Kind == servingstate.OperationRemove && operation.WorkloadUID != "" && !o.measurementPodRemoval(operation) {
 		current := o.Runtime.SchedulerInputs(time.Now)
 		for _, route := range current.Routing {
 			if route[operation.Instance] > 0 {
@@ -325,7 +360,7 @@ func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operat
 		status := servingstate.FirstfloorStatus(&pod)
 		if pod.Spec.NodeName != actual.Name || pod.Labels["app.kubernetes.io/component"] != servingstate.ServingInstanceComponent ||
 			operation.Instance != "" && (status == nil || status.ContainerID != containerID) ||
-			operation.Instance == "" && !servingstate.PodTerminated(&pod) && !servingstate.PodAwaitingExecutor(&pod) {
+			operation.Instance == "" && !o.measurementPodRemoval(operation) && !servingstate.PodTerminated(&pod) && !servingstate.PodAwaitingExecutor(&pod) {
 			return errors.New("operation instance belongs to different physical Node/source")
 		}
 		for _, i := range o.Runtime.Instances() {

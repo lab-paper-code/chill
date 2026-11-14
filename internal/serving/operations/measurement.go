@@ -178,18 +178,19 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 // operation is Accepted only with the primitive state effect its cost needs.
 func (record *OperationMeasurement) Judge(operationErr, observeErr error) error {
 	generic := record.Request.Operation.Kind != servingstate.OperationIdle
-	if operationErr == nil && generic {
-		operationErr = operationZeroInference(record.Result)
-	}
 	if record.Result.StartedAt.IsZero() {
 		record.Verdict = MeasurementInsufficient
 	} else if operationErr != nil {
 		record.Verdict = string(edge.MeasurementPhaseFailed)
 		record.Reason = operationErr.Error()
 	} else {
+		record.Verdict = MeasurementInsufficient
 		var effectErr error
 		if generic {
-			_, _, effectErr = OperationCostKeys(record.Result)
+			effectErr = operationZeroInference(record.Result)
+			if effectErr == nil {
+				_, _, effectErr = OperationCostKeys(record.Result)
+			}
 		}
 		measurement, integrationErr := record.EnergyMeasurement()
 		if effectErr != nil {
@@ -514,7 +515,7 @@ func OperationCostKeys(result servingstate.OperationResult) (string, string, err
 
 func operationZeroInference(result servingstate.OperationResult) error {
 	if len(result.Before.Reasons) > 0 || len(result.Actual.Reasons) > 0 {
-		return errors.New("operation native observations incomplete")
+		return fmt.Errorf("operation native observations incomplete: before %v; after %v", result.Before.Reasons, result.Actual.Reasons)
 	}
 	for id, before := range result.Before.Native {
 		after, ok := result.Actual.Native[id]

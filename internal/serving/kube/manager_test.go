@@ -118,11 +118,13 @@ func (a managerArchive) PutImmutable(_ context.Context, identity evidencestore.O
 // internals or replacing any lifecycle behavior.
 type managerHarness struct {
 	*management.Manager
-	store          *Store
-	runtime        *serving.Runtime
-	observationLog *observation.ObservationLog
-	observer       *Observer
-	reservations   *ClusterState
+	store             *Store
+	runtime           *serving.Runtime
+	observationLog    *observation.ObservationLog
+	observer          *Observer
+	reservations      *ClusterState
+	measurement       *servingops.Operations
+	measurementConfig SchedulerControllerConfig
 }
 
 func newManagerHarness(t *testing.T) (*managerHarness, observation.ObservationLogConfig) {

@@ -155,6 +155,7 @@ type Runtime struct {
 	workloads          map[string]*runtimeWorkload
 	names              map[string]string
 	instances          map[string]*runtimeInstance
+	createdPods        map[string]bool
 	profiles           []Profile
 	measurement        []NodeReference
 	routingControlled  bool
@@ -273,11 +274,21 @@ func (r *Runtime) observationErrLocked() error {
 
 func (r *Runtime) Recovery() ObservationRecovery { return r.recovery }
 
-// RecordCreatedPod records an exact create receipt without bypassing normal
-// executor recovery, native verification, or readiness publication.
+// RecordCreatedPod records this process's successful create receipt. This Pod
+// cannot contain an executor or requests inherited from a previous process.
 func (r *Runtime) RecordCreatedPod(uid string, node NodeReference) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.createdPods == nil {
+		r.createdPods = map[string]bool{}
+	}
+	r.createdPods[uid] = true
+	for _, instance := range r.instances {
+		if instance.State.PodUID == uid {
+			instance.State.CreatedThisRun = true
+			instance.State.RecoveryUnknown = false
+		}
+	}
 	return r.recordRecoveryLocked(InstanceState{PodUID: uid, Node: node, CreatedThisRun: true}, false)
 }
 
@@ -286,6 +297,10 @@ func (r *Runtime) InstanceRecoveryUnknown(id string) bool {
 	defer r.mu.Unlock()
 	if instance := r.instances[id]; instance != nil {
 		return instance.State.RecoveryUnknown
+	}
+	uid, _, _ := strings.Cut(id, "/")
+	if r.createdPods[uid] {
+		return false
 	}
 	return r.recovery.Unknown
 }
@@ -1716,6 +1731,15 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) (result erro
 }
 
 func (r *Runtime) updateInstanceRecoveryLocked(i *runtimeInstance, candidate *ReadyInstance) (result error) {
+	// Only executors inherited from an earlier process need recovery. An exact
+	// create receipt from this process excludes that possibility, for serving
+	// and measurement Pods alike; no native probe is needed to prove it.
+	candidate.State.CreatedThisRun = r.createdPods[candidate.State.PodUID]
+	if candidate.State.CreatedThisRun {
+		candidate.State.RecoveryUnknown = false
+		i.State.RecoveryUnknown = false
+		return nil
+	}
 	if r.recovery.Unknown && !i.recoveryRecorded {
 		if err := r.recordRecoveryLocked(candidate.State, false); err != nil {
 			result = errors.Join(result, err)
@@ -1793,6 +1817,7 @@ func (r *Runtime) RetirePod(uid string) error {
 			delete(r.instances, key)
 		}
 	}
+	delete(r.createdPods, uid)
 	r.rebuildLocked()
 	r.signal()
 	return nil

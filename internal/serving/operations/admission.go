@@ -9,10 +9,14 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ClearNode removes every CHILL serving Pod on the Node: through the native
-// removal when the runtime observes the instance, otherwise by deleting the Pod.
+// ClearNode removes every CHILL serving Pod on the Node. Measurement operations
+// own their residual Pods and wait only for physical termination and deletion.
 func (o *Operations) ClearNode(ctx context.Context, node serving.NodeReference) error {
-	if err := o.checkRecovery(ctx, node, ""); err != nil {
+	if !o.Config.Measurement {
+		if err := o.checkRecovery(ctx, node, ""); err != nil {
+			return err
+		}
+	} else if _, err := o.AdmittedNode(ctx, node); err != nil {
 		return err
 	}
 	pods, err := o.Kube.CoreV1().Pods(o.Config.Namespace).List(ctx, meta.ListOptions{
@@ -21,24 +25,25 @@ func (o *Operations) ClearNode(ctx context.Context, node serving.NodeReference) 
 	if err != nil {
 		return err
 	}
-	observed := map[string]bool{}
-	for _, i := range o.Runtime.Instances() {
-		observed[i.ID] = true
+	var observed map[string]bool
+	if !o.Config.Measurement {
+		observed = map[string]bool{}
+		for _, i := range o.Runtime.Instances() {
+			observed[i.ID] = true
+		}
 	}
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		if pod.Spec.NodeName != node.Name {
 			continue
 		}
-		if status := servingstate.FirstfloorStatus(pod); status != nil && observed[servingstate.PhysicalID(pod.UID, status.ContainerID)] {
+		if status := servingstate.FirstfloorStatus(pod); !o.Config.Measurement && status != nil && observed[servingstate.PhysicalID(pod.UID, status.ContainerID)] {
 			if err = o.RemoveInstance(ctx, node, servingstate.PhysicalID(pod.UID, status.ContainerID)); err != nil {
 				return err
 			}
 			continue
 		}
-		// Unobserved executors still need the same retained termination proof.
-		// A preparation without an executor may request DELETE, but still waits
-		// for terminal Pod status before releasing its source finalizer.
+		// Pod-only cleanup retains the source until kubelet reports termination.
 		if err = o.removeInstance(ctx, node, string(pod.UID), "", nil); err != nil {
 			return err
 		}
