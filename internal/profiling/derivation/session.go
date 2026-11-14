@@ -1,6 +1,7 @@
 package profilederivation
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -14,8 +15,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
-const levelKindSaturation = "saturation"
-
 // SessionInput is everything a session observed, as plain values.
 type SessionInput struct {
 	Condition SessionCondition
@@ -27,6 +26,9 @@ type SessionInput struct {
 	PostLoadStart time.Time
 	PostLoadEnd   time.Time
 	Stop          *SessionStop
+	// MaxResultBytes is the byte limit the catalog reads one object with,
+	// the ChillServer --max-evidence-bytes value.
+	MaxResultBytes int64
 }
 
 // SessionBatchInput is one fixed-batch instance's observation.
@@ -60,35 +62,55 @@ type NativeBatchRow struct {
 	LatestEnqueuedAt time.Time
 }
 
+// sessionTests holds the quantiles every statistical decision uses, all at
+// the configured confidence level.
+type sessionTests struct {
+	// chiSquare bounds a residual increase in units of the level variance.
+	chiSquare float64
+	// oneSided bounds a drop, twoSided a trend, in standard errors.
+	oneSided, twoSided float64
+}
+
+// powerOptimum is the best power fit whatever the identification of its
+// parameters; the stored result publishes only identified values.
+type powerOptimum struct {
+	fitted      bool
+	idle, step  float64
+	hold        float64
+	slopeByBatch map[int]float64
+}
+
 // DeriveSession computes the stored result of one session.
 func DeriveSession(input SessionInput) (SessionResult, error) {
+	result, _, err := deriveSession(input)
+	return result, err
+}
+
+func deriveSession(input SessionInput) (SessionResult, powerOptimum, error) {
 	settings := input.Settings
-	if settings.MeterLagSeconds < 0 || settings.MinimumPowerWindowSeconds <= 0 || settings.Percentile <= 0 || settings.Percentile >= 100 {
-		return SessionResult{}, errors.New("session settings need a nonnegative meter lag, a positive minimum power window and a percentile in (0, 100)")
+	if settings.MeterLagSeconds < 0 || settings.MinimumPowerWindowSeconds <= 0 || settings.ConfidenceLevel < 0.5 || settings.ConfidenceLevel >= 1 {
+		return SessionResult{}, powerOptimum{}, errors.New("session settings need a nonnegative meter lag, a positive minimum power window and a confidence level in [0.5, 1)")
+	}
+	if input.MaxResultBytes < 1 {
+		return SessionResult{}, powerOptimum{}, errors.New("session result byte limit must be positive")
 	}
 	if len(input.Batches) == 0 {
-		return SessionResult{}, errors.New("session has no measured batch")
+		return SessionResult{}, powerOptimum{}, errors.New("session has no measured batch")
 	}
-	minimumWindow := seconds(settings.MinimumPowerWindowSeconds)
-	if input.PostLoadEnd.Sub(input.PostLoadStart) < 2*minimumWindow {
-		return SessionResult{}, fmt.Errorf("post-load window %v is shorter than two minimum power windows of %v", input.PostLoadEnd.Sub(input.PostLoadStart), minimumWindow)
-	}
+	lag, minimum := seconds(settings.MeterLagSeconds), seconds(settings.MinimumPowerWindowSeconds)
 	power := slices.Clone(input.Power)
 	sort.Slice(power, func(i, j int) bool { return power[i].ObservedAt.Before(power[j].ObservedAt) })
-	// Identification tests run at the session's percentile: the fit compares a
-	// residual increase with the one-degree chi-square quantile, and the
-	// post-load tests compare a drop in mean watts with the one-sided normal
-	// quantile times its standard error.
-	confidence := settings.Percentile / 100
-	threshold := distuv.ChiSquared{K: 1}.Quantile(confidence)
-	normal := distuv.UnitNormal.Quantile(confidence)
+	tests := sessionTests{
+		chiSquare: distuv.ChiSquared{K: 1}.Quantile(settings.ConfidenceLevel),
+		oneSided:  distuv.UnitNormal.Quantile(settings.ConfidenceLevel),
+		twoSided:  distuv.UnitNormal.Quantile((1 + settings.ConfidenceLevel) / 2),
+	}
 
 	result := SessionResult{SchemaVersion: SessionResultSchemaVersion, Condition: input.Condition, Settings: settings, Stop: input.Stop}
-	var executions []NativeBatchRow
 	var levels []fitLevel
 	for index, batchInput := range input.Batches {
 		if batchInput.Batch < 1 || (index > 0 && batchInput.Batch <= input.Batches[index-1].Batch) {
-			return SessionResult{}, errors.New("session batch sizes must be positive and increasing")
+			return SessionResult{}, powerOptimum{}, errors.New("session batch sizes must be positive and increasing")
 		}
 		batch := SessionBatch{
 			Batch: batchInput.Batch, PeakMemoryBytes: batchInput.PeakMemoryBytes, MemoryKind: batchInput.MemoryKind,
@@ -96,11 +118,15 @@ func DeriveSession(input SessionInput) (SessionResult, error) {
 			ServiceNanos: []int64{}, PrecedingIdleNanos: []int64{}, DispatchOccupancyNanos: []float64{},
 		}
 		for _, levelInput := range batchInput.Levels {
+			switch levelInput.Row.Kind {
+			case LevelSaturation, LevelMid, LevelSparse:
+			default:
+				return SessionResult{}, powerOptimum{}, fmt.Errorf("level %s has unknown kind %q", levelInput.Row.ID, levelInput.Row.Kind)
+			}
 			rows, err := distinctNativeRows(levelInput, batchInput.Batch)
 			if err != nil {
-				return SessionResult{}, err
+				return SessionResult{}, powerOptimum{}, err
 			}
-			executions = append(executions, rows...)
 			for _, row := range rows {
 				// The first execution after prepare has no preceding idle gap.
 				if row.PrecedingIdleNanos != nil {
@@ -108,12 +134,14 @@ func DeriveSession(input SessionInput) (SessionResult, error) {
 					batch.PrecedingIdleNanos = append(batch.PrecedingIdleNanos, *row.PrecedingIdleNanos)
 				}
 			}
-			if levelInput.Row.Kind == levelKindSaturation {
-				batch.DispatchOccupancyNanos = append(batch.DispatchOccupancyNanos, saturationOccupancy(levelInput.Row.ID, rows, batchInput.Batch)...)
-			}
-			level, fitted, err := measureLevel(levelInput.Row, power, settings)
+			level, fitted, err := measureLevel(levelInput.Row, rows, power, lag, minimum)
 			if err != nil {
-				return SessionResult{}, err
+				return SessionResult{}, powerOptimum{}, err
+			}
+			if levelInput.Row.Kind == LevelSaturation {
+				batch.DispatchOccupancyNanos = append(batch.DispatchOccupancyNanos, saturationOccupancy(levelInput.Row.ID, rows, batchInput.Batch)...)
+				rate := level.InputRate
+				batch.SaturationInputRate = &rate
 			}
 			if fitted != nil {
 				fitted.at = [2]int{index, len(batch.Levels)}
@@ -123,36 +151,31 @@ func DeriveSession(input SessionInput) (SessionResult, error) {
 		}
 		result.Batches = append(result.Batches, batch)
 	}
-	sort.Slice(executions, func(i, j int) bool { return executions[i].StartedAt.Before(executions[j].StartedAt) })
 
-	postLoad := make([][2]float64, 0)
-	for _, sample := range power {
-		if !sample.ObservedAt.Before(input.PostLoadStart) && !sample.ObservedAt.After(input.PostLoadEnd) {
-			postLoad = append(postLoad, [2]float64{sample.ObservedAt.Sub(input.PostLoadStart).Seconds(), sample.Watts})
-		}
-	}
-	result.Power.PostLoad = postLoad
-	idle, idleVariance, err := settledIdle(power, input.PostLoadEnd, minimumWindow, normal)
+	postLoad, err := analysePostLoad(power, input.PostLoadStart, input.PostLoadEnd, lag, minimum, tests)
 	if err != nil {
-		return SessionResult{}, err
+		return SessionResult{}, powerOptimum{}, err
 	}
-	result.Power.IdleWatts = idle
-	if idle.Status != ParameterIdentified {
+	result.Power.IdleWatts, result.Power.PostLoad = postLoad.idle, postLoad.series
+	result.Power.MeterIntervalSeconds, result.Power.SettledAtSeconds = postLoad.interval, postLoad.settledAt
+	var optimum powerOptimum
+	if idle, ok := postLoad.idle.Value(); ok {
+		optimum = fitPower(&result, levels, idle, postLoad.hold, tests)
+	} else {
 		reason := "settled idle watts not identified"
 		result.Power.AwakeStepWatts, result.Power.HoldSeconds = notIdentified(reason), notIdentified(reason)
 		for index := range result.Batches {
 			result.Batches[index].JoulesPerInput = notIdentified(reason)
 		}
-		return result, nil
 	}
-	hold, err := decayHold(power, input.PostLoadStart, *idle.Value, idleVariance, minimumWindow, seconds(settings.MeterLagSeconds), normal)
+	encoded, err := json.Marshal(result)
 	if err != nil {
-		return SessionResult{}, err
+		return SessionResult{}, powerOptimum{}, err
 	}
-	if err := fitPower(&result, executions, levels, *idle.Value, hold, threshold); err != nil {
-		return SessionResult{}, err
+	if int64(len(encoded)) > input.MaxResultBytes {
+		return SessionResult{}, powerOptimum{}, fmt.Errorf("session result encodes to %d bytes, above the %d byte read limit", len(encoded), input.MaxResultBytes)
 	}
-	return result, nil
+	return result, optimum, nil
 }
 
 // distinctNativeRows drops repeated batch identifiers and checks the distinct
@@ -213,93 +236,211 @@ type fitLevel struct {
 	rate  float64
 	watts float64
 	// variance is the squared standard error of watts.
-	variance   float64
-	start, end time.Time
+	variance float64
+	awake    awakeWindow
 }
 
-func measureLevel(row DriverLevelRow, power []Sample, settings SessionSettings) (SessionLevel, *fitLevel, error) {
+// measureLevel measures power over the driver's window and the awake
+// fraction over the level's own native executions: the two clocks are never
+// compared, only their offset is recorded.
+func measureLevel(row DriverLevelRow, rows []NativeBatchRow, power []Sample, lag, minimum time.Duration) (SessionLevel, *fitLevel, error) {
 	duration := row.End.Sub(row.Start)
 	if duration <= 0 {
 		return SessionLevel{}, nil, fmt.Errorf("level %s has no positive duration", row.ID)
 	}
+	if (row.PredictedSeconds == nil) != (row.LimitSeconds == nil) {
+		return SessionLevel{}, nil, fmt.Errorf("level %s carries one of its predicted duration and limit", row.ID)
+	}
 	level := SessionLevel{DriverLevelRow: row, InputRate: float64(row.CompletedInputs) / duration.Seconds()}
-	start := row.Start.Add(seconds(settings.MeterLagSeconds))
-	if row.End.Sub(start) < seconds(settings.MinimumPowerWindowSeconds) {
+	if len(rows) == 0 {
 		return level, nil, nil
 	}
-	watts, variance, err := windowPower(power, start, row.End)
+	window, ok := newAwakeWindow(rows, lag)
+	offset := window.origin.Sub(row.Start).Nanoseconds()
+	level.NativeStartOffsetNanos = &offset
+	start := row.Start.Add(lag)
+	if !ok || row.End.Sub(start) < minimum {
+		return level, nil, nil
+	}
+	watts, standardError, count, err := windowPower(power, start, row.End)
 	if err != nil {
 		return SessionLevel{}, nil, fmt.Errorf("level %s: %w", row.ID, err)
 	}
-	level.MeanWatts = &watts
-	return level, &fitLevel{rate: level.InputRate, watts: watts, variance: variance, start: start, end: row.End}, nil
+	level.MeanWatts, level.MeanWattsStandardError, level.PowerSamples = &watts, &standardError, count
+	return level, &fitLevel{rate: level.InputRate, watts: watts, variance: standardError * standardError, awake: window}, nil
 }
 
-// windowPower returns the integrated mean watts over [start, end] and the
-// squared standard error of the samples inside it.
-func windowPower(power []Sample, start, end time.Time) (float64, float64, error) {
+// windowPower returns the integrated mean watts over [start, end], the
+// standard error of the samples' mean and their count.
+func windowPower(power []Sample, start, end time.Time) (float64, float64, int, error) {
 	joules, err := measurePower(start, end, power)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
+	inside := samplesWithin(power, start, end)
+	return joules / end.Sub(start).Seconds(), standardErrorOfMean(inside), len(inside), nil
+}
+
+func samplesWithin(power []Sample, start, end time.Time) []float64 {
 	var inside []float64
 	for _, sample := range power {
 		if !sample.ObservedAt.Before(start) && !sample.ObservedAt.After(end) {
 			inside = append(inside, sample.Watts)
 		}
 	}
-	return joules / end.Sub(start).Seconds(), stat.Variance(inside, nil) / float64(len(inside)), nil
+	return inside
 }
 
-// settledIdle is the mean of the final minimum power window of the post-load
-// observation. Power relaxes downward after load, so it has not settled when
-// that mean lies below the mean of the window before it by more than the
-// one-sided noise bound. A final window above the one before is background
-// activity: genesis2 idles with a 30 s cycle that alternates 15 s windows by
-// up to 4.5 W.
-func settledIdle(power []Sample, end time.Time, window time.Duration, normal float64) (SessionParameter, float64, error) {
-	tail, tailVariance, err := windowPower(power, end.Add(-window), end)
-	if err != nil {
-		return SessionParameter{}, 0, fmt.Errorf("post-load tail: %w", err)
-	}
-	before, beforeVariance, err := windowPower(power, end.Add(-2*window), end.Add(-window))
-	if err != nil {
-		return SessionParameter{}, 0, fmt.Errorf("post-load tail: %w", err)
-	}
-	if before-tail > normal*math.Sqrt(tailVariance+beforeVariance) {
-		return notIdentified(fmt.Sprintf("post-load power has not settled: final %v mean %.3f W, preceding %.3f W", window, tail, before)), 0, nil
-	}
-	return SessionParameter{Status: ParameterIdentified, Value: &tail}, tailVariance, nil
+// standardErrorOfMean scales the sample variance by the integrated
+// autocorrelation time, so a meter that smooths or a device that cycles does
+// not pass for independent samples.
+func standardErrorOfMean(values []float64) float64 {
+	return math.Sqrt(stat.Variance(values, nil) * integratedAutocorrelationTime(values) / float64(len(values)))
 }
 
-// decayHold reads the hold time from the post-load drop: the first sample at
-// or below the midpoint between the loaded and the settled level, less the
-// meter lag. It returns nil when the drop is within the noise or the hold is
-// within the meter lag; the fit then searches the hold time.
-func decayHold(power []Sample, loadEnd time.Time, idle, idleVariance float64, window, lag time.Duration, normal float64) (*float64, error) {
-	loaded, loadedVariance, err := windowPower(power, loadEnd.Add(-window), loadEnd)
-	if err != nil {
-		return nil, fmt.Errorf("loaded power before post-load: %w", err)
+// integratedAutocorrelationTime is Geyer's initial positive sequence
+// estimator (Geyer 1992, Practical Markov Chain Monte Carlo, Statistical
+// Science 7(4)): one plus twice the sum of autocorrelations, summed in
+// adjacent pairs while a pair stays positive.
+func integratedAutocorrelationTime(values []float64) float64 {
+	mean := stat.Mean(values, nil)
+	autocovariance := func(lag int) float64 {
+		var sum float64
+		for i := 0; i+lag < len(values); i++ {
+			sum += (values[i] - mean) * (values[i+lag] - mean)
+		}
+		return sum / float64(len(values))
 	}
-	if loaded-idle <= normal*math.Sqrt(loadedVariance+idleVariance) {
-		return nil, nil
+	variance := autocovariance(0)
+	if variance == 0 {
+		return 1
 	}
+	sum := -variance
+	for m := 0; 2*m+1 < len(values); m++ {
+		pair := autocovariance(2*m) + autocovariance(2*m+1)
+		if pair <= 0 {
+			break
+		}
+		sum += 2 * pair
+	}
+	return sum / variance
+}
+
+// postLoadObservation is what the observation after load reads.
+type postLoadObservation struct {
+	idle      SessionParameter
+	interval  float64
+	settledAt float64
+	// hold is set when the decay identifies the hold time.
+	hold   *SessionParameter
+	series [][2]float64
+}
+
+// analysePostLoad finds where the post-load power settles and its level.
+// The drop's midpoint crossing t50 lies between the loaded level, the mean
+// over the minimum power window before load stopped, and the settled level;
+// the series has settled one meter lag after t50, and the settled level is the
+// mean from there to the end. Settle point and level are refined together
+// until the settle point stops moving. The hold is t50 less the meter lag,
+// identified when that exceeds the meter's sampling interval. Idle is not
+// identified only when the settled series still trends.
+func analysePostLoad(power []Sample, start, end time.Time, lag, minimum time.Duration, tests sessionTests) (postLoadObservation, error) {
+	var observation postLoadObservation
+	var spacing []float64
+	var previous time.Time
+	observation.series = make([][2]float64, 0)
 	for _, sample := range power {
-		if sample.ObservedAt.Before(loadEnd) || sample.Watts > (loaded+idle)/2 {
+		if sample.ObservedAt.Before(start) || sample.ObservedAt.After(end) {
 			continue
 		}
-		hold := sample.ObservedAt.Sub(loadEnd) - lag
-		if hold <= lag {
-			return nil, nil
+		if !previous.IsZero() {
+			spacing = append(spacing, sample.ObservedAt.Sub(previous).Seconds())
 		}
-		value := hold.Seconds()
-		return &value, nil
+		previous = sample.ObservedAt
+		observation.series = append(observation.series, [2]float64{sample.ObservedAt.Sub(start).Seconds(), sample.Watts})
 	}
-	return nil, nil
+	if len(spacing) == 0 {
+		return postLoadObservation{}, errors.New("post-load window holds fewer than two power samples")
+	}
+	slices.Sort(spacing)
+	observation.interval = stat.Quantile(0.5, stat.Empirical, spacing, nil)
+	loaded, loadedError, _, err := windowPower(power, start.Add(-minimum), start)
+	if err != nil {
+		return postLoadObservation{}, fmt.Errorf("loaded power before post-load: %w", err)
+	}
+
+	settle := start
+	var crossing, beforeCrossing float64
+	for {
+		idle, _, _, err := windowPower(power, settle, end)
+		if err != nil {
+			return postLoadObservation{}, fmt.Errorf("post-load power: %w", err)
+		}
+		index := slices.IndexFunc(observation.series, func(point [2]float64) bool { return point[1] <= (loaded+idle)/2 })
+		if index < 0 {
+			break
+		}
+		next := start.Add(seconds(observation.series[index][0])).Add(lag)
+		if !next.After(settle) {
+			break
+		}
+		if end.Sub(next) < minimum {
+			observation.idle = notIdentified(fmt.Sprintf("post-load power crosses the midpoint of its drop at %.1f s, leaving less than the minimum power window after the meter lag", observation.series[index][0]))
+			return observation, nil
+		}
+		settle, crossing, beforeCrossing = next, observation.series[index][0], 0
+		if index > 0 {
+			beforeCrossing = observation.series[index-1][0]
+		}
+	}
+	idle, idleError, _, err := windowPower(power, settle, end)
+	if err != nil {
+		return postLoadObservation{}, fmt.Errorf("post-load power: %w", err)
+	}
+	if loaded-idle <= tests.oneSided*math.Hypot(loadedError, idleError) {
+		// No drop: there is no decay to wait for or to time.
+		settle, crossing = start, 0
+		if idle, _, _, err = windowPower(power, settle, end); err != nil {
+			return postLoadObservation{}, fmt.Errorf("post-load power: %w", err)
+		}
+	}
+	observation.settledAt = settle.Sub(start).Seconds()
+	if slope, trending := trend(observation.series, observation.settledAt, tests.twoSided); trending {
+		observation.idle = notIdentified(fmt.Sprintf("post-load power still trends at %.4f W/s from %.1f s to the end of the window", slope, observation.settledAt))
+		return observation, nil
+	}
+	observation.idle = identifiedParameter(idle, [2]float64{idle, idle})
+	if hold := crossing - lag.Seconds(); hold > observation.interval {
+		parameter := identifiedParameter(hold, [2]float64{math.Max(beforeCrossing-lag.Seconds(), 0), hold})
+		observation.hold = &parameter
+	}
+	return observation, nil
 }
 
-func notIdentified(reason string) SessionParameter {
-	return SessionParameter{Status: ParameterNotIdentified, Reason: reason}
+// trend fits a line to the series from the given offset and reports whether
+// its slope differs from zero, with the slope's variance scaled by the
+// residuals' integrated autocorrelation time.
+func trend(series [][2]float64, from, twoSided float64) (float64, bool) {
+	var times, watts []float64
+	for _, point := range series {
+		if point[0] >= from {
+			times, watts = append(times, point[0]), append(watts, point[1])
+		}
+	}
+	if len(times) < 3 {
+		return 0, false
+	}
+	intercept, slope := stat.LinearRegression(times, watts, nil, false)
+	residuals := make([]float64, len(times))
+	meanTime := stat.Mean(times, nil)
+	var squares, spread float64
+	for i := range times {
+		residuals[i] = watts[i] - intercept - slope*times[i]
+		squares += residuals[i] * residuals[i]
+		spread += (times[i] - meanTime) * (times[i] - meanTime)
+	}
+	variance := squares / float64(len(times)-2) * integratedAutocorrelationTime(residuals) / spread
+	return slope, slope*slope > twoSided*twoSided*variance
 }
 
 func seconds(value float64) time.Duration {
