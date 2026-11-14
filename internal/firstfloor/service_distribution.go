@@ -43,7 +43,8 @@ type ConditionalSupport struct {
 }
 
 // ServiceDistribution is immutable after hydration apart from its per-
-// percentile window tables, built once on first use.
+// percentile window tables. Prepare builds them when the profile is loaded;
+// a percentile first queried later (a new service) builds on that query.
 //
 // The N records nearest a gap g are those with the smallest |ln(1+g)-ln(1+x)|
 // over record gaps x. Gaps are integer nanoseconds of the native monotonic
@@ -99,6 +100,19 @@ func NewServiceDistribution(samples []ServiceSample) (*ServiceDistribution, erro
 
 // DroppedFirstExecutions counts records without a preceding idle gap.
 func (d *ServiceDistribution) DroppedFirstExecutions() int { return d.firstDropped }
+
+// Prepare builds the window table of an identified percentile now, so the
+// first query does not; an unidentified percentile has none to build.
+func (d *ServiceDistribution) Prepare(percentile float64) {
+	if n, err := MinimumServiceSamples(percentile); err == nil && d != nil && len(d.gaps) >= n {
+		d.table(percentile, n)
+	}
+}
+
+// Prepared reports whether percentile's window table is built.
+func (d *ServiceDistribution) Prepared(percentile float64) bool {
+	return d != nil && d.findTable(percentile) != nil
+}
 
 // QuantileNanos returns the empirical percentile of the window at gap. The
 // sample floor makes the window's maximum a bound on the quantile at

@@ -64,6 +64,47 @@ func TestRefreshPreparesRecordedRuntimeTag(t *testing.T) {
 	}
 }
 
+// A refresh builds each registered service's quantile tables for the profiles
+// that can serve it, so a control round's first query finds them built.
+func TestRefreshPreparesServiceQuantilesOffDecisionPath(t *testing.T) {
+	fixture := newPreparationCatalogFixture(t)
+	c := fixture.profile.Condition
+	fields := func(names []string) []serving.RawField {
+		out := make([]serving.RawField, len(names))
+		for i, name := range names {
+			out[i].Name = name
+		}
+		return out
+	}
+	d := &serving.Definition{
+		Name: "service", UID: "service-uid", Generation: 1,
+		Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024},
+		SLO:       serving.SLO{Percentile: 95, TargetLatency: time.Second},
+		Model: serving.Model{Name: c.LogicalModel, UID: "model-uid", Generation: 1, Paths: []serving.ModelPath{{
+			Name: c.Artifact.ExecutionPath, Artifact: c.Artifact.Name, Files: c.Artifact.Files, Image: c.Artifact.Image,
+			RuntimeFamily: c.RuntimeFamily, Backend: c.Backend, Firstfloor: c.Firstfloor,
+			Preprocessor: serving.PreprocessorArtifact{Image: c.Preprocessor.Image, Architecture: c.Preprocessor.Architecture, Path: c.Preprocessor.Path},
+		}}},
+		Preprocessor: serving.Preprocessor{Name: c.Preprocessor.Name, Input: fields(c.Preprocessor.Inputs), Output: fields(c.Preprocessor.Outputs), MaxNewTokens: int32(c.Preprocessor.MaxNewTokens)},
+	}
+	if err := fixture.service.execution.Publish(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.service.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	profiles := fixture.service.Profiles.Load().Profiles
+	if len(profiles) != 1 || len(profiles[0].Batches) == 0 {
+		t.Fatalf("fixture profile missing: %+v", profiles)
+	}
+	// No query has run: a built table can only come from the refresh.
+	for _, b := range profiles[0].Batches {
+		if !b.ServiceDistribution.Prepared(95) {
+			t.Fatalf("batch %d p95 table is left to the first decision query", b.Batch)
+		}
+	}
+}
+
 // Before the fix, the failed pass accepted an empty preparation map and froze
 // its source signature. The healthy pass then skipped materialization forever.
 func TestRefreshRecoversPreparationsAfterTransientMaterialization(t *testing.T) {
