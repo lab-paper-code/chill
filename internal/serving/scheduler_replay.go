@@ -794,10 +794,7 @@ func (s *schedulerReplayState) initializeRunning() bool {
 			service, support, ok = b.ServiceDistribution.Sample(gap, percentile, s.rng)
 			if ok {
 				remaining = float64(service)
-				profileMax := int64(0)
-				for _, row := range b.ServiceSamples {
-					profileMax = max(profileMax, row.ServiceDurationNanos)
-				}
+				profileMax := b.ServiceDistribution.MaximumNanos()
 				s.out.conditional.RunningResidualBeyondSupport = append(s.out.conditional.RunningResidualBeyondSupport,
 					RunningResidualBeyondSupport{
 						InstanceID: i.config.ID, BatchSize: len(i.batch), ElapsedNanos: elapsed,

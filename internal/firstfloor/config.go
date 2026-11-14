@@ -139,13 +139,15 @@ func validatePolicy(p Policy, sizes []int) error {
 	for index := range p.Batches {
 		b := &p.Batches[index]
 		i := sort.SearchInts(sizes, b.Size)
-		if b.Size <= prev || i == len(sizes) || sizes[i] != b.Size || len(b.ServiceSamples) == 0 || !finite(b.EnergyPerItemJ) || b.EnergyPerItemJ < 0 {
+		if b.Size <= prev || i == len(sizes) || sizes[i] != b.Size || (b.Distribution == nil && len(b.ServiceSamples) == 0) || !finite(b.EnergyPerItemJ) || b.EnergyPerItemJ < 0 {
 			return fmt.Errorf("invalid measured batch %d", b.Size)
 		}
-		var err error
-		b.Distribution, err = NewServiceDistribution(b.ServiceSamples)
-		if err != nil {
-			return fmt.Errorf("batch %d: %w", b.Size, err)
+		if b.Distribution == nil {
+			var err error
+			b.Distribution, err = NewServiceDistribution(b.ServiceSamples)
+			if err != nil {
+				return fmt.Errorf("batch %d: %w", b.Size, err)
+			}
 		}
 		prev = b.Size
 	}
