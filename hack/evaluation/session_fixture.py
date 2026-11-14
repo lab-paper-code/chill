@@ -8,7 +8,9 @@ node power samples and its post-load window. Rows keep their phase order; each
 level names how many rows it owns. Times are microseconds from the
 trial's first power sample. Native rows are delta coded (start from the
 previous finish, preceding idle from that gap). The enqueue time is left out:
-it only feeds dispatch occupancy, which the replay does not check.
+it only feeds dispatch occupancy, which the replay does not check. Every trial
+records the raw evidence file it came from. The gzip stream has no file name
+and a zero mtime, so the same evidence gives the same bytes.
 Usage: session_fixture.py <evidence root> <output file>
 """
 import gzip
@@ -86,12 +88,12 @@ def main(root, output):
             continue
         seen.add(entry['uid'])
         record = trial(json.loads(Path(entry['raw']).read_text()))
-        record['run'] = entry['run']
+        record['run'], record['source'] = entry['run'], entry['raw']
         fixture[name].append(record)
     for trials in fixture.values():
         trials.sort(key=lambda t: t['run'])
-    with gzip.open(output, 'wt', compresslevel=9) as out:
-        json.dump(fixture, out, separators=(',', ':'))
+    with open(output, 'wb') as raw, gzip.GzipFile(filename='', mode='wb', fileobj=raw, compresslevel=9, mtime=0) as out:
+        out.write(json.dumps(fixture, separators=(',', ':')).encode())
 
 
 if __name__ == '__main__':
