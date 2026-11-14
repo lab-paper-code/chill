@@ -328,7 +328,7 @@ type postLoadObservation struct {
 // and level are refined together until the settle point stops moving. The
 // hold is t50 less the meter lag, identified when that exceeds the meter's
 // sampling interval, the median sample spacing. Idle is not identified only
-// when the settled series still trends.
+// when the settled series still trends over its last minimum power window.
 func analysePostLoad(power []Sample, start, end time.Time, lag, minimum time.Duration, tests sessionTests) (postLoadObservation, error) {
 	var observation postLoadObservation
 	var spacing []float64

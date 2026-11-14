@@ -371,11 +371,10 @@ func TestNonNegativeLeastSquaresAgreesWithBruteForce(t *testing.T) {
 // A 30 s cycle on idle power is not a trend, and its batch means standard
 // error exceeds the independent-sample one.
 func TestPostLoadStatisticsTolerateCycle(t *testing.T) {
-	var series [][2]float64
-	var watts []float64
+	series, watts := make([][2]float64, 301), make([]float64, 301)
 	for at := range 301 {
-		w := 66 + math.Sin(2*math.Pi*float64(at)/30)
-		series, watts = append(series, [2]float64{float64(at), w}), append(watts, w)
+		watts[at] = 66 + math.Sin(2*math.Pi*float64(at)/30)
+		series[at] = [2]float64{float64(at), watts[at]}
 	}
 	for from := 0.0; from <= 60; from += 5 {
 		if slope, trending := trend(series, from, 0.95); trending {
