@@ -554,8 +554,7 @@ func TestSchedulerCatalogFollowsMeterChangeRestartAndHour(t *testing.T) {
 	observationLog, clock := clockedObservationLog(t, config, observationTestHour)
 	node := serving.NodeReference{Name: "node", UID: "node-uid"}
 	_, snapshot := schedulerFixture()
-	snapshot.Instances[0].Profile.Batches[0].EnergyPerInputJoules = 0
-	snapshot.Instances[0].Profile.Batches[0].EnergyBelowResolution = true
+	snapshot.Instances[0].Profile.Batches[0].InputSlopeJoules = observationTestSlope(`{"status":"Identified","value":0}`)
 	record := func(observationLog *ObservationLog, at time.Time, gap time.Duration) {
 		t.Helper()
 		clock.set(at)
@@ -620,8 +619,8 @@ func TestSchedulerCatalogFollowsMeterChangeRestartAndHour(t *testing.T) {
 				if err := json.Unmarshal(row.Body, &profile); err != nil {
 					t.Fatal(err)
 				}
-				if profile.Batches[0].EnergyPerInputJoules != 0 || !profile.Batches[0].EnergyBelowResolution {
-					t.Fatal("persisted profile lost below-resolution energy after restart/hour change")
+				if slope, ok := profile.Batches[0].InputSlopeJoules.Value(); !ok || slope != 0 {
+					t.Fatal("persisted profile lost its identified zero input slope after restart/hour change")
 				}
 			}
 		}

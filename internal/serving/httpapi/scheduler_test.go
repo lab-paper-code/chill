@@ -408,7 +408,7 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *testing.T) {
 	at := time.Date(2026, 10, 15, 18, 22, 30, 0, time.UTC)
 	profile := &serving.Profile{ID: "profile", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "profile", Size: 123},
-		Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 12), fixtures.ServiceSample("physical-trial", 1, 34)}, EnergyPerInputJoules: 0, EnergyBelowResolution: true}}}
+		Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 12), fixtures.ServiceSample("physical-trial", 1, 34)}, InputSlopeJoules: httpapiTestSlope(`{"status":"Identified","value":0}`)}}}
 	equalProfile := *profile
 	differentProfile := *profile
 	differentProfile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 56), fixtures.ServiceSample("physical-trial", 1, 56)}}}
@@ -448,8 +448,8 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 		t.Fatal("snapshot evidence did not use the same response dictionaries")
 	}
 	evidenceJSON, err := json.Marshal(evidence)
-	if err != nil || !bytes.Contains(evidenceJSON, []byte(`"energyBelowResolution":true`)) {
-		t.Fatalf("compact observation API lost below-resolution marker: %s, %v", evidenceJSON, err)
+	if err != nil || !bytes.Contains(evidenceJSON, []byte(`"inputSlopeJoules":{"status":"Identified","value":0}`)) {
+		t.Fatalf("compact observation API lost an identified zero input slope: %s, %v", evidenceJSON, err)
 	}
 	raw, err := json.Marshal(got[0])
 	if err != nil {

@@ -150,7 +150,7 @@ func capacityFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 		Source: "fixture",
 	}}
 	p := *snap.Instances[0].Profile
-	p.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 8e5), fixtures.ServiceSample("physical-trial", 1, 1e6), fixtures.ServiceSample("physical-trial", 2, 1.2e6)}, EnergyPerInputJoules: 0.01, MemoryBytes: 100}}
+	p.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 8e5), fixtures.ServiceSample("physical-trial", 1, 1e6), fixtures.ServiceSample("physical-trial", 2, 1.2e6)}, InputSlopeJoules: observationTestSlope(`{"status":"Identified","value":0.01}`), MemoryBytes: 100}}
 	distribution, err := firstfloor.NewServiceDistribution(p.Batches[0].ServiceSamples)
 	if err != nil {
 		panic(err)
@@ -173,7 +173,7 @@ func schedulerFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
 	path := serving.ModelPath{Name: "cpu", Artifact: "model", Files: []string{"/model"}, Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Firstfloor: settings}
 	d := &serving.Definition{Name: "workload", UID: "w1", Generation: 1, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}, Model: serving.Model{Name: "model", UID: "m", Generation: 1, Paths: []serving.ModelPath{path}}, Preprocessor: serving.Preprocessor{Name: "pre", Input: []serving.RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []serving.RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"}, SLO: serving.SLO{Percentile: 95, TargetLatency: 100 * time.Millisecond}}
-	p := &serving.Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: fixtures.ServiceSamples("physical-trial", int64(10*time.Millisecond)), EnergyPerInputJoules: 1, MemoryBytes: 100}}}
+	p := &serving.Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: fixtures.ServiceSamples("physical-trial", int64(10*time.Millisecond)), InputSlopeJoules: observationTestSlope(`{"status":"Identified","value":1}`), MemoryBytes: 100}}}
 	distribution, err := firstfloor.NewServiceDistribution(p.Batches[0].ServiceSamples)
 	if err != nil {
 		panic(err)
@@ -210,4 +210,12 @@ func occupancyScanRow(at time.Time, id uint64) serving.RequestRow {
 	q, s, f := at, at, at.Add(20)
 	// Receipt anchors incomplete-request facts; worker timestamps anchor execution.
 	return serving.RequestRow{Kind: serving.RequestRowFinal, RequestID: fmt.Sprintf("%d/0", id), ReceivedAt: at, Node: &serving.NodeReference{Name: "node", UID: "node-uid"}, Instance: "instance", WorkloadUID: "workload", ProfileID: "profile", DecisionID: "decision", DefinitionID: "definition", BatchID: id, BatchSize: 1, Outcome: "completed", ExecutionComplete: true, NativeOutcome: "completed", NativeExecutionComplete: true, NativeQueuedAt: &q, NativeRunningAt: &s, NativeFinishedAt: &f}
+}
+
+func observationTestSlope(wire string) *derivation.SessionParameter {
+	var p derivation.SessionParameter
+	if err := json.Unmarshal([]byte(wire), &p); err != nil {
+		panic(err)
+	}
+	return &p
 }
