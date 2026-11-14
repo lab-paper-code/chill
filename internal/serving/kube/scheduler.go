@@ -134,6 +134,8 @@ type SchedulerController struct {
 	powerTargets map[string]time.Duration
 	// measureStep measures one step of an operation-cost measurement.
 	measureStep func(context.Context, SchedulerControllerConfig, servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error)
+	// sessionReads reads the observation records a measurement session derives from.
+	sessionReads sessionReads
 	// measurements caches payloads against each round's direct metadata baseline.
 	// tickMu owns the cache and every consumer's selected-object copies.
 	measurements []*measurementCache
@@ -155,6 +157,7 @@ func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes
 	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, reservationState: &cluster.reservation, ctx: ctx, cancel: cancel}
 	c.completions = make(chan struct{}, 1)
 	c.measureStep = c.measureOperation
+	c.sessionReads = observedSessionReads(observationLog)
 	return c, nil
 }
 
