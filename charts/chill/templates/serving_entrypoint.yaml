@@ -86,7 +86,13 @@ spec:
             - {{ printf "--actuation-policies-key=%s" .Values.profiler.factSource.actuationPoliciesKey | quote }}
             - {{ printf "--metric-sources-key=%s" .Values.profiler.factSource.metricSourcesKey | quote }}
             - {{ printf "--execution-facts-key=%s" .Values.profiler.factSource.executionFactsKey | quote }}
+            # Measurement sessions resolve their actor and Workload from the same facts.
+            - {{ printf "--execution-policies-key=%s" .Values.profiler.factSource.executionPoliciesKey | quote }}
+            - {{ printf "--workload-observation-key=%s" .Values.profiler.factSource.workloadObservationKey | quote }}
+            - {{ printf "--measurement-memory-fraction=%v" .Values.profiler.measurementMemoryFraction | quote }}
             {{- end }}
+            # The session-load Job runs this image's session-load subcommand.
+            - {{ printf "--session-load-image=%s" (include "chill.servingEntrypointImage" .) | quote }}
             - "--tls-cert=/etc/chill/tls/tls.crt"
             - "--tls-key=/etc/chill/tls/tls.key"
             - {{ printf "--observation-directory=%s" .Values.servingEntrypoint.observationStorage.directory | quote }}

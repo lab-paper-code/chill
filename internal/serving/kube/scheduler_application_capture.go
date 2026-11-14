@@ -196,7 +196,7 @@ func (c *SchedulerController) releaseCapturedScopes(
 // Function ports do not carry admission policy. All accepted values do.
 func schedulerApprovalConfiguration(config SchedulerControllerConfig) SchedulerControllerConfig {
 	config.OnDecision, config.OnAction = nil, nil
-	config.DispatchOccupancySnapshot, config.MeterSource = nil, nil
+	config.DispatchOccupancySnapshot, config.MeterSource, config.Session.Prepare = nil, nil, nil
 	// Occupancy policy is the selected cell/value projection below, not raw
 	// cache evidence or unused legacy rows.
 	config.DispatchOccupancy = nil

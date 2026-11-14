@@ -27,6 +27,7 @@ type Options struct {
 	SchedulerConfigKey     string
 	SchedulerConfigMap     string
 	ServingNamespace       string
+	Session                servingkube.SessionConfig
 	StoreBucket            string
 	StoreCredentialsSecret string
 	StoreEndpoint          string

@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -13,9 +14,11 @@ import (
 	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
+	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	"k8s.io/client-go/kubernetes"
@@ -47,6 +50,7 @@ type SchedulerControllerConfig struct {
 	// CatalogIssues are the profiles the catalog or the preparations omit.
 	CatalogIssues []CatalogIssue
 	LoadGenerator LoadGeneratorConfig
+	Session       SessionConfig
 	// GatewayRequestTimeout is the actual HTTP handler lifetime cap.
 	GatewayRequestTimeout time.Duration
 	Meters                []servingops.MeterDeclaration
@@ -63,6 +67,38 @@ type SchedulerControllerConfig struct {
 	MeterSource   func(metricobserver.SourceIdentity) (metricobserver.Source, error)
 	OnDecision    func(serving.SchedulerDecision, serving.SchedulerSnapshot) error
 	OnAction      func(servingstate.OperationResult) error
+}
+
+// SessionConfig runs BatchEnergyOptimization measurement sessions. Prepare is
+// nil when ChillServer has no Profiler facts to resolve a session from.
+type SessionConfig struct {
+	Prepare func(context.Context, *edge.BatchEnergyOptimization) (SessionPreparation, error)
+	// Image, Namespace, ServiceAccount and NodeName place the session-load Job.
+	Image, Namespace, ServiceAccount, NodeName string
+	// MaxResultBytes is the byte limit the catalog reads one session result with.
+	MaxResultBytes int64
+}
+
+// SessionPreparation is the measurement request resolved once per session:
+// what each batch size's fixed-batch instance and the result's condition need.
+type SessionPreparation struct {
+	// RunConfig is the frozen candidate, Node and actor configuration.
+	RunConfig profilingrun.RunConfig
+	// MemoryBytes is the actor's memory envelope, RunConfig.Actor.MemoryLimitBytes.
+	MemoryBytes uint64
+	// RuntimeDelivery is RunConfig.Delivery as JSON, the measured delivery a
+	// prepared instance reproduces and the result stores.
+	RuntimeDelivery json.RawMessage
+	// BatchSizes are the batch sizes the session may measure, ascending: powers
+	// of two up to the execution path's maximum that the artifact declares.
+	BatchSizes []int
+	// SLOPercentile and SLOTarget are the measured Workload's latency objective.
+	SLOPercentile float64
+	SLOTarget     time.Duration
+	// Dataset is the dataset the load Job samples.
+	Dataset profilingrun.DatasetContract
+	// Meter is the wall meter of the target Node.
+	Meter metricobserver.SourceIdentity
 }
 
 type SchedulerControllerState struct {

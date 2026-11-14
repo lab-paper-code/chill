@@ -30,6 +30,63 @@ type BatchEnergyOptimizationSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=10
 	RetryLimit int32 `json:"retryLimit"`
+
+	// Session holds the settings of a ChillServer measurement session.
+	// +optional
+	Session *BatchEnergyOptimizationSessionSpec `json:"session,omitempty"`
+}
+
+// BatchEnergyOptimizationSessionSpec holds the measurement request's session
+// settings. Durations are seconds unless the name says otherwise.
+// +kubebuilder:validation:XValidation:rule="self.levelDurationLimitSeconds > self.meterLagSeconds + self.minimumPowerWindowSeconds",message="levelDurationLimitSeconds must exceed meterLagSeconds plus minimumPowerWindowSeconds"
+// +kubebuilder:validation:XValidation:rule="self.requestLifetimeSeconds * 1000 > self.deliveryMarginMilliseconds",message="requestLifetimeSeconds must exceed deliveryMarginMilliseconds"
+type BatchEnergyOptimizationSessionSpec struct {
+	// MeterLagSeconds is the power meter lag discarded at each level start.
+	// +kubebuilder:validation:Minimum=0
+	MeterLagSeconds float64 `json:"meterLagSeconds"`
+	// MinimumPowerWindowSeconds is the shortest power observation of a level.
+	// +kubebuilder:validation:ExclusiveMinimum=true
+	// +kubebuilder:validation:Minimum=0
+	MinimumPowerWindowSeconds float64 `json:"minimumPowerWindowSeconds"`
+	// MidLevelRatio is the mid level arrival rate as a ratio of saturation throughput.
+	// +kubebuilder:validation:ExclusiveMinimum=true
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:ExclusiveMaximum=true
+	// +kubebuilder:validation:Maximum=1
+	MidLevelRatio float64 `json:"midLevelRatio"`
+	// SparseMeanGapSeconds is the sparse level's mean idle gap.
+	// +kubebuilder:validation:ExclusiveMinimum=true
+	// +kubebuilder:validation:Minimum=0
+	SparseMeanGapSeconds float64 `json:"sparseMeanGapSeconds"`
+	// LevelDurationLimitSeconds is the longest predicted duration of one level.
+	// +kubebuilder:validation:ExclusiveMinimum=true
+	// +kubebuilder:validation:Minimum=0
+	LevelDurationLimitSeconds float64 `json:"levelDurationLimitSeconds"`
+	// PostLoadWindowSeconds observes the loaded actor without inference after the last level.
+	// +kubebuilder:validation:ExclusiveMinimum=true
+	// +kubebuilder:validation:Minimum=0
+	PostLoadWindowSeconds float64 `json:"postLoadWindowSeconds"`
+	// ConfidenceLevel, a decimal in [0.5, 1), is the level of every statistical
+	// decision the derivation makes.
+	// +kubebuilder:validation:Pattern=`^0\.[5-9][0-9]*$`
+	ConfidenceLevel string `json:"confidenceLevel"`
+	// +kubebuilder:validation:Minimum=1
+	RequestLifetimeSeconds int32 `json:"requestLifetimeSeconds"`
+	// +kubebuilder:validation:Minimum=1
+	DeliveryMarginMilliseconds int32 `json:"deliveryMarginMilliseconds"`
+	// +kubebuilder:validation:Minimum=1
+	FramedDecodedRequestUpperBytes int64 `json:"framedDecodedRequestUpperBytes"`
+}
+
+var sessionConfidenceDecimal = regexp.MustCompile(`^0\.[5-9][0-9]*$`)
+
+// Confidence returns ConfidenceLevel as a number in [0.5, 1).
+func (s BatchEnergyOptimizationSessionSpec) Confidence() (float64, error) {
+	confidence, err := strconv.ParseFloat(s.ConfidenceLevel, 64)
+	if err != nil || !sessionConfidenceDecimal.MatchString(s.ConfidenceLevel) {
+		return 0, fmt.Errorf("session.confidenceLevel must be a decimal in [0.5, 1), got %q", s.ConfidenceLevel)
+	}
+	return confidence, nil
 }
 
 // BatchEnergyOptimizationPointPolicySpec owns the confidence of both idle and
@@ -118,12 +175,23 @@ type BatchEnergyOptimizationStatus struct {
 	// +optional
 	CompletedTrials int32 `json:"completedTrials,omitempty"`
 
+	// CompletedBatches counts the batch sizes a session measured.
+	// +optional
+	CompletedBatches int32 `json:"completedBatches,omitempty"`
+
 	// +optional
 	// +kubebuilder:validation:MaxLength=128
 	Outcome string `json:"outcome,omitempty"`
 
 	// +optional
 	Result *ProfilingRunEvidenceReference `json:"result,omitempty"`
+}
+
+// Terminal reports whether the measurement ended, Complete or Failed, for
+// generation.
+func (s BatchEnergyOptimizationStatus) Terminal(generation int64) bool {
+	return s.ObservedGeneration == generation &&
+		(s.Phase == string(MeasurementPhaseComplete) || s.Phase == string(MeasurementPhaseFailed))
 }
 
 // +kubebuilder:object:root=true

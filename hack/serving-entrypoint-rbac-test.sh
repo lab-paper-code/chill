@@ -196,6 +196,16 @@ for kind in ("batchenergyoptimizations", "dispatchoccupancymeasurements"):
     for verb in ("get", "list", "create", "delete"):
         if not all(grants(r, kind, verb) for r in profiles):
             sys.exit("server SA profile Role lacks " + verb + " " + kind)
+# Measurement sessions: ChillServer writes BEO status, creates the load Job and
+# reads the Profiler facts in every profile.
+if not all(grants(r, "batchenergyoptimizations/status", "patch") for r in profiles):
+    sys.exit("a profile namespace Role lacks batchenergyoptimizations/status patch")
+load = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoint-load"]
+if not load or not grants(load[0], "jobs", "create"):
+    sys.exit("release namespace Role lacks session-load Job create")
+facts = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoint-profiler-facts"]
+if not facts or not grants(facts[0], "configmaps", "get"):
+    sys.exit("Profiler facts ConfigMap get is missing")
 
 # measurements.go requires create (collection) / delete (named) as the caller.
 # authorizer.go separately checks the lowercase HTTP verb and /chill-prefixed path.
