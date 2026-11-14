@@ -125,12 +125,12 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (s
 			s.Reasons = append(s.Reasons, p.Name+": "+e.Error())
 			continue
 		}
-		model, e := servingstate.NativeModel(ctx, o.Store.Client(), p)
+		config, e := servingstate.NativeConfig(ctx, o.Store.Client(), p)
 		if e != nil {
 			s.Reasons = append(s.Reasons, p.Name+": "+e.Error())
 			continue
 		}
-		state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: model})
+		state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: config.Model})
 		if e != nil {
 			s.Reasons = append(s.Reasons, p.Name+": "+e.Error())
 			continue

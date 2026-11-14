@@ -874,3 +874,20 @@ func TestObserverMeasuredImageStillRequiresPhysicalSafety(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeSourceRequiresPreparedMode(t *testing.T) {
+	pod, _, _, _ := observerSourceFixture()
+	for _, preparedMode := range []string{servingstate.NativeServingMode, servingstate.NativeProfilingMode} {
+		for _, reportedMode := range []string{servingstate.NativeServingMode, servingstate.NativeProfilingMode} {
+			t.Run(preparedMode+" reports "+reportedMode, func(t *testing.T) {
+				prepared := native.Config{Model: "model", Mode: preparedMode}
+				instance := serving.InstanceState{Native: &native.State{Ready: true,
+					Metadata: native.Metadata{Model: prepared.Model, Mode: reportedMode,
+						ProfileID: pod.Annotations[servingstate.ServingProfileAnnotation]}}}
+				if got := matchesNativeSource(pod, prepared, &instance); got != (preparedMode == reportedMode) {
+					t.Fatalf("prepared mode %q, reported mode %q: verified=%t", preparedMode, reportedMode, got)
+				}
+			})
+		}
+	}
+}

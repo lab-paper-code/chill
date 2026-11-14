@@ -88,7 +88,7 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 		return err
 	}
 	if id != "" && status.State.Terminated == nil {
-		model, err := servingstate.NativeModel(ctx, o.Store.Client(), pod)
+		config, err := servingstate.NativeConfig(ctx, o.Store.Client(), pod)
 		if err != nil {
 			return err
 		}
@@ -97,7 +97,7 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 			if e != nil {
 				return false, e
 			}
-			state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: model})
+			state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: config.Model})
 			if e != nil {
 				return false, e
 			}

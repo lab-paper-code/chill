@@ -1726,6 +1726,9 @@ func (r *Runtime) updateInstanceRecoveryLocked(i *runtimeInstance, candidate *Re
 	}
 	candidate.State.RecoveryUnknown = i.State.RecoveryUnknown
 	terminated := candidate.State.Terminated || i.State.Terminated
+	// Creation time alone does not identify the running executor. Keep the
+	// same fence for newly observed Pods; their first verified empty probe
+	// clears it without a separate creation-time recovery mechanism.
 	verifiedEmpty := candidate.State.ID != "" && candidate.State.Node.UID != "" && candidate.State.NativeVerified &&
 		!candidate.State.ObservedAt.Before(r.recovery.Started) &&
 		candidate.State.Native != nil && len(candidate.State.Native.Requests) == 0
