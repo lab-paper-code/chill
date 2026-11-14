@@ -440,9 +440,11 @@ func TestSessionRuntimeFactDifferingAcrossInstancesFails(t *testing.T) {
 	}
 }
 
+const droppedLevel = "session-uid/2/mid"
+
 func TestSessionWaitsForRowsStillInTransitBeforeRemoving(t *testing.T) {
 	s := newSessionHarness(t)
-	s.dropRow, s.lateReads = "session-uid/2/mid", 2
+	s.dropRow, s.lateReads = droppedLevel, 2
 	beo := sessionRoot(sessionSettingsFixture())
 	s.create(beo)
 	s.admit()
@@ -461,7 +463,7 @@ func TestSessionWaitsForRowsStillInTransitBeforeRemoving(t *testing.T) {
 
 func TestSessionNativeRowCountMismatchExcludesOnlyThatLevel(t *testing.T) {
 	s := newSessionHarness(t)
-	s.dropRow = "session-uid/2/mid"
+	s.dropRow = droppedLevel
 	settings := sessionSettingsFixture()
 	settings.LevelDurationLimitSeconds = 0.01
 	beo := sessionRoot(settings)
@@ -476,7 +478,7 @@ func TestSessionNativeRowCountMismatchExcludesOnlyThatLevel(t *testing.T) {
 		for _, level := range batch.Levels {
 			if level.Excluded {
 				excluded++
-				if level.ID != "session-uid/2/mid" || !strings.Contains(level.Detail, "native") {
+				if level.ID != droppedLevel || !strings.Contains(level.Detail, "native") {
 					t.Fatalf("excluded level %+v", level.DriverLevelRow)
 				}
 			}

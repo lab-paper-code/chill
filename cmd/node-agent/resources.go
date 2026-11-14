@@ -82,9 +82,16 @@ func runResourceAgent(ctx context.Context, kube kubernetes.Interface, opts optio
 		},
 	}
 	defer transport.CloseIdleConnections()
+	// A failed first lookup must not end collection for the process lifetime.
 	node, err := kube.CoreV1().Nodes().Get(ctx, opts.nodeName, metav1.GetOptions{})
-	if err != nil {
-		return err
+	for err != nil {
+		log.Printf("resource collection waits for Node %s: %v", opts.nodeName, err)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(batchInterval):
+		}
+		node, err = kube.CoreV1().Nodes().Get(ctx, opts.nodeName, metav1.GetOptions{})
 	}
 	identity := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	send := func(samples []observation.ResourceSample) ([]observation.ResourceTarget, error) {
