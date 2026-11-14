@@ -47,7 +47,6 @@ const (
 
 	// Level end reasons of chill-server session-load.
 	sessionSamplesReached         = "SamplesReached"
-	sessionPredictedOverLimit     = "PredictedDurationExceedsLimit"
 	sessionServiceOverLifetime    = "BatchServiceExceedsLifetime"
 	sessionAllocationBeforeBatch  = "AllocationFailedBeforeAnyBatch"
 	sessionRequestLifetimeExpired = "RequestLifetimeExpired"
@@ -599,7 +598,7 @@ func sessionLevels(table sessionLevelTable, batch int) ([]profilederivation.Driv
 	for _, level := range table.Levels {
 		switch level.EndReason {
 		case sessionSamplesReached:
-		case sessionPredictedOverLimit, sessionRequestLifetimeExpired:
+		case sessionRequestLifetimeExpired:
 			if level.Kind == profilederivation.LevelSaturation {
 				return rows, stop(profilederivation.StopNotMeasured, level), nil
 			}
@@ -618,11 +617,8 @@ func sessionLevels(table sessionLevelTable, batch int) ([]profilederivation.Driv
 // levelSentence is the driver's own sentence for a level end, or the end
 // reason with the level when the driver gave none.
 func levelSentence(level sessionLevelWire, batch int) string {
-	switch {
-	case level.Detail != "":
+	if level.Detail != "" {
 		return level.Detail
-	case level.EndReason == sessionPredictedOverLimit:
-		return fmt.Sprintf("%s level of batch %d predicted %g s, above the %g s level limit", level.Kind, batch, level.PredictedSeconds, level.LimitSeconds)
 	}
 	return fmt.Sprintf("%s level of batch %d ended %s", level.Kind, batch, level.EndReason)
 }

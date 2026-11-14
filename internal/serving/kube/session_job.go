@@ -1,7 +1,6 @@
 package kube
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -125,17 +124,13 @@ type sessionLevelWire struct {
 	Outstanding             int       `json:"outstanding,omitempty"`
 	TargetInputsPerSecond   float64   `json:"targetInputsPerSecond,omitempty"`
 	AchievedInputsPerSecond float64   `json:"achievedInputsPerSecond"`
-	PredictedSeconds        float64   `json:"predictedSeconds,omitempty"`
-	LimitSeconds            float64   `json:"limitSeconds,omitempty"`
 	EndReason               string    `json:"endReason"`
 	Detail                  string    `json:"detail,omitempty"`
 }
 
 func decodeSessionLevelTable(message string) (sessionLevelTable, error) {
 	var table sessionLevelTable
-	decoder := json.NewDecoder(bytes.NewReader([]byte(message)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&table); err != nil {
+	if err := json.Unmarshal([]byte(message), &table); err != nil {
 		return table, fmt.Errorf("session-load termination message is not a level table: %w", err)
 	}
 	return table, nil
@@ -148,9 +143,6 @@ func (l sessionLevelWire) row() profilederivation.DriverLevelRow {
 		row.Detail = l.Detail
 	}
 	row.Excluded = l.EndReason == sessionRequestLifetimeExpired
-	if l.EndReason == sessionPredictedOverLimit {
-		row.PredictedSeconds, row.LimitSeconds = ptr.To(l.PredictedSeconds), ptr.To(l.LimitSeconds)
-	}
 	return row
 }
 

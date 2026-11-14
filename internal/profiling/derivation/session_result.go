@@ -238,10 +238,6 @@ type DriverLevelRow struct {
 	Detail string `json:"detail,omitempty"`
 	// Excluded levels cannot identify physical execution counts after expiry.
 	Excluded bool `json:"excluded,omitempty"`
-	// PredictedSeconds and LimitSeconds are present when the driver ended the
-	// level as not measured because its predicted duration exceeded the limit.
-	PredictedSeconds *float64 `json:"predictedSeconds,omitempty"`
-	LimitSeconds     *float64 `json:"limitSeconds,omitempty"`
 }
 
 // SessionLevel is a driver row with what the derivation measured over it.
