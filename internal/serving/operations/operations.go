@@ -198,21 +198,6 @@ func (o *Operations) Execute(ctx context.Context, operation servingstate.Operati
 	if measurementSnapshots {
 		if captureErr != nil {
 			result.Actual.Reasons = append(result.Actual.Reasons, captureErr.Error())
-			// The observer's retained ready read proves preparation independently
-			// of a later cost snapshot. Its timestamp and counters stay unchanged.
-			result.Actual.Instances = nil
-			for _, instance := range o.Runtime.Instances() {
-				if instance.Node != operation.Node {
-					continue
-				}
-				result.Actual.Instances = append(result.Actual.Instances, instance)
-				if instance.Native != nil {
-					if result.Actual.Native == nil {
-						result.Actual.Native = map[string]native.State{}
-					}
-					result.Actual.Native[instance.ID] = *instance.Native
-				}
-			}
 		}
 	} else {
 		err = errors.Join(err, captureErr)
