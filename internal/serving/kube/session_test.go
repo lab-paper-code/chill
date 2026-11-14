@@ -57,6 +57,9 @@ type sessionHarness struct {
 	// dropRow removes one native row of this workload identifier.
 	dropRow string
 	nextID  uint64
+	// runtime replaces a batch size's captured native runtime metadata; a
+	// nil entry captures no native state.
+	runtime map[int]*native.RuntimeMetadata
 }
 
 func sessionSettingsFixture() *edge.BatchEnergyOptimizationSessionSpec {
@@ -240,7 +243,14 @@ func (s *sessionHarness) measure(_ context.Context, _ SchedulerControllerConfig,
 		pod := "pod-b" + strconv.Itoa(batch)
 		id := pod + "/containerd://runtime"
 		record.Result.Actual.Instances = []serving.InstanceState{{ID: id, PodUID: pod, TargetID: prepare.Instance.ID}}
-		record.Result.Actual.Native = map[string]native.State{id: {Ready: true, Metadata: native.Metadata{Runtime: native.RuntimeMetadata{RuntimeVersion: "1.20"}}}}
+		metadata := &native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.20", Providers: []string{"CPUExecutionProvider"},
+			ModelFiles: []string{"/model/model.onnx"}, Device: "cpu", InitializedBatches: []int{batch}}
+		if replaced, set := s.runtime[batch]; set {
+			metadata = replaced
+		}
+		if metadata != nil {
+			record.Result.Actual.Native = map[string]native.State{id: {Ready: true, Metadata: native.Metadata{Runtime: *metadata}}}
+		}
 	}
 	return record, receipt, nil
 }
@@ -384,6 +394,25 @@ func TestSessionLoadFailureCarriesTheOriginalSentence(t *testing.T) {
 	jobs, _ := s.kube.BatchV1().Jobs("chill-system").List(context.Background(), meta.ListOptions{})
 	if len(jobs.Items) != 0 {
 		t.Fatalf("load Jobs left: %d", len(jobs.Items))
+	}
+}
+
+// Every batch size runs on its own instance; the result keeps one runtime
+// report, so the facts profile consumers read must be the same on all of them.
+func TestSessionRuntimeFactDifferingAcrossInstancesFails(t *testing.T) {
+	s := newSessionHarness(t)
+	s.runtime = map[int]*native.RuntimeMetadata{2: {Runtime: "ort-cpu", RuntimeVersion: "1.20", Providers: []string{"CUDAExecutionProvider"},
+		ModelFiles: []string{"/model/model.onnx"}, Device: "cpu", InitializedBatches: []int{2}}}
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	s.admit()
+	status := s.status(beo)
+	want := "the batch 2 instance reports providers [CUDAExecutionProvider], the batch 1 instance [CPUExecutionProvider]"
+	if _, stored := s.result(beo); stored || status.Phase != string(edge.MeasurementPhaseFailed) || sessionCondition(status).Message != want {
+		t.Fatalf("status %+v message %q", status, sessionCondition(status).Message)
+	}
+	if s.holder() != "" || !slices.Contains(s.measured, "remove-b2") {
+		t.Fatalf("measured %v holder %q", s.measured, s.holder())
 	}
 }
 

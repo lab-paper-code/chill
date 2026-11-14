@@ -221,13 +221,20 @@ func (c *SchedulerController) runSession(ctx context.Context, beo *edge.BatchEne
 		return fail(err)
 	}
 	sizes := plan.preparation.BatchSizes
+	metadataBatch := 0
 	for index, batch := range sizes {
 		outcome, err := run.batch(ctx, batch, index == len(sizes)-1)
 		if err != nil {
 			return fail(err)
 		}
-		if input.RuntimeMetadata == nil {
-			input.RuntimeMetadata = outcome.metadata
+		switch {
+		case outcome.metadata == nil:
+		case input.RuntimeMetadata == nil:
+			input.RuntimeMetadata, metadataBatch = outcome.metadata, batch
+		default:
+			if err := sameRuntimeFacts(*input.RuntimeMetadata, metadataBatch, *outcome.metadata, batch); err != nil {
+				return fail(err)
+			}
 		}
 		if outcome.postLoad[1].After(outcome.postLoad[0]) {
 			input.PostLoadStart, input.PostLoadEnd = outcome.postLoad[0], outcome.postLoad[1]
@@ -472,6 +479,23 @@ func measuredCondition(preparation SessionPreparation, ref serving.NodeReference
 			SupplementalGroups: slices.Clone(access.SupplementalGroups), Resources: access.Resources, GPUUUID: access.GPUUUID}
 	}
 	return condition
+}
+
+// sameRuntimeFacts compares the runtime facts profile consumers read (the
+// catalog's backend and condition, the serving instance's measured runtime
+// check) between two instances of one session; the result keeps one report.
+func sameRuntimeFacts(kept native.RuntimeMetadata, keptBatch int, next native.RuntimeMetadata, batch int) error {
+	facts := func(m native.RuntimeMetadata) []string {
+		return []string{m.Runtime, m.RuntimeVersion, fmt.Sprint(m.Providers), m.Device, m.GPUUUID, fmt.Sprint(m.ModelFiles)}
+	}
+	names := []string{"runtime", "runtime version", "providers", "device", "GPU UUID", "model files"}
+	want, got := facts(kept), facts(next)
+	for i, name := range names {
+		if want[i] != got[i] {
+			return fmt.Errorf("the batch %d instance reports %s %s, the batch %d instance %s", batch, name, got[i], keptBatch, want[i])
+		}
+	}
+	return nil
 }
 
 func batchList(batches []profilederivation.SessionBatch) string {

@@ -81,8 +81,10 @@ func catalogSessionResult(t testing.TB) profilederivation.SessionResult {
 			Dataset:      &profilederivation.CurveDatasetContract{Name: "data", UID: "data-uid"},
 			Firstfloor:   &modelcompat.FirstfloorSettings{MaxBatchSize: 2, MaxQueueSize: 8}, Actor: actor},
 		Power: profilederivation.SessionPower{IdleWatts: identified("10"), AwakeStepWatts: identified("4"), HoldSeconds: identified("0.5")},
+		// A session keeps the metadata of its batch-1 instance, which
+		// initialized only its own batch size.
 		RuntimeMetadata: &firstfloor.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.19.0", Providers: []string{"CPUExecutionProvider"},
-			ModelFiles: []string{"/model/model.onnx"}, Inputs: []string{"x"}, Outputs: []string{"y"}, InitializedBatches: []int{1, 2}},
+			ModelFiles: []string{"/model/model.onnx"}, Inputs: []string{"x"}, Outputs: []string{"y"}, InitializedBatches: []int{1}},
 		MeterSource: meter,
 	}
 	for _, b := range []int{1, 2} {
