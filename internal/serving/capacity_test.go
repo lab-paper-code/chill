@@ -352,19 +352,13 @@ func TestCapacityConditionalSupportWithDispatchOccupancy(t *testing.T) {
 	settings.CapacityWindow, settings.CapacityWindows, settings.CapacityPassingWindows = time.Second, 1, 1
 	settings.CapacityTailSamples = 10
 	settings.DefaultDispatchOccupancyNanos = 0
-	short, long := int64(0), int64(time.Second)
+	// On the ln(1+gap) scale the 1ms-gap and 10s-gap laws meet at
+	// sqrt(1e6*1e10) ns = 100ms: busy and arrival gaps below 100ms read the
+	// fast law, quieter gaps the slow one. Each law is one p95 window (59
+	// records). From 50 req/s fewer than 1% of Poisson gaps exceed 100ms.
+	short, long := int64(time.Millisecond), int64(10*time.Second)
 	batch := &snapshot.Instances[0].Profile.Batches[0]
-	batch.ServiceSamples = nil
-	for range 59 { // the p95 sample floor at each gap
-		batch.ServiceSamples = append(batch.ServiceSamples,
-			firstfloor.ServiceSample{ServiceDurationNanos: int64(time.Millisecond), PrecedingIdleNanos: &short, TrialID: "synthetic"},
-			firstfloor.ServiceSample{ServiceDurationNanos: int64(100 * time.Millisecond), PrecedingIdleNanos: &long, TrialID: "synthetic"})
-	}
-	var err error
-	batch.ServiceDistribution, err = firstfloor.NewServiceDistribution(batch.ServiceSamples)
-	if err != nil {
-		t.Fatal(err)
-	}
+	*batch = schedulerTestPairedBatch(*batch, schedulerTestGapLaws([2]int64{short, int64(time.Millisecond)}, [2]int64{long, int64(100 * time.Millisecond)}))
 	snapshot.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: 50 * time.Millisecond}
 	without := capacityBuildForTest(t, settings, snapshot)
 	// A marginal mean closes search below 30 req/s despite fast recorded

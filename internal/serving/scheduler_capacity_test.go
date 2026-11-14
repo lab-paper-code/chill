@@ -720,7 +720,9 @@ func TestCapacityJudgesEachWorkloadWithItsSLO(t *testing.T) {
 		if score.SuccessQuantileNanos == nil || !schedulerFinite(*score.SuccessQuantileNanos) {
 			t.Fatalf("%s lost finite success quantile: %+v", score.UID, score)
 		}
-		want := score.FailureFraction == 0 && *score.SuccessQuantileNanos <= float64(definition.SLO.TargetLatency)
+		// The success quantile counts failures as +Inf, so the allowed tail
+		// (here p95's 5%) may hold failures and still satisfy the SLO.
+		want := *score.SuccessQuantileNanos <= float64(definition.SLO.TargetLatency)
 		if score.Satisfied != want {
 			t.Fatalf("%s judged against another SLO: %+v", score.UID, score)
 		}

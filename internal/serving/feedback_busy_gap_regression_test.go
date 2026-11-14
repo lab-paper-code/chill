@@ -4,8 +4,6 @@ import (
 	"math"
 	"testing"
 	"time"
-
-	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 func TestFeedbackConsumerBusyPotentialUsesNextBatchGap(t *testing.T) {
@@ -19,19 +17,17 @@ func TestFeedbackConsumerBusyPotentialUsesNextBatchGap(t *testing.T) {
 		snapshot.Instances[0].MaxBatch = 1
 		snapshot.Workloads[0].SLO.TargetLatency = 10 * time.Millisecond
 		snapshot.Workloads[0].Admission.Policy = AdmissionPolicyDelay
-		busy, idle := int64(0), int64(100e6)
+		// One 59-record window per gap: the running batch followed a 1s gap
+		// (30ms law: 9ms residual after 20ms+1ms), its successor follows it
+		// with no gap (busy law), and the actor's last idle age is 100ms.
+		busy, idle, prior := int64(0), int64(100e6), int64(1e9)
 		snapshot.Instances[0].LastServiceEndAgeNanos = &idle
-		// Conditional gap selection happens within each physical trial.
-		snapshot.Instances[0].Profile.Batches = []BatchProfile{schedulerTestPairedBatch(BatchProfile{Batch: 1}, []firstfloor.ServiceSample{
-			{ServiceDurationNanos: 30e6, TrialID: "physical-a"},
-			{ServiceDurationNanos: service.busy, PrecedingIdleNanos: &busy, TrialID: "physical-a"},
-			{ServiceDurationNanos: service.idle, PrecedingIdleNanos: &idle, TrialID: "physical-a"},
-		})}
+		snapshot.Instances[0].Profile.Batches = []BatchProfile{schedulerTestPairedBatch(BatchProfile{Batch: 1}, schedulerTestGapLaws([2]int64{prior, 30e6}, [2]int64{busy, service.busy}, [2]int64{idle, service.idle}))}
 		post, sender, native := 0.0, 0.0, 20e6
 		elapsed := int64(20e6)
 		life := time.Millisecond
 		snapshot.Outstanding = []SchedulerRequest{
-			{ID: "running", Definition: snapshot.Workloads[0], Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &native, PrecedingIdleNanos: new(int64), ExchangeElapsedNanos: &elapsed},
+			{ID: "running", Definition: snapshot.Workloads[0], Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &native, PrecedingIdleNanos: &prior, ExchangeElapsedNanos: &elapsed},
 			{ID: "waiting", Definition: snapshot.Workloads[0], Phase: phaseQueued, Instance: "i1", CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &sender, RemainingLifetime: &life},
 		}
 		result := feedbackEvaluateForTest(t, settings, snapshot, candidate)

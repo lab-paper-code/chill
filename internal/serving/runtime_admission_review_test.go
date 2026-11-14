@@ -82,11 +82,7 @@ func TestAdmissionCompletionUsesMaximumQuantileOverPossibleGap(t *testing.T) {
 	r, i, _, c := admissionReviewCompletion(t, phaseRunning)
 	zero, thirty := int64(0), int64(30*time.Millisecond)
 	profile := *i.Profile
-	profile.Batches = []BatchProfile{schedulerTestPairedBatch(BatchProfile{Batch: 1}, []firstfloor.ServiceSample{
-		{TrialID: "a", ServiceDurationNanos: int64(20 * time.Millisecond)},
-		{TrialID: "a", PrecedingIdleNanos: &zero, ServiceDurationNanos: int64(20 * time.Millisecond)},
-		{TrialID: "a", PrecedingIdleNanos: &thirty, ServiceDurationNanos: int64(50 * time.Millisecond)},
-	})}
+	profile.Batches = []BatchProfile{schedulerTestPairedBatch(BatchProfile{Batch: 1}, schedulerTestGapLaws([2]int64{zero, int64(20 * time.Millisecond)}, [2]int64{thirty, int64(50 * time.Millisecond)}))}
 	i.Profile = &profile
 	i.admissionBatches = profile.NativeBundle().Batches
 	i.State.Native.Metadata.Policy.MaxBatchSize = 1

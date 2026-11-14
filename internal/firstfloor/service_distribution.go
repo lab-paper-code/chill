@@ -281,9 +281,10 @@ func (d *ServiceDistribution) slide(lower, upper, elapsed int64, percentile, lev
 }
 
 // slideWindows keeps windows first..last sorted while sliding and returns the
-// largest level percentile over each window's records above elapsed, or false
-// when a window has none. values, when given, receives every window's answer.
-// Windows of up to 512 records need no heap.
+// largest level percentile over each selectable window's records above
+// elapsed, or false when such a window has none. values, when given, receives
+// every window's answer, math.MinInt64 for a window no gap selects. Windows of
+// up to 512 records need no heap.
 func (d *ServiceDistribution) slideWindows(first, last, n int, elapsed int64, level float64, values []int64) (int64, bool) {
 	var local [512]int64
 	sorted := local[:0]
@@ -294,19 +295,22 @@ func (d *ServiceDistribution) slideWindows(first, last, n int, elapsed int64, le
 	slices.Sort(sorted)
 	top := int64(math.MinInt64)
 	for w := first; ; w++ {
-		dead, _ := slices.BinarySearchFunc(sorted, elapsed, func(v, e int64) int {
-			if v <= e {
-				return -1
+		value := int64(math.MinInt64)
+		if d.selectable(w, n) {
+			dead, _ := slices.BinarySearchFunc(sorted, elapsed, func(v, e int64) int {
+				if v <= e {
+					return -1
+				}
+				return 1
+			})
+			survivors := n - dead
+			if survivors == 0 {
+				return 0, false
 			}
-			return 1
-		})
-		survivors := n - dead
-		if survivors == 0 {
-			return 0, false
+			k := min(max(int(math.Ceil(level/100*float64(survivors))), 1), survivors)
+			value = sorted[dead+k-1]
+			top = max(top, value)
 		}
-		k := min(max(int(math.Ceil(level/100*float64(survivors))), 1), survivors)
-		value := sorted[dead+k-1]
-		top = max(top, value)
 		if values != nil {
 			values[w-first] = value
 		}
@@ -319,4 +323,25 @@ func (d *ServiceDistribution) slideWindows(first, last, n int, elapsed int64, le
 		in, _ := slices.BinarySearch(sorted, d.services[w+n])
 		sorted = slices.Insert(sorted, in, d.services[w+n])
 	}
+}
+
+// selectable reports whether some integer gap selects window i: window(g) = i
+// exactly when t(i-1) < (1+g)^2 <= t(i), t(i) = (1+gaps[i])(1+gaps[i+n]).
+// Repeated gaps leave windows between two selected ones that no gap selects;
+// a gap interval's maximum must skip them.
+func (d *ServiceDistribution) selectable(i, n int) bool {
+	if i == 0 || i == len(d.gaps)-n {
+		return true
+	}
+	h, l := bits.Mul64(uint64(d.gaps[i])+1, uint64(d.gaps[i+n])+1)
+	s := uint64(math.Sqrt(float64(h)*0x1p64 + float64(l)))
+	for sh, sl := bits.Mul64(s, s); sh > h || sh == h && sl > l; sh, sl = bits.Mul64(s, s) {
+		s--
+	}
+	for sh, sl := bits.Mul64(s+1, s+1); sh < h || sh == h && sl <= l; sh, sl = bits.Mul64(s+1, s+1) {
+		s++
+	}
+	ph, pl := bits.Mul64(uint64(d.gaps[i-1])+1, uint64(d.gaps[i-1+n])+1)
+	sh, sl := bits.Mul64(s, s)
+	return sh > ph || sh == ph && sl > pl
 }

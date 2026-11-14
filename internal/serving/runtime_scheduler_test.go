@@ -845,8 +845,13 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	replay.weights = make([]int32, len(replay.instances))
 	replay.available = make([]bool, len(replay.instances))
 	for _, wanted := range candidate.Instances {
-		replay.byID[wanted.ID].loaded = true
-		replay.byID[wanted.ID].ready = true
+		// Prepared slots are ready now, as the physical actors below: their
+		// warm-up ended at replay time 0.
+		x := replay.byID[wanted.ID]
+		x.loaded, x.ready = true, true
+		if !x.hasNativeFinish {
+			x.lastNativeFinish, x.hasNativeFinish = 0, true
+		}
 	}
 	for range 8 {
 		for _, d := range snapshot.Workloads {

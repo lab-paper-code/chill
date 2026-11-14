@@ -109,10 +109,7 @@ func TestAdmissionSharedFillWaitIsBounded(t *testing.T) {
 }
 
 func TestAdmissionPreservesNearestGapOutsideSupportEvidence(t *testing.T) {
-	gap := int64(time.Second)
-	batch := schedulerTestPairedBatch(BatchProfile{Batch: 1}, []firstfloor.ServiceSample{
-		{TrialID: "physical", ServiceDurationNanos: int64(20 * time.Millisecond), PrecedingIdleNanos: &gap},
-	})
+	batch := schedulerTestPairedBatch(BatchProfile{Batch: 1}, schedulerTestGapLaws([2]int64{int64(time.Second), int64(20 * time.Millisecond)}))
 	p := firstfloor.Policy{MaxBatchSize: 1, Batches: (&Profile{Batches: []BatchProfile{batch}}).NativeBundle().Batches}
 	idle := int64(0)
 	got := EstimateAdmission(AdmissionInput{Policy: p, LastServiceEndAgeNanos: &idle, Candidate: admissionTestRequest("candidate")})

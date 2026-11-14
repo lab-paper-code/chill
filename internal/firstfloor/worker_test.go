@@ -22,7 +22,23 @@ func testPolicy() Policy {
 func startupSample(trial string, durationMS float64) ServiceSample {
 	return ServiceSample{TrialID: trial, ServiceDurationNanos: int64(durationMS * float64(time.Millisecond))}
 }
+// warmGap is a ready actor's idle age: its warm-up service ended 1ms ago.
+var warmGap = func() *int64 { g := int64(time.Millisecond); return &g }()
+
+// Synthetic laws repeat their known-gap rows in whole cycles until the 99th
+// percentile's sample floor (459 records) is covered. Gapless rows are kept
+// as recorded; hydration drops them.
 func testBatch(size int, energy float64, samples ...ServiceSample) BatchProfile {
+	var known []ServiceSample
+	for _, s := range samples {
+		if s.PrecedingIdleNanos != nil {
+			known = append(known, s)
+		}
+	}
+	samples = append([]ServiceSample(nil), samples...)
+	for j := 0; len(known) > 0 && len(known)+j < 459; j++ {
+		samples = append(samples, known[j%len(known)])
+	}
 	distribution, err := NewServiceDistribution(samples)
 	if err != nil {
 		panic(err)
@@ -46,22 +62,22 @@ func TestMeasuredEnergyRemainsNonnegative(t *testing.T) {
 func TestMeasuredSelector(t *testing.T) {
 	p := testPolicy()
 	q := []RequestState{testState("a", 100, 100)}
-	choice := ChooseBatch(p, q, nil)
+	choice := ChooseBatch(p, q, warmGap)
 	if choice.Size != 0 || choice.WaitMS != 10 {
 		t.Fatalf("strict measured gain with observed fill should wait: %+v", choice)
 	}
 	capped := p
 	capped.MaxBatchSize = 1
-	if c := ChooseBatch(capped, q, nil); c.Size != 1 || c.WaitMS != 0 {
+	if c := ChooseBatch(capped, q, warmGap); c.Size != 1 || c.WaitMS != 0 {
 		t.Fatalf("mutable cap must forbid energy-gain waits for a larger initialized batch: %+v", c)
 	}
 	pair := []RequestState{testState("a", 100, 0), testState("a", 100, 0)}
-	if c := ChooseBatch(capped, pair, nil); c.Size != 1 {
+	if c := ChooseBatch(capped, pair, warmGap); c.Size != 1 {
 		t.Fatalf("available energy choice must honor cap: %+v", c)
 	}
 	pair[0].Context.SLO.TargetMS = 1
 	pair[1].Context.SLO.TargetMS = 1
-	if c := ChooseBatch(capped, pair, nil); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
+	if c := ChooseBatch(capped, pair, warmGap); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
 		t.Fatalf("infeasible requests must reject without exceeding the batch cap: %+v", c)
 	}
 	if e := validatePolicy(capped, []int{1, 2}); e != nil {
@@ -78,42 +94,42 @@ func TestMeasuredSelector(t *testing.T) {
 	}
 	equal := p
 	equal.Batches = []BatchProfile{testBatch(1, 1, startupSample("trial-a", 10)), testBatch(2, 1, startupSample("trial-a", 12))}
-	if c := ChooseBatch(equal, q, nil); c.Size != 1 || c.WaitMS != 0 {
+	if c := ChooseBatch(equal, q, warmGap); c.Size != 1 || c.WaitMS != 0 {
 		t.Fatalf("equal energy must not wait: %+v", c)
 	}
 	q[0].ArrivalRate = 0
-	if c := ChooseBatch(p, q, nil); c.Size != 1 {
+	if c := ChooseBatch(p, q, warmGap); c.Size != 1 {
 		t.Fatalf("no actual arrival rate must dispatch: %+v", c)
 	}
 	q[0].ArrivalRate = 100
 	q = append(q, testState("b", 15, 0))
-	if c := ChooseBatch(p, q, nil); c.WorkloadUID != "b" || c.Size != 1 || c.WaitMS != 0 {
+	if c := ChooseBatch(p, q, warmGap); c.WorkloadUID != "b" || c.Size != 1 || c.WaitMS != 0 {
 		t.Fatalf("urgent other UID must prevent wait: %+v", c)
 	}
 	q = []RequestState{testState("a", 100, 0), testState("b", 100, 0)}
-	if c := ChooseBatch(p, q, nil); c.Size != 1 {
+	if c := ChooseBatch(p, q, warmGap); c.Size != 1 {
 		t.Fatalf("UIDs must never form combined batch: %+v", c)
 	}
 	q = []RequestState{testState("a", 1, 100)}
-	if c := ChooseBatch(p, q, nil); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
+	if c := ChooseBatch(p, q, warmGap); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
 		t.Fatalf("late Reject request must not execute: %+v", c)
 	}
 	samples := p
 	samples.Batches = []BatchProfile{testBatch(1, 2, startupSample("trial-a", 1), startupSample("trial-b", 100)), testBatch(2, 1, startupSample("trial-a", 2), startupSample("trial-b", 101))}
 	q = []RequestState{testState("a", 50, 100)}
 	q[0].Context.SLO.Percentile = 50
-	if c := ChooseBatch(samples, q, nil); c.WaitMS == 0 {
+	if c := ChooseBatch(samples, q, warmGap); c.WaitMS == 0 {
 		t.Fatalf("empirical p50 should leave slack: %+v", c)
 	}
 	q[0].Context.SLO.Percentile = 100
-	if c := ChooseBatch(samples, q, nil); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
+	if c := ChooseBatch(samples, q, warmGap); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
 		t.Fatalf("empirical p100 must not borrow p50 slack: %+v", c)
 	}
 	q = []RequestState{testState("a", 50, 100)}
 	q[0].Context.SenderElapsedMS = 25
 	q[0].ElapsedMS = 10
 	q[0].Context.CompletionMarginMS = 6
-	if c := ChooseBatch(p, q, nil); c.WaitMS != 0 {
+	if c := ChooseBatch(p, q, warmGap); c.WaitMS != 0 {
 		t.Fatalf("sender, local and completion margin all consume original slack: %+v", c)
 	}
 }
@@ -127,7 +143,7 @@ func TestCompletionMarginIsReservedOnceRegardlessOfSenderElapsed(t *testing.T) {
 	if slack := requestSlack(q, p.Batches[0], nil, &costs); slack != 0 {
 		t.Fatalf("400ms sender + 100ms service + 7ms margin must fit 507ms exactly: %v", slack)
 	}
-	if c := ChooseBatch(p, []RequestState{q}, nil); c.Size != 1 || c.Reason == OutcomeDeadlineDrop {
+	if c := ChooseBatch(p, []RequestState{q}, warmGap); c.Size != 1 || c.Reason == OutcomeDeadlineDrop {
 		t.Fatalf("feasible deadline must execute: %+v", c)
 	}
 	for _, sender := range []float64{0, 400, 500} {
@@ -519,7 +535,7 @@ func TestLateQueueMaximumThroughput(t *testing.T) {
 				queue[i].ElapsedMS = 1100
 				queue[i].Phase = phaseDeferred
 			}
-			if c := ChooseBatch(p, queue, nil); c.Size != tc.want || c.WaitMS != 0 || c.Reason != ReasonMaximumThroughput {
+			if c := ChooseBatch(p, queue, warmGap); c.Size != tc.want || c.WaitMS != 0 || c.Reason != ReasonMaximumThroughput {
 				t.Fatalf("late queue must minimize service cost per item: want size %d, got %+v", tc.want, c)
 			}
 		})
@@ -540,7 +556,7 @@ func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 	for i := range late {
 		late[i].Phase = phaseDeferred
 	}
-	if c := ChooseBatch(p, late, nil); c.Size != 2 || c.WaitMS != 0 {
+	if c := ChooseBatch(p, late, warmGap); c.Size != 2 || c.WaitMS != 0 {
 		t.Fatalf("deferred work must run maximum throughput among fillable batches: %+v", c)
 	}
 	for _, policy := range []string{AdmissionReject, AdmissionDelay} {
@@ -548,7 +564,7 @@ func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 			late[i].Phase = phaseQueued
 			late[i].Context.AdmissionPolicy = policy
 		}
-		c := ChooseBatch(p, late, nil)
+		c := ChooseBatch(p, late, warmGap)
 		reason := OutcomeDeadlineDrop
 		if policy == AdmissionDelay {
 			reason = ReasonDeadlineDefer
@@ -562,35 +578,35 @@ func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 	}
 	running := testState("running", 1, 0)
 	running.Phase = phaseRunning
-	if c := ChooseBatch(p, append(late, running), nil); c.Size != 0 || c.RequestID != "" {
+	if c := ChooseBatch(p, append(late, running), warmGap); c.Size != 0 || c.RequestID != "" {
 		t.Fatalf("infeasible prediction is idle-only: %+v", c)
 	}
 	late[1].ElapsedMS = 1
-	if c := ChooseBatch(p, append(late, running), nil); c.RequestID != "b" || c.Reason != "deadline_drop" {
+	if c := ChooseBatch(p, append(late, running), warmGap); c.RequestID != "b" || c.Reason != "deadline_drop" {
 		t.Fatalf("expired queued work drops even during an active batch: %+v", c)
 	}
 	for i := range late {
 		late[i].Context.AdmissionPolicy = AdmissionDelay
 	}
-	if c := ChooseBatch(p, append(late, running), nil); c.RequestID != "" || c.Size != 0 {
+	if c := ChooseBatch(p, append(late, running), warmGap); c.RequestID != "" || c.Size != 0 {
 		t.Fatalf("defer does not demote while another batch is active: %+v", c)
 	}
 	for i := range late {
 		late[i].Phase = phaseDeferred
 	}
 	late[1].Context.WorkloadUID = "other"
-	if c := ChooseBatch(p, late, nil); c.Size != 1 || c.RequestID != "a" {
+	if c := ChooseBatch(p, late, warmGap); c.Size != 1 || c.RequestID != "a" {
 		t.Fatalf("deferred FIFO cannot skip an incompatible entry: %+v", c)
 	}
 	normal := testState("normal", 100, 0)
-	if c := ChooseBatch(p, append(late, normal), nil); c.WorkloadUID != "normal" {
+	if c := ChooseBatch(p, append(late, normal), warmGap); c.WorkloadUID != "normal" {
 		t.Fatalf("normal work precedes every deferred request: %+v", c)
 	}
 	normal.Context.RequestID = "first"
 	equal := normal
 	equal.Context.RequestID = "second"
 	equal.Context.Definition = "another-definition"
-	if c := ChooseBatch(p, []RequestState{normal, equal}, nil); c.RequestID != "first" || c.Size != 1 {
+	if c := ChooseBatch(p, []RequestState{normal, equal}, warmGap); c.RequestID != "first" || c.Size != 1 {
 		t.Fatalf("stable EDF keeps arrival ties and definitions separate: %+v", c)
 	}
 	p.DeadlinePolicy = DeadlineDrop
@@ -598,7 +614,7 @@ func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 	a, b := testState("a", 50, 0), testState("b", 60, 0)
 	a.Context.SLO.Percentile = 50
 	b.Context.SLO.Percentile = 100
-	if c := ChooseBatch(p, []RequestState{b, a}, nil); c.WorkloadUID != "a" || c.Size != 1 {
+	if c := ChooseBatch(p, []RequestState{b, a}, warmGap); c.WorkloadUID != "a" || c.Size != 1 {
 		t.Fatalf("unrelated infeasible workload cannot reject a feasible EDF head: %+v", c)
 	}
 	a.Context.SenderElapsedMS, a.ElapsedMS = 20, 30
@@ -889,7 +905,7 @@ func TestNativeBundleRejectsDurationOnlyProfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	queue := []RequestState{testState("w", 100, 0), testState("w", 100, 0)}
-	if choice := ChooseBatch(loaded.Policy, queue, nil); choice.Size != 2 || choice.Reason != ReasonAvailableEnergy {
+	if choice := ChooseBatch(loaded.Policy, queue, warmGap); choice.Size != 2 || choice.Reason != ReasonAvailableEnergy {
 		t.Fatalf("paired bundle must hydrate a usable conditional native policy: %+v", choice)
 	}
 }
@@ -1012,7 +1028,7 @@ func TestRequestAdmissionValidationAndMissingPolicyFailSafe(t *testing.T) {
 		}
 		state := testState("uid", 1000, 0)
 		state.Context.AdmissionPolicy = invalid
-		if choice := ChooseBatch(testPolicy(), []RequestState{state}, nil); choice.Size != 0 || choice.Reason != "admission_unknown" {
+		if choice := ChooseBatch(testPolicy(), []RequestState{state}, warmGap); choice.Size != 0 || choice.Reason != "admission_unknown" {
 			t.Fatalf("missing replay policy must fail closed: %+v", choice)
 		}
 	}

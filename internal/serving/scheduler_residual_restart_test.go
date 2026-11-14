@@ -17,10 +17,7 @@ func TestSchedulerRunningResidualBeyondSupportRestartsSameGap(t *testing.T) {
 	settings.DefaultDispatchOccupancyNanos = 0
 	gap, elapsed := int64(0), int64(50*time.Millisecond)
 	batch := &snapshot.Instances[0].Profile.Batches[0]
-	*batch = schedulerTestPairedBatch(*batch, []firstfloor.ServiceSample{
-		{TrialID: "physical", ServiceDurationNanos: int64(30 * time.Millisecond)},
-		{TrialID: "physical", PrecedingIdleNanos: &gap, ServiceDurationNanos: int64(10 * time.Millisecond)},
-	})
+	*batch = schedulerTestPairedBatch(*batch, schedulerTestGapLaws([2]int64{gap, int64(10 * time.Millisecond)}))
 	d := snapshot.Workloads[0]
 	snapshot.Outstanding = []SchedulerRequest{{
 		ID: "running", Definition: d, Instance: "i1", Phase: phaseRunning, BatchID: "batch-1",
@@ -43,7 +40,7 @@ func TestSchedulerRunningResidualBeyondSupportRestartsSameGap(t *testing.T) {
 	records := result.conditional.RunningResidualBeyondSupport
 	if len(records) != 1 || records[0] != (RunningResidualBeyondSupport{
 		InstanceID: "i1", BatchSize: 1, ElapsedNanos: elapsed,
-		ProfileMaxNanos: int64(30 * time.Millisecond), Model: "same-gap-service-restart",
+		ProfileMaxNanos: int64(10 * time.Millisecond), Model: "same-gap-service-restart",
 	}) {
 		t.Fatalf("restart evidence missing or wrong: %+v", records)
 	}

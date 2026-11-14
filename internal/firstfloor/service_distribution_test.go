@@ -211,7 +211,7 @@ func TestSampleDrawsUniformlyFromTheWindow(t *testing.T) {
 }
 
 func TestConditionalQueriesDoNotAllocate(t *testing.T) {
-	d := fastModelProfile(t, 3)
+	d := fastModelProfile(t)
 	rng := rand.New(rand.NewPCG(1, 2))
 	gap, elapsed := int64(5*time.Millisecond), int64(12*time.Millisecond)
 	for _, percentile := range []float64{95, 99} {
