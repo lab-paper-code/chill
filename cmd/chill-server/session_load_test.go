@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -311,14 +310,15 @@ func TestSessionLevelDeadlineRetainsCompletedCounts(t *testing.T) {
 	}, nil)
 	config := sessionTestConfig(t, fake.server.URL, 2)
 	config.minSamples, config.levelLimit = 1000, 150*time.Millisecond
-	levels, err := runSessionLoad(context.Background(), config)
-	if !errors.Is(err, context.DeadlineExceeded) || len(levels) != 1 {
-		t.Fatalf("level deadline lost its actual outcome: %+v, %v", levels, err)
+	levels, _ := runSessionLoad(context.Background(), config)
+	if len(levels) != 1 {
+		t.Fatalf("level limit lost its actual outcome: %+v", levels)
 	}
 	row := levels[0]
 	if row.CompletedBatches < 2 || row.CompletedInputs < 2*row.CompletedBatches ||
-		row.PredictedSeconds <= row.LimitSeconds || row.EndReason != sessionFailed {
-		t.Fatalf("level deadline lost completed measurements: %+v", row)
+		row.PredictedSeconds <= row.LimitSeconds || row.EndReason != sessionLevelLimitReached ||
+		!strings.Contains(row.Detail, "reached the 150ms level limit") {
+		t.Fatalf("level limit lost completed measurements: %+v", row)
 	}
 }
 

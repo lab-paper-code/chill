@@ -45,6 +45,7 @@ const (
 	sessionAllocationAfterBatch   = "AllocationFailedAfterCompletedBatch"
 	sessionFailed                 = "Failed"
 	sessionRequestLifetimeExpired = "RequestLifetimeExpired"
+	sessionLevelLimitReached      = "LevelLimitReached"
 )
 
 type sessionLoadConfig struct {
@@ -183,12 +184,13 @@ func runSessionLoad(ctx context.Context, c sessionLoadConfig) ([]sessionLevel, e
 			}
 		}
 		level, err := s.level(ctx, kind, rate)
-		if err == nil && level.EndReason == sessionRequestLifetimeExpired {
+		// Cancelled or expired requests may still execute natively.
+		endedEarly := level.EndReason == sessionRequestLifetimeExpired || level.EndReason == sessionLevelLimitReached
+		if err == nil && endedEarly {
 			err = s.waitIdle(ctx, level.Detail)
 			level.EndedAt = time.Now().UTC()
 		}
 		levels = append(levels, level)
-		endedEarly := level.EndReason == sessionRequestLifetimeExpired
 		if err != nil || level.EndReason != sessionSamplesReached && (kind == sessionSaturation || !endedEarly) {
 			return levels, err
 		}
@@ -284,7 +286,12 @@ func (s *sessionLoad) level(parent context.Context, kind string, rate float64) (
 		select {
 		case <-fire:
 		case <-done:
-			l.end(sessionFailed, "", ctx.Err())
+			if parent.Err() != nil {
+				l.end(sessionFailed, "", ctx.Err())
+				break
+			}
+			l.end(sessionLevelLimitReached, fmt.Sprintf("%s level of batch %d reached the %s level limit with %d of %d samples",
+				kind, c.batch, c.levelLimit, l.counter.samples, c.minSamples), nil)
 		case result := <-l.results:
 			l.receive(result)
 		}

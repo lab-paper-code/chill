@@ -50,6 +50,7 @@ const (
 	sessionServiceOverLifetime    = "BatchServiceExceedsLifetime"
 	sessionAllocationBeforeBatch  = "AllocationFailedBeforeAnyBatch"
 	sessionRequestLifetimeExpired = "RequestLifetimeExpired"
+	sessionLevelLimitReached      = "LevelLimitReached"
 )
 
 // SessionOperationCostPrefix holds a session's operation-cost records, whose
@@ -506,13 +507,6 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (outcome s
 	if loadErr == nil && len(levels) > 0 && (last || outcome.stop != nil && outcome.stop.Class != profilederivation.StopCapacityLimit) {
 		outcome.postLoad, loadErr = r.observePostLoad(ctx, levels[len(levels)-1].End)
 	}
-	removeKey, removeErr := r.removePrepared(ctx, "remove-b"+strconv.Itoa(batch), spec, prepared)
-	removeOnReturn = false
-	removeEnd := time.Now()
-	if err := errors.Join(removeErr, loadErr); err != nil || outcome.stop != nil {
-		return outcome, err
-	}
-	outcome.input = profilederivation.SessionBatchInput{Batch: batch, PrepareCostKey: prepareKey, RemoveCostKey: removeKey}
 	var excluded map[string]bool
 	for _, level := range levels {
 		if level.Excluded {
@@ -522,10 +516,18 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (outcome s
 			excluded[level.ID] = true
 		}
 	}
-	rows, err := r.c.sessionReads.native(ctx, string(r.beo.UID)+"/"+strconv.Itoa(batch)+"/", r.started, excluded)
-	if err != nil {
+	prefix := string(r.beo.UID) + "/" + strconv.Itoa(batch) + "/"
+	rows, readErr := r.awaitNativeRows(ctx, prefix, levels, excluded)
+	removeKey, removeErr := r.removePrepared(ctx, "remove-b"+strconv.Itoa(batch), spec, prepared)
+	removeOnReturn = false
+	removeEnd := time.Now()
+	if err := errors.Join(removeErr, loadErr); err != nil || outcome.stop != nil {
 		return outcome, err
 	}
+	if readErr != nil {
+		return outcome, readErr
+	}
+	outcome.input = profilederivation.SessionBatchInput{Batch: batch, PrepareCostKey: prepareKey, RemoveCostKey: removeKey}
 	// Derivation compares each level's native rows with the driver's count.
 	for _, level := range levels {
 		outcome.input.Levels = append(outcome.input.Levels, profilederivation.SessionLevelInput{Row: level, Native: rows[level.ID].rows})
@@ -541,6 +543,31 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (outcome s
 		outcome.input.MemoryKind = "peak"
 	}
 	return outcome, nil
+}
+
+// awaitNativeRows reads the levels' native rows once the instance's Pod log
+// stream has delivered the driver's counts. Removing the Pod ends that stream,
+// so rows still in transit would be lost. The wait is bounded by the level
+// time limit; derivation excludes a level that is still short.
+func (r *sessionRun) awaitNativeRows(ctx context.Context, prefix string, levels []profilederivation.DriverLevelRow, excluded map[string]bool) (map[string]sessionNativeLevel, error) {
+	deadline := time.Now().Add(time.Duration(r.beo.Spec.Session.LevelDurationLimitSeconds * float64(time.Second)))
+	for {
+		rows, err := r.c.sessionReads.native(ctx, prefix, r.started, excluded)
+		if err != nil {
+			return nil, err
+		}
+		short := slices.ContainsFunc(levels, func(level profilederivation.DriverLevelRow) bool {
+			return !level.Excluded && rows[level.ID].inputs < level.CompletedInputs
+		})
+		if !short || !time.Now().Before(deadline) {
+			return rows, nil
+		}
+		select {
+		case <-ctx.Done():
+			return rows, nil
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 // observePostLoad keeps the loaded instance without requests for the
@@ -598,7 +625,7 @@ func sessionLevels(table sessionLevelTable, batch int) ([]profilederivation.Driv
 	for _, level := range table.Levels {
 		switch level.EndReason {
 		case sessionSamplesReached:
-		case sessionRequestLifetimeExpired:
+		case sessionRequestLifetimeExpired, sessionLevelLimitReached:
 			if level.Kind == profilederivation.LevelSaturation {
 				return rows, stop(profilederivation.StopNotMeasured, level), nil
 			}

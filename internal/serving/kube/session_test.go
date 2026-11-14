@@ -55,9 +55,12 @@ type sessionHarness struct {
 	spans    [][2]time.Time
 	// prepareErr fails a batch size's prepare with the given failure.
 	prepareErr map[int]*serving.PreparationFailureObservation
-	// dropRow removes one native row of this workload identifier.
-	dropRow string
-	nextID  uint64
+	// dropRow removes one native row of this workload identifier; with
+	// lateReads set, only for that many reads.
+	dropRow   string
+	lateReads int
+	reads     int
+	nextID    uint64
 	// runtime replaces a batch size's captured native runtime metadata; a
 	// nil entry captures no native state.
 	runtime map[int]*native.RuntimeMetadata
@@ -150,7 +153,7 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 			for uid, nativeRows := range s.native {
 				if strings.HasPrefix(uid, prefix) && !excluded[uid] {
 					kept := slices.Clone(nativeRows)
-					if uid == s.dropRow {
+					if uid == s.dropRow && (s.lateReads == 0 || s.reads < s.lateReads) {
 						kept = kept[1:]
 					}
 					inputs := 0
@@ -159,6 +162,9 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 					}
 					rows[uid] = sessionNativeLevel{rows: kept, inputs: inputs}
 				}
+			}
+			if strings.HasPrefix(s.dropRow, prefix) {
+				s.reads++
 			}
 			if len(rows) == 0 {
 				return nil, fmt.Errorf("fixture has no native rows for prefix %q", prefix)
@@ -434,10 +440,31 @@ func TestSessionRuntimeFactDifferingAcrossInstancesFails(t *testing.T) {
 	}
 }
 
+func TestSessionWaitsForRowsStillInTransitBeforeRemoving(t *testing.T) {
+	s := newSessionHarness(t)
+	s.dropRow, s.lateReads = "session-uid/2/mid", 2
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	s.admit()
+	result, stored := s.result(beo)
+	if !stored {
+		t.Fatalf("status %+v", s.status(beo))
+	}
+	for _, batch := range result.Batches {
+		for _, level := range batch.Levels {
+			if level.Excluded {
+				t.Fatalf("late rows excluded level %+v", level.DriverLevelRow)
+			}
+		}
+	}
+}
+
 func TestSessionNativeRowCountMismatchExcludesOnlyThatLevel(t *testing.T) {
 	s := newSessionHarness(t)
 	s.dropRow = "session-uid/2/mid"
-	beo := sessionRoot(sessionSettingsFixture())
+	settings := sessionSettingsFixture()
+	settings.LevelDurationLimitSeconds = 0.01
+	beo := sessionRoot(settings)
 	s.create(beo)
 	s.admit()
 	result, stored := s.result(beo)
@@ -837,7 +864,9 @@ func TestSessionLostFinishedMemberFailsWithInputCount(t *testing.T) {
 		prepared.BatchSizes = []int{2}
 		return prepared, nil
 	}
-	beo := sessionRoot(sessionSettingsFixture())
+	settings := sessionSettingsFixture()
+	settings.LevelDurationLimitSeconds = 0.01
+	beo := sessionRoot(settings)
 	s.create(beo)
 	uid := string(beo.UID) + "/2/saturation"
 	table := s.tables[2]

@@ -142,7 +142,8 @@ func (l sessionLevelWire) row() profilederivation.DriverLevelRow {
 	if l.EndReason != sessionSamplesReached {
 		row.Detail = l.Detail
 	}
-	row.Excluded = l.EndReason == sessionRequestLifetimeExpired
+	// Requests cut at expiry or at the level limit leave unverifiable counts.
+	row.Excluded = l.EndReason == sessionRequestLifetimeExpired || l.EndReason == sessionLevelLimitReached
 	return row
 }
 
