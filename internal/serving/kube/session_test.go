@@ -140,7 +140,7 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 	}
 	h.controller.measureStep = s.measure
 	h.controller.sessionReads = sessionReads{
-		native: func(_ context.Context, workloadUID string, _, _ time.Time) ([]profilederivation.NativeBatchRow, error) {
+		native: func(_ context.Context, workloadUID string, _ time.Time) ([]profilederivation.NativeBatchRow, error) {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			rows := slices.Clone(s.native[workloadUID])
@@ -597,21 +597,27 @@ func emitSessionBatches(t *testing.T, rt *serving.Runtime, uid string, start tim
 
 // The session's reads join a request's per-phase supplement rows before
 // folding per batch: no single stored row has running, finished and service.
+// Rows are selected by the level identifier, whatever the executor clock
+// reads against ChillServer's.
 func TestSessionReadsJoinNativeProgressLines(t *testing.T) {
-	rt, log := sessionObservedRuntime(t)
-	uid := "session-uid/2/saturation"
-	start := time.Now().UTC()
-	emitSessionBatches(t, rt, uid, start, 3, 0)
-	rows, err := observedSessionReads(log).native(context.Background(), uid, start, time.Now().Add(time.Second))
-	if err != nil || len(rows) != 3 {
-		t.Fatalf("native batch rows %d err %v", len(rows), err)
-	}
-	for i, row := range rows {
-		running := start.Add(time.Duration(i)*50*time.Millisecond + 5*time.Millisecond)
-		if row.BatchID != uint64(i+1) || row.BatchSize != 2 || !row.StartedAt.Equal(running) || !row.FinishedAt.Equal(running.Add(20*time.Millisecond)) ||
-			row.ServiceDurationNanos != (20*time.Millisecond).Nanoseconds() || !row.LatestEnqueuedAt.Equal(running.Add(-4*time.Millisecond)) ||
-			(row.PrecedingIdleNanos == nil) != (i == 0) || i > 0 && *row.PrecedingIdleNanos != (30*time.Millisecond).Nanoseconds() {
-			t.Fatalf("batch %d row %+v", i, row)
-		}
+	for _, skew := range []time.Duration{0, 30 * time.Second, -30 * time.Second} {
+		t.Run(skew.String(), func(t *testing.T) {
+			rt, log := sessionObservedRuntime(t)
+			uid := "session-uid/2/saturation"
+			start := time.Now().UTC()
+			emitSessionBatches(t, rt, uid, start, 3, skew)
+			rows, err := observedSessionReads(log).native(context.Background(), uid, start)
+			if err != nil || len(rows) != 3 {
+				t.Fatalf("native batch rows %d err %v", len(rows), err)
+			}
+			for i, row := range rows {
+				running := start.Add(skew + time.Duration(i)*50*time.Millisecond + 5*time.Millisecond)
+				if row.BatchID != uint64(i+1) || row.BatchSize != 2 || !row.StartedAt.Equal(running) || !row.FinishedAt.Equal(running.Add(20*time.Millisecond)) ||
+					row.ServiceDurationNanos != (20*time.Millisecond).Nanoseconds() || !row.LatestEnqueuedAt.Equal(running.Add(-4*time.Millisecond)) ||
+					(row.PrecedingIdleNanos == nil) != (i == 0) || i > 0 && *row.PrecedingIdleNanos != (30*time.Millisecond).Nanoseconds() {
+					t.Fatalf("batch %d row %+v", i, row)
+				}
+			}
+		})
 	}
 }

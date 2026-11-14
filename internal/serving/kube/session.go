@@ -71,8 +71,10 @@ type sessionPlan struct {
 
 // sessionReads are the observation records a session derives its result from.
 type sessionReads struct {
-	// native returns the executor's batch rows of one level's workload identifier.
-	native func(ctx context.Context, workloadUID string, from, to time.Time) ([]profilederivation.NativeBatchRow, error)
+	// native returns the executor's batch rows of one level's workload
+	// identifier, which is unique to the session; since is the session start
+	// on ChillServer's clock.
+	native func(ctx context.Context, workloadUID string, since time.Time) ([]profilederivation.NativeBatchRow, error)
 	power  func(ctx context.Context, meter servingops.MeterDeclaration, from, to time.Time) ([]profilederivation.Sample, error)
 	memory func(ctx context.Context, podUID string, from, to time.Time) (observation.PodMemoryPeak, error)
 }
@@ -80,10 +82,17 @@ type sessionReads struct {
 // observedSessionReads reads the serving observation log.
 func observedSessionReads(log *observation.ObservationLog) sessionReads {
 	return sessionReads{
-		native: func(ctx context.Context, workloadUID string, from, to time.Time) ([]profilederivation.NativeBatchRow, error) {
+		native: func(ctx context.Context, workloadUID string, since time.Time) ([]profilederivation.NativeBatchRow, error) {
+			// The scan selects rows by their executor-clock running time; the
+			// identifier is the selection. The window spans the session with
+			// the reader's own tail on both sides, so an executor clock off
+			// ChillServer's by less than the tail selects the same rows.
+			tail := log.OccupancyTail()
 			batches := serving.NewNativeBatchJoin()
-			gap, err := log.ScanOccupancyRows(ctx, workloadUID, "", from, to, batches.Add)
-			if err == nil && gap != nil {
+			gap, err := log.ScanOccupancyRows(ctx, workloadUID, "", since.Add(-tail), time.Now().Add(tail), batches.Add)
+			// The margin may reach back before the log; only a gap the
+			// session's own rows could fall in loses them.
+			if err == nil && gap != nil && gap.After(since) {
 				err = fmt.Errorf("request observations of %s have a gap until %s", workloadUID, gap.Format(time.RFC3339Nano))
 			}
 			if err != nil {
@@ -179,6 +188,8 @@ type sessionRun struct {
 	config SchedulerControllerConfig
 	base   servingops.MeasurementRequest
 	steps  int
+	// started precedes the session's first operation.
+	started time.Time
 }
 
 // measure runs one operation through the measurement operations, which write
@@ -214,7 +225,7 @@ func (c *SchedulerController) runSession(ctx context.Context, beo *edge.BatchEne
 	if err != nil {
 		return fail(err)
 	}
-	run := &sessionRun{c: c, beo: beo, ref: ref, plan: plan, config: config, base: base}
+	run := &sessionRun{c: c, beo: beo, ref: ref, plan: plan, config: config, base: base, started: started}
 	if !plan.powered {
 		mode := plan.preparation.RunConfig.State.PowerMode
 		if _, _, err := run.measure(ctx, "power", servingstate.Operation{Kind: servingstate.OperationPower, PowerMode: mode,
@@ -340,7 +351,7 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (sessionBa
 	}
 	outcome.input = profilederivation.SessionBatchInput{Batch: batch, PrepareCostKey: prepareKey, RemoveCostKey: removeKey}
 	for _, level := range levels {
-		rows, err := r.c.sessionReads.native(ctx, level.ID, prepareStart, removeEnd)
+		rows, err := r.c.sessionReads.native(ctx, level.ID, r.started)
 		if err != nil {
 			return outcome, err
 		}
