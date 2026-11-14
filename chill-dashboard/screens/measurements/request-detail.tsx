@@ -140,8 +140,6 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
         ? <SessionResultSection session={data.session} phase={campaign.phase} outcome={campaign.outcome} reason={reason} />
         : <SessionStatusSection phase={campaign.phase} outcome={campaign.outcome} reason={reason} />)}
 
-      {tab === "results" && !sessionRun && data?.resultFormat === "PreviousFormat" && <SessionStatusSection previousFormat />}
-
       {tab === "results" && !sessionRun && (
         <Section title="배치별 결과" actions={<Link href={sameTarget} className={buttonClassName({ variant: "outline", size: "sm" })}>같은 대상 결과</Link>}>
           {rows.length === 0 ? (

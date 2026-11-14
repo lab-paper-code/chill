@@ -13,9 +13,9 @@ export function failure(error: ApiError) {
   return { code:data.code, message:data.code==="DashboardOriginDenied"?"허용되지 않은 접속 주소":error.status===403?"측정 요청 권한 없음":error.status===401?"로그인 만료":error.status===409?"같은 이름 또는 조건 변경됨":error.status===400||error.status===422?"측정 조건 거부":"서버 응답 확인 불가" }
 }
 
-export function useMeasurementDocumentSubmission({body,namespace,plans,refetchPlans,variantId="",verdict,validate,onInvalid,onSubmit}:{
+export function useMeasurementDocumentSubmission({body,namespace,plans,refetchPlans,verdict,validate,onInvalid,onSubmit}:{
   body:MeasurementRequestDocument|null;namespace:string;plans:Context["plans"];
-  refetchPlans:()=>Promise<{error:ApiError|null}>;variantId?:string;
+  refetchPlans:()=>Promise<{error:ApiError|null}>;
   verdict?:Compatibility;validate?:()=>string;onInvalid?:()=>void;onSubmit?:()=>void;
 }) {
   const router=useRouter()
@@ -47,7 +47,7 @@ export function useMeasurementDocumentSubmission({body,namespace,plans,refetchPl
     if(verdict?.state==="unknown"&&!showUnknown){setError("미확인 조합 검사 선택 필요");return}
     setError("")
     dry.mutate({path:`${listPath}?dryRun=All`,method:"POST",body})
-    pre.mutate({path:`${listPath}/preflight${variantId?`?${new URLSearchParams({variantId})}`:""}`,method:"POST",body})
+    pre.mutate({path:`${listPath}/preflight`,method:"POST",body})
   }
   function submit() {
     if(sending.current||unknown||send.isPending||!checkInput())return

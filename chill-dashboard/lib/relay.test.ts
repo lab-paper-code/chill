@@ -58,7 +58,7 @@ test("fixed-chill-server relay enforces path, origin, body and credential bounda
     for(const query of ["?view=","?view=compact","?view=full","?view=summary&view=summary"])assert.throws(()=>relayPlan("GET",route,query,config),/DashboardQueryInvalid/)
   }
   for(const [method,route] of [["POST",["v1","workloads"]],["GET",["v1","workloads","one"]],["POST",["v1","namespaces","research","batch-energy-optimizations"]]] as const)assert.throws(()=>relayPlan(method,[...route],"?view=summary",config),/DashboardQueryInvalid/)
-  assert.equal(relayPlan("POST","v1/namespaces/research/batch-energy-optimizations/preflight".split("/"),"?variantId=exact-condition",config).kind,"query")
+  assert.throws(()=>relayPlan("POST","v1/namespaces/research/batch-energy-optimizations/preflight".split("/"),"?variantId=exact-condition",config),/DashboardQueryInvalid/)
   const runs="v1/namespaces/research/profiling-runs".split("/")
   const runFilters=new URLSearchParams({model:"m",deviceClass:"d",node:"n",path:"cpu",powerMode:"fixed",status:"problem",group:JSON.stringify({namespace:"research",measurement:{dataset:"images"}}),parentUID:"parent"})
   assert.equal(new URL(`https://local${relayPlan("GET",runs,`?${runFilters}`,config).path}`).searchParams.get("status"),"problem")

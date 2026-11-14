@@ -119,15 +119,7 @@ function SessionConclusion({ batches, stop, phase, outcome, reason }: { batches:
 }
 
 /** A session request that has no readable result: its status and the reason sentence. */
-export function SessionStatusSection({ phase, outcome, reason, previousFormat }: { phase?: string; outcome?: string; reason?: string; previousFormat?: boolean }) {
-  if (previousFormat) return (
-    <Section title="결론" card>
-      <Fields columns={2} items={[
-        { label: "결과", value: <StatusBadge tone="warn" label="이전 형식의 측정 결과" /> },
-        { label: "조치", value: "삭제 후 다시 측정 필요", info: "이전 측정 방식이 저장한 결과는 읽지 않습니다" },
-      ]} />
-    </Section>
-  )
+export function SessionStatusSection({ phase, outcome, reason }: { phase?: string; outcome?: string; reason?: string }) {
   return <SessionConclusion batches={[]} phase={phase} outcome={outcome} reason={reason} />
 }
 

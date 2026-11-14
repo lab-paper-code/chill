@@ -244,14 +244,7 @@ export function measurementRequests({ capture, startedAt, ns, nodeUID, measure }
     run: runNamed,
 
     // GET batch-energy-optimizations/{name}/result: BuildBatchEnergyOptimizationResult or its error projection.
-    // A request without session settings whose result is published answers PreviousFormat (BuildBatchEnergyOptimizationResult).
     result(scene, own, name, t) {
-      const [code, body] = this.storedResult(scene, own, name, t)
-      const request = item(scene, own, name, t)
-      return [code, request?.status?.result && !request.spec.session && body.campaign
-        ? { ...body, resultFormat: 'PreviousFormat', resultFormatMessage: 'This result was stored by the previous measurement method and cannot be read; delete the request and measure again.' } : body]
-    },
-    storedResult(scene, own, name, t) {
       const request = item(scene, own, name, t)
       if (!request) return [404, { code: 'BatchEnergyOptimizationResultUnavailable' }]
       if (scene === 'active' && request.spec.session) return [200, measure.sessionResult(name, t)]

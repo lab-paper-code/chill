@@ -107,7 +107,7 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
 
   const issueOf = (list: Step[]) => list.find(item => v.problem(item))
   const submission = useMeasurementDocumentSubmission({
-    body: manifest(d, context, namespace), namespace, plans: context.plans, refetchPlans, variantId,
+    body: manifest(d, context, namespace), namespace, plans: context.plans, refetchPlans,
     verdict: selectedSupport ? { state: selectedSupport.state, reason: selectedSupport.reason } : undefined,
     validate: () => steps.filter(item => item !== "review").map(item => v.problem(item)).find(Boolean) || "",
     onInvalid: () => {

@@ -417,7 +417,7 @@ async function mutate(scene, req, path, url) {
   // Batch energy optimizations.
   if (path === `${NS}batch-energy-optimizations/preflight` && req.method === 'POST') {
     if (body?.kind && body.kind !== 'BatchEnergyOptimization') return error(400, 'BatchEnergyOptimizationPreflightRequestInvalid', 'BatchEnergyOptimizationPreflightRequestInvalid')
-    return [200, measure.preflight(body, q.get('variantId'), now)]
+    return [200, measure.preflight(body, now)]
   }
   if (path === `${NS}batch-energy-optimizations` && req.method === 'POST') {
     if (q.has('dryRun') && q.get('dryRun') !== 'All') return error(400, 'InvalidQuery', 'dryRun must be All when supplied')

@@ -356,7 +356,7 @@ export function activeMeasurements(capture, epoch) {
     },
 
     // BatchEnergyOptimizationPreflight for a campaign body (internal/queryapi/batch_energy_optimization_preflight_view.go).
-    preflight(campaign, variantId, t) {
+    preflight(campaign, t) {
       const c = campaign?.spec?.state?.candidate ?? {}, node = campaign?.spec?.state?.targetNode ?? ''
       const id = cellID(c.modelSpec, c.deviceClass, c.executionPath, c.powerMode), cell = cells[id]
       const head = { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationPreflight', readAt: iso(t), campaign: { namespace: ns, name: campaign?.metadata?.name ?? '', spec: campaign?.spec ?? {} } }
@@ -367,15 +367,7 @@ export function activeMeasurements(capture, epoch) {
       // buildSessionPreflight: PrepareSession's planned batch sizes and the Workload's minimum sample count.
       if (campaign.spec.session) return { ...head, resolves: true, batchPlan: { variantId: null, conditionMatch: 'planned-only', plannedBatches: BATCHES, measuredBatches: [], inProgressBatches: [], missingBatches: BATCHES, searchMayStopEarly: true, reasons: [] },
         session: { plannedBatchSizes: BATCHES, minimumSamples: 59, sloPercentile: 95 } }
-      const plan = curvePlan(cell, node), planned = [...BATCHES, 16], p = profileByCell[id]
-      const inProgress = runningIDs.includes(id) ? (id === measuringCell ? BATCHES.slice(measuringBatches(t).length, measuringBatches(t).length + 1) : [4]) : []
-      const measured = p ? p.measured : runningIDs.includes(id) ? (id === measuringCell ? measuringBatches(t) : [1, 2]) : []
-      const exact = measured.length > 0 || inProgress.length > 0, variant = hash(JSON.stringify({ ...plan, name: undefined, plannedBatchSizes: undefined }))
-      return { ...head, resolves: true, plan: { schemaVersion: 'chill.dacs.io/curve-plan.v1alpha14', shared: { ...plan, plannedBatchSizes: planned } },
-        batchPlan: { variantId: exact && !variantId ? variant : null, conditionMatch: exact ? 'exact' : 'planned-only', plannedBatches: planned, measuredBatches: measured, inProgressBatches: inProgress,
-          missingBatches: planned.filter(b => !measured.includes(b) && !inProgress.includes(b)), searchMayStopEarly: true,
-          reasons: [{ code: 'AutomaticBatchDiscovery', message: 'The plan bounds automatic batch discovery; completed measurements may cover only a prefix.' },
-            ...(exact ? [{ code: 'DeclarationUIDsNotRetained', message: 'Measured evidence retains declaration names and generations, not their UIDs.' }] : [])] } }
+      return unresolved('the measurement has no session settings')
     },
 
     // Accepted profile of a BEO by name (profile ID ns/name/uid), with its node and measured batches.

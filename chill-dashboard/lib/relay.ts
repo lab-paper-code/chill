@@ -89,7 +89,6 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (query === "coverage") allowed.push("batches","node")
   if (query === "inputs") allowed.push("kind","set","offset","limit")
   if (query === "experimentPage") allowed.push("offset","limit")
-  if (query === "preflight") allowed.push("variantId")
   if (query === "event") allowed.push("at","from","to","limit","cursor")
   if (query === "power") allowed.push("from","to","bucket","format")
   if (query === "profiles") allowed.push("limit","offset","model","deviceClass","profile","q","node","powerMode","path","status","sort","order")
