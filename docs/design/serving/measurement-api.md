@@ -1,6 +1,6 @@
 # 측정 API와 근거 소비
 
-이 문서는 동작 비용, 디스패치 점유, 프로파일 재사용과 공개 측정 조회를 정한다. 노드별 승인과 실제 반환은 [측정 승인](measurement-admission.md), 실행 조건은 [실행기와 측정](scheduler-runtime-measurement.md), 판단은 [계획기](analytic-planner.md)를 따른다.
+이 문서는 동작 비용, 디스패치 점유와 공개 측정 조회를 정한다. 노드별 승인과 실제 반환은 [측정 승인](measurement-admission.md), 실행 조건은 [실행기와 측정](scheduler-runtime-measurement.md), 판단은 [계획기](analytic-planner.md), 프로파일 측정은 [프로파일 측정 세션](profile-session.md)을 따른다.
 
 ## 소유권과 근거 경계
 
@@ -67,17 +67,16 @@ DELETE는 항목 URL의 `?uid=<UID>`와 `If-Match` RV가 필요하다. Measuring
 
 Bearer TokenReview와 정확한 URL SAR, namespace allowlist와 native resource SAR를 모두 적용한다. POST create는 collection scope, DELETE는 URL 이름의 delete다. 삭제 lookup과 evidence 정리는 owner SA가 수행하며 caller get을 추가 권한으로 요구하지 않는다.
 
-BEO 생성과 삭제도 같은 두 권한 층을 사용한다. BEO 삭제는 소유와 위치로만 결정하며 저장된 payload를 읽거나 decode하지 않는다. 따라서 이전 schema로 쓴 객체도 삭제할 수 있다. 거절(409 MeasurementInUse)은 다섯 가지다.
+BEO 생성과 삭제도 같은 두 권한 층을 사용한다. BEO 삭제는 소유와 위치로만 결정하며 저장된 payload를 읽거나 decode하지 않는다. 따라서 이전 schema로 쓴 객체도 삭제할 수 있다. 거절(409 MeasurementInUse)은 네 가지다.
 
-- 현재 generation을 관측한 terminal 상태가 아니다. campaign reconciler가 그때까지 curve plan, result와 Run을 쓸 수 있다. 판정은 reconciler와 같은 `TerminalStatusCurrent`를 쓴다.
-- BEO가 controller인 Run이 결과를 기록하지 않았다. 결과는 `status.evidence`, 현재 generation의 `ExecutionComplete=False`, 또는 `EvidenceVerified=False/EvidenceInvalid`다. profiler controller는 Job이 끝난 뒤에도 그때까지 execution evidence를 쓸 수 있다. 사유는 나열하지 않으므로 이전 Run도 삭제할 수 있다.
-- 그 Run이 controller인 Job이 active이거나, 그 Job 또는 Run이 기록한 Pod가 종료되지 않았다. worker가 cleanup 뒤에 raw를 다시 쓸 수 있다.
+- 현재 generation을 관측한 terminal 상태(Complete 또는 Failed)가 아니다. ChillServer가 세션의 마지막 기록으로 terminal 상태를 쓰므로 그 전에는 지울 수 없다. 실행 중 세션의 취소는 지원하지 않는다.
+- BEO가 controller인 Run이 결과를 기록하지 않았거나, 그 Run의 Job 또는 Run이 기록한 Pod가 종료되지 않았다. worker가 cleanup 뒤에 raw를 다시 쓸 수 있다. 결과는 `status.evidence`, 현재 generation의 `ExecutionComplete=False`, 또는 `EvidenceVerified=False/EvidenceInvalid`다. 사유는 나열하지 않으므로 이전 Run도 삭제할 수 있다.
 - `edge.dacs.io/serving-profile`이 이 BEO profile을 가리키는 살아 있는 serving Pod가 있다. observer가 그 annotation으로 instance를 귀속한다.
-- scheduler가 이 BEO에서 나온 profile을 준비 대상으로 싣고 있다. 이 BEO의 profile, 이 BEO가 확인한 reuse profile, 이 BEO를 source로 쓰는 reuse profile이 해당한다. 준비 대상은 init container가 지울 bundle을 내려받는 instance를 시작할 수 있다. 오류 메시지는 profile ID와 아래 두 단계를 담는다.
+- scheduler가 이 BEO에서 나온 profile을 준비 대상으로 싣고 있다. 준비 대상은 init container가 지울 bundle을 내려받는 instance를 시작할 수 있다. 오류 메시지는 profile ID와 아래 두 단계를 담는다.
 
-준비 대상인 profile의 측정은 두 단계로 지운다. 먼저 BEO에 `chill.dacs.io/measurement-invalid` annotation을 붙인다. catalog는 이 annotation이 있는 측정을 `MeasurementInvalid` issue로 돌리고 profile을 만들지 않으므로, 다음 profile refresh부터 이 BEO의 profile과 이 BEO를 source나 confirmation으로 쓰는 reuse profile은 준비 대상에서 빠진다. 그 뒤 새 resourceVersion으로 DELETE한다. 새 측정이나 replacement로 현재 지위를 넘긴 BEO는 준비 대상이 아니므로 바로 지울 수 있다.
+준비 대상인 profile의 측정은 두 단계로 지운다. 먼저 BEO에 `chill.dacs.io/measurement-invalid` annotation을 붙인다. catalog는 이 annotation이 있는 측정을 `MeasurementInvalid` issue로 돌리고 profile을 만들지 않으므로, 다음 profile refresh부터 이 BEO의 profile은 준비 대상에서 빠진다. 그 뒤 새 resourceVersion으로 DELETE한다. 새 측정이나 replacement로 현재 지위를 넘긴 BEO는 준비 대상이 아니므로 바로 지울 수 있다.
 
-삭제 대상은 `batch-energy-optimizations/<BEO UID>/`, `serving/profiles/<namespace>/<name>/<BEO UID>/`, `serving/profile-reuse/<namespace>/<name>/<BEO UID>/`, 그리고 BEO가 controller인 각 Run의 `profiling-runs/<Run UID>/` 아래 모든 객체다. 모든 writer는 자기 owner ID 아래에만 쓰고, 끝의 `/`가 다른 UID와의 접두 일치를 막는다. 거절 판정은 scheduler mutation lock 안에서 하고, store 삭제와 native 삭제는 그 lock을 놓은 뒤 scheduler refresh lock만 잡고 한다. refresh는 profile bundle과 reuse 기록을 쓰므로, 다음 refresh는 native 삭제 뒤에 시작해 이 BEO를 보지 않는다. 주기 refresh는 삭제가 refresh lock을 잡고 있으면 그 tick을 건너뛰어 main loop를 막지 않는다. 실패 뒤 같은 UID/RV 재시도는 남은 객체만 다시 나열해 끝낸다. native 객체가 이미 사라진 측정의 객체는 이 API로 지정할 수 없어 운영자가 지운다.
+삭제 대상은 `batch-energy-optimizations/<BEO UID>/`, `serving/profiles/<namespace>/<name>/<BEO UID>/`, 이전 형식이 쓴 `serving/profile-reuse/<namespace>/<name>/<BEO UID>/`, 세션의 동작 비용 기록(`serving/operation-measurements/<Node UID>/<BEO UID>.` 접두), 그리고 BEO가 controller인 각 Run의 `profiling-runs/<Run UID>/` 아래 모든 객체다. 모든 writer는 자기 owner ID 아래에만 쓰고, 끝의 구분자가 다른 UID와의 접두 일치를 막는다. 거절 판정은 scheduler mutation lock 안에서 하고, store 삭제와 native 삭제는 그 lock을 놓은 뒤 scheduler refresh lock만 잡고 한다. refresh는 profile bundle을 쓰므로, 다음 refresh는 native 삭제 뒤에 시작해 이 BEO를 보지 않는다. 주기 refresh는 삭제가 refresh lock을 잡고 있으면 그 tick을 건너뛰어 main loop를 막지 않는다. 실패 뒤 같은 UID/RV 재시도는 남은 객체만 다시 나열해 끝낸다. native 객체가 이미 사라진 측정의 객체는 이 API로 지정할 수 없어 운영자가 지운다.
 
 ### 동결 protocol과 실행
 
@@ -116,7 +115,7 @@ burst는 minimumPairs 미만이면 Insufficient/TooFewPairs로 통계를 보존�
 
 ## Scheduler의 d 선택
 
-정확한 Node UID, 모델, mode, path, batch와 profile ID별 선택 순서는 qualified rolling median, legacy Accepted DOM, configured `defaultDispatchOccupancyNanos`다. legacy는 기록된 runtime image 문자열도 맞춘다. tag와 digest reference를 문자열 그대로 비교한다.
+정확한 Node UID, 모델, mode, path, batch와 profile ID별 선택 순서는 qualified rolling median, profile의 세션 포화 수준 점유 표본 중앙값, legacy Accepted DOM, configured `defaultDispatchOccupancyNanos`다. legacy는 기록된 runtime image 문자열도 맞춘다. tag와 digest reference를 문자열 그대로 비교한다.
 
 rolling은 UID 사이 실제 pair 표본을 같은 exact cell에 pool하며 median의 median을 쓰지 않는다. 운영값만 `round(max(median,0))`로 만든다. signed raw와 진단은 그대로다. scalar default는 모든 batch 공통이며 dispatchOccupancy 블록이 이를 shadow하지 않는다.
 
@@ -130,27 +129,6 @@ bounded scan은 수명 cap과 drain allowance의 tail 안 segment만 두 번 읽
 
 private `GET /api/v1/scheduler/catalog-read`의 accepted.dispatchOccupancy가 실제 d 선택의 권위다. accepted.occupancyEstimates는 signed 관측이며 accepted.occupancy는 legacy evidence다. burst Observed 자체를 scalar Accepted나 scheduler 채택으로 승격하지 않는다.
 
-## 같은 기종 프로파일 재사용
-
-요구사항은 [같은 기종 프로파일 재사용 조건](../../spec/catalog/SRS.md#같은-기종-프로파일-재사용-조건)을 따른다. 대상 BEO의 `chill.dacs.io/profile-reuse` annotation은 JSON이다.
-
-| 필드 | 검증 |
-|---|---|
-| sourceProfileID | 같은 namespace의 유효 직접 측정 ID |
-| maximumRelativeDifference | 필수 유한 `(0,1)` |
-| minimumMeasurementSeconds | 선택, 유한 양수, 기본30 |
-| minimumTrials | 선택,2 이상, 기본3 |
-
-unknown 필드는 거절한다. 자기 참조와 전이 재사용, 삭제와 replacement로 무효화한 source는 거절한다. 실패 confirmation의 annotation을 지워 짧은 측정을 독립 profile로 승격하지 않는다.
-
-동결 performance condition은 실제 recipe와 runtime image 문자열, 관측 version, DeviceClass와 power/backend, 모델과 전처리, Dataset을 비교한다. Node/meter와 GPU 물리 identity, Workload별 이름/UID/RV와 SLO/count, 창 길이는 대상별 비교에 맞춰 정규화한다. 정규화가 actual physical 검증을 면제하지 않는다.
-
-source의 모든 measured batch가 confirmation에 있어야 한다. 서비스 raw 평균, trial별 활성 wall power의 산술 평균, loaded idle power의 상대 차이를 각각 검사한다. 분모 비양수, 결손과 비유한, 조건 불일치나 허용차 초과는 Rejected다. 기본 허용차 예시0.05를 SLO나 전체 오차 bound로 해석하지 않는다.
-
-Accepted와 Rejected 모두 content-addressed immutable reuse-check를 저장한 뒤 catalog에 발행한다. annotation과 source validity 변경은 새 판정이며 옛 record를 덮지 않는다.
-
-대상 파생 ID는 source ID와 상대차, 최소 측정초와 trial 정책을 포함한다. 대상 Node UID와 meter, GPU UUID와 runtime metadata/delivery, idle은 대상 근거다. 서비스 분포와 증분 J는 source, memory는 양쪽 최대다. d와 prepare/remove/power 비용은 대상별 별도 측정이며 source 비용을 복제하지 않는다.
-
 ## 공개 Query와 권한
 
 Query가 집계, 정적 호환성, assessment와 retained result를 소유한다. ChillServer는 인증과 namespace/resource SAR 뒤 완성 응답을 opaque proxy한다. owner catalog의 accepted와 reporting은 별도이며 Query가 새 scheduler 선택을 만들지 않는다.
@@ -160,7 +138,8 @@ Query가 집계, 정적 호환성, assessment와 retained result를 소유한다
 | `/api/v1/model-compatibility` | modelSpec, executionPath, deviceClass, node 각각 하나 필수인 정적 판정 |
 | `/api/v1/model-compatibility-matrix` | query 없는 inventory 행렬, 대표 rows와 실제 nodeRows |
 | `/api/v1/namespaces/{namespace}/batch-energy-optimizations` | native spec/status와 assessment |
-| `/api/v1/namespaces/{namespace}/profiling-runs` | 정확 owner와 제한 labels, 회차와 assessment |
+| `/api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}/result` | 세션 결과. 조건, 설정, 전력 값, 배치별 요약 |
+| `/api/v1/namespaces/{namespace}/profiling-runs` | 정확 owner와 제한 labels, assessment |
 | `/api/v1/namespaces/{namespace}/operation-cost-measurements[/{name}]` | CR와 exact step 결과 |
 | `/api/v1/namespaces/{namespace}/dispatch-occupancy-measurements[/{name}]` | 원 phase, ref와 burst/legacy evidence, assessment |
 | `/api/v1/namespaces/{namespace}/measurement-coverage` | 현재 측정 셀과 근거 집계 |
@@ -170,19 +149,13 @@ Query가 집계, 정적 호환성, assessment와 retained result를 소유한다
 
 정적 compatibility는 Compatible/Incompatible/Unknown이다. Ready와 측정 완료, admission 성공은 별도로 확인한다. 없거나 무효인 선언은 Unknown과 이유다. 같은 scope의 마지막 matching declaration을 사용하고 앞선 일치는 비차단 진단으로 남긴다. 대표 Node를 다른 Node 지원으로 복제하지 않는다.
 
-Run의 controller owner는 같은 namespace, apiVersion과 kind, exact BEO UID로 결합한다. 이름과 긴 이름의 축약 label만으로 소유를 확정하지 않는다. 원 attempt와 batch/mode를 유지하며 여러 배치를 새 회차 번호로 다시 매기지 않는다.
+ProfilingRun의 controller owner는 같은 namespace, apiVersion과 kind, exact owner UID로 결합한다. 이름과 긴 이름의 축약 label만으로 소유를 확정하지 않는다. `POST /api/v1/namespaces/{namespace}/batch-energy-optimizations/preflight`는 적용 전 세션 요청을 해석해 측정할 배치 크기 후보와 수준이 끝나는 최소 표본 수, 분위수를 돌려준다. 소요 시간은 예측하지 않는다.
 
 ## 저장 결과의 읽기 projection
 
-BEO result의 sealed detail은 바꾸지 않는다. statistics와 measurementFacts를 형제로 제공하고 retained verified trial과 CurvePlan의 기존 derivation을 사용한다.
-
-batch별 incremental J/item은 독립 trial 추정의 산술 평균이다. 기존 shared-idle와 Student-t CI의 level과 halfWidth, 음수 하한과 0폭을 보존한다. latencyP95Milliseconds는 같은 batch의 모든 active client 호출 sample을 pool한 empirical p95다. trial percentile 평균이나 native S로 대체하지 않는다.
-
-NoPublishedResult, RetainedEvidenceMissing과 StatisticsNotRecorded를 구분한다. 실제 권한과 transport, store와 identity 오류를 미기록으로 숨기지 않는다. 단건 통계 때문에 coverage 전체의 raw를 다시 내려받지 않는다.
+BEO result는 저장한 세션 결과를 `resultFormat: "Session"`과 `session`으로 제공한다. `session`은 조건, 설정, 전력 값과 배치별 요약을 담고 큰 배열은 개수로 바꾼다. 전력 값(유휴 전력, 깨어 있는 전력 증가, 유지 시간)과 배치별 요청당 에너지는 `Identified` 또는 `NotIdentified` 상태와 값, 범위, 단위, 사유를 가진다. 배치별 요약은 서비스 기록 수, 포화 처리율, 메모리 최댓값과 종류, 점유 시간 표본 수와 중앙값, 수준 목록이다. 부하 뒤 전력 시계열은 줄이지 않고 싣는다. 결과가 발행되기 전에는 `session`이 없다.
 
 OCM은 status의 정확 step key만 읽는다. durationNanos는 실제 시작부터 끝까지의 경과다. wallJoules는 저장 Accepted 전체 Node wall J다. 실패에 시간만 있으면 시간만 표시하고 후속 미실행 행을 만들지 않는다. CR별 최대8 projection을 병렬 수행하되 이름순과 step 순서를 유지한다.
-
-ResultRow는 exact variant와 batch의 p95, CI, idle/active W와 total/incremental J, trial과 sample 분모, power source와 원본 ref를 보존한다. active W는 같은 trial의 유효 적분과 창에서 구한다. source 재사용 행과 대상 confirmation 행은 분리하고 혼합 total J를 만들지 않는다.
 
 ## 측정 커버리지
 
@@ -196,9 +169,9 @@ variant는 실제 runtime image reference와 관측 version, recipe를 보존한
 
 assessment는 status, displayStatus와 label, execution과 evidence, checklist와 scope다. 서버 label을 UI가 다시 판정하지 않는다. checklist는 variant에 한 번만 전체를 두고 동일 항목 sourceIds를 합친다. cell과 result row는 criteriaMet와 version을 유지하며 checks를 비운다. resultRows와 variants를 용량 때문에 자르지 않는다.
 
-체크는 exact lineage, 목표 batch와 독립 active/shared idle 각각 `max(3,MinimumTrials)`, 유한 CI와 pooled client latency, 동결 power policy와 source를 확인한다. 미조회는 unknown이다. PolicyUnset은 정책 미설정을 나타낸다. source timestamp 부재와 node-wall scope를 새 실패 gate로 쓰지 않는다.
+세션 변형은 측정한 배치 크기, 멈춘 사유(`stopClass`: CapacityLimit, NotServable, NotMeasured)와 전력 값이 모두 식별됐는지(`powerIdentified`)를 보인다. 세션은 시도별 사실을 만들지 않는다. 미조회는 unknown이다. PolicyUnset은 정책 미설정을 나타낸다. source timestamp 부재와 node-wall scope를 새 실패 gate로 쓰지 않는다.
 
-failureSummary는 exact owner Run UID와 조건, 실제 exit와 안전한 한 줄 근거를 사용한다. 명시 CUDA OOM과 CPU/host OOM, power timeout, image pull과 runtime 실패를 구분하며 일반 allocator 문구만으로 GPU 원인을 단정하지 않는다. 원시 로그와 미확정 인과를 보존한다.
+failureSummary는 세션의 `status.outcome`과 `MeasurementComplete` 조건의 원문 문장을 쓴다. 세션은 Run을 소유하지 않는다. ProfilingRun의 failureSummary는 exact owner Run UID와 조건, 실제 exit와 안전한 한 줄 근거를 사용하며 일반 allocator 문구만으로 GPU 원인을 단정하지 않는다. 원시 로그와 미확정 인과를 보존한다.
 
 coverage occupancy의 present는 current exact profile와 Node의 검증 legacy Accepted 또는 burst Observed다. scheduler adopted는 accepted.dispatchOccupancy provenance의 measured/dom이면 true, default와 확인된 선택 부재면 false, catalog나 provenance 미확인이면 null이다.
 
@@ -228,7 +201,6 @@ Evaluation의 공개 procedure와 stage progress, loadJobs는 기록된 사실�
 | 미완료 sequence | `serving-operation-sequence.v1alpha1`, `serving/operation-sequences/<CR UID>.json` |
 | legacy scalar DOM | `chill.dacs.io/dispatch-occupancy-measurement.v1alpha1`, `serving/dispatch-occupancy/` |
 | burst DOM | `chill.dacs.io/dispatch-occupancy-measurement.v1alpha2`, `serving/dispatch-occupancy-observations/<NodeUID>/<CRUID>.json` |
-| reuse check | `chill.dacs.io/profile-reuse-check.v1alpha1`, `serving/profile-reuse/` |
 | experiment | `serving-experiment.v1alpha1`, `serving/experiments.v1alpha1/` |
 
 ## 저장 계약

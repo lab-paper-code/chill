@@ -66,11 +66,11 @@ Serving과 Profiling은 같은 serving-worker, persistent IPC runner와 firstflo
 
 Actor의 measured runtime image reference와 실제 관측 version이 실행 조건이다. 태그와 digest reference 모두 plain string으로 허용하며 pinning과 imageID gate는 없다. 현재 declaration image로 frozen image를 대입하지 않는다.
 
-memory request/limit은 CurvePlan 준비 전에 동결한 Actor envelope를 유지한다. peak는 실제 측정값을 사용한다. queue는 같은 limit의 measured peak 뒤 양의 headroom 안에 둔다. worker와 init에는 CPU resource를 주입하지 않는다.
+memory request/limit은 측정 요청을 해석할 때 동결한 Actor envelope를 유지한다. peak는 실제 측정값을 사용한다. queue는 같은 limit의 measured peak 뒤 양의 headroom 안에 둔다. worker와 init에는 CPU resource를 주입하지 않는다.
 
 ORT는 기본 자동 병렬성을 사용한다. affinity와 cgroup, quota와 실제 thread 값은 관측이다. GPU UUID, RKNN delivery와 host library, initialized batch와 실제 runtime identity는 검증한다.
 
-capability initialization과 measured batch warmup은 별도 domain이다. 실제 측정 K 전체를 같은 순서로 warmup하며 cap/fixed K만 warmup하지 않는다. initialized/measured 안의 정책 cap 증가는 재시작 없이 ACK로 적용한다. profile와 initialized capacity 변경은 재시작한다.
+capability initialization과 measured batch warmup은 별도 domain이다. 서빙 인스턴스는 실제 측정 K 전체를 같은 순서로 warmup하며 cap/fixed K만 warmup하지 않는다. 측정 세션의 인스턴스는 자기 고정 배치 하나만 초기화하고 warmup한다. initialized/measured 안의 정책 cap 증가는 재시작 없이 ACK로 적용한다. profile와 initialized capacity 변경은 재시작한다.
 
 ## 조건과 현재 측정 선택
 
@@ -80,17 +80,17 @@ PerformanceCondition은 실제 모델과 전처리, 표본 recipe, runtime image
 
 catalog는 현재 source UID/RV와 terminal 적격성을 읽는다. immutable source의 검증 raw는 재사용하고 변경과 삭제, pending은 cache에서 제거한다. 오류에 이전 success로 fallback하지 않는다.
 
-cold trial load는 입력 순서의 작은 window에서 최대 8개의 execution/raw read를 병렬 처리한다. 완료 뒤 원래 순서로 도출하고 첫 오류도 결정적이다. 실제 byte cap과 실행/관측, Run/Job/Pod binding을 검증하며 invalid profile을 publish하지 않는다. 동시성 제한은 진행 중인 execution/raw read 수에 적용한다.
+catalog는 측정 요청마다 저장한 세션 결과 객체 하나를 읽는다. 실제 byte cap을 검증하고 읽을 수 없는 결과는 issue로 남기며 invalid profile을 publish하지 않는다. 배치 크기는 서비스 기록 둘 이상, 메모리 최댓값, 유효한 포화 수준과 식별된 입력당 줄을 모두 가질 때 profile에 싣는다. 하나도 싣지 못하면 `MeasurementEvidenceMissing`이다.
 
 ## 실제 S와 G의 조건부 법칙
 
-S는 Go runner IPC 교환 전체, G는 직전 교환 종료부터 다음 교환 시작까지 같은 monotonic clock의 경과다. runner는 초기화한 모든 batch 크기를 warmup한 뒤 ready를 보내므로 ready 시각이 첫 anchor다. 첫 교환도 G를 가진다. G가 없는 옛 기록(시작 후 첫 실행)은 hydration에서 버리고 그 수를 센다. 각 표본은 물리 TrialID와 결합을 유지한다.
+S는 Go runner IPC 교환 전체, G는 직전 교환 종료부터 다음 교환 시작까지 같은 monotonic clock의 경과다. runner는 초기화한 모든 batch 크기를 warmup한 뒤 ready를 보내므로 ready 시각이 첫 anchor다. 첫 교환도 G를 가진다. G가 없는 옛 기록(시작 후 첫 실행)은 hydration에서 버리고 그 수를 센다. 각 표본은 측정 요청 UID와 결합을 유지한다.
 
 ready actor는 ready 직전에 warmup service를 마쳤으므로 마지막 service 종료 age를 항상 가진다. native runner는 ready 시각을 마지막 종료로 두고, observer와 ChillServer 재시작 뒤 runtime은 native가 보고한 age를 그대로 쓴다. ready인데 age가 없는 instance와 G가 없는 실행 중 교환은 `UnknownNativeServiceEnd` 사유가 되어 측정 없음과 같은 경로로 처리된다. gap을 대신 고르지 않는다. 아직 실행 중이 아닌 option과 준비 중 instance는 Workload 부하가 정하는 gap(도착률 λ에서 1/λ)으로 질의한다. replay에서 prepare가 끝나면 그 시각이 마지막 종료이고, capacity 창의 합성 actor는 창 replay 시작에 ready다.
 
-현재 active 측정은 frozen operatingPoints와 off-node producer를 사용한다. sparse, saturation과 utilization의 실제 S/G와 공급, post-load idle을 구분한다. 원래 target gap으로 실제 G를 대체하거나 donor trace를 import하지 않는다.
+프로파일 측정은 세션이 서빙의 준비 동작과 Service 전달로 주는 부하다. 포화, 중간과 배치 크기 1의 저부하 수준의 실제 S/G와 공급, 부하 뒤 관측을 구분한다. 원래 target gap으로 실제 G를 대체하거나 donor trace를 import하지 않는다.
 
-profile은 batch 크기마다 모든 물리 trial의 기록을 하나로 모아 gap 순서로 한 번 정렬한다. trial 사이 편차도 스케줄러가 마주하는 분포의 일부다. 모형 이름은 `log-gap-nearest-sample-floor`다. gap g의 분위수 p는 `ln(1+g)` 거리로 가장 가까운 기록 N개의 경험 분위수다. N은 p의 표본 하한 `ceil(ln(1−p)/ln(p))`(95분위 59)다. gap은 native monotonic clock의 정수 나노초이며 그 단위 1을 더해 0 gap도 로그 척도에 둔다. N개 창은 gap 순서의 연속 구간이다. 거리 동률이면 작은 gap을 고르고, 같은 gap의 기록은 g를 향한 쪽부터 저장 순서로 고른다. N은 창의 최댓값이 신뢰도 p로 분위수를 넘는 개수이므로 창의 경험 분위수는 점추정이지 상한이 아니다. 기록이 N보다 적으면 분위수는 식별되지 않는다. 질의는 unknown이고 각 소비자는 profile 부재와 같은 경로로 처리한다. p=100은 유한 하한이 없어 식별되지 않는다.
+profile은 batch 크기마다 세션의 모든 수준 기록을 하나로 모아 gap 순서로 한 번 정렬한다. 수준 사이 편차도 스케줄러가 마주하는 분포의 일부다. 모형 이름은 `log-gap-nearest-sample-floor`다. gap g의 분위수 p는 `ln(1+g)` 거리로 가장 가까운 기록 N개의 경험 분위수다. N은 p의 표본 하한 `ceil(ln(1−p)/ln(p))`(95분위 59)다. gap은 native monotonic clock의 정수 나노초이며 그 단위 1을 더해 0 gap도 로그 척도에 둔다. N개 창은 gap 순서의 연속 구간이다. 거리 동률이면 작은 gap을 고르고, 같은 gap의 기록은 g를 향한 쪽부터 저장 순서로 고른다. N은 창의 최댓값이 신뢰도 p로 분위수를 넘는 개수이므로 창의 경험 분위수는 점추정이지 상한이 아니다. 기록이 N보다 적으면 분위수는 식별되지 않는다. 질의는 unknown이고 각 소비자는 profile 부재와 같은 경로로 처리한다. p=100은 받지 않는다.
 
 로그 거리를 쓰는 근거: gap은 1 ms 미만부터 1 s 이상까지 여섯 자릿수에 걸치고 처리 시간의 gap 의존도 자릿수 단위로 바뀐다(GPU host b1은 10 ms 이상에서 약 2.7배). 저장된 229개 측정의 trial 단위 교차검증에서 절대 거리와 로그 거리의 95분위 적중률과 pinball 손실은 모든 gap 자릿수에서 1 % 안쪽으로 같았다. 이 데이터에서 둘은 구별되지 않으므로 척도 문제에 맞는 로그 거리를 쓴다.
 
@@ -116,7 +116,7 @@ fixed instance는 자동 후보와 replay에서 제외한다. baseline 비교는
 
 ## Baseline과 원자 측정
 
-profile은 idle을 차감한 incremental J/input과 차감한 idle, raw와 memory를 보존한다. NodeBaseline은 실제 Node/mode와 loaded state, node-exclusive meter에 연결한다. 공존 additive 예상은 실측 co-loaded baseline과 구분한다.
+profile은 노드 전력의 네 값(정착한 유휴 전력, 깨어 있는 전력 증가, 유지 시간, 배치 크기별 입력당 줄)과 메모리 최댓값, 서비스 기록을 보존한다. 노드 전력은 `유휴 전력 + 깨어 있는 전력 증가 × 깨어 있는 시간 비율 + 입력당 줄 × 입력률`이다. 구하지 못한 값은 식별되지 않음으로 남고, 그 값이 필요한 에너지는 비교하지 않는다. NodeBaseline은 실제 Node/mode와 loaded state, node-exclusive meter에 연결한다. 공존 additive 예상은 실측 co-loaded baseline과 구분한다.
 
 원자 측정은 production prepare/remove/power와 idle이다. resize는 기존 primitive의 조합이다. 실제 Ready, drain과 remove, power readback과 원시 wall sample을 사용하며 표본 부족은 Insufficient다.
 
@@ -132,6 +132,6 @@ memory와 whole GPU UUID는 물리 안전 제약이다. CPU는 공유한다. SLO
 
 과부하 정책과 큐 한도는 applied Definition과 요청의 저장 계약이다. 저장 Definition의 정책 부재를 현재 기본 Reject/1024로 소급 채우지 않는다. protocol과 replay, 관측과 client, 평가 소비자는 같은 계약을 사용한다.
 
-계약 변경은 campaign 밖에서 한 번에 적용하고 영향받는 작업용 객체를 정리한다. 게시된 과학 원문은 변경하지 않는다. observation 현행 버전은 `v1alpha7`이며 profiling과 bundle의 현재 schema는 각 owner source를 따른다. [Durable Stored-Contract Compatibility](../../adr/0019-durable-stored-contract-compatibility.md)에 따른 단일 reader다.
+저장 형식 변경은 측정과 측정 사이에 한 번 적용하고 영향받는 작업용 객체를 정리한다. 게시된 과학 원문은 변경하지 않는다. observation 현행 버전은 `v1alpha7`이며 profiling과 bundle의 현재 schema는 각 owner source를 따른다. [Durable Stored-Contract Compatibility](../../adr/0019-durable-stored-contract-compatibility.md)에 따른 단일 reader다.
 
 native-pair 통계와 rolling d 채택은 [측정 API](measurement-api.md#디스패치-점유-측정), 원시 조회와 crash 경계는 [관측 설계](observability-split.md)에 둔다.

@@ -63,7 +63,7 @@ profile의 양의 `RoutingWeight`는 빠른 관측 support에서 도출한 상�
 
 현행 native-pair 측정은 인접한 고정 배치의 시작 간격에서 앞 배치의 실제 Go runner exchange S를 빼고 배치 크기로 나눈 signed ns/request다. 원 signed 통계와 운영 선택값은 구분한다.
 
-운영 선택은 minimumPairs를 충족한 rolling median, 정확한 legacy Accepted DOM, configured `defaultDispatchOccupancyNanos` 순이다. Node UID, 모델, 전력모드, 실행 경로, batch, profile ID를 맞춘다. legacy DOM은 기록된 runtime image 문자열도 맞춰야 한다. 운영 median은 0 이상으로 clamp하고 반올림한다.
+운영 선택은 minimumPairs를 충족한 rolling median, 프로파일의 세션 포화 수준 점유 표본 중앙값, 정확한 legacy Accepted DOM, configured `defaultDispatchOccupancyNanos` 순이다. Node UID, 모델, 전력모드, 실행 경로, batch, profile ID를 맞춘다. legacy DOM은 기록된 runtime image 문자열도 맞춰야 한다. 운영 median은 0 이상으로 clamp하고 반올림한다.
 
 rate 계산의 처리율 추정은 측정 batch별 `b/(profileMean(b)+b×d)`의 최댓값이며 replay는 시작한 실제 batch마다 `batch size×d`를 한 번 더한다. 저비용 service 항은 gap의 조건부 SLO 분위수에 batch 점유를 더한다. 실행 중인 인스턴스의 gap은 현재 idle 나이다. 아직 실행하지 않은 option은 Workload 요청률 λ가 뜻하는 평균 idle 구간 1/λ(Poisson 도착에서 빈 실행기가 기다리는 평균)에서 같은 방식으로 질의한다. λ=0은 그 극한인 가장 긴 gap이다. 분위수가 식별되지 않으면(기록이 표본 하한보다 적음) profile 부재와 같은 `MissingConditionalService`다. 분배값, 처리율 추정, 현재 κ̂와 실제 지연은 각각의 의미를 유지한다.
 
@@ -117,6 +117,8 @@ keep의 노드 에너지는 `P_before × H`다. 전환은 전체 pre/post operat
 
 요청 에너지는 route 전 retained 처리와 overflow, route 뒤 최종 정수 분배로 나눈다. 비교 집합 밖의 동일 노드 항은 소거한다. 비교 집합에는 keep 외 적격 계획이 있는 노드만 포함한다.
 
+노드의 부하 전력은 정착한 유휴 전력에 `깨어 있는 전력 증가 × a + Σ 입력당 줄 × 입력률`을 더한 값이다. 노드의 입력률 합을 λ, 이용률 합을 ρ(1 이하), 유지 시간을 τ라 할 때 `a = 1 − (1−ρ) × exp(−λτ)`다. 한 노드에 구성이 여럿이면 깨어 있는 전력 증가가 가장 큰 구성의 증가와 유지 시간을 함께 쓴다. 입력당 줄과 이용률은 입력률을 감당하는 가장 작은 측정 배치 크기(없으면 가장 큰 측정 배치 크기)의 값을 쓴다. 식이 요구하는 값이 식별되지 않았으면 그 노드의 에너지는 비교하지 않고 누락 셀로 남긴다. 부하가 없으면 부하 항은 0이고 값을 요구하지 않는다.
+
 동작 시간 추정은 exact, 같은 Node, 같은 DeviceClass, 명시 default 순으로 고른다. SLO 회복은 이 추정을 사용할 수 있다. 에너지 이동은 공통 미지 항을 signed 상쇄한 뒤 남은 필수 셀이 모두 결정 가능해야 한다. keep가 SLO 충족이고 새 비-exact operation 셀이 필요한 후보는 replay 전에 `EnergyUndecidable`로 제외할 수 있다. 누락 측정은 결정의 `missingCells`로 연결한다.
 
 현재 구성이 충족할 때의 에너지 축소는 개별 교체 payback과 minimumGain을 통과해야 한다. 교체를 해당 노드 keep으로 되돌려도 충족하면 최소 관측 부하와 같은 H에서 비교한다. 지불되지 않은 교체는 `ReplacementUnpaid`다. 빈 노드의 새 절전도 같은 개별 검사를 거치며 다른 노드 이득으로 손해를 덮지 않는다.
@@ -154,4 +156,4 @@ minimumGain은 선택 operation의 `energyUncertaintyJoules`와 baseline의 `wat
 
 `search`의 출발점, 평가 수, 후보 수, 가지치기, fallback, budget 종료와 시간은 [스케줄러 API](scheduler-api.md)에 둔다. `dualBound`는 가격 반복 진단이다. 전체 평가 구성 목록을 기록하지 않는다.
 
-저장 계약은 [Durable Stored-Contract Compatibility](../../adr/0019-durable-stored-contract-compatibility.md)를 따른다. 프로파일 재사용은 source와 확인 정책을 포함한 대상 파생 ID를 사용하며, 대상 Node 비용이나 d를 암묵적으로 복사하지 않는다. 운영 수용은 [실클러스터 수용 기준](scheduler-operations.md#실클러스터-수용-기준)을 따른다.
+저장 계약은 [Durable Stored-Contract Compatibility](../../adr/0019-durable-stored-contract-compatibility.md)를 따른다. 운영 수용은 [실클러스터 수용 기준](scheduler-operations.md#실클러스터-수용-기준)을 따른다.

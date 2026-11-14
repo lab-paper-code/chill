@@ -2,8 +2,11 @@
 
 [Component contracts](README.md) and [Profiling design index](../README.md)
 
-MetricObserver retains typed power/thermal facts for a bounded window.
-Numeric derivation and scientific interpretation belong to consumers.
+MetricObserver retains typed power/thermal facts for a bounded window. It runs
+only in the model-loaded idle baseline measurement, whose result the power-mode
+transition cost reads. Batch profiles are measured by the session in
+[profile-session.md](../../serving/profile-session.md). Numeric derivation and
+scientific interpretation belong to consumers.
 
 ## Ownership
 
@@ -46,11 +49,9 @@ until one succeeds or the original duration watchdog expires. Failed reads
 remain in `failures`; result counts include all retained samples and failures.
 Capacity admits power and auxiliary thermal failures together.
 
-For sample-count stops, start/end waits and the `ObserveUntil` watchdog derive
-from producer `AttemptTimeout`. Admission covers that entire schedule before
-polling or Job creation. This is a failure bound; successful elapsed/sample
-floors can take longer than nominal measurement duration. Runtime failure still
-interrupts both observers.
+Start/end waits and the `ObserveUntil` watchdog derive from the producer
+`AttemptTimeout`. Admission covers that entire schedule before polling or Job
+creation. Runtime failure still interrupts both observers.
 
 Raw validation binds source, RunConfig and actual window once at finalization.
 Co-resident membership belongs to WorkloadObserver. Discovery, monitoring
