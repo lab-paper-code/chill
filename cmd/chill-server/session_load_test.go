@@ -606,7 +606,9 @@ func TestSessionLoadMidExpiryWaitsForPhysicalCompletion(t *testing.T) {
 			Start: level.StartedAt, End: level.EndedAt, CompletedInputs: level.CompletedInputs,
 			CompletedBatches: level.CompletedBatches, EndReason: level.EndReason, Detail: level.Detail,
 			Excluded: level.EndReason == sessionRequestLifetimeExpired}
-		batch.Levels = append(batch.Levels, profilederivation.SessionLevelInput{Row: row, Native: fake.nativeRows[level.Kind]})
+		batch.Levels = append(batch.Levels, profilederivation.SessionLevelInput{
+			Row: row, Native: fake.nativeRows[level.Kind],
+		})
 	}
 	input.Batches = []profilederivation.SessionBatchInput{batch}
 	for at := levels[0].StartedAt; !at.After(input.PostLoadEnd); at = at.Add(time.Millisecond) {

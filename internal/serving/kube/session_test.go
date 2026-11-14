@@ -594,7 +594,7 @@ func emitSessionBatches(t *testing.T, rt *serving.Runtime, uid string, start tim
 			lines[2].QueueMS, lines[2].ServiceMS, lines[2].BackendMS, lines[2].NativeElapsedMS = ms(running.Sub(queued)), ms(service), ms(service), ms(finished.Sub(queued))
 			lines[2].Outcome, lines[2].ServiceSample, lines[2].Units = "completed", sample, 1
 			for _, line := range lines {
-				if line.Phase == "finished" && slices.Contains(lostFinished, line.RequestID) {
+				if line.ExecutionComplete && slices.Contains(lostFinished, line.RequestID) {
 					continue
 				}
 				raw, err := json.Marshal(line)
