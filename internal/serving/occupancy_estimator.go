@@ -2,6 +2,7 @@ package serving
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"slices"
 	"time"
@@ -66,6 +67,7 @@ type occupancyRequest struct {
 	id                                                          uint64
 	size                                                        int
 	serviceNanos                                                int64
+	precedingIdle                                               *int64
 	queued, running, finished                                   time.Time
 	received                                                    time.Time
 	finals, completeFinals, rows, completeRows                  int
@@ -147,23 +149,13 @@ func (e *OccupancyEstimator) Add(row RequestRow) {
 	if row.Kind != RequestRowOpen {
 		r.rows++
 	}
-	raw := occupancyRequest{id: row.BatchID, size: row.BatchSize}
-	if row.NativeQueuedAt != nil {
-		raw.queued = *row.NativeQueuedAt
-	}
-	if row.NativeRunningAt != nil {
-		raw.running = *row.NativeRunningAt
-	}
-	if row.NativeFinishedAt != nil {
-		raw.finished = *row.NativeFinishedAt
-	}
+	raw := r.join(&row)
 	if directComplete(&raw) && row.Kind != RequestRowOpen {
 		r.completeRows++
 		if row.Kind == RequestRowFinal {
 			r.completeFinals++
 		}
 	}
-	r.mergeIdentityAndTiming(&row, &raw)
 	if row.Kind == RequestRowFinal {
 		r.finals++
 		r.execution = row.ExecutionComplete
@@ -176,6 +168,24 @@ func (e *OccupancyEstimator) Add(row RequestRow) {
 	if row.NativeError != "" || row.NativeOutcome != "" && row.NativeOutcome != outcomeCompleted {
 		r.invalid = true
 	}
+}
+
+// join merges one row into its request and returns the row's own native
+// batch identity and stamps. It is the one join of a request's sparse
+// supplements: native logs each progress phase as its own row.
+func (r *occupancyRequest) join(row *RequestRow) occupancyRequest {
+	raw := occupancyRequest{id: row.BatchID, size: row.BatchSize}
+	if row.NativeQueuedAt != nil {
+		raw.queued = *row.NativeQueuedAt
+	}
+	if row.NativeRunningAt != nil {
+		raw.running = *row.NativeRunningAt
+	}
+	if row.NativeFinishedAt != nil {
+		raw.finished = *row.NativeFinishedAt
+	}
+	r.mergeIdentityAndTiming(row, &raw)
+	return raw
 }
 
 func (r *occupancyRequest) mergeIdentityAndTiming(row *RequestRow, raw *occupancyRequest) {
@@ -224,6 +234,12 @@ func (r *occupancyRequest) mergeIdentityAndTiming(row *RequestRow, raw *occupanc
 			r.invalid = true
 		}
 		r.serviceNanos = row.ServiceDurationNanos
+	}
+	if row.PrecedingIdleNanos != nil {
+		if r.precedingIdle != nil && *r.precedingIdle != *row.PrecedingIdleNanos {
+			r.invalid = true
+		}
+		r.precedingIdle = row.PrecedingIdleNanos
 	}
 }
 
@@ -428,4 +444,62 @@ func directStatistics(sample []float64) *OccupancyStatistics {
 		P10: q(.1), P90: q(.9), Mean: stat.Mean(sample, nil),
 		NegativeFraction: float64(negative) / float64(len(sample)),
 	}
+}
+
+// NativeBatchJoin joins one workload's request rows with the occupancy join
+// and folds the joined requests into one row per executor batch.
+type NativeBatchJoin struct {
+	requests map[string]*occupancyRequest
+}
+
+func NewNativeBatchJoin() *NativeBatchJoin {
+	return &NativeBatchJoin{requests: map[string]*occupancyRequest{}}
+}
+
+func (j *NativeBatchJoin) Add(row RequestRow) {
+	if row.RequestID == "" || row.Kind == RequestRowOccupancySelected {
+		return
+	}
+	r := j.requests[row.RequestID]
+	if r == nil {
+		r = &occupancyRequest{}
+		j.requests[row.RequestID] = r
+	}
+	r.join(&row)
+}
+
+// Batches returns one row per executor batch in batch order. A request
+// without running and finished stamps and its service never completed in a
+// batch and adds nothing. Every member reports its batch's timing;
+// LatestEnqueuedAt is the last member's enqueue time.
+func (j *NativeBatchJoin) Batches() ([]profilederivation.NativeBatchRow, error) {
+	byID := map[uint64]*profilederivation.NativeBatchRow{}
+	for id, r := range j.requests {
+		if r.invalid {
+			return nil, fmt.Errorf("native request %s has conflicting progress records", id)
+		}
+		if r.id == 0 || r.running.IsZero() || r.finished.IsZero() || r.serviceNanos <= 0 {
+			continue
+		}
+		known := byID[r.id]
+		if known == nil {
+			byID[r.id] = &profilederivation.NativeBatchRow{BatchID: r.id, BatchSize: r.size, StartedAt: r.running, FinishedAt: r.finished,
+				ServiceDurationNanos: r.serviceNanos, PrecedingIdleNanos: r.precedingIdle, LatestEnqueuedAt: r.queued}
+			continue
+		}
+		if known.BatchSize != r.size || !known.StartedAt.Equal(r.running) || !known.FinishedAt.Equal(r.finished) ||
+			known.ServiceDurationNanos != r.serviceNanos || (known.PrecedingIdleNanos == nil) != (r.precedingIdle == nil) ||
+			known.PrecedingIdleNanos != nil && *known.PrecedingIdleNanos != *r.precedingIdle {
+			return nil, fmt.Errorf("members of native batch %d report different batch timing", r.id)
+		}
+		if r.queued.After(known.LatestEnqueuedAt) {
+			known.LatestEnqueuedAt = r.queued
+		}
+	}
+	rows := make([]profilederivation.NativeBatchRow, 0, len(byID))
+	for _, row := range byID {
+		rows = append(rows, *row)
+	}
+	slices.SortFunc(rows, func(a, b profilederivation.NativeBatchRow) int { return cmp.Compare(a.BatchID, b.BatchID) })
+	return rows, nil
 }

@@ -25,6 +25,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	servingnative "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	batchv1 "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -491,5 +492,97 @@ func TestSessionRestartFailsAndHandsBack(t *testing.T) {
 	}
 	if len(s.measured) != 0 {
 		t.Fatalf("a cut-off session measured again: %v", s.measured)
+	}
+}
+
+// sessionObservedRuntime is a runtime whose observation log stores what the
+// observer passes it, as in ChillServer.
+func sessionObservedRuntime(t *testing.T) (*serving.Runtime, *observation.ObservationLog) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
+		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()},
+		OccupancyTail: 3 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := log.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rt, log
+}
+
+// emitSessionBatches passes the progress lines native prints for batches of
+// two requests of one level to the runtime, as the observer's log follow does:
+// one line per request and phase, the batch's service only on finished. skew
+// shifts the executor clock.
+func emitSessionBatches(t *testing.T, rt *serving.Runtime, uid string, start time.Time, batches int, skew time.Duration) {
+	t.Helper()
+	const service = 20 * time.Millisecond
+	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+	var lastEnd time.Time
+	for b := range batches {
+		received := start.Add(skew + time.Duration(b)*50*time.Millisecond)
+		running := received.Add(5 * time.Millisecond)
+		finished := running.Add(service)
+		sample := &native.ServiceSample{ServiceDurationNanos: service.Nanoseconds(), TrialID: uid}
+		if !lastEnd.IsZero() {
+			gap := running.Sub(lastEnd).Nanoseconds()
+			sample.PrecedingIdleNanos = &gap
+		}
+		lastEnd = finished
+		for m := range 2 {
+			queued := received.Add(time.Duration(m) * time.Millisecond)
+			base := native.Progress{RequestID: fmt.Sprintf("saturation-%d", 2*b+m), WorkloadUID: uid, Definition: "42", ProfileID: "profile", DecisionID: "decision"}
+			lines := []native.Progress{base, base, base}
+			lines[0].Phase, lines[0].At, lines[0].QueueMS, lines[0].NativeElapsedMS = "queued", queued, 0, 0
+			lines[1].Phase, lines[1].At, lines[1].BatchID, lines[1].BatchSize = "running", running, uint64(b+1), 2
+			lines[1].QueueMS, lines[1].NativeElapsedMS = ms(running.Sub(queued)), ms(running.Sub(queued))
+			lines[2].Phase, lines[2].At, lines[2].BatchID, lines[2].BatchSize, lines[2].ExecutionComplete = "finished", finished, uint64(b+1), 2, true
+			lines[2].QueueMS, lines[2].ServiceMS, lines[2].BackendMS, lines[2].NativeElapsedMS = ms(running.Sub(queued)), ms(service), ms(service), ms(finished.Sub(queued))
+			lines[2].Outcome, lines[2].ServiceSample, lines[2].Units = "completed", sample, 1
+			for _, line := range lines {
+				raw, err := json.Marshal(line)
+				if err != nil {
+					t.Fatal(err)
+				}
+				progress, err := servingnative.ParseProgress(append([]byte("2026-11-14T00:00:00Z CHILL_PROGRESS "), raw...))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := rt.ObserveBackend("pod-b2/containerd://runtime", progress); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+}
+
+// The session's reads join a request's per-phase supplement rows before
+// folding per batch: no single stored row has running, finished and service.
+func TestSessionReadsJoinNativeProgressLines(t *testing.T) {
+	rt, log := sessionObservedRuntime(t)
+	uid := "session-uid/2/saturation"
+	start := time.Now().UTC()
+	emitSessionBatches(t, rt, uid, start, 3, 0)
+	rows, err := observedSessionReads(log).native(context.Background(), uid, start, time.Now().Add(time.Second))
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("native batch rows %d err %v", len(rows), err)
+	}
+	for i, row := range rows {
+		running := start.Add(time.Duration(i)*50*time.Millisecond + 5*time.Millisecond)
+		if row.BatchID != uint64(i+1) || row.BatchSize != 2 || !row.StartedAt.Equal(running) || !row.FinishedAt.Equal(running.Add(20*time.Millisecond)) ||
+			row.ServiceDurationNanos != (20*time.Millisecond).Nanoseconds() || !row.LatestEnqueuedAt.Equal(running.Add(-4*time.Millisecond)) ||
+			(row.PrecedingIdleNanos == nil) != (i == 0) || i > 0 && *row.PrecedingIdleNanos != (30*time.Millisecond).Nanoseconds() {
+			t.Fatalf("batch %d row %+v", i, row)
+		}
 	}
 }

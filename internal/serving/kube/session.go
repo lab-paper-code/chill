@@ -74,15 +74,15 @@ type sessionReads struct {
 func observedSessionReads(log *observation.ObservationLog) sessionReads {
 	return sessionReads{
 		native: func(ctx context.Context, workloadUID string, from, to time.Time) ([]profilederivation.NativeBatchRow, error) {
-			batches := &sessionBatchRows{byID: map[uint64]*profilederivation.NativeBatchRow{}}
-			gap, err := log.ScanOccupancyRows(ctx, workloadUID, "", from, to, batches.add)
+			batches := serving.NewNativeBatchJoin()
+			gap, err := log.ScanOccupancyRows(ctx, workloadUID, "", from, to, batches.Add)
 			if err == nil && gap != nil {
 				err = fmt.Errorf("request observations of %s have a gap until %s", workloadUID, gap.Format(time.RFC3339Nano))
 			}
-			if err == nil {
-				err = batches.err
+			if err != nil {
+				return nil, err
 			}
-			return batches.rows, err
+			return batches.Batches()
 		},
 		power: func(ctx context.Context, meter servingops.MeterDeclaration, from, to time.Time) ([]profilederivation.Sample, error) {
 			read, err := log.PowerSamples(ctx, observation.OperatingPowerMeter{Node: meter.Node, Meter: meter.ID, Scope: meter.Scope, Source: meter.Source}, from, to)
@@ -93,46 +93,6 @@ func observedSessionReads(log *observation.ObservationLog) sessionReads {
 			return samples, err
 		},
 		memory: log.PodMemoryPeak,
-	}
-}
-
-// sessionBatchRows folds request rows into one row per executor batch. Every
-// member of a batch reports the batch's timing; LatestEnqueuedAt is the last
-// member's enqueue time.
-type sessionBatchRows struct {
-	byID map[uint64]*profilederivation.NativeBatchRow
-	rows []profilederivation.NativeBatchRow
-	err  error
-}
-
-func (b *sessionBatchRows) add(row serving.RequestRow) {
-	if row.BatchID == 0 || row.NativeRunningAt == nil || row.NativeFinishedAt == nil || row.ServiceDurationNanos <= 0 || b.err != nil {
-		return
-	}
-	batch := profilederivation.NativeBatchRow{BatchID: row.BatchID, BatchSize: row.BatchSize, StartedAt: *row.NativeRunningAt,
-		FinishedAt: *row.NativeFinishedAt, ServiceDurationNanos: row.ServiceDurationNanos, PrecedingIdleNanos: row.PrecedingIdleNanos}
-	if row.NativeQueuedAt != nil {
-		batch.LatestEnqueuedAt = *row.NativeQueuedAt
-	}
-	known := b.byID[row.BatchID]
-	if known == nil {
-		b.byID[row.BatchID] = &batch
-		b.rows = append(b.rows, batch)
-		return
-	}
-	if known.BatchSize != batch.BatchSize || !known.StartedAt.Equal(batch.StartedAt) || !known.FinishedAt.Equal(batch.FinishedAt) ||
-		known.ServiceDurationNanos != batch.ServiceDurationNanos || (known.PrecedingIdleNanos == nil) != (batch.PrecedingIdleNanos == nil) ||
-		known.PrecedingIdleNanos != nil && *known.PrecedingIdleNanos != *batch.PrecedingIdleNanos {
-		b.err = fmt.Errorf("members of native batch %d report different batch timing", row.BatchID)
-		return
-	}
-	if batch.LatestEnqueuedAt.After(known.LatestEnqueuedAt) {
-		known.LatestEnqueuedAt = batch.LatestEnqueuedAt
-		for i := range b.rows {
-			if b.rows[i].BatchID == row.BatchID {
-				b.rows[i].LatestEnqueuedAt = batch.LatestEnqueuedAt
-			}
-		}
 	}
 }
 
