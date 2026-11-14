@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	serving "github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -324,5 +326,87 @@ func TestScanOccupancyRowsCapRejectsBeforePublishing(t *testing.T) {
 	})
 	if err == nil || visited != 0 {
 		t.Fatalf("partial request population published: err=%v visited=%d", err, visited)
+	}
+}
+
+func TestNativeBatchJoinMissingFinishedNeverPublishesOccupancy(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		lastQueued    time.Duration
+		missingFinish bool
+		batches       int
+		completed     int
+		pairs         int
+	}{
+		{name: "complete backlogged", lastQueued: 9 * time.Millisecond, batches: 2, completed: 4, pairs: 1},
+		{name: "complete late member", lastQueued: 11 * time.Millisecond, batches: 2, completed: 4},
+		{name: "missing late member finish", lastQueued: 11 * time.Millisecond, missingFinish: true, batches: 1, completed: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+			runtime, err := newObservedRuntime(t, ctx, serving.RuntimeConfig{ObservationLog: log})
+			if err != nil {
+				t.Fatal(err)
+			}
+			const uid = "session/2/saturation"
+			at := observationTestHour.Add(time.Second)
+			clock.set(at)
+			for batch := uint64(1); batch <= 2; batch++ {
+				for member := range 2 {
+					start := time.Duration(batch-1) * 12 * time.Millisecond
+					queued := time.Duration(0)
+					if batch == 2 {
+						queued = 9 * time.Millisecond
+						if member == 1 {
+							queued = tc.lastQueued
+						}
+					}
+					for phase, offset := range []time.Duration{queued, start, start + 10*time.Millisecond} {
+						if tc.missingFinish && batch == 2 && member == 1 && phase == 2 {
+							continue
+						}
+						progress := serving.BackendProgress{
+							RequestID: fmt.Sprintf("%d/%d", batch, member), WorkloadUID: uid,
+							Phase: []string{"queued", "running", "finished"}[phase], At: at.Add(offset),
+							BatchID: batch, BatchSize: 2, ExecutionComplete: phase == 2,
+						}
+						if phase == 2 {
+							progress.ServiceSample = &native.ServiceSample{ServiceDurationNanos: int64(10 * time.Millisecond), TrialID: uid}
+						}
+						if err := runtime.ObserveBackend("measurement-pod/container", progress); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			}
+			if err := log.Drain(ctx); err != nil {
+				t.Fatal(err)
+			}
+			join := serving.NewNativeBatchJoin()
+			if err := log.ScanSessionRows(ctx, "session/2/", at, at.Add(time.Second), func(row serving.RequestRow) error {
+				join.Add(row)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			rows, err := join.Batches()
+			if err != nil || len(rows) != tc.batches || join.CompletedInputs() != tc.completed {
+				t.Fatalf("rows=%+v completed=%d err=%v", rows, join.CompletedInputs(), err)
+			}
+			samples := make([]profilederivation.NativeServiceSample, len(rows))
+			for i, row := range rows {
+				samples[i] = profilederivation.NativeServiceSample{
+					BatchID: row.BatchID, BatchSize: row.BatchSize, RecordIDs: make([]string, row.BatchSize),
+					ServiceSample: native.ServiceSample{ServiceDurationNanos: row.ServiceDurationNanos, TrialID: uid},
+					StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, LatestEnqueuedAt: row.LatestEnqueuedAt,
+				}
+			}
+			occupancy := profilederivation.SaturationDispatchOccupancy(samples, 2)
+			if len(occupancy) != tc.pairs || len(occupancy) == 1 && occupancy[0] != float64(time.Millisecond) {
+				t.Fatalf("occupancy=%v want %d pairs", occupancy, tc.pairs)
+			}
+		})
 	}
 }

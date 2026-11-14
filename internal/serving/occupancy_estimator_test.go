@@ -67,6 +67,12 @@ func TestOccupancyEstimatorPairEligibilityAndLateJoin(t *testing.T) {
 			rows[1].NativeQueuedAt = &late
 		}},
 		{name: "incomplete batch membership", batch: 2, mutate: func(rows []RequestRow, _ map[string]firstfloor.Metadata) { rows[3].BatchID = 3 }},
+		{name: "missing member finished supplement", batch: 2, mutate: func(rows []RequestRow, _ map[string]firstfloor.Metadata) {
+			rows[3].NativeFinishedAt = nil
+			rows[3].NativeExecutionComplete = false
+			rows[3].NativeOutcome = ""
+			rows[3].ServiceDurationNanos = 0
+		}},
 		{name: "missing native never reconstructed", batch: 1, mutate: func(rows []RequestRow, _ map[string]firstfloor.Metadata) {
 			rows[0].NativeRunningAt = nil
 			legacy := int64(1)
@@ -265,5 +271,108 @@ func TestOccupancyEstimatorRetainsOnlySelectedRequest(t *testing.T) {
 	}
 	if len(estimator.requests) != 1 {
 		t.Fatalf("outside rows retained: requests=%d", len(estimator.requests))
+	}
+}
+
+func TestNativeBatchJoinRequiresEveryMember(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mutate    func([]RequestRow) []RequestRow
+		batches   int
+		completed int
+		conflict  bool
+	}{
+		{name: "complete", batches: 2, completed: 4},
+		{name: "replayed supplements", batches: 2, completed: 4, mutate: func(rows []RequestRow) []RequestRow {
+			return append(rows, rows...)
+		}},
+		{name: "missing finished", batches: 1, completed: 3, mutate: func(rows []RequestRow) []RequestRow {
+			rows[3].NativeFinishedAt = nil
+			rows[3].ServiceDurationNanos = 0
+			return rows
+		}},
+		{name: "missing queued", batches: 1, completed: 3, mutate: func(rows []RequestRow) []RequestRow {
+			rows[3].NativeQueuedAt = nil
+			return rows
+		}},
+		{name: "missing service", batches: 1, completed: 3, mutate: func(rows []RequestRow) []RequestRow {
+			rows[3].ServiceDurationNanos = 0
+			return rows
+		}},
+		{name: "missing member", batches: 1, completed: 3, mutate: func(rows []RequestRow) []RequestRow {
+			return rows[:3]
+		}},
+		{name: "extra unique member", batches: 1, completed: 5, mutate: func(rows []RequestRow) []RequestRow {
+			extra := rows[3]
+			extra.RequestID = "extra"
+			return append(rows, extra)
+		}},
+		{name: "conflicting replay", conflict: true, mutate: func(rows []RequestRow) []RequestRow {
+			conflict := rows[3]
+			conflict.ServiceDurationNanos++
+			return append(rows, conflict)
+		}},
+		{name: "conflicting member timing", conflict: true, mutate: func(rows []RequestRow) []RequestRow {
+			rows[3].ServiceDurationNanos++
+			return rows
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, at := directFixture(2)
+			var rows []RequestRow
+			for id := uint64(1); id <= 2; id++ {
+				for member := range 2 {
+					start := time.Duration(id-1) * 12 * time.Millisecond
+					row := directRow(at, id, 2, member, start, start+10*time.Millisecond)
+					queued := at
+					if id == 2 {
+						queued = at.Add(time.Duration(9+2*member) * time.Millisecond)
+					}
+					row.NativeQueuedAt = &queued
+					row.Kind = RequestRowNative
+					rows = append(rows, row)
+				}
+			}
+			if tc.mutate != nil {
+				rows = tc.mutate(rows)
+			}
+			join := NewNativeBatchJoin()
+			for _, row := range rows {
+				join.Add(row)
+			}
+			got, err := join.Batches()
+			if tc.conflict {
+				if err == nil {
+					t.Fatal("conflicting native evidence accepted")
+				}
+				return
+			}
+			if err != nil || len(got) != tc.batches || join.CompletedInputs() != tc.completed {
+				t.Fatalf("batches=%+v completed=%d err=%v", got, join.CompletedInputs(), err)
+			}
+			if len(got) == 2 && !got[1].LatestEnqueuedAt.Equal(at.Add(11*time.Millisecond)) {
+				t.Fatalf("latest member enqueue lost: %+v", got[1])
+			}
+		})
+	}
+}
+
+func TestNativeBatchJoinCompletesLateMemberWithoutDoubleCounting(t *testing.T) {
+	_, _, at := directFixture(2)
+	join := NewNativeBatchJoin()
+	first := directRow(at, 1, 2, 0, 0, 10*time.Millisecond)
+	last := directRow(at, 1, 2, 1, 0, 10*time.Millisecond)
+	unfinished := last
+	unfinished.NativeFinishedAt = nil
+	unfinished.ServiceDurationNanos = 0
+	join.Add(first)
+	join.Add(unfinished)
+	if rows, err := join.Batches(); err != nil || len(rows) != 0 || join.CompletedInputs() != 1 {
+		t.Fatalf("partial batch published: rows=%+v completed=%d err=%v", rows, join.CompletedInputs(), err)
+	}
+	join.Add(last)
+	join.Add(last)
+	if rows, err := join.Batches(); err != nil || len(rows) != 1 || join.CompletedInputs() != 2 {
+		t.Fatalf("late completion lost or duplicated: rows=%+v completed=%d err=%v", rows, join.CompletedInputs(), err)
 	}
 }

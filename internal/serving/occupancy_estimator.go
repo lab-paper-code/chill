@@ -468,37 +468,69 @@ func (j *NativeBatchJoin) Add(row RequestRow) {
 	r.join(&row)
 }
 
-// Batches returns one row per executor batch in batch order. A request
-// without running and finished stamps and its service never completed in a
-// batch and adds nothing. Every member reports its batch's timing;
-// LatestEnqueuedAt is the last member's enqueue time.
+func nativeComplete(r *occupancyRequest) bool {
+	return !r.invalid && directComplete(r) && r.serviceNanos > 0
+}
+
+// CompletedInputs counts unique requests with complete, nonconflicting native
+// identity, enqueue, running, finished and service evidence. HTTP outcomes do
+// not affect physical completion. Complete requests in partial batches count.
+func (j *NativeBatchJoin) CompletedInputs() int {
+	completed := 0
+	for _, r := range j.requests {
+		if nativeComplete(r) {
+			completed++
+		}
+	}
+	return completed
+}
+
+// Batches returns one row per fully evidenced executor batch in batch order.
+// Every observed member contributes its enqueue and membership evidence, even
+// without its finished supplement. Exactly BatchSize unique complete requests
+// must agree on the batch timing before the row can be used.
 func (j *NativeBatchJoin) Batches() ([]profilederivation.NativeBatchRow, error) {
-	byID := map[uint64]*profilederivation.NativeBatchRow{}
+	type batch struct {
+		row               profilederivation.NativeBatchRow
+		members, complete int
+	}
+	byID := map[uint64]*batch{}
 	for id, r := range j.requests {
 		if r.invalid {
 			return nil, fmt.Errorf("native request %s has conflicting progress records", id)
 		}
-		if r.id == 0 || r.running.IsZero() || r.finished.IsZero() || r.serviceNanos <= 0 {
+		if r.id == 0 {
 			continue
 		}
 		known := byID[r.id]
 		if known == nil {
-			byID[r.id] = &profilederivation.NativeBatchRow{BatchID: r.id, BatchSize: r.size, StartedAt: r.running, FinishedAt: r.finished,
-				ServiceDurationNanos: r.serviceNanos, PrecedingIdleNanos: r.precedingIdle, LatestEnqueuedAt: r.queued}
+			known = &batch{}
+			byID[r.id] = known
+		}
+		known.members++
+		row := &known.row
+		if r.queued.After(row.LatestEnqueuedAt) {
+			row.LatestEnqueuedAt = r.queued
+		}
+		if !nativeComplete(r) {
 			continue
 		}
-		if known.BatchSize != r.size || !known.StartedAt.Equal(r.running) || !known.FinishedAt.Equal(r.finished) ||
-			known.ServiceDurationNanos != r.serviceNanos || (known.PrecedingIdleNanos == nil) != (r.precedingIdle == nil) ||
-			known.PrecedingIdleNanos != nil && *known.PrecedingIdleNanos != *r.precedingIdle {
+		if known.complete == 0 {
+			row.BatchID, row.BatchSize = r.id, r.size
+			row.StartedAt, row.FinishedAt = r.running, r.finished
+			row.ServiceDurationNanos, row.PrecedingIdleNanos = r.serviceNanos, r.precedingIdle
+		} else if row.BatchSize != r.size || !row.StartedAt.Equal(r.running) || !row.FinishedAt.Equal(r.finished) ||
+			row.ServiceDurationNanos != r.serviceNanos || (row.PrecedingIdleNanos == nil) != (r.precedingIdle == nil) ||
+			row.PrecedingIdleNanos != nil && *row.PrecedingIdleNanos != *r.precedingIdle {
 			return nil, fmt.Errorf("members of native batch %d report different batch timing", r.id)
 		}
-		if r.queued.After(known.LatestEnqueuedAt) {
-			known.LatestEnqueuedAt = r.queued
-		}
+		known.complete++
 	}
 	rows := make([]profilederivation.NativeBatchRow, 0, len(byID))
-	for _, row := range byID {
-		rows = append(rows, *row)
+	for _, b := range byID {
+		if b.members == b.row.BatchSize && b.complete == b.members {
+			rows = append(rows, b.row)
+		}
 	}
 	slices.SortFunc(rows, func(a, b profilederivation.NativeBatchRow) int { return cmp.Compare(a.BatchID, b.BatchID) })
 	return rows, nil
