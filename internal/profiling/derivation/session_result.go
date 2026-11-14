@@ -82,12 +82,13 @@ type SessionSettings struct {
 	ConfidenceLevel float64 `json:"confidenceLevel"`
 }
 
-// ParameterStatus says whether a session identified a fitted value.
+// ParameterStatus says whether a session identified a fitted value. An
+// Identified parameter carries its value at the best fit and its range over
+// the fits within the noise limit; a value of zero is a value like any other.
 type ParameterStatus string
 
 const (
 	ParameterIdentified    ParameterStatus = "Identified"
-	ParameterAtBound       ParameterStatus = "AtBound"
 	ParameterNotIdentified ParameterStatus = "NotIdentified"
 )
 
@@ -107,10 +108,6 @@ func identifiedParameter(value float64, bounds [2]float64) SessionParameter {
 	return SessionParameter{status: ParameterIdentified, value: value, bounds: bounds, hasBounds: true}
 }
 
-func atBoundParameter() SessionParameter {
-	return SessionParameter{status: ParameterAtBound, hasBounds: true}
-}
-
 func notIdentified(reason string) SessionParameter {
 	return SessionParameter{status: ParameterNotIdentified, reason: reason}
 }
@@ -122,9 +119,9 @@ func notIdentifiedWithin(reason string, bounds [2]float64) SessionParameter {
 // Status reports whether the session identified the parameter.
 func (p SessionParameter) Status() ParameterStatus { return p.status }
 
-// Value returns the parameter and true when it is Identified or AtBound.
+// Value returns the parameter and true when it is Identified.
 func (p SessionParameter) Value() (float64, bool) {
-	if p.status != ParameterIdentified && p.status != ParameterAtBound {
+	if p.status != ParameterIdentified {
 		return 0, false
 	}
 	return p.value, true
@@ -165,7 +162,6 @@ func (p *SessionParameter) UnmarshalJSON(raw []byte) error {
 	switch {
 	case wire.Status == ParameterNotIdentified && wire.Value == nil:
 	case wire.Status == ParameterIdentified && wire.Value != nil:
-	case wire.Status == ParameterAtBound && wire.Value != nil && *wire.Value == 0:
 	default:
 		return fmt.Errorf("parameter status %q does not match its value", wire.Status)
 	}
@@ -193,6 +189,20 @@ type SessionPower struct {
 	SettledAtSeconds float64 `json:"settledAtSeconds"`
 	// PostLoad holds (seconds after load stopped, watts) samples.
 	PostLoad [][2]float64 `json:"postLoad"`
+	// PostLoadTailSlopeWattsPerSecond is the least squares slope of the
+	// post-load power over the last minimum power window after the settle
+	// point, an observation that decides nothing.
+	PostLoadTailSlopeWattsPerSecond float64 `json:"postLoadTailSlopeWattsPerSecond"`
+	// FitResidualSquareWatts is the best fit's residual sum of squares over
+	// the fitted levels; FitLimitSquareWatts is the residual bound of the
+	// fits the ranges are taken over.
+	FitResidualSquareWatts float64 `json:"fitResidualSquareWatts"`
+	FitLimitSquareWatts    float64 `json:"fitLimitSquareWatts"`
+	// HoldSegmentsSearched is the number of hold segments the search solved
+	// and HoldResolutionWatts the predicted-power change below which
+	// breakpoints were merged; both are zero when the decay gives the hold.
+	HoldSegmentsSearched int     `json:"holdSegmentsSearched"`
+	HoldResolutionWatts  float64 `json:"holdResolutionWatts"`
 }
 
 // SessionBatch is one fixed-batch instance's measurement. ServiceNanos[i] and
@@ -244,6 +254,13 @@ type SessionLevel struct {
 	// MeanWattsStandardError accounts for the autocorrelation of the samples.
 	MeanWattsStandardError *float64 `json:"meanWattsStandardError,omitempty"`
 	PowerSamples           int      `json:"powerSamples"`
+	// AwakeFraction is the awake fraction the level entered the best power
+	// fit with, present for fitted levels.
+	AwakeFraction *float64 `json:"awakeFraction,omitempty"`
+	// AwakeWindowNanos are the native window the awake fraction covers, the
+	// first native start plus the meter lag and the last native finish, as
+	// offsets from the driver's level start.
+	AwakeWindowNanos *[2]int64 `json:"awakeWindowNanos,omitempty"`
 }
 
 // StopClass is why the batch-size search ended before the path's largest batch.
