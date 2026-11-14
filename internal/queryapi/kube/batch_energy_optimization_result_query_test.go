@@ -84,26 +84,6 @@ func TestCampaignWithoutResultStillExposesFailureAndDoesNotReadStore(t *testing.
 	}
 }
 
-func TestRequestWithoutSessionSettingsKeepsItsResultUnread(t *testing.T) {
-	campaign, _, _ := campaignResultFixture(t)
-	campaign.Spec.Session = nil
-	objects := &recordingObjectReader{err: errors.New("an old result is never read")}
-	query, err := NewKubernetesBatchEnergyOptimizationResultQuery(
-		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(campaign).Build(), objects,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := query.Read(context.Background(), campaign.Namespace, campaign.Name)
-	if err != nil || objects.calls != 0 || snapshot.Session != nil {
-		t.Fatalf("snapshot = %+v calls = %d err = %v", snapshot, objects.calls, err)
-	}
-	view, err := queryapi.BuildBatchEnergyOptimizationResult(snapshot)
-	if err != nil || view.ResultFormat != queryapi.ResultFormatPrevious {
-		t.Fatalf("view = %+v err = %v", view, err)
-	}
-}
-
 func TestBatchEnergyOptimizationResultQueryRejectsUnusableResultReference(t *testing.T) {
 	t.Parallel()
 	validCampaign, _, _ := campaignResultFixture(t)

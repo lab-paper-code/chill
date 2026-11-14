@@ -34,7 +34,7 @@ func TestSessionPreflightResolvesWithPrepareSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !view.Resolves || view.Session == nil || view.Session.MinimumSamples != 59 ||
-		!slices.Equal(view.BatchPlan.PlannedBatches, []int{1, 2, 4}) || view.Plan != nil {
+		!slices.Equal(view.BatchPlan.PlannedBatches, []int{1, 2, 4}) {
 		t.Fatalf("resolved preflight = %+v", view)
 	}
 

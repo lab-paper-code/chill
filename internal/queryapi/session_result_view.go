@@ -9,16 +9,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// Result formats a measurement result view declares.
-const (
-	// ResultFormatSession is a stored measurement-session result.
-	ResultFormatSession = "Session"
-	// ResultFormatPrevious is a stored result of the per-batch Run method the
-	// session replaced. Its trials are not read; the request must be measured again.
-	ResultFormatPrevious = "PreviousFormat"
-)
-
-const resultFormatPreviousMessage = "This result was stored by the previous measurement method and cannot be read; delete the request and measure again."
+// ResultFormatSession is a stored measurement-session result.
+const ResultFormatSession = "Session"
 
 // SessionResultView is a session result with its large arrays replaced by
 // counts and the summaries a reader needs computed here.
@@ -159,12 +151,6 @@ func resultCampaign(task *api.BatchEnergyOptimization) BatchEnergyOptimizationRe
 		Reason:           MeasurementReasonSentence(*task),
 		Conditions:       append([]metav1.Condition(nil), task.Status.Conditions...),
 	}
-}
-
-// previousFormat reports a published result the session reader does not
-// decode: every result of a request without session settings.
-func previousFormat(task *api.BatchEnergyOptimization) bool {
-	return task.Status.Result != nil && task.Spec.Session == nil
 }
 
 // sessionFailureLabels name a session outcome in a failure summary.

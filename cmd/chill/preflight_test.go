@@ -74,9 +74,7 @@ func TestExecutePreflightWritesResolvingTable(t *testing.T) {
 	}
 	for _, want := range []string{
 		"READ_AT", "NAMESPACE", preflightTestNamespace, "CAMPAIGN", "hourly-curve", "RESOLVES", "yes",
-		"PLANNED_BATCH_SIZES", "1,2,4", "mobilenet.rknn", "rknnlite", "orangepi-5-plus", "fixed",
-		"ARTIFACT_FILES", "/artifact/mobilenet.rknn", "PREPROCESSOR", "mobilenet-imagenet",
-		"DATASET", "vqav2-val-subset",
+		"PLANNED_BATCH_SIZES", "1,2,4", "MINIMUM_SAMPLES", "59", "SLO_PERCENTILE", "95",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("table missing %q:\n%s", want, stdout.String())
@@ -160,16 +158,6 @@ func testBatchEnergyOptimizationPreflight(resolves bool) queryapi.BatchEnergyOpt
 		preflight.Reason = "referenced DeviceClass does not exist"
 		return preflight
 	}
-	preflight.Plan = json.RawMessage(`{
-		"schemaVersion":"chill.dacs.io/curve-plan.v1alpha9",
-		"shared":{
-			"plannedBatchSizes":[1,2,4],
-			"artifact":{"name":"mobilenet.rknn","executionPath":"rknnlite","files":["/artifact/mobilenet.rknn"]},
-			"preprocessor":{"name":"mobilenet-imagenet"},
-			"activeProtocol":{"dataset":{"name":"vqav2-val-subset"}},
-			"deviceClass":"orangepi-5-plus",
-			"powerMode":"fixed"
-		}
-	}`)
+	preflight.Session = &queryapi.SessionPreflightPlan{PlannedBatchSizes: []int{1, 2, 4}, MinimumSamples: 59, SLOPercentile: 95}
 	return preflight
 }

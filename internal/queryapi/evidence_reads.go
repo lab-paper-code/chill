@@ -70,10 +70,6 @@ func BuildBatchEnergyOptimizationResultError(
 		Assessment: assessment, ResultRows: []ResultRow{},
 	}
 	view.Campaign.StoredResult = stored
-	// An old request's result stays unreadable however its read failed.
-	if previousFormat(&task) {
-		view.ResultFormat, view.ResultFormatMessage = ResultFormatPrevious, resultFormatPreviousMessage
-	}
 	return BatchEnergyOptimizationResultError{
 		BatchEnergyOptimizationResult: view,
 		Code:                          code, Reason: reason, EvidenceError: EvidenceReadError{Code: code, Status: status},

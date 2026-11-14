@@ -227,13 +227,7 @@ func buildHandler(
 	handler, err := readapi.NewHandler(
 		passports,
 		querykube.MeasurementResultReader{ReadSource: results.Read, Catalog: queryCatalogSource(catalog)},
-		querykube.MeasurementPreflightReader{
-			ReadSource: preflights.Read,
-			Enrichment: &querykube.MeasurementPreflightService{
-				Reader: reader, Objects: measurements.objects, Catalog: queryCatalogSource(catalog),
-				Authorize: measurements.namespace, StoreName: opts.storeName, MaxEvidenceBytes: opts.maxEvidenceBytes,
-			},
-		},
+		preflights,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construct Query API HTTP handler: %w", err)

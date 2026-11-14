@@ -14,7 +14,6 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/queryapi"
@@ -149,7 +148,7 @@ func TestHandlerServesResolvingBatchEnergyOptimizationPreflight(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &preflight); err != nil {
 		t.Fatal(err)
 	}
-	if !preflight.Resolves || len(preflight.Plan) == 0 {
+	if !preflight.Resolves || preflight.Session == nil {
 		t.Fatalf("preflight = %#v", preflight)
 	}
 }
@@ -257,42 +256,18 @@ func TestHandlerUsesPathNamespaceForBatchEnergyOptimizationPreflight(t *testing.
 	}
 }
 
-func TestPreflightVariantContextUsesOnlyOptionalQuery(t *testing.T) {
-	queries := []string{
-		"?variantId=chosen", "?variantId=", "?variantId=a&variantId=b", "?other=a", "?variantId=%20a", "?variantId=%zz",
+func TestPreflightRejectsQuery(t *testing.T) {
+	reader := &recordingPreflightReader{snapshot: resolvingPreflightSnapshot(t)}
+	handler, err := NewHandler(&recordingPassportReader{}, &recordingCampaignResultReader{}, reader)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, query := range queries {
-		t.Run(query, func(t *testing.T) {
-			reader := &recordingPreflightReader{snapshot: resolvingPreflightSnapshot(t)}
-			handler, err := NewHandler(&recordingPassportReader{}, &recordingCampaignResultReader{}, reader)
-			if err != nil {
-				t.Fatal(err)
-			}
-			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, httptest.NewRequest(
-				http.MethodPost, testPreflightPath+query, preflightCampaignBody(t, testNamespace),
-			))
-			if query != "?variantId=chosen" {
-				if response.Code != http.StatusBadRequest || reader.calls != 0 {
-					t.Fatalf("invalid variant query = %d, calls %d", response.Code, reader.calls)
-				}
-				return
-			}
-			var view queryapi.BatchEnergyOptimizationPreflight
-			if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
-				t.Fatal(err)
-			}
-			if response.Code != http.StatusOK || reader.campaign.Annotations != nil || view.BatchPlan.VariantID != nil {
-				t.Fatalf("variant context changed submitted CR or was trusted: %#v", view)
-			}
-			found := false
-			for _, reason := range view.BatchPlan.Reasons {
-				found = found || reason.Code == "VariantConditionChanged"
-			}
-			if !found {
-				t.Fatal("unmatched variant context was lost")
-			}
-		})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodPost, testPreflightPath+"?variantId=chosen", preflightCampaignBody(t, testNamespace),
+	))
+	if response.Code != http.StatusBadRequest || reader.calls != 0 {
+		t.Fatalf("query = %d, calls %d", response.Code, reader.calls)
 	}
 }
 
@@ -499,54 +474,9 @@ func preflightCampaignBody(t *testing.T, namespace string) *bytes.Reader {
 func resolvingPreflightSnapshot(t *testing.T) queryapi.BatchEnergyOptimizationPreflightSnapshot {
 	t.Helper()
 	return queryapi.BatchEnergyOptimizationPreflightSnapshot{
-		ReadAt: time.Now(), Campaign: preflightCampaign(testNamespace), Plan: preflightPlan(t),
+		ReadAt: time.Now(), Campaign: preflightCampaign(testNamespace),
+		SessionPlan: &queryapi.SessionPreflightPlan{PlannedBatchSizes: []int{1, 2, 4}, MinimumSamples: 100, SLOPercentile: 0.99},
 	}
-}
-
-func preflightPlan(t *testing.T) profilederivation.CurvePlan {
-	t.Helper()
-	active := preflightProtocol("empirical-cadence-fixed-batch")
-	active.Dataset = &profilederivation.CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
-	plan, err := profilederivation.NewCurvePlan(profilederivation.CurvePlanSpec{
-		Name: "mobilenet-curve", LogicalModel: "mobilenet-v2", DeviceClass: "orangepi-5-plus",
-		NodeUID: "node-uid", RuntimeFamily: "rknnlite", Backend: "not-applicable",
-		RuntimeImage: "registry.example/chill/runtime@sha256:" + strings.Repeat("a", 64), PowerMode: "fixed",
-		MetricSource: profilederivation.CurveMetricSourceContract{
-			SourceKind: "prometheus", NodeName: "orangepi", Endpoint: "http://metrics",
-			PowerMetric: "power_watts",
-		},
-		ActiveProtocol: active,
-		IdleProtocol:   preflightProtocol("idle-model-loaded"),
-		Artifact: profilederivation.CurveArtifactContract{
-			ExecutionPath: "rknnlite", Name: "artifact", Files: []string{"/artifact/model.rknn"},
-			Image: "registry.example/chill/artifact:v1",
-		},
-		Preprocessor: profilederivation.CurvePreprocessorContract{
-			Name: "mobilenet-imagenet", Image: "registry.example/chill/preprocessor:v1", Architecture: "arm64",
-			Path: "/artifact/mobilenet-nhwc", Inputs: []string{"image"}, Outputs: []string{"label"},
-		},
-		PlannedBatchSizes: []int{1, 2, 4},
-	})
-	if err != nil {
-		t.Fatalf("build preflight plan: %v", err)
-	}
-	return plan
-}
-
-func preflightProtocol(mode string) profilederivation.CurveProtocolContract {
-	protocol := profilederivation.CurveProtocolContract{
-		WorkloadMode:    mode,
-		DurationSeconds: 30, MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900,
-		MetricDurationSeconds: 31, MetricObserverImage: "registry.example/chill/metric-observer:v1",
-		WorkloadObserverImage: "registry.example/chill/workload-observer:v1",
-		WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
-	}
-	if mode == "empirical-cadence-fixed-batch" {
-		protocol.DurationSeconds, protocol.MetricDurationSeconds = 120, 121
-		protocol.OperatingPoints = &profilederivation.OperatingPointsContract{Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
-			PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30, RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768}
-	}
-	return protocol
 }
 
 func passportSnapshot() queryapi.EvidencePassportSnapshot {

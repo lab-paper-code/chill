@@ -34,11 +34,9 @@ type BatchEnergyOptimizationResult struct {
 	Campaign   BatchEnergyOptimizationResultCampaign `json:"campaign"`
 	Assessment MeasurementAssessment                 `json:"assessment"`
 	ResultRows []ResultRow                           `json:"resultRows"`
-	// ResultFormat is ResultFormatSession or ResultFormatPrevious once a
-	// result is published, absent before.
-	ResultFormat        string             `json:"resultFormat,omitempty"`
-	ResultFormatMessage string             `json:"resultFormatMessage,omitempty"`
-	Session             *SessionResultView `json:"session,omitempty"`
+	// ResultFormat is ResultFormatSession once a result is published, absent before.
+	ResultFormat string             `json:"resultFormat,omitempty"`
+	Session      *SessionResultView `json:"session,omitempty"`
 }
 
 type BatchEnergyOptimizationResultCampaign struct {
@@ -77,9 +75,6 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 	}
 	if reference := campaign.Status.Result; reference != nil {
 		view.Campaign.StoredResult = &evidencestore.ObjectIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size}
-	}
-	if previousFormat(campaign) {
-		view.ResultFormat, view.ResultFormatMessage = ResultFormatPrevious, resultFormatPreviousMessage
 	}
 	view.Assessment.FailureSummary = MeasurementRequestFailures(*campaign, nil, view.Assessment)
 	return view, nil

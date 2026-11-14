@@ -43,22 +43,20 @@ func (q *KubernetesBatchEnergyOptimizationPreflightQuery) Read(
 	if err := validateObjectReference("BatchEnergyOptimization", campaign.Namespace, campaign.Name); err != nil {
 		return queryapi.BatchEnergyOptimizationPreflightSnapshot{}, err
 	}
-	if campaign.Spec.Session != nil {
-		snapshot := queryapi.BatchEnergyOptimizationPreflightSnapshot{ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy()}
-		if q.Session == nil {
-			snapshot.Reason = "this Query API does not resolve measurement sessions"
-			return snapshot, nil
-		}
-		plan, err := q.Session(ctx, campaign)
-		if err != nil {
-			snapshot.Reason = err.Error()
-			return snapshot, nil
-		}
-		snapshot.SessionPlan = &plan
+	snapshot := queryapi.BatchEnergyOptimizationPreflightSnapshot{ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy()}
+	if campaign.Spec.Session == nil {
+		snapshot.Reason = "the measurement has no session settings"
 		return snapshot, nil
 	}
-	return queryapi.BatchEnergyOptimizationPreflightSnapshot{
-		ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy(),
-		Reason: "a measurement request needs session settings",
-	}, nil
+	if q.Session == nil {
+		snapshot.Reason = "this Query API does not resolve measurement sessions"
+		return snapshot, nil
+	}
+	plan, err := q.Session(ctx, campaign)
+	if err != nil {
+		snapshot.Reason = err.Error()
+		return snapshot, nil
+	}
+	snapshot.SessionPlan = &plan
+	return snapshot, nil
 }

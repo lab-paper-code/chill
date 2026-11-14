@@ -409,31 +409,4 @@ func TestCoveragePreservesNonBlockingCompatibilityDiagnostics(t *testing.T) {
 	}
 }
 
-func TestCoverageConditionIdentitySurvivesSameConditionPreflight(t *testing.T) {
-	plan := batchEnergyOptimizationPreflightPlan(t)
-	cell := MeasurementCoverageCell{}
-	measurementID := "ns/measurement/uid"
-	variant := CoverageFindVariant(&cell, measurementID, plan.Shared(), "requested")
-	variant.RequestIDs = append(variant.RequestIDs, measurementID)
-	if variant.ID == measurementID || variant.ID != MeasurementVariantID(plan.Shared()) {
-		t.Fatal("condition identity was replaced by measurement identity")
-	}
-	view, err := BuildBatchEnergyOptimizationPreflight(BatchEnergyOptimizationPreflightSnapshot{
-		Plan: plan, VariantID: variant.ID, RequestsComplete: true,
-		Campaign:      api.BatchEnergyOptimization{},
-		ExactEvidence: []MeasurementPreflightEvidence{{Condition: plan.Shared(), Batches: []int{1}}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, reason := range view.BatchPlan.Reasons {
-		if reason.Code == batchPlanReasonVariantConditionChanged {
-			t.Fatal("unchanged frozen condition reported a changed variant")
-		}
-	}
-	if view.BatchPlan.VariantID == nil || *view.BatchPlan.VariantID != variant.ID {
-		t.Fatal("preflight did not retain the condition identity from coverage")
-	}
-}
-
 const coverageDuplicateDiagnostic = "Last entry selected."

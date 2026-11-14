@@ -50,8 +50,7 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) Read(
 		return queryapi.BatchEnergyOptimizationResultSnapshot{}, fmt.Errorf("get BatchEnergyOptimization %s: %w", key, err)
 	}
 	snapshot := queryapi.BatchEnergyOptimizationResultSnapshot{ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy()}
-	// A request without session settings carries a result no reader decodes.
-	if campaign.Status.Result == nil || campaign.Spec.Session == nil {
+	if campaign.Status.Result == nil {
 		return snapshot, nil
 	}
 	identity, err := terminalResultIdentity(campaign.Status.Result)

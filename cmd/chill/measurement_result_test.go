@@ -38,11 +38,10 @@ func TestMeasurementResultResponseSizeBoundary(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = fmt.Fprintf(w, `{"apiVersion":%q,"kind":"BatchEnergyOptimizationResult",`+
-					`"campaign":{"namespace":"ns","name":"task","phase":"Complete"},`+
-					`"resultFormatMessage":"`,
+					`"campaign":{"namespace":"ns","name":"task","phase":"Complete","reason":"`,
 					queryapi.BatchEnergyOptimizationResultAPIVersion)
 				_, _ = io.CopyN(w, resultDetailReader{}, test.detailBytes)
-				_, _ = io.WriteString(w, `"}`)
+				_, _ = io.WriteString(w, `"}}`)
 			}))
 			defer server.Close()
 			q := &measurementClient{ownerClient: &ownerClient{
@@ -59,7 +58,7 @@ func TestMeasurementResultResponseSizeBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if int64(len(result.ResultFormatMessage)) != test.detailBytes {
+			if int64(len(result.Campaign.Reason)) != test.detailBytes {
 				t.Fatal("valid result above Evidence Passport size limit was not retained")
 			}
 		})

@@ -241,11 +241,6 @@ func renderMeasurementResult(table io.Writer, result queryapi.BatchEnergyOptimiz
 			return err
 		}
 	}
-	if result.ResultFormat == queryapi.ResultFormatPrevious {
-		if _, err := fmt.Fprintf(table, "\nRESULT_FORMAT\n%s\n", result.ResultFormatMessage); err != nil {
-			return err
-		}
-	}
 	if result.Session != nil {
 		if err := renderSessionResult(table, *result.Session); err != nil {
 			return err

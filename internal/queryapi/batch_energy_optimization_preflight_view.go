@@ -1,15 +1,11 @@
 package queryapi
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
-	"slices"
 	"strings"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 // BatchEnergyOptimizationPreflightSnapshot pairs one campaign a caller intends to
@@ -17,18 +13,11 @@ import (
 // not resolve is the answer rather than a failed read, so the reason travels
 // beside the plan instead of replacing it.
 type BatchEnergyOptimizationPreflightSnapshot struct {
-	ReadAt           time.Time
-	Campaign         edgev1alpha1.BatchEnergyOptimization
-	Plan             profilederivation.CurvePlan
-	Reason           string
-	VariantID        string
-	Requests         []BatchEnergyOptimizationPreflightRequest
-	RequestsComplete bool
-	ExactEvidence    []MeasurementPreflightEvidence
-	BatchPlanReasons []MeasurementBatchPlanReason
-	// SessionPlan is what PrepareSession resolved for a request with session
-	// settings, nil when it did not resolve (Reason says why) or for a request
-	// without them.
+	ReadAt   time.Time
+	Campaign edgev1alpha1.BatchEnergyOptimization
+	Reason   string
+	// SessionPlan is what PrepareSession resolved, nil when it did not
+	// resolve (Reason says why).
 	SessionPlan *SessionPreflightPlan
 }
 
@@ -41,18 +30,6 @@ type SessionPreflightPlan struct {
 	// fewest that estimate the Workload's SLO percentile.
 	MinimumSamples int     `json:"minimumSamples"`
 	SLOPercentile  float64 `json:"sloPercentile"`
-}
-
-type BatchEnergyOptimizationPreflightRequest struct {
-	Campaign edgev1alpha1.BatchEnergyOptimization
-	Plan     profilederivation.CurvePlan
-}
-
-// MeasurementPreflightEvidence comes from the verified catalog or a UID-bound frozen plan.
-type MeasurementPreflightEvidence struct {
-	Condition  profilederivation.CurvePlanSpec
-	Batches    []int
-	InProgress bool
 }
 
 type MeasurementBatchPlanReason struct {
@@ -73,14 +50,8 @@ type MeasurementBatchPlan struct {
 
 const BatchEnergyOptimizationPreflightAPIVersion = "console.chill.dacs.io/v1alpha1"
 
-const MeasurementConditionExact = "exact"
-
-const batchPlanReasonVariantConditionChanged = "VariantConditionChanged"
-
 // BatchEnergyOptimizationPreflight is the bounded read model for one campaign that has
-// not been applied. The plan is republished as the canonical JSON the campaign
-// would have recorded, so what a preflight shows and what a campaign records
-// cannot drift apart.
+// not been applied.
 type BatchEnergyOptimizationPreflight struct {
 	APIVersion string                                   `json:"apiVersion"`
 	Kind       string                                   `json:"kind"`
@@ -88,9 +59,8 @@ type BatchEnergyOptimizationPreflight struct {
 	Campaign   BatchEnergyOptimizationPreflightCampaign `json:"campaign"`
 	Resolves   bool                                     `json:"resolves"`
 	Reason     string                                   `json:"reason,omitempty"`
-	Plan       json.RawMessage                          `json:"plan,omitempty"`
 	BatchPlan  MeasurementBatchPlan                     `json:"batchPlan"`
-	// Session is present when a request with session settings resolves.
+	// Session is present when the request resolves.
 	Session *SessionPreflightPlan `json:"session,omitempty"`
 }
 
@@ -100,50 +70,10 @@ type BatchEnergyOptimizationPreflightCampaign struct {
 	Spec      edgev1alpha1.BatchEnergyOptimizationSpec `json:"spec"`
 }
 
-func BuildBatchEnergyOptimizationPreflight(
-	snapshot BatchEnergyOptimizationPreflightSnapshot,
-) (BatchEnergyOptimizationPreflight, error) {
-	if snapshot.Campaign.Spec.Session != nil {
-		return buildSessionPreflight(snapshot)
-	}
-	resolved := snapshot.Plan.SchemaVersion() != ""
-	switch {
-	case resolved && strings.TrimSpace(snapshot.Reason) != "":
-		return BatchEnergyOptimizationPreflight{}, errors.New("a resolved preflight carries no reason")
-	case !resolved && strings.TrimSpace(snapshot.Reason) == "":
-		return BatchEnergyOptimizationPreflight{}, errors.New("an unresolved preflight requires a reason")
-	}
-
-	var plan json.RawMessage
-	if resolved {
-		canonical, err := snapshot.Plan.CanonicalJSON()
-		if err != nil {
-			return BatchEnergyOptimizationPreflight{}, fmt.Errorf("encode batch-energy-optimization preflight plan: %w", err)
-		}
-		plan = canonical
-	}
-
-	campaign := snapshot.Campaign.DeepCopy()
-	return BatchEnergyOptimizationPreflight{
-		APIVersion: BatchEnergyOptimizationPreflightAPIVersion,
-		Kind:       "BatchEnergyOptimizationPreflight",
-		ReadAt:     snapshot.ReadAt.UTC(),
-		Campaign: BatchEnergyOptimizationPreflightCampaign{
-			Namespace: campaign.Namespace,
-			Name:      campaign.Name,
-			Spec:      campaign.Spec,
-		},
-		Resolves:  resolved,
-		Reason:    snapshot.Reason,
-		Plan:      plan,
-		BatchPlan: BuildMeasurementBatchPlan(snapshot),
-	}, nil
-}
-
-// buildSessionPreflight answers whether a request with session settings
-// resolves, with the batch sizes the session may measure. A session measures
-// on its own Node, so no catalog or request overlap is reported.
-func buildSessionPreflight(snapshot BatchEnergyOptimizationPreflightSnapshot) (BatchEnergyOptimizationPreflight, error) {
+// BuildBatchEnergyOptimizationPreflight answers whether a request resolves,
+// with the batch sizes the session may measure. A session measures on its own
+// Node, so no catalog or request overlap is reported.
+func BuildBatchEnergyOptimizationPreflight(snapshot BatchEnergyOptimizationPreflightSnapshot) (BatchEnergyOptimizationPreflight, error) {
 	resolved := snapshot.SessionPlan != nil
 	switch {
 	case resolved && strings.TrimSpace(snapshot.Reason) != "":
@@ -171,106 +101,4 @@ func buildSessionPreflight(snapshot BatchEnergyOptimizationPreflightSnapshot) (B
 		},
 		Resolves: resolved, Reason: snapshot.Reason, BatchPlan: plan, Session: snapshot.SessionPlan,
 	}, nil
-}
-
-// BuildMeasurementBatchPlan never treats a projected request as immutable evidence.
-func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot) MeasurementBatchPlan {
-	result := MeasurementBatchPlan{
-		ConditionMatch: "unknown",
-		PlannedBatches: []int{}, MeasuredBatches: []int{}, InProgressBatches: []int{},
-		MissingBatches: []int{}, Reasons: append([]MeasurementBatchPlanReason{}, snapshot.BatchPlanReasons...),
-	}
-	if snapshot.Plan.SchemaVersion() == "" {
-		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{"PlanUnresolved", snapshot.Reason})
-		return result
-	}
-	result.ConditionMatch = "planned-only"
-	result.PlannedBatches = snapshot.Plan.PlannedBatchSizes()
-	result.SearchMayStopEarly = true
-	result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
-		Code:    "AutomaticBatchDiscovery",
-		Message: "The plan bounds automatic batch discovery; completed measurements may cover only a prefix.",
-	})
-	condition := snapshot.Plan.Shared()
-	id := MeasurementVariantID(condition)
-	selectedID := ""
-	selectedComplete := false
-	for _, evidence := range snapshot.ExactEvidence {
-		measured := evidence.Condition
-		if condition.RuntimeVersion == "" {
-			// The plan fixes the image; the runtime version is observed later.
-			measured.RuntimeVersion = ""
-		}
-		if MeasurementVariantID(measured) == id {
-			evidenceID := MeasurementVariantID(evidence.Condition)
-			if (snapshot.VariantID == "" || snapshot.VariantID == evidenceID) &&
-				(!evidence.InProgress || !selectedComplete) {
-				selectedID = evidenceID
-				selectedComplete = !evidence.InProgress
-			}
-			result.ConditionMatch = MeasurementConditionExact
-			for _, batch := range evidence.Batches {
-				if slices.Contains(result.PlannedBatches, batch) {
-					if evidence.InProgress {
-						result.InProgressBatches = append(result.InProgressBatches, batch)
-					} else {
-						result.MeasuredBatches = append(result.MeasuredBatches, batch)
-					}
-				}
-			}
-		}
-	}
-	if result.ConditionMatch == MeasurementConditionExact {
-		if snapshot.VariantID == "" {
-			result.VariantID = &selectedID
-		}
-		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
-			Code: "DeclarationUIDsNotRetained",
-			Message: "Exact matching covers retained frozen identities only; " +
-				"historical ModelSpec, DeviceClass and preprocessor declaration UIDs were not recorded.",
-		})
-	}
-	slices.Sort(result.MeasuredBatches)
-	result.MeasuredBatches = slices.Compact(result.MeasuredBatches)
-	slices.Sort(result.InProgressBatches)
-	result.InProgressBatches = slices.Compact(result.InProgressBatches)
-	result.InProgressBatches = slices.DeleteFunc(result.InProgressBatches, func(batch int) bool {
-		return slices.Contains(result.MeasuredBatches, batch)
-	})
-	if snapshot.VariantID != "" {
-		if snapshot.VariantID == selectedID && result.ConditionMatch == MeasurementConditionExact {
-			result.VariantID = &selectedID
-		} else {
-			result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
-				Code: batchPlanReasonVariantConditionChanged,
-				Message: "The selected variant is not confirmed for the current frozen condition; " +
-					"previous batch exclusions are invalid.",
-			})
-		}
-	}
-	for _, request := range snapshot.Requests {
-		if request.Plan.SchemaVersion() != "" && MeasurementVariantID(request.Plan.Shared()) == id {
-			result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
-				Code: "PlannedRequestOverlap",
-				Message: fmt.Sprintf(
-					"Request %s currently plans batches %v under matching conditions; "+
-						"this projected overlap alone does not confirm frozen execution or measurement.",
-					request.Campaign.Name, request.Plan.PlannedBatchSizes(),
-				),
-			})
-		}
-	}
-	if !snapshot.RequestsComplete {
-		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
-			Code: "RequestListUnconfirmed",
-			Message: "Current request coverage is not confirmed; " +
-				"an empty in-progress set does not prove no pending overlap.",
-		})
-	}
-	for _, batch := range result.PlannedBatches {
-		if !slices.Contains(result.MeasuredBatches, batch) && !slices.Contains(result.InProgressBatches, batch) {
-			result.MissingBatches = append(result.MissingBatches, batch)
-		}
-	}
-	return result
 }

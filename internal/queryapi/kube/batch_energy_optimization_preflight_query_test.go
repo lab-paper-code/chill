@@ -53,7 +53,7 @@ func TestPreflightWithoutSessionSettingsIsUnresolved(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err := queryapi.BuildBatchEnergyOptimizationPreflight(snapshot)
-	if err != nil || view.Resolves || view.Reason == "" {
+	if err != nil || view.Resolves || view.Reason != "the measurement has no session settings" {
 		t.Fatalf("view = %+v, err = %v", view, err)
 	}
 }
