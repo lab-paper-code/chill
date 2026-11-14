@@ -462,35 +462,7 @@ func TestHandBackFailedSessionAfterRestartWithMeasurementInstance(t *testing.T) 
 	if !controller.runtime.Recovery().Unknown || !controller.runtime.InstanceRecoveryUnknown(id) {
 		t.Fatal("restart did not fence the leftover physical executor")
 	}
-	for _, kind := range []string{servingstate.OperationRemove, servingstate.OperationStop, servingstate.OperationDrain} {
-		operation := servingstate.Operation{Kind: kind, Node: spec.Instance.Node, PodUID: string(pod.UID), Instance: id}
-		if err := operations.ValidateOperationBinding(ctx, operation); err == nil {
-			t.Fatalf("ordinary serving %s admitted an unverified executor", kind)
-		}
-	}
-	owned := servingstate.Operation{Kind: servingstate.OperationRemove, Node: spec.Instance.Node, PodUID: string(pod.UID)}
-	if err := operations.ValidateOperationBinding(ctx, owned); err == nil {
-		t.Fatal("ordinary serving Pod-only removal bypassed recovery")
-	}
-	if err := controller.measurement.ValidateOperationBinding(ctx, owned); err != nil {
-		t.Fatalf("measurement-owned removal required native recovery: %v", err)
-	}
-	wrongNode := owned
-	wrongNode.Node.UID = "replacement-node"
-	if err := controller.measurement.ValidateOperationBinding(ctx, wrongNode); err == nil {
-		t.Fatal("measurement-owned removal admitted a changed Node UID")
-	}
-	wrongPod := owned
-	wrongPod.PodUID = "another-pod"
-	if err := controller.measurement.ValidateOperationBinding(ctx, wrongPod); err == nil {
-		t.Fatal("measurement-owned removal admitted a different Pod UID")
-	}
-	if _, err := operations.AdmittedNode(ctx, spec.Instance.Node); err != servingops.ErrNodeInMeasurement {
-		t.Fatalf("serving operation admitted to measurement pool: %v", err)
-	}
-	if _, err := controller.measurement.AdmittedNode(ctx, spec.Instance.Node); err != nil {
-		t.Fatalf("measurement operation refused its held Node: %v", err)
-	}
+	assertRestartedOperationBindings(t, ctx, operations, controller.measurement, spec, pod, id)
 	h.admit()
 	if h.holder() != "" {
 		t.Fatalf("failed session kept its taint without native verification: %+v", controller.State().Results)
@@ -659,5 +631,38 @@ func TestAdmitSharedCPUWithoutOnlineInventory(t *testing.T) {
 				t.Fatalf("shared CPU admission required allocation inventory: %q holder=%q", got, h.holder())
 			}
 		})
+	}
+}
+
+func assertRestartedOperationBindings(t *testing.T, ctx context.Context, operations, measurement *servingops.Operations, spec servingstate.PrepareSpec, pod *core.Pod, id string) {
+	t.Helper()
+	for _, kind := range []string{servingstate.OperationRemove, servingstate.OperationStop, servingstate.OperationDrain} {
+		operation := servingstate.Operation{Kind: kind, Node: spec.Instance.Node, PodUID: string(pod.UID), Instance: id}
+		if err := operations.ValidateOperationBinding(ctx, operation); err == nil {
+			t.Fatalf("ordinary serving %s admitted an unverified executor", kind)
+		}
+	}
+	owned := servingstate.Operation{Kind: servingstate.OperationRemove, Node: spec.Instance.Node, PodUID: string(pod.UID)}
+	if err := operations.ValidateOperationBinding(ctx, owned); err == nil {
+		t.Fatal("ordinary serving Pod-only removal bypassed recovery")
+	}
+	if err := measurement.ValidateOperationBinding(ctx, owned); err != nil {
+		t.Fatalf("measurement-owned removal required native recovery: %v", err)
+	}
+	wrongNode := owned
+	wrongNode.Node.UID = "replacement-node"
+	if err := measurement.ValidateOperationBinding(ctx, wrongNode); err == nil {
+		t.Fatal("measurement-owned removal admitted a changed Node UID")
+	}
+	wrongPod := owned
+	wrongPod.PodUID = "another-pod"
+	if err := measurement.ValidateOperationBinding(ctx, wrongPod); err == nil {
+		t.Fatal("measurement-owned removal admitted a different Pod UID")
+	}
+	if _, err := operations.AdmittedNode(ctx, spec.Instance.Node); err != servingops.ErrNodeInMeasurement {
+		t.Fatalf("serving operation admitted to measurement pool: %v", err)
+	}
+	if _, err := measurement.AdmittedNode(ctx, spec.Instance.Node); err != nil {
+		t.Fatalf("measurement operation refused its held Node: %v", err)
 	}
 }

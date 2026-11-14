@@ -31,6 +31,7 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -976,37 +977,43 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 				measured[1].Request.Operation.Kind != servingstate.OperationRemove {
 				t.Fatalf("prepared instance was not removed: %+v", measured)
 			}
-			current, err := kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			holder, _ := profilingrun.MeasurementHolder(current)
-			pods, err := kube.CoreV1().Pods(fixture.Namespace).List(ctx, meta.ListOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			message := sessionCondition(beo.Status).Message
-			remaining := 0
-			for _, pod := range pods.Items {
-				if pod.Labels["job-name"] == "" {
-					remaining++
-				}
-			}
-			if !manager.runtime.Recovery().Unknown || !readyAtLoad || remaining != 0 || holder != "" || loads != 1 ||
-				measured[1].Request.Operation.Instance != "" || measured[1].Request.Operation.PodUID != string(fixture.UID) {
-				t.Fatalf("cleanup/handback failed: holder %q pods %d loads %d remove %+v", holder, remaining, loads, measured[1])
-			}
-			if scenario == "prepare insufficient" && (measured[0].Verdict != servingops.MeasurementInsufficient || measured[0].Reason == "") {
-				t.Fatalf("missing insufficient prepare cost: %+v", measured[0])
-			}
-			if completes {
-				if measured[1].Verdict != servingops.MeasurementInsufficient || measured[1].Reason == "" || beo.Status.CompletedBatches != 1 {
-					t.Fatalf("insufficient removal failed session: status %+v record %+v", beo.Status, measured[1])
-				}
-			} else if message != "session-load creation refused" {
-				t.Fatalf("load failure changed: status %+v", beo.Status)
-			}
+			assertSessionFailureCleanup(t, ctx, scenario, completes, kube, node, fixture, manager, beo, measured, readyAtLoad, loads)
 		})
+	}
+}
+
+func assertSessionFailureCleanup(t *testing.T, ctx context.Context, scenario string, completes bool, kube *kubefake.Clientset, node *core.Node, fixture *core.Pod,
+	manager *managerHarness, beo *edge.BatchEnergyOptimization, measured []servingops.OperationMeasurement, readyAtLoad bool, loads int) {
+	t.Helper()
+	current, err := kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder, _ := profilingrun.MeasurementHolder(current)
+	pods, err := kube.CoreV1().Pods(fixture.Namespace).List(ctx, meta.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := sessionCondition(beo.Status).Message
+	remaining := 0
+	for _, pod := range pods.Items {
+		if pod.Labels["job-name"] == "" {
+			remaining++
+		}
+	}
+	if !manager.runtime.Recovery().Unknown || !readyAtLoad || remaining != 0 || holder != "" || loads != 1 ||
+		measured[1].Request.Operation.Instance != "" || measured[1].Request.Operation.PodUID != string(fixture.UID) {
+		t.Fatalf("cleanup/handback failed: holder %q pods %d loads %d remove %+v", holder, remaining, loads, measured[1])
+	}
+	if scenario == "prepare insufficient" && (measured[0].Verdict != servingops.MeasurementInsufficient || measured[0].Reason == "") {
+		t.Fatalf("missing insufficient prepare cost: %+v", measured[0])
+	}
+	if completes {
+		if measured[1].Verdict != servingops.MeasurementInsufficient || measured[1].Reason == "" || beo.Status.CompletedBatches != 1 {
+			t.Fatalf("insufficient removal failed session: status %+v record %+v", beo.Status, measured[1])
+		}
+	} else if message != "session-load creation refused" {
+		t.Fatalf("load failure changed: status %+v", beo.Status)
 	}
 }
 

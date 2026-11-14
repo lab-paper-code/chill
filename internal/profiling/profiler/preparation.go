@@ -255,12 +255,9 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err != nil {
 		return PreparedRun{}, fmt.Errorf("decode resolved candidate report: %w", err)
 	}
-	runConfig, err := p.freeze(
+	runConfig := p.freeze(
 		request, candidate, report.RuntimeDelivery(), node, metrics, workload, actuation,
 	)
-	if err != nil {
-		return PreparedRun{}, err
-	}
 	if runConfig.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
 		originNode, gateway, err := p.resolveLoadOrigin(ctx, runConfig.TargetNode.Name)
 		if err != nil {
@@ -353,7 +350,7 @@ func (p *Preparer) PrepareSession(ctx context.Context, request SessionRequest) (
 	if err != nil {
 		return PreparedSession{}, err
 	}
-	runConfig, err := p.freeze(PreparationRequest{
+	runConfig := p.freeze(PreparationRequest{
 		Candidate: request.Candidate, TargetNode: request.Candidate.Node, Workload: request.Workload,
 		Measurement: profilingrun.MeasurementContract{
 			StartupWarmupIterations: request.WarmupIterations,
@@ -363,9 +360,6 @@ func (p *Preparer) PrepareSession(ctx context.Context, request SessionRequest) (
 			WorkloadUID: stop.WorkloadUID, WorkloadResourceVersion: stop.WorkloadResourceVersion,
 		},
 	}, candidate, candidate.Delivery, node, ResolvedMetricSource{}, ResolvedWorkloadObservation{}, nil)
-	if err != nil {
-		return PreparedSession{}, err
-	}
 	executionPolicy, err := p.execution.Resolve(ctx, runConfig)
 	if err != nil {
 		return PreparedSession{}, fmt.Errorf("resolve actor memory envelope: %w", err)
@@ -454,7 +448,7 @@ func (p *Preparer) freeze(
 	metrics ResolvedMetricSource,
 	workload ResolvedWorkloadObservation,
 	actuation *profilingrun.ActuationContract,
-) (profilingrun.RunConfig, error) {
+) profilingrun.RunConfig {
 	measurement := request.Measurement
 	if candidate.Dataset != nil {
 		dataset := *candidate.Dataset
@@ -487,7 +481,7 @@ func (p *Preparer) freeze(
 		Actuation: actuation,
 	}
 	config.Actor = config.ActorConfig()
-	return config, nil
+	return config
 }
 
 func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCandidate) error {

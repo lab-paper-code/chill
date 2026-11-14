@@ -92,46 +92,14 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 		return err
 	}
 	if id != "" && status.State.Terminated == nil {
-		model, err := servingstate.NativeModel(ctx, o.Store.Client(), pod)
-		if err != nil {
-			return err
-		}
-		if err = o.Wait(ctx, func() (bool, error) {
-			endpoint, e := servingstate.NativeInstanceEndpoint(ctx, o.Kube, pod)
-			if e != nil {
-				return false, e
-			}
-			state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: model})
-			if e != nil {
-				return false, e
-			}
-			if len(state.Requests) != 0 {
-				return false, nil
-			}
-			if proof != nil {
-				proof[id] = state
-			}
-			return true, nil
-		}); err != nil {
+		if err := o.awaitNativeDrain(ctx, pod, id, proof); err != nil {
 			return err
 		}
 	}
 	if o.Config.Measurement && id == "" {
-		// A single optional cost read never waits for native drain or gates DELETE.
-		if proof != nil && status != nil && status.ContainerID != "" && status.State.Running != nil {
-			if model, e := servingstate.NativeModel(ctx, o.Store.Client(), pod); e == nil {
-				if endpoint, e := servingstate.NativeInstanceEndpoint(ctx, o.Kube, pod); e == nil {
-					if state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: model}); e == nil {
-						proof[servingstate.PhysicalID(pod.UID, status.ContainerID)] = state
-					}
-				}
-			}
-		}
-		// A failed cost read may have consumed its context. Physical cleanup
-		// still gets a bounded opportunity to observe kubelet termination.
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		var cancel context.CancelFunc
+		ctx, cancel = o.measurementCleanupContext(ctx, pod, status, proof)
 		defer cancel()
-		ctx = cleanupCtx
 	}
 	if err = servingstate.PatchSourceFinalizer(ctx, o.Store.Client(), pod, true); err != nil {
 		return err
@@ -319,4 +287,47 @@ func (o *Operations) waitPowerState(ctx context.Context, node serving.NodeRefere
 		return err
 	}
 	return nil
+}
+
+// awaitNativeDrain waits until the native executor reports no outstanding requests.
+func (o *Operations) awaitNativeDrain(ctx context.Context, pod *core.Pod, id string, proof map[string]native.State) error {
+	model, err := servingstate.NativeModel(ctx, o.Store.Client(), pod)
+	if err != nil {
+		return err
+	}
+	return o.Wait(ctx, func() (bool, error) {
+		endpoint, e := servingstate.NativeInstanceEndpoint(ctx, o.Kube, pod)
+		if e != nil {
+			return false, e
+		}
+		state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: model})
+		if e != nil {
+			return false, e
+		}
+		if len(state.Requests) != 0 {
+			return false, nil
+		}
+		if proof != nil {
+			proof[id] = state
+		}
+		return true, nil
+	})
+}
+
+// measurementCleanupContext performs the optional native state read and returns
+// the bounded context used for physical cleanup.
+func (o *Operations) measurementCleanupContext(ctx context.Context, pod *core.Pod, status *core.ContainerStatus, proof map[string]native.State) (context.Context, context.CancelFunc) {
+	// A single optional cost read never waits for native drain or gates DELETE.
+	if proof != nil && status != nil && status.ContainerID != "" && status.State.Running != nil {
+		if model, e := servingstate.NativeModel(ctx, o.Store.Client(), pod); e == nil {
+			if endpoint, e := servingstate.NativeInstanceEndpoint(ctx, o.Kube, pod); e == nil {
+				if state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: model}); e == nil {
+					proof[servingstate.PhysicalID(pod.UID, status.ContainerID)] = state
+				}
+			}
+		}
+	}
+	// A failed cost read may have consumed its context. Physical cleanup
+	// still gets a bounded opportunity to observe kubelet termination.
+	return context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 }

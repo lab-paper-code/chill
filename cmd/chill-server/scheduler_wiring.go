@@ -113,9 +113,10 @@ func newSessionPrepare(
 		return nil, nil
 	}
 	namespace, name := opts.factsNamespace, opts.factsConfigMap
-	candidates, candidateErr := profilerkube.NewKubernetesSessionCandidateResolver(reader, profilerkube.CandidateResolverOptions{
-		Namespace: namespace, ConfigMapName: name, ConfigMapKey: opts.executionFactsKey,
-	})
+	candidates, candidateErr := profilerkube.NewKubernetesSessionCandidateResolver(reader,
+		profilerkube.CandidateResolverOptions{
+			Namespace: namespace, ConfigMapName: name, ConfigMapKey: opts.executionFactsKey,
+		})
 	nodes, nodeErr := profilerkube.NewKubernetesNodeResolver(reader)
 	workloads, workloadErr := profilerkube.NewKubernetesSessionWorkloadResolver(reader)
 	execution, executionErr := profilerkube.NewKubernetesSessionExecutionPolicyResolver(reader,

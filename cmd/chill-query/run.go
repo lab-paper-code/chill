@@ -174,14 +174,16 @@ func newCampaignPreflightQuery(
 	if err != nil {
 		return nil, fmt.Errorf("construct batch-energy-optimization preflight query: %w", err)
 	}
-	sessionCandidates, candidateErr := profilerkube.NewKubernetesSessionCandidateResolver(reader, profilerkube.CandidateResolverOptions{
-		Namespace: opts.namespace, ConfigMapName: opts.factSourceConfigMap, ConfigMapKey: opts.executionFactsKey,
-	})
+	sessionCandidates, candidateErr := profilerkube.NewKubernetesSessionCandidateResolver(reader,
+		profilerkube.CandidateResolverOptions{
+			Namespace: opts.namespace, ConfigMapName: opts.factSourceConfigMap, ConfigMapKey: opts.executionFactsKey,
+		})
 	sessionWorkloads, workloadErr := profilerkube.NewKubernetesSessionWorkloadResolver(reader)
-	sessionExecution, executionErr := profilerkube.NewKubernetesSessionExecutionPolicyResolver(reader, profilerkube.ExecutionPolicyResolverOptions{
-		Namespace: opts.namespace, ConfigMapName: opts.factSourceConfigMap,
-		ConfigMapKey: opts.executionPoliciesKey, MeasurementMemoryFraction: opts.measurementMemoryFraction,
-	})
+	sessionExecution, executionErr := profilerkube.NewKubernetesSessionExecutionPolicyResolver(reader,
+		profilerkube.ExecutionPolicyResolverOptions{
+			Namespace: opts.namespace, ConfigMapName: opts.factSourceConfigMap,
+			ConfigMapKey: opts.executionPoliciesKey, MeasurementMemoryFraction: opts.measurementMemoryFraction,
+		})
 	if err := errors.Join(candidateErr, workloadErr, executionErr); err != nil {
 		return nil, fmt.Errorf("construct session resolvers: %w", err)
 	}

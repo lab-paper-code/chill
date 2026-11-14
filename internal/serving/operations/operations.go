@@ -317,6 +317,16 @@ func (o *Operations) ValidateOperationBinding(ctx context.Context, operation ser
 	if string(actual.UID) != operation.Node.UID || actual.DeletionTimestamp != nil {
 		return errors.New("operation physical Node identity changed")
 	}
+	if err := validatePrepareResizeScope(operation); err != nil {
+		return err
+	}
+	if operation.Kind != servingstate.OperationRemove && operation.Kind != servingstate.OperationResize && operation.Kind != servingstate.OperationStop && operation.Kind != servingstate.OperationDrain {
+		return nil
+	}
+	return o.validatePhysicalInstanceBinding(ctx, operation, actual)
+}
+
+func validatePrepareResizeScope(operation servingstate.Operation) error {
 	if operation.Kind == servingstate.OperationPrepare || operation.Kind == servingstate.OperationResize {
 		if operation.Prepare == nil || operation.Prepare.Instance.Node != operation.Node {
 			return errors.New("prepare physical Node differs from operation scope")
@@ -336,10 +346,7 @@ func (o *Operations) ValidateOperationBinding(ctx context.Context, operation ser
 			return errors.New("resize replacement target differs from operation physical scope")
 		}
 	}
-	if operation.Kind != servingstate.OperationRemove && operation.Kind != servingstate.OperationResize && operation.Kind != servingstate.OperationStop && operation.Kind != servingstate.OperationDrain {
-		return nil
-	}
-	return o.validatePhysicalInstanceBinding(ctx, operation, actual)
+	return nil
 }
 
 func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operation servingstate.Operation, actual *core.Node) error {
