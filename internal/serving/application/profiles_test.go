@@ -155,7 +155,7 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 		spec.Bundle.Size != 0 || spec.Config.Policy.Batches != nil {
 		t.Fatal("selection fabricated readiness/evidence/publication")
 	}
-	if !reflect.DeepEqual(spec.Config.BatchSizes, []int{1, 2, 4}) || spec.Config.Policy.MaxBatchSize != 2 ||
+	if !reflect.DeepEqual(spec.Config.BatchSizes, []int{1, 2}) || spec.Config.Policy.MaxBatchSize != 2 ||
 		spec.MemoryBytes != uint64(profile.Condition.Actor.MemoryLimitBytes) || spec.Store.CredentialsSecretName != "actual-secret" {
 		t.Fatalf("lost measured startup/delivery facts: %+v", spec)
 	}
@@ -179,26 +179,13 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 	if _, err = service.measuredPreparation(context.Background(), profile, 2); err == nil {
 		t.Fatal("missing measured memory accepted")
 	}
-	// A profile measured with a command that warmed fewer batches does not
-	// restrict serving: serving warms every initialized batch.
-	for _, measured := range [][]int{{1}, {1, 2}, {1, 4}} {
-		t.Run(fmt.Sprint(measured), func(t *testing.T) {
-			profile := measuredAdoptionProfile()
-			profile.Condition.Actor.RunnerCommand = profile.Condition.Actor.RunnerCommand[:9] // through --warmup-iterations N
-			for _, k := range measured {
-				profile.Condition.Actor.RunnerCommand = append(profile.Condition.Actor.RunnerCommand, "--warmup-batch", fmt.Sprint(k))
-			}
-			profile.Condition.Actor.WarmupBatchSizes = measured
-			spec, err := service.measuredPreparation(context.Background(), profile, 2)
-			if err != nil {
-				t.Fatal(err)
-			}
-			command := strings.Join(spec.Config.RunnerCommand, " ")
-			if !strings.Contains(command, "--warmup-batch 1 --warmup-batch 2 --warmup-batch 4") || !reflect.DeepEqual(spec.Config.WarmupBatchSizes, []int{1, 2, 4}) ||
-				!reflect.DeepEqual(spec.Config.BatchSizes, []int{1, 2, 4}) {
-				t.Fatalf("serving warms %v of initialized %v", spec.Config.RunnerCommand, spec.Config.BatchSizes)
-			}
-		})
+	// The configuration allows batch 4, but the session stopped there (a
+	// capacity limit) and measured 1 and 2: serving initializes and warms
+	// exactly the measured sizes, never the one that ran out of memory.
+	command := strings.Join(spec.Config.RunnerCommand, " ")
+	if !strings.Contains(command, "--warmup-batch 1 --warmup-batch 2") || strings.Contains(command, "--warmup-batch 4") ||
+		!reflect.DeepEqual(spec.Config.WarmupBatchSizes, []int{1, 2}) {
+		t.Fatalf("serving warms %v of initialized %v", spec.Config.RunnerCommand, spec.Config.BatchSizes)
 	}
 }
 
