@@ -955,6 +955,9 @@ func capacityRawPlannerForTest(p *capacityPlanner) {
 		if ws.d.SLO.TargetLatency > 0 {
 			definition.SLO.TargetLatency = ws.d.SLO.TargetLatency
 		}
+		if ws.d.SLO.Percentile > 0 {
+			definition.SLO.Percentile = ws.d.SLO.Percentile
+		}
 		ws.d = &definition
 		p.index[definition.UID] = w
 		p.snapshot.Workloads = append(p.snapshot.Workloads, ws.d)
@@ -1013,8 +1016,9 @@ func capacityRawPlannerForTest(p *capacityPlanner) {
 	p.keepWatts = p.evaluateEnergyForRoutes(make([]int, len(p.plans)), 0, nil, 1, p.keep.Routing).joules
 }
 
-// capacityRandomPlanner builds a planner over synthetic node plans.
-func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int) *capacityPlanner {
+// capacityRandomPlanner builds a planner over synthetic node plans whose
+// workloads share one SLO percentile.
+func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int, percentile float64) *capacityPlanner {
 	p := &capacityPlanner{ctx: context.Background(), settings: capacityTestSettings}
 	// Keep all 300 exhaustive plan spaces, with a one-second finite cohort.
 	p.settings.ComparisonPeriod = time.Second
@@ -1023,7 +1027,7 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int) *capacityPlanne
 		if rng.IntN(4) > 0 {
 			rate = 10 + 90*rng.Float64()
 		}
-		ws := capacityWorkload{d: &Definition{UID: fmt.Sprint("w", w), SLO: SLO{TargetLatency: time.Duration((0.2 + 2*rng.Float64()) * float64(time.Second))}}, rate: rate, queued: rng.IntN(6)}
+		ws := capacityWorkload{d: &Definition{UID: fmt.Sprint("w", w), SLO: SLO{Percentile: percentile, TargetLatency: time.Duration((0.2 + 2*rng.Float64()) * float64(time.Second))}}, rate: rate, queued: rng.IntN(6)}
 		p.ws = append(p.ws, ws)
 	}
 	for n := range nodes {
@@ -1085,7 +1089,7 @@ func capacityBruteForce(p *capacityPlanner) *capacityResult {
 // every plan set, so the search equals the exact finite-demand brute force.
 func TestCapacitySearchMatchesBruteForce(t *testing.T) {
 	for trial := range 300 {
-		p := capacityRandomPlanner(rand.New(rand.NewPCG(uint64(trial), 7)), 1+trial%3, 1+trial%3)
+		p := capacityRandomPlanner(rand.New(rand.NewPCG(uint64(trial), 7)), 1+trial%3, 1+trial%3, 95)
 		best := capacitySearchForTest(t, p)
 		exact := capacityBruteForce(p)
 		if best.feasible != (exact != nil) || exact != nil && (best.key != exact.key || best.joules != exact.joules) {

@@ -9,8 +9,8 @@ import (
 
 // Rebuild synthetic targets through the production plan path so retained Ready
 // supply, placement identity and replay actions describe the same transition.
-func capacityV2RandomPlanner(trial int) *capacityPlanner {
-	p := capacityRandomPlanner(rand.New(rand.NewPCG(uint64(trial), 7)), 1+trial%3, 1+trial%3)
+func capacityV2RandomPlanner(trial int, percentile float64) *capacityPlanner {
+	p := capacityRandomPlanner(rand.New(rand.NewPCG(uint64(trial), 7)), 1+trial%3, 1+trial%3, percentile)
 	p.settings.PlanSearchStrategy = "v2"
 	p.resolveCapacity()
 	for n, plans := range p.plans {
@@ -39,13 +39,18 @@ func capacityV2RandomPlanner(trial int) *capacityPlanner {
 }
 
 // TestCapacityV2HeuristicAdmitsExactFeasible asserts the property for uniformly
-// spaced (or empty) p100 arrival streams with captured initial queues, plus a
-// spaced p95 stream with an initial idle gap. These fixtures exclude simultaneous
-// future-arrival bursts; the point score does not generally bound their quantile.
+// spaced (or empty) arrival streams with captured initial queues whose SLO
+// quantile is the cohort maximum, plus a spaced p95 stream with an initial idle
+// gap. The fluid score charges each phase its last request's delay, a phase
+// maximum, so it bounds only a quantile that is the maximum. The Workload API
+// admits percentiles below 100 only, so random workloads use p99 and are judged
+// when their cohort has fewer than 100 requests, where rank ceil(0.99n) is n.
+// These fixtures exclude simultaneous future-arrival bursts; the point score
+// does not generally bound their quantile.
 func TestCapacityV2HeuristicAdmitsExactFeasible(t *testing.T) {
 	checked := 0
 	for trial := range 300 {
-		p := capacityV2RandomPlanner(trial)
+		p := capacityV2RandomPlanner(trial, 99)
 		if trial == 0 {
 			p = capacityDelayedArrivalPlanner(t)
 		}
@@ -68,15 +73,19 @@ func TestCapacityV2HeuristicAdmitsExactFeasible(t *testing.T) {
 							continue
 						}
 						var quantile *float64
+						population := 0
 						for _, score := range exact.feedback {
 							if score.UID == ws.d.UID {
-								quantile = score.SuccessQuantileNanos
+								quantile, population = score.SuccessQuantileNanos, score.Population
 							}
+						}
+						if trial > 0 && empiricalSLORank(population, ws.d.SLO.Percentile) != population {
+							continue // a below-maximum quantile is outside the property
 						}
 						if quantile == nil {
 							t.Errorf("trial=%d choice=%v w=%s exact quantile missing, fluid excess=%g eligible=%t", trial, choice, ws.d.UID, excess, eligible)
 						} else {
-							t.Errorf("trial=%d choice=%v route=%g w=%s target=%s exactQuantile=%g exactSlackNanos=%g fluidExcess=%g mu=%g retained=%g", trial, choice, key.route, ws.d.UID, ws.d.SLO.TargetLatency, *quantile, float64(ws.d.SLO.TargetLatency)-*quantile, excess, sum.routingRate, sum.retainedRoutingRate)
+							t.Errorf("trial=%d choice=%v route=%g w=%s target=%s exactQuantile=%g exactSlackNanos=%g fluidExcess=%g mu=%g retained=%g population=%d", trial, choice, key.route, ws.d.UID, ws.d.SLO.TargetLatency, *quantile, float64(ws.d.SLO.TargetLatency)-*quantile, excess, sum.routingRate, sum.retainedRoutingRate, population)
 						}
 					}
 				}
@@ -101,7 +110,7 @@ func TestCapacityV2HeuristicAdmitsExactFeasible(t *testing.T) {
 
 func TestCapacitySearchV2MatchesBruteForce(t *testing.T) {
 	for trial := range 300 {
-		p := capacityV2RandomPlanner(trial)
+		p := capacityV2RandomPlanner(trial, 95)
 		best, err := p.search(time.Time{})
 		if err != nil {
 			t.Fatal(err)

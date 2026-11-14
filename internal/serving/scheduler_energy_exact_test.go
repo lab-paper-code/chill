@@ -279,7 +279,7 @@ func TestCapacityEnergyUndecidableSkipsReplayWithoutChangingSelection(t *testing
 				if marked == 0 && !recovery || marked != 0 && recovery {
 					t.Fatalf("recovery=%t skipped markers=%d", recovery, marked)
 				}
-				if !reflect.DeepEqual(before, after) {
+				if !reflect.DeepEqual(withoutDerivedDistributions(before), withoutDerivedDistributions(after)) {
 					t.Fatalf("preflight changed full decision beyond timing and replaySkipped: before=%+v after=%+v", before, after)
 				}
 				want := counts[0] - marked
@@ -292,4 +292,30 @@ func TestCapacityEnergyUndecidableSkipsReplayWithoutChangingSelection(t *testing
 			})
 		}
 	}
+}
+
+// withoutDerivedDistributions drops each profile's hydrated distribution. It is
+// derived from the ServiceSamples still compared; its window tables are
+// per-object caches whose addresses differ between independently built fixtures.
+func withoutDerivedDistributions(d SchedulerDecision) SchedulerDecision {
+	strip := func(c *SchedulerCandidate) {
+		c.Instances = slices.Clone(c.Instances)
+		for i := range c.Instances {
+			if p := c.Instances[i].Profile; p != nil {
+				q := *p
+				q.Batches = slices.Clone(p.Batches)
+				for k := range q.Batches {
+					q.Batches[k].ServiceDistribution = nil
+				}
+				c.Instances[i].Profile = &q
+			}
+		}
+	}
+	strip(&d.Keep)
+	if d.Target != nil {
+		target := *d.Target
+		strip(&target)
+		d.Target = &target
+	}
+	return d
 }
