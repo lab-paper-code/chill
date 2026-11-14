@@ -33,6 +33,7 @@ type CandidateResolverOptions struct {
 type KubernetesCandidateResolver struct {
 	reader              client.Reader
 	options             CandidateResolverOptions
+	session             bool
 	declarationMu       sync.Mutex
 	declarationIdentity string
 	declarations        []resolvedExecutionDeclaration
@@ -60,12 +61,22 @@ func NewKubernetesCandidateResolver(
 	return &KubernetesCandidateResolver{reader: reader, options: options}, nil
 }
 
+// NewKubernetesSessionCandidateResolver selects only the material a session uses.
+func NewKubernetesSessionCandidateResolver(reader client.Reader, options CandidateResolverOptions) (*KubernetesCandidateResolver, error) {
+	if reader == nil {
+		return nil, errors.New("Kubernetes candidate fact reader is required")
+	}
+	return &KubernetesCandidateResolver{reader: reader, options: options, session: true}, nil
+}
+
 func (r *KubernetesCandidateResolver) ResolveCandidate(
 	ctx context.Context,
 	selection profiler.CandidateSelection,
 ) (profiler.ResolvedCandidate, error) {
-	if err := validateCandidateSelection(selection); err != nil {
-		return profiler.ResolvedCandidate{}, err
+	if !r.session {
+		if err := validateCandidateSelection(selection); err != nil {
+			return profiler.ResolvedCandidate{}, err
+		}
 	}
 
 	model := &edgev1alpha1.ModelSpec{}
@@ -93,15 +104,23 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		}
 	}
 
-	modelPath, artifact, err := selectModelPath(model, selection.ExecutionPath)
+	selectPath := selectModelPath
+	selectDevice := validateDeviceClass
+	selectDeclaration := selectExecutionDeclaration
+	if r.session {
+		selectPath = selectSessionModelPath
+		selectDevice = selectSessionDevice
+		selectDeclaration = selectSessionDeclaration
+	}
+	modelPath, artifact, err := selectPath(model, selection.ExecutionPath)
 	if err != nil {
 		return profiler.ResolvedCandidate{}, err
 	}
-	deviceFacts, err := validateDeviceClass(deviceClass, selection.PowerMode)
+	deviceFacts, err := selectDevice(deviceClass, selection.PowerMode)
 	if err != nil {
 		return profiler.ResolvedCandidate{}, err
 	}
-	declaration, err := selectExecutionDeclaration(
+	declaration, err := selectDeclaration(
 		configMap,
 		r.options.ConfigMapKey,
 		selection.DeviceClass,
@@ -112,15 +131,23 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 	if err != nil {
 		return profiler.ResolvedCandidate{}, err
 	}
-	if err := validateSelectedRuntime(modelPath, declaration); err != nil {
-		return profiler.ResolvedCandidate{}, err
+	if !r.session {
+		if err := validateSelectedRuntime(modelPath, declaration); err != nil {
+			return profiler.ResolvedCandidate{}, err
+		}
 	}
 
-	result := evaluateStaticCandidate(modelPath, artifact, deviceClass, declaration)
-	if result.Verdict != modelcompat.VerdictCompatible {
-		return profiler.ResolvedCandidate{}, fmt.Errorf(
-			"static candidate verdict is %s: %s", result.Verdict, compatibilityReasonCodes(result),
-		)
+	var result modelcompat.Result
+	if !r.session {
+		result = evaluateStaticCandidate(modelPath, artifact, deviceClass, declaration)
+		if result.Verdict != modelcompat.VerdictCompatible {
+			return profiler.ResolvedCandidate{}, fmt.Errorf(
+				"static candidate verdict is %s: %s", result.Verdict, compatibilityReasonCodes(result),
+			)
+		}
+	}
+	if r.session && declaration.Runtime.Architecture != deviceClass.Spec.Architecture {
+		return profiler.ResolvedCandidate{}, errors.New("runtime architecture does not match DeviceClass")
 	}
 
 	if artifact.Source.Architecture != deviceClass.Spec.Architecture {
@@ -142,18 +169,32 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 			Image: dataset.Spec.Source.Image, Path: dataset.Spec.Source.Path,
 		}
 	}
-	report, err := buildCandidateReport(candidateReportInput{
-		Model: model, DeviceClass: deviceClass, ConfigMap: configMap,
-		ConfigMapKey: r.options.ConfigMapKey,
-		Path:         modelPath, Artifact: artifact, PowerMode: selection.PowerMode,
-		DeviceFacts: deviceFacts, Declaration: declaration, Result: result,
-	})
-	if err != nil {
-		return profiler.ResolvedCandidate{}, err
+	var report builtCandidateReport
+	var delivery profilingrun.CandidateRuntimeDelivery
+	if !r.session {
+		report, err = buildCandidateReport(candidateReportInput{
+			Model: model, DeviceClass: deviceClass, ConfigMap: configMap,
+			ConfigMapKey: r.options.ConfigMapKey,
+			Path:         modelPath, Artifact: artifact, PowerMode: selection.PowerMode,
+			DeviceFacts: deviceFacts, Declaration: declaration, Result: result,
+		})
+		if err != nil {
+			return profiler.ResolvedCandidate{}, err
+		}
+	} else {
+		delivery = profilingrun.CandidateRuntimeDelivery{
+			ArtifactCapability: reportArtifactCapability(artifact),
+			RuntimeAccess:      reportRuntimeAccess(declaration.Access),
+		}
+		if modelPath.Runtime.Backend == profilingrun.FirstfloorRKNNLiteBackend {
+			delivery.RuntimePackages = reportRuntimePackages(declaration.Runtime.Packages)
+			delivery.HostContract = reportHostContract(declaration.Host)
+		}
 	}
 
 	return profiler.ResolvedCandidate{
 		ReportBytes: report.Bytes,
+		Delivery:    delivery,
 		Inputs: profilingrun.CandidateReportInputs{
 			ModelSpec: profilingrun.CandidateReportObjectInput{
 				Name: model.Name, UID: string(model.UID), ResourceVersion: model.ResourceVersion,

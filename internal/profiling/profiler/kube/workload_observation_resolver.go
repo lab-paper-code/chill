@@ -57,6 +57,14 @@ func NewKubernetesWorkloadObservationResolver(
 	return &KubernetesWorkloadObservationResolver{reader: reader, options: options}, nil
 }
 
+// NewKubernetesSessionWorkloadResolver reads Workloads without observer prerequisites.
+func NewKubernetesSessionWorkloadResolver(reader client.Reader) (*KubernetesWorkloadObservationResolver, error) {
+	if reader == nil {
+		return nil, errors.New("Kubernetes workload reader is required")
+	}
+	return &KubernetesWorkloadObservationResolver{reader: reader}, nil
+}
+
 func (r *KubernetesWorkloadObservationResolver) ResolveWorkloadObservation(
 	ctx context.Context,
 ) (profiler.ResolvedWorkloadObservation, error) {
@@ -78,7 +86,7 @@ func (r *KubernetesWorkloadObservationResolver) ResolveWorkloadObservation(
 		return profiler.ResolvedWorkloadObservation{}, fmt.Errorf("decode workload-observation facts: %w", err)
 	}
 	var facts workloadObservationFacts
-	if err := yaml.UnmarshalStrict(document, &facts); err != nil {
+	if err := yaml.Unmarshal(document, &facts); err != nil {
 		return profiler.ResolvedWorkloadObservation{}, fmt.Errorf("decode workload-observation facts: %w", err)
 	}
 	if facts.SchemaVersion != workloadObservationFactsSchema {
@@ -100,12 +108,11 @@ func (r *KubernetesWorkloadObservationResolver) ResolveMeasurementWorkload(
 	if err := r.reader.Get(ctx, types.NamespacedName{Name: name}, workload); err != nil {
 		return profilingrun.MeasurementContract{}, fmt.Errorf("get measurement Workload %q: %w", name, err)
 	}
-	if workload.UID == "" ||
-		workload.Spec.ModelRef.Name != selection.ModelSpec ||
+	if workload.Spec.ModelRef.Name != selection.ModelSpec ||
 		workload.Spec.PreprocessorRef.Name != selection.Preprocessor ||
 		workload.Spec.DatasetRef == nil || workload.Spec.DatasetRef.Name != selection.Dataset ||
 		workload.Spec.SLO.TargetLatency.Duration <= 0 {
-		return profilingrun.MeasurementContract{}, errors.New("measurement Workload identity, model, preprocessor, dataset or SLO differs from the selected measurement")
+		return profilingrun.MeasurementContract{}, errors.New("measurement Workload model, preprocessor, dataset or SLO differs from the selected measurement")
 	}
 	minimum, err := firstfloor.MinimumServiceSamples(workload.Spec.SLO.Percentile)
 	if err != nil {

@@ -26,6 +26,7 @@ type ExecutionPolicyResolverOptions struct {
 type KubernetesExecutionPolicyResolver struct {
 	reader  client.Reader
 	options ExecutionPolicyResolverOptions
+	session bool
 }
 
 func NewKubernetesExecutionPolicyResolver(
@@ -50,6 +51,14 @@ func NewKubernetesExecutionPolicyResolver(
 	return &KubernetesExecutionPolicyResolver{reader: reader, options: options}, nil
 }
 
+// NewKubernetesSessionExecutionPolicyResolver omits unused worker prerequisites.
+func NewKubernetesSessionExecutionPolicyResolver(reader client.Reader, options ExecutionPolicyResolverOptions) (*KubernetesExecutionPolicyResolver, error) {
+	if reader == nil {
+		return nil, errors.New("Kubernetes API reader is required")
+	}
+	return &KubernetesExecutionPolicyResolver{reader: reader, options: options, session: true}, nil
+}
+
 func (r *KubernetesExecutionPolicyResolver) Resolve(
 	ctx context.Context,
 	config profilingrun.RunConfig,
@@ -59,38 +68,44 @@ func (r *KubernetesExecutionPolicyResolver) Resolve(
 	if err := r.reader.Get(ctx, key, configMap); err != nil {
 		return profiler.FrozenExecutionPolicy{}, fmt.Errorf("get execution-policy ConfigMap %s: %w", key, err)
 	}
-	if _, exists := configMap.BinaryData[r.options.ConfigMapKey]; exists {
-		return profiler.FrozenExecutionPolicy{}, profiler.InvalidExecutionPolicy(
-			"execution-policy ConfigMap key must be stored in text data",
-		)
+	raw := []byte(configMap.Data[r.options.ConfigMapKey])
+	if len(raw) == 0 {
+		raw = configMap.BinaryData[r.options.ConfigMapKey]
 	}
-	raw, exists := configMap.Data[r.options.ConfigMapKey]
-	if !exists || raw == "" {
+	if len(raw) == 0 {
 		return profiler.FrozenExecutionPolicy{}, profiler.InvalidExecutionPolicy(
 			"execution-policy ConfigMap %s is missing key %q",
 			key,
 			r.options.ConfigMapKey,
 		)
 	}
-	frozen, err := profiler.FreezeConfiguredExecutionPolicy([]byte(raw), config, profiler.ExecutionPolicySource{
+	freeze := profiler.FreezeConfiguredExecutionPolicy
+	if r.session {
+		freeze = profiler.FreezeSessionExecutionPolicy
+	}
+	frozen, err := freeze(raw, config, profiler.ExecutionPolicySource{
 		Kind: profiler.ConfigMapExecutionPolicySourceKind, Namespace: configMap.Namespace, Name: configMap.Name,
 		UID: string(configMap.UID), ResourceVersion: configMap.ResourceVersion, Key: r.options.ConfigMapKey,
 	})
 	if err != nil {
 		return profiler.FrozenExecutionPolicy{}, profiler.NewTerminalResolutionError(profilingrun.ResolutionReasonExecutionPolicyInvalid, err)
 	}
-	node := &corev1.Node{}
-	if err := r.reader.Get(ctx, types.NamespacedName{Name: config.TargetNode.Name}, node); err != nil {
-		return profiler.FrozenExecutionPolicy{}, fmt.Errorf("get measurement Node memory: %w", err)
+	memory := config.TargetNode.AllocatableMemoryBytes
+	if !r.session {
+		node := &corev1.Node{}
+		if err := r.reader.Get(ctx, types.NamespacedName{Name: config.TargetNode.Name}, node); err != nil {
+			return profiler.FrozenExecutionPolicy{}, fmt.Errorf("get measurement Node memory: %w", err)
+		}
+		if string(node.UID) != config.TargetNode.UID {
+			return profiler.FrozenExecutionPolicy{}, errors.New("measurement Node UID changed since resolution")
+		}
+		allocatable := node.Status.Allocatable[corev1.ResourceMemory]
+		memory = allocatable.Value()
 	}
-	if string(node.UID) != config.TargetNode.UID {
-		return profiler.FrozenExecutionPolicy{}, errors.New("measurement Node UID changed since resolution")
-	}
-	allocatable, ok := node.Status.Allocatable[corev1.ResourceMemory]
-	if !ok || allocatable.Sign() <= 0 {
+	if memory <= 0 {
 		return profiler.FrozenExecutionPolicy{}, errors.New("measurement Node has no positive allocatable memory")
 	}
-	limit := int64(float64(allocatable.Value()) * r.options.MeasurementMemoryFraction)
+	limit := int64(float64(memory) * r.options.MeasurementMemoryFraction)
 	frozen.Policy.RuntimeMemoryLimitBytes = min(frozen.Policy.RuntimeMemoryLimitBytes, limit)
 	if frozen.Policy.RuntimeMemoryLimitBytes < frozen.Policy.RuntimeMemoryRequestBytes {
 		return profiler.FrozenExecutionPolicy{}, errors.New("measurement Node memory limit is below the runtime memory request")

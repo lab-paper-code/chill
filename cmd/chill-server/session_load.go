@@ -17,12 +17,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	gateway "github.com/lab-paper-code/chill/internal/serving/firstfloor"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
 // session-load drives the load levels of one batch size of a profile
@@ -36,15 +34,12 @@ const (
 	sessionTerminationBytes = 3072
 	sessionErrorBytes       = 1024
 	sessionDetailBytes      = 512
-	// Native accepts a request workload identifier of at most 256 bytes.
-	sessionIdentifierBytes = 256
 
 	sessionSaturation = "saturation"
 	sessionMid        = "mid"
 	sessionSparse     = "sparse"
 
 	sessionSamplesReached         = "SamplesReached"
-	sessionPredictedOverLimit     = "PredictedDurationExceedsLimit"
 	sessionServiceOverLifetime    = "BatchServiceExceedsLifetime"
 	sessionAllocationBeforeBatch  = "AllocationFailedBeforeAnyBatch"
 	sessionAllocationAfterBatch   = "AllocationFailedAfterCompletedBatch"
@@ -98,8 +93,8 @@ func sessionLoadCommand(args []string, terminationPath string, stdout io.Writer)
 	if encodeErr != nil {
 		return errors.Join(err, encodeErr)
 	}
-	_, writeErr := stdout.Write(append(message, '\n'))
-	return errors.Join(err, writeErr, os.WriteFile(terminationPath, message, 0o600))
+	_, _ = stdout.Write(append(message, '\n'))
+	return errors.Join(err, os.WriteFile(terminationPath, message, 0o600))
 }
 
 func parseSessionLoad(args []string) (sessionLoadConfig, error) {
@@ -136,26 +131,12 @@ func parseSessionLoad(args []string) (sessionLoadConfig, error) {
 		*fields == "" || c.dataset == "" || c.definition == "":
 		return c, errors.New("session-load requires an http --native-endpoint, --model, --fields, --dataset-dir " +
 			"and --definition")
-	case c.batch < 1 || c.minSamples < 1 || c.requestUpperBytes < 1:
-		return c, errors.New("session-load requires positive --batch, --min-samples and --request-upper-bytes")
-	case !sessionIdentifier(c.workloadUID(sessionSaturation)):
-		return c, fmt.Errorf("session-load --session must make %q a native workload identifier: "+
-			"at most %d bytes of UTF-8 without spaces or control characters", c.workloadUID(sessionSaturation),
-			sessionIdentifierBytes)
-	case !(c.sloPercentile > 0 && c.sloPercentile <= 100) || c.sloTarget <= 0 || c.margin <= 0 || c.lifetime <= c.margin:
-		return c, errors.New("session-load requires an SLO and a request lifetime longer than its delivery margin")
-	case c.meterLag < 0 || c.powerWindow <= 0 || c.sparseMeanGap <= 0 || c.levelLimit <= c.meterLag+c.powerWindow ||
-		!(c.midRatio > 0 && c.midRatio < 1):
-		return c, errors.New("session-load requires a level limit above meter lag plus power window, " +
-			"a positive sparse mean gap and a mid ratio between 0 and 1")
+	case c.batch < 1 || c.minSamples < 1 || c.requestUpperBytes < 1 || c.maxQueueRequests < 1 || c.maxQueueBytes < 1:
+		return c, errors.New("session-load requires positive batch, sample, request and queue counts")
+	case c.levelLimit <= 0:
+		return c, errors.New("session-load requires a positive --level-limit")
 	}
-	return c, servingkube.SessionQueueCapacity(c.batch, c.maxQueueRequests, c.maxQueueBytes, c.requestUpperBytes)
-}
-
-// sessionIdentifier mirrors the native request identity rule.
-func sessionIdentifier(s string) bool {
-	return s != "" && len(s) <= sessionIdentifierBytes && utf8.ValidString(s) &&
-		!strings.ContainsFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) })
+	return c, nil
 }
 
 type sessionLoad struct {
@@ -180,9 +161,8 @@ func newSessionLoad(c sessionLoadConfig, records []profilingRecord) *sessionLoad
 	return s
 }
 
-// runSessionLoad runs saturation, mid and, when asked, sparse. Duration
-// predictions outside saturation and mid lifetime expiry preserve the early
-// end reason and allow the following level to run.
+// runSessionLoad runs saturation, mid and, when asked, sparse. A mid lifetime
+// expiry preserves its row and allows sparse to run after physical idle.
 func runSessionLoad(ctx context.Context, c sessionLoadConfig) ([]sessionLevel, error) {
 	records, err := readProfilingRecords(ctx, c.dataset, c.fields, c.requestUpperBytes)
 	if err != nil {
@@ -208,7 +188,7 @@ func runSessionLoad(ctx context.Context, c sessionLoadConfig) ([]sessionLevel, e
 			level.EndedAt = time.Now().UTC()
 		}
 		levels = append(levels, level)
-		endedEarly := level.EndReason == sessionPredictedOverLimit || level.EndReason == sessionRequestLifetimeExpired
+		endedEarly := level.EndReason == sessionRequestLifetimeExpired
 		if err != nil || level.EndReason != sessionSamplesReached && (kind == sessionSaturation || !endedEarly) {
 			return levels, err
 		}
@@ -229,9 +209,6 @@ func (s *sessionLoad) waitIdle(parent context.Context, detail string) error {
 		if err != nil {
 			return fmt.Errorf("%s: read native state while waiting for idle: %w", detail, err)
 		}
-		if !state.Ready {
-			return fmt.Errorf("%s: native executor is not ready while waiting for idle", detail)
-		}
 		if len(state.Requests) == 0 {
 			return nil
 		}
@@ -244,14 +221,11 @@ func (s *sessionLoad) waitIdle(parent context.Context, detail string) error {
 	}
 }
 
-// level drives one level until it has the minimum service samples and the
-// power window after the meter lag. Its duration is predicted once, from the
-// first completed batch for saturation and sparse (the batch time is their
-// only unknown; prepare already warmed the instance), and at the start for mid
-// (its batch interval follows from the saturation throughput). A prediction
-// over the level limit ends the level at once.
+// level collects the minimum service samples and power window within the
+// configured actual time limit. It records a duration prediction from the
+// first completed batch, or from the measured saturation rate for mid.
 func (s *sessionLoad) level(parent context.Context, kind string, rate float64) (sessionLevel, error) {
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithTimeout(parent, s.config.levelLimit)
 	defer cancel()
 	c := s.config
 	start := time.Now()
@@ -259,6 +233,7 @@ func (s *sessionLoad) level(parent context.Context, kind string, rate float64) (
 		s: s, ctx: ctx, cancel: cancel, rate: rate, counter: newSessionCounter(),
 		row: sessionLevel{
 			Kind: kind, WorkloadUID: c.workloadUID(kind), StartedAt: start.UTC(), TargetInputsPerSecond: rate,
+			LimitSeconds: c.levelLimit.Seconds(),
 		},
 		request: loadRequestContext{
 			workloadUID: c.workloadUID(kind), definition: c.definition,
@@ -340,17 +315,11 @@ func (l *sessionLevelRun) arrivalGap() time.Duration {
 	return time.Duration(max(1, math.Round(l.rng.ExpFloat64()/l.rate*1e9)))
 }
 
-// predict ends the level when collecting the minimum samples at one per batch
-// interval, or the power window, would outlast the level limit.
+// predict records the expected exposure without refusing actual measurement.
 func (l *sessionLevelRun) predict(interval time.Duration) {
 	c := l.s.config
 	predicted := max(c.meterLag+c.powerWindow, time.Duration(c.minSamples)*interval)
 	l.row.PredictedSeconds, l.row.LimitSeconds = predicted.Seconds(), c.levelLimit.Seconds()
-	if predicted > c.levelLimit {
-		l.end(sessionPredictedOverLimit, fmt.Sprintf(
-			"predicted level duration %.3fs exceeds limit %.3fs after %d completed batches",
-			predicted.Seconds(), c.levelLimit.Seconds(), l.counter.batches), nil)
-	}
 }
 
 // issuing stops new requests only on a fixed batch boundary: native holds a
@@ -447,14 +416,6 @@ func (l *sessionLevelRun) count(result sessionResult) {
 		}
 	case sessionSaturation:
 		if l.counter.batches != 1 {
-			return
-		}
-		// The waiting batch's members wait one batch, are served in another
-		// and need the delivery margin, all within their lifetime.
-		if 2*service+c.margin > c.lifetime {
-			l.end(sessionServiceOverLifetime, fmt.Sprintf(
-				"batch service %s: two batches plus delivery margin %s exceed request lifetime %s",
-				service, c.margin, c.lifetime), nil)
 			return
 		}
 		l.predict(service)
@@ -566,9 +527,8 @@ func (s *sessionLoad) send(
 	return result
 }
 
-// sessionTerminationMessage is the level table, led by the failure sentence
-// when the run failed. To fit the bound it shortens level details first, then
-// drops the table, and shortens the failure sentence last.
+// sessionTerminationMessage preserves every level row and shortens diagnostic
+// text until the result fits the container termination message.
 func sessionTerminationMessage(levels []sessionLevel, failure error) ([]byte, error) {
 	report := struct {
 		Error  string         `json:"error,omitempty"`
@@ -590,10 +550,10 @@ func sessionTerminationMessage(levels []sessionLevel, failure error) ([]byte, er
 		}
 		switch {
 		case shortened:
-		case report.Levels != nil:
-			report.Levels = nil
-		default:
+		case report.Error != "":
 			report.Error = sessionBounded(report.Error, len(report.Error)/2)
+		default:
+			return nil, errors.New("session-load level table exceeds the termination message limit")
 		}
 	}
 }

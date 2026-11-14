@@ -48,6 +48,7 @@ type MetricObservationPolicy struct {
 // the resolver found it compatible with the preprocessor input contract.
 type ResolvedCandidate struct {
 	ReportBytes          []byte
+	Delivery             profilingrun.CandidateRuntimeDelivery
 	Inputs               profilingrun.CandidateReportInputs
 	Verdict              string
 	State                profilingrun.ExecutionState
@@ -166,6 +167,17 @@ func NewPreparer(
 		candidates: candidates, nodes: nodes, metrics: metrics, workloads: workloads, actuation: actuation, execution: execution,
 		resolveLoadOrigin: resolveLoadOrigin,
 	}, nil
+}
+
+// NewSessionPreparer requires only the resolvers a measurement session uses.
+func NewSessionPreparer(
+	candidates CandidateResolver, nodes NodeResolver,
+	workloads WorkloadObservationResolver, execution ExecutionPolicyResolver,
+) (*Preparer, error) {
+	if candidates == nil || nodes == nil || workloads == nil || execution == nil {
+		return nil, errors.New("candidate, Node, workload and execution resolvers are required")
+	}
+	return &Preparer{candidates: candidates, nodes: nodes, workloads: workloads, execution: execution}, nil
 }
 
 // FreezePhaseDuration expands the existing observation window for every named
@@ -315,10 +327,6 @@ type PreparedSession struct {
 // delivery, the frozen configuration and the execution policy's memory
 // envelope and queue capacity.
 func (p *Preparer) PrepareSession(ctx context.Context, request SessionRequest) (PreparedSession, error) {
-	if request.Workload == "" || request.Candidate.Node == "" || request.Candidate.Dataset == "" ||
-		request.WarmupIterations < 0 {
-		return PreparedSession{}, errors.New("session requires a Workload, a target Node, a dataset and non-negative warm-up iterations")
-	}
 	stop, err := p.workloads.ResolveMeasurementWorkload(ctx, request.Workload, request.Candidate)
 	if err != nil {
 		return PreparedSession{}, fmt.Errorf("resolve measurement Workload: %w", err)
@@ -326,9 +334,6 @@ func (p *Preparer) PrepareSession(ctx context.Context, request SessionRequest) (
 	candidate, err := p.candidates.ResolveCandidate(ctx, request.Candidate)
 	if err != nil {
 		return PreparedSession{}, fmt.Errorf("resolve static candidate: %w", err)
-	}
-	if err := validateResolvedCandidate(request.Candidate, candidate); err != nil {
-		return PreparedSession{}, err
 	}
 	node, err := p.nodes.ResolveNode(ctx, NodeSelection{
 		Name:                request.Candidate.Node,
@@ -342,11 +347,9 @@ func (p *Preparer) PrepareSession(ctx context.Context, request SessionRequest) (
 		return PreparedSession{}, fmt.Errorf("preprocessor artifact architecture %q does not match target Node architecture %q",
 			candidate.State.Preprocessor.Architecture, node.Architecture)
 	}
-	report, err := profilingrun.DecodeCandidateReport(candidate.ReportBytes)
-	if err != nil {
-		return PreparedSession{}, fmt.Errorf("decode resolved candidate report: %w", err)
-	}
-	planned, err := PlannedBatchSizes(report)
+	planned, err := PlannedBatchSizes(profilingrun.CandidateReport{
+		Firstfloor: candidate.State.Firstfloor, ArtifactCapability: candidate.Delivery.ArtifactCapability,
+	})
 	if err != nil {
 		return PreparedSession{}, err
 	}
@@ -359,7 +362,7 @@ func (p *Preparer) PrepareSession(ctx context.Context, request SessionRequest) (
 			MinServiceSamples: stop.MinServiceSamples, WorkloadName: stop.WorkloadName,
 			WorkloadUID: stop.WorkloadUID, WorkloadResourceVersion: stop.WorkloadResourceVersion,
 		},
-	}, candidate, report.RuntimeDelivery(), node, ResolvedMetricSource{}, ResolvedWorkloadObservation{}, nil)
+	}, candidate, candidate.Delivery, node, ResolvedMetricSource{}, ResolvedWorkloadObservation{}, nil)
 	if err != nil {
 		return PreparedSession{}, err
 	}
@@ -376,9 +379,6 @@ func (p *Preparer) PrepareSession(ctx context.Context, request SessionRequest) (
 // PlannedBatchSizes are the powers of two up to the resolved maximum batch
 // size, restricted to the artifact's declared batch sizes when it declares any.
 func PlannedBatchSizes(report profilingrun.CandidateReport) ([]int, error) {
-	if report.Firstfloor == nil || report.Firstfloor.MaxBatchSize < 1 {
-		return nil, errors.New("BatchEnergyOptimization requires a positive resolved firstfloor maxBatchSize")
-	}
 	cap := int(report.Firstfloor.MaxBatchSize)
 	var declared []int32
 	if report.ArtifactCapability != nil {
@@ -455,9 +455,6 @@ func (p *Preparer) freeze(
 	workload ResolvedWorkloadObservation,
 	actuation *profilingrun.ActuationContract,
 ) (profilingrun.RunConfig, error) {
-	if node.Name != request.TargetNode {
-		return profilingrun.RunConfig{}, errors.New("resolved Node identity does not match requested target")
-	}
 	measurement := request.Measurement
 	if candidate.Dataset != nil {
 		dataset := *candidate.Dataset

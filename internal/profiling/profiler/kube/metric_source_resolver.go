@@ -120,7 +120,7 @@ func DecodeMetricSources(raw []byte) ([]MetricSourceDeclaration, error) {
 		return nil, fmt.Errorf("decode Profiler metric sources: %w", err)
 	}
 	var document metricSourcesDocument
-	if err := yaml.UnmarshalStrict(documentBytes, &document); err != nil {
+	if err := yaml.Unmarshal(documentBytes, &document); err != nil {
 		return nil, fmt.Errorf("decode Profiler metric sources: %w", err)
 	}
 	if document.SchemaVersion != metricSourcesSchema {

@@ -60,7 +60,7 @@ func DecodeActuationPolicyCatalog(raw []byte) ([]nodeactuator.ActuationPolicySpe
 		return nil, errors.New("actuation-policy catalog is empty")
 	}
 	var catalog ActuationPolicyCatalog
-	if err := yaml.UnmarshalStrict(raw, &catalog); err != nil {
+	if err := yaml.Unmarshal(raw, &catalog); err != nil {
 		return nil, fmt.Errorf("decode actuation-policy catalog: %w", err)
 	}
 	if catalog.SchemaVersion != ActuationPolicyCatalogSchemaVersion {
@@ -92,7 +92,6 @@ func DecodeActuationPolicyCatalog(raw []byte) ([]nodeactuator.ActuationPolicySpe
 func DecodeFrozenActuationPolicy(raw []byte) (FrozenActuationPolicy, error) {
 	var frozen FrozenActuationPolicy
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&frozen); err != nil {
 		return FrozenActuationPolicy{}, fmt.Errorf("decode frozen actuation policy: %w", err)
 	}

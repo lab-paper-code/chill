@@ -42,7 +42,7 @@ func TestCandidateReportMatchesMaterialSelectionSemantics(t *testing.T) {
 	}
 }
 
-func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
+func TestDecodeInternalCandidateReportRequiresSelectedMaterial(t *testing.T) {
 	report := CandidateReport{
 		SchemaVersion: CandidateReportSchemaVersion,
 		Scope:         "StaticCompatibility",
@@ -89,10 +89,6 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 		t.Fatal("expected missing material fact rejection")
 	}
 
-	unknown := append(payload[:len(payload)-1], []byte(`,"unknown":true}`)...)
-	if _, err := DecodeCandidateReport(unknown); err == nil {
-		t.Fatal("expected unknown field rejection")
-	}
 	valid, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)

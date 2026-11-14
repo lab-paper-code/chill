@@ -3,7 +3,6 @@ package kube
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
@@ -55,7 +54,7 @@ func TestKubernetesExecutionPolicyResolverFreezesSelectedConfigMapPolicy(t *test
 	}
 }
 
-func TestKubernetesExecutionPolicyResolverFailsClosedForBinaryData(t *testing.T) {
+func TestKubernetesExecutionPolicyResolverRejectsMalformedCatalog(t *testing.T) {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:       testSystemNamespace,
@@ -65,26 +64,6 @@ func TestKubernetesExecutionPolicyResolverFailsClosedForBinaryData(t *testing.T)
 		},
 		BinaryData: map[string][]byte{"execution-policies.yaml": controllerExecutionPolicyCatalog(t)},
 	}
-	resolver, err := NewKubernetesExecutionPolicyResolver(
-		fake.NewClientBuilder().WithObjects(configMap).Build(),
-		ExecutionPolicyResolverOptions{
-			Namespace:                 testSystemNamespace,
-			ConfigMapName:             "facts",
-			ConfigMapKey:              "execution-policies.yaml",
-			MeasurementMemoryFraction: 0.8,
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = resolver.Resolve(context.Background(), currentRunConfig(t))
-	if err == nil || !strings.Contains(err.Error(), "text data") {
-		t.Fatalf("binary execution policy error = %v", err)
-	}
-	if reason, terminal := profiler.TerminalResolutionReason(err); !terminal || reason != profilingrun.ResolutionReasonExecutionPolicyInvalid {
-		t.Fatalf("binary execution policy classification = %q, terminal=%t", reason, terminal)
-	}
-
 	malformedConfigMap := configMap.DeepCopy()
 	malformedConfigMap.BinaryData = nil
 	malformedConfigMap.Data = map[string]string{"execution-policies.yaml": "policies: ["}

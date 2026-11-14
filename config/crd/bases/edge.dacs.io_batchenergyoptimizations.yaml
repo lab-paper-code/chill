@@ -62,16 +62,11 @@ spec:
                     description: |-
                       Dataset names the cluster-scoped Dataset whose profiling records every
                       active child Run samples.
-                    maxLength: 253
-                    minLength: 1
                     type: string
                   durationSeconds:
                     format: int32
-                    minimum: 30
                     type: integer
                   durationToleranceSeconds:
-                    default: 0.5
-                    minimum: 0
                     type: number
                   metricObservation:
                     description: ProfilingRunMetricObservationSpec contains policy
@@ -152,22 +147,12 @@ spec:
                   workload:
                     description: Workload supplies the actual SLO percentile and latency
                       for this sweep.
-                    minLength: 1
                     type: string
                 required:
                 - dataset
-                - durationSeconds
-                - metricObservation
-                - operatingPoints
                 - warmupIterations
                 - workload
                 type: object
-                x-kubernetes-validations:
-                - message: duration tolerance must be less than duration
-                  rule: '!has(self.durationToleranceSeconds) || self.durationToleranceSeconds
-                    < double(self.durationSeconds)'
-                - message: metricObservation.durationSeconds must cover durationSeconds
-                  rule: self.metricObservation.durationSeconds >= self.durationSeconds
               idleProtocol:
                 properties:
                   durationSeconds:
@@ -218,7 +203,6 @@ spec:
                 - message: metricObservation.durationSeconds must cover durationSeconds
                   rule: self.metricObservation.durationSeconds >= self.durationSeconds
               pointPolicy:
-                default: {}
                 description: |-
                   BatchEnergyOptimizationPointPolicySpec owns the confidence of both idle and
                   incremental-energy estimates for this measurement.
@@ -233,8 +217,6 @@ spec:
                   RetryLimit bounds retries at the same batch after retryable infrastructure
                   failures. Runtime OOM, execution failures and invalid evidence do not retry.
                 format: int32
-                maximum: 10
-                minimum: 0
                 type: integer
               session:
                 description: Session holds the settings of a ChillServer measurement
@@ -244,7 +226,6 @@ spec:
                     description: |-
                       ConfidenceLevel, a decimal in [0.5, 1), is the level of every statistical
                       decision the derivation makes.
-                    pattern: ^0\.[5-9][0-9]*$
                     type: string
                   deliveryMarginMilliseconds:
                     format: int32
@@ -342,12 +323,9 @@ spec:
                   postLoadWindowSeconds:
                     description: PostLoadWindowSeconds observes the loaded actor without
                       inference after the last level.
-                    exclusiveMinimum: true
-                    minimum: 0
                     type: number
                   requestLifetimeSeconds:
                     format: int32
-                    minimum: 1
                     type: integer
                   sparseMeanGapSeconds:
                     description: SparseMeanGapSeconds is the sparse level's mean idle
@@ -364,14 +342,10 @@ spec:
                 - midLevelRatio
                 - minimumPowerWindowSeconds
                 - observation
-                - postLoadWindowSeconds
                 - requestLifetimeSeconds
                 - sparseMeanGapSeconds
                 type: object
                 x-kubernetes-validations:
-                - message: levelDurationLimitSeconds must exceed meterLagSeconds plus
-                    minimumPowerWindowSeconds
-                  rule: self.levelDurationLimitSeconds > self.meterLagSeconds + self.minimumPowerWindowSeconds
                 - message: requestLifetimeSeconds must exceed deliveryMarginMilliseconds
                   rule: self.requestLifetimeSeconds * 1000 > self.deliveryMarginMilliseconds
               state:
@@ -434,15 +408,9 @@ spec:
                   TrialsPerBatch is the number of completed active and idle observations used
                   to compare each batch under the minimum-energy objective.
                 format: int32
-                maximum: 3
-                minimum: 3
                 type: integer
             required:
-            - activeProtocol
-            - idleProtocol
-            - retryLimit
             - state
-            - trialsPerBatch
             type: object
             x-kubernetes-validations:
             - message: BatchEnergyOptimization spec is immutable
@@ -519,13 +487,8 @@ spec:
                 format: int64
                 type: integer
               outcome:
-                maxLength: 128
                 type: string
               phase:
-                enum:
-                - Measuring
-                - Complete
-                - Failed
                 type: string
               result:
                 properties:
@@ -558,9 +521,6 @@ spec:
         required:
         - spec
         type: object
-        x-kubernetes-validations:
-        - message: name must be at most 200 characters so generated Run names fit
-          rule: size(self.metadata.name) <= 200
     served: true
     storage: true
     subresources:

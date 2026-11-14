@@ -15,33 +15,7 @@ spec:
   activeProtocol:
     workload: mobilenet
     warmupIterations: 20
-    durationSeconds: 180
     dataset: vqav2-val-subset
-    operatingPoints:
-      utilizations: [0.25, 0.5, 0.75]
-      sparseMeanGapMilliseconds: 1000
-      phaseDurationSeconds: 30
-      postLoadDurationSeconds: 30
-      requestLifetimeSeconds: 30
-      deliveryMarginMilliseconds: 100
-      framedDecodedRequestUpperBytes: 2097152
-    metricObservation:
-      intervalMilliseconds: 1000
-      timeoutMilliseconds: 500
-      durationSeconds: 181
-  idleProtocol:
-    settlingDurationSeconds: 60
-    durationSeconds: 30
-    metricObservation:
-      intervalMilliseconds: 1000
-      timeoutMilliseconds: 500
-      durationSeconds: 31
-  trialsPerBatch: 3
-  retryLimit: 2
-  # ChillServer runs the measurement as one session with these settings. The
-  # fields above stay required by the schema until the per-batch Run method is
-  # removed; a session reads only state, the Workload, the dataset and the
-  # warm-up count from them.
   session:
     # The 1 s power meter reports 2-3 s late (profile-session.md).
     meterLagSeconds: 3
