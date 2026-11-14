@@ -76,6 +76,9 @@ type BatchEnergyOptimizationSessionSpec struct {
 	DeliveryMarginMilliseconds int32 `json:"deliveryMarginMilliseconds"`
 	// +kubebuilder:validation:Minimum=1
 	FramedDecodedRequestUpperBytes int64 `json:"framedDecodedRequestUpperBytes"`
+	// Observation is how the session's power, prepare and remove operations
+	// are measured, as in a stand-alone operation-cost measurement.
+	Observation MeasurementObservationSpec `json:"observation"`
 }
 
 var sessionConfidenceDecimal = regexp.MustCompile(`^0\.[5-9][0-9]*$`)

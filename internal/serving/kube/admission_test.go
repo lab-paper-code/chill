@@ -435,7 +435,9 @@ const (
 // The hand-back requests the lowest mode on the Node it still holds and removes
 // the taint once the agent settled it.
 func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
-	for _, reason := range []string{"", "InvalidRunSpec", "FatalFailure", "RetryLimitExhausted", "CurvePlanResolutionFailed"} {
+	// Every Failed session is terminal: ChillServer refuses an unresolved
+	// session at admission instead of retrying it under a held Node.
+	for _, reason := range []string{"", "InvalidRunSpec", "FatalFailure", "RetryLimitExhausted"} {
 		t.Run("failure="+reason, func(t *testing.T) {
 			h := newAdmissionHarness(t)
 			actuator := edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 2}}
@@ -469,12 +471,6 @@ func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
 				settle(n)
 			}
 			h.admit()
-			if reason == "CurvePlanResolutionFailed" {
-				if holderAtRequest != "" || h.holder() != holder {
-					t.Fatalf("recoverable resolver failure was handed back: holder=%q request=%q", h.holder(), holderAtRequest)
-				}
-				return
-			}
 			node, err := h.kube.CoreV1().Nodes().Get(context.Background(), "node", meta.GetOptions{})
 			if err != nil {
 				t.Fatal(err)
@@ -502,7 +498,8 @@ func TestAdmitSharedCPUWithoutOnlineInventory(t *testing.T) {
 			h := newAdmissionHarness(t)
 			h.create(cpuClass())
 			h.setNode(func(node *core.Node) { delete(node.Annotations, chillmeta.OnlineCPUs) })
-			root := beoRoot("beo", "node", "")
+			// A Profiler-run root: ChillServer grants it and runs nothing itself.
+			root := baselineRoot("baseline", time.Now())
 			root.Spec.State.Candidate.PowerMode = mode
 			h.create(root)
 			h.admit()

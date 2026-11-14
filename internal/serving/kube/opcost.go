@@ -103,6 +103,30 @@ func (c *SchedulerController) patchMeasurementStatus(ctx context.Context, object
 	return c.store.client.Status().Patch(ctx, object, client.MergeFrom(base))
 }
 
+// measurementRequestBase is the sampling, budget, coverage and timing every
+// operation measured under observation shares.
+func measurementRequestBase(observation edge.MeasurementObservationSpec) (servingops.MeasurementRequest, error) {
+	allowance, err := servingops.MeasurementTimingAllowance(observation.Timing)
+	if err != nil {
+		return servingops.MeasurementRequest{}, err
+	}
+	interval := time.Duration(observation.IntervalMilliseconds) * time.Millisecond
+	duration := time.Duration(observation.MaximumOperationSeconds) * time.Second
+	timeout := time.Duration(observation.RequestTimeoutMilliseconds) * time.Millisecond
+	// One finite watchdog covers pre-support, the unchanged action, post-support
+	// and two polling/transport deliveries. The action gets its own full budget.
+	if interval <= 0 || duration <= 0 || timeout <= 0 || allowance > (time.Duration(1<<63-1)-duration-2*interval-timeout)/2 {
+		return servingops.MeasurementRequest{}, errors.New("invalid or overflowing operation measurement budget")
+	}
+	watchdog := duration + 2*allowance + 2*interval + timeout
+	return servingops.MeasurementRequest{
+		Timing: observation.Timing, OperationBudget: duration,
+		Sampling: metricobserver.Request{Interval: interval, Duration: watchdog,
+			RequestTimeout: timeout},
+		Coverage: powerwindow.Policy{MaximumGap: time.Duration(observation.MaximumGapMilliseconds) * time.Millisecond},
+	}, nil
+}
+
 // failMeasurement writes the Failed phase of a measurement kind ChillServer runs.
 func (c *SchedulerController) failMeasurement(ctx context.Context, object client.Object, reason string) error {
 	switch o := object.(type) {
@@ -110,6 +134,8 @@ func (c *SchedulerController) failMeasurement(ctx context.Context, object client
 		return c.patchMeasurementStatus(ctx, o, func() { o.Status.Phase, o.Status.Reason = edge.MeasurementPhaseFailed, reason })
 	case *edge.DispatchOccupancyMeasurement:
 		return c.patchMeasurementStatus(ctx, o, func() { o.Status.Phase, o.Status.Reason = edge.MeasurementPhaseFailed, reason })
+	case *edge.BatchEnergyOptimization:
+		return c.patchMeasurementStatus(ctx, o, func() { setSessionStatus(o, edge.MeasurementPhaseFailed, reason, reason, nil, 0) })
 	}
 	return nil
 }
@@ -132,26 +158,9 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 	if err := c.patchMeasurementStatus(ctx, m, func() { m.Status.Phase = edge.MeasurementPhaseMeasuring }); err != nil {
 		return err
 	}
-	observation := m.Spec.Observation
-	allowance, err := servingops.MeasurementTimingAllowance(observation.Timing)
+	base, err := measurementRequestBase(m.Spec.Observation)
 	if err != nil {
 		return errors.Join(err, c.failMeasurement(ctx, m, firstLine(err.Error())))
-	}
-	interval := time.Duration(observation.IntervalMilliseconds) * time.Millisecond
-	duration := time.Duration(observation.MaximumOperationSeconds) * time.Second
-	timeout := time.Duration(observation.RequestTimeoutMilliseconds) * time.Millisecond
-	// One finite watchdog covers pre-support, the unchanged action, post-support
-	// and two polling/transport deliveries. The action gets its own full budget.
-	if interval <= 0 || duration <= 0 || timeout <= 0 || allowance > (time.Duration(1<<63-1)-duration-2*interval-timeout)/2 {
-		err := errors.New("invalid or overflowing operation measurement budget")
-		return errors.Join(err, c.failMeasurement(ctx, m, err.Error()))
-	}
-	watchdog := duration + 2*allowance + 2*interval + timeout
-	base := servingops.MeasurementRequest{
-		Timing: observation.Timing, OperationBudget: duration,
-		Sampling: metricobserver.Request{Interval: interval, Duration: watchdog,
-			RequestTimeout: timeout},
-		Coverage: powerwindow.Policy{MaximumGap: time.Duration(observation.MaximumGapMilliseconds) * time.Millisecond},
 	}
 	phase, reason := edge.MeasurementPhaseComplete, ""
 	var saved []string
