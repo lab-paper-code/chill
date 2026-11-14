@@ -9,7 +9,6 @@ import (
 	"io"
 	"maps"
 	"path"
-	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -134,7 +133,9 @@ func (o *Observer) SetProfiles(profiles []serving.Profile) {
 	for i := range o.profiles {
 		profile := &o.profiles[i]
 		canonical := previous[profile.ID]
-		if canonical == nil || !reflect.DeepEqual(canonical, profile) {
+		// A catalog profile is immutable for one BEO UID/resourceVersion and
+		// stored result reference. No record comparison belongs under this lock.
+		if canonical == nil || canonical.SourceVersion != profile.SourceVersion || canonical.Reference != profile.Reference {
 			frozen := cloneCatalogProfile(*profile)
 			// Catalog cloning defaults preparation settings; evidence keeps the
 			// original policy and nil/empty slice shapes exactly as published.

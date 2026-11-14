@@ -53,6 +53,7 @@ type catalogProfile struct {
 	version string
 	profile serving.Profile
 	facts   serving.MeasurementFacts
+	issues  []CatalogIssue
 }
 
 type CatalogIssue struct {
@@ -287,7 +288,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	}
 	if admitted, found := c.current[source]; found &&
 		admitted.uid == campaign.UID && admitted.version == campaign.ResourceVersion {
-		return cloneCatalogProfile(admitted.profile), nil, nil
+		return cloneCatalogProfile(admitted.profile), slices.Clone(admitted.issues), nil
 	}
 	// A new identity/version is read again; the old success is never retained
 	// if that read fails.
@@ -300,7 +301,9 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	}
 	result, err := profilederivation.DecodeSessionResult(raw)
 	if err != nil {
-		return serving.Profile{}, []CatalogIssue{{Source: source, Code: measurementResultUnreadableCode, Reason: unreadableResultReason(reference, raw, err)}}, nil
+		issues := []CatalogIssue{{Source: source, Code: measurementResultUnreadableCode, Reason: unreadableResultReason(reference, raw, err)}}
+		c.current[source] = catalogProfile{uid: campaign.UID, version: campaign.ResourceVersion, issues: issues}
+		return serving.Profile{}, slices.Clone(issues), nil
 	}
 	profile, err := sessionProfile(campaign, reference, result)
 	if err != nil {
@@ -364,6 +367,7 @@ func sessionProfile(campaign *edgev1alpha1.BatchEnergyOptimization, reference ev
 	}
 	profile := serving.Profile{
 		ID: types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}.String() + "/" + string(campaign.UID), Reference: reference,
+		SourceVersion: campaign.ResourceVersion,
 		Evidence: []evidencestore.ObjectIdentity{reference}, NodeName: session.NodeName,
 		MeasuredAt: measurementCompletedAt(campaign), RuntimeMetadata: result.RuntimeMetadata,
 		RuntimeDelivery: slices.Clone(result.RuntimeDelivery), MetricSource: meter,
@@ -375,8 +379,7 @@ func sessionProfile(campaign *edgev1alpha1.BatchEnergyOptimization, reference ev
 		}
 		samples := make([]firstfloor.ServiceSample, len(batch.ServiceNanos))
 		for k, service := range batch.ServiceNanos {
-			idle := batch.PrecedingIdleNanos[k]
-			samples[k] = firstfloor.ServiceSample{ServiceDurationNanos: service, PrecedingIdleNanos: &idle, TrialID: string(campaign.UID)}
+			samples[k] = firstfloor.ServiceSample{ServiceDurationNanos: service, PrecedingIdleNanos: &batch.PrecedingIdleNanos[k], TrialID: string(campaign.UID)}
 		}
 		distribution, err := firstfloor.NewServiceDistribution(samples)
 		if err != nil {
@@ -401,15 +404,13 @@ func sessionProfile(campaign *edgev1alpha1.BatchEnergyOptimization, reference ev
 	return profile, nil
 }
 
-// Only mutable ownership is copied; source facts are not decoded or validated
-// again. Callers cannot mutate the admitted entry through returned slices/maps.
+// Only mutable ownership is copied; immutable samples, distributions and dispatch
+// occupancy records stay shared. Mutating those records requires an explicit copy.
 func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 	profile.Evidence = slices.Clone(profile.Evidence)
 	profile.Batches = slices.Clone(profile.Batches)
 	for i := range profile.Batches {
 		batch := &profile.Batches[i]
-		batch.ServiceSamples = firstfloor.CloneServiceSamples(batch.ServiceSamples)
-		batch.DispatchOccupancyNanos = slices.Clone(batch.DispatchOccupancyNanos)
 		if batch.InputSlopeJoules != nil {
 			slope := *batch.InputSlopeJoules
 			batch.InputSlopeJoules = &slope
