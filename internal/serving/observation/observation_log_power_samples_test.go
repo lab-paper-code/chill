@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
 )
 
 // A session reads its meter's recorded samples as stored: overlapping

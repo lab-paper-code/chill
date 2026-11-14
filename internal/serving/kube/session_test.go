@@ -83,8 +83,8 @@ func sessionPreparationFixture() SessionPreparation {
 		Dataset: profilingrun.DatasetContract{Name: "imagenet-val", UID: "dataset-uid", Image: "dataset:1", Path: "/datasets/imagenet"}}
 }
 
-func sessionRoot(name string, session *edge.BatchEnergyOptimizationSessionSpec) *edge.BatchEnergyOptimization {
-	beo := beoRoot(name, testNode.Name, "")
+func sessionRoot(session *edge.BatchEnergyOptimizationSessionSpec) *edge.BatchEnergyOptimization {
+	beo := beoRoot("session", testNode.Name, "")
 	beo.Spec.Session = session
 	return beo
 }
@@ -126,7 +126,9 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 	}
 	h.controller.config.Session = SessionConfig{Image: "chill-server:1", Namespace: "chill-system", ServiceAccount: "session-load", NodeName: "chill-server-node",
 		MaxResultBytes: 64 << 20, RunnerTimeout: time.Minute, MaxRequestBytes: 4 << 20,
-		Prepare: func(context.Context, *edge.BatchEnergyOptimization) (SessionPreparation, error) { return sessionPreparationFixture(), nil }}
+		Prepare: func(context.Context, *edge.BatchEnergyOptimization) (SessionPreparation, error) {
+			return sessionPreparationFixture(), nil
+		}}
 	h.controller.mu.Unlock()
 	cursor := s.origin
 	for _, batch := range []int{1, 2, 4} {
@@ -276,7 +278,7 @@ func sessionCondition(status edge.BatchEnergyOptimizationStatus) meta.Condition 
 
 func TestSessionMeasuresEveryBatchSizeAndStoresOneResult(t *testing.T) {
 	s := newSessionHarness(t)
-	beo := sessionRoot("session", sessionSettingsFixture())
+	beo := sessionRoot(sessionSettingsFixture())
 	s.create(beo)
 	s.admit()
 	status := s.status(beo)
@@ -321,7 +323,7 @@ func TestSessionCapacityLimitKeepsTheBatchesBefore(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := newSessionHarness(t)
 			limit(s)
-			beo := sessionRoot("session", sessionSettingsFixture())
+			beo := sessionRoot(sessionSettingsFixture())
 			s.create(beo)
 			s.admit()
 			status := s.status(beo)
@@ -346,7 +348,7 @@ func TestSessionNotServableAtFirstBatchFailsWithoutResult(t *testing.T) {
 	sentence := "two batches of 1 took 31.2 s, above the 30 s request lifetime"
 	s.tables[1] = sessionLevelTable{Levels: []sessionLevelWire{{Kind: profilederivation.LevelSaturation, WorkloadUID: "session-uid/1/saturation",
 		StartedAt: s.origin, EndedAt: s.origin.Add(32 * time.Second), SentInputs: 2, CompletedInputs: 2, CompletedBatches: 2, EndReason: sessionServiceOverLifetime, Detail: sentence}}}
-	beo := sessionRoot("session", sessionSettingsFixture())
+	beo := sessionRoot(sessionSettingsFixture())
 	s.create(beo)
 	s.admit()
 	status := s.status(beo)
@@ -367,7 +369,7 @@ func TestSessionLoadFailureCarriesTheOriginalSentence(t *testing.T) {
 	sentence := "native batch failed: CUDA error: an illegal memory access was encountered"
 	s.tables[2] = sessionLevelTable{Error: sentence, Levels: []sessionLevelWire{{Kind: profilederivation.LevelSaturation, WorkloadUID: "session-uid/2/saturation",
 		StartedAt: s.origin, EndedAt: s.origin.Add(time.Second), SentInputs: 40, CompletedInputs: 20, CompletedBatches: 10, EndReason: "AllocationFailedAfterCompletedBatch"}}}
-	beo := sessionRoot("session", sessionSettingsFixture())
+	beo := sessionRoot(sessionSettingsFixture())
 	s.create(beo)
 	s.admit()
 	status := s.status(beo)
@@ -387,7 +389,7 @@ func TestSessionLoadFailureCarriesTheOriginalSentence(t *testing.T) {
 func TestSessionNativeRowCountMismatchFailsWithTheNumbers(t *testing.T) {
 	s := newSessionHarness(t)
 	s.dropRow = "session-uid/2/mid"
-	beo := sessionRoot("session", sessionSettingsFixture())
+	beo := sessionRoot(sessionSettingsFixture())
 	s.create(beo)
 	s.admit()
 	status := s.status(beo)
@@ -422,7 +424,7 @@ func TestSessionAdmissionRefusesWithTheReason(t *testing.T) {
 				scenario.change(s)
 				s.controller.mu.Unlock()
 			}
-			beo := sessionRoot("session", scenario.session)
+			beo := sessionRoot(scenario.session)
 			s.create(beo)
 			s.admit()
 			status := s.status(beo)
@@ -438,7 +440,7 @@ func TestSessionAdmissionRefusesWithTheReason(t *testing.T) {
 }
 
 func TestSessionLoadJobSpec(t *testing.T) {
-	beo := sessionRoot("session", sessionSettingsFixture())
+	beo := sessionRoot(sessionSettingsFixture())
 	preparation := sessionPreparationFixture()
 	config := SessionConfig{Image: "chill-server:1", Namespace: "chill-system", ServiceAccount: "session-load", NodeName: "chill-server-node"}
 	for _, batch := range []int{1, 2} {
@@ -475,7 +477,7 @@ func TestSessionLoadJobSpec(t *testing.T) {
 
 func TestSessionRestartFailsAndHandsBack(t *testing.T) {
 	s := newSessionHarness(t)
-	beo := sessionRoot("session", sessionSettingsFixture())
+	beo := sessionRoot(sessionSettingsFixture())
 	beo.Annotations = map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Now())}
 	beo.Status.Phase = string(edge.MeasurementPhaseMeasuring)
 	s.create(beo)
@@ -491,4 +493,3 @@ func TestSessionRestartFailsAndHandsBack(t *testing.T) {
 		t.Fatalf("a cut-off session measured again: %v", s.measured)
 	}
 }
-

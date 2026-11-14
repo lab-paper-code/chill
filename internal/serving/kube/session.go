@@ -292,7 +292,7 @@ func (c *SchedulerController) runSession(ctx context.Context, beo *edge.BatchEne
 	if input.Power, err = c.sessionReads.power(ctx, plan.meter, started, input.PostLoadEnd); err != nil {
 		return fail(err)
 	}
-	input.Condition = sessionCondition(plan.preparation, ref)
+	input.Condition = measuredCondition(plan.preparation, ref)
 	result, err := profilederivation.DeriveSession(input)
 	if err != nil {
 		return fail(err)
@@ -493,9 +493,9 @@ func sessionSettings(s *edge.BatchEnergyOptimizationSessionSpec, plan sessionPla
 		PostLoadWindowSeconds: s.PostLoadWindowSeconds, MinimumSamples: plan.minimumSamples, ConfidenceLevel: plan.confidence}
 }
 
-// sessionCondition is the configuration the session measured, from its
+// measuredCondition is the configuration the session measured, from its
 // frozen RunConfig.
-func sessionCondition(preparation SessionPreparation, ref serving.NodeReference) profilederivation.SessionCondition {
+func measuredCondition(preparation SessionPreparation, ref serving.NodeReference) profilederivation.SessionCondition {
 	config := preparation.RunConfig
 	state := config.State
 	condition := profilederivation.SessionCondition{NodeName: ref.Name, NodeUID: ref.UID, DeviceClass: state.DeviceClass, PowerMode: state.PowerMode,
