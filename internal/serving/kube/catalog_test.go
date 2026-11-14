@@ -28,6 +28,16 @@ func catalogServiceSamples(duration int64) []firstfloor.ServiceSample {
 	return fixtures.ServiceSamples("catalog-physical-trial", duration)
 }
 
+func catalogHydratedBatch(t testing.TB, batch serving.BatchProfile) serving.BatchProfile {
+	t.Helper()
+	distribution, err := firstfloor.NewServiceDistribution(batch.ServiceSamples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch.ServiceDistribution = distribution
+	return batch
+}
+
 func TestCatalogKeysObservedRuntimeVersionAndProvider(t *testing.T) {
 	catalog, source, _, _ := catalogEvidenceFixture(t)
 	view, err := catalog.Refresh(context.Background(), []string{source.Namespace})

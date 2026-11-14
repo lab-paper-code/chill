@@ -43,7 +43,7 @@ func newOpcostHarness(t *testing.T) *opcostHarness {
 	spec := measuredCPUPreparationFixture()
 	profile := *spec.Instance.Profile
 	profile.ID = "chill-system/beo/" + string(beo.UID)
-	profile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: catalogServiceSamples(27790000)}}
+	profile.Batches = []serving.BatchProfile{catalogHydratedBatch(t, serving.BatchProfile{Batch: 1, ServiceSamples: catalogServiceSamples(27790000)})}
 	spec.Instance.Profile = &profile
 	h.controller.observer.SetProfiles([]serving.Profile{profile})
 	h.controller.mu.Lock()

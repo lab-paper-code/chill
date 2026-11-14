@@ -250,6 +250,7 @@ func TestOccupancyJudgesWorkloadServingByListedPods(t *testing.T) {
 	// The Node reads back the profile mode, so the run needs no power change.
 	profiles := o.controller.observer.Profiles()
 	profiles[0].Condition.PowerMode = maxMode
+	profiles[0].SourceVersion = "2"
 	o.controller.observer.SetProfiles(profiles)
 	o.setNode(func(n *core.Node) {
 		n.Annotations[chillmeta.PowerActuator] = nvpModel0
