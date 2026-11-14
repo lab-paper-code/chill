@@ -154,16 +154,23 @@ func TestCatalogBuildsProfileFromSessionResult(t *testing.T) {
 		!p.MeasuredAt.Equal(time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("profile mapping: %+v", p)
 	}
+	assertCatalogSessionCondition(t, p)
+	instance := serving.SchedulerInstance{Node: serving.NodeReference{Name: "node-a", UID: "node-a-uid"}, Profile: &p}
+	bindProfileMeter(&instance, []servingops.MeterDeclaration{{ID: "wall-node-a", Node: instance.Node, Scope: servingstate.MeasurementWallScope, Source: catalogTestMeter}})
+	if instance.IdleMeter != "wall-node-a" {
+		t.Fatalf("session profile meter not bound: %+v", instance)
+	}
+}
+
+// assertCatalogSessionCondition checks the condition the catalog projects from
+// the session result's condition, runtime report and meter.
+func assertCatalogSessionCondition(t *testing.T, p serving.Profile) {
+	t.Helper()
 	c := p.Condition
 	if c.RuntimeVersion != "1.19.0" || c.RuntimeProvider != "CPUExecutionProvider" || len(c.PlannedBatchSizes) != 2 ||
 		c.ActiveProtocol.Dataset == nil || c.ActiveProtocol.Dataset.UID != "data-uid" || c.NodeUID != "node-a-uid" || c.Actor.MaxBatchSize != 2 ||
 		p.RuntimeMetadata == nil || !sameWallSeries(p.MetricSource, catalogTestMeter) || p.MetricSource.NodeName != "node-a" {
 		t.Fatalf("condition projection: %+v", c)
-	}
-	instance := serving.SchedulerInstance{Node: serving.NodeReference{Name: "node-a", UID: "node-a-uid"}, Profile: &p}
-	bindProfileMeter(&instance, []servingops.MeterDeclaration{{ID: "wall-node-a", Node: instance.Node, Scope: servingstate.MeasurementWallScope, Source: catalogTestMeter}})
-	if instance.IdleMeter != "wall-node-a" {
-		t.Fatalf("session profile meter not bound: %+v", instance)
 	}
 }
 

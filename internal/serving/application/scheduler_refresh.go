@@ -80,10 +80,7 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 		return err
 	}
 	occupancy, skipped := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
-	signature, err := refreshSourceSignature(config, view, costs, factsVersion)
-	if err != nil {
-		return err
-	}
+	signature := refreshSourceSignature(config, view, costs, factsVersion)
 	currentProfiles := view.CurrentProfiles()
 	o.Lock.Lock()
 	accepted := o.Profiles.Load()
@@ -171,7 +168,7 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 	return nil
 }
 
-func refreshSourceSignature(config SchedulerConfiguration, view servingkube.CatalogView, costs servingkube.CostView, factsVersion string) (string, error) {
+func refreshSourceSignature(config SchedulerConfiguration, view servingkube.CatalogView, costs servingkube.CostView, factsVersion string) string {
 	sources := costs.Sources
 	sources = append(sources, "profiler-facts:"+factsVersion)
 	for _, meter := range config.Meters {
@@ -191,6 +188,5 @@ func refreshSourceSignature(config SchedulerConfiguration, view servingkube.Cata
 		sources = append(sources, "catalog:"+issue.Code+":"+issue.Source.String())
 	}
 	slices.Sort(sources)
-	signature := strings.Join(sources, "\x00")
-	return signature, nil
+	return strings.Join(sources, "\x00")
 }

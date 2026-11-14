@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -59,15 +60,40 @@ func measurementInstanceSpec(node *core.Node, profile serving.Profile) servingst
 func TestMeasurementInstanceIsMeasuredWithoutProfile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	manager, _ := newManagerHarness(t)
 	fixture, node, profile, class := observerSourceFixture()
-	node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "session-uid", Effect: core.TaintEffectNoSchedule}}
 	// The profile only supplies the runner fixture's initialization facts;
 	// the catalog holds no profile.
 	profile.Condition.Preprocessor.Inputs, profile.Condition.Preprocessor.Outputs = []string{"input"}, []string{"output"}
 	profile.RuntimeMetadata.RuntimeVersion = observerTestRuntime
 	profile.RuntimeMetadata.Inputs, profile.RuntimeMetadata.Outputs = []string{"input"}, []string{"output"}
 	profile.RuntimeMetadata.InitializedBatches = []int{1}
+	spec := measurementInstanceSpec(node, profile)
+	nativeHTTPClient, _ := preparationNativeHTTPClient(t, ctx, spec.Config, profile)
+	manager, kube, measure := measurementOperations(t, ctx, fixture, node, class, spec, nativeHTTPClient)
+
+	prepared := measure(servingstate.Operation{ID: "session.1.prepare", Kind: servingstate.OperationPrepare, Node: spec.Instance.Node, Prepare: &spec})
+	pod := &core.Pod{}
+	if err := manager.store.client.Get(ctx, types.NamespacedName{Namespace: fixture.Namespace, Name: spec.Name}, pod); err != nil {
+		t.Fatal(err)
+	}
+	assertMeasurementInstance(t, ctx, kube, pod, prepared, 1)
+
+	id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
+	removed := measure(servingstate.Operation{ID: "session.2.remove", Kind: servingstate.OperationRemove, Node: spec.Instance.Node, Instance: id})
+	if _, drained := removed.Result.DrainNative[id]; !drained || len(removed.Result.Actual.Pods) != 0 {
+		t.Fatalf("remove left the measurement instance: %+v", removed.Result)
+	}
+}
+
+// measurementOperations is the operations path a session prepares and removes
+// its instances through, on a measurement-pool Node: the Kubernetes fakes
+// stand in for the kubelet, nativeClient reaches the instance's runtime, and
+// measure runs Measure(operation) and requires an accepted record.
+func measurementOperations(t *testing.T, ctx context.Context, fixture *core.Pod, node *core.Node, class edge.DeviceClass,
+	spec servingstate.PrepareSpec, nativeClient *http.Client) (*managerHarness, *kubefake.Clientset, func(servingstate.Operation) servingops.OperationMeasurement) {
+	t.Helper()
+	manager, _ := newManagerHarness(t)
+	node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "session-uid", Effect: core.TaintEffectNoSchedule}}
 	kube := kubefake.NewSimpleClientset(node)
 	kube.PrependReactor("create", "services", func(action ktesting.Action) (bool, runtime.Object, error) {
 		action.(ktesting.CreateAction).GetObject().(*core.Service).Spec.ClusterIP = "10.96.0.31"
@@ -136,9 +162,7 @@ func TestMeasurementInstanceIsMeasuredWithoutProfile(t *testing.T) {
 		},
 	}).Build()
 	manager.observer.kube = kube
-	spec := measurementInstanceSpec(node, profile)
-	nativeHTTPClient, _ := preparationNativeHTTPClient(t, ctx, spec.Config, profile)
-	manager.observer.native.HTTPClient = nativeHTTPClient
+	manager.observer.native.HTTPClient = nativeClient
 	operations := &servingops.Operations{Cluster: manager.observer.cluster, Store: manager.store, Kube: kube, Runtime: manager.runtime, Observer: manager.observer, Native: manager.observer.native,
 		Config: servingops.OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond, Measurement: true,
 			MetricLimits: metricobserver.Limits{MaxResultBytes: 64 << 20, MemoryBudgetBytes: 256 << 20}}}
@@ -164,12 +188,14 @@ func TestMeasurementInstanceIsMeasuredWithoutProfile(t *testing.T) {
 		}
 		return record
 	}
+	return manager, kube, measure
+}
 
-	prepared := measure(servingstate.Operation{ID: "session.1.prepare", Kind: servingstate.OperationPrepare, Node: spec.Instance.Node, Prepare: &spec})
-	pod := &core.Pod{}
-	if err := manager.store.client.Get(ctx, types.NamespacedName{Namespace: fixture.Namespace, Name: spec.Name}, pod); err != nil {
-		t.Fatal(err)
-	}
+// assertMeasurementInstance requires the prepared measurement instance to be a
+// profile-less fixed-batch runtime behind its own Service, ready in profiling
+// mode, and returns its native state.
+func assertMeasurementInstance(t *testing.T, ctx context.Context, kube *kubefake.Clientset, pod *core.Pod, prepared servingops.OperationMeasurement, batch int) native.State {
+	t.Helper()
 	for _, container := range pod.Spec.InitContainers {
 		if container.Name == profileInitContainerName {
 			t.Fatal("measurement instance materializes a profile bundle")
@@ -188,14 +214,10 @@ func TestMeasurementInstanceIsMeasuredWithoutProfile(t *testing.T) {
 	}
 	id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 	state, ok := prepared.Result.Actual.Native[id]
-	if !ok || !state.Ready || state.Metadata.Mode != "profiling" || state.Metadata.ProfileID != measurementProfileID || state.Metadata.Policy.FixedBatchSize != 1 {
+	if !ok || !state.Ready || state.Metadata.Mode != "profiling" || state.Metadata.ProfileID != measurementProfileID || state.Metadata.Policy.FixedBatchSize != batch {
 		t.Fatalf("prepare did not end on the ready profiling runtime: %+v", prepared.Result.Actual.Native)
 	}
-
-	removed := measure(servingstate.Operation{ID: "session.2.remove", Kind: servingstate.OperationRemove, Node: spec.Instance.Node, Instance: id})
-	if _, drained := removed.Result.DrainNative[id]; !drained || len(removed.Result.Actual.Pods) != 0 {
-		t.Fatalf("remove left the measurement instance: %+v", removed.Result)
-	}
+	return state
 }
 
 // Only a profile-less fixed-batch runtime in profiling mode is a measurement

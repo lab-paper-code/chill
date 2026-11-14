@@ -91,7 +91,7 @@ func hydrationTickFixture() (serving.SchedulerSettings, serving.SchedulerSnapsho
 		Controls:             serving.SchedulerControls{Routing: true},
 	}
 	node := serving.SchedulerNode{Node: serving.NodeReference{Name: "n", UID: "n-uid"}, PowerMode: "fixed", Ready: true, MemoryBytes: 1024, ObservedAt: at}
-	definition := &serving.Definition{UID: "w", Model: serving.Model{Name: "model", UID: "model-uid", Paths: []serving.ModelPath{{Name: "cpu", Artifact: "model", Files: []string{"/model"}, RuntimeFamily: "firstfloor", Backend: "ort-cpu"}}}, SLO: serving.SLO{Percentile: 100, TargetLatency: time.Second}, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}
+	definition := &serving.Definition{UID: "w", Model: serving.Model{Name: "model", UID: "model-uid", Paths: []serving.ModelPath{{Name: "cpu", Artifact: "model", Files: []string{"/model"}, RuntimeFamily: "firstfloor", Backend: "ort-cpu"}}}, SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}
 	profile := &serving.Profile{
 		ID: "captured-profile", NodeName: node.Node.Name,
 		Condition: profilederivation.CurvePlanSpec{
@@ -99,13 +99,20 @@ func hydrationTickFixture() (serving.SchedulerSettings, serving.SchedulerSnapsho
 			Artifact: profilederivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}},
 		},
 		Batches: []serving.BatchProfile{{
-			Batch: 1, MemoryBytes: 1, EnergyPerInputJoules: 1,
-			ServiceSamples: []firstfloor.ServiceSample{
-				fixtures.ServiceSample("captured-trial", 0, int64(time.Millisecond)),
-				fixtures.ServiceSample("captured-trial", 1, int64(time.Millisecond)),
-			},
+			Batch: 1, MemoryBytes: 1, InputSlopeJoules: kappaTestSlope(`{"status":"Identified","value":1}`),
+			// The service quantile needs at least the percentile's sample floor of records.
+			ServiceSamples: fixtures.ServiceSamples("captured-trial", int64(time.Millisecond)),
 		}},
 	}
-	instance := serving.SchedulerInstance{ID: "i", Node: node.Node, Profile: profile, WorkloadUID: definition.UID, Allocation: serving.SchedulerAllocation{MemoryBytes: 1}, Ready: true, Routable: map[string]bool{definition.UID: true}, Capacity: 1, Weight: 1000, MaxBatch: 1, ObservedAt: at, ArrivalAgesMS: map[string][]float64{}}
+	// A ready actor was warmed, so its last service end is known.
+	instance := serving.SchedulerInstance{ID: "i", Node: node.Node, Profile: profile, WorkloadUID: definition.UID, Allocation: serving.SchedulerAllocation{MemoryBytes: 1}, Ready: true, Routable: map[string]bool{definition.UID: true}, Capacity: 1, Weight: 1000, MaxBatch: 1, ObservedAt: at, LastServiceEndAgeNanos: new(int64), ArrivalAgesMS: map[string][]float64{}}
 	return settings, serving.SchedulerSnapshot{At: at, ObservationEnd: at, ObservedSince: at.Add(-time.Second), Workloads: []*serving.Definition{definition}, Nodes: []serving.SchedulerNode{node}, Instances: []serving.SchedulerInstance{instance}, Options: []serving.SchedulerOption{{Instance: instance, CompatibleUIDs: []string{definition.UID}}}, Routing: map[string]map[string]int32{definition.UID: {instance.ID: 1000}}}
+}
+
+func kappaTestSlope(wire string) *profilederivation.SessionParameter {
+	var p profilederivation.SessionParameter
+	if err := json.Unmarshal([]byte(wire), &p); err != nil {
+		panic(err)
+	}
+	return &p
 }
