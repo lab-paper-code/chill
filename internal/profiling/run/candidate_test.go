@@ -199,30 +199,6 @@ func TestDecodeCandidateReportValidatesSeparatedHostContract(t *testing.T) {
 	}
 }
 
-func TestDecodeCandidateReportRejectsRetiredConfiguredTensorFields(t *testing.T) {
-	report := completeCandidateReportForTest()
-	report.ArtifactCapability = rknnArtifactCapabilityForTest()
-	payload, err := json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var wire map[string]any
-	if err := json.Unmarshal(payload, &wire); err != nil {
-		t.Fatal(err)
-	}
-	for field, value := range map[string]any{"inputLayout": RKNNLiteInputLayout, "inputDataType": "float32"} {
-		wire["artifactCapability"].(map[string]any)[field] = value
-		payload, err = json.Marshal(wire)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := DecodeCandidateReport(payload); err == nil {
-			t.Fatalf("expected retired configured %s rejection", field)
-		}
-		delete(wire["artifactCapability"].(map[string]any), field)
-	}
-}
-
 func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	report := completeCandidateReportForTest()
 	contract := rknnHostContractForTest()

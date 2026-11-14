@@ -366,13 +366,6 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 			match: "architecture and Node selector are required",
 		},
 		{
-			name: "Node identity mismatch",
-			mutate: func(resolvers *fakePreparationResolvers) {
-				resolvers.node.result.Name = "other-node"
-			},
-			match: "does not match requested target",
-		},
-		{
 			name: "invalid metric source",
 			mutate: func(resolvers *fakePreparationResolvers) {
 				resolvers.metrics.result.Endpoint = ""

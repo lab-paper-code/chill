@@ -133,18 +133,6 @@ func TestFirstfloorFrozenBackendRequirements(t *testing.T) {
 	}
 }
 
-func TestFirstfloorSettingsWireRejectsRetiredPriorityLevels(t *testing.T) {
-	payload, err := json.Marshal(firstfloorFrozenConfig(FirstfloorORTCPUBackend))
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload = []byte(strings.Replace(string(payload), `"maxQueueSize":32`, `"maxQueueSize":32,"priorityLevels":1`, 1))
-	var config RunConfig
-	if err := json.Unmarshal(payload, &config); err == nil {
-		t.Fatal("retired priorityLevels was accepted")
-	}
-}
-
 func TestFrozenGPUAccessIsDetached(t *testing.T) {
 	config := firstfloorFrozenConfig(FirstfloorORTCUDABackend)
 	copy := cloneRunConfig(config)

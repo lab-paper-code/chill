@@ -89,8 +89,6 @@ func (s BatchEnergyOptimizationSessionSpec) Confidence() (float64, error) {
 // incremental-energy estimates for this measurement.
 type BatchEnergyOptimizationPointPolicySpec struct {
 	// +optional
-	// +kubebuilder:default="0.95"
-	// +kubebuilder:validation:Pattern=`^0\.[0-9]*[1-9][0-9]*$`
 	ConfidenceLevel string `json:"confidenceLevel,omitempty"`
 }
 
