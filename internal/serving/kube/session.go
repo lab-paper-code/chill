@@ -249,23 +249,33 @@ func (r *sessionRun) measure(ctx context.Context, name string, operation serving
 // optional cost snapshot, using the exact Pod returned by prepare.
 func (r *sessionRun) preparedInstance(spec *servingstate.PrepareSpec, result *servingstate.OperationResult) (*serving.InstanceState, *native.State) {
 	instance := schedulerPhysicalState(spec.Instance.ID, result.Actual.Instances)
-	if instance != nil {
-		if state, ok := result.Actual.Native[instance.ID]; ok {
-			return instance, &state
-		}
-		if instance.Native != nil {
-			return instance, instance.Native
-		}
-	}
+	podUID := ""
 	if evidence := result.Preparation; evidence != nil {
+		podUID = evidence.PodUID
+	}
+	if instance == nil && podUID != "" {
 		instances := r.c.runtime.Instances()
 		for i := range instances {
-			if instances[i].PodUID == evidence.PodUID {
-				return &instances[i], instances[i].Native
+			if instances[i].PodUID == podUID {
+				instance = &instances[i]
 			}
 		}
 	}
-	return instance, nil
+	if instance == nil {
+		return nil, nil
+	}
+	if podUID == "" {
+		podUID = instance.PodUID
+	}
+	// The operation's own native read is keyed by Pod UID and container. The
+	// observer's instance may predate the container start and carry neither
+	// the container identity nor a native read yet.
+	for id, state := range result.Actual.Native {
+		if uid, _, _ := strings.Cut(id, "/"); uid == podUID && podUID != "" {
+			return instance, &state
+		}
+	}
+	return instance, instance.Native
 }
 
 // removePrepared removes only the exact Pod returned by this preparation.

@@ -968,3 +968,21 @@ func TestSessionLoadLogFailureCarriesOriginalSentenceAndRemovesInstance(t *testi
 		})
 	}
 }
+
+// The operation's native read is used when the observer's instance still
+// predates the container start: no physical identifier, no native read yet
+// (jetsonx, batch size 2 of a real session).
+func TestPreparedInstanceUsesTheOperationNativeReadByPodUID(t *testing.T) {
+	spec := servingstate.PrepareSpec{Instance: serving.SchedulerInstance{ID: "slot"}}
+	result := servingstate.OperationResult{
+		Preparation: &servingstate.PreparationEvidence{PodUID: "pod-uid"},
+		Actual: servingstate.OperationState{
+			Instances: []serving.InstanceState{{TargetID: "slot", PodUID: "pod-uid", Reason: "Pod is not currently ready"}},
+			Native:    map[string]native.State{"pod-uid/containerd://abc": {Ready: true}, "other/containerd://def": {}},
+		},
+	}
+	instance, state := (&sessionRun{}).preparedInstance(&spec, &result)
+	if instance == nil || instance.PodUID != "pod-uid" || state == nil || !state.Ready {
+		t.Fatalf("instance %+v state %+v", instance, state)
+	}
+}
