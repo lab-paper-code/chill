@@ -64,6 +64,10 @@ func TestRefreshPreparesRecordedRuntimeTag(t *testing.T) {
 // that can serve it, so a control round's first query finds them built.
 func TestRefreshPreparesServiceQuantilesOffDecisionPath(t *testing.T) {
 	fixture := newPreparationCatalogFixture(t)
+	// Accept sources before registration: the next refresh has unchanged inputs.
+	if err := fixture.service.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	c := fixture.profile.Condition
 	fields := func(names []string) []serving.RawField {
 		out := make([]serving.RawField, len(names))

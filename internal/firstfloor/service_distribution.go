@@ -60,6 +60,8 @@ type ServiceDistribution struct {
 	services      []int64 // service of the record at the same index in gaps
 	firstDropped  int
 	maxService    int64
+	meanService   float64
+	minService    int64
 	build         sync.Mutex
 	windowQueries atomic.Pointer[[]*windowTable]
 }
@@ -72,31 +74,64 @@ type windowTable struct {
 	tree       []int64
 }
 
+type serviceRecord struct{ gap, service int64 }
+
 func NewServiceDistribution(samples []ServiceSample) (*ServiceDistribution, error) {
 	if len(samples) == 0 {
 		return nil, errors.New("paired service samples required")
 	}
-	type record struct{ gap, service int64 }
-	d := &ServiceDistribution{}
-	known := make([]record, 0, len(samples))
+	firstDropped := 0
+	known := make([]serviceRecord, 0, len(samples))
 	for _, s := range samples {
 		if s.ServiceDurationNanos <= 0 || s.PrecedingIdleNanos != nil && *s.PrecedingIdleNanos < 0 {
 			return nil, errors.New("positive service and nonnegative actual idle required")
 		}
 		if s.PrecedingIdleNanos == nil {
-			d.firstDropped++
+			firstDropped++
 			continue
 		}
-		known = append(known, record{*s.PrecedingIdleNanos, s.ServiceDurationNanos})
-		d.maxService = max(d.maxService, s.ServiceDurationNanos)
+		known = append(known, serviceRecord{*s.PrecedingIdleNanos, s.ServiceDurationNanos})
 	}
-	slices.SortStableFunc(known, func(a, b record) int { return cmp.Compare(a.gap, b.gap) })
+	return hydrateServiceRecords(known, firstDropped), nil
+}
+
+func hydrateServiceRecords(known []serviceRecord, firstDropped int) *ServiceDistribution {
+	d := &ServiceDistribution{firstDropped: firstDropped, minService: math.MaxInt64}
+	slices.SortStableFunc(known, func(a, b serviceRecord) int { return cmp.Compare(a.gap, b.gap) })
 	d.gaps, d.services = make([]int64, len(known)), make([]int64, len(known))
 	for i, r := range known {
 		d.gaps[i], d.services[i] = r.gap, r.service
+		d.meanService += float64(r.service)
+		d.minService = min(d.minService, r.service)
+		d.maxService = max(d.maxService, r.service)
 	}
-	return d, nil
+	if len(known) > 0 {
+		d.meanService /= float64(len(known))
+	}
+	return d
 }
+
+// MeanNanos and MinimumNanos are hydrated summaries of the known-gap records.
+// They never scan records on the scheduler's decision path.
+func (d *ServiceDistribution) MeanNanos() (float64, bool) {
+	if d == nil || len(d.services) == 0 {
+		return 0, false
+	}
+	return d.meanService, true
+}
+
+func (d *ServiceDistribution) MinimumNanos() (int64, bool) {
+	if d == nil || len(d.services) == 0 {
+		return 0, false
+	}
+	return d.minService, true
+}
+
+// MaximumNanos is the largest known-gap service duration.
+func (d *ServiceDistribution) MaximumNanos() int64 { return d.maxService }
+
+// RecordCount excludes first executions without a preceding idle gap.
+func (d *ServiceDistribution) RecordCount() int { return len(d.services) }
 
 // DroppedFirstExecutions counts records without a preceding idle gap.
 func (d *ServiceDistribution) DroppedFirstExecutions() int { return d.firstDropped }

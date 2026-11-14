@@ -440,7 +440,14 @@ func preparationNativeHTTPClient(t *testing.T, ctx context.Context, config nativ
 	actorConfig.RunnerTimeoutMS = 3000
 	actorConfig.RunnerCommand = []string{"env", "CHILL_NATIVE_STATE_RUNNER=" + string(runtimeJSON), os.Args[0], "-test.run=^TestNativeStateRunnerProcess$"}
 	if config.Mode == servingstate.NativeServingMode {
-		actorConfig.Policy.Batches = []native.BatchProfile{{Size: 1, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 1000000), fixtures.ServiceSample("physical-trial", 1, 1000000)}, EnergyPerItemJ: 1}}
+		distribution, err := native.NewServiceDistribution([]native.ServiceSample{
+			fixtures.ServiceSample("physical-trial", 0, 1000000),
+			fixtures.ServiceSample("physical-trial", 1, 1000000),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		actorConfig.Policy.Batches = []native.BatchProfile{{Size: 1, Distribution: distribution, EnergyPerItemJ: 1}}
 	}
 	if err := native.ValidateConfig(&actorConfig); err != nil {
 		t.Fatal(err)

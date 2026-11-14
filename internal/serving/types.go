@@ -184,6 +184,9 @@ func (d *Definition) SameExecution(o *Definition) bool {
 }
 
 type BatchProfile struct {
+	// ServiceSamples and ServiceDistribution share immutable measurement storage
+	// across the catalog, accepted views and observer. After hydration, writers
+	// must explicitly copy samples (including idle pointers) before changing them.
 	Batch               int                             `json:"batch"`
 	ServiceSamples      []firstfloor.ServiceSample      `json:"serviceSamples"`
 	ServiceDistribution *firstfloor.ServiceDistribution `json:"-"`
@@ -210,12 +213,15 @@ type ProfilePower struct {
 // Profile retains the frozen measurement condition and its raw evidence. It is
 // built once by the evidence boundary, not decoded or revalidated per request.
 type Profile struct {
-	ID        string                          `json:"id"`
-	Reference evidencestore.ObjectIdentity    `json:"reference"`
-	Evidence  []evidencestore.ObjectIdentity  `json:"evidence"`
-	NodeName  string                          `json:"nodeName"`
-	Condition profilederivation.CurvePlanSpec `json:"condition"`
-	Batches   []BatchProfile                  `json:"batches"`
+	ID        string                       `json:"id"`
+	Reference evidencestore.ObjectIdentity `json:"reference"`
+	// SourceVersion is the BEO resourceVersion. Every status or spec update
+	// changes it; immutable result objects are named by Reference.
+	SourceVersion string                          `json:"-"`
+	Evidence      []evidencestore.ObjectIdentity  `json:"evidence"`
+	NodeName      string                          `json:"nodeName"`
+	Condition     profilederivation.CurvePlanSpec `json:"condition"`
+	Batches       []BatchProfile                  `json:"batches"`
 	// IdleBaselineWatts is no longer read by the scheduler (Power.IdleWatts is);
 	// it stays until the offline holdout tool moves to session results.
 	IdleBaselineWatts float64                       `json:"idleBaselineWatts"`
@@ -269,12 +275,8 @@ type ProfileReuseBatchCheck struct {
 // MeanNanos is the mean measured execution time of batch b.
 func (p *Profile) MeanNanos(b int) (float64, bool) {
 	for _, batch := range p.Batches {
-		if batch.Batch == b && len(batch.ServiceSamples) > 0 {
-			sum := 0.0
-			for _, sample := range batch.ServiceSamples {
-				sum += float64(sample.ServiceDurationNanos)
-			}
-			return sum / float64(len(batch.ServiceSamples)), true
+		if batch.Batch == b {
+			return batch.ServiceDistribution.MeanNanos()
 		}
 	}
 	return 0, false
@@ -295,7 +297,7 @@ func (p *Profile) NativeBundle() firstfloor.ProfileBundle {
 			}
 		}
 		bundle.Batches[i] = firstfloor.BatchProfile{
-			Size: batch.Batch, ServiceSamples: batch.ServiceSamples, Distribution: batch.ServiceDistribution,
+			Size: batch.Batch, Distribution: batch.ServiceDistribution,
 			EnergyPerItemJ: energy,
 		}
 	}
