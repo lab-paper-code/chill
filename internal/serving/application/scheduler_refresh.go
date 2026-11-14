@@ -2,7 +2,6 @@ package application
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -71,9 +70,6 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 	}
 	view, err := o.catalog.Refresh(ctx, namespaces)
 	if err != nil {
-		return err
-	}
-	if err = o.retainProfileReuseChecks(ctx, &view); err != nil {
 		return err
 	}
 	// Coverage consumes verified measurement facts independently of operation
@@ -193,13 +189,6 @@ func refreshSourceSignature(config SchedulerConfiguration, view servingkube.Cata
 	// A catalog issue refuses the measurements naming its profile.
 	for _, issue := range view.Insufficiencies {
 		sources = append(sources, "catalog:"+issue.Code+":"+issue.Source.String())
-	}
-	if len(view.ReuseChecks) != 0 {
-		checks, err := json.Marshal(view.ReuseChecks)
-		if err != nil {
-			return "", err
-		}
-		sources = append(sources, "profile-reuse:"+string(checks))
 	}
 	slices.Sort(sources)
 	signature := strings.Join(sources, "\x00")

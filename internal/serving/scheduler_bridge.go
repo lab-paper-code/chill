@@ -370,10 +370,10 @@ func (b *schedulerBridgeCompiler) peers(uid string) (map[string]SchedulerInstanc
 	for _, i := range peers {
 		k := b.p.currentRoutingRate(i)
 		if k > 0 {
-			items = append(items, capacityItem{id: i.ID, routingWeight: profileRoutingWeight(k), e: capacityInputEnergy(i)})
+			items = append(items, capacityItem{id: i.ID, routingWeight: profileRoutingWeight(k), order: capacityEnergyOrder(i), node: i.Node, model: b.p.loadModels.of(i)})
 		}
 	}
-	slices.SortFunc(items, func(a, c capacityItem) int { return cmp.Or(cmp.Compare(a.e, c.e), cmp.Compare(a.id, c.id)) })
+	slices.SortFunc(items, func(a, c capacityItem) int { return cmp.Or(cmp.Compare(a.order, c.order), cmp.Compare(a.id, c.id)) })
 	return available, items
 }
 
@@ -398,44 +398,6 @@ func (p *capacityPlanner) bridgeFlow(uid string, rate float64, routing map[strin
 		served += min(k, rate*float64(weight)/units)
 	}
 	return kappa, served
-}
-
-func (p *capacityPlanner) bridgeRequestJoules(b *schedulerBridgeSchedule, w capacityWorkload, finalMean, route, window float64) float64 {
-	power := func(weights map[string]int32) float64 {
-		units, served, watts := 0.0, 0.0, 0.0
-		for _, weight := range weights {
-			units += float64(max(0, weight))
-		}
-		for id, weight := range weights {
-			if weight <= 0 || units == 0 {
-				continue
-			}
-			i := b.instances[id]
-			k := p.currentRoutingRate(i)
-			flow := min(k, w.rate*float64(weight)/units)
-			served, watts = served+flow, watts+flow*capacityInputEnergy(i)
-		}
-		return watts + max(0, w.rate-served)*finalMean
-	}
-	at, joules, weights := 0.0, 0.0, p.keep.Routing[w.d.UID]
-	for _, stage := range b.stages {
-		if stage.UID != w.d.UID {
-			continue
-		}
-		until := min(stage.At.Seconds(), window)
-		joules += power(weights) * (until - at)
-		at = until
-		if at >= window {
-			return joules
-		}
-		for _, action := range b.actions {
-			if action.ID == stage.Action {
-				weights = action.RouteTarget.Routing[w.d.UID]
-				break
-			}
-		}
-	}
-	return joules + power(weights)*max(0, min(route, window)-at) + w.rate*finalMean*max(0, window-route)
 }
 
 func (b *schedulerBridgeSchedule) nodeJoules(plan *capacityPlan, n int, r, t float64) float64 {

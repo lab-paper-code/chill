@@ -43,7 +43,7 @@ func BuildFeedbackRouting(instances []FeedbackRouteInput, controlRouting bool) (
 	}
 	sort.Slice(order, func(a, b int) bool {
 		left, right := instances[order[a]], instances[order[b]]
-		le, re := capacityInputEnergy(SchedulerInstance{Profile: left.Profile}), capacityInputEnergy(SchedulerInstance{Profile: right.Profile})
+		le, re := capacityEnergyOrder(SchedulerInstance{Profile: left.Profile}), capacityEnergyOrder(SchedulerInstance{Profile: right.Profile})
 		if le != re {
 			return le < re
 		}

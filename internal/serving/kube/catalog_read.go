@@ -17,68 +17,45 @@ import (
 // ProfileSummary is a deliberate read contract, not an embedded internal Profile.
 // Raw latency arrays and runtime delivery are never visited by an encoder.
 type ProfileSummary struct {
-	ID                string                         `json:"id"`
-	Reference         evidencestore.ObjectIdentity   `json:"reference"`
-	Evidence          []evidencestore.ObjectIdentity `json:"evidence"`
-	NodeName          string                         `json:"nodeName"`
-	Condition         derivation.CurvePlanSpec       `json:"condition"`
-	Batches           []ProfileBatchSummary          `json:"batches"`
-	ConfidenceLevel   float64                        `json:"confidenceLevel"`
-	TrialsPerBatch    int                            `json:"trialsPerBatch,omitempty"`
-	IdleBaselineWatts float64                        `json:"idleBaselineWatts"`
-	MeasuredAt        time.Time                      `json:"measuredAt"`
-	RuntimeMetadata   *firstfloor.RuntimeMetadata    `json:"runtimeMetadata,omitempty"`
-	MetricSource      metricobserver.SourceIdentity  `json:"metricSource"`
-	Reuse             *serving.ProfileReuseCheck     `json:"reuse,omitempty"`
+	ID              string                         `json:"id"`
+	Reference       evidencestore.ObjectIdentity   `json:"reference"`
+	Evidence        []evidencestore.ObjectIdentity `json:"evidence"`
+	NodeName        string                         `json:"nodeName"`
+	Condition       derivation.CurvePlanSpec       `json:"condition"`
+	Batches         []ProfileBatchSummary          `json:"batches"`
+	Power           *serving.ProfilePower          `json:"power,omitempty"`
+	MeasuredAt      time.Time                      `json:"measuredAt"`
+	RuntimeMetadata *firstfloor.RuntimeMetadata    `json:"runtimeMetadata,omitempty"`
+	MetricSource    metricobserver.SourceIdentity  `json:"metricSource"`
+	Reuse           *serving.ProfileReuseCheck     `json:"reuse,omitempty"`
 }
 
 type ProfileBatchSummary struct {
-	Batch                 int                    `json:"batch"`
-	EnergyPerInputJoules  float64                `json:"energyPerInputJoules"`
-	EnergyBelowResolution bool                   `json:"energyBelowResolution,omitempty"`
-	MemoryBytes           uint64                 `json:"memoryBytes"`
-	MemoryBasis           derivation.MemoryBasis `json:"memoryBasis"`
-	MeanWallWatts         float64                `json:"meanWallWatts,omitempty"`
+	Batch               int                          `json:"batch"`
+	InputSlopeJoules    *derivation.SessionParameter `json:"inputSlopeJoules,omitempty"`
+	SaturationInputRate *float64                     `json:"saturationInputRate,omitempty"`
+	MemoryBytes         uint64                       `json:"memoryBytes"`
+	MemoryBasis         derivation.MemoryBasis       `json:"memoryBasis"`
 }
 
 func SummarizeProfile(p serving.Profile) ProfileSummary {
 	out := ProfileSummary{ID: p.ID, Reference: p.Reference, Evidence: p.Evidence, NodeName: p.NodeName,
-		Condition: p.Condition, ConfidenceLevel: p.ConfidenceLevel, TrialsPerBatch: p.TrialsPerBatch,
-		IdleBaselineWatts: p.IdleBaselineWatts, MeasuredAt: p.MeasuredAt, RuntimeMetadata: p.RuntimeMetadata,
+		Condition: p.Condition, Power: p.Power, MeasuredAt: p.MeasuredAt, RuntimeMetadata: p.RuntimeMetadata,
 		MetricSource: p.MetricSource, Reuse: p.Reuse, Batches: make([]ProfileBatchSummary, 0, len(p.Batches))}
 	for _, b := range p.Batches {
-		out.Batches = append(
-			out.Batches,
-			ProfileBatchSummary{
-				b.Batch,
-				b.EnergyPerInputJoules,
-				b.EnergyBelowResolution,
-				b.MemoryBytes,
-				b.MemoryBasis,
-				b.MeanWallWatts,
-			},
-		)
+		out.Batches = append(out.Batches, ProfileBatchSummary{Batch: b.Batch, InputSlopeJoules: b.InputSlopeJoules,
+			SaturationInputRate: b.SaturationInputRate, MemoryBytes: b.MemoryBytes, MemoryBasis: b.MemoryBasis})
 	}
 	return out
 }
 
 func (p ProfileSummary) Profile() serving.Profile {
 	out := serving.Profile{ID: p.ID, Reference: p.Reference, Evidence: p.Evidence, NodeName: p.NodeName,
-		Condition: p.Condition, ConfidenceLevel: p.ConfidenceLevel, TrialsPerBatch: p.TrialsPerBatch,
-		IdleBaselineWatts: p.IdleBaselineWatts, MeasuredAt: p.MeasuredAt, RuntimeMetadata: p.RuntimeMetadata,
+		Condition: p.Condition, Power: p.Power, MeasuredAt: p.MeasuredAt, RuntimeMetadata: p.RuntimeMetadata,
 		MetricSource: p.MetricSource, Reuse: p.Reuse, Batches: make([]serving.BatchProfile, 0, len(p.Batches))}
 	for _, b := range p.Batches {
-		out.Batches = append(
-			out.Batches,
-			serving.BatchProfile{
-				Batch:                 b.Batch,
-				EnergyPerInputJoules:  b.EnergyPerInputJoules,
-				EnergyBelowResolution: b.EnergyBelowResolution,
-				MemoryBytes:           b.MemoryBytes,
-				MemoryBasis:           b.MemoryBasis,
-				MeanWallWatts:         b.MeanWallWatts,
-			},
-		)
+		out.Batches = append(out.Batches, serving.BatchProfile{Batch: b.Batch, InputSlopeJoules: b.InputSlopeJoules,
+			SaturationInputRate: b.SaturationInputRate, MemoryBytes: b.MemoryBytes, MemoryBasis: b.MemoryBasis})
 	}
 	return out
 }

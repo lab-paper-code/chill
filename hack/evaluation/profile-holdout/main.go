@@ -228,18 +228,10 @@ func analyze(input request) (result, error) {
 	}
 	var batches []serving.BatchProfile
 	if len(input.Heldout) > 0 {
-		batches = make([]serving.BatchProfile, 0, len(profiles))
-		for _, measured := range profiles {
-			distribution, err := firstfloor.NewServiceDistribution(measured.ServiceSamples)
-			if err != nil {
-				return out, err
-			}
-			batches = append(batches, serving.BatchProfile{
-				Batch: measured.Batch, MemoryBytes: 1, EnergyPerInputJoules: measured.EnergyPerInputJoules,
-				ServiceSamples: measured.ServiceSamples, ServiceDistribution: distribution,
-			})
-		}
-		sort.Slice(batches, func(i, j int) bool { return batches[i].Batch < batches[j].Batch })
+		// A serving profile carries a session's input slope per batch; old trial
+		// evidence has only a mean per-item energy, a different quantity.
+		return out, fmt.Errorf("heldout latency prediction needs profiles from a session result (%s); old trial evidence has no input slope",
+			derivation.SessionResultSchemaVersion)
 	}
 	out.Latency = make([]latencyPrediction, 0, len(input.Heldout))
 	for _, heldout := range input.Heldout {

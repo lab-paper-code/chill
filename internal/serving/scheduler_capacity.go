@@ -382,6 +382,7 @@ type capacityPlanner struct {
 	optionCapacity  map[int][]capacityChoice
 	currentCapacity map[capacityInstanceKey]capacityItem
 	profileScalars  map[profileTermsKey]profileScalar
+	loadModels      schedulerLoadModels
 	// partial marks a window observed for less than its length since the
 	// process started: arrivals there still reflect the restart, so plans
 	// only add instances and keep every route.

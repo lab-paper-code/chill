@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -159,65 +160,118 @@ func (p *capacityPlanner) bridgeEnergyTimes(res capacityResult, operations map[s
 	return ends, delays, route
 }
 
-// bridgeRequestTimingCoefficients rewrites the piecewise request law as power
-// differences at stage boundaries, plus the final-route boundary. Equal powers
-// cancel regardless of routing-map, instance, or action identity.
-func (p *capacityPlanner) bridgeRequestTimingCoefficients(res capacityResult) (map[string]float64, float64) {
-	changes, route := map[string]float64{}, 0.0
+// schedulerLoadSegment is one constant routing state of a bridge.
+type schedulerLoadSegment struct {
+	start, end float64
+	rates      []schedulerRate
+}
+
+// schedulerBridgeEvent switches one Workload's routing at a bridge stage.
+type schedulerBridgeEvent struct {
+	at      float64
+	w       int
+	action  string
+	weights map[string]int32
+}
+
+// bridgeEvents orders the bridge's route stages by time.
+func (p *capacityPlanner) bridgeEvents(res capacityResult) []schedulerBridgeEvent {
+	var events []schedulerBridgeEvent
+	for _, stage := range res.bridge.stages {
+		w, ok := p.index[stage.UID]
+		if !ok {
+			continue
+		}
+		for _, action := range res.bridge.actions {
+			if action.ID == stage.Action {
+				events = append(events, schedulerBridgeEvent{at: stage.At.Seconds(), w: w, action: stage.Action, weights: action.RouteTarget.Routing[stage.UID]})
+				break
+			}
+		}
+	}
+	slices.SortStableFunc(events, func(a, b schedulerBridgeEvent) int { return cmp.Compare(a.at, b.at) })
+	return events
+}
+
+// bridgeStateRates gives each routed bridge instance its flow, up to its
+// routing rate; the rest of a Workload goes to its final routing.
+func (p *capacityPlanner) bridgeStateRates(res capacityResult, state []map[string]int32, shares [][]schedulerRate) []schedulerRate {
+	var rates []schedulerRate
 	for w, ws := range p.ws {
-		var items []capacityItem
-		for n, j := range res.choice {
-			items = append(items, p.plans[n][j].items[w]...)
+		units, served := 0.0, 0.0
+		ids := make([]string, 0, len(state[w]))
+		for id, weight := range state[w] {
+			units += float64(max(0, weight))
+			ids = append(ids, id)
 		}
-		for k := range items {
-			items[k].weight = res.weights[w][items[k].id]
-		}
-		_, loads, _ := capacityFixedWeights(ws.rate, items)
-		served, mean := 0.0, 0.0
-		for k, load := range loads {
-			served += load
-			mean += load * items[k].e
-		}
-		if served > 0 {
-			mean /= served
-		}
-		power := func(weights map[string]int32) float64 {
-			units, served, watts := 0.0, 0.0, 0.0
-			var ids []string
-			for id, weight := range weights {
-				units += float64(max(0, weight))
-				ids = append(ids, id)
-			}
-			slices.Sort(ids)
-			for _, id := range ids {
-				weight := weights[id]
-				if weight <= 0 || units == 0 {
-					continue
-				}
-				instance := res.bridge.instances[id]
-				flow := min(p.currentRoutingRate(instance), ws.rate*float64(weight)/units)
-				served += flow
-				watts += flow * capacityInputEnergy(instance)
-			}
-			return watts + max(0, ws.rate-served)*mean
-		}
-		before := power(p.keep.Routing[ws.d.UID])
-		for _, stage := range res.bridge.stages {
-			if stage.UID != ws.d.UID {
+		slices.Sort(ids)
+		for _, id := range ids {
+			weight := state[w][id]
+			if weight <= 0 || units == 0 {
 				continue
 			}
-			for _, action := range res.bridge.actions {
-				if action.ID == stage.Action {
-					after := power(action.RouteTarget.Routing[ws.d.UID])
-					changes[stage.Action] += before - after
-					before = after
-					break
-				}
-			}
+			instance := res.bridge.instances[id]
+			flow := min(p.currentRoutingRate(instance), ws.rate*float64(weight)/units)
+			served += flow
+			rates = append(rates, schedulerRate{id: id, node: instance.Node, model: p.loadModels.of(instance), rate: flow})
 		}
-		route += before - ws.rate*mean
+		rates = appendScaledRates(rates, shares[w], max(0, ws.rate-served))
 	}
-	return changes, route
+	return rates
+}
+
+// bridgeSegments lists the bridge's routing states over [0, min(route, window)).
+func (p *capacityPlanner) bridgeSegments(res capacityResult, window float64) []schedulerLoadSegment {
+	shares := p.finalShares(res)
+	state := make([]map[string]int32, len(p.ws))
+	for w, ws := range p.ws {
+		state[w] = p.keep.Routing[ws.d.UID]
+	}
+	var segments []schedulerLoadSegment
+	at, end := 0.0, min(res.route, window)
+	for _, event := range p.bridgeEvents(res) {
+		if until := min(event.at, end); until > at {
+			segments = append(segments, schedulerLoadSegment{start: at, end: until, rates: p.bridgeStateRates(res, state, shares)})
+			at = until
+		}
+		state[event.w] = event.weights
+	}
+	if end > at {
+		segments = append(segments, schedulerLoadSegment{start: at, end: end, rates: p.bridgeStateRates(res, state, shares)})
+	}
+	return segments
+}
+
+// bridgeRequestTimingCoefficients rewrites the piecewise load law as power
+// differences at stage boundaries, plus the final-route boundary. Equal powers
+// cancel regardless of routing-map, instance, or action identity. Unknown node
+// load watts are missing cells of their own and add nothing here.
+func (p *capacityPlanner) bridgeRequestTimingCoefficients(res capacityResult) (map[string]float64, float64) {
+	shares := p.finalShares(res)
+	state := make([]map[string]int32, len(p.ws))
+	for w, ws := range p.ws {
+		state[w] = p.keep.Routing[ws.d.UID]
+	}
+	changes := map[string]float64{}
+	before := knownLoadWatts(p.bridgeStateRates(res, state, shares))
+	for _, event := range p.bridgeEvents(res) {
+		state[event.w] = event.weights
+		after := knownLoadWatts(p.bridgeStateRates(res, state, shares))
+		changes[event.action] += before - after
+		before = after
+	}
+	_, final := p.requestRates(res)
+	return changes, before - knownLoadWatts(final)
+}
+
+func knownLoadWatts(rates []schedulerRate) float64 {
+	watts := 0.0
+	for _, load := range nodeLoadWatts(rates) {
+		if load.known {
+			watts += load.watts
+		}
+	}
+	return watts
 }
 
 // nodePlans builds keep without operation cells. Any non-exact candidate
@@ -304,6 +358,13 @@ func (p *capacityPlanner) missingEnergyCells(reference, candidate capacityResult
 				}
 				operations[key] = operation
 			}
+		}
+		// A node's load watts not identified at one load is one unknown,
+		// cancelled only by the same load for the same seconds.
+		for _, unknown := range res.loadUnknowns {
+			cell := SchedulerMissingEnergyCell{Node: unknown.node, Phase: unknown.phase, Kind: schedulerLoadPowerCell, State: unknown.identities,
+				Required: "identified awake step, hold, input slope and service time of these configurations at these input rates"}
+			add("load:"+unknown.key, cell, side.sign*unknown.seconds)
 		}
 		// Whole-wall J and elapsed seconds are separate unknowns. Each source's
 		// duration law already includes every occurrence and its chain location.
@@ -415,149 +476,138 @@ func (p *capacityPlanner) energyTimingLaws(res capacityResult, operations map[st
 
 type schedulerNodeRequestPower struct {
 	watts      float64
+	unknown    bool
 	references []string
 }
 
-// requestPowerTerms projects the very same retained and final load equations as
-// evaluateEnergyForRoutes. Profile references identify the batch-1 EPI source.
-func (p *capacityPlanner) requestPowerTerms(res capacityResult) (map[string]schedulerNodeRequestPower, map[string]schedulerNodeRequestPower) {
-	initial, final := map[string]schedulerNodeRequestPower{}, map[string]schedulerNodeRequestPower{}
-	add := func(out map[string]schedulerNodeRequestPower, instance SchedulerInstance, watts float64) {
-		if watts == 0 {
-			return
-		}
-		term := out[instance.Node.UID]
-		term.watts += watts
-		if instance.Profile != nil {
-			term.references = appendUnique(term.references, instance.Profile.ID)
-		}
-		out[instance.Node.UID] = term
-	}
-	for w, ws := range p.ws {
-		var items, retained []capacityItem
-		instances := map[string]SchedulerInstance{}
+// schedulerLoadPowerCell marks a missing cell of a node's load watts.
+const schedulerLoadPowerCell = "load-power"
+
+// finalShares is each Workload's final routing as instance shares of one
+// input per second.
+func (p *capacityPlanner) finalShares(res capacityResult) [][]schedulerRate {
+	shares := make([][]schedulerRate, len(p.ws))
+	for w := range p.ws {
+		var items []capacityItem
 		for n, j := range res.choice {
-			plan := p.plans[n][j]
-			items = append(items, plan.items[w]...)
-			retained = append(retained, plan.retained[w]...)
-			for _, instance := range plan.instances {
-				instances[instance.ID] = instance
-			}
-			for _, instance := range p.plans[n][0].instances {
-				instances[instance.ID] = instance
-			}
+			items = append(items, p.plans[n][j].items[w]...)
 		}
 		for k := range items {
 			items[k].weight = res.weights[w][items[k].id]
 		}
-		_, load, _ := capacityFixedWeights(ws.rate, items)
-		served, retainedRate, weightSum := 0.0, 0.0, 0.0
-		for _, flow := range load {
-			served += flow
+		_, loads, _ := capacityFixedWeights(1, items)
+		for k, item := range items {
+			if loads[k] > 0 {
+				shares[w] = append(shares[w], schedulerRate{id: item.id, node: item.node, model: item.model, rate: loads[k]})
+			}
 		}
+	}
+	return shares
+}
+
+func appendScaledRates(rates, shares []schedulerRate, rate float64) []schedulerRate {
+	if rate <= 0 {
+		return rates
+	}
+	for _, share := range shares {
+		share.rate *= rate
+		rates = append(rates, share)
+	}
+	return rates
+}
+
+// requestRates gives every instance its input rate before and after the
+// route: retained current instances first serve up to their routing rate,
+// the rest of a Workload goes to its final routing; after the route the whole
+// Workload follows the final routing.
+func (p *capacityPlanner) requestRates(res capacityResult) (initial, final []schedulerRate) {
+	shares := p.finalShares(res)
+	for w, ws := range p.ws {
+		var retained []capacityItem
+		for n, j := range res.choice {
+			retained = append(retained, p.plans[n][j].retained[w]...)
+		}
+		retainedRate, weightSum := 0.0, 0.0
 		for _, item := range retained {
 			retainedRate += float64(item.routingWeight)
 			weightSum += float64(item.weight)
 		}
-		for k, item := range items {
-			if served > 0 {
-				add(final, instances[item.id], ws.rate*load[k]/served*item.e)
-				add(initial, instances[item.id], max(0, ws.rate-retainedRate)*load[k]/served*item.e)
-			}
-		}
 		for _, item := range retained {
 			if weightSum > 0 {
-				add(initial, instances[item.id], min(ws.rate, retainedRate)*float64(item.weight)/weightSum*item.e)
+				initial = append(initial, schedulerRate{id: item.id, node: item.node, model: item.model,
+					rate: min(ws.rate, retainedRate) * float64(item.weight) / weightSum})
 			}
 		}
+		initial = appendScaledRates(initial, shares[w], max(0, ws.rate-retainedRate))
+		final = appendScaledRates(final, shares[w], ws.rate)
 	}
 	return initial, final
 }
 
-// bridgePhaseRequestPower integrates the bridge's routed request law over a
-// node's constant loaded-state phase. Only request power is averaged; the idle
-// cell remains the phase's single node-wall reference.
+// addLoadJoules adds each node's load watts for seconds; a node whose watts
+// are not identified is held as an unknown instead.
+func (res *capacityResult) addLoadJoules(rates []schedulerRate, phase string, seconds float64) {
+	if seconds <= 0 {
+		return
+	}
+	for _, load := range nodeLoadWatts(rates) {
+		if load.known {
+			res.joules += load.watts * seconds
+			continue
+		}
+		res.loadUnknowns = append(res.loadUnknowns, schedulerLoadUnknown{node: load.node, phase: phase, key: load.key, identities: load.identities, seconds: seconds})
+	}
+}
+
+func nodeRequestPower(rates []schedulerRate) map[string]schedulerNodeRequestPower {
+	out := map[string]schedulerNodeRequestPower{}
+	for _, load := range nodeLoadWatts(rates) {
+		out[load.node.UID] = schedulerNodeRequestPower{watts: load.watts, unknown: !load.known, references: load.references}
+	}
+	return out
+}
+
+// requestPowerTerms projects the same load watts evaluateEnergyForRoutes adds,
+// before and after the route, per node UID.
+func (p *capacityPlanner) requestPowerTerms(res capacityResult) (map[string]schedulerNodeRequestPower, map[string]schedulerNodeRequestPower) {
+	initial, final := p.requestRates(res)
+	return nodeRequestPower(initial), nodeRequestPower(final)
+}
+
+// bridgePhaseRequestPower averages one node's bridge load watts over a phase;
+// the idle cell remains the phase's single node-wall reference. An empty phase
+// reports the state at its start.
 func (p *capacityPlanner) bridgePhaseRequestPower(res capacityResult, node int, start, end float64) schedulerNodeRequestPower {
-	out := schedulerNodeRequestPower{}
 	uid := p.snapshot.Nodes[node].Node.UID
-	add := func(watts float64, profile string, seconds float64) {
-		if watts == 0 || seconds == 0 {
-			return
-		}
-		out.watts += watts * seconds
-		out.references = appendUnique(out.references, profile)
+	out := schedulerNodeRequestPower{}
+	segments := p.bridgeSegments(res, res.period)
+	if len(segments) == 0 {
+		return out
 	}
-	for w, ws := range p.ws {
-		var finalItems []capacityItem
-		instances := map[string]SchedulerInstance{}
-		for n, j := range res.choice {
-			plan := p.plans[n][j]
-			finalItems = append(finalItems, plan.items[w]...)
-			for _, instance := range plan.instances {
-				instances[instance.ID] = instance
-			}
+	if end <= start {
+		index := slices.IndexFunc(segments, func(s schedulerLoadSegment) bool { return start < s.end })
+		if index < 0 {
+			index = len(segments) - 1
 		}
-		for k := range finalItems {
-			finalItems[k].weight = res.weights[w][finalItems[k].id]
+		load, ok := nodeRequestPower(segments[index].rates)[uid]
+		if !ok {
+			return out
 		}
-		_, loads, _ := capacityFixedWeights(ws.rate, finalItems)
-		finalServed := 0.0
-		for _, load := range loads {
-			finalServed += load
+		return load
+	}
+	for _, segment := range segments {
+		seconds := max(0, min(end, segment.end)-max(start, segment.start))
+		load, ok := nodeRequestPower(segment.rates)[uid]
+		if seconds == 0 || !ok {
+			continue
 		}
-		power := func(weights map[string]int32, seconds float64) {
-			units, served := 0.0, 0.0
-			for _, weight := range weights {
-				units += float64(max(0, weight))
-			}
-			for id, weight := range weights {
-				if weight <= 0 || units == 0 {
-					continue
-				}
-				instance := res.bridge.instances[id]
-				flow := min(p.currentRoutingRate(instance), ws.rate*float64(weight)/units)
-				served += flow
-				if instance.Node.UID == uid && instance.Profile != nil {
-					add(flow*capacityInputEnergy(instance), instance.Profile.ID, seconds)
-				}
-			}
-			for k, item := range finalItems {
-				instance := instances[item.id]
-				if finalServed > 0 && instance.Node.UID == uid && instance.Profile != nil {
-					add(max(0, ws.rate-served)*loads[k]/finalServed*item.e, instance.Profile.ID, seconds)
-				}
-			}
-		}
-		at, weights := 0.0, p.keep.Routing[ws.d.UID]
-		for _, stage := range res.bridge.stages {
-			if stage.UID != ws.d.UID {
-				continue
-			}
-			until := stage.At.Seconds()
-			if end > start {
-				power(weights, max(0, min(end, until)-max(start, at)))
-			}
-			if until > end {
-				at = end
-				break
-			}
-			at = until
-			for _, action := range res.bridge.actions {
-				if action.ID == stage.Action {
-					weights = action.RouteTarget.Routing[ws.d.UID]
-					break
-				}
-			}
-		}
-		if end > start {
-			power(weights, max(0, end-max(start, at)))
-		} else {
-			power(weights, 1)
+		out.watts += load.watts * seconds
+		out.unknown = out.unknown || load.unknown
+		for _, reference := range load.references {
+			out.references = appendUnique(out.references, reference)
 		}
 	}
-	if end > start {
-		out.watts /= end - start
-	}
+	out.watts /= end - start
 	return out
 }
 

@@ -74,10 +74,20 @@ func (o *SchedulerService) preparation(
 	spec.Instance.Profile = &profile
 	if accepted := o.Profiles.Load(); accepted != nil {
 		if published, ok := accepted.Preparations[profile.ID]; ok {
-			// Profile identity includes immutable campaign and reuse-policy identity.
+			// Profile identity includes the immutable measurement identity.
 			// Keep fresh Node and queue checks above; reuse only the object.
 			spec.Bundle = published.Bundle
 			return spec, nil
+		}
+	}
+	// The runner ranks batch sizes by each batch's input slope; a bundle
+	// never carries a slope the session did not identify.
+	for _, batch := range profile.Batches {
+		if batch.InputSlopeJoules == nil {
+			return spec, fmt.Errorf("profile batch %d has no input slope; firstfloor batching needs one", batch.Batch)
+		}
+		if _, ok := batch.InputSlopeJoules.Value(); !ok {
+			return spec, fmt.Errorf("profile batch %d input slope is not identified (%s); firstfloor batching needs one", batch.Batch, batch.InputSlopeJoules.Reason())
 		}
 	}
 	raw, err := json.Marshal(profile.NativeBundle())
@@ -94,38 +104,6 @@ func (o *SchedulerService) preparation(
 		return spec, &preparationSourceError{err}
 	}
 	return spec, nil
-}
-
-// Retain both Accepted and Rejected comparisons before publishing the catalog.
-// Content-addressed records preserve earlier decisions when annotations change.
-func (o *SchedulerService) retainProfileReuseChecks(ctx context.Context, view *servingkube.CatalogView) error {
-	for index, check := range view.ReuseChecks {
-		check.Record = nil
-		raw, err := json.Marshal(struct {
-			SchemaVersion string                    `json:"schemaVersion"`
-			Check         serving.ProfileReuseCheck `json:"check"`
-		}{"chill.dacs.io/profile-reuse-check.v1alpha1", check})
-		if err != nil {
-			return err
-		}
-		if int64(len(raw)) > o.opts.MaxEvidenceBytes {
-			return errors.New("profile reuse check exceeds immutable object bound")
-		}
-		reference := evidencestore.ObjectIdentity{Store: o.opts.StoreName,
-			Key:  fmt.Sprintf("serving/profile-reuse/%s/%x.json", check.ConfirmationProfileID, sha256.Sum256(raw)),
-			Size: int64(len(raw))}
-		if _, err := o.objects.PutImmutable(ctx, reference, bytes.NewReader(raw)); err != nil {
-			return err
-		}
-		view.ReuseChecks[index].Record = &reference
-		for profileIndex := range view.Profiles {
-			profile := &view.Profiles[profileIndex]
-			if profile.Reuse != nil && profile.Reuse.ConfirmationProfileID == check.ConfirmationProfileID {
-				profile.Reuse.Record = &reference
-			}
-		}
-	}
-	return nil
 }
 
 // reproducibleRuntimeAccess rejects measured delivery the generated Pod cannot

@@ -283,8 +283,13 @@ func (p *capacityPlanner) recordNodePlans(best, keepResult capacityResult, recor
 							}
 						}
 					}
-					watts := power.watts
-					idle.RequestWatts, idle.RequestReferences = &watts, power.references
+					// The decision shows the load watts the evaluation added; a
+					// node whose load watts are not identified shows none.
+					if !power.unknown {
+						watts := power.watts
+						idle.RequestWatts = &watts
+					}
+					idle.RequestReferences = power.references
 				}
 				projected.IdleCosts[phase] = idle
 			}
