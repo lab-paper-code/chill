@@ -154,8 +154,9 @@ func (s *admissionOverloadRun) addNative(c *Call, running bool) {
 	}
 	if running {
 		q.Phase, q.BatchID, q.BatchSize = phaseRunning, 1, 16
-		zero := int64(0)
-		q.ExchangeElapsedNanos, q.PrecedingIdleNanos = &zero, &zero
+		// Distinct variables: advance grows the exchange span, never the gap.
+		elapsed, gap := int64(0), int64(0)
+		q.ExchangeElapsedNanos, q.PrecedingIdleNanos = &elapsed, &gap
 	}
 	s.native.Requests = append(s.native.Requests, q)
 	s.refreshArrival()

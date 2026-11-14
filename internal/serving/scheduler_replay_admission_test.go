@@ -215,7 +215,9 @@ func runReplayAdmissionOverload(t *testing.T, fixture admissionOverloadFixture, 
 		s.snap.Outstanding = append(s.snap.Outstanding, SchedulerRequest{ID: fmt.Sprintf("initial-%02d", j), Definition: d, ReceivedAt: s.snap.At.Add(-500 * time.Millisecond), Elapsed: 500 * time.Millisecond, QueueAge: 500 * time.Millisecond, Phase: phase, Instance: "jetsono", BatchID: "initial", NativeSenderElapsedMS: &zero, NativeElapsedNanos: &nativeAge, CompletionMarginMS: &zero, ExchangeElapsedNanos: &exchange, RemainingLifetime: &lifetime})
 	}
 	s.initializeOutstanding()
-	i.exchangeKnown = true
+	// As initializeRunning would from the exchange, without drawing: the
+	// runtime arm's initial exchange runs at gap 0 (ready marked its end).
+	i.exchangeKnown, i.batchIdle, i.hasBatchIdle = true, 0, true
 	for _, batch := range fixture.Batches {
 		if batch.Batch == 16 {
 			i.finish = float64(batch.ServiceSamples[0].ServiceDurationNanos)
