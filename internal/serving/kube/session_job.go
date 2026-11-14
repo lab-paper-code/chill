@@ -144,6 +144,7 @@ func (l sessionLevelWire) row() profilederivation.DriverLevelRow {
 	if l.EndReason != sessionSamplesReached {
 		row.Detail = l.Detail
 	}
+	row.Excluded = l.EndReason == sessionRequestLifetimeExpired
 	if l.EndReason == sessionPredictedOverLimit {
 		row.PredictedSeconds, row.LimitSeconds = ptr.To(l.PredictedSeconds), ptr.To(l.LimitSeconds)
 	}

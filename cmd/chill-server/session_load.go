@@ -203,6 +203,10 @@ func runSessionLoad(ctx context.Context, c sessionLoadConfig) ([]sessionLevel, e
 			}
 		}
 		level, err := s.level(ctx, kind, rate)
+		if err == nil && level.EndReason == sessionRequestLifetimeExpired {
+			err = s.waitIdle(ctx, level.Detail)
+			level.EndedAt = time.Now().UTC()
+		}
 		levels = append(levels, level)
 		endedEarly := level.EndReason == sessionPredictedOverLimit || level.EndReason == sessionRequestLifetimeExpired
 		if err != nil || level.EndReason != sessionSamplesReached && (kind == sessionSaturation || !endedEarly) {
@@ -210,6 +214,34 @@ func runSessionLoad(ctx context.Context, c sessionLoadConfig) ([]sessionLevel, e
 		}
 	}
 	return levels, nil
+}
+
+// waitIdle observes physical completion: an expired HTTP request may still
+// belong to an executing, non-preemptible native batch.
+func (s *sessionLoad) waitIdle(parent context.Context, detail string) error {
+	ctx, cancel := context.WithTimeout(parent, s.config.levelLimit)
+	defer cancel()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	spec := gateway.Spec{Endpoint: s.config.endpoint, ModelName: s.config.model}
+	for {
+		state, err := s.client.State(ctx, spec)
+		if err != nil {
+			return fmt.Errorf("%s: read native state while waiting for idle: %w", detail, err)
+		}
+		if !state.Ready {
+			return fmt.Errorf("%s: native executor is not ready while waiting for idle", detail)
+		}
+		if len(state.Requests) == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s: native executor did not become idle within %s (%d requests remain): %w",
+				detail, s.config.levelLimit, len(state.Requests), ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 // level drives one level until it has the minimum service samples and the
@@ -385,14 +417,13 @@ func (l *sessionLevelRun) receive(result sessionResult) {
 		l.end(sessionAllocationBeforeBatch, nativeErr.message, nil)
 	case isNative && nativeErr.allocation:
 		l.end(sessionAllocationAfterBatch, nativeErr.message, nil)
-	case isNative && l.row.Kind == sessionMid && nativeErr.status == http.StatusRequestTimeout:
-		// Drain healthy requests without cancelling their native execution:
-		// every finished batch must remain in the driver's completion count.
+	case isNative && l.row.Kind != sessionSaturation && nativeErr.status == http.StatusRequestTimeout:
+		// Drain HTTP responses, then waitIdle observes physical completion.
+		// Expired levels cannot identify execution counts and are excluded.
 		l.row.EndReason, l.row.Detail = sessionRequestLifetimeExpired, sessionBounded(nativeErr.message, sessionDetailBytes)
 		l.terminal = true
-	case isNative && l.row.Kind != sessionMid && nativeErr.status == http.StatusRequestTimeout:
-		// Without queueing behind other levels' work, a saturation or sparse
-		// request outlives its lifetime only behind a too long batch.
+	case isNative && l.row.Kind == sessionSaturation && nativeErr.status == http.StatusRequestTimeout:
+		// Saturation requires two batches plus delivery margin within lifetime.
 		l.end(sessionServiceOverLifetime, nativeErr.message, nil)
 	default:
 		l.end(sessionFailed, "", result.err)
