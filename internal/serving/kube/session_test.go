@@ -5,14 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -143,15 +139,6 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 		s.tables[batch] = s.layOut(batch, &cursor)
 	}
 	h.controller.measureStep = s.measure
-	idle := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(native.State{At: time.Now(), Ready: true})
-	}))
-	t.Cleanup(idle.Close)
-	proxy, err := url.Parse(idle.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.controller.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 	h.controller.sessionReads = sessionReads{
 		native: func(_ context.Context, prefix string, _ time.Time, excluded map[string]bool) (map[string]sessionNativeLevel, error) {
 			s.mu.Lock()
@@ -261,6 +248,8 @@ func (s *sessionHarness) measure(_ context.Context, _ SchedulerControllerConfig,
 	s.measured = append(s.measured, name)
 	s.mu.Unlock()
 	record := servingops.OperationMeasurement{Request: request, Verdict: servingstate.MeasurementAccepted}
+	record.Result = servingstate.OperationResult{Operation: operation, StartedAt: time.Now(), Status: servingstate.NativeOperationComplete}
+	record.Result.Actual.PowerMode = operation.PowerMode
 	receipt := evidencestore.Receipt{Object: evidencestore.ObjectIdentity{Key: servingops.OperationMeasurementKey(operation)}}
 	if prepare := operation.Prepare; prepare != nil {
 		batch := prepare.Config.Policy.FixedBatchSize
@@ -860,8 +849,9 @@ func TestSessionLostFinishedMemberFailsWithInputCount(t *testing.T) {
 // actor. Only kubelet transitions, the IPC runner and load Job creation are
 // fixtures; unlike sessionHarness, executor recovery is not replaced.
 func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
-	for _, scenario := range []string{"prepare insufficient", "load creation failed", "unverified executor"} {
+	for _, scenario := range []string{"prepare insufficient", "load creation failed", "remove insufficient", "prepare no first sample", "prepare wrapper refusal", "remove no first sample"} {
 		t.Run(scenario, func(t *testing.T) {
+			completes := strings.HasPrefix(scenario, "remove ")
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			fixture, node, profile, class := observerSourceFixture()
@@ -887,10 +877,6 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 				RunnerTimeout: 3 * time.Second, MaxRequestBytes: 1 << 20}
 			spec := sessionInstance(beo, preparation, testNode, 1, config)
 			actor := spec.Config
-			if scenario == "unverified executor" {
-				// A real actor with the wrong mode must retain its recovery fence.
-				actor.Mode = servingstate.NativeServingMode
-			}
 			nativeClient, _ := preparationNativeHTTPClient(t, ctx, actor, profile)
 			manager, kube, _ := measurementOperations(t, ctx, fixture, node, class, spec, nativeClient,
 				func(manager *managerHarness) { measurementRecoveryBoot(t, manager) })
@@ -903,36 +889,96 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 				config: manager.measurementConfig, observationLog: manager.observationLog}
 			controller.config.Session = config
 			controller.config.MeasurementNamespaces = []string{fixture.Namespace}
+			reads := newSessionHarness(t)
+			controller.sessionReads = reads.controller.sessionReads
 			var measured []servingops.OperationMeasurement
 			controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
-				if scenario == "prepare insufficient" && request.Operation.Kind == servingstate.OperationPrepare {
+				if scenario == "prepare insufficient" && request.Operation.Kind == servingstate.OperationPrepare ||
+					scenario == "remove insufficient" && request.Operation.Kind == servingstate.OperationRemove {
 					// Real power samples cannot cover a one-nanosecond maximum gap.
 					request.Coverage.MaximumGap = time.Nanosecond
 				}
+				if strings.HasSuffix(scenario, "no first sample") &&
+					(strings.HasPrefix(scenario, "prepare ") && request.Operation.Kind == servingstate.OperationPrepare ||
+						strings.HasPrefix(scenario, "remove ") && request.Operation.Kind == servingstate.OperationRemove) {
+					config.MeterSource = func(identity metricobserver.SourceIdentity) (metricobserver.Source, error) {
+						return &measurementTestSource{identity: identity, failAfterFirst: true, reads: 1}, nil
+					}
+				}
+				if scenario == "prepare wrapper refusal" && request.Operation.Kind == servingstate.OperationPrepare {
+					config.MeterSource = func(metricobserver.SourceIdentity) (metricobserver.Source, error) {
+						return nil, errors.New("meter source unavailable")
+					}
+				}
 				record, receipt, err := controller.measureOperation(ctx, config, request)
 				measured = append(measured, record)
+				if receipt.Object.Key != "" {
+					assertRetainedOperationMeasurement(t, config.Evidence.(archiveEvidence).directory, receipt, request, record, err)
+				}
 				return record, receipt, err
 			}
 			loads := 0
-			kube.PrependReactor("create", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+			kube.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
 				loads++
-				return true, nil, errors.New("session-load creation refused")
+				if !completes {
+					return true, nil, errors.New("session-load creation refused")
+				}
+				job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
+				job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: core.ConditionTrue}}
+				message, _ := json.Marshal(reads.tables[1])
+				pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: job.Name + "-load", Namespace: job.Namespace, Labels: map[string]string{"job-name": job.Name}},
+					Status: core.PodStatus{Phase: core.PodSucceeded, ContainerStatuses: []core.ContainerStatus{{Name: sessionLoadContainer,
+						State: core.ContainerState{Terminated: &core.ContainerStateTerminated{Message: string(message)}}}}}}
+				return false, nil, kube.Tracker().Create(core.SchemeGroupVersion.WithResource("pods"), pod, pod.Namespace)
 			})
-			controller.startSession(node, beo, sessionPlan{preparation: preparation, powered: true}, controller.config)
+			minimumSamples, err := native.MinimumServiceSamples(95)
+			if err != nil {
+				t.Fatal(err)
+			}
+			controller.startSession(node, beo, sessionPlan{preparation: preparation, powered: true, meter: controller.config.Meters[0], minimumSamples: minimumSamples, confidence: .95}, controller.config)
 			controller.wg.Wait()
 			if err := manager.store.client.Get(ctx, client.ObjectKeyFromObject(beo), beo); err != nil {
 				t.Fatal(err)
 			}
-			if beo.Status.Phase != string(edge.MeasurementPhaseFailed) || beo.Status.Result != nil {
+			wantPhase := edge.MeasurementPhaseFailed
+			if completes {
+				wantPhase = edge.MeasurementPhaseComplete
+			}
+			if beo.Status.Phase != string(wantPhase) || (beo.Status.Result != nil) != completes {
 				t.Fatalf("status %+v", beo.Status)
 			}
 			if len(measured) != 2 || measured[0].Request.Operation.Kind != servingstate.OperationPrepare ||
 				measured[1].Request.Operation.Kind != servingstate.OperationRemove {
 				t.Fatalf("prepared instance was not removed: %+v", measured)
 			}
+			// Explicit unmeasured actions retain a separate physical result.
+			identities, err := controller.config.Evidence.List(ctx, SessionOperationCostPrefix(string(node.UID), beo.UID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, identity := range identities {
+				reader, err := controller.config.Evidence.Open(ctx, identity)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var retained servingops.OperationMeasurement
+				err = json.NewDecoder(reader).Decode(&retained)
+				_ = reader.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := range measured {
+					if measured[i].Result.StartedAt.IsZero() && retained.Request.Operation.Kind == measured[i].Request.Operation.Kind &&
+						!retained.Result.StartedAt.IsZero() {
+						if retained.Verdict != servingops.MeasurementInsufficient || !strings.HasPrefix(retained.Reason, "unmeasured action:") || retained.WallJoules != nil {
+							t.Fatalf("unmeasured physical action gained cost: %+v", retained)
+						}
+						measured[i] = retained
+					}
+				}
+			}
 			physical := schedulerPhysicalState(spec.Instance.ID, measured[0].Result.Actual.Instances)
-			unverified := scenario == "unverified executor"
-			if physical == nil || physical.RecoveryUnknown != unverified || physical.NativeVerified == unverified {
+			if physical == nil || physical.RecoveryUnknown || !physical.NativeVerified {
 				t.Fatalf("observer did not preserve the exact executor's recovery proof: %+v", physical)
 			}
 			current, err := kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
@@ -945,23 +991,26 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 				t.Fatal(err)
 			}
 			message := sessionCondition(beo.Status).Message
-			if scenario == "unverified executor" {
-				if !strings.Contains(message, "UnconfirmedInstance: executor recovery unknown") || holder != string(beo.UID) ||
-					len(pods.Items) != 1 || loads != 0 {
-					t.Fatalf("remove refusal lost: status %+v holder %q pods %d loads %d", beo.Status, holder, len(pods.Items), loads)
+			remaining := 0
+			for _, pod := range pods.Items {
+				if pod.Labels["job-name"] == "" {
+					remaining++
 				}
-				return
 			}
-			if !manager.runtime.Recovery().Unknown || len(pods.Items) != 0 || holder != "" ||
-				measured[1].Verdict != servingstate.MeasurementAccepted || len(measured[1].Result.DrainNative) != 1 {
-				t.Fatalf("cleanup/handback failed: holder %q pods %d remove %+v", holder, len(pods.Items), measured[1])
+			if !manager.runtime.Recovery().Unknown || remaining != 0 || holder != "" || loads != 1 ||
+				measured[1].Result.Status != servingstate.NativeOperationComplete ||
+				measured[1].Request.Operation.Instance != "" || measured[1].Request.Operation.PodUID != string(fixture.UID) {
+				t.Fatalf("cleanup/handback failed: holder %q pods %d loads %d remove %+v", holder, remaining, loads, measured[1])
 			}
-			if scenario == "prepare insufficient" {
-				if measured[0].Verdict != servingops.MeasurementInsufficient || message != measured[0].Reason || loads != 0 {
-					t.Fatalf("insufficient preparation continued: status %+v loads %d record %+v", beo.Status, loads, measured[0])
+			if scenario == "prepare insufficient" && (measured[0].Verdict != servingops.MeasurementInsufficient || measured[0].Reason == "") {
+				t.Fatalf("missing insufficient prepare cost: %+v", measured[0])
+			}
+			if completes {
+				if measured[1].Verdict != servingops.MeasurementInsufficient || measured[1].Reason == "" || beo.Status.CompletedBatches != 1 {
+					t.Fatalf("insufficient removal failed session: status %+v record %+v", beo.Status, measured[1])
 				}
-			} else if message != "session-load creation refused" || loads != 1 {
-				t.Fatalf("load failure changed: status %+v loads %d", beo.Status, loads)
+			} else if message != "session-load creation refused" {
+				t.Fatalf("load failure changed: status %+v", beo.Status)
 			}
 		})
 	}
@@ -1012,122 +1061,31 @@ func TestSessionFailedPreparationRemovesExactPod(t *testing.T) {
 	}
 }
 
-func TestSessionLoadWaitsForSenderTerminationBeforeReturning(t *testing.T) {
-	h := newAdmissionHarness(t)
-	waitCtx, stop := context.WithTimeout(context.Background(), time.Second)
-	defer stop()
-	ctx, cancel := context.WithCancel(waitCtx)
-	defer cancel()
-	job := &batchv1.Job{ObjectMeta: meta.ObjectMeta{Name: "sender-drain", Namespace: "chill-system"}}
-	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "sender", Namespace: job.Namespace, Labels: map[string]string{"job-name": job.Name}},
-		Status: core.PodStatus{Phase: core.PodRunning, ContainerStatuses: []core.ContainerStatus{{Name: sessionLoadContainer,
-			State: core.ContainerState{Running: &core.ContainerStateRunning{}}}}}}
-	if _, err := h.kube.CoreV1().Pods(pod.Namespace).Create(ctx, pod, meta.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	readErr := errors.New("load Job read refused")
-	h.kube.PrependReactor("get", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
-		return true, nil, readErr
-	})
-	deleted := make(chan struct{})
-	h.kube.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
-		close(deleted)
-		cancel()
-		return false, nil, nil
-	})
-	done := make(chan error, 1)
-	go func() {
-		_, err := h.controller.runSessionLoad(ctx, job, time.Second)
-		done <- err
-	}()
-	select {
-	case <-deleted:
-	case <-waitCtx.Done():
-		t.Fatal("load Job deletion was not requested")
-	}
-	select {
-	case err := <-done:
-		t.Fatalf("load returned while sender still ran: %v", err)
-	case <-time.After(20 * time.Millisecond):
-	}
-	pod.Status.Phase = core.PodSucceeded
-	pod.Status.ContainerStatuses[0].State = core.ContainerState{Terminated: &core.ContainerStateTerminated{}}
-	if _, err := h.kube.CoreV1().Pods(pod.Namespace).UpdateStatus(waitCtx, pod, meta.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-done:
-		if !errors.Is(err, readErr) {
-			t.Fatalf("original load failure changed: %v", err)
-		}
-	case <-waitCtx.Done():
-		t.Fatal("load did not return after sender terminated")
-	}
-}
-
-func TestSessionRemoveStartsAfterNativeLoadDrains(t *testing.T) {
+func TestSessionCostStorageFailureRetainsDiagnosticWithoutFailingSession(t *testing.T) {
 	s := newSessionHarness(t)
-	busy := &atomic.Bool{}
-	busy.Store(true)
-	probed := make(chan struct{}, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		state := native.State{At: time.Now(), Ready: true, AcceptedRequests: 1}
-		if busy.Load() {
-			state.Requests = []native.RequestState{{}}
-			select {
-			case probed <- struct{}{}:
-			default:
-			}
-		} else {
-			state.CompletedRequests, state.Executions = 1, 1
+	s.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
+		record, _, err := s.measure(ctx, config, request)
+		if err != nil {
+			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(state)
-	}))
-	defer server.Close()
-	proxy, err := url.Parse(server.URL)
-	if err != nil {
-		t.Fatal(err)
+		record.Verdict, record.Reason = servingops.MeasurementInsufficient, "unmeasured: final power read failed"
+		return record, evidencestore.Receipt{}, errors.New("cost evidence write refused")
 	}
-	s.controller.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
-	beo := sessionRoot(sessionSettingsFixture())
-	s.create(beo)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		s.admit()
-	}()
-	select {
-	case <-probed:
-	case <-time.After(time.Second):
-		busy.Store(false)
-		t.Fatal("session never checked physical idle before measured removal")
-	}
-	s.mu.Lock()
-	removed := slices.Contains(s.measured, "remove-b1")
-	s.mu.Unlock()
-	busy.Store(false)
-	if removed {
-		t.Fatal("remove began while native counters could still change")
-	}
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("session did not finish after native load drained")
-	}
-}
-
-func TestSessionDoesNotMeasureRemovalWhenSenderCleanupFails(t *testing.T) {
-	s := newSessionHarness(t)
-	s.kube.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
-		return true, nil, errors.New("load sender deletion refused")
-	})
 	beo := sessionRoot(sessionSettingsFixture())
 	s.create(beo)
 	s.admit()
 	status := s.status(beo)
-	if status.Phase != string(edge.MeasurementPhaseFailed) ||
-		!strings.Contains(sessionCondition(status).Message, errSessionLoadDrain.Error()) ||
-		slices.Contains(s.measured, "remove-b1") || s.holder() != string(beo.UID) {
-		t.Fatalf("unconfirmed sender overlapped measured removal: status %+v operations %v holder %q", status, s.measured, s.holder())
+	if status.Phase != string(edge.MeasurementPhaseComplete) || sessionCondition(status).Status != meta.ConditionTrue || s.holder() != "" {
+		t.Fatalf("cost storage failure changed physical session outcome: %+v", status)
 	}
+	for _, condition := range status.Conditions {
+		if condition.Type == "OperationCostEvidence" {
+			if condition.Status != meta.ConditionFalse || !strings.Contains(condition.Message, "final power read failed") ||
+				!strings.Contains(condition.Message, "cost evidence write refused") {
+				t.Fatalf("cost diagnostic lost original or persistence error: %+v", condition)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing cost persistence diagnostic: %+v", status)
 }

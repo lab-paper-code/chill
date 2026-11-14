@@ -22,6 +22,7 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	core "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -211,41 +212,117 @@ func setSessionPending(beo *edge.BatchEnergyOptimization, message string) {
 
 // sessionRun is one session's progress.
 type sessionRun struct {
-	c      *SchedulerController
-	beo    *edge.BatchEnergyOptimization
-	ref    serving.NodeReference
-	plan   sessionPlan
-	config SchedulerControllerConfig
-	base   servingops.MeasurementRequest
-	steps  int
+	c         *SchedulerController
+	beo       *edge.BatchEnergyOptimization
+	ref       serving.NodeReference
+	plan      sessionPlan
+	config    SchedulerControllerConfig
+	base      servingops.MeasurementRequest
+	steps     int
+	costError error
 	// started precedes the session's first operation.
 	started time.Time
 }
 
-// measure runs one operation through the measurement operations, which write
-// its cost record.
+// measure retains operation cost independently of the physical effect needed
+// by the session. A missing power window must not skip the action.
 func (r *sessionRun) measure(ctx context.Context, name string, operation servingstate.Operation) (servingops.OperationMeasurement, string, error) {
 	request := r.base
 	operation.ID, operation.Node = fmt.Sprintf("%s.%d.%s", r.beo.UID, r.steps, name), r.ref
 	r.steps++
 	request.Operation = operation
 	record, receipt, err := r.c.measureStep(ctx, r.config, request)
-	if err == nil && record.Verdict != servingstate.MeasurementAccepted {
+	key := receipt.Object.Key
+	var costSaveErr error
+	if key == "" {
+		costSaveErr = err
+	}
+	if record.Result.StartedAt.IsZero() {
+		reason := record.Reason
+		if reason == "" && err != nil {
+			reason = err.Error()
+		}
+		record.Reason = "unmeasured action: measurement did not invoke operation"
+		if reason != "" {
+			record.Reason += ": " + reason
+		}
+		if key != "" {
+			operation.ID += ".unmeasured"
+		}
+		actionCtx, cancel := context.WithTimeout(ctx, request.OperationBudget)
+		record.Result, err = r.c.measurement.Execute(actionCtx, operation)
+		cancel()
+		record.SchemaVersion, record.Verdict = servingops.OperationMeasurementSchema, servingops.MeasurementInsufficient
+		if record.Request.Meter.ID == "" {
+			record.Request.Meter = r.plan.meter
+		}
+		record.Request.Operation, record.Request.Store = operation, r.config.EvidenceStore
+		raw, encodeErr := json.Marshal(record)
+		costSaveErr = errors.Join(costSaveErr, encodeErr)
+		if encodeErr == nil && r.config.Evidence != nil {
+			writeCtx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			identity := evidencestore.ObjectIdentity{Store: r.config.EvidenceStore, Key: servingops.OperationMeasurementKey(operation), Size: int64(len(raw))}
+			if _, writeErr := r.config.Evidence.PutImmutable(writeCtx, identity, bytes.NewReader(raw)); writeErr == nil {
+				key = identity.Key
+				costSaveErr = nil
+			} else {
+				costSaveErr = errors.Join(costSaveErr, writeErr)
+			}
+			cancelWrite()
+		}
+		if r.config.Evidence == nil {
+			costSaveErr = errors.Join(costSaveErr, errors.New("operation measurement evidence store is not configured"))
+		}
+	}
+	if costSaveErr != nil {
+		r.costError = errors.Join(r.costError, fmt.Errorf("%s: %s: %w", operation.ID, record.Reason, costSaveErr))
+	}
+	switch operation.Kind {
+	case servingstate.OperationPrepare:
+		instance := schedulerPhysicalState(operation.Prepare.Instance.ID, record.Result.Actual.Instances)
+		if instance != nil && instance.PodUID != "" && record.Result.Actual.Native[instance.ID].Ready {
+			return record, key, nil
+		}
+		if err == nil && record.Reason == "" {
+			batch := operation.Prepare.Config.Policy.FixedBatchSize
+			switch {
+			case instance == nil || instance.PodUID == "":
+				err = fmt.Errorf("prepare of batch %d left no instance", batch)
+			case record.Result.Actual.Native == nil:
+				err = fmt.Errorf("batch %d instance reported no runtime metadata", batch)
+			default:
+				err = fmt.Errorf("prepare of batch %d left no ready instance", batch)
+			}
+		}
+	case servingstate.OperationRemove:
+		present := slices.ContainsFunc(record.Result.Actual.Pods, func(pod workloadobserver.Pod) bool { return pod.UID == operation.PodUID })
+		if record.Result.Status == servingstate.NativeOperationComplete && !present {
+			return record, key, nil
+		}
+	case servingstate.OperationPower:
+		if record.Result.Actual.PowerMode == operation.PowerMode {
+			return record, key, nil
+		}
+	}
+	if record.Result.Error != "" {
+		err = errors.New(record.Result.Error)
+	}
+	if err == nil {
 		err = errors.New(record.Reason)
 	}
-	return record, receipt.Object.Key, err
+	return record, key, err
 }
 
-// removePrepared removes only the exact instance or Pod returned by this
-// preparation. Cleanup survives cancellation; a refusal keeps the Node held.
+// removePrepared removes only the exact Pod returned by this preparation.
+// Cleanup survives cancellation and remains bounded by the operation window.
 func (r *sessionRun) removePrepared(ctx context.Context, name string, spec servingstate.PrepareSpec, prepared servingops.OperationMeasurement) (string, error) {
 	operation := servingstate.Operation{Kind: servingstate.OperationRemove}
-	if instance := schedulerPhysicalState(spec.Instance.ID, prepared.Result.Actual.Instances); instance != nil {
-		operation.Instance = instance.ID
-	} else if evidence := prepared.Result.Preparation; evidence != nil {
+	if evidence := prepared.Result.Preparation; evidence != nil && evidence.PodUID != "" {
 		operation.PodUID = evidence.PodUID
+	} else if instance := schedulerPhysicalState(spec.Instance.ID, prepared.Result.Actual.Instances); instance != nil {
+		operation.PodUID = instance.PodUID
 	}
-	if operation.Instance == "" && operation.PodUID == "" {
+	if operation.PodUID == "" {
 		return "", nil
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.base.Sampling.Duration)
@@ -259,11 +336,18 @@ func (r *sessionRun) removePrepared(ctx context.Context, name string, spec servi
 // first ends the session with the batches before it; at the first, or on any
 // other failure, the session fails with the original sentence.
 func (c *SchedulerController) runSession(ctx context.Context, beo *edge.BatchEnergyOptimization, ref serving.NodeReference, plan sessionPlan, config SchedulerControllerConfig) error {
+	var run *sessionRun
 	finish := func(phase edge.MeasurementPhase, outcome, message string, result *edge.ProfilingRunEvidenceReference, batches int) error {
 		// The final status survives a canceled run; publication is bounded on its own.
 		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		return c.patchMeasurementStatus(statusCtx, beo, func() { setSessionStatus(beo, phase, outcome, message, result, batches) })
+		return c.patchMeasurementStatus(statusCtx, beo, func() {
+			setSessionStatus(beo, phase, outcome, message, result, batches)
+			if run != nil && run.costError != nil {
+				apimeta.SetStatusCondition(&beo.Status.Conditions, meta.Condition{Type: "OperationCostEvidence", Status: meta.ConditionFalse,
+					Reason: "CostEvidenceNotStored", Message: run.costError.Error(), ObservedGeneration: beo.Generation})
+			}
+		})
 	}
 	fail := func(err error) error {
 		return errors.Join(err, finish(edge.MeasurementPhaseFailed, sessionOutcomeFailed, firstLine(err.Error()), nil, 0))
@@ -276,7 +360,7 @@ func (c *SchedulerController) runSession(ctx context.Context, beo *edge.BatchEne
 	if err != nil {
 		return fail(err)
 	}
-	run := &sessionRun{c: c, beo: beo, ref: ref, plan: plan, config: config, base: base, started: started}
+	run = &sessionRun{c: c, beo: beo, ref: ref, plan: plan, config: config, base: base, started: started}
 	if !plan.powered {
 		mode := plan.preparation.RunConfig.State.PowerMode
 		if _, _, err := run.measure(ctx, "power", servingstate.Operation{Kind: servingstate.OperationPower, PowerMode: mode,
@@ -386,7 +470,7 @@ type sessionBatchOutcome struct {
 }
 
 // batch prepares a fixed-batch instance, runs its load and attempts removal on
-// every path. A live sender or unconfirmed drain keeps removal unmeasured.
+// every path.
 func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (outcome sessionBatchOutcome, err error) {
 	spec := sessionInstance(r.beo, r.plan.preparation, r.ref, batch, r.config.Session)
 	if err := SessionQueueCapacity(batch, spec.Config.MaxQueueRequests, int64(spec.Config.MaxQueueBytes), r.beo.Spec.Session.FramedDecodedRequestUpperBytes); err != nil {
@@ -399,8 +483,7 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (outcome s
 	defer func() {
 		if removeOnReturn {
 			_, removeErr := r.removePrepared(ctx, "remove-b"+strconv.Itoa(batch), spec, prepared)
-			// A cleanup refusal explains why the failed session still holds its Node.
-			err = errors.Join(removeErr, err)
+			err = errors.Join(err, removeErr)
 		}
 	}()
 	if err != nil {
@@ -421,21 +504,13 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (outcome s
 	if outcome.metadata == nil {
 		return outcome, fmt.Errorf("batch %d instance reported no runtime metadata", batch)
 	}
+	if !prepared.Result.Actual.Native[instance.ID].Ready {
+		return outcome, fmt.Errorf("prepare of batch %d left no ready instance", batch)
+	}
 	load := sessionLoad{batch: batch, podUID: instance.PodUID,
 		servingNamespace: r.c.observer.config.Namespace, minimumSamples: r.plan.minimumSamples, config: r.config.Session,
 		preparation: r.plan.preparation, actor: sessionActorLimits{maxQueueRequests: spec.Config.MaxQueueRequests, maxQueueBytes: spec.Config.MaxQueueBytes}}
 	table, loadErr := r.c.runSessionLoad(ctx, sessionLoadJob(r.beo, r.ref, load), r.config.Session.RunnerTimeout)
-	if errors.Is(loadErr, errSessionLoadDrain) {
-		removeOnReturn = false
-		return outcome, loadErr
-	}
-	drainCtx, cancelDrain := context.WithTimeout(context.WithoutCancel(ctx), r.base.Sampling.Duration)
-	drainErr := r.c.waitSessionIdle(drainCtx, load)
-	cancelDrain()
-	if drainErr != nil {
-		removeOnReturn = false
-		return outcome, errors.Join(drainErr, loadErr)
-	}
 	var levels []profilederivation.DriverLevelRow
 	if loadErr == nil {
 		levels, outcome.stop, loadErr = sessionLevels(table, batch)
@@ -504,7 +579,7 @@ func (r *sessionRun) postLoadInstance(ctx context.Context, batch int) (start, en
 	prepared, _, err := r.measure(ctx, "prepare-post-b"+strconv.Itoa(batch), servingstate.Operation{Kind: servingstate.OperationPrepare, Prepare: &spec})
 	defer func() {
 		_, removeErr := r.removePrepared(ctx, "remove-post-b"+strconv.Itoa(batch), spec, prepared)
-		err = errors.Join(removeErr, err)
+		err = errors.Join(err, removeErr)
 	}()
 	if err != nil {
 		return time.Time{}, time.Time{}, err
@@ -512,6 +587,9 @@ func (r *sessionRun) postLoadInstance(ctx context.Context, batch int) (start, en
 	instance := schedulerPhysicalState(spec.Instance.ID, prepared.Result.Actual.Instances)
 	if instance == nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("post-load prepare of batch %d left no instance", batch)
+	}
+	if instance.PodUID == "" || !prepared.Result.Actual.Native[instance.ID].Ready {
+		return time.Time{}, time.Time{}, fmt.Errorf("post-load prepare of batch %d left no ready instance", batch)
 	}
 	window, observeErr := r.observePostLoad(ctx, time.Now())
 	return window[0], window[1], observeErr

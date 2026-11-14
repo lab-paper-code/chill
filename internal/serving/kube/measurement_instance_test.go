@@ -117,7 +117,7 @@ func TestMeasurementInstanceIsMeasuredWithoutProfile(t *testing.T) {
 			}
 
 			id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
-			removed := measure(servingstate.Operation{ID: "session.2.remove", Kind: servingstate.OperationRemove, Node: spec.Instance.Node, Instance: id})
+			removed := measure(servingstate.Operation{ID: "session.2.remove", Kind: servingstate.OperationRemove, Node: spec.Instance.Node, PodUID: string(pod.UID)})
 			if _, drained := removed.Result.DrainNative[id]; !drained || len(removed.Result.Actual.Pods) != 0 {
 				t.Fatalf("remove left the measurement instance: %+v", removed.Result)
 			}
