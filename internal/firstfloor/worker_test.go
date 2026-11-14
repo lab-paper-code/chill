@@ -22,6 +22,7 @@ func testPolicy() Policy {
 func startupSample(trial string, durationMS float64) ServiceSample {
 	return ServiceSample{TrialID: trial, ServiceDurationNanos: int64(durationMS * float64(time.Millisecond))}
 }
+
 // warmGap is a ready actor's idle age: its warm-up service ended 1ms ago.
 var warmGap = func() *int64 { g := int64(time.Millisecond); return &g }()
 

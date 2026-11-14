@@ -30,4 +30,3 @@ func TestChooseBatchMissingConditionalSupportExecutesWithoutRejection(t *testing
 		}
 	}
 }
-

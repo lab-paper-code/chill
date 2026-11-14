@@ -9,9 +9,9 @@ type QuantileCache struct {
 	entries map[quantileQuery]quantileResult
 }
 type quantileQuery struct {
-	distribution                *ServiceDistribution
-	gap, elapsed, upper         int64
-	percentile                  uint64
+	distribution                   *ServiceDistribution
+	gap, elapsed, upper            int64
+	percentile                     uint64
 	unanchored, residual, interval bool
 }
 type quantileResult struct {

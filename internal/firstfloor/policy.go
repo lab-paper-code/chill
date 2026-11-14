@@ -80,6 +80,7 @@ func requestDeadlinePolicy(r RequestState) string {
 		return ""
 	}
 }
+
 // requestSlack is unknown when the batch's service quantile is not identified.
 func requestSlack(r RequestState, b BatchProfile, gap *int64, costs *serviceCosts) (float64, bool) {
 	cost, known := costs.cost(b, r.Context.SLO.Percentile, gap)
@@ -91,6 +92,7 @@ func allowedBatch(p Policy, size int) bool {
 func sameQueue(a, b RequestState) bool {
 	return a.Context.WorkloadUID == b.Context.WorkloadUID && a.Context.Definition == b.Context.Definition
 }
+
 // minimumService is the least identified service quantile over allowed
 // batches; known=false when no allowed batch's quantile is identified.
 func minimumService(p Policy, q RequestState, gap *int64, costs *serviceCosts) (minimum float64, known bool) {
