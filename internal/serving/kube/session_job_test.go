@@ -3,10 +3,13 @@ package kube
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	batch "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -70,7 +73,7 @@ func TestSessionLoadPrestartTimeoutRetainsWaitingEvidenceAndDeletesJob(t *testin
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			_, err := h.controller.runSessionLoad(ctx, job, 10*time.Millisecond)
+			_, _, err := h.controller.runSessionLoad(ctx, job, 10*time.Millisecond, 1<<20)
 			if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "session-load did not start") || ctx.Err() != nil {
 				t.Fatalf("prestart error %v, parent error %v", err, ctx.Err())
 			}
@@ -94,6 +97,9 @@ func TestSessionLoadPrestartTimeoutRetainsWaitingEvidenceAndDeletesJob(t *testin
 
 func TestSessionLoadPrestartBoundEndsWhenLoadContainerRuns(t *testing.T) {
 	h := newAdmissionHarness(t)
+	h.controller.sessionLoadLog = func(context.Context, *core.Pod) (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader("")), nil
+	}
 	job := &batch.Job{ObjectMeta: meta.ObjectMeta{Name: "session-running", Namespace: "chill-system"}}
 	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "session-pod", Namespace: job.Namespace, Labels: map[string]string{"job-name": job.Name}},
 		Status: core.PodStatus{ContainerStatuses: []core.ContainerStatus{{Name: sessionLoadContainer, State: core.ContainerState{Running: &core.ContainerStateRunning{}}}}}}
@@ -115,7 +121,7 @@ func TestSessionLoadPrestartBoundEndsWhenLoadContainerRuns(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	table, err := h.controller.runSessionLoad(ctx, job, 10*time.Millisecond)
+	table, _, err := h.controller.runSessionLoad(ctx, job, 10*time.Millisecond, 1<<20)
 	if err != nil || len(table.Levels) != 1 || table.Levels[0].CompletedBatches != 3 {
 		t.Fatalf("running load was cut off by startup bound: table %+v, error %v", table, err)
 	}
@@ -123,6 +129,9 @@ func TestSessionLoadPrestartBoundEndsWhenLoadContainerRuns(t *testing.T) {
 
 func TestSessionLoadTerminationBeforeRunningPollStillReturnsTable(t *testing.T) {
 	h := newAdmissionHarness(t)
+	h.controller.sessionLoadLog = func(context.Context, *core.Pod) (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader("")), nil
+	}
 	job := &batch.Job{ObjectMeta: meta.ObjectMeta{Name: "session-finished", Namespace: "chill-system"}}
 	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "session-pod", Namespace: job.Namespace, Labels: map[string]string{"job-name": job.Name}},
 		Status: core.PodStatus{ContainerStatuses: []core.ContainerStatus{{Name: sessionLoadContainer, State: core.ContainerState{Terminated: &core.ContainerStateTerminated{Message: `{"levels":[]}`}}}}}}
@@ -140,7 +149,34 @@ func TestSessionLoadTerminationBeforeRunningPollStillReturnsTable(t *testing.T) 
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := h.controller.runSessionLoad(ctx, job, 10*time.Millisecond); err != nil {
+	if _, _, err := h.controller.runSessionLoad(ctx, job, 10*time.Millisecond, 1<<20); err != nil {
 		t.Fatalf("load finished between polls: %v", err)
+	}
+}
+
+func TestReadSessionBatchRowsKeepsExecutorClockAndBoundsLog(t *testing.T) {
+	const line = `CHILL_SESSION_BATCH {"workloadUID":"session/2/mid","batchID":3,"batchSize":2,"finishedAt":"2026-11-15T00:00:00Z","serviceDurationNanos":1000000,"precedingIdleNanos":7,"latestEnqueuedAt":"2026-11-14T23:59:59Z"}` + "\n"
+	rows, err := readSessionBatchRows(strings.NewReader("unrelated log line\n"+line), 1<<20)
+	if err != nil || len(rows["session/2/mid"]) != 1 {
+		t.Fatalf("rows %+v error %v", rows, err)
+	}
+	row := rows["session/2/mid"][0]
+	if row.BatchID != 3 || row.BatchSize != 2 || row.StartedAt != row.FinishedAt.Add(-time.Millisecond) ||
+		row.PrecedingIdleNanos == nil || *row.PrecedingIdleNanos != 7 || row.LatestEnqueuedAt.IsZero() {
+		t.Fatalf("executor row changed: %+v", row)
+	}
+	for _, limit := range []int64{int64(len(line) - 1), int64(len(line))} {
+		_, err := readSessionBatchRows(strings.NewReader(line), limit)
+		if (err == nil) != (limit == int64(len(line))) {
+			t.Fatalf("limit %d error %v", limit, err)
+		}
+	}
+	_, err = readSessionBatchRows(iotest.ErrReader(io.ErrUnexpectedEOF), 1<<20)
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("read error changed: %v", err)
+	}
+	_, err = readSessionBatchRows(strings.NewReader(profilederivation.SessionBatchRowPrefix+"{\n"), 1<<20)
+	if err == nil || err.Error() != "decode session batch row: unexpected end of JSON input" {
+		t.Fatalf("parse error changed: %v", err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,7 +25,6 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingnative "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	batchv1 "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
@@ -55,12 +55,9 @@ type sessionHarness struct {
 	spans    [][2]time.Time
 	// prepareErr fails a batch size's prepare with the given failure.
 	prepareErr map[int]*serving.PreparationFailureObservation
-	// dropRow removes one native row of this workload identifier; with
-	// lateReads set, only for that many reads.
-	dropRow   string
-	lateReads int
-	reads     int
-	nextID    uint64
+	// dropRow removes one row from the completed load Job's log.
+	dropRow string
+	nextID  uint64
 	// runtime replaces a batch size's captured native runtime metadata; a
 	// nil entry captures no native state.
 	runtime map[int]*native.RuntimeMetadata
@@ -144,33 +141,6 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 	}
 	h.controller.measureStep = s.measure
 	h.controller.sessionReads = sessionReads{
-		native: func(_ context.Context, prefix string, _ time.Time, excluded map[string]bool) (map[string]sessionNativeLevel, error) {
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			// The fake API assigns the BEO UID; tables use a fixed fixture UID.
-			prefix = "session-uid" + prefix[strings.IndexByte(prefix, '/'):]
-			rows := map[string]sessionNativeLevel{}
-			for uid, nativeRows := range s.native {
-				if strings.HasPrefix(uid, prefix) && !excluded[uid] {
-					kept := slices.Clone(nativeRows)
-					if uid == s.dropRow && (s.lateReads == 0 || s.reads < s.lateReads) {
-						kept = kept[1:]
-					}
-					inputs := 0
-					for _, row := range kept {
-						inputs += row.BatchSize
-					}
-					rows[uid] = sessionNativeLevel{rows: kept, inputs: inputs}
-				}
-			}
-			if strings.HasPrefix(s.dropRow, prefix) {
-				s.reads++
-			}
-			if len(rows) == 0 {
-				return nil, fmt.Errorf("fixture has no native rows for prefix %q", prefix)
-			}
-			return rows, nil
-		},
 		power: func(_ context.Context, _ servingops.MeterDeclaration, _, to time.Time) ([]profilederivation.Sample, error) {
 			s.mu.Lock()
 			defer s.mu.Unlock()
@@ -190,6 +160,7 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 			return observation.PodMemoryPeak{Bytes: 700 << 20, Lifetime: true}, nil
 		},
 	}
+	h.controller.sessionLoadLog = s.loadLog
 	pods := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
 	h.kube.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
 		job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
@@ -206,6 +177,33 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 		return false, nil, h.kube.Tracker().Create(pods, pod, pod.Namespace)
 	})
 	return s
+}
+
+func (s *sessionHarness) loadLog(_ context.Context, pod *core.Pod) (io.ReadCloser, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var output strings.Builder
+	for _, job := range s.jobs {
+		if job.Name+"-pod" != pod.Name && job.Name+"-load" != pod.Name {
+			continue
+		}
+		args := job.Spec.Template.Spec.Containers[0].Args
+		batch, _ := strconv.Atoi(args[slices.Index(args, "--batch")+1])
+		for _, level := range s.tables[batch].Levels {
+			for index, row := range s.native[level.WorkloadUID] {
+				if level.WorkloadUID == s.dropRow && index == 0 {
+					continue
+				}
+				raw, err := json.Marshal(profilederivation.SessionBatchRow{WorkloadUID: level.WorkloadUID, NativeBatchRow: row})
+				if err != nil {
+					return nil, err
+				}
+				fmt.Fprintf(&output, "%s%s\n", profilederivation.SessionBatchRowPrefix, raw)
+			}
+		}
+		return io.NopCloser(strings.NewReader(output.String())), nil
+	}
+	return nil, fmt.Errorf("fixture has no load Job for Pod %s", pod.Name)
 }
 
 // layOut places one batch size's levels on the timeline after cursor: the
@@ -442,30 +440,10 @@ func TestSessionRuntimeFactDifferingAcrossInstancesFails(t *testing.T) {
 
 const droppedLevel = "session-uid/2/mid"
 
-func TestSessionWaitsForRowsStillInTransitBeforeRemoving(t *testing.T) {
-	s := newSessionHarness(t)
-	s.dropRow, s.lateReads = droppedLevel, 2
-	beo := sessionRoot(sessionSettingsFixture())
-	s.create(beo)
-	s.admit()
-	result, stored := s.result(beo)
-	if !stored {
-		t.Fatalf("status %+v", s.status(beo))
-	}
-	for _, batch := range result.Batches {
-		for _, level := range batch.Levels {
-			if level.Excluded {
-				t.Fatalf("late rows excluded level %+v", level.DriverLevelRow)
-			}
-		}
-	}
-}
-
 func TestSessionNativeRowCountMismatchExcludesOnlyThatLevel(t *testing.T) {
 	s := newSessionHarness(t)
 	s.dropRow = droppedLevel
 	settings := sessionSettingsFixture()
-	settings.LevelDurationLimitSeconds = 0.01
 	beo := sessionRoot(settings)
 	s.create(beo)
 	s.admit()
@@ -579,108 +557,6 @@ func TestSessionRestartFailsAndHandsBack(t *testing.T) {
 	}
 	if len(s.measured) != 0 {
 		t.Fatalf("a cut-off session measured again: %v", s.measured)
-	}
-}
-
-// sessionObservedRuntime is a runtime whose observation log stores what the
-// observer passes it, as in ChillServer.
-func sessionObservedRuntime(t *testing.T) (*serving.Runtime, *observation.ObservationLog) {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()},
-		OccupancyTail: 3 * time.Minute,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := log.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
-	})
-	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: log})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return rt, log
-}
-
-// emitSessionBatches passes the progress lines native prints for batches of
-// two requests of one level to the runtime, as the observer's log follow does:
-// one line per request and phase, the batch's service only on finished. skew
-// shifts the executor clock.
-func emitSessionBatches(t *testing.T, rt *serving.Runtime, uid string, start time.Time, batches int, skew time.Duration, lostFinished ...string) {
-	t.Helper()
-	const service = 20 * time.Millisecond
-	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
-	var lastEnd time.Time
-	for b := range batches {
-		received := start.Add(skew + time.Duration(b)*50*time.Millisecond)
-		running := received.Add(5 * time.Millisecond)
-		finished := running.Add(service)
-		sample := &native.ServiceSample{ServiceDurationNanos: service.Nanoseconds(), TrialID: uid}
-		if !lastEnd.IsZero() {
-			gap := running.Sub(lastEnd).Nanoseconds()
-			sample.PrecedingIdleNanos = &gap
-		}
-		lastEnd = finished
-		for m := range 2 {
-			queued := received.Add(time.Duration(m) * time.Millisecond)
-			base := native.Progress{RequestID: fmt.Sprintf("saturation-%d", 2*b+m), WorkloadUID: uid, Definition: "42", ProfileID: "profile", DecisionID: "decision"}
-			lines := []native.Progress{base, base, base}
-			lines[0].Phase, lines[0].At, lines[0].QueueMS, lines[0].NativeElapsedMS = "queued", queued, 0, 0
-			lines[1].Phase, lines[1].At, lines[1].BatchID, lines[1].BatchSize = "running", running, uint64(b+1), 2
-			lines[1].QueueMS, lines[1].NativeElapsedMS = ms(running.Sub(queued)), ms(running.Sub(queued))
-			lines[2].Phase, lines[2].At, lines[2].BatchID, lines[2].BatchSize, lines[2].ExecutionComplete = "finished", finished, uint64(b+1), 2, true
-			lines[2].QueueMS, lines[2].ServiceMS, lines[2].BackendMS, lines[2].NativeElapsedMS = ms(running.Sub(queued)), ms(service), ms(service), ms(finished.Sub(queued))
-			lines[2].Outcome, lines[2].ServiceSample, lines[2].Units = "completed", sample, 1
-			for _, line := range lines {
-				if line.ExecutionComplete && slices.Contains(lostFinished, line.RequestID) {
-					continue
-				}
-				raw, err := json.Marshal(line)
-				if err != nil {
-					t.Fatal(err)
-				}
-				progress, err := servingnative.ParseProgress(append([]byte("2026-11-14T00:00:00Z CHILL_PROGRESS "), raw...))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := rt.ObserveBackend("pod-b2/containerd://runtime", progress); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-	}
-}
-
-// The session's reads join a request's per-phase supplement rows before
-// folding per batch: no single stored row has running, finished and service.
-// Rows are selected by the level identifier, whatever the executor clock
-// reads against ChillServer's.
-func TestSessionReadsJoinNativeProgressLines(t *testing.T) {
-	for _, skew := range []time.Duration{0, 30 * time.Second, -30 * time.Second} {
-		t.Run(skew.String(), func(t *testing.T) {
-			rt, log := sessionObservedRuntime(t)
-			uid := "session-uid/2/saturation"
-			start := time.Now().UTC()
-			emitSessionBatches(t, rt, uid, start, 3, skew)
-			byLevel, err := observedSessionReads(log).native(context.Background(), uid, start, nil)
-			rows := byLevel[uid].rows
-			if err != nil || len(rows) != 3 {
-				t.Fatalf("native batch rows %d err %v", len(rows), err)
-			}
-			for i, row := range rows {
-				running := start.Add(skew + time.Duration(i)*50*time.Millisecond + 5*time.Millisecond)
-				if row.BatchID != uint64(i+1) || row.BatchSize != 2 || !row.StartedAt.Equal(running) || !row.FinishedAt.Equal(running.Add(20*time.Millisecond)) ||
-					row.ServiceDurationNanos != (20*time.Millisecond).Nanoseconds() || !row.LatestEnqueuedAt.Equal(running.Add(-4*time.Millisecond)) ||
-					(row.PrecedingIdleNanos == nil) != (i == 0) || i > 0 && *row.PrecedingIdleNanos != (30*time.Millisecond).Nanoseconds() {
-					t.Fatalf("batch %d row %+v", i, row)
-				}
-			}
-		})
 	}
 }
 
@@ -815,34 +691,6 @@ func TestSessionMidLifetimeExpiryKeepsLevelAndLaterBatches(t *testing.T) {
 	}
 }
 
-func BenchmarkSessionNativeBatchFold(b *testing.B) {
-	for _, count := range []int{75_000, 150_000} {
-		b.Run(strconv.Itoa(count), func(b *testing.B) {
-			start := time.Unix(1000, 0)
-			end := start.Add(time.Millisecond)
-			rows := make([]serving.RequestRow, count*4)
-			for i := range rows {
-				queued := start.Add(time.Duration(i%4) * time.Nanosecond)
-				rows[i] = serving.RequestRow{Kind: serving.RequestRowNative, RequestID: strconv.Itoa(i), BatchID: uint64(i/4 + 1),
-					BatchSize: 4, NativeQueuedAt: &queued, NativeRunningAt: &start, NativeFinishedAt: &end, ServiceDurationNanos: time.Millisecond.Nanoseconds()}
-			}
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				join := serving.NewNativeBatchJoin()
-				for _, row := range rows {
-					join.Add(row)
-				}
-				folded, err := join.Batches()
-				if err != nil || len(folded) != count {
-					b.Fatalf("folded %d batches: %v", len(folded), err)
-				}
-			}
-			b.ReportMetric(float64(len(rows)), "rows/op")
-		})
-	}
-}
-
 func TestSessionRefusesMissingLoadNode(t *testing.T) {
 	s := newSessionHarness(t)
 	s.controller.config.Session.NodeName = ""
@@ -854,37 +702,6 @@ func TestSessionRefusesMissingLoadNode(t *testing.T) {
 		!strings.Contains(sessionCondition(status).Message, "Session.NodeName") ||
 		len(s.measured) != 0 || len(s.jobs) != 0 {
 		t.Fatalf("status %+v operations %v jobs %d", status, s.measured, len(s.jobs))
-	}
-}
-
-func TestSessionLostFinishedMemberFailsWithInputCount(t *testing.T) {
-	s := newSessionHarness(t)
-	rt, log := sessionObservedRuntime(t)
-	s.controller.sessionReads.native = observedSessionReads(log).native
-	s.controller.config.Session.Prepare = func(context.Context, *edge.BatchEnergyOptimization) (SessionPreparation, error) {
-		prepared := sessionPreparationFixture()
-		prepared.BatchSizes = []int{2}
-		return prepared, nil
-	}
-	settings := sessionSettingsFixture()
-	settings.LevelDurationLimitSeconds = 0.01
-	beo := sessionRoot(settings)
-	s.create(beo)
-	uid := string(beo.UID) + "/2/saturation"
-	table := s.tables[2]
-	table.Levels = table.Levels[:1]
-	table.Levels[0].WorkloadUID = uid
-	table.Levels[0].SentInputs, table.Levels[0].CompletedInputs, table.Levels[0].CompletedBatches = 4, 4, 2
-	s.tables[2] = table
-	s.kube.PrependReactor("create", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
-		emitSessionBatches(t, rt, uid, time.Now(), 2, 0, "saturation-3")
-		return false, nil, nil
-	})
-	s.admit()
-	status := s.status(beo)
-	if status.Phase != string(edge.MeasurementPhaseFailed) ||
-		!strings.Contains(sessionCondition(status).Message, "native rows 1 of 2") {
-		t.Fatalf("status %+v", status)
 	}
 }
 
@@ -934,6 +751,7 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 			controller.config.MeasurementNamespaces = []string{fixture.Namespace}
 			reads := newSessionHarness(t)
 			controller.sessionReads = reads.controller.sessionReads
+			controller.sessionLoadLog = reads.loadLog
 			var measured []servingops.OperationMeasurement
 			controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
 				if scenario == "prepare insufficient" && request.Operation.Kind == servingstate.OperationPrepare ||
@@ -981,6 +799,9 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 					return true, nil, errors.New("session-load creation refused")
 				}
 				job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
+				reads.mu.Lock()
+				reads.jobs = append(reads.jobs, job.DeepCopy())
+				reads.mu.Unlock()
 				job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: core.ConditionTrue}}
 				message, _ := json.Marshal(reads.tables[1])
 				pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: job.Name + "-load", Namespace: job.Namespace, Labels: map[string]string{"job-name": job.Name}},
@@ -1119,5 +940,31 @@ func TestSessionCompletesWithoutOperationCostKeys(t *testing.T) {
 		if batch.PrepareCostKey != "" || batch.RemoveCostKey != "" {
 			t.Fatalf("missing cost evidence gained a key: %+v", batch)
 		}
+	}
+}
+
+func TestSessionLoadLogFailureCarriesOriginalSentenceAndRemovesInstance(t *testing.T) {
+	for _, parse := range []bool{false, true} {
+		t.Run(strconv.FormatBool(parse), func(t *testing.T) {
+			s := newSessionHarness(t)
+			sentence := "load Pod log read: unexpected EOF"
+			s.controller.sessionLoadLog = func(context.Context, *core.Pod) (io.ReadCloser, error) {
+				if parse {
+					return io.NopCloser(strings.NewReader(profilederivation.SessionBatchRowPrefix + "{\n")), nil
+				}
+				return nil, errors.New(sentence)
+			}
+			beo := sessionRoot(sessionSettingsFixture())
+			s.create(beo)
+			s.admit()
+			status := s.status(beo)
+			if parse {
+				sentence = "decode session batch row: unexpected end of JSON input"
+			}
+			if status.Phase != string(edge.MeasurementPhaseFailed) || sessionCondition(status).Message != sentence ||
+				!slices.Contains(s.measured, "remove-b1") || s.holder() != "" {
+				t.Fatalf("log failure changed: status %+v operations %v", status, s.measured)
+			}
+		})
 	}
 }

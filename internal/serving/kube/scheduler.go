@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"slices"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	core "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -140,7 +142,8 @@ type SchedulerController struct {
 	// measureStep measures one step of an operation-cost measurement.
 	measureStep func(context.Context, SchedulerControllerConfig, servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error)
 	// sessionReads reads the observation records a measurement session derives from.
-	sessionReads sessionReads
+	sessionReads   sessionReads
+	sessionLoadLog func(context.Context, *core.Pod) (io.ReadCloser, error)
 	// measurements caches payloads against each round's direct metadata baseline.
 	// tickMu owns the cache and every consumer's selected-object copies.
 	measurements []*measurementCache
@@ -163,6 +166,9 @@ func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes
 	c.completions = make(chan struct{}, 1)
 	c.measureStep = c.measureOperation
 	c.sessionReads = observedSessionReads(observationLog)
+	c.sessionLoadLog = func(ctx context.Context, pod *core.Pod) (io.ReadCloser, error) {
+		return c.kube.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &core.PodLogOptions{Container: sessionLoadContainer}).Stream(ctx)
+	}
 	return c, nil
 }
 

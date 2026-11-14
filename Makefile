@@ -166,7 +166,7 @@ test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-l
 
 .PHONY: test-native
 test-native: envtest ## Run the real firstfloor native session measurement test.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./internal/serving/kube -run '^TestSessionMeasurementRealNative$$' -count=1 -timeout 600s
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./cmd/chill-server ./internal/serving/kube -run '^TestSessionMeasurementRealNative$$' -count=1 -timeout 600s
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e

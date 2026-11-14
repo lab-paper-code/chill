@@ -55,18 +55,36 @@ type SessionLevelInput struct {
 	Native []NativeBatchRow
 }
 
-// NativeBatchRow is one executor batch record. A log follow reopen repeats
-// rows; repeats of one batch identifier are counted once.
+// SessionBatchRowPrefix identifies a completed batch in the load Job's stdout.
+const SessionBatchRowPrefix = "CHILL_SESSION_BATCH "
+
+// SessionBatchRow carries the level identifier with the executor's batch values.
+type SessionBatchRow struct {
+	WorkloadUID string `json:"workloadUID"`
+	NativeBatchRow
+}
+
+// NativeRow defines execution start as finish minus service duration, using
+// only the executor's values, independently of its separate running event.
+func (r SessionBatchRow) NativeRow() NativeBatchRow {
+	row := r.NativeBatchRow
+	row.StartedAt = row.FinishedAt.Add(-time.Duration(row.ServiceDurationNanos))
+	return row
+}
+
+// NativeBatchRow is one executor batch record. Repeated batch identifiers
+// count once when derivation checks the driver's level counts.
 type NativeBatchRow struct {
-	BatchID              uint64
-	BatchSize            int
-	StartedAt            time.Time
-	FinishedAt           time.Time
-	ServiceDurationNanos int64
-	PrecedingIdleNanos   *int64
+	BatchID   uint64 `json:"batchID"`
+	BatchSize int    `json:"batchSize"`
+	// StartedAt is finish time minus service duration, both from the executor.
+	StartedAt            time.Time `json:"-"`
+	FinishedAt           time.Time `json:"finishedAt"`
+	ServiceDurationNanos int64     `json:"serviceDurationNanos"`
+	PrecedingIdleNanos   *int64    `json:"precedingIdleNanos,omitempty"`
 	// LatestEnqueuedAt is the last member's enqueue time; dispatch occupancy
 	// reads it on saturation rows to prove the next batch was already formed.
-	LatestEnqueuedAt time.Time
+	LatestEnqueuedAt time.Time `json:"latestEnqueuedAt"`
 }
 
 // sessionTests holds the quantiles every statistical decision uses, all at
