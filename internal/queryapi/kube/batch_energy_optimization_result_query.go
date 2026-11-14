@@ -10,6 +10,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -60,11 +61,13 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) Read(
 		return queryapi.BatchEnergyOptimizationResultSnapshot{}, fmt.Errorf("get BatchEnergyOptimization %s: %w", key, err)
 	}
 	snapshot := queryapi.BatchEnergyOptimizationResultSnapshot{ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy()}
+	session := campaign.Spec.Session != nil
 	var failedRuns edgev1alpha1.ProfilingRunList
-	// A completed discovery can retain an expected-stop child without failing the request.
-	if campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseFailed) ||
+	// A completed discovery can retain an expected-stop child without failing
+	// the request. A session owns no Run.
+	if !session && (campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseFailed) ||
 		(campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseComplete) &&
-			campaign.Status.Outcome == batchenergyoptimization.BatchDiscoveryComplete) {
+			campaign.Status.Outcome == batchenergyoptimization.BatchDiscoveryComplete)) {
 		if err := q.reader.List(ctx, &failedRuns, client.InNamespace(namespace)); err != nil {
 			return snapshot, fmt.Errorf("list failed request Runs: %w", err)
 		}
@@ -80,6 +83,14 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) Read(
 	payload, err := q.readResult(ctx, identity)
 	if err != nil {
 		return snapshot, fmt.Errorf("read BatchEnergyOptimization %s result: %w", key, err)
+	}
+	if session {
+		result, err := profilederivation.DecodeSessionResult(payload)
+		if err != nil {
+			return snapshot, fmt.Errorf("decode BatchEnergyOptimization %s result: %w", key, err)
+		}
+		snapshot.Session = &result
+		return snapshot, nil
 	}
 	record, err := batchenergyoptimization.DecodeResultRecord(payload)
 	if err != nil {

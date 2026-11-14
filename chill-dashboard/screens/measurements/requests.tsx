@@ -10,6 +10,7 @@ import { useMeasurementPlans } from "@/hooks/use-measurement-data"
 import { sectionTabs } from "@/lib/routes"
 import { deviceClassLabel, executionPathLabel, powerModeLabel } from "@/lib/display-labels"
 import { requestPhase } from "@/lib/measurements-coverage-matrix"
+import { sessionOutcomeStatus } from "@/lib/status-labels"
 import type { MeasurementPlan } from "@/lib/read-types"
 import { Wrapping } from "./coverage-matrix"
 
@@ -30,10 +31,20 @@ const columns: Column<MeasurementPlan>[] = [
   { key: "model", header: "모델", cell: p => condition(p).modelSpec, sortValue: p => condition(p).modelSpec },
   { key: "device", header: "장치와 전력 모드", cell: p => <Wrapping text={`${deviceClassLabel(condition(p).deviceClass)} ${powerModeLabel(condition(p).powerMode)}`} />, csv: p => `${deviceClassLabel(condition(p).deviceClass)} ${powerModeLabel(condition(p).powerMode)}`, sortValue: p => `${condition(p).deviceClass} ${condition(p).powerMode}`, width: "20%" },
   { key: "path", header: "실행 경로", cell: p => executionPathLabel(condition(p).executionPath), sortValue: p => executionPathLabel(condition(p).executionPath), width: "12.5rem" },
-  { key: "status", header: "상태", cell: p => <StatusBadge status={requestPhase(p.status?.phase)} />, sortValue: p => requestPhase(p.status?.phase).label, width: "6.5rem" },
-  { key: "trials", header: "완료 회차", unit: "개", numeric: true, cell: p => p.status?.completedTrials, sortValue: p => p.status?.completedTrials, missingReason: "아직 집계되지 않음", width: "8rem" },
+  // A finished session shows its outcome; the reason sentence is on hover and in the detail.
+  { key: "status", header: "상태", cell: p => <RequestStatus plan={p} />, sortValue: p => requestStatus(p).label, width: "9rem" },
+  {
+    key: "batches", header: "완료 배치", unit: "개", numeric: true, cell: p => (p.spec.session ? p.status?.completedBatches ?? 0 : null), sortValue: p => p.status?.completedBatches,
+    missing: p => `이전 방식 요청, 완료 회차 ${p.status?.completedTrials ?? 0}개`, width: "8rem",
+  },
   { key: "created", header: "생성", cell: p => <TimeText at={p.metadata.creationTimestamp} mode="list" />, sortValue: p => Date.parse(p.metadata.creationTimestamp), width: "8.5rem" },
 ]
+
+const requestStatus = (p: MeasurementPlan) => (p.spec.session && p.status?.outcome && p.status.phase !== "Measuring" ? sessionOutcomeStatus(p.status.outcome) : requestPhase(p.status?.phase))
+function RequestStatus({ plan }: { plan: MeasurementPlan }) {
+  const status = requestStatus(plan)
+  return <StatusBadge status={status} reason={plan.reason || (status.code ? `코드 ${status.code}` : undefined)} />
+}
 
 export function MeasurementRequestsScreen() {
   const { config } = useSession()

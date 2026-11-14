@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { admissionPolicy, codeMessage, evaluationVerdict, experimentVerdict, schedulerReason, serviceReadiness } from "./status-labels.ts"
+import { admissionPolicy, codeMessage, evaluationVerdict, experimentVerdict, schedulerReason, serviceReadiness, sessionOutcomeStatus, sessionParameterStatus } from "./status-labels.ts"
 
 test("one verdict word in lists and details", () => {
   assert.equal(experimentVerdict("PASS").label, "목표 충족")
@@ -23,4 +23,11 @@ test("code messages are terse phrases without internal names", () => {
   for (const code of ["AppliedDefinitionUnavailable", "RestartDrain", "DashboardRelayUnavailable", "GatewayOverloaded"]) {
     assert.doesNotMatch(codeMessage(code)!, /ChillServer|요\.?$|니다|SLO/)
   }
+})
+
+test("every session outcome has a Korean word, an unknown one keeps its code", () => {
+  const words = { CapacityLimit: "용량 한계에서 종료", NotServable: "서빙 불가", NotMeasured: "측정하지 않음", Failed: "실패", ChillServerRestart: "서버 재시작으로 중단", SessionSettingsMissing: "설정 없음", MeterUndeclared: "전력계 미선언", SessionUnresolved: "준비 정보 해석 실패" }
+  for (const [code, label] of Object.entries(words)) assert.equal(sessionOutcomeStatus(code).label, label)
+  assert.deepEqual(sessionOutcomeStatus("FutureOutcome"), { label: "기타", tone: "idle", code: "FutureOutcome" })
+  assert.equal(sessionParameterStatus("NotIdentified").label, "구분 안 됨")
 })

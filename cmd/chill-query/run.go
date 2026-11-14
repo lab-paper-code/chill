@@ -174,6 +174,29 @@ func newCampaignPreflightQuery(
 	if err != nil {
 		return nil, fmt.Errorf("construct batch-energy-optimization preflight query: %w", err)
 	}
+	// The same call and request ChillServer's session runner prepares with.
+	preflights.Session = func(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization) (queryapi.SessionPreflightPlan, error) {
+		state, protocol := campaign.Spec.State, campaign.Spec.ActiveProtocol
+		session, err := preparer.PrepareSession(ctx, profilerapp.SessionRequest{
+			Candidate: profilerapp.CandidateSelection{
+				ModelSpec: state.Candidate.ModelSpec, DeviceClass: state.Candidate.DeviceClass, Node: state.TargetNode,
+				ExecutionPath: state.Candidate.ExecutionPath, PowerMode: state.Candidate.PowerMode,
+				Preprocessor: state.Candidate.Preprocessor, Dataset: protocol.Dataset,
+			},
+			Workload: protocol.Workload, WarmupIterations: int(protocol.WarmupIterations),
+		})
+		if err != nil {
+			return queryapi.SessionPreflightPlan{}, err
+		}
+		if len(session.PlannedBatchSizes) == 0 {
+			return queryapi.SessionPreflightPlan{}, errors.New("measurement session resolved no batch size")
+		}
+		return queryapi.SessionPreflightPlan{
+			PlannedBatchSizes: session.PlannedBatchSizes,
+			MinimumSamples:    session.RunConfig.Measurement.MinServiceSamples,
+			SLOPercentile:     session.RunConfig.Measurement.SLOPercentile,
+		}, nil
+	}
 	return preflights, nil
 }
 

@@ -20,8 +20,12 @@ var (
 	runtimeErrorTime        = regexp.MustCompile(`^(?:\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T[0-9:.]+(?:Z|[+-]\d{2}:\d{2}))`)
 )
 
-// MeasurementRequestFailures joins only exact native controller owners.
+// MeasurementRequestFailures joins only exact native controller owners. A
+// session request owns no Run: its one failure is its outcome and sentence.
 func MeasurementRequestFailures(task api.BatchEnergyOptimization, runs []api.ProfilingRun, assessment MeasurementAssessment) []MeasurementFailure {
+	if task.Spec.Session != nil {
+		return sessionRequestFailures(task, assessment)
+	}
 	failures := []MeasurementFailure{}
 	owned := make([]*api.ProfilingRun, 0, len(runs))
 	for i := range runs {

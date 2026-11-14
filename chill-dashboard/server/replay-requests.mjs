@@ -157,7 +157,8 @@ export function measurementRequests({ capture, startedAt, ns, nodeUID, measure }
   function items(scene, own, summary, t) {
     const added = own.added.map(item => summary ? { ...item, assessment: requestAssessment(item) } : item)
     const base = [...(summary ? summaries : plains).values()].map(item => overlaid(scene, item.metadata.name) ? measure.beoItem(item, t) : item)
-    return [...added, ...base].filter(item => !own.removed.has(item.metadata.name)).sort((a, b) => byName(a.metadata, b.metadata))
+    const sessions = scene === 'active' ? measure.sessions(t) : []
+    return [...added, ...sessions, ...base].filter(item => !own.removed.has(item.metadata.name)).sort((a, b) => byName(a.metadata, b.metadata))
   }
   const item = (scene, own, name, t) => items(scene, own, true, t).find(row => row.metadata.name === name)
   function runSet(scene, own, t) {
@@ -243,9 +244,17 @@ export function measurementRequests({ capture, startedAt, ns, nodeUID, measure }
     run: runNamed,
 
     // GET batch-energy-optimizations/{name}/result: BuildBatchEnergyOptimizationResult or its error projection.
+    // A request without session settings whose result is published answers PreviousFormat (BuildBatchEnergyOptimizationResult).
     result(scene, own, name, t) {
+      const [code, body] = this.storedResult(scene, own, name, t)
+      const request = item(scene, own, name, t)
+      return [code, request?.status?.result && !request.spec.session && body.campaign
+        ? { ...body, resultFormat: 'PreviousFormat', resultFormatMessage: 'This result was stored by the previous measurement method and cannot be read; delete the request and measure again.' } : body]
+    },
+    storedResult(scene, own, name, t) {
       const request = item(scene, own, name, t)
       if (!request) return [404, { code: 'BatchEnergyOptimizationResultUnavailable' }]
+      if (scene === 'active' && request.spec.session) return [200, measure.sessionResult(name, t)]
       if (overlaid(scene, name)) return [200, measure.beoResult(request, t)]
       if (!own.added.some(row => row.metadata.name === name)) { const raw = capturedRaw(`${NS}batch-energy-optimizations/${name}/result`); if (raw) return [raw[0], { ...raw[1], readAt: new Date(t).toISOString() }] }
       const st = request.status ?? {}, ref = st.result

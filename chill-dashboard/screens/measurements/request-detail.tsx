@@ -16,6 +16,7 @@ import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { formatNumber, formatSeconds, msNumber } from "@/lib/format"
 import { measurementStatus } from "@/lib/status-labels"
 import type { CampaignResult, MeasurementFailure, MeasurementPlanSpec, ProfilingRun, ResultRow, RunsView } from "@/lib/read-types"
+import { SessionResultSection, SessionStatusSection, sessionSettingFields } from "./request-session"
 
 const plansPath = (namespace: string) => `v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
 
@@ -56,6 +57,9 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
   const rows = data?.resultRows ?? []
   const failures: MeasurementFailure[] = assessment?.failureSummary ?? []
   const failed = campaign?.phase === "Failed"
+  // A session request runs no Run: no runs tab, failure is its outcome and sentence.
+  const sessionRun = !!campaign?.spec.session
+  const reason = campaign?.reason ?? plan?.reason
 
   const router = useRouter()
   const client = useQueryClient()
@@ -77,6 +81,7 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
   const candidate = spec.state.candidate
   const uid = campaign.uid
   const trials = campaign.completedTrials ?? 0
+  const completed = sessionRun ? { label: "완료 배치", value: `${campaign.completedBatches ?? 0}개` } : { label: "완료 회차", value: `${trials}개` }
   const download = () => {
     const text = stringifySchedulerJSON({ apiVersion: "edge.dacs.io/v1alpha1", kind: "BatchEnergyOptimization", metadata: { name, namespace }, spec }, 2)
     const url = URL.createObjectURL(new Blob([text], { type: "application/json" }))
@@ -101,13 +106,16 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
     },
   )
 
-  const tabs = [
+  const tabs = sessionRun ? [
+    { value: "results", label: "결과", count: data?.session?.batches.length },
+    { value: "conditions", label: "조건" },
+  ] : [
     ...(failed ? [{ value: "failure", label: "실패" }] : []),
     { value: "results", label: "결과", count: rows.length },
     { value: "runs", label: "회차" },
     { value: "conditions", label: "조건" },
   ]
-  const defaultTab = failed ? "failure" : "results"
+  const defaultTab = failed && !sessionRun ? "failure" : "results"
   const requested = params.get("tab")
   const tab = tabs.find(t => t.value === requested)?.value ?? defaultTab
   const cause = failures[0]
@@ -125,10 +133,16 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
           { label: "삭제", destructive: true, disabled: campaign.phase === "Measuring", disabledReason: campaign.phase === "Measuring" ? "측정 중" : undefined, onSelect: () => setConfirm(true) },
         ]}
       />
-      {failed && cause && <p className="text-sm text-muted-foreground">{cause.label ?? cause.message}{cause.firstErrorLine ? `: ${cause.firstErrorLine.slice((cause.firstErrorTime ?? "").length).trim()}` : ""}</p>}
+      {failed && cause && !sessionRun && <p className="text-sm text-muted-foreground">{cause.label ?? cause.message}{cause.firstErrorLine ? `: ${cause.firstErrorLine.slice((cause.firstErrorTime ?? "").length).trim()}` : ""}</p>}
       <PageTabs param="tab" defaultValue={defaultTab} tabs={tabs} />
 
-      {tab === "results" && (
+      {tab === "results" && sessionRun && (data?.session
+        ? <SessionResultSection session={data.session} phase={campaign.phase} outcome={campaign.outcome} reason={reason} />
+        : <SessionStatusSection phase={campaign.phase} outcome={campaign.outcome} reason={reason} />)}
+
+      {tab === "results" && !sessionRun && data?.resultFormat === "PreviousFormat" && <SessionStatusSection previousFormat />}
+
+      {tab === "results" && !sessionRun && (
         <Section title="배치별 결과" actions={<Link href={sameTarget} className={buttonClassName({ variant: "outline", size: "sm" })}>같은 대상 결과</Link>}>
           {rows.length === 0 ? (
             <EmptyState title={result.error && !result.data ? "결과 파일을 읽지 못함" : campaign.phase === "Measuring" ? "측정 중" : failed ? "결과 없음" : "저장된 결과 없음"} compact />
@@ -159,12 +173,14 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
             { label: "장치", value: spec.state.targetNode },
             { label: "전력 모드", value: powerModeLabel(candidate.powerMode) },
             { label: "실행 경로", value: executionPathLabel(candidate.executionPath) },
-            { label: "배치별 반복", value: `${spec.trialsPerBatch}회` },
-            { label: "재시도 한도", value: `${spec.retryLimit}회` },
-            { label: "실행 측정", value: formatSeconds(spec.activeProtocol.durationSeconds) },
+            ...(spec.session ? sessionSettingFields(spec.session) : [
+              { label: "배치별 반복", value: `${spec.trialsPerBatch}회` },
+              { label: "재시도 한도", value: `${spec.retryLimit}회` },
+              { label: "실행 측정", value: formatSeconds(spec.activeProtocol.durationSeconds) },
+              { label: "유휴 측정", value: formatSeconds(spec.idleProtocol.durationSeconds) },
+              { label: "신뢰 수준", value: spec.pointPolicy?.confidenceLevel ? `${Number(spec.pointPolicy.confidenceLevel) * 100}%` : null },
+            ]),
             { label: "예열", value: `${spec.activeProtocol.warmupIterations}회` },
-            { label: "유휴 측정", value: formatSeconds(spec.idleProtocol.durationSeconds) },
-            { label: "신뢰 수준", value: spec.pointPolicy?.confidenceLevel ? `${Number(spec.pointPolicy.confidenceLevel) * 100}%` : null },
             ...(plan ? [{ label: "생성", value: <TimeText at={plan.metadata.creationTimestamp} mode="detail" /> }] : []),
           ]} />
         </Section>
@@ -198,7 +214,7 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
         target={name}
         confirmLabel="영구 삭제"
         tone="destructive"
-        changes={[{ label: "측정 요청", before: "있음", after: "삭제" }, { label: "완료 회차", before: `${trials}개`, after: "삭제" }, { label: "결과와 근거 파일", before: "있음", after: "영구 삭제" }]}
+        changes={[{ label: "측정 요청", before: "있음", after: "삭제" }, { label: completed.label, before: completed.value, after: "삭제" }, { label: "결과와 근거 파일", before: "있음", after: "영구 삭제" }]}
         pending={remove.isPending}
         onConfirm={confirmDelete}
       >

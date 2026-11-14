@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -36,10 +37,12 @@ func ProjectMeasurementList(
 	type item struct {
 		api.BatchEnergyOptimization
 		Assessment json.RawMessage `json:"assessment"`
+		// Reason is the current MeasurementComplete condition's message.
+		Reason string `json:"reason,omitempty"`
 	}
 	items := make([]item, len(list.Items))
 	for i := range list.Items {
-		items[i] = item{list.Items[i], assessments[i]}
+		items[i] = item{list.Items[i], assessments[i], queryapi.MeasurementReasonSentence(list.Items[i])}
 	}
 	return struct {
 		meta.TypeMeta `json:",inline"`

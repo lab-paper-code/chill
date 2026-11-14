@@ -20,6 +20,9 @@ type KubernetesBatchEnergyOptimizationPreflightQuery struct {
 	reader    client.Reader
 	projector func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error)
 	now       func() time.Time
+	// Session resolves a request with session settings, the call the session
+	// runner prepares a measurement with.
+	Session func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (queryapi.SessionPreflightPlan, error)
 }
 
 func NewKubernetesBatchEnergyOptimizationPreflightQuery(
@@ -46,6 +49,20 @@ func (q *KubernetesBatchEnergyOptimizationPreflightQuery) Read(
 	}
 	if err := validateObjectReference("BatchEnergyOptimization", campaign.Namespace, campaign.Name); err != nil {
 		return queryapi.BatchEnergyOptimizationPreflightSnapshot{}, err
+	}
+	if campaign.Spec.Session != nil {
+		snapshot := queryapi.BatchEnergyOptimizationPreflightSnapshot{ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy()}
+		if q.Session == nil {
+			snapshot.Reason = "this Query API does not resolve measurement sessions"
+			return snapshot, nil
+		}
+		plan, err := q.Session(ctx, campaign)
+		if err != nil {
+			snapshot.Reason = err.Error()
+			return snapshot, nil
+		}
+		snapshot.SessionPlan = &plan
+		return snapshot, nil
 	}
 
 	plan, err := q.projector(ctx, campaign)
