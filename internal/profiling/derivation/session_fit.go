@@ -31,14 +31,27 @@ type powerFit struct {
 }
 
 // fitPower fills the step, hold and slopes of result. A hold read from the
-// decay is used as is. Otherwise the hold is searched: between two
-// consecutive breakpoints of the awake fractions (observed gaps and window
-// edges) every awake fraction is linear in the hold, so with p, q >= 0 the
-// segment's model p*awake(lower) + q*awake(upper) is exactly step*awake(hold)
-// with step = p+q and hold = (lower*p + upper*q)/step, and each segment is a
-// non-negative least squares problem. Every parameter's status comes from its
-// range over all fits within the limit.
-func fitPower(result *SessionResult, levels []fitLevel, idle float64, decay *SessionParameter, tests sessionTests) {
+// decay is used as is. Otherwise the hold is searched over segments between
+// breakpoints of the awake fractions (observed gaps and window edges). Within
+// a segment every awake fraction is linear in the hold, so with p, q >= 0 the
+// segment's model p*awake(lower) + q*awake(upper) is step*awake(hold) with
+// step = p+q and hold = (lower*p + upper*q)/step, and each segment is a
+// non-negative least squares problem.
+//
+// The resolution of the search: consecutive breakpoints are merged into one
+// segment while the largest change of any level's awake fraction across the
+// merged span, times the largest level watts above idle, stays at or below
+// resolution, the smallest standard error of a level's mean watts. A segment
+// is split only where the hold could move a level's predicted power by more
+// than the measurement resolves; inside a merged segment the linear model
+// departs from the exact awake fractions by at most resolution watts. A zero
+// resolution searches every breakpoint.
+//
+// Every parameter carries its value from the best joint fit and its range over
+// the fits within the limit. A parameter is NotIdentified only when the design
+// does not determine it or, for the hold, when its range reaches the top of
+// the searched holds.
+func fitPower(result *SessionResult, levels []fitLevel, idle float64, decay *SessionParameter, tests sessionTests, resolution float64) {
 	fit := powerFit{levels: levels, observed: mat.NewVecDense(max(len(levels), 1), nil), slopeColumn: map[int]int{}}
 	var noise float64
 	for i, level := range levels {
@@ -59,50 +72,66 @@ func fitPower(result *SessionResult, levels []fitLevel, idle float64, decay *Ses
 		return
 	}
 	slopes := len(fit.slopeColumn)
-	// c returns the functional of the awake columns' sum (the step) or of
-	// one slope, in a design with the given number of awake columns.
-	functional := func(awake, slope int) []float64 {
-		c := make([]float64, awake+slopes)
-		if slope < 0 {
-			for j := range awake {
-				c[j] = 1
-			}
-		} else {
-			c[awake+slope] = 1
-		}
-		return c
-	}
-	var step SessionParameter
-	slope := make([]SessionParameter, slopes)
-	var hold SessionParameter
+	var step, hold SessionParameter
+	var slope []SessionParameter
+	var best acceptedFit
+	awakeColumns := 1
 	if decay != nil {
 		value, _ := decay.Value()
 		design := fit.design(fit.fractions(value))
 		x, residual := nonNegativeLeastSquares(design, fit.observed)
+		result.Power.FitResidualSquareWatts = residual
 		fit.limit = residual + jointQuantile(tests.confidence, 1+slopes)*noise
-		fits := []acceptedFit{{design, x}}
-		step = fit.linearParameter("the awake step", x[0], functional(1, -1), fits)
-		for k := range slopes {
-			slope[k] = fit.linearParameter("the slope", x[1+k], functional(1, k), fits)
-		}
+		best = acceptedFit{design, x}
+		parameters := fit.linearParameters(slices.Clone(x), 1, []acceptedFit{best})
+		step, slope = parameters[0], parameters[1:]
 		hold = *decay
 	} else {
-		search := fit.searchHold(tests.confidence, noise)
-		x := search.best.x
+		awakeColumns = 2
+		search := fit.searchHold(tests.confidence, noise, resolution)
+		result.Power.FitResidualSquareWatts = search.best.residual
+		result.Power.HoldSegmentsSearched, result.Power.HoldResolutionWatts = search.segments, resolution
+		best = acceptedFit{search.best.design, search.best.x}
 		fits := make([]acceptedFit, len(search.acceptable))
 		for i, segment := range search.acceptable {
 			fits[i] = acceptedFit{segment.design, segment.x}
 		}
-		step = fit.linearParameter("the awake step", x[0]+x[1], functional(2, -1), fits)
-		for k := range slopes {
-			slope[k] = fit.linearParameter("the slope", x[2+k], functional(2, k), fits)
-		}
+		values := slices.Concat([]float64{best.x[0] + best.x[1]}, best.x[2:])
+		parameters := fit.linearParameters(values, 2, fits)
+		step, slope = parameters[0], parameters[1:]
 		hold = fit.holdParameter(search, step)
 	}
+	result.Power.FitLimitSquareWatts = fit.limit
 	result.Power.AwakeStepWatts, result.Power.HoldSeconds = step, hold
 	for index, column := range fit.slopeColumn {
 		result.Batches[index].JoulesPerInput = slope[column]
 	}
+	// The awake fraction each level entered the best fit with: the awake
+	// columns weighted by their share of the step.
+	var stepSum float64
+	for j := range awakeColumns {
+		stepSum += best.x[j]
+	}
+	for i, level := range levels {
+		fraction := best.design.At(i, 0)
+		if stepSum > 0 {
+			fraction = 0
+			for j := range awakeColumns {
+				fraction += best.x[j] * best.design.At(i, j) / stepSum
+			}
+		}
+		result.Batches[level.at[0]].Levels[level.at[1]].AwakeFraction = &fraction
+	}
+}
+
+// holdResolution is the smallest standard error of a fitted level's mean
+// watts.
+func holdResolution(levels []fitLevel) float64 {
+	resolution := math.Inf(1)
+	for _, level := range levels {
+		resolution = math.Min(resolution, math.Sqrt(level.variance))
+	}
+	return resolution
 }
 
 func jointQuantile(confidence float64, parameters int) float64 {
@@ -136,7 +165,7 @@ func (f powerFit) design(awake ...[]float64) *mat.Dense {
 	return design
 }
 
-// holdSegment is the hold interval between two consecutive breakpoints.
+// holdSegment is the hold interval between two searched breakpoints.
 type holdSegment struct {
 	lower, upper float64
 	design       *mat.Dense
@@ -160,10 +189,11 @@ type holdSearch struct {
 	// acceptable are the segments holding a fit within the limit.
 	acceptable []*holdSegment
 	// domain is the largest breakpoint; above it no awake fraction changes.
-	domain float64
+	domain   float64
+	segments int
 }
 
-func (f *powerFit) searchHold(confidence, variance float64) holdSearch {
+func (f *powerFit) searchHold(confidence, variance, resolution float64) holdSearch {
 	breakpoints := []float64{0}
 	for _, level := range f.levels {
 		for _, point := range level.awake.breakpoints() {
@@ -178,18 +208,21 @@ func (f *powerFit) searchHold(confidence, variance float64) holdSearch {
 		// No gap: the domain is the single hold zero.
 		breakpoints = append(breakpoints, 0)
 	}
-	segments := make([]*holdSegment, len(breakpoints)-1)
+	var scale float64
+	for i := range f.levels {
+		scale = math.Max(scale, f.observed.AtVec(i))
+	}
+	ends, fractions := mergeBreakpoints(breakpoints, f.fractions, scale, resolution)
+	segments := make([]*holdSegment, len(ends)-1)
 	all := 1<<(2+len(f.slopeColumn)) - 1
-	lower := f.fractions(breakpoints[0])
 	for k := range segments {
-		upper := f.fractions(breakpoints[k+1])
-		segment := &holdSegment{lower: breakpoints[k], upper: breakpoints[k+1], design: f.design(lower, upper)}
+		segment := &holdSegment{lower: breakpoints[ends[k]], upper: breakpoints[ends[k+1]], design: f.design(fractions[k], fractions[k+1])}
 		segment.bound = solveFace(segment.design, f.observed, all).residual
-		segments[k], lower = segment, upper
+		segments[k] = segment
 	}
 	ordered := slices.Clone(segments)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].bound < ordered[j].bound })
-	search := holdSearch{domain: breakpoints[len(breakpoints)-1]}
+	search := holdSearch{domain: breakpoints[len(breakpoints)-1], segments: len(segments)}
 	for _, segment := range ordered {
 		if search.best != nil && segment.bound > search.best.residual {
 			break
@@ -212,41 +245,87 @@ func (f *powerFit) searchHold(confidence, variance float64) holdSearch {
 	return search
 }
 
-// linearParameter gives a parameter c·x its range over every non-negative x
-// within the limit of each accepted fit's design, and its status from that
-// range.
-func (f powerFit) linearParameter(name string, value float64, c []float64, fits []acceptedFit) SessionParameter {
-	bounds := [2]float64{math.Inf(1), math.Inf(-1)}
-	for _, fit := range fits {
-		if !estimable(fit.design, c) {
-			return notIdentified(fmt.Sprintf("the power fit design does not determine %s", name))
+// mergeBreakpoints returns the indexes of the breakpoints that end searched
+// segments, starting with zero, and the awake fractions there. A segment
+// grows by one breakpoint while the largest change of a level's fraction from
+// its start times scale stays at or below resolution; a single step is a
+// segment whatever its change. Fractions grow with the hold, so the change
+// over a span is the change between its ends.
+func mergeBreakpoints(breakpoints []float64, fractions func(float64) []float64, scale, resolution float64) ([]int, [][]float64) {
+	ends, at := []int{0}, [][]float64{fractions(breakpoints[0])}
+	start, previous := at[0], at[0]
+	for k := 1; k < len(breakpoints); k++ {
+		current := fractions(breakpoints[k])
+		if k-1 > ends[len(ends)-1] {
+			var change float64
+			for i := range current {
+				change = math.Max(change, current[i]-start[i])
+			}
+			if change*scale > resolution {
+				ends, at, start = append(ends, k-1), append(at, previous), previous
+			}
 		}
-		low, high := extent(fit.design, f.observed, c, f.limit, fit.x)
-		bounds = [2]float64{math.Min(bounds[0], low), math.Max(bounds[1], high)}
+		previous = current
 	}
-	switch {
-	case bounds[1] == 0:
-		return atBoundParameter()
-	case bounds[0] == 0:
-		return notIdentifiedWithin(fmt.Sprintf("%s takes zero and values up to %.6g within the noise threshold", name, bounds[1]), bounds)
+	return append(ends, len(breakpoints)-1), append(at, previous)
+}
+
+// linearParameters gives the step and every slope their value at the best fit
+// and their range over every non-negative x within the limit of each accepted
+// fit's design, with the given number of awake columns; a parameter is
+// NotIdentified when a design does not determine it.
+func (f powerFit) linearParameters(values []float64, awake int, fits []acceptedFit) []SessionParameter {
+	// The step sums the awake columns, a slope is its rate column.
+	functionals := make([][]float64, len(values))
+	for k := range functionals {
+		functionals[k] = make([]float64, awake+len(values)-1)
+		if k == 0 {
+			for j := range awake {
+				functionals[k][j] = 1
+			}
+		} else {
+			functionals[k][awake+k-1] = 1
+		}
 	}
-	return identifiedParameter(value, bounds)
+	bounds := make([][2]float64, len(values))
+	determined := make([]bool, len(values))
+	for k := range bounds {
+		bounds[k], determined[k] = [2]float64{math.Inf(1), math.Inf(-1)}, true
+	}
+	for _, fit := range fits {
+		for k, c := range functionals {
+			determined[k] = determined[k] && estimable(fit.design, c)
+		}
+		for k, extent := range extents(fit.design, f.observed, functionals, f.limit, fit.x) {
+			bounds[k] = [2]float64{math.Min(bounds[k][0], extent[0]), math.Max(bounds[k][1], extent[1])}
+		}
+	}
+	parameters := make([]SessionParameter, len(values))
+	for k := range parameters {
+		name := "the awake step"
+		if k > 0 {
+			name = "the slope"
+		}
+		parameters[k] = identifiedParameter(values[k], bounds[k])
+		if !determined[k] {
+			parameters[k] = notIdentified(fmt.Sprintf("the power fit design does not determine %s", name))
+		}
+	}
+	return parameters
 }
 
 // holdParameter ranges the hold over the acceptable segments. Within one
 // segment the holds that fit form an interval (the projection of a convex set
 // through q/(p+q)); its ends are the segment ends that fit or the holds where
-// the residual of a feasible set of free columns reaches the limit.
+// the residual of a feasible set of free columns reaches the limit. A step
+// that may be zero lets every hold fit, so the range reaches the top.
 func (f powerFit) holdParameter(search holdSearch, step SessionParameter) SessionParameter {
-	domain := [2]float64{0, search.domain}
-	switch step.Status() {
-	case ParameterAtBound:
-		return notIdentifiedWithin("the awake step is zero, so every hold fits", domain)
-	case ParameterNotIdentified:
-		if _, ok := step.Range(); !ok {
-			return notIdentified("the awake step is not determined, so neither is the hold")
-		}
-		return notIdentifiedWithin("the awake step may be zero, so every hold fits", domain)
+	stepRange, _ := step.Range()
+	switch {
+	case step.Status() == ParameterNotIdentified:
+		return notIdentified("the awake step is not determined, so neither is the hold")
+	case stepRange[0] <= 0:
+		return notIdentifiedWithin(fmt.Sprintf("the awake step may be zero within the noise limit, so every hold from 0 s to the top of the searched holds, %.6g s, fits", search.domain), [2]float64{0, search.domain})
 	}
 	best := search.best
 	value := (best.lower*best.x[0] + best.upper*best.x[1]) / (best.x[0] + best.x[1])
@@ -270,8 +349,8 @@ func (f powerFit) holdParameter(search holdSearch, step SessionParameter) Sessio
 			include(hold)
 		}
 	}
-	if bounds[0] == 0 || bounds[1] == search.domain {
-		return notIdentifiedWithin(fmt.Sprintf("the holds within the noise threshold, %.6g s to %.6g s, reach an end of the searched holds 0 s to %.6g s", bounds[0], bounds[1], search.domain), bounds)
+	if bounds[1] >= search.domain {
+		return notIdentifiedWithin(fmt.Sprintf("the holds within the noise limit, %.6g s to %.6g s, reach the top of the searched holds, %.6g s", bounds[0], bounds[1], search.domain), bounds)
 	}
 	return identifiedParameter(value, bounds)
 }
@@ -407,20 +486,24 @@ func nonNegativeLeastSquares(a *mat.Dense, b *mat.VecDense) ([]float64, float64)
 	return best.x, best.residual
 }
 
-// extent returns the smallest and largest c·x over x >= 0 with
-// |Ax - b|^2 <= limit, for c >= 0 that is estimable. By the KKT conditions
-// an extreme lies on a face with independent free columns F, either where c
-// vanishes on F or where the ellipsoid bounds it: x = x_F ± r*G⁻¹c_F with
-// G = A_Fᵀ A_F and r = sqrt((limit - residual_F)/(c_Fᵀ G⁻¹ c_F)). Every face
-// is tried and the feasible candidates kept, along with the known solution
-// within the limit, so rounding cannot leave the range empty.
-func extent(a *mat.Dense, b *mat.VecDense, c []float64, limit float64, known []float64) (float64, float64) {
-	low := floats.Dot(c, known)
-	high := low
-	include := func(x []float64) {
+// extents returns the smallest and largest c·x over x >= 0 with
+// |Ax - b|^2 <= limit for each c >= 0 that is estimable. By the KKT
+// conditions an extreme lies on a face with independent free columns F,
+// either where c vanishes on F or where the ellipsoid bounds it:
+// x = x_F ± r*G⁻¹c_F with G = A_Fᵀ A_F and r = sqrt((limit -
+// residual_F)/(c_Fᵀ G⁻¹ c_F)). Every face is factorized once and tried for
+// every c, and the feasible candidates kept, along with the known solution
+// within the limit, so rounding cannot leave a range empty.
+func extents(a *mat.Dense, b *mat.VecDense, cs [][]float64, limit float64, known []float64) [][2]float64 {
+	bounds := make([][2]float64, len(cs))
+	for k, c := range cs {
+		value := floats.Dot(c, known)
+		bounds[k] = [2]float64{value, value}
+	}
+	include := func(k int, x []float64) {
 		if !slices.ContainsFunc(x, func(v float64) bool { return v < 0 }) {
-			value := floats.Dot(c, x)
-			low, high = math.Min(low, value), math.Max(high, value)
+			value := floats.Dot(cs[k], x)
+			bounds[k] = [2]float64{math.Min(bounds[k][0], value), math.Max(bounds[k][1], value)}
 		}
 	}
 	_, columns := a.Dims()
@@ -429,33 +512,37 @@ func extent(a *mat.Dense, b *mat.VecDense, c []float64, limit float64, known []f
 		if !fit.fullRank || fit.residual > limit {
 			continue
 		}
-		g := make([]float64, columns)
+		var v mat.Dense
+		var sigmas []float64
 		if len(fit.free) > 0 {
-			var v mat.Dense
 			fit.svd.VTo(&v)
-			for i, sigma := range fit.svd.Values(nil) {
+			sigmas = fit.svd.Values(nil)
+		}
+		for k, c := range cs {
+			g := make([]float64, columns)
+			for i, sigma := range sigmas {
 				var projection float64
-				for k, j := range fit.free {
-					projection += v.At(k, i) * c[j]
+				for row, j := range fit.free {
+					projection += v.At(row, i) * c[j]
 				}
-				for k, j := range fit.free {
-					g[j] += v.At(k, i) * projection / (sigma * sigma)
+				for row, j := range fit.free {
+					g[j] += v.At(row, i) * projection / (sigma * sigma)
 				}
 			}
-		}
-		curvature := floats.Dot(c, g)
-		if curvature == 0 {
-			include(fit.x)
-			continue
-		}
-		radius := math.Sqrt((limit - fit.residual) / curvature)
-		for _, sign := range []float64{-1, 1} {
-			x := slices.Clone(fit.x)
-			floats.AddScaled(x, sign*radius, g)
-			include(x)
+			curvature := floats.Dot(c, g)
+			if curvature == 0 {
+				include(k, fit.x)
+				continue
+			}
+			radius := math.Sqrt((limit - fit.residual) / curvature)
+			for _, sign := range []float64{-1, 1} {
+				x := slices.Clone(fit.x)
+				floats.AddScaled(x, sign*radius, g)
+				include(k, x)
+			}
 		}
 	}
-	return low, high
+	return bounds
 }
 
 // estimable reports whether c·x is the same for every x with the same Ax,
@@ -496,21 +583,20 @@ type awakeEdge struct{ from, until float64 }
 // levelAwakeWindow is the awake window of one level on the native clock
 // alone: from the first native start plus the meter lag, which drops the
 // executions the meter has not yet seen, to the last native finish. It
-// returns the first native start and whether the window is positive.
-func levelAwakeWindow(rows []NativeBatchRow, lag time.Duration) (awakeWindow, time.Time, bool) {
+// returns the window bounds and whether the window is positive.
+func levelAwakeWindow(rows []NativeBatchRow, lag time.Duration) (awakeWindow, [2]time.Time, bool) {
 	executions := slices.Clone(rows)
 	sort.Slice(executions, func(i, j int) bool { return executions[i].StartedAt.Before(executions[j].StartedAt) })
-	first, last := executions[0].StartedAt, executions[0].FinishedAt
+	bounds := [2]time.Time{executions[0].StartedAt.Add(lag), executions[0].FinishedAt}
 	for _, row := range executions {
-		if row.FinishedAt.After(last) {
-			last = row.FinishedAt
+		if row.FinishedAt.After(bounds[1]) {
+			bounds[1] = row.FinishedAt
 		}
 	}
-	start := first.Add(lag)
-	if !last.After(start) {
-		return awakeWindow{}, first, false
+	if !bounds[1].After(bounds[0]) {
+		return awakeWindow{}, bounds, false
 	}
-	return newAwakeWindow(executions, start, last), first, true
+	return newAwakeWindow(executions, bounds[0], bounds[1]), bounds, true
 }
 
 func newAwakeWindow(executions []NativeBatchRow, start, end time.Time) awakeWindow {

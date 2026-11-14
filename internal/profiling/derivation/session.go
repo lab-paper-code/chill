@@ -72,8 +72,8 @@ type NativeBatchRow struct {
 type sessionTests struct {
 	// oneSided bounds a drop, twoSided the idle interval, in standard errors.
 	oneSided, twoSided float64
-	// confidence is the configured level; the trend test reads its Student t
-	// quantile and the power fit its chi-square quantile.
+	// confidence is the configured level; the power fit reads its chi-square
+	// quantile.
 	confidence float64
 }
 
@@ -160,8 +160,9 @@ func DeriveSession(input SessionInput) (SessionResult, error) {
 	}
 	result.Power.IdleWatts, result.Power.PostLoad = postLoad.idle, postLoad.series
 	result.Power.MeterIntervalSeconds, result.Power.SettledAtSeconds = postLoad.interval, postLoad.settledAt
+	result.Power.PostLoadTailSlopeWattsPerSecond = postLoad.tailSlope
 	if idle, ok := postLoad.idle.Value(); ok {
-		fitPower(&result, levels, idle, postLoad.hold, tests)
+		fitPower(&result, levels, idle, postLoad.hold, tests, holdResolution(levels))
 	} else {
 		reason := "settled idle watts not identified"
 		result.Power.AwakeStepWatts, result.Power.HoldSeconds = notIdentified(reason), notIdentified(reason)
@@ -256,8 +257,9 @@ func measureLevel(row DriverLevelRow, rows []NativeBatchRow, power []Sample, lag
 	if len(rows) == 0 {
 		return level, nil, nil
 	}
-	window, first, ok := levelAwakeWindow(rows, lag)
-	offset := first.Sub(row.Start).Nanoseconds()
+	window, bounds, ok := levelAwakeWindow(rows, lag)
+	offset := bounds[0].Add(-lag).Sub(row.Start).Nanoseconds()
+	level.AwakeWindowNanos = &[2]int64{bounds[0].Sub(row.Start).Nanoseconds(), bounds[1].Sub(row.Start).Nanoseconds()}
 	level.NativeStartOffsetNanos = &offset
 	start := row.Start.Add(lag)
 	if !ok || row.End.Sub(start) < minimum {
@@ -315,6 +317,8 @@ type postLoadObservation struct {
 	idle      SessionParameter
 	interval  float64
 	settledAt float64
+	// tailSlope is the slope over the last minimum power window, in W/s.
+	tailSlope float64
 	// hold is set when the decay identifies the hold time.
 	hold   *SessionParameter
 	series [][2]float64
@@ -328,7 +332,9 @@ type postLoadObservation struct {
 // and level are refined together until the settle point stops moving. The
 // hold is t50 less the meter lag, identified when that exceeds the meter's
 // sampling interval, the median sample spacing. Idle is not identified only
-// when the settled series still trends over its last minimum power window.
+// when the settle point leaves less than one minimum power window before the
+// end of the window; the slope over the last minimum power window is kept as
+// an observation and decides nothing.
 func analysePostLoad(power []Sample, start, end time.Time, lag, minimum time.Duration, tests sessionTests) (postLoadObservation, error) {
 	var observation postLoadObservation
 	var spacing []float64
@@ -373,6 +379,11 @@ func analysePostLoad(power []Sample, start, end time.Time, lag, minimum time.Dur
 		if index > 0 {
 			beforeCrossing = observation.series[index-1][0]
 		}
+		if end.Sub(settle) < minimum {
+			observation.settledAt = settle.Sub(start).Seconds()
+			observation.idle = notIdentified(fmt.Sprintf("post-load power settles at %.1f s, less than the minimum power window of %v before the end of the window", observation.settledAt, minimum))
+			return observation, nil
+		}
 	}
 	idle, idleError, _, err := windowPower(power, settle, end)
 	if err != nil {
@@ -386,13 +397,7 @@ func analysePostLoad(power []Sample, start, end time.Time, lag, minimum time.Dur
 		}
 	}
 	observation.settledAt = settle.Sub(start).Seconds()
-	// Still trending at the end: the slope over the last minimum power window
-	// of the settled series.
-	from := math.Max(observation.settledAt, end.Sub(start).Seconds()-minimum.Seconds())
-	if slope, trending := trend(observation.series, from, tests.confidence); trending {
-		observation.idle = notIdentified(fmt.Sprintf("post-load power still trends at %.4f W/s from %.1f s to the end of the window", slope, from))
-		return observation, nil
-	}
+	observation.tailSlope = tailSlope(observation.series, math.Max(observation.settledAt, end.Sub(start).Seconds()-minimum.Seconds()))
 	observation.idle = identifiedParameter(idle, [2]float64{idle - tests.twoSided*idleError, idle + tests.twoSided*idleError})
 	if hold := crossing - lag.Seconds(); hold > observation.interval {
 		parameter := identifiedParameter(hold, [2]float64{math.Max(beforeCrossing-lag.Seconds(), 0), hold})
@@ -401,35 +406,20 @@ func analysePostLoad(power []Sample, start, end time.Time, lag, minimum time.Dur
 	return observation, nil
 }
 
-// trend fits a line to the batch means of the series from the given offset,
-// batched as in standardErrorOfMean, and reports whether its slope differs
-// from zero by the two-sided Student t test at the confidence level.
-func trend(series [][2]float64, from, confidence float64) (float64, bool) {
+// tailSlope is the least squares slope of the series from the given offset,
+// in watts per second.
+func tailSlope(series [][2]float64, from float64) float64 {
 	var times, watts []float64
 	for _, point := range series {
 		if point[0] >= from {
 			times, watts = append(times, point[0]), append(watts, point[1])
 		}
 	}
-	if len(times) < 3 {
-		return 0, false
+	if len(times) < 2 {
+		return 0
 	}
-	times, watts = batchMeans(times), batchMeans(watts)
-	if len(times) < 3 {
-		// Fewer than three batches leave no residual to test against.
-		return 0, false
-	}
-	intercept, slope := stat.LinearRegression(times, watts, nil, false)
-	meanTime := stat.Mean(times, nil)
-	var squares, spread float64
-	for i := range times {
-		residual := watts[i] - intercept - slope*times[i]
-		squares += residual * residual
-		spread += (times[i] - meanTime) * (times[i] - meanTime)
-	}
-	degrees := float64(len(times) - 2)
-	quantile := distuv.StudentsT{Mu: 0, Sigma: 1, Nu: degrees}.Quantile((1 + confidence) / 2)
-	return slope, math.Abs(slope) > quantile*math.Sqrt(squares/degrees/spread)
+	_, slope := stat.LinearRegression(times, watts, nil, false)
+	return slope
 }
 
 func seconds(value float64) time.Duration {

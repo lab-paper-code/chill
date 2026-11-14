@@ -186,9 +186,9 @@ func TestSessionIdleSettlesOnStoredPostLoad(t *testing.T) {
 func TestSessionPowerPredictsOtherStoredTrials(t *testing.T) {
 	// Bounds sit just above the recomputed maxima over sessions a1-a3:
 	// genesis2 2.73-3.13 W, jetsono 0.55-1.01 W and lattepanda 0.12-0.15 W.
-	// jetsono's batch 8 slope is NotIdentified from every session, so its
-	// replay predicts only batches 1, 2 and 4 (30 of 40 levels) and logs the
-	// levels it leaves out.
+	// jetsono's batch 8 slope is a value near zero (0.021, 0.014, 0.020 J
+	// with ranges from 0 to about 0.10 J), so every session predicts all 40
+	// levels of the other trials.
 	bounds := map[string]float64{"genesis2-ic-cuda": 3.2, "jetsono-ic-cpu": 1.1, "lattepanda-ic-cpu": 0.2}
 	for condition, trials := range loadSessionFixture(t) {
 		for _, session := range []string{"a1", "a2", "a3"} {
@@ -235,8 +235,8 @@ func TestSessionPowerPredictsOtherStoredTrials(t *testing.T) {
 				}
 			}
 			t.Logf("%s max error %.2f W, mean %.2f W over %d levels, %d levels not predicted", line, worst, sum/float64(max(count, 1)), count, skipped)
-			if worst > bounds[condition] {
-				t.Errorf("%s %s: max error %.2f W exceeds %.2f W", condition, session, worst, bounds[condition])
+			if worst > bounds[condition] || skipped > 0 {
+				t.Errorf("%s %s: max error %.2f W exceeds %.2f W or %d levels not predicted", condition, session, worst, bounds[condition], skipped)
 			}
 		}
 	}
