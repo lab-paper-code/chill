@@ -297,7 +297,7 @@ func (p *Profile) NativeBundle() firstfloor.ProfileBundle {
 			}
 		}
 		bundle.Batches[i] = firstfloor.BatchProfile{
-			Size: batch.Batch, ServiceSamples: batch.ServiceSamples, Distribution: batch.ServiceDistribution,
+			Size: batch.Batch, Distribution: batch.ServiceDistribution,
 			EnergyPerItemJ: energy,
 		}
 	}

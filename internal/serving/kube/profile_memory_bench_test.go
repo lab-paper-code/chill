@@ -140,7 +140,7 @@ func BenchmarkProfilePublication(b *testing.B) {
 	observer.SetProfiles(view.Profiles)
 	b.Run("UnchangedRefresh20x1200000", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			view, err = catalog.Refresh(context.Background(), []string{"chill-system"})
 			if err != nil {
 				b.Fatal(err)
@@ -149,7 +149,7 @@ func BenchmarkProfilePublication(b *testing.B) {
 	})
 	b.Run("SetProfiles20x1200000", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			observer.SetProfiles(view.Profiles)
 		}
 	})

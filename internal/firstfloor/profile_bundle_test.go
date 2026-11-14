@@ -15,7 +15,7 @@ func TestNativeBundleOmitsUnanchoredExecutions(t *testing.T) {
 	if err := json.Unmarshal(raw, &loaded); err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Distribution.RecordCount() != len(batch.ServiceSamples)-1 || loaded.Distribution.DroppedFirstExecutions() != 0 {
+	if loaded.Distribution.RecordCount() != batch.Distribution.RecordCount() || loaded.Distribution.DroppedFirstExecutions() != 0 {
 		t.Fatal("bundle retained the first unanchored execution")
 	}
 	if mean, _ := loaded.Distribution.MeanNanos(); mean != 1e7 {

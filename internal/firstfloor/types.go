@@ -140,7 +140,7 @@ type ErrorResponse struct {
 }
 type BatchProfile struct {
 	Size           int                  `json:"size"`
-	ServiceSamples []ServiceSample      `json:"-"` // Hydration input only; native bundles carry paired arrays.
+	ServiceSamples []ServiceSample      `json:"-"` // Not part of the native wire or hydrated native population.
 	Distribution   *ServiceDistribution `json:"-"`
 	EnergyPerItemJ float64              `json:"energyPerItemJ"`
 }

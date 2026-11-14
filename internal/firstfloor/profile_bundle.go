@@ -19,11 +19,7 @@ type batchProfileWire struct {
 func (b BatchProfile) MarshalJSON() ([]byte, error) {
 	d := b.Distribution
 	if d == nil {
-		var err error
-		d, err = NewServiceDistribution(b.ServiceSamples)
-		if err != nil {
-			return nil, err
-		}
+		return nil, errors.New("hydrated service distribution required")
 	}
 	return json.Marshal(batchProfileWire{b.Size, d.services, d.gaps, b.EnergyPerItemJ})
 }

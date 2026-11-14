@@ -51,7 +51,7 @@ func testBatch(size int, energy float64, samples ...ServiceSample) BatchProfile 
 	if err != nil {
 		panic(err)
 	}
-	return BatchProfile{Size: size, EnergyPerItemJ: energy, ServiceSamples: samples, Distribution: distribution}
+	return BatchProfile{Size: size, EnergyPerItemJ: energy, Distribution: distribution}
 }
 func testState(uid string, target float64, rate float64) RequestState {
 	return RequestState{Context: RequestContext{WorkloadUID: uid, Definition: uid + "/1", AdmissionPolicy: AdmissionReject, SLO: SLO{Percentile: 95, TargetMS: target}}, ArrivalRate: rate, Phase: "queued"}

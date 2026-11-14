@@ -101,6 +101,9 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 		}
 		c.sourceCheckedAt, c.sourceError, c.revision = view.SourceCheckedAt, "", view.Revision
 	}()
+	if err := ctx.Err(); err != nil {
+		return CatalogView{}, err
+	}
 	view = CatalogView{Profiles: []serving.Profile{}, Insufficiencies: []CatalogIssue{}, MeasurementFacts: map[string]serving.MeasurementFacts{}}
 	var revisions []string
 	seen := map[types.NamespacedName]struct{}{}
@@ -192,6 +195,9 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 	view.CurrentMeasurements = profilederivation.CurrentMeasurements(candidates, profilederivation.ReplacedMeasurements(replacements, names))
 	slices.Sort(revisions)
 	view.Revision = fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(revisions, "\x00"))))
+	if err := ctx.Err(); err != nil {
+		return CatalogView{}, err
+	}
 	view.SourceCheckedAt = time.Now().UTC()
 	return view, nil
 }
@@ -330,8 +336,8 @@ func unreadableResultReason(reference evidencestore.ObjectIdentity, raw []byte, 
 		SchemaVersion string `json:"schemaVersion"`
 	}
 	if json.Unmarshal(raw, &header) == nil && header.SchemaVersion != profilederivation.SessionResultSchemaVersion {
-		return fmt.Sprintf("stored result %s has schema %q, not %q; a measurement from before profile sessions is not read: delete it and measure again",
-			reference.Key, header.SchemaVersion, profilederivation.SessionResultSchemaVersion)
+		return fmt.Sprintf("stored result %s has schema %q, not %q; a measurement from before profile sessions is not read: delete it and measure again (%v)",
+			reference.Key, header.SchemaVersion, profilederivation.SessionResultSchemaVersion, err)
 	}
 	return fmt.Sprintf("stored result %s is not a decodable session result (%v); delete the measurement and measure again", reference.Key, err)
 }
@@ -368,7 +374,7 @@ func sessionProfile(campaign *edgev1alpha1.BatchEnergyOptimization, reference ev
 	profile := serving.Profile{
 		ID: types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}.String() + "/" + string(campaign.UID), Reference: reference,
 		SourceVersion: campaign.ResourceVersion,
-		Evidence: []evidencestore.ObjectIdentity{reference}, NodeName: session.NodeName,
+		Evidence:      []evidencestore.ObjectIdentity{reference}, NodeName: session.NodeName,
 		MeasuredAt: measurementCompletedAt(campaign), RuntimeMetadata: result.RuntimeMetadata,
 		RuntimeDelivery: slices.Clone(result.RuntimeDelivery), MetricSource: meter,
 		Power: &serving.ProfilePower{IdleWatts: result.Power.IdleWatts, AwakeStepWatts: result.Power.AwakeStepWatts, HoldSeconds: result.Power.HoldSeconds},
