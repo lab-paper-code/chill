@@ -125,6 +125,10 @@ func DeriveSession(input SessionInput) (SessionResult, error) {
 			default:
 				return SessionResult{}, fmt.Errorf("level %s has unknown kind %q", levelInput.Row.ID, levelInput.Row.Kind)
 			}
+			if levelInput.Row.Excluded {
+				batch.Levels = append(batch.Levels, SessionLevel{DriverLevelRow: levelInput.Row})
+				continue
+			}
 			rows, err := distinctNativeRows(levelInput, batchInput.Batch)
 			if err != nil {
 				return SessionResult{}, err

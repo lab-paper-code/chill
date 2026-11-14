@@ -24,7 +24,7 @@ func TestSessionLoadJobBoundsAndResources(t *testing.T) {
 	for _, scenario := range []struct {
 		batch    int
 		deadline int64
-	}{{1, 40}, {2, 29}, {4, 29}} {
+	}{{1, 60}, {2, 40}, {4, 40}} {
 		job := sessionLoadJob(beo, testNode, sessionLoad{batch: scenario.batch, config: config, preparation: sessionPreparationFixture()})
 		if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != scenario.deadline {
 			t.Fatalf("batch %d deadline %v, want %d seconds", scenario.batch, job.Spec.ActiveDeadlineSeconds, scenario.deadline)

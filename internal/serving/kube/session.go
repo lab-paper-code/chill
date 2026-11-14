@@ -70,11 +70,16 @@ type sessionPlan struct {
 	maxActuation time.Duration
 }
 
+type sessionNativeLevel struct {
+	rows   []profilederivation.NativeBatchRow
+	inputs int
+}
+
 // sessionReads are the observation records a session derives its result from.
 type sessionReads struct {
 	// native returns batch rows grouped by level identifier, selected with
 	// one batch-size prefix over receipt hours since the session started.
-	native func(ctx context.Context, workloadPrefix string, since time.Time) (map[string][]profilederivation.NativeBatchRow, error)
+	native func(ctx context.Context, workloadPrefix string, since time.Time, excluded map[string]bool) (map[string]sessionNativeLevel, error)
 	power  func(ctx context.Context, meter servingops.MeterDeclaration, from, to time.Time) ([]profilederivation.Sample, error)
 	memory func(ctx context.Context, podUID string, from, to time.Time) (observation.PodMemoryPeak, error)
 }
@@ -82,9 +87,12 @@ type sessionReads struct {
 // observedSessionReads reads the serving observation log.
 func observedSessionReads(log *observation.ObservationLog) sessionReads {
 	return sessionReads{
-		native: func(ctx context.Context, workloadPrefix string, since time.Time) (map[string][]profilederivation.NativeBatchRow, error) {
+		native: func(ctx context.Context, workloadPrefix string, since time.Time, excluded map[string]bool) (map[string]sessionNativeLevel, error) {
 			joins := map[string]*serving.NativeBatchJoin{}
 			err := log.ScanSessionRows(ctx, workloadPrefix, since, time.Now(), func(row serving.RequestRow) error {
+				if excluded[row.WorkloadUID] {
+					return nil
+				}
 				join := joins[row.WorkloadUID]
 				if join == nil {
 					join = serving.NewNativeBatchJoin()
@@ -96,11 +104,13 @@ func observedSessionReads(log *observation.ObservationLog) sessionReads {
 			if err != nil {
 				return nil, err
 			}
-			rows := make(map[string][]profilederivation.NativeBatchRow, len(joins))
+			rows := make(map[string]sessionNativeLevel, len(joins))
 			for uid, join := range joins {
-				if rows[uid], err = join.Batches(); err != nil {
+				batches, err := join.Batches()
+				if err != nil {
 					return nil, err
 				}
+				rows[uid] = sessionNativeLevel{rows: batches, inputs: join.CompletedInputs()}
 			}
 			return rows, nil
 		},
@@ -122,6 +132,9 @@ func (c *SchedulerController) sessionRefusal(ctx context.Context, beo *edge.Batc
 	settings := beo.Spec.Session
 	if settings == nil {
 		return plan, refusedSessionMissing, "measurement request has no session settings", false
+	}
+	if in.config.Session.NodeName == "" {
+		return plan, refusedSessionUnresolved, "measurement session requires Session.NodeName for the ChillServer load generator", false
 	}
 	if node.Name == in.config.Session.NodeName {
 		return plan, refusedSessionUnresolved, "the load generator runs on this Node, so its power would be measured as the model's", false
@@ -399,12 +412,25 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (sessionBa
 		return outcome, err
 	}
 	outcome.input = profilederivation.SessionBatchInput{Batch: batch, PrepareCostKey: prepareKey, RemoveCostKey: removeKey}
-	rows, err := r.c.sessionReads.native(ctx, string(r.beo.UID)+"/"+strconv.Itoa(batch)+"/", r.started)
+	var excluded map[string]bool
+	for _, level := range levels {
+		if level.Excluded {
+			if excluded == nil {
+				excluded = map[string]bool{}
+			}
+			excluded[level.ID] = true
+		}
+	}
+	rows, err := r.c.sessionReads.native(ctx, string(r.beo.UID)+"/"+strconv.Itoa(batch)+"/", r.started, excluded)
 	if err != nil {
 		return outcome, err
 	}
 	for _, level := range levels {
-		outcome.input.Levels = append(outcome.input.Levels, profilederivation.SessionLevelInput{Row: level, Native: rows[level.ID]})
+		native := rows[level.ID]
+		if !level.Excluded && native.inputs != level.CompletedInputs {
+			return outcome, fmt.Errorf("level %s: native inputs %d of %d", level.ID, native.inputs, level.CompletedInputs)
+		}
+		outcome.input.Levels = append(outcome.input.Levels, profilederivation.SessionLevelInput{Row: level, Native: native.rows})
 	}
 	peak, err := r.c.sessionReads.memory(ctx, instance.PodUID, prepareStart, removeEnd)
 	if err != nil {

@@ -236,6 +236,8 @@ type DriverLevelRow struct {
 	EndReason        string    `json:"endReason"`
 	// Detail preserves the driver's sentence for an abnormal level end.
 	Detail string `json:"detail,omitempty"`
+	// Excluded levels cannot identify physical execution counts after expiry.
+	Excluded bool `json:"excluded,omitempty"`
 	// PredictedSeconds and LimitSeconds are present when the driver ended the
 	// level as not measured because its predicted duration exceeded the limit.
 	PredictedSeconds *float64 `json:"predictedSeconds,omitempty"`

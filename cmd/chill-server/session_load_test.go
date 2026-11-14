@@ -15,23 +15,28 @@ import (
 	"time"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 // sessionFake is a fixed-batch native executor: it answers once B requests
 // are queued, reports the given service time and records per-level
 // outstanding requests. A failure answers every member of that batch.
 type sessionFake struct {
-	t        testing.TB
-	batch    int
-	service  func(batch uint64) (reported, sleep time.Duration)
-	failure  func(kind string, ordinal int) (int, string)
-	calls    chan sessionFakeCall
-	done     chan struct{}
-	mu       sync.Mutex
-	open     map[string]int
-	maxOpen  map[string]int
-	finished map[string]int
-	server   *httptest.Server
+	t          testing.TB
+	batch      int
+	service    func(batch uint64) (reported, sleep time.Duration)
+	failure    func(kind string, ordinal int) (int, string)
+	calls      chan sessionFakeCall
+	done       chan struct{}
+	mu         sync.Mutex
+	open       map[string]int
+	maxOpen    map[string]int
+	finished   map[string]int
+	active     map[string]native.RequestState
+	nativeRows map[string][]profilederivation.NativeBatchRow
+	busyStarts map[string]bool
+	neverIdle  bool
+	server     *httptest.Server
 }
 
 type sessionFakeCall struct {
@@ -50,6 +55,8 @@ func newSessionFake(
 	f := &sessionFake{
 		t: t, batch: batch, service: service, failure: failure, calls: make(chan sessionFakeCall),
 		done: make(chan struct{}), open: map[string]int{}, maxOpen: map[string]int{}, finished: map[string]int{},
+		active: map[string]native.RequestState{}, nativeRows: map[string][]profilederivation.NativeBatchRow{},
+		busyStarts: map[string]bool{},
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	go f.execute()
@@ -61,6 +68,21 @@ func newSessionFake(
 }
 
 func (f *sessionFake) serve(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/state") {
+		f.mu.Lock()
+		state := native.State{At: time.Now(), Ready: true}
+		for _, request := range f.active {
+			state.Requests = append(state.Requests, request)
+		}
+		if f.neverIdle {
+			state.Requests = append(state.Requests, native.RequestState{Phase: "running"})
+		}
+		f.mu.Unlock()
+		if err := json.NewEncoder(w).Encode(state); err != nil {
+			f.t.Error(err)
+		}
+		return
+	}
 	var request native.Request
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		f.t.Errorf("decode native request: %v", err)
@@ -71,6 +93,12 @@ func (f *sessionFake) serve(w http.ResponseWriter, r *http.Request) {
 		f.t.Errorf("request %s workload %q, want %q", request.ID, request.Context.WorkloadUID, want)
 	}
 	f.mu.Lock()
+	for _, active := range f.active {
+		if active.Context.WorkloadUID != request.Context.WorkloadUID {
+			f.busyStarts[kind] = true
+		}
+	}
+	f.active[request.ID] = native.RequestState{Context: request.Context, Phase: "queued"}
 	f.open[kind]++
 	f.maxOpen[kind] = max(f.maxOpen[kind], f.open[kind])
 	f.mu.Unlock()
@@ -113,13 +141,28 @@ func (f *sessionFake) execute() {
 		}
 		kind := members[0].kind
 		ids := make([]string, len(members))
+		f.mu.Lock()
 		for index, member := range members {
 			if member.kind != kind {
 				f.t.Errorf("native batch mixes levels %s and %s", kind, member.kind)
 			}
 			ids[index] = member.id
+			state := f.active[member.id]
+			state.Phase = "running"
+			f.active[member.id] = state
 		}
+		f.mu.Unlock()
 		ordinals[kind]++
+		status, failure := 0, ""
+		if f.failure != nil {
+			status, failure = f.failure(kind, ordinals[kind])
+		}
+		expired := status == http.StatusRequestTimeout
+		if expired {
+			for _, member := range members {
+				member.reply <- sessionFakeReply{status: status, body: []byte(failure)}
+			}
+		}
 		reported, sleep := f.service(id)
 		started := time.Now()
 		time.Sleep(sleep)
@@ -129,12 +172,24 @@ func (f *sessionFake) execute() {
 			idle = &gap
 		}
 		lastEnd = time.Now()
-		for index, member := range members {
-			if f.failure != nil {
-				if status, body := f.failure(kind, ordinals[kind]); status != 0 {
-					member.reply <- sessionFakeReply{status: status, body: []byte(body)}
-					continue
-				}
+		f.mu.Lock()
+		if status == 0 || expired {
+			f.finished[kind]++
+			f.nativeRows[kind] = append(f.nativeRows[kind], profilederivation.NativeBatchRow{BatchID: id, BatchSize: f.batch,
+				StartedAt: started, FinishedAt: lastEnd, ServiceDurationNanos: int64(reported),
+				PrecedingIdleNanos: idle, LatestEnqueuedAt: started})
+		}
+		for _, member := range members {
+			delete(f.active, member.id)
+		}
+		f.mu.Unlock()
+		for _, member := range members {
+			if expired {
+				continue
+			}
+			if status != 0 {
+				member.reply <- sessionFakeReply{status: status, body: []byte(failure)}
+				continue
 			}
 			body, err := json.Marshal(native.Response{
 				ID: member.id, ModelName: "classifier", ExecutionComplete: true,
@@ -149,11 +204,6 @@ func (f *sessionFake) execute() {
 			})
 			if err != nil {
 				f.t.Error(err)
-			}
-			if index == 0 {
-				f.mu.Lock()
-				f.finished[kind]++
-				f.mu.Unlock()
 			}
 			member.reply <- sessionFakeReply{status: http.StatusOK, body: body}
 		}
@@ -382,7 +432,7 @@ func TestSessionLoadSparseBatchBeyondLifetimeEndsRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	sparse := levels[len(levels)-1]
-	if len(levels) != 3 || sparse.EndReason != sessionServiceOverLifetime || sparse.CompletedBatches != 2 ||
+	if len(levels) != 3 || sparse.EndReason != sessionRequestLifetimeExpired || sparse.CompletedBatches != 2 ||
 		sparse.Detail != "native inference HTTP 408: "+strings.TrimSpace(body) {
 		t.Fatalf("sparse = %+v", sparse)
 	}
@@ -522,7 +572,7 @@ func TestSessionLoadMidLifetimeExpiryContinuesToSparse(t *testing.T) {
 	}
 }
 
-func TestSessionLoadMidExpiryDrainsNativeFinishedBatches(t *testing.T) {
+func TestSessionLoadMidExpiryWaitsForPhysicalCompletion(t *testing.T) {
 	fake := newSessionFake(t, 1, fixedService(5*time.Millisecond), func(kind string, ordinal int) (int, string) {
 		if kind == sessionMid && ordinal == 15 {
 			return http.StatusRequestTimeout, `{"error":"request lifetime expired"}`
@@ -536,11 +586,64 @@ func TestSessionLoadMidExpiryDrainsNativeFinishedBatches(t *testing.T) {
 		t.Fatalf("levels %+v error %v", levels, err)
 	}
 	fake.mu.Lock()
-	finished := fake.finished[sessionMid]
-	fake.mu.Unlock()
+	defer fake.mu.Unlock()
 	mid := levels[1]
-	if mid.EndReason != sessionRequestLifetimeExpired || finished == 0 ||
-		mid.CompletedBatches != finished || mid.CompletedInputs != finished || mid.SentInputs != finished+1 {
-		t.Fatalf("mid %+v native finished %d", mid, finished)
+	if mid.EndReason != sessionRequestLifetimeExpired || mid.CompletedBatches+1 != fake.finished[sessionMid] ||
+		mid.SentInputs != fake.finished[sessionMid] || fake.busyStarts[sessionSparse] ||
+		levels[2].CompletedBatches != fake.finished[sessionSparse] {
+		t.Fatalf("mid %+v native finished %v busy starts %v", mid, fake.finished, fake.busyStarts)
+	}
+	input := profilederivation.SessionInput{
+		Settings: profilederivation.SessionSettings{MeterLagSeconds: config.meterLag.Seconds(),
+			MinimumPowerWindowSeconds: config.powerWindow.Seconds(), PostLoadWindowSeconds: 1,
+			MinimumSamples: config.minSamples, ConfidenceLevel: .95},
+		MeterSource: json.RawMessage(`{"kind":"fixture"}`), MaxResultBytes: 64 << 20,
+		PostLoadStart: levels[2].EndedAt, PostLoadEnd: levels[2].EndedAt.Add(time.Second),
+	}
+	batch := profilederivation.SessionBatchInput{Batch: 1}
+	for _, level := range levels {
+		row := profilederivation.DriverLevelRow{ID: level.WorkloadUID, Kind: level.Kind,
+			Start: level.StartedAt, End: level.EndedAt, CompletedInputs: level.CompletedInputs,
+			CompletedBatches: level.CompletedBatches, EndReason: level.EndReason, Detail: level.Detail,
+			Excluded: level.EndReason == sessionRequestLifetimeExpired}
+		batch.Levels = append(batch.Levels, profilederivation.SessionLevelInput{
+			Row: row, Native: fake.nativeRows[level.Kind],
+		})
+	}
+	input.Batches = []profilederivation.SessionBatchInput{batch}
+	for at := levels[0].StartedAt; !at.After(input.PostLoadEnd); at = at.Add(time.Millisecond) {
+		watts := 100.0
+		if !at.Before(input.PostLoadStart) {
+			watts = 10
+		}
+		input.Power = append(input.Power, profilederivation.Sample{ObservedAt: at, Watts: watts})
+	}
+	result, err := profilederivation.DeriveSession(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := result.Batches[0].Levels[1]
+	if !stored.Excluded || stored.Detail != mid.Detail || stored.MeanWatts != nil ||
+		result.Batches[0].Levels[2].CompletedBatches != len(fake.nativeRows[sessionSparse]) {
+		t.Fatalf("stored levels %+v", result.Batches[0].Levels)
+	}
+}
+
+func TestSessionLoadExpiryIdleWaitIsBounded(t *testing.T) {
+	fake := newSessionFake(t, 1, fixedService(time.Millisecond), func(kind string, _ int) (int, string) {
+		if kind == sessionMid {
+			return http.StatusRequestTimeout, `{"error":"request lifetime expired"}`
+		}
+		return 0, ""
+	})
+	fake.mu.Lock()
+	fake.neverIdle = true
+	fake.mu.Unlock()
+	config := sessionTestConfig(t, fake.server.URL, 1)
+	config.sparse, config.levelLimit = true, 200*time.Millisecond
+	levels, err := runSessionLoad(context.Background(), config)
+	if err == nil || !strings.Contains(err.Error(), "did not become idle within 200ms") ||
+		!strings.Contains(err.Error(), "native inference HTTP 408") || len(levels) != 2 {
+		t.Fatalf("levels %+v error %v", levels, err)
 	}
 }

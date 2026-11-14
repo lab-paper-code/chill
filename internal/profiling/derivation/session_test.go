@@ -568,3 +568,52 @@ func TestHoldSearchBoundsLargeSession(t *testing.T) {
 		t.Errorf("%d segments searched, above the bound %.0f", result.Power.HoldSegmentsSearched, bound)
 	}
 }
+
+func TestDeriveSessionExcludedLevelRetainsOnlyItsReport(t *testing.T) {
+	for index, kind := range []string{LevelSaturation, LevelMid, LevelSparse} {
+		t.Run(kind, func(t *testing.T) {
+			input := synthSession(gpuLikeBatches(), 0, gpuModel(nil), flat, 0, nil)
+			target := &input.Batches[0].Levels[index]
+			const detail = "native inference HTTP 408: request lifetime expired"
+			target.Row.EndReason, target.Row.Detail = "RequestLifetimeExpired", detail
+			raw, err := json.Marshal(target.Row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatal(err)
+			}
+			fields["excluded"] = json.RawMessage("true")
+			raw, _ = json.Marshal(fields)
+			if err := json.Unmarshal(raw, &target.Row); err != nil {
+				t.Fatal(err)
+			}
+			target.Native = append(target.Native, NativeBatchRow{})
+			expected := 0
+			for i, level := range input.Batches[0].Levels {
+				if i != index {
+					for _, row := range level.Native {
+						if row.PrecedingIdleNanos != nil {
+							expected++
+						}
+					}
+				}
+			}
+			result, err := DeriveSession(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored := result.Batches[0].Levels[index]
+			raw, _ = json.Marshal(stored)
+			if !strings.Contains(string(raw), `"excluded":true`) || stored.Detail != detail ||
+				stored.MeanWatts != nil || stored.AwakeFraction != nil || stored.PowerSamples != 0 ||
+				len(result.Batches[0].ServiceNanos) != expected {
+				t.Fatalf("excluded level %+v service records %d expected %d", stored, len(result.Batches[0].ServiceNanos), expected)
+			}
+			if kind == LevelSaturation && len(result.Batches[0].DispatchOccupancyNanos) != 0 {
+				t.Fatal("excluded saturation published occupancy")
+			}
+		})
+	}
+}

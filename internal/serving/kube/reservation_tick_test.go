@@ -314,7 +314,9 @@ func waitReservationTest(t *testing.T, ctx context.Context, ready func() bool) {
 //
 //nolint:gocyclo // One controller/native fixture covers reserve admission, owned retirement, request execution and complete-H energy.
 func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T) {
-	c, prepared := tickReadySubsetController(t, nil)
+	c, prepared := tickReadySubsetController(t, func(_ int, state *native.State) {
+		state.ArrivalAgesMS = map[string][]float64{}
+	})
 	prepared.Store(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	c.ctx = ctx
@@ -330,6 +332,8 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	settings.MinimumDemand = map[string]float64{uid: 2}
 	profiles := c.observer.Profiles()
 	for index := range profiles {
+		profiles[index].Batches = slices.Clone(profiles[index].Batches)
+		profiles[index].SourceVersion = "2"
 		profiles[index].Power = catalogTestPower("100")
 		if profiles[index].NodeName == "b" {
 			profiles[index].Power = catalogTestPower("20")

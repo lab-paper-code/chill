@@ -197,6 +197,11 @@ func fixtureAdmissionNative(profile *serving.Profile) *firstfloor.State {
 func directFixture(batch int) (*serving.Profile, map[string]firstfloor.Metadata, time.Time) {
 	at := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
 	p := &serving.Profile{ID: "profile", NodeName: "node", Batches: []serving.BatchProfile{{Batch: batch, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 100*int64(batch)), fixtures.ServiceSample("physical-trial", 1, 100*int64(batch))}}}}
+	distribution, err := firstfloor.NewServiceDistribution(p.Batches[0].ServiceSamples)
+	if err != nil {
+		panic(err)
+	}
+	p.Batches[0].ServiceDistribution = distribution
 	p.Condition.NodeUID = "node-uid"
 	p.Condition.LogicalModel = "model"
 	p.Condition.PowerMode = "fixture-fixed-mode"

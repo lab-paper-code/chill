@@ -79,7 +79,10 @@ func sessionLoadJob(beo *edge.BatchEnergyOptimization, ref serving.NodeReference
 		levels++
 		args = append(args, "--sparse")
 	}
-	deadlineSeconds := int64(math.Ceil(float64(levels)*s.LevelDurationLimitSeconds + float64(s.RequestLifetimeSeconds) + load.config.RunnerTimeout.Seconds()))
+	// Each non-saturation level can also spend one level limit waiting for
+	// physical idle after an expired request.
+	levelBudget := float64(2*levels-1) * s.LevelDurationLimitSeconds
+	deadlineSeconds := int64(math.Ceil(levelBudget + float64(s.RequestLifetimeSeconds) + load.config.RunnerTimeout.Seconds()))
 	resources := core.ResourceRequirements{
 		Requests: core.ResourceList{core.ResourceMemory: resource.MustParse("512Mi")},
 		Limits:   core.ResourceList{core.ResourceMemory: resource.MustParse("512Mi")},
@@ -144,6 +147,7 @@ func (l sessionLevelWire) row() profilederivation.DriverLevelRow {
 	if l.EndReason != sessionSamplesReached {
 		row.Detail = l.Detail
 	}
+	row.Excluded = l.EndReason == sessionRequestLifetimeExpired
 	if l.EndReason == sessionPredictedOverLimit {
 		row.PredictedSeconds, row.LimitSeconds = ptr.To(l.PredictedSeconds), ptr.To(l.LimitSeconds)
 	}

@@ -140,18 +140,23 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 	}
 	h.controller.measureStep = s.measure
 	h.controller.sessionReads = sessionReads{
-		native: func(_ context.Context, prefix string, _ time.Time) (map[string][]profilederivation.NativeBatchRow, error) {
+		native: func(_ context.Context, prefix string, _ time.Time, excluded map[string]bool) (map[string]sessionNativeLevel, error) {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			// The fake API assigns the BEO UID; tables use a fixed fixture UID.
 			prefix = "session-uid" + prefix[strings.IndexByte(prefix, '/'):]
-			rows := map[string][]profilederivation.NativeBatchRow{}
+			rows := map[string]sessionNativeLevel{}
 			for uid, nativeRows := range s.native {
-				if strings.HasPrefix(uid, prefix) {
-					rows[uid] = slices.Clone(nativeRows)
+				if strings.HasPrefix(uid, prefix) && !excluded[uid] {
+					kept := slices.Clone(nativeRows)
 					if uid == s.dropRow {
-						rows[uid] = rows[uid][1:]
+						kept = kept[1:]
 					}
+					inputs := 0
+					for _, row := range kept {
+						inputs += row.BatchSize
+					}
+					rows[uid] = sessionNativeLevel{rows: kept, inputs: inputs}
 				}
 			}
 			if len(rows) == 0 {
@@ -433,7 +438,7 @@ func TestSessionNativeRowCountMismatchFailsWithTheNumbers(t *testing.T) {
 	s.create(beo)
 	s.admit()
 	status := s.status(beo)
-	if message := sessionCondition(status).Message; status.Phase != string(edge.MeasurementPhaseFailed) || !strings.Contains(message, "native rows 59 of 60") {
+	if message := sessionCondition(status).Message; status.Phase != string(edge.MeasurementPhaseFailed) || !strings.Contains(message, "native inputs 118 of 120") {
 		t.Fatalf("status %+v message %q", status, message)
 	}
 	if _, stored := s.result(beo); stored || s.holder() != "" {
@@ -563,7 +568,7 @@ func sessionObservedRuntime(t *testing.T) (*serving.Runtime, *observation.Observ
 // two requests of one level to the runtime, as the observer's log follow does:
 // one line per request and phase, the batch's service only on finished. skew
 // shifts the executor clock.
-func emitSessionBatches(t *testing.T, rt *serving.Runtime, uid string, start time.Time, batches int, skew time.Duration) {
+func emitSessionBatches(t *testing.T, rt *serving.Runtime, uid string, start time.Time, batches int, skew time.Duration, lostFinished ...string) {
 	t.Helper()
 	const service = 20 * time.Millisecond
 	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
@@ -589,6 +594,9 @@ func emitSessionBatches(t *testing.T, rt *serving.Runtime, uid string, start tim
 			lines[2].QueueMS, lines[2].ServiceMS, lines[2].BackendMS, lines[2].NativeElapsedMS = ms(running.Sub(queued)), ms(service), ms(service), ms(finished.Sub(queued))
 			lines[2].Outcome, lines[2].ServiceSample, lines[2].Units = "completed", sample, 1
 			for _, line := range lines {
+				if line.ExecutionComplete && slices.Contains(lostFinished, line.RequestID) {
+					continue
+				}
 				raw, err := json.Marshal(line)
 				if err != nil {
 					t.Fatal(err)
@@ -616,8 +624,8 @@ func TestSessionReadsJoinNativeProgressLines(t *testing.T) {
 			uid := "session-uid/2/saturation"
 			start := time.Now().UTC()
 			emitSessionBatches(t, rt, uid, start, 3, skew)
-			byLevel, err := observedSessionReads(log).native(context.Background(), uid, start)
-			rows := byLevel[uid]
+			byLevel, err := observedSessionReads(log).native(context.Background(), uid, start, nil)
+			rows := byLevel[uid].rows
 			if err != nil || len(rows) != 3 {
 				t.Fatalf("native batch rows %d err %v", len(rows), err)
 			}
@@ -757,8 +765,8 @@ func TestSessionMidLifetimeExpiryKeepsLevelAndLaterBatches(t *testing.T) {
 				t.Fatalf("result %+v stored %v", result, stored)
 			}
 			mid := result.Batches[0].Levels[1]
-			if (mid.MeanWatts != nil) != enoughPower || enoughPower && mid.PowerSamples == 0 {
-				t.Fatalf("stored power eligibility %+v enough power %v", mid, enoughPower)
+			if !mid.Excluded || mid.MeanWatts != nil || mid.PowerSamples != 0 {
+				t.Fatalf("stored excluded level %+v", mid)
 			}
 		})
 	}
@@ -789,5 +797,48 @@ func BenchmarkSessionNativeBatchFold(b *testing.B) {
 			}
 			b.ReportMetric(float64(len(rows)), "rows/op")
 		})
+	}
+}
+
+func TestSessionRefusesMissingLoadNode(t *testing.T) {
+	s := newSessionHarness(t)
+	s.controller.config.Session.NodeName = ""
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	s.admit()
+	status := s.status(beo)
+	if status.Phase != string(edge.MeasurementPhaseFailed) ||
+		!strings.Contains(sessionCondition(status).Message, "Session.NodeName") ||
+		len(s.measured) != 0 || len(s.jobs) != 0 {
+		t.Fatalf("status %+v operations %v jobs %d", status, s.measured, len(s.jobs))
+	}
+}
+
+func TestSessionLostFinishedMemberFailsWithInputCount(t *testing.T) {
+	s := newSessionHarness(t)
+	rt, log := sessionObservedRuntime(t)
+	s.controller.sessionReads.native = observedSessionReads(log).native
+	s.controller.config.Session.Prepare = func(context.Context, *edge.BatchEnergyOptimization) (SessionPreparation, error) {
+		prepared := sessionPreparationFixture()
+		prepared.BatchSizes = []int{2}
+		return prepared, nil
+	}
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	uid := string(beo.UID) + "/2/saturation"
+	table := s.tables[2]
+	table.Levels = table.Levels[:1]
+	table.Levels[0].WorkloadUID = uid
+	table.Levels[0].SentInputs, table.Levels[0].CompletedInputs, table.Levels[0].CompletedBatches = 4, 4, 2
+	s.tables[2] = table
+	s.kube.PrependReactor("create", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		emitSessionBatches(t, rt, uid, time.Now(), 2, 0, "saturation-3")
+		return false, nil, nil
+	})
+	s.admit()
+	status := s.status(beo)
+	if status.Phase != string(edge.MeasurementPhaseFailed) ||
+		!strings.Contains(sessionCondition(status).Message, "native inputs 3 of 4") {
+		t.Fatalf("status %+v", status)
 	}
 }

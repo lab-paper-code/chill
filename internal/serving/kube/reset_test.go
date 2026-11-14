@@ -940,6 +940,7 @@ func TestResetPendingPowerTargetsRespectCurrentScopeAndOwnership(t *testing.T) {
 			case "workload":
 				profiles := h.controller.observer.Profiles()
 				profiles[0].Condition.LogicalModel = "outside-scope"
+				profiles[0].SourceVersion = "2"
 				h.controller.observer.SetProfiles(profiles)
 			case nodeUIDChanged:
 				node.UID = "reset-replacement"
