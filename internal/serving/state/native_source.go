@@ -47,13 +47,13 @@ func PhysicalID(podUID types.UID, containerID string) string {
 }
 
 // NativeConfig reads the startup Config mounted by the physical executor.
-func NativeConfig(ctx context.Context, reader client.Reader, pod *corev1.Pod) (native.Config, error) {
-	var config native.Config
+func NativeConfig(ctx context.Context, reader client.Reader, pod *corev1.Pod) (*native.Config, error) {
+	config := &native.Config{}
 	cm := &corev1.ConfigMap{}
 	if err := reader.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, cm); err != nil {
 		return config, err
 	}
-	if err := json.Unmarshal([]byte(cm.Data["config.json"]), &config); err != nil {
+	if err := json.Unmarshal([]byte(cm.Data["config.json"]), config); err != nil {
 		return config, err
 	}
 	if config.Model == "" {

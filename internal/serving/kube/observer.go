@@ -610,7 +610,7 @@ func (o *Observer) physicalSourceSpec(pod *corev1.Pod, node *corev1.Node, model 
 		Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}, nil
 }
 
-func matchesNativeSource(pod *corev1.Pod, prepared native.Config, instance *serving.InstanceState) bool {
+func matchesNativeSource(pod *corev1.Pod, prepared *native.Config, instance *serving.InstanceState) bool {
 	observed := instance.Native
 	profileID := pod.Annotations[servingstate.ServingProfileAnnotation]
 	// Recovery trusts an empty probe only from the executor prepared for this
@@ -645,7 +645,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 	if node != nil && o.movingNodes[string(node.UID)] {
 		err = errors.New("NodePowerTransition")
 	}
-	var prepared native.Config
+	var prepared *native.Config
 	if err == nil {
 		prepared, err = servingstate.NativeConfig(ctx, o.store.client, pod)
 	}

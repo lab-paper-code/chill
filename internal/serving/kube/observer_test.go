@@ -880,7 +880,7 @@ func TestNativeSourceRequiresPreparedMode(t *testing.T) {
 	for _, preparedMode := range []string{servingstate.NativeServingMode, servingstate.NativeProfilingMode} {
 		for _, reportedMode := range []string{servingstate.NativeServingMode, servingstate.NativeProfilingMode} {
 			t.Run(preparedMode+" reports "+reportedMode, func(t *testing.T) {
-				prepared := native.Config{Model: "model", Mode: preparedMode}
+				prepared := &native.Config{Model: "model", Mode: preparedMode}
 				instance := serving.InstanceState{Native: &native.State{Ready: true,
 					Metadata: native.Metadata{Model: prepared.Model, Mode: reportedMode,
 						ProfileID: pod.Annotations[servingstate.ServingProfileAnnotation]}}}
