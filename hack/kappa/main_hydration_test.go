@@ -91,7 +91,7 @@ func hydrationTickFixture() (serving.SchedulerSettings, serving.SchedulerSnapsho
 		Controls:             serving.SchedulerControls{Routing: true},
 	}
 	node := serving.SchedulerNode{Node: serving.NodeReference{Name: "n", UID: "n-uid"}, PowerMode: "fixed", Ready: true, MemoryBytes: 1024, ObservedAt: at}
-	definition := &serving.Definition{UID: "w", Model: serving.Model{Name: "model", UID: "model-uid", Paths: []serving.ModelPath{{Name: "cpu", Artifact: "model", Files: []string{"/model"}, RuntimeFamily: "firstfloor", Backend: "ort-cpu"}}}, SLO: serving.SLO{Percentile: 100, TargetLatency: time.Second}, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}
+	definition := &serving.Definition{UID: "w", Model: serving.Model{Name: "model", UID: "model-uid", Paths: []serving.ModelPath{{Name: "cpu", Artifact: "model", Files: []string{"/model"}, RuntimeFamily: "firstfloor", Backend: "ort-cpu"}}}, SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}, Admission: serving.Admission{Policy: serving.AdmissionPolicyReject, MaxQueuedRequests: 1024}}
 	profile := &serving.Profile{
 		ID: "captured-profile", NodeName: node.Node.Name,
 		Condition: profilederivation.CurvePlanSpec{
@@ -100,10 +100,8 @@ func hydrationTickFixture() (serving.SchedulerSettings, serving.SchedulerSnapsho
 		},
 		Batches: []serving.BatchProfile{{
 			Batch: 1, MemoryBytes: 1, InputSlopeJoules: kappaTestSlope(`{"status":"Identified","value":1}`),
-			ServiceSamples: []firstfloor.ServiceSample{
-				fixtures.ServiceSample("captured-trial", 0, int64(time.Millisecond)),
-				fixtures.ServiceSample("captured-trial", 1, int64(time.Millisecond)),
-			},
+			// The service quantile needs at least the percentile's sample floor of records.
+			ServiceSamples: fixtures.ServiceSamples("captured-trial", int64(time.Millisecond)),
 		}},
 	}
 	// A ready actor was warmed, so its last service end is known.
