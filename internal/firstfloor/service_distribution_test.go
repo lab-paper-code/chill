@@ -74,7 +74,7 @@ func TestMinimumServiceSamplesIsThePercentileSampleFloor(t *testing.T) {
 }
 
 func TestQuantileBelowTheFloorIsNotIdentifiedAndFirstExecutionsAreDropped(t *testing.T) {
-	var samples []ServiceSample
+	samples := make([]ServiceSample, 0, 12)
 	for i := range 10 {
 		samples = append(samples, pairedSample("a", int64(i), int64(10+i)))
 	}
@@ -183,7 +183,7 @@ func TestResidualConditionsTheWindow(t *testing.T) {
 
 // Sample draws every window record with equal probability and nothing else.
 func TestSampleDrawsUniformlyFromTheWindow(t *testing.T) {
-	var samples []ServiceSample
+	samples := make([]ServiceSample, 0, 8)
 	for i := range 8 {
 		samples = append(samples, pairedSample("a", int64(10*i), int64(1+i)))
 	}
