@@ -19,6 +19,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -408,6 +409,7 @@ func TestHandBackFailedSessionAfterRestartWithMeasurementInstance(t *testing.T) 
 	spec := measurementInstanceSpec(node, profile)
 	nativeClient, _ := preparationNativeHTTPClient(t, ctx, spec.Config, profile)
 	manager, kube, measure := measurementOperations(t, ctx, fixture, node, class, spec, nativeClient)
+	manager.store.client = beoStatusClient{Client: manager.store.client}
 	prepared := measure(servingstate.Operation{ID: "session.1.prepare", Kind: servingstate.OperationPrepare, Node: spec.Instance.Node, Prepare: &spec})
 	pod := &core.Pod{}
 	if err := manager.store.client.Get(ctx, types.NamespacedName{Namespace: fixture.Namespace, Name: spec.Name}, pod); err != nil {
@@ -457,6 +459,13 @@ func TestHandBackFailedSessionAfterRestartWithMeasurementInstance(t *testing.T) 
 	if h.holder() != string(root.UID) || len(results) != 1 || !strings.Contains(results[0].Error, "executor recovery unknown") {
 		t.Fatalf("unverified executor lost its hold: holder=%q results=%+v", h.holder(), results)
 	}
+	if err := manager.store.client.Get(ctx, client.ObjectKeyFromObject(root), root); err != nil {
+		t.Fatal(err)
+	}
+	if condition := apimeta.FindStatusCondition(root.Status.Conditions, "NodeReturned"); condition == nil ||
+		condition.Status != meta.ConditionFalse || !strings.Contains(condition.Message, "UnconfirmedInstance: executor recovery unknown") {
+		t.Fatalf("terminal session hid its held-node reason: %+v", root.Status.Conditions)
+	}
 	if _, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{}); err != nil {
 		t.Fatal("unverified executor was removed", err)
 	}
@@ -494,6 +503,10 @@ func TestHandBackFailedSessionAfterRestartWithMeasurementInstance(t *testing.T) 
 	}
 	if root.Status.Phase != string(edge.MeasurementPhaseFailed) || root.Status.Outcome != "FatalFailure" {
 		t.Fatalf("terminal session was restarted: %+v", root.Status)
+	}
+	if condition := apimeta.FindStatusCondition(root.Status.Conditions, "NodeReturned"); condition == nil ||
+		condition.Status != meta.ConditionTrue {
+		t.Fatalf("terminal session still reports its Node held: %+v", root.Status.Conditions)
 	}
 	completed := slices.ContainsFunc(controller.State().Results, func(result servingstate.OperationResult) bool {
 		return result.Operation.Kind == handBackKind && result.Status == servingstate.NativeOperationComplete &&

@@ -17,6 +17,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -397,7 +398,25 @@ func (c *SchedulerController) startNodeRun(operation servingstate.Operation, con
 //
 // interrupted is set when the measurement object vanished: it is recorded as
 // Interrupted.
-func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeReference, holder string, root *measurementRoot, interrupted bool, result *servingstate.OperationResult) error {
+func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeReference, holder string, root *measurementRoot, interrupted bool, result *servingstate.OperationResult) (resultErr error) {
+	if root != nil {
+		if beo, ok := root.object.(*edge.BatchEnergyOptimization); ok && beo.Spec.Session != nil {
+			defer func() {
+				// A terminal session retains its measurement outcome while its
+				// Node separately reports the exact reason hand-back is held.
+				status, reason, message := meta.ConditionTrue, "NodeReturned", "measurement Node handed back"
+				if resultErr != nil {
+					status, reason, message = meta.ConditionFalse, "NodeHeld", resultErr.Error()
+				}
+				statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+				defer cancel()
+				resultErr = errors.Join(resultErr, c.patchMeasurementStatus(statusCtx, beo, func() {
+					apimeta.SetStatusCondition(&beo.Status.Conditions, meta.Condition{Type: "NodeReturned", Status: status,
+						Reason: reason, Message: message, ObservedGeneration: beo.Generation})
+				}))
+			}()
+		}
+	}
 	c.mu.Lock()
 	config := c.config
 	c.mu.Unlock()
