@@ -32,6 +32,16 @@ type SessionResult struct {
 	Batches       []SessionBatch   `json:"batches"`
 	// Stop is absent when the session reached the path's largest batch.
 	Stop *SessionStop `json:"stop,omitempty"`
+	// RuntimeMetadata is the executor's native runtime report serving
+	// preparation checks against.
+	RuntimeMetadata *firstfloor.RuntimeMetadata `json:"runtimeMetadata,omitempty"`
+	// RuntimeDelivery is the measured runtime delivery document (RKNNLite host
+	// delivery and supplemental groups), absent when the runtime needs none.
+	RuntimeDelivery json.RawMessage `json:"runtimeDelivery,omitempty"`
+	// MeterSource identifies the power meter the session's power came from,
+	// in the JSON shape of metricobserver.SourceIdentity, which this package
+	// may not import.
+	MeterSource json.RawMessage `json:"meterSource"`
 }
 
 // SessionCondition is the configuration a session measured. It reuses the
@@ -189,9 +199,9 @@ type SessionPower struct {
 // PrecedingIdleNanos[i] form one service record; parallel arrays keep the
 // object at about 21 bytes per record.
 type SessionBatch struct {
-	Batch                  int     `json:"batch"`
-	ServiceNanos           []int64 `json:"serviceNanos"`
-	PrecedingIdleNanos     []int64 `json:"precedingIdleNanos"`
+	Batch                  int       `json:"batch"`
+	ServiceNanos           []int64   `json:"serviceNanos"`
+	PrecedingIdleNanos     []int64   `json:"precedingIdleNanos"`
 	DispatchOccupancyNanos []float64 `json:"dispatchOccupancyNanos"`
 	// SaturationInputRate is the saturation level's completed inputs per
 	// second, absent when the batch has no saturation level.
