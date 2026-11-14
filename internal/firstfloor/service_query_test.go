@@ -2,7 +2,6 @@ package firstfloor
 
 import (
 	"fmt"
-	"math"
 	"testing"
 	"time"
 )
@@ -37,30 +36,31 @@ func TestBatchServiceCostsUseExactQueryKeys(t *testing.T) {
 	other := testBatch(1, 1, pairedSample("a", 0, 7))
 	var costs serviceCosts
 	gap, same := int64(0), int64(0)
-	// A nil gap has no anchor and p100 no sample floor: both are unmeasured.
-	unknown := math.Inf(1)
+	// A nil gap has no anchor and p100 no sample floor: both are unmeasured,
+	// reported as not known rather than as a cost.
 	for _, query := range []struct {
 		batch BatchProfile
 		gap   *int64
 		p     float64
 		want  float64
-	}{{batch, &gap, 50, 1}, {batch, &same, 50, 1}, {batch, nil, 50, unknown}, {other, &gap, 50, 7}, {batch, &gap, 100, unknown}} {
-		if got := costs.cost(query.batch, query.p, query.gap); got != query.want {
-			t.Fatalf("exact query p%g: got %g want %g", query.p, got, query.want)
+		known bool
+	}{{batch, &gap, 50, 1, true}, {batch, &same, 50, 1, true}, {batch, nil, 50, 0, false}, {other, &gap, 50, 7, true}, {batch, &gap, 100, 0, false}} {
+		if got, known := costs.cost(query.batch, query.p, query.gap); got != query.want || known != query.known {
+			t.Fatalf("exact query p%g: got %g/%v want %g/%v", query.p, got, known, query.want, query.known)
 		}
 	}
 	if costs.count != 4 || len(costs.extra) != 0 {
 		t.Fatalf("same-valued gap pointers did not reuse cost: %+v", costs)
 	}
 	gap = int64(20 * time.Millisecond)
-	if got := costs.cost(batch, 50, &gap); got != 9 {
+	if got, known := costs.cost(batch, 50, &gap); got != 9 || !known {
 		t.Fatalf("reused caller scratch pointer kept old gap: %g", got)
 	}
 	var overflow serviceCosts
 	for range 2 {
 		for percentile := 1; percentile <= 20; percentile++ {
-			if got := overflow.cost(batch, float64(percentile), nil); got != unknown {
-				t.Fatalf("overflow percentile %d: %g", percentile, got)
+			if _, known := overflow.cost(batch, float64(percentile), nil); known {
+				t.Fatalf("overflow percentile %d answered without an anchor", percentile)
 			}
 		}
 	}

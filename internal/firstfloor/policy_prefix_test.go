@@ -3,7 +3,6 @@ package firstfloor
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"math/rand/v2"
 	"os"
 	"reflect"
@@ -38,7 +37,7 @@ func originalPrefixChoose(p Policy, requests []RequestState, gapDecision, gapUpp
 		}
 		costs.gapWidth = *gapUpper - *gapDecision
 	}
-	if mode == DeadlineDrop && head >= 0 && SLOExpired(requests[head]) && !math.IsInf(minimumService(p, requests[head], gapDecision, &costs), 1) {
+	if mode == DeadlineDrop && head >= 0 && SLOExpired(requests[head]) && serviceIdentified(p, requests[head], gapDecision, &costs) {
 		r := requests[head]
 		return BatchChoice{RequestID: r.Context.RequestID, WorkloadUID: r.Context.WorkloadUID, Definition: r.Context.Definition, Reason: OutcomeDeadlineDrop}
 	}
@@ -67,7 +66,7 @@ func originalPrefixChoose(p Policy, requests []RequestState, gapDecision, gapUpp
 		return choice
 	}
 	choice.Size, choice.Reason = available.Size, ReasonAvailableEnergy
-	if math.IsInf(costs.cost(available, r.Context.SLO.Percentile, gapDecision), 1) {
+	if _, known := costs.cost(available, r.Context.SLO.Percentile, gapDecision); !known {
 		choice.Reason = ReasonMissingConditionalSupport
 		return choice
 	}
@@ -76,16 +75,18 @@ func originalPrefixChoose(p Policy, requests []RequestState, gapDecision, gapUpp
 
 func originalPrefixProfiles(p Policy, requests []RequestState, head, count int, gapDecision *int64, costs *serviceCosts) (available, throughput BatchProfile) {
 	r := requests[head]
-	perItemCost := math.Inf(1)
+	var perItemCost float64
+	throughputKnown := false
 	for _, b := range p.Batches {
 		if b.Size < 1 || b.Size > count || !allowedBatch(p, b.Size) {
 			continue
 		}
-		cost := costs.cost(b, r.Context.SLO.Percentile, gapDecision) / float64(b.Size)
-		if throughput.Size == 0 || cost < perItemCost || cost == perItemCost && b.Size > throughput.Size {
-			throughput, perItemCost = b, cost
+		cost, known := costs.cost(b, r.Context.SLO.Percentile, gapDecision)
+		cost /= float64(b.Size)
+		if throughput.Size == 0 || known && (!throughputKnown || cost < perItemCost) || known == throughputKnown && (!known || cost == perItemCost) && b.Size > throughput.Size {
+			throughput, perItemCost, throughputKnown = b, cost, known
 		}
-		if r.Phase != phaseDeferred && (math.IsInf(cost, 1) || originalPrefixFeasible(requests, head, b, gapDecision, costs)) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
+		if r.Phase != phaseDeferred && (!known || originalPrefixFeasible(requests, head, b, gapDecision, costs)) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
 			available = b
 		}
 	}
@@ -96,7 +97,10 @@ func originalPrefixFeasible(requests []RequestState, head int, b BatchProfile, g
 	previous := -1
 	for range b.Size {
 		previous = nextCompatible(requests, head, previous)
-		if previous < 0 || requestSlack(requests[previous], b, gap, costs) < 0 {
+		if previous < 0 {
+			return false
+		}
+		if slack, known := requestSlack(requests[previous], b, gap, costs); !known || slack < 0 {
 			return false
 		}
 	}

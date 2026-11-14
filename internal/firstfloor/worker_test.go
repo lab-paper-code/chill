@@ -25,6 +25,13 @@ func startupSample(trial string, durationMS float64) ServiceSample {
 // warmGap is a ready actor's idle age: its warm-up service ended 1ms ago.
 var warmGap = func() *int64 { g := int64(time.Millisecond); return &g }()
 
+// warmSample is an exchange at warmGap: the record a ready actor's query uses.
+func warmSample(trial string, durationMS float64) ServiceSample {
+	s := startupSample(trial, durationMS)
+	s.PrecedingIdleNanos = warmGap
+	return s
+}
+
 // Synthetic laws repeat their known-gap rows in whole cycles until the 99th
 // percentile's sample floor (459 records) is covered. Gapless rows are kept
 // as recorded; hydration drops them.
@@ -93,7 +100,7 @@ func TestMeasuredSelector(t *testing.T) {
 		t.Fatal("negative cap accepted")
 	}
 	equal := p
-	equal.Batches = []BatchProfile{testBatch(1, 1, startupSample("trial-a", 10)), testBatch(2, 1, startupSample("trial-a", 12))}
+	equal.Batches = []BatchProfile{testBatch(1, 1, warmSample("trial-a", 10)), testBatch(2, 1, warmSample("trial-a", 12))}
 	if c := ChooseBatch(equal, q, warmGap); c.Size != 1 || c.WaitMS != 0 {
 		t.Fatalf("equal energy must not wait: %+v", c)
 	}
@@ -115,15 +122,18 @@ func TestMeasuredSelector(t *testing.T) {
 		t.Fatalf("late Reject request must not execute: %+v", c)
 	}
 	samples := p
-	samples.Batches = []BatchProfile{testBatch(1, 2, startupSample("trial-a", 1), startupSample("trial-b", 100)), testBatch(2, 1, startupSample("trial-a", 2), startupSample("trial-b", 101))}
+	// Each record is repeated to 459 (the p99 floor), alternating 1/100ms at
+	// one gap. p50 (N=1) takes the first record in stored order, 1ms; p99 takes
+	// all 459 records and their 99th percentile, 100ms.
+	samples.Batches = []BatchProfile{testBatch(1, 2, warmSample("trial-a", 1), warmSample("trial-b", 100)), testBatch(2, 1, warmSample("trial-a", 2), warmSample("trial-b", 101))}
 	q = []RequestState{testState("a", 50, 100)}
 	q[0].Context.SLO.Percentile = 50
 	if c := ChooseBatch(samples, q, warmGap); c.WaitMS == 0 {
 		t.Fatalf("empirical p50 should leave slack: %+v", c)
 	}
-	q[0].Context.SLO.Percentile = 100
+	q[0].Context.SLO.Percentile = 99
 	if c := ChooseBatch(samples, q, warmGap); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
-		t.Fatalf("empirical p100 must not borrow p50 slack: %+v", c)
+		t.Fatalf("empirical p99 must not borrow p50 slack: %+v", c)
 	}
 	q = []RequestState{testState("a", 50, 100)}
 	q[0].Context.SenderElapsedMS = 25
@@ -136,12 +146,15 @@ func TestMeasuredSelector(t *testing.T) {
 func TestCompletionMarginIsReservedOnceRegardlessOfSenderElapsed(t *testing.T) {
 	p := testPolicy()
 	p.DeadlinePolicy = DeadlineDrop
-	p.Batches = []BatchProfile{testBatch(1, 1, startupSample("trial-a", 100))}
+	p.Batches = []BatchProfile{testBatch(1, 1, warmSample("trial-a", 100))}
 	q := testState("uid", 507, 0)
 	q.Context.SenderElapsedMS, q.Context.CompletionMarginMS = 400, 7
 	var costs serviceCosts
-	if slack := requestSlack(q, p.Batches[0], nil, &costs); slack != 0 {
-		t.Fatalf("400ms sender + 100ms service + 7ms margin must fit 507ms exactly: %v", slack)
+	if slack, known := requestSlack(q, p.Batches[0], warmGap, &costs); slack != 0 || !known {
+		t.Fatalf("400ms sender + 100ms service + 7ms margin must fit 507ms exactly: %v (known %v)", slack, known)
+	}
+	if _, known := requestSlack(q, p.Batches[0], nil, &costs); known {
+		t.Fatal("an unanchored query has no slack; it must be unknown, not a number")
 	}
 	if c := ChooseBatch(p, []RequestState{q}, warmGap); c.Size != 1 || c.Reason == OutcomeDeadlineDrop {
 		t.Fatalf("feasible deadline must execute: %+v", c)
@@ -527,7 +540,7 @@ func TestLateQueueMaximumThroughput(t *testing.T) {
 			p.MaxBatchSize = tc.cap
 			p.Batches = nil
 			for i, size := range []int{1, 2, 4, 8} {
-				p.Batches = append(p.Batches, testBatch(size, 1, startupSample("trial-a", tc.costs[i])))
+				p.Batches = append(p.Batches, testBatch(size, 1, warmSample("trial-a", tc.costs[i])))
 			}
 			queue := make([]RequestState, tc.count)
 			for i := range queue {
@@ -545,9 +558,9 @@ func TestLateQueueMaximumThroughput(t *testing.T) {
 func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 	p := testPolicy()
 	p.Batches = []BatchProfile{
-		testBatch(1, 3, startupSample("trial-a", 10)),
-		testBatch(2, 2, startupSample("trial-a", 10)),
-		testBatch(3, 1, startupSample("trial-a", 30)),
+		testBatch(1, 3, warmSample("trial-a", 10)),
+		testBatch(2, 2, warmSample("trial-a", 10)),
+		testBatch(3, 1, warmSample("trial-a", 30)),
 	}
 	late := []RequestState{testState("a", 1, 100), testState("a", 1, 100), testState("a", 1, 100)}
 	for i := range late {
@@ -610,10 +623,10 @@ func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 		t.Fatalf("stable EDF keeps arrival ties and definitions separate: %+v", c)
 	}
 	p.DeadlinePolicy = DeadlineDrop
-	p.Batches = []BatchProfile{testBatch(1, 1, startupSample("trial-a", 1), startupSample("trial-b", 100))}
+	p.Batches = []BatchProfile{testBatch(1, 1, warmSample("trial-a", 1), warmSample("trial-b", 100))}
 	a, b := testState("a", 50, 0), testState("b", 60, 0)
 	a.Context.SLO.Percentile = 50
-	b.Context.SLO.Percentile = 100
+	b.Context.SLO.Percentile = 99
 	if c := ChooseBatch(p, []RequestState{b, a}, warmGap); c.WorkloadUID != "a" || c.Size != 1 {
 		t.Fatalf("unrelated infeasible workload cannot reject a feasible EDF head: %+v", c)
 	}
@@ -852,9 +865,11 @@ func TestProfilingInferPreservesExchangePairsAndNaturalIdle(t *testing.T) {
 		}
 		return *response.Progress.ServiceSample
 	}
+	// Ready marks the warm-up's service end, so even the first exchange has
+	// an actual preceding idle gap, measured from ready.
 	first := infer()
-	if first.PrecedingIdleNanos != nil {
-		t.Fatalf("Python startup warmup cannot invent a Go exchange anchor: %+v", first)
+	if first.PrecedingIdleNanos == nil || *first.PrecedingIdleNanos < 0 {
+		t.Fatalf("first exchange must carry its idle since ready: %+v", first)
 	}
 	start := time.Now()
 	second := infer()
@@ -942,14 +957,16 @@ func TestBatchConfirmationRefreshesMonotonicExpiry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	makeRequest := func(id, policy string) *request {
-		return &request{ctx: context.Background(), context: RequestContext{RequestID: id, AdmissionPolicy: policy, SLO: SLO{TargetMS: 100}}, received: stale, enqueued: stale, bytes: 1, result: make(chan result, 1)}
+		return &request{ctx: context.Background(), context: RequestContext{RequestID: id, AdmissionPolicy: policy, SLO: SLO{Percentile: 95, TargetMS: 100}}, received: stale, enqueued: stale, bytes: 1, result: make(chan result, 1)}
 	}
 	canceled := makeRequest("cancel", AdmissionDelay)
 	canceled.ctx = ctx
 	timedOut := makeRequest("lifetime", AdmissionDelay)
 	timedOut.lifetime = stale.Add(500 * time.Millisecond)
 	rejected := makeRequest("slo", AdmissionReject)
-	a := schedulerActor{cfg: &Config{Mode: modeServing, Policy: testPolicy()}, queue: []*request{canceled, timedOut, rejected}, queuedBytes: 3}
+	// A ready runner has marked its warm-up service end, so the actor has an idle age.
+	ready := &Scheduler{runner: &Runner{lastEnd: time.Now()}}
+	a := schedulerActor{s: ready, cfg: &Config{Mode: modeServing, Policy: testPolicy()}, queue: []*request{canceled, timedOut, rejected}, queuedBytes: 3}
 	a.startBatch(context.Background(), time.Time{})
 	for _, tc := range []struct {
 		request *request

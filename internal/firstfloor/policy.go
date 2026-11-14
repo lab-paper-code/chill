@@ -14,6 +14,7 @@ type serviceCostQuery struct {
 type serviceCostEntry struct {
 	query serviceCostQuery
 	cost  float64
+	known bool
 }
 type serviceCosts struct {
 	quantiles *QuantileCache
@@ -25,20 +26,22 @@ type serviceCosts struct {
 
 // Costs live for one ChooseBatch call. Gap values, not caller scratch pointers,
 // identify queries; every request still checks its own remaining deadline.
+// known=false is an unidentified quantile: callers decide explicitly what an
+// unknown cost means; it never enters arithmetic.
 // ponytail: linear lookup fits few distinct queries; index if mixed-query scans dominate.
-func (costs *serviceCosts) cost(b BatchProfile, percentile float64, gap *int64) float64 {
+func (costs *serviceCosts) cost(b BatchProfile, percentile float64, gap *int64) (float64, bool) {
 	query := serviceCostQuery{distribution: b.Distribution, percentile: percentile, unanchored: gap == nil}
 	if gap != nil {
 		query.gap = *gap
 	}
 	for _, entry := range costs.local[:costs.count] {
 		if entry.query == query {
-			return entry.cost
+			return entry.cost, entry.known
 		}
 	}
 	for _, entry := range costs.extra {
 		if entry.query == query {
-			return entry.cost
+			return entry.cost, entry.known
 		}
 	}
 	var value int64
@@ -48,18 +51,17 @@ func (costs *serviceCosts) cost(b BatchProfile, percentile float64, gap *int64) 
 	} else {
 		value, _, known = costs.quantiles.QuantileNanos(b.Distribution, gap, percentile)
 	}
-	cost := math.Inf(1)
+	entry := serviceCostEntry{query: query, known: known}
 	if known {
-		cost = float64(value) / float64(time.Millisecond)
+		entry.cost = float64(value) / float64(time.Millisecond)
 	}
-	entry := serviceCostEntry{query, cost}
 	if costs.count < len(costs.local) {
 		costs.local[costs.count] = entry
 		costs.count++
 	} else {
 		costs.extra = append(costs.extra, entry)
 	}
-	return cost
+	return entry.cost, entry.known
 }
 
 // RemainingSLOMS uses frozen sender and native elapsed spans, never remote UTC.
@@ -78,8 +80,10 @@ func requestDeadlinePolicy(r RequestState) string {
 		return ""
 	}
 }
-func requestSlack(r RequestState, b BatchProfile, gap *int64, costs *serviceCosts) float64 {
-	return RemainingSLOMS(r) - r.Context.CompletionMarginMS - costs.cost(b, r.Context.SLO.Percentile, gap)
+// requestSlack is unknown when the batch's service quantile is not identified.
+func requestSlack(r RequestState, b BatchProfile, gap *int64, costs *serviceCosts) (float64, bool) {
+	cost, known := costs.cost(b, r.Context.SLO.Percentile, gap)
+	return RemainingSLOMS(r) - r.Context.CompletionMarginMS - cost, known
 }
 func allowedBatch(p Policy, size int) bool {
 	return p.MaxBatchSize >= 0 && (p.MaxBatchSize == 0 || size <= p.MaxBatchSize)
@@ -87,14 +91,18 @@ func allowedBatch(p Policy, size int) bool {
 func sameQueue(a, b RequestState) bool {
 	return a.Context.WorkloadUID == b.Context.WorkloadUID && a.Context.Definition == b.Context.Definition
 }
-func minimumService(p Policy, q RequestState, gap *int64, costs *serviceCosts) float64 {
-	cost := math.Inf(1)
+// minimumService is the least identified service quantile over allowed
+// batches; known=false when no allowed batch's quantile is identified.
+func minimumService(p Policy, q RequestState, gap *int64, costs *serviceCosts) (minimum float64, known bool) {
 	for _, b := range p.Batches {
-		if allowedBatch(p, b.Size) {
-			cost = math.Min(cost, costs.cost(b, q.Context.SLO.Percentile, gap))
+		if !allowedBatch(p, b.Size) {
+			continue
+		}
+		if cost, ok := costs.cost(b, q.Context.SLO.Percentile, gap); ok && (!known || cost < minimum) {
+			minimum, known = cost, true
 		}
 	}
-	return cost
+	return minimum, known
 }
 func normalRequest(q RequestState) bool {
 	return q.Phase != phaseRunning && q.Phase != phaseDeferred && q.Phase != phaseFinished
@@ -162,7 +170,11 @@ func batchFeasible(requests []RequestState, head int, b BatchProfile, gap *int64
 			prefix = append(prefix, nextCompatible(requests, head, previous))
 		}
 		previous = prefix[i]
-		if previous < 0 || requestSlack(requests[previous], b, gap, costs) < 0 {
+		if previous < 0 {
+			return false, prefix
+		}
+		// A member whose own quantile is unidentified cannot be shown to fit.
+		if slack, known := requestSlack(requests[previous], b, gap, costs); !known || slack < 0 {
 			return false, prefix
 		}
 	}
@@ -208,7 +220,7 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision, gapUpper *int64
 	}
 	// Missing conditional support is not evidence of infeasibility. Native can
 	// still execute a measured batch; gateway prediction remains unknown.
-	if mode == DeadlineDrop && head >= 0 && SLOExpired(requests[head]) && !math.IsInf(minimumService(p, requests[head], gapDecision, &costs), 1) {
+	if mode == DeadlineDrop && head >= 0 && SLOExpired(requests[head]) && serviceIdentified(p, requests[head], gapDecision, &costs) {
 		r := requests[head]
 		return BatchChoice{RequestID: r.Context.RequestID, WorkloadUID: r.Context.WorkloadUID, Definition: r.Context.Definition, Reason: OutcomeDeadlineDrop}
 	}
@@ -237,16 +249,23 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision, gapUpper *int64
 		return choice
 	}
 	choice.Size, choice.Reason = available.Size, ReasonAvailableEnergy
-	if math.IsInf(costs.cost(available, r.Context.SLO.Percentile, gapDecision), 1) {
+	if _, known := costs.cost(available, r.Context.SLO.Percentile, gapDecision); !known {
 		choice.Reason = ReasonMissingConditionalSupport
 		return choice
 	}
 	return energyGainWait(p, requests, head, count, available, choice, gapDecision, &costs)
 }
 
+// serviceIdentified reports whether any allowed batch's quantile is identified.
+func serviceIdentified(p Policy, q RequestState, gap *int64, costs *serviceCosts) bool {
+	_, known := minimumService(p, q, gap, costs)
+	return known
+}
+
 func chooseBatchProfiles(p *Policy, requests []RequestState, head, count int, gapDecision *int64, costs *serviceCosts) (available, throughput BatchProfile) {
 	r := &requests[head]
-	perItemCost := math.Inf(1)
+	var perItemCost float64
+	throughputKnown := false
 	// Each profile checks its own slack, but all share the same EDF prefix.
 	// Extend lazily so an early deadline failure does not scan unused members.
 	// ponytail: measured batches through 32 use stack storage; larger batches grow the slice.
@@ -256,12 +275,18 @@ func chooseBatchProfiles(p *Policy, requests []RequestState, head, count int, ga
 		if b.Size < 1 || b.Size > count || !allowedBatch(*p, b.Size) {
 			continue
 		}
-		cost := costs.cost(b, r.Context.SLO.Percentile, gapDecision) / float64(b.Size)
-		if throughput.Size == 0 || cost < perItemCost || cost == perItemCost && b.Size > throughput.Size {
-			throughput, perItemCost = b, cost
+		cost, known := costs.cost(b, r.Context.SLO.Percentile, gapDecision)
+		cost /= float64(b.Size)
+		// Identified per-item cost ranks first; among equal (or all unknown)
+		// costs the larger batch wins.
+		better := known && (!throughputKnown || cost < perItemCost)
+		tied := known == throughputKnown && (!known || cost == perItemCost) && b.Size > throughput.Size
+		if throughput.Size == 0 || better || tied {
+			throughput, perItemCost, throughputKnown = b, cost, known
 		}
+		// Missing conditional support is not evidence of infeasibility.
 		feasible := r.Phase != phaseDeferred
-		if feasible && !math.IsInf(cost, 1) {
+		if feasible && known {
 			feasible, prefix = batchFeasible(requests, head, b, gapDecision, costs, prefix)
 		}
 		if feasible && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
@@ -301,6 +326,7 @@ func energyGainWait(p Policy, requests []RequestState, head, count int, availabl
 		followCosts.quantiles = costs.quantiles
 		following = &followCosts
 	}
+batches:
 	for _, b := range p.Batches {
 		if b.Size <= count || b.EnergyPerItemJ >= available.EnergyPerItemJ || !allowedBatch(p, b.Size) {
 			continue
@@ -318,12 +344,20 @@ func energyGainWait(p Policy, requests []RequestState, head, count int, availabl
 			if !normalRequest(q) {
 				continue
 			}
-			slack := requestSlack(q, b, futureGap, costs)
+			// An unidentified deadline cannot justify waiting for this batch.
+			slack, known := requestSlack(q, b, futureGap, costs)
+			if !known {
+				continue batches
+			}
 			if sameQueue(q, r) {
 				allowed = math.Min(allowed, p.MaxBatchWaitMS-q.QueueMS)
 			} else {
 				zero := int64(0)
-				slack -= minimumService(p, q, &zero, following)
+				service, known := minimumService(p, q, &zero, following)
+				if !known {
+					continue batches
+				}
+				slack -= service
 			}
 			allowed = math.Min(allowed, slack)
 		}
