@@ -211,40 +211,47 @@ func executeMeasurements(ctx context.Context, args []string, stdout, stderr io.W
 		if opts.output == outputFormatJSON {
 			return writeOperationJSON(stdout, result)
 		}
-		task := result.Campaign
-		const taskHeader = "NAMESPACE\tMEASUREMENT_TASK\tPHASE\tBATCHES\tTRIALS\tOUTCOME\tREASON\n"
-		if _, err := fmt.Fprintf(table, taskHeader+"%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
-			task.Namespace, task.Name, display(task.Phase), task.CompletedBatches, task.CompletedTrials,
-			display(task.Outcome), display(task.Reason)); err != nil {
+		if err := renderMeasurementResult(table, result); err != nil {
 			return err
-		}
-		if _, err := fmt.Fprintln(table, "\nCONDITION\tSTATUS\tREASON\tMESSAGE"); err != nil {
-			return err
-		}
-		for _, condition := range task.Conditions {
-			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\n",
-				condition.Type, condition.Status, condition.Reason, condition.Message); err != nil {
-				return err
-			}
-		}
-		if task.StoredResult != nil {
-			if _, err := fmt.Fprintf(table, "\nRESULT_STORE\tRESULT_KEY\tSIZE\n%s\t%s\t%d\n",
-				task.StoredResult.Store, task.StoredResult.Key, task.StoredResult.Size); err != nil {
-				return err
-			}
-		}
-		if result.ResultFormat == queryapi.ResultFormatPrevious {
-			if _, err := fmt.Fprintf(table, "\nRESULT_FORMAT\n%s\n", result.ResultFormatMessage); err != nil {
-				return err
-			}
-		}
-		if result.Session != nil {
-			if err := renderSessionResult(table, *result.Session); err != nil {
-				return err
-			}
 		}
 	}
 	return table.Flush()
+}
+
+func renderMeasurementResult(table io.Writer, result queryapi.BatchEnergyOptimizationResult) error {
+	task := result.Campaign
+	const taskHeader = "NAMESPACE\tMEASUREMENT_TASK\tPHASE\tBATCHES\tTRIALS\tOUTCOME\tREASON\n"
+	if _, err := fmt.Fprintf(table, taskHeader+"%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
+		task.Namespace, task.Name, display(task.Phase), task.CompletedBatches, task.CompletedTrials,
+		display(task.Outcome), display(task.Reason)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(table, "\nCONDITION\tSTATUS\tREASON\tMESSAGE"); err != nil {
+		return err
+	}
+	for _, condition := range task.Conditions {
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\n",
+			condition.Type, condition.Status, condition.Reason, condition.Message); err != nil {
+			return err
+		}
+	}
+	if task.StoredResult != nil {
+		if _, err := fmt.Fprintf(table, "\nRESULT_STORE\tRESULT_KEY\tSIZE\n%s\t%s\t%d\n",
+			task.StoredResult.Store, task.StoredResult.Key, task.StoredResult.Size); err != nil {
+			return err
+		}
+	}
+	if result.ResultFormat == queryapi.ResultFormatPrevious {
+		if _, err := fmt.Fprintf(table, "\nRESULT_FORMAT\n%s\n", result.ResultFormatMessage); err != nil {
+			return err
+		}
+	}
+	if result.Session != nil {
+		if err := renderSessionResult(table, *result.Session); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // renderSessionResult prints a session result's power parameters, its batch
@@ -266,7 +273,8 @@ func renderSessionResult(table io.Writer, session queryapi.SessionResultView) er
 			return err
 		}
 	}
-	const batchHeader = "\nBATCH\tSERVICE_RECORDS\tSATURATION_INPUTS_PER_S\tJOULES_PER_INPUT\tSTATUS\tRANGE\tPEAK_MEMORY_BYTES\tMEMORY_KIND\tOCCUPANCY_SAMPLES\tOCCUPANCY_MEDIAN_NS"
+	const batchHeader = "\nBATCH\tSERVICE_RECORDS\tSATURATION_INPUTS_PER_S\tJOULES_PER_INPUT\tSTATUS\tRANGE" +
+		"\tPEAK_MEMORY_BYTES\tMEMORY_KIND\tOCCUPANCY_SAMPLES\tOCCUPANCY_MEDIAN_NS"
 	if _, err := fmt.Fprintln(table, batchHeader); err != nil {
 		return err
 	}
@@ -279,7 +287,9 @@ func renderSessionResult(table io.Writer, session queryapi.SessionResultView) er
 			return err
 		}
 	}
-	if _, err := fmt.Fprintln(table, "\nBATCH\tLEVEL\tINPUTS_PER_S\tMEAN_WATTS\tSTANDARD_ERROR\tPOWER_SAMPLES\tCOMPLETED_INPUTS\tEND_REASON"); err != nil {
+	const levelHeader = "\nBATCH\tLEVEL\tINPUTS_PER_S\tMEAN_WATTS\tSTANDARD_ERROR" +
+		"\tPOWER_SAMPLES\tCOMPLETED_INPUTS\tEND_REASON"
+	if _, err := fmt.Fprintln(table, levelHeader); err != nil {
 		return err
 	}
 	for _, batch := range session.Batches {

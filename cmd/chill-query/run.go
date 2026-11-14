@@ -175,7 +175,9 @@ func newCampaignPreflightQuery(
 		return nil, fmt.Errorf("construct batch-energy-optimization preflight query: %w", err)
 	}
 	// The same call and request ChillServer's session runner prepares with.
-	preflights.Session = func(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization) (queryapi.SessionPreflightPlan, error) {
+	preflights.Session = func(
+		ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization,
+	) (queryapi.SessionPreflightPlan, error) {
 		state, protocol := campaign.Spec.State, campaign.Spec.ActiveProtocol
 		session, err := preparer.PrepareSession(ctx, profilerapp.SessionRequest{
 			Candidate: profilerapp.CandidateSelection{
