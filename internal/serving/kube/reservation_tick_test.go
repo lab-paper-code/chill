@@ -332,7 +332,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	settings.MinimumDemand = map[string]float64{uid: 2}
 	profiles := c.observer.Profiles()
 	for index := range profiles {
-		profiles[index] = cloneCatalogProfile(profiles[index])
+		profiles[index].Batches = slices.Clone(profiles[index].Batches)
 		profiles[index].SourceVersion = "2"
 		profiles[index].Power = catalogTestPower("100")
 		if profiles[index].NodeName == "b" {
