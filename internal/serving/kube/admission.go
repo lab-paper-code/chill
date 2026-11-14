@@ -119,7 +119,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 		}
 		if reason != "" {
 			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(reason, detail)),
-				c.failMeasurement(ctx, root.object, strings.TrimSpace(reason+" "+detail)))
+				c.refuseMeasurement(ctx, root.object, reason, detail))
 			continue
 		}
 		transition, _ := root.object.(*edge.PowerModeTransitionCost)
@@ -190,14 +190,26 @@ func (c *SchedulerController) rootRefusal(ctx context.Context, root measurementR
 	case *edge.DispatchOccupancyMeasurement:
 		plan, reason, detail, wait := c.occupancyRefusal(ctx, o, node, in)
 		return reason, detail, wait, func() { c.startOccupancy(node, o.DeepCopy(), plan, in.config) }
+	case *edge.BatchEnergyOptimization:
+		plan, reason, detail := c.sessionRefusal(ctx, o, node, in)
+		return reason, detail, false, func() { c.startSession(node, o.DeepCopy(), plan, in.config) }
 	}
 	return "", "", false, nil
+}
+
+// refuseMeasurement writes a refusal to a measurement ChillServer runs: a
+// session's outcome is the refusal code and its condition message the detail.
+func (c *SchedulerController) refuseMeasurement(ctx context.Context, object client.Object, reason, detail string) error {
+	if beo, ok := object.(*edge.BatchEnergyOptimization); ok {
+		return c.patchMeasurementStatus(ctx, beo, func() { setSessionStatus(beo, edge.MeasurementPhaseFailed, reason, detail, nil, 0) })
+	}
+	return c.failMeasurement(ctx, object, strings.TrimSpace(reason+" "+detail))
 }
 
 // chillServerRun reports a measurement kind ChillServer runs itself.
 func chillServerRun(object client.Object) bool {
 	switch object.(type) {
-	case *edge.OperationCostMeasurement, *edge.DispatchOccupancyMeasurement:
+	case *edge.OperationCostMeasurement, *edge.DispatchOccupancyMeasurement, *edge.BatchEnergyOptimization:
 		return true
 	}
 	return false

@@ -236,10 +236,7 @@ func managerProfile(d *serving.Definition) serving.Profile {
 	if d.Dataset != nil {
 		profile.Condition.ActiveProtocol.Dataset = &derivation.CurveDatasetContract{Name: d.Dataset.Name, UID: d.Dataset.UID}
 	}
-	profile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []native.ServiceSample{
-		fixtures.ServiceSample("physical-trial", 0, int64(time.Millisecond)),
-		fixtures.ServiceSample("physical-trial", 1, int64(time.Millisecond)),
-	}}}
+	profile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: fixtures.ServiceSamples("physical-trial", int64(time.Millisecond))}}
 	distribution, err := native.NewServiceDistribution(profile.Batches[0].ServiceSamples)
 	if err != nil {
 		panic(err)
@@ -248,8 +245,9 @@ func managerProfile(d *serving.Definition) serving.Profile {
 	return profile
 }
 
+// A ready actor was warmed, so it always reports its last service end.
 func fixtureAdmissionNative(profile *serving.Profile) *native.State {
-	return &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID,
+	return &native.State{Ready: true, LastServiceEndAgeNanos: new(int64), Metadata: native.Metadata{ProfileID: profile.ID,
 		Policy: native.Policy{ProfileID: profile.ID, MaxBatchSize: 1}}}
 }
 

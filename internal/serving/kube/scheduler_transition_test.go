@@ -61,7 +61,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	}
 	oldTarget := serving.SchedulerCandidate{ID: "old-target", Instances: []serving.SchedulerInstance{wanted}, Routing: map[string]map[string]int32{d.UID: {wanted.ID: 1}}}
 	physical := serving.ReadyInstance{
-		State: serving.InstanceState{ID: wanted.ID, Node: node, Profile: profile.ID, Ready: true, ObservedAt: time.Now(), Native: &native.State{Ready: true, Metadata: native.Metadata{
+		State: serving.InstanceState{ID: wanted.ID, Node: node, Profile: profile.ID, Ready: true, ObservedAt: time.Now(), Native: &native.State{Ready: true, LastServiceEndAgeNanos: new(int64), Metadata: native.Metadata{
 			ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: wanted.Capacity, MaxBatchSize: wanted.MaxBatch,
 			Policy: native.Policy{ProfileID: profile.ID, MaxBatchSize: wanted.MaxBatch, DeadlinePolicy: "keep"},
 		}}},
@@ -730,7 +730,7 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			}
 			snapshot.Instances = []serving.SchedulerInstance{old, added}
 			for n := range snapshot.Instances {
-				snapshot.Instances[n].ObservedAt = snapshot.At
+				snapshot.Instances[n].ObservedAt, snapshot.Instances[n].LastServiceEndAgeNanos = snapshot.At, new(int64)
 			}
 			snapshot.Routing = map[string]map[string]int32{uid: {old.ID: 1000}}
 			if err := c.runtime.ApplySchedulerTarget(serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{old}, Routing: snapshot.Routing}); err != nil {
@@ -1003,11 +1003,16 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State), e
 		p := profiles[index]
 		actual := *p.RuntimeMetadata
 		actual.ModelFiles = deliveredModelFiles(p.Condition.Artifact.Files)
-		state := native.State{At: time.Now().UTC(), Ready: index == 0 || prepared.Load(), Metadata: native.Metadata{
+		ready := index == 0 || prepared.Load()
+		state := native.State{At: time.Now().UTC(), Ready: ready, Metadata: native.Metadata{
 			Model: cfg.Model, Mode: "serving", ProfileID: p.ID, AppliedAt: time.Now().UTC(),
 			Runtime: actual, MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
 			DecisionID: cfg.Policy.DecisionID, Policy: cfg.Policy,
 		}}
+		if ready {
+			// A ready actor was warmed, so it always reports its last service end.
+			state.LastServiceEndAgeNanos = new(int64)
+		}
 		if observe != nil {
 			observe(index, &state)
 		}

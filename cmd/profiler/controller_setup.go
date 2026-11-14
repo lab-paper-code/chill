@@ -51,9 +51,8 @@ func setupProfilerControllers(mgr ctrl.Manager, opts options) error {
 	if err := setupRunController(mgr, opts, shared); err != nil {
 		return err
 	}
-	if err := setupBatchEnergyOptimizationController(mgr, opts, shared); err != nil {
-		return err
-	}
+	// ChillServer runs BatchEnergyOptimization measurement sessions; no
+	// campaign controller here reconciles them.
 	if err := setupModelLoadedIdleBaselineController(mgr, opts, shared); err != nil {
 		return err
 	}
@@ -215,40 +214,6 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 		evidence: evidence, retainedEvidence: retainedEvidence,
 		curvePlans: curvePlans,
 	}, nil
-}
-
-func setupBatchEnergyOptimizationController(
-	mgr ctrl.Manager,
-	opts options,
-	shared *profilerControllerShared,
-) error {
-	logicalStore := component.EvidenceStoreServiceName(opts.systemName)
-	curvePlans := shared.curvePlans
-	curves, err := batchcontroller.NewCurveDeriver(
-		retainedCurveEvidenceLoader{retained: shared.retainedEvidence},
-	)
-	if err != nil {
-		return fmt.Errorf("construct BatchEnergyOptimization curve deriver: %w", err)
-	}
-	results, err := batchcontroller.NewResultWriter(
-		shared.evidence,
-		batchcontroller.ResultWriterOptions{
-			Store: logicalStore, MaxObjectBytes: profilingResultMaximumObjectBytes,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("construct BatchEnergyOptimization result writer: %w", err)
-	}
-	reconciler, err := batchcontroller.NewBatchEnergyOptimizationReconciler(
-		mgr.GetClient(), curvePlans.Resolve, curves.Derive, results.Write,
-	)
-	if err != nil {
-		return fmt.Errorf("construct BatchEnergyOptimization reconciler: %w", err)
-	}
-	if err := reconciler.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("set up BatchEnergyOptimization reconciler: %w", err)
-	}
-	return nil
 }
 
 func setupModelLoadedIdleBaselineController(

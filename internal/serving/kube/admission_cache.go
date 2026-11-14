@@ -45,8 +45,7 @@ func measurementObjectRoot(object client.Object) (measurementRoot, bool) {
 	switch o := object.(type) {
 	case *edge.BatchEnergyOptimization:
 		root.node = o.Spec.State.TargetNode
-		// A curve plan resolution failure is retried by its controller.
-		root.terminal = o.Status.Phase == catalogCompletePhase || o.Status.Phase == campaignFailedPhase && o.Status.Outcome != "CurvePlanResolutionFailed"
+		root.terminal = o.Status.Terminal(o.Generation)
 	case *edge.ModelLoadedIdleBaseline:
 		root.node = o.Spec.State.TargetNode
 		root.terminal = o.Status.Phase == edge.ModelLoadedIdleBaselinePhaseComplete || o.Status.Phase == edge.ModelLoadedIdleBaselinePhaseInsufficient

@@ -33,6 +33,21 @@ var _ = Describe("BatchEnergyOptimization API", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
 	})
+
+	It("requires the session's operation observation settings", func() {
+		ctx := context.Background()
+		campaign := validBatchEnergyOptimization(uniqueBatchEnergyOptimizationName("session"))
+		campaign.Spec.Session = validSession()
+		Expect(k8sClient.Create(ctx, campaign)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, campaign) })
+
+		missing := validBatchEnergyOptimization(uniqueBatchEnergyOptimizationName("session-unobserved"))
+		missing.Spec.Session = validSession()
+		missing.Spec.Session.Observation = edgev1alpha1.MeasurementObservationSpec{}
+		err := k8sClient.Create(ctx, missing)
+		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "%v", err)
+		Expect(err.Error()).To(ContainSubstring("spec.session.observation"))
+	})
 })
 
 func uniqueBatchEnergyOptimizationName(prefix string) string {
@@ -80,6 +95,18 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 			},
 			TrialsPerBatch: 3,
 			RetryLimit:     2,
+		},
+	}
+}
+
+func validSession() *edgev1alpha1.BatchEnergyOptimizationSessionSpec {
+	return &edgev1alpha1.BatchEnergyOptimizationSessionSpec{
+		MeterLagSeconds: 3, MinimumPowerWindowSeconds: 30, MidLevelRatio: .5, SparseMeanGapSeconds: 1,
+		LevelDurationLimitSeconds: 600, PostLoadWindowSeconds: 120, ConfidenceLevel: "0.95",
+		RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024,
+		Observation: edgev1alpha1.MeasurementObservationSpec{
+			IntervalMilliseconds: 750, RequestTimeoutMilliseconds: 500, MaximumOperationSeconds: 600, MaximumGapMilliseconds: 3000,
+			Timing: &edgev1alpha1.MeasurementTimingSpec{ChangeIntervalP95Seconds: "3", MaximumRequestSeconds: "0.5", MaximumReceiptGapSeconds: "0.1", Source: "pilot"},
 		},
 	}
 }

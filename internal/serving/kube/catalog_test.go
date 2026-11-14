@@ -24,13 +24,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func catalogServiceSamples(durations ...int64) []firstfloor.ServiceSample {
-	samples := make([]firstfloor.ServiceSample, 0, len(durations)*2)
-	for _, duration := range durations {
-		samples = append(samples, fixtures.ServiceSample("catalog-physical-trial", 0, duration))
-		samples = append(samples, fixtures.ServiceSample("catalog-physical-trial", 1, duration))
-	}
-	return samples
+func catalogServiceSamples(duration int64) []firstfloor.ServiceSample {
+	return fixtures.ServiceSamples("catalog-physical-trial", duration)
 }
 
 func TestCatalogKeysObservedRuntimeVersionAndProvider(t *testing.T) {
