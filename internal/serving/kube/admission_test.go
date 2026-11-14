@@ -502,7 +502,8 @@ func TestAdmitSharedCPUWithoutOnlineInventory(t *testing.T) {
 			h := newAdmissionHarness(t)
 			h.create(cpuClass())
 			h.setNode(func(node *core.Node) { delete(node.Annotations, chillmeta.OnlineCPUs) })
-			root := beoRoot("beo", "node", "")
+			// A Profiler-run root: ChillServer grants it and runs nothing itself.
+			root := baselineRoot("baseline", time.Now())
 			root.Spec.State.Candidate.PowerMode = mode
 			h.create(root)
 			h.admit()

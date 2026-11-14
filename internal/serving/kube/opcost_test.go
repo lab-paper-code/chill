@@ -72,9 +72,14 @@ func newOpcostHarness(t *testing.T) *opcostHarness {
 	return o
 }
 
+// beoRoot is a BatchEnergyOptimization whose status, when phase is set, was
+// written for its current generation, as its only writer does.
 func beoRoot(name, node, phase string) *edge.BatchEnergyOptimization {
-	o := &edge.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: name, UID: types.UID(name + "-uid"), CreationTimestamp: meta.NewTime(time.Now().Add(-time.Hour))}}
+	o := &edge.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: name, UID: types.UID(name + "-uid"), Generation: 1, CreationTimestamp: meta.NewTime(time.Now().Add(-time.Hour))}}
 	o.Spec.State.TargetNode, o.Status.Phase = node, phase
+	if phase != "" {
+		o.Status.ObservedGeneration = o.Generation
+	}
 	return o
 }
 
