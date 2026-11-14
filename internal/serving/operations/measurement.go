@@ -514,7 +514,7 @@ func OperationCostKeys(result servingstate.OperationResult) (string, string, err
 
 func operationZeroInference(result servingstate.OperationResult) error {
 	if len(result.Before.Reasons) > 0 || len(result.Actual.Reasons) > 0 {
-		return errors.New("operation native observations incomplete")
+		return fmt.Errorf("operation native observations incomplete: before %v; after %v", result.Before.Reasons, result.Actual.Reasons)
 	}
 	for id, before := range result.Before.Native {
 		after, ok := result.Actual.Native[id]

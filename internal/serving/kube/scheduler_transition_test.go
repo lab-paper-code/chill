@@ -950,7 +950,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State), e
 				t.Fatal(err)
 			}
 		}
-		cfg := native.Config{Model: source.Condition.Actor.Model, Policy: native.Policy{ProfileID: source.ID, MaxBatchSize: 1, DeadlinePolicy: "keep"}}
+		cfg := native.Config{Model: source.Condition.Actor.Model, Mode: servingstate.NativeServingMode, Policy: native.Policy{ProfileID: source.ID, MaxBatchSize: 1, DeadlinePolicy: "keep"}}
 		raw, _ := json.Marshal(cfg)
 		objects = append(objects, p, &core.ConfigMap{
 			ObjectMeta: meta.ObjectMeta{Name: p.Name, Namespace: p.Namespace}, Data: map[string]string{"config.json": string(raw)},
