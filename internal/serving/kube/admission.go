@@ -114,6 +114,9 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 		}
 		reason, detail, wait, start := c.rootRefusal(ctx, root, node, in)
 		if wait {
+			if beo, ok := root.object.(*edge.BatchEnergyOptimization); ok && detail != "" {
+				errs = append(errs, c.patchMeasurementStatus(ctx, beo, func() { setSessionPending(beo, detail) }))
+			}
 			claimed[node.Name] = true
 			continue
 		}
@@ -191,8 +194,8 @@ func (c *SchedulerController) rootRefusal(ctx context.Context, root measurementR
 		plan, reason, detail, wait := c.occupancyRefusal(ctx, o, node, in)
 		return reason, detail, wait, func() { c.startOccupancy(node, o.DeepCopy(), plan, in.config) }
 	case *edge.BatchEnergyOptimization:
-		plan, reason, detail := c.sessionRefusal(ctx, o, node, in)
-		return reason, detail, false, func() { c.startSession(node, o.DeepCopy(), plan, in.config) }
+		plan, reason, detail, wait := c.sessionRefusal(ctx, o, node, in)
+		return reason, detail, wait, func() { c.startSession(node, o.DeepCopy(), plan, in.config) }
 	}
 	return "", "", false, nil
 }

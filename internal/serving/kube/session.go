@@ -44,10 +44,11 @@ const (
 	sessionOutcomeMeasured = "AllBatchesMeasured"
 
 	// Level end reasons of chill-server session-load.
-	sessionSamplesReached        = "SamplesReached"
-	sessionPredictedOverLimit    = "PredictedDurationExceedsLimit"
-	sessionServiceOverLifetime   = "BatchServiceExceedsLifetime"
-	sessionAllocationBeforeBatch = "AllocationFailedBeforeAnyBatch"
+	sessionSamplesReached         = "SamplesReached"
+	sessionPredictedOverLimit     = "PredictedDurationExceedsLimit"
+	sessionServiceOverLifetime    = "BatchServiceExceedsLifetime"
+	sessionAllocationBeforeBatch  = "AllocationFailedBeforeAnyBatch"
+	sessionRequestLifetimeExpired = "RequestLifetimeExpired"
 )
 
 // SessionOperationCostPrefix holds a session's operation-cost records, whose
@@ -71,10 +72,9 @@ type sessionPlan struct {
 
 // sessionReads are the observation records a session derives its result from.
 type sessionReads struct {
-	// native returns the executor's batch rows of one level's workload
-	// identifier, which is unique to the session; since is the session start
-	// on ChillServer's clock.
-	native func(ctx context.Context, workloadUID string, since time.Time) ([]profilederivation.NativeBatchRow, error)
+	// native returns batch rows grouped by level identifier, selected with
+	// one batch-size prefix over receipt hours since the session started.
+	native func(ctx context.Context, workloadPrefix string, since time.Time) (map[string][]profilederivation.NativeBatchRow, error)
 	power  func(ctx context.Context, meter servingops.MeterDeclaration, from, to time.Time) ([]profilederivation.Sample, error)
 	memory func(ctx context.Context, podUID string, from, to time.Time) (observation.PodMemoryPeak, error)
 }
@@ -82,23 +82,27 @@ type sessionReads struct {
 // observedSessionReads reads the serving observation log.
 func observedSessionReads(log *observation.ObservationLog) sessionReads {
 	return sessionReads{
-		native: func(ctx context.Context, workloadUID string, since time.Time) ([]profilederivation.NativeBatchRow, error) {
-			// The scan selects rows by their executor-clock running time; the
-			// identifier is the selection. The window spans the session with
-			// the reader's own tail on both sides, so an executor clock off
-			// ChillServer's by less than the tail selects the same rows.
-			tail := log.OccupancyTail()
-			batches := serving.NewNativeBatchJoin()
-			gap, err := log.ScanOccupancyRows(ctx, workloadUID, "", since.Add(-tail), time.Now().Add(tail), batches.Add)
-			// The margin may reach back before the log; only a gap the
-			// session's own rows could fall in loses them.
-			if err == nil && gap != nil && gap.After(since) {
-				err = fmt.Errorf("request observations of %s have a gap until %s", workloadUID, gap.Format(time.RFC3339Nano))
-			}
+		native: func(ctx context.Context, workloadPrefix string, since time.Time) (map[string][]profilederivation.NativeBatchRow, error) {
+			joins := map[string]*serving.NativeBatchJoin{}
+			err := log.ScanSessionRows(ctx, workloadPrefix, since, time.Now(), func(row serving.RequestRow) error {
+				join := joins[row.WorkloadUID]
+				if join == nil {
+					join = serving.NewNativeBatchJoin()
+					joins[row.WorkloadUID] = join
+				}
+				join.Add(row)
+				return nil
+			})
 			if err != nil {
 				return nil, err
 			}
-			return batches.Batches()
+			rows := make(map[string][]profilederivation.NativeBatchRow, len(joins))
+			for uid, join := range joins {
+				if rows[uid], err = join.Batches(); err != nil {
+					return nil, err
+				}
+			}
+			return rows, nil
 		},
 		power: func(ctx context.Context, meter servingops.MeterDeclaration, from, to time.Time) ([]profilederivation.Sample, error) {
 			read, err := log.PowerSamples(ctx, observation.OperatingPowerMeter{Node: meter.Node, Meter: meter.ID, Scope: meter.Scope, Source: meter.Source}, from, to)
@@ -114,41 +118,48 @@ func observedSessionReads(log *observation.ObservationLog) sessionReads {
 
 // sessionRefusal judges a measurement session before its grant. A refused
 // session is never granted, so no session is left without its run.
-func (c *SchedulerController) sessionRefusal(ctx context.Context, beo *edge.BatchEnergyOptimization, node *core.Node, in admissionInputs) (plan sessionPlan, reason, detail string) {
+func (c *SchedulerController) sessionRefusal(ctx context.Context, beo *edge.BatchEnergyOptimization, node *core.Node, in admissionInputs) (plan sessionPlan, reason, detail string, wait bool) {
 	settings := beo.Spec.Session
 	if settings == nil {
-		return plan, refusedSessionMissing, "measurement request has no session settings"
+		return plan, refusedSessionMissing, "measurement request has no session settings", false
+	}
+	if node.Name == in.config.Session.NodeName {
+		return plan, refusedSessionUnresolved, "the load generator runs on this Node, so its power would be measured as the model's", false
 	}
 	i := slices.IndexFunc(in.config.Meters, func(meter servingops.MeterDeclaration) bool { return meter.Node.UID == string(node.UID) })
 	if i < 0 {
-		return plan, MeterUndeclared, node.Name
+		return plan, MeterUndeclared, node.Name, false
 	}
 	plan.meter = in.config.Meters[i]
 	confidence, err := settings.Confidence()
 	if err != nil {
-		return plan, refusedSessionUnresolved, err.Error()
+		return plan, refusedSessionUnresolved, err.Error(), false
 	}
 	plan.confidence = confidence
 	if in.config.Session.Prepare == nil {
-		return plan, refusedSessionUnresolved, "ChillServer has no Profiler facts to resolve a measurement session"
+		return plan, refusedSessionUnresolved, "ChillServer has no Profiler facts to resolve a measurement session", false
 	}
 	if plan.preparation, err = in.config.Session.Prepare(ctx, beo); err != nil {
-		return plan, refusedSessionUnresolved, firstLine(err.Error())
+		var retry *SessionResolutionRetry
+		if errors.As(err, &retry) {
+			return plan, "", firstLine(err.Error()), true
+		}
+		return plan, refusedSessionUnresolved, firstLine(err.Error()), false
 	}
 	if len(plan.preparation.BatchSizes) == 0 {
-		return plan, refusedSessionUnresolved, "measurement session resolved no batch size"
+		return plan, refusedSessionUnresolved, "measurement session resolved no batch size", false
 	}
 	if plan.minimumSamples, err = native.MinimumServiceSamples(plan.preparation.SLOPercentile); err != nil {
-		return plan, refusedSessionUnresolved, err.Error()
+		return plan, refusedSessionUnresolved, err.Error(), false
 	}
 	mode := plan.preparation.RunConfig.State.PowerMode
 	plan.powered = servingstate.ReadBackMode(node, servingstate.NodeClass(node, in.classes)) == mode
 	maxActuation, ok := nodePowerTargets(node, in.classes, in.config.PowerPolicies)[mode]
 	if !plan.powered && !ok {
-		return plan, refusedPowerModeUnknown, mode
+		return plan, refusedPowerModeUnknown, mode, false
 	}
 	plan.maxActuation = maxActuation
-	return plan, "", ""
+	return plan, "", "", false
 }
 
 // startSession registers the run of a granted measurement session.
@@ -169,6 +180,7 @@ func setSessionStatus(beo *edge.BatchEnergyOptimization, phase edge.MeasurementP
 	beo.Status.Phase, beo.Status.ObservedGeneration, beo.Status.Outcome = string(phase), beo.Generation, outcome
 	beo.Status.Result, beo.Status.CompletedBatches = result, int32(batches)
 	if phase == edge.MeasurementPhaseMeasuring {
+		apimeta.RemoveStatusCondition(&beo.Status.Conditions, sessionConditionComplete)
 		return
 	}
 	status := meta.ConditionFalse
@@ -177,6 +189,11 @@ func setSessionStatus(beo *edge.BatchEnergyOptimization, phase edge.MeasurementP
 	}
 	apimeta.SetStatusCondition(&beo.Status.Conditions, meta.Condition{Type: sessionConditionComplete, Status: status,
 		Reason: outcome, Message: message, ObservedGeneration: beo.Generation})
+}
+
+func setSessionPending(beo *edge.BatchEnergyOptimization, message string) {
+	apimeta.SetStatusCondition(&beo.Status.Conditions, meta.Condition{Type: sessionConditionComplete, Status: meta.ConditionUnknown,
+		Reason: "SessionResolutionPending", Message: message, ObservedGeneration: beo.Generation})
 }
 
 // sessionRun is one session's progress.
@@ -278,14 +295,38 @@ func (c *SchedulerController) runSession(ctx context.Context, beo *edge.BatchEne
 		return fail(err)
 	}
 	input.Condition = measuredCondition(plan.preparation, ref)
-	result, err := profilederivation.DeriveSession(input)
-	if err != nil {
-		return fail(err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	raw, err := json.Marshal(result)
-	if err != nil {
-		return fail(err)
+	// Derivation owns no controller lock. Its computation may finish after
+	// shutdown, but only this run goroutine can publish its result.
+	type derivedSession struct {
+		result profilederivation.SessionResult
+		raw    []byte
+		err    error
 	}
+	derived := make(chan derivedSession, 1)
+	go func() {
+		result, err := profilederivation.DeriveSession(input)
+		var raw []byte
+		if err == nil {
+			raw, err = json.Marshal(result)
+		}
+		derived <- derivedSession{result: result, raw: raw, err: err}
+	}()
+	var complete derivedSession
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case complete = <-derived:
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if complete.err != nil {
+		return fail(complete.err)
+	}
+	result, raw := complete.result, complete.raw
 	identity := evidencestore.ObjectIdentity{Store: config.EvidenceStore, Key: SessionResultPrefix + string(beo.UID) + "/result.json", Size: int64(len(raw))}
 	if config.Evidence == nil {
 		return fail(errors.New("measurement evidence store is not configured"))
@@ -315,6 +356,10 @@ type sessionBatchOutcome struct {
 func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (sessionBatchOutcome, error) {
 	var outcome sessionBatchOutcome
 	spec := sessionInstance(r.beo, r.plan.preparation, r.ref, batch, r.config.Session)
+	if err := SessionQueueCapacity(batch, spec.Config.MaxQueueRequests, int64(spec.Config.MaxQueueBytes), r.beo.Spec.Session.FramedDecodedRequestUpperBytes); err != nil {
+		outcome.stop = &profilederivation.SessionStop{Batch: batch, Class: profilederivation.StopCapacityLimit, Reason: err.Error()}
+		return outcome, nil
+	}
 	prepareStart := time.Now()
 	prepared, prepareKey, err := r.measure(ctx, "prepare-b"+strconv.Itoa(batch), servingstate.Operation{Kind: servingstate.OperationPrepare, Prepare: &spec})
 	if err != nil {
@@ -332,9 +377,13 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (sessionBa
 		metadata := state.Metadata.Runtime
 		outcome.metadata = &metadata
 	}
+	if outcome.metadata == nil {
+		_, _, removeErr := r.measure(ctx, "remove-b"+strconv.Itoa(batch), servingstate.Operation{Kind: servingstate.OperationRemove, Instance: instance.ID})
+		return outcome, errors.Join(fmt.Errorf("batch %d instance reported no runtime metadata", batch), removeErr)
+	}
 	table, loadErr := r.c.runSessionLoad(ctx, sessionLoadJob(r.beo, r.ref, sessionLoad{batch: batch, podUID: instance.PodUID,
 		servingNamespace: r.c.observer.config.Namespace, minimumSamples: r.plan.minimumSamples, config: r.config.Session,
-		preparation: r.plan.preparation, actor: sessionActorLimits{maxQueueRequests: spec.Config.MaxQueueRequests, maxQueueBytes: spec.Config.MaxQueueBytes}}))
+		preparation: r.plan.preparation, actor: sessionActorLimits{maxQueueRequests: spec.Config.MaxQueueRequests, maxQueueBytes: spec.Config.MaxQueueBytes}}), r.config.Session.RunnerTimeout)
 	var levels []profilederivation.DriverLevelRow
 	if loadErr == nil {
 		levels, outcome.stop, loadErr = sessionLevels(table, batch)
@@ -350,12 +399,12 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (sessionBa
 		return outcome, err
 	}
 	outcome.input = profilederivation.SessionBatchInput{Batch: batch, PrepareCostKey: prepareKey, RemoveCostKey: removeKey}
+	rows, err := r.c.sessionReads.native(ctx, string(r.beo.UID)+"/"+strconv.Itoa(batch)+"/", r.started)
+	if err != nil {
+		return outcome, err
+	}
 	for _, level := range levels {
-		rows, err := r.c.sessionReads.native(ctx, level.ID, r.started)
-		if err != nil {
-			return outcome, err
-		}
-		outcome.input.Levels = append(outcome.input.Levels, profilederivation.SessionLevelInput{Row: level, Native: rows})
+		outcome.input.Levels = append(outcome.input.Levels, profilederivation.SessionLevelInput{Row: level, Native: rows[level.ID]})
 	}
 	peak, err := r.c.sessionReads.memory(ctx, instance.PodUID, prepareStart, removeEnd)
 	if err != nil {
@@ -417,7 +466,7 @@ func sessionLevels(table sessionLevelTable, batch int) ([]profilederivation.Driv
 	for _, level := range table.Levels {
 		switch level.EndReason {
 		case sessionSamplesReached:
-		case sessionPredictedOverLimit:
+		case sessionPredictedOverLimit, sessionRequestLifetimeExpired:
 			if level.Kind == profilederivation.LevelSaturation {
 				return rows, stop(profilederivation.StopNotMeasured, level), nil
 			}
@@ -522,4 +571,15 @@ func batchList(batches []profilederivation.SessionBatch) string {
 		sizes[i] = strconv.Itoa(batch.Batch)
 	}
 	return strings.Join(sizes, ", ")
+}
+
+// SessionQueueCapacity checks whether saturation's two outstanding batches
+// fit the native request and byte limits.
+func SessionQueueCapacity(batch, maxQueueRequests int, maxQueueBytes, requestUpperBytes int64) error {
+	if int64(batch) > min(int64(maxQueueRequests), maxQueueBytes/requestUpperBytes)/2 {
+		return fmt.Errorf("saturation keeps %d requests (two batches of %d) outstanding, above the native "+
+			"queue limit of %d requests or %d bytes at %d bytes per request",
+			2*int64(batch), batch, maxQueueRequests, maxQueueBytes, requestUpperBytes)
+	}
+	return nil
 }

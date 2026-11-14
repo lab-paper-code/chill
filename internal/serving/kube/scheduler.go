@@ -83,6 +83,13 @@ type SessionConfig struct {
 	MaxRequestBytes int64
 }
 
+// SessionResolutionRetry marks a transient resolution failure. Err preserves
+// the resolver's original failure for the pending status.
+type SessionResolutionRetry struct{ Err error }
+
+func (e *SessionResolutionRetry) Error() string { return e.Err.Error() }
+func (e *SessionResolutionRetry) Unwrap() error { return e.Err }
+
 // SessionPreparation is the measurement request resolved once per session:
 // what each batch size's fixed-batch instance and the result's condition need.
 type SessionPreparation struct {
