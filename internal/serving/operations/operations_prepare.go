@@ -192,11 +192,11 @@ func (o *Operations) prepareNativeReady(ctx context.Context, pod *core.Pod) (boo
 	if err != nil {
 		return false, err
 	}
-	config, err := servingstate.NativeConfig(ctx, o.Store.Client(), current)
+	model, err := servingstate.NativeModel(ctx, o.Store.Client(), current)
 	if err != nil {
 		return false, err
 	}
-	state, err := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: config.Model})
+	state, err := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: model})
 	return err == nil && state.Ready, nil
 }
 

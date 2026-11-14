@@ -178,18 +178,19 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 // operation is Accepted only with the primitive state effect its cost needs.
 func (record *OperationMeasurement) Judge(operationErr, observeErr error) error {
 	generic := record.Request.Operation.Kind != servingstate.OperationIdle
-	if operationErr == nil && generic {
-		operationErr = operationZeroInference(record.Result)
-	}
 	if record.Result.StartedAt.IsZero() {
 		record.Verdict = MeasurementInsufficient
 	} else if operationErr != nil {
 		record.Verdict = string(edge.MeasurementPhaseFailed)
 		record.Reason = operationErr.Error()
 	} else {
+		record.Verdict = MeasurementInsufficient
 		var effectErr error
 		if generic {
-			_, _, effectErr = OperationCostKeys(record.Result)
+			effectErr = operationZeroInference(record.Result)
+			if effectErr == nil {
+				_, _, effectErr = OperationCostKeys(record.Result)
+			}
 		}
 		measurement, integrationErr := record.EnergyMeasurement()
 		if effectErr != nil {

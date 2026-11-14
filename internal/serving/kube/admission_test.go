@@ -395,9 +395,8 @@ func TestAdmitKeepsLiveGrantAcrossRestart(t *testing.T) {
 	}
 }
 
-// A failed session can leave a live profiling executor behind when ChillServer
-// restarts. Fresh observer proof releases recovery, then admission retries the
-// normal hand-back without changing the terminal session or needing an operator.
+// A failed session owns its leftover profiling Pod after restart. Physical
+// termination and deletion release the Node without a successful native read.
 func TestHandBackFailedSessionAfterRestartWithMeasurementInstance(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -451,23 +450,40 @@ func TestHandBackFailedSessionAfterRestartWithMeasurementInstance(t *testing.T) 
 	recoveryBootRuntime(t, controller)
 	controller.measurement.Runtime = controller.runtime
 	h := &admissionHarness{t: t, controller: controller, kube: kube, node: node}
+	manager.observer.mu.Lock()
+	source := manager.observer.sources[string(pod.UID)]
+	if source == nil {
+		manager.observer.mu.Unlock()
+		t.Fatal("leftover profiling source was not retained")
+	}
+	source.instance.State.NativeVerified = false
+	source.instance.State.Native = nil
+	manager.observer.mu.Unlock()
 	if !controller.runtime.Recovery().Unknown || !controller.runtime.InstanceRecoveryUnknown(id) {
 		t.Fatal("restart did not fence the leftover physical executor")
 	}
-	h.admit()
-	results := controller.State().Results
-	if h.holder() != string(root.UID) || len(results) != 1 || !strings.Contains(results[0].Error, "executor recovery unknown") {
-		t.Fatalf("unverified executor lost its hold: holder=%q results=%+v", h.holder(), results)
+	for _, kind := range []string{servingstate.OperationRemove, servingstate.OperationStop, servingstate.OperationDrain} {
+		operation := servingstate.Operation{Kind: kind, Node: spec.Instance.Node, PodUID: string(pod.UID), Instance: id}
+		if err := operations.ValidateOperationBinding(ctx, operation); err == nil {
+			t.Fatalf("ordinary serving %s admitted an unverified executor", kind)
+		}
 	}
-	if err := manager.store.client.Get(ctx, client.ObjectKeyFromObject(root), root); err != nil {
-		t.Fatal(err)
+	owned := servingstate.Operation{Kind: servingstate.OperationRemove, Node: spec.Instance.Node, PodUID: string(pod.UID)}
+	if err := operations.ValidateOperationBinding(ctx, owned); err == nil {
+		t.Fatal("ordinary serving Pod-only removal bypassed recovery")
 	}
-	if condition := apimeta.FindStatusCondition(root.Status.Conditions, "NodeReturned"); condition == nil ||
-		condition.Status != meta.ConditionFalse || !strings.Contains(condition.Message, "UnconfirmedInstance: executor recovery unknown") {
-		t.Fatalf("terminal session hid its held-node reason: %+v", root.Status.Conditions)
+	if err := controller.measurement.ValidateOperationBinding(ctx, owned); err != nil {
+		t.Fatalf("measurement-owned removal required native recovery: %v", err)
 	}
-	if _, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{}); err != nil {
-		t.Fatal("unverified executor was removed", err)
+	wrongNode := owned
+	wrongNode.Node.UID = "replacement-node"
+	if err := controller.measurement.ValidateOperationBinding(ctx, wrongNode); err == nil {
+		t.Fatal("measurement-owned removal admitted a changed Node UID")
+	}
+	wrongPod := owned
+	wrongPod.PodUID = "another-pod"
+	if err := controller.measurement.ValidateOperationBinding(ctx, wrongPod); err == nil {
+		t.Fatal("measurement-owned removal admitted a different Pod UID")
 	}
 	if _, err := operations.AdmittedNode(ctx, spec.Instance.Node); err != servingops.ErrNodeInMeasurement {
 		t.Fatalf("serving operation admitted to measurement pool: %v", err)
@@ -475,17 +491,9 @@ func TestHandBackFailedSessionAfterRestartWithMeasurementInstance(t *testing.T) 
 	if _, err := controller.measurement.AdmittedNode(ctx, spec.Instance.Node); err != nil {
 		t.Fatalf("measurement operation refused its held Node: %v", err)
 	}
-	if err := manager.observer.Refresh(ctx); err != nil {
-		t.Fatal(err)
-	}
-	physical := schedulerPhysicalState(id, controller.runtime.Instances())
-	if physical == nil || physical.RecoveryUnknown || !physical.NativeVerified || physical.Native == nil ||
-		!physical.Native.Ready || physical.Native.Metadata.Mode != "profiling" || len(physical.Native.Requests) != 0 {
-		t.Fatalf("fresh profiling executor did not release exact recovery: %+v issues=%+v", physical, manager.observer.Issues())
-	}
 	h.admit()
 	if h.holder() != "" {
-		t.Fatalf("verified failed session kept its taint: %+v", controller.State().Results)
+		t.Fatalf("failed session kept its taint without native verification: %+v", controller.State().Results)
 	}
 	if _, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("leftover measurement Pod survived hand-back: %v", err)
@@ -514,6 +522,26 @@ func TestHandBackFailedSessionAfterRestartWithMeasurementInstance(t *testing.T) 
 	})
 	if !completed {
 		t.Fatalf("hand-back did not complete: %+v", controller.State().Results)
+	}
+}
+
+func TestOwnedMeasurementRemovalCostDoesNotFailPhysicalResult(t *testing.T) {
+	started := time.Now().UTC()
+	record := servingops.OperationMeasurement{
+		Request: servingops.MeasurementRequest{Operation: servingstate.Operation{Kind: servingstate.OperationRemove, PodUID: "owned-pod"}},
+		Result: servingstate.OperationResult{
+			Status: servingstate.NativeOperationComplete, StartedAt: started, EndedAt: started.Add(time.Second),
+			Before: servingstate.OperationState{Reasons: []string{"executor recovery unknown"}},
+		},
+	}
+	if err := record.Judge(nil, nil); err != nil {
+		t.Fatalf("missing native cost proof failed physical removal: %v", err)
+	}
+	if record.Verdict != servingops.MeasurementInsufficient || !strings.Contains(record.Reason, "executor recovery unknown") {
+		t.Fatalf("missing native cost proof did not explain Insufficient: %+v", record)
+	}
+	if record.Result.Status != servingstate.NativeOperationComplete || record.Result.Error != "" || record.WallJoules != nil {
+		t.Fatalf("cost judgment changed physical result or invented energy: %+v", record)
 	}
 }
 
