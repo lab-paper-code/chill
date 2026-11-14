@@ -211,8 +211,8 @@ export function activeMeasurements(capture, epoch) {
   }
   function beoStatus(item, t) {
     const o = overlay.get(item.metadata.name)
-    if (!o.p) return { completedTrials: o.trials(t), conditions: [{ lastTransitionTime: seconds(epoch - 900_000), message: 'batch-energy-optimization measurements are in progress', observedGeneration: 1, reason: 'TrialInFlight', status: 'Unknown', type: 'MeasurementComplete' }], observedGeneration: 1, phase: 'Measuring' }
-    return { completedTrials: TRIALS * (o.p.measured.length + 1), conditions: [{ lastTransitionTime: o.p.at, message: 'batch-energy-optimization result is complete', observedGeneration: 1, reason: 'ResultWritten', status: 'True', type: 'MeasurementComplete' }],
+    if (!o.p) return { conditions: [{ lastTransitionTime: seconds(epoch - 900_000), message: 'batch-energy-optimization measurements are in progress', observedGeneration: 1, reason: 'TrialInFlight', status: 'Unknown', type: 'MeasurementComplete' }], observedGeneration: 1, phase: 'Measuring' }
+    return { conditions: [{ lastTransitionTime: o.p.at, message: 'batch-energy-optimization result is complete', observedGeneration: 1, reason: 'ResultWritten', status: 'True', type: 'MeasurementComplete' }],
       observedGeneration: 1, outcome: 'MinimumFound/SearchSpaceExhausted', phase: 'Complete',
       result: { key: `batch-energy-optimizations/${item.metadata.uid}/result.json`, schemaVersion: 'chill.dacs.io/batch-energy-optimization-result.v1alpha5', size: 11284, store: STORE } }
   }
@@ -337,7 +337,7 @@ export function activeMeasurements(capture, epoch) {
       const { item, status, assessment: a } = entry
       return { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationResult', readAt: iso(t),
         campaign: { namespace: ns, name, uid: item.metadata.uid, resourceVersion: item.metadata.resourceVersion, generation: 1, spec: item.spec, phase: status.phase, outcome: status.outcome,
-          completedTrials: 0, completedBatches: status.completedBatches, reason: status.conditions[0].message, conditions: status.conditions,
+          completedBatches: status.completedBatches, reason: status.conditions[0].message, conditions: status.conditions,
           storedResult: status.result ? { store: STORE, key: status.result.key, size: status.result.size } : null },
         assessment: a, resultRows: [],
         ...(status.result ? { resultFormat: 'Session', session: sessionView(item) } : {}) }
@@ -381,7 +381,7 @@ export function activeMeasurements(capture, epoch) {
       const name = item.metadata.name, o = overlay.get(name)
       const status = beoStatus(item, t)
       const campaign = { namespace: ns, name, uid: item.metadata.uid, resourceVersion: item.metadata.resourceVersion, generation: 1, spec: item.spec, phase: status.phase, ...(status.outcome ? { outcome: status.outcome } : {}),
-        completedTrials: status.completedTrials, conditions: status.conditions, storedResult: status.result ? { store: STORE, key: status.result.key, size: status.result.size } : null }
+        conditions: status.conditions, storedResult: status.result ? { store: STORE, key: status.result.key, size: status.result.size } : null }
       const readAt = iso(t)
       if (!o.p) return { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationResult', readAt, campaign,
         assessment: { ...beoAssessment(item), scope: { schedulerUsed: false, reused: false, facts: [] } }, resultRows: [] }

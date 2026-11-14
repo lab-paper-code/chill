@@ -13,7 +13,7 @@ import { currentRunCondition, runSpec } from "@/lib/measurement-coverage"
 import { requestPhase } from "@/lib/measurements-coverage-matrix"
 import { deviceClassLabel, executionPathLabel, powerModeLabel } from "@/lib/display-labels"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
-import { formatNumber, formatSeconds, msNumber } from "@/lib/format"
+import { formatNumber, msNumber } from "@/lib/format"
 import { measurementStatus } from "@/lib/status-labels"
 import type { CampaignResult, MeasurementFailure, MeasurementPlanSpec, ProfilingRun, ResultRow, RunsView } from "@/lib/read-types"
 import { SessionResultSection, SessionStatusSection, sessionSettingFields } from "./request-session"
@@ -80,8 +80,7 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
   const spec = campaign.spec
   const candidate = spec.state.candidate
   const uid = campaign.uid
-  const trials = campaign.completedTrials ?? 0
-  const completed = sessionRun ? { label: "완료 배치", value: `${campaign.completedBatches ?? 0}개` } : { label: "완료 회차", value: `${trials}개` }
+  const completed = { label: "완료 배치", value: `${campaign.completedBatches ?? 0}개` }
   const download = () => {
     const text = stringifySchedulerJSON({ apiVersion: "edge.dacs.io/v1alpha1", kind: "BatchEnergyOptimization", metadata: { name, namespace }, spec }, 2)
     const url = URL.createObjectURL(new Blob([text], { type: "application/json" }))
@@ -171,13 +170,7 @@ export function MeasurementRequestDetailScreen({ name }: { name: string }) {
             { label: "장치", value: spec.state.targetNode },
             { label: "전력 모드", value: powerModeLabel(candidate.powerMode) },
             { label: "실행 경로", value: executionPathLabel(candidate.executionPath) },
-            ...(spec.session ? sessionSettingFields(spec.session) : [
-              { label: "배치별 반복", value: `${spec.trialsPerBatch}회` },
-              { label: "재시도 한도", value: `${spec.retryLimit}회` },
-              { label: "실행 측정", value: formatSeconds(spec.activeProtocol.durationSeconds) },
-              { label: "유휴 측정", value: formatSeconds(spec.idleProtocol.durationSeconds) },
-              { label: "신뢰 수준", value: spec.pointPolicy?.confidenceLevel ? `${Number(spec.pointPolicy.confidenceLevel) * 100}%` : null },
-            ]),
+            ...(spec.session ? sessionSettingFields(spec.session) : []),
             { label: "예열", value: `${spec.activeProtocol.warmupIterations}회` },
             ...(plan ? [{ label: "생성", value: <TimeText at={plan.metadata.creationTimestamp} mode="detail" /> }] : []),
           ]} />

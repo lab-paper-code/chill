@@ -2,15 +2,12 @@
 
 import * as React from "react"
 import { useSearchParams } from "next/navigation"
-import { ChevronDown } from "lucide-react"
 import { Button, Fields, FormActions, FormSection, LeaveGuard, Page, PageHeader, QueryBoundary, RawDialog, StatusBadge } from "@/components/kit"
 import { InputBlock } from "@/components/custom/blocks/InputBlock"
 import { SelectBlock } from "@/components/custom/blocks/SelectBlock"
 import { Stepper } from "@/components/custom/blocks/StepperBlock"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/custom/blocks/CollapsibleBlock"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
-import { cn } from "@/lib/utils"
 import { useChillQueries, useChillQuery } from "@/lib/client"
 import type { ApiError } from "@/lib/client-transport"
 import type { DatasetResource, ModelList, PreprocessorResource, WorkloadSummary } from "@/lib/domain"
@@ -26,8 +23,8 @@ import { useMeasurementDocumentSubmission } from "@/hooks/use-measurement-submis
 import { ChoiceGroup, PreflightSection, UnknownOutcome, allLoaded, suffix, useSubmitToast } from "./request-shared"
 
 const stepTitles = ["대상", "조건", "검토"] as const
-const stepOf: Record<Step, number> = { workload: 0, device: 0, run: 0, size: 1, advanced: 1, name: 2, review: 2 }
-const stepChecks: Step[][] = [["workload", "device", "run"], ["size", "advanced"], ["name"]]
+const stepOf: Record<Step, number> = { workload: 0, device: 0, run: 0, advanced: 1, name: 2, review: 2 }
+const stepChecks: Step[][] = [["workload", "device", "run"], ["advanced"], ["name"]]
 
 type Props = { namespace: string; bar: React.ReactNode; onDirty: (dirty: boolean) => void }
 
@@ -79,9 +76,8 @@ function initialDraft(context: Context, params: URLSearchParams, namespace: stri
     draft = started.draft
     step = Math.min(stepOf[steps[started.index]], 1)
   }
-  // The request validator accepts exactly three trials per batch; there is no choice to offer.
   // A prefilled target fixes the model; only its services are offered.
-  return { draft: updateDraft({ ...draft, trials: 3 }, {}, context, true), step, notes, model: target?.model ?? "" }
+  return { draft: updateDraft(draft, {}, context, true), step, notes, model: target?.model ?? "" }
 }
 
 function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetchPlans, plansFetching }: Props & {
@@ -94,7 +90,6 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
   const [d, setD] = React.useState(initial.draft)
   const [step, setStep] = React.useState(initial.step)
   const [shown, setShown] = React.useState<boolean[]>([false, false, false])
-  const [advancedOpen, setAdvancedOpen] = React.useState(false)
   const [raw, setRaw] = React.useState(false)
   const v = view(d, context)
   const node = v.cls?.nodes.find(item => item.name === d.node)
@@ -115,7 +110,6 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
       if (!bad) return
       setStep(stepOf[bad])
       setShown(current => current.map((value, index) => value || index === stepOf[bad]))
-      if (bad === "advanced") setAdvancedOpen(true)
     },
     onSubmit: () => setD(current => ({ ...current, name: v.name })),
   })
@@ -137,7 +131,6 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
       if (bad) {
         setStep(index)
         setShown(current => current.map((value, at) => value || at === index))
-        if (bad === "advanced") setAdvancedOpen(true)
         return
       }
     }
@@ -152,14 +145,9 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
   const field = (key: keyof Advanced, label: string, unit?: string, hint?: string) => {
     const value = values[key]
     const issue = show ? advancedIssue(values, key) : ""
-    return key === "utilizations"
-      ? <InputBlock key={key} label={label} inputSize="sm" inputMode="decimal" placeholder="0.2, 0.5, 0.8" value={values.utilizations} error={issue} disabled={locked} onChange={event => setValues({ ...values, utilizations: event.target.value })} />
-      : <InputBlock key={key} label={label} inputSize="sm" type="number" inputMode="decimal" value={typeof value === "number" && !Number.isNaN(value) ? value : ""} error={issue} disabled={locked} helperText={hint}
-          rightIcon={unit ? suffix(unit) : undefined} onChange={event => setValues({ ...values, [key]: event.target.valueAsNumber })} />
+    return <InputBlock key={key} label={label} inputSize="sm" type="number" inputMode="decimal" value={typeof value === "number" && !Number.isNaN(value) ? value : ""} error={issue} disabled={locked} helperText={hint}
+      rightIcon={unit ? suffix(unit) : undefined} onChange={event => setValues({ ...values, [key]: event.target.valueAsNumber })} />
   }
-  // The previous method's fields the schema still requires; a session does not read them.
-  const legacyKeys: (keyof Advanced)[] = ["activeDuration", "activeWindow", "activeInterval", "activeTimeout", "settling", "idleDuration", "idleWindow", "idleInterval", "idleTimeout", "retryLimit", "utilizations", "sparseMeanGap", "phaseDuration", "postLoadDuration"]
-  const advancedErrors = legacyKeys.filter(key => advancedIssue(values, key)).length
 
   const supportBadge = selectedSupport
     ? <StatusBadge tone={selectedSupport.state === "candidate" ? "ok" : selectedSupport.state === "unsupported" ? "fail" : "warn"} label={selectedSupport.state === "candidate" ? "지원" : selectedSupport.state === "unsupported" ? "지원 안 함" : "미확인"} reason={selectedSupport.reason || undefined} />
@@ -251,26 +239,6 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
             {field("maximumGap", "최대 공백", "ms", "이보다 긴 기록 공백은 보정 대상")}
           </div>
         </FormSection>
-        <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="rounded-xl border border-border bg-card">
-          <CollapsibleTrigger className="flex h-12 w-full items-center gap-2 px-5 text-sm font-semibold" title="스키마가 아직 요구해 함께 보내는 값, 세션 측정은 쓰지 않음">
-            이전 측정 방식 값
-            {show && advancedErrors > 0 && <StatusBadge tone="fail" label={`확인 ${advancedErrors}`} />}
-            <ChevronDown className={cn("ml-auto size-4 text-muted-foreground transition-transform", advancedOpen && "rotate-180")} aria-hidden="true" />
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="grid gap-6 border-t border-border p-5" inert={!advancedOpen}>
-              <AdvancedGroup title="실행 전력 기록">
-                {field("activeDuration", "실행 측정", "초")}{field("activeWindow", "기록 시간", "초")}{field("activeInterval", "기록 간격", "ms")}{field("activeTimeout", "대기 한도", "ms")}
-              </AdvancedGroup>
-              <AdvancedGroup title="유휴 전력 기록">
-                {field("settling", "안정 시간", "초")}{field("idleDuration", "유휴 측정", "초")}{field("idleWindow", "기록 시간", "초")}{field("idleInterval", "기록 간격", "ms")}{field("idleTimeout", "대기 한도", "ms")}
-              </AdvancedGroup>
-              <AdvancedGroup title="운영점">
-                {field("utilizations", "이용률")}{field("sparseMeanGap", "희소 요청 간격", "ms")}{field("phaseDuration", "운영점별 측정", "초")}{field("postLoadDuration", "부하 후 기록", "초")}{field("retryLimit", "재시도 한도", "회")}
-              </AdvancedGroup>
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
       </>}
 
       {step === 2 && <>
@@ -307,14 +275,5 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
       </FormActions>
       <RawDialog open={raw} onOpenChange={setRaw} value={manifest(d, context, namespace)} filename={`${v.name || "measurement-request"}.json`} />
     </Page>
-  )
-}
-
-function AdvancedGroup({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="grid gap-3">
-      <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{children}</div>
-    </section>
   )
 }

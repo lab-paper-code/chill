@@ -87,7 +87,7 @@ export function measurementRequests({ capture, startedAt, ns, nodeUID, measure }
       Complete: ['True', 'ResultWritten', 'batch-energy-optimization result is complete'] }[phase]
     const item = { apiVersion: GROUP, kind: 'BatchEnergyOptimization',
       metadata: { name, namespace: ns, uid, resourceVersion: String(370000000 + parseInt(uid.slice(0, 5), 16)), generation: 1, creationTimestamp: seconds(created), annotations: { 'chill.dacs.io/coverage-cell': cell?.id ?? '' } },
-      spec, status: { completedTrials: 0, observedGeneration: 1, phase, ...(phase === 'Failed' ? { outcome: 'FatalFailure' } : {}),
+      spec, status: { observedGeneration: 1, phase, ...(phase === 'Failed' ? { outcome: 'FatalFailure' } : {}),
         conditions: [{ lastTransitionTime: seconds(phase === 'Measuring' ? Math.min(startedAt, created + 600_000) : ended), message: condition[2], observedGeneration: 1, reason: condition[1], status: condition[0], type: 'MeasurementComplete' }] } }
     item.assessment = requestAssessment(item, { reasons: [{ code: 'AcceptedEvidenceUnavailable', message: 'No verified catalog profile for this request identity', sourceIds: [id] }] })
     summaries.set(name, item); plains.set(name, item)
@@ -252,7 +252,7 @@ export function measurementRequests({ capture, startedAt, ns, nodeUID, measure }
       if (!own.added.some(row => row.metadata.name === name)) { const raw = capturedRaw(`${NS}batch-energy-optimizations/${name}/result`); if (raw) return [raw[0], { ...raw[1], readAt: new Date(t).toISOString() }] }
       const st = request.status ?? {}, ref = st.result
       const campaign = { namespace: ns, name, uid: request.metadata.uid, resourceVersion: request.metadata.resourceVersion, generation: request.metadata.generation ?? 1, spec: request.spec,
-        ...(st.phase ? { phase: st.phase } : {}), ...(st.outcome ? { outcome: st.outcome } : {}), completedTrials: st.completedTrials ?? 0, ...(st.conditions?.length ? { conditions: st.conditions } : {}),
+        ...(st.phase ? { phase: st.phase } : {}), ...(st.outcome ? { outcome: st.outcome } : {}), ...(st.conditions?.length ? { conditions: st.conditions } : {}),
         storedResult: ref ? { store: ref.store, key: ref.key, size: ref.size } : null }
       const listsFailedRuns = st.phase === 'Failed' || (st.phase === 'Complete' && st.outcome === 'BatchDiscoveryComplete')
       const head = { apiVersion: API, kind: 'BatchEnergyOptimizationResult', readAt: new Date(t).toISOString(), campaign }

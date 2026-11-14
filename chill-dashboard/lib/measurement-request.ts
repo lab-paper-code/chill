@@ -28,14 +28,12 @@ export function requestDefaults(condition:RequestCondition, plans:MeasurementPla
     const source=newest.find(plan=>plan.status?.phase==="Complete"&&!!condition.model&&plan.spec.state.candidate.modelSpec===condition.model)??newest.find(plan=>plan.status?.phase==="Complete"&&!!condition.path&&plan.spec.state.candidate.executionPath===condition.path)
     if(!source)return null
     const spec=source.spec
-    return {exact:false,source:`기존 요청 ${source.metadata.name} (${spec.state.candidate.deviceClass}, ${spec.state.candidate.modelSpec===condition.model?"같은 모델":"같은 실행 경로"}의 최근 성공 측정 방식)`,spec:{...spec,state:{...spec.state,targetNode:"",candidate:{...spec.state.candidate,preprocessor:spec.state.candidate.modelSpec===condition.model?spec.state.candidate.preprocessor:""}},activeProtocol:{...spec.activeProtocol,workload:undefined,...(spec.state.candidate.modelSpec===condition.model?{}:{dataset:undefined})},trialsPerBatch:3}}
+    return {exact:false,source:`기존 요청 ${source.metadata.name} (${spec.state.candidate.deviceClass}, ${spec.state.candidate.modelSpec===condition.model?"같은 모델":"같은 실행 경로"}의 최근 성공 측정 방식)`,spec:{...spec,state:{...spec.state,targetNode:"",candidate:{...spec.state.candidate,preprocessor:spec.state.candidate.modelSpec===condition.model?spec.state.candidate.preprocessor:""}},activeProtocol:{...spec.activeProtocol,workload:undefined,...(spec.state.candidate.modelSpec===condition.model?{}:{dataset:undefined})}}}
   }
-  const c=profile.condition,active=c.activeProtocol,idle=c.idleProtocol
-  return {exact:true,source:`측정 프로파일 ${profile.id} (동일 조건; 인프라 재시도 한도는 직접 지정)`,spec:{
+  const c=profile.condition,active=c.activeProtocol
+  return {exact:true,source:`측정 프로파일 ${profile.id} (동일 조건)`,spec:{
     state:{candidate:{modelSpec:c.logicalModel,deviceClass:c.deviceClass,executionPath:c.artifact.executionPath,powerMode:c.powerMode,preprocessor:c.preprocessor.name},targetNode:profile.nodeName},
-    activeProtocol:{warmupIterations:active.warmupIterations,durationSeconds:active.durationSeconds,dataset:active.dataset?.name,...(active.operatingPoints?{operatingPoints:active.operatingPoints}:{}),metricObservation:{intervalMilliseconds:active.metricIntervalMilliseconds,timeoutMilliseconds:active.metricTimeoutMilliseconds,durationSeconds:active.metricDurationSeconds}},
-    idleProtocol:{settlingDurationSeconds:idle.settlingDurationSeconds,durationSeconds:idle.durationSeconds,metricObservation:{intervalMilliseconds:idle.metricIntervalMilliseconds,timeoutMilliseconds:idle.metricTimeoutMilliseconds,durationSeconds:idle.metricDurationSeconds}},
-    trialsPerBatch:3,retryLimit:NaN,
+    activeProtocol:{warmupIterations:active.warmupIterations,dataset:active.dataset?.name},
   }}
 }
 
@@ -69,39 +67,22 @@ export function requestInputs(model:string,artifact:string,preprocessor:string,d
 
 export type RequestRejectionGuidance={target:string;fields:string[];message:string;constraints:[string,string][]}
 export function requestRejectionGuidance(reason:string):RequestRejectionGuidance|null {
-  if(/model-loaded idle measurement protocol is invalid|curve plan idle.*protocol is invalid/i.test(reason))return {target:"measurement-settling",fields:["settling"],message:"유휴 측정 조건 확인",constraints:[["안정 시간 (s)","≥ 1"],["자동 유휴 예열 (회)","0"],["자동 유휴 데이터셋","없음"],["서버 유휴 배치 (ORT)","1"]]}
-  if(/invalid or under-covering metric observation request|metric.*(?:interval|timeout|duration)/i.test(reason))return {target:"measurement-activeWindow",fields:["activeWindow","activeTimeout","idleWindow","idleTimeout"],message:"전력 기록 조건 확인",constraints:[["전력 기록 시간","≥ 측정 시간"],["대기 한도","< 기록 간격"],["입력값","양의 정수"]]}
-  if(/active measurement cannot contain settlingDurationSeconds|curve plan active.*protocol is invalid/i.test(reason))return {target:"measurement-activeDuration",fields:["activeDuration","warmup"],message:"실행 측정 조건 확인",constraints:[["측정 시간 (s)","≥ 1"],["예열 (회)","≥ 0"],["실행 중 안정 시간","미전송"]]}
   if(/batch.*(?:maxBatchSize|positive|valid|supported)|planned batch size/i.test(reason))return {target:"measurement-batches",fields:[],message:"처리 건수 확인",constraints:[["처리 건수","≥ 1, ≤ 경로 최대 배치"],["모델 선언 배치","전체 선택"]]}
   if(/dataset|preprocessor/i.test(reason))return {target:"request-input-guidance",fields:[],message:"입력 연결 확인",constraints:[["전처리기","모델 파일 연결"],["데이터셋","입력 이름과 형식 일치, 크기 상한 이하"],["UID 또는 이미지 누락","카탈로그 등록 수정"]]}
   if(/power.?mode|target.?node|candidate.*compatible|executionPath/i.test(reason))return {target:"measurement-device",fields:[],message:"실행 장치 조건 확인",constraints:[["실행 장치","준비 상태"],["전력 모드","장치 등록값"],["실행 경로","호환 선언"]]}
   return null
 }
-export const steps = ["workload", "device", "run", "size", "advanced", "name", "review"] as const
+export const steps = ["workload", "device", "run", "advanced", "name", "review"] as const
 export type Step = typeof steps[number]
 const dns1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/
 
-// Session settings are what ChillServer measures with; the other keys fill the previous method's fields the schema still requires.
-export type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number; utilizations:string; sparseMeanGap:number; phaseDuration:number; postLoadDuration:number; requestLifetime:number; deliveryMargin:number; framedDecodedRequestUpperBytes:number
+export type Advanced = { warmup: number; requestLifetime:number; deliveryMargin:number; framedDecodedRequestUpperBytes:number
   meterLag:number; minimumPowerWindow:number; midLevelRatio:number; sparseGap:number; levelLimit:number; postLoadWindow:number; confidence:number; observationInterval:number; observationTimeout:number; maximumOperation:number; maximumGap:number }
-export const advancedFields: [key: keyof Omit<Advanced,"utilizations">, label: string, min: number, max?:number, step?:number|"any"][] = [
+export const advancedFields: [key: keyof Advanced, label: string, min: number, max?:number, step?:number|"any"][] = [
   ["warmup", "측정 전 예열 횟수", 0],
-  ["activeDuration", "측정 시간 (초)", 1],
-  ["activeWindow", "전력 기록 시간 (초)", 1],
-  ["activeInterval", "전력 기록 간격 (밀리초)", 1],
-  ["activeTimeout", "전력 기록 대기 한도 (밀리초)", 1],
-  ["sparseMeanGap", "희소 요청 평균 간격 (밀리초)", 0, Number.MAX_VALUE, "any"],
-  ["phaseDuration", "운영점별 측정 시간 (초)", 1],
-  ["postLoadDuration", "부하 종료 후 전력 기록 시간 (초)", 1],
   ["requestLifetime", "요청 수명 (초)", 1],
   ["deliveryMargin", "응답 전달 여유 (밀리초)", 1],
   ["framedDecodedRequestUpperBytes", "디코딩된 요청 프레임 상한 (바이트)", 1, Number.MAX_SAFE_INTEGER],
-  ["settling", "쉬는 상태 안정 시간 (초)", 1],
-  ["idleDuration", "쉬는 상태 측정 시간 (초)", 1],
-  ["idleWindow", "쉬는 상태 전력 기록 시간 (초)", 1],
-  ["idleInterval", "쉬는 상태 전력 기록 간격 (밀리초)", 1],
-  ["idleTimeout", "쉬는 상태 전력 기록 대기 한도 (밀리초)", 1],
-  ["retryLimit", "일시적 인프라 장애 재시도 한도", 0],
   ["meterLag", "전력계 지연 (초)", 0, 3600, "any"],
   ["minimumPowerWindow", "최소 전력 관측 (초)", 0, 3600, "any"],
   ["midLevelRatio", "중간 수준 비율", 0, 1, "any"],
@@ -116,14 +97,13 @@ export const advancedFields: [key: keyof Omit<Advanced,"utilizations">, label: s
 ]
 export type Protocol = { values: Advanced; from: string | null; spec?:MeasurementPlanSpec; target?:string; copied?:boolean }
 // model, preprocessor and dataset come from the chosen Workload's spec refs (or a copied plan); the API takes catalog names.
-export type Draft = { workload: string; model: string; preprocessor: string; dataset: string; explicitPreprocessor?:boolean; explicitDataset?:boolean; deviceClass: string; node: string; path: string; powerMode: string; trials: number | null; protocol: Protocol | null; name: string | null }
+export type Draft = { workload: string; model: string; preprocessor: string; dataset: string; explicitPreprocessor?:boolean; explicitDataset?:boolean; deviceClass: string; node: string; path: string; powerMode: string; protocol: Protocol | null; name: string | null }
 export type Context = { models: ModelResource[]; workloads: WorkloadSummary[]; classes: InventoryClass[]; plans: MeasurementPlan[]; preprocessors: PreprocessorResource[]; datasets: DatasetResource[]; profiles:ProfilesView["profiles"]; prefill?:boolean }
 
-export const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", trials: null, protocol: null, name: null }
+export const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", protocol: null, name: null }
 // config/samples/profiling/edge_v1alpha1_batchenergyoptimization.yaml: an operator can submit without typing any value.
 export const defaultAdvanced: Advanced = {
-  warmup: 20, activeDuration: 180, activeWindow: 181, activeInterval: 1000, activeTimeout: 500, settling: 60, idleDuration: 30, idleWindow: 31, idleInterval: 1000, idleTimeout: 500, retryLimit: 2,
-  utilizations: "0.25, 0.5, 0.75", sparseMeanGap: 1000, phaseDuration: 30, postLoadDuration: 30, requestLifetime: 30, deliveryMargin: 100, framedDecodedRequestUpperBytes: 2097152,
+  warmup: 20, requestLifetime: 30, deliveryMargin: 100, framedDecodedRequestUpperBytes: 2097152,
   meterLag: 3, minimumPowerWindow: 15, midLevelRatio: 0.25, sparseGap: 1, levelLimit: 300, postLoadWindow: 60, confidence: 0.95,
   observationInterval: 100, observationTimeout: 80, maximumOperation: 600, maximumGap: 500,
 }
@@ -132,17 +112,11 @@ export const defaultTiming: MeasurementTiming = { changeIntervalP95Seconds: "1",
 const positive = (value: number | undefined, fallback: number) => value !== undefined && value > 0 ? value : fallback
 const finite = (value: number | undefined, fallback: number) => value !== undefined && Number.isFinite(value) ? value : fallback
 function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
-  const active = spec.activeProtocol, idle = spec.idleProtocol, points = active.operatingPoints, session = spec.session, d = defaultAdvanced
+  const session = spec.session, d = defaultAdvanced
   return {
-    warmup: finite(active.warmupIterations, d.warmup), activeDuration: positive(active.durationSeconds, d.activeDuration), activeWindow: positive(active.metricObservation?.durationSeconds, d.activeWindow),
-    activeInterval: positive(active.metricObservation?.intervalMilliseconds, d.activeInterval), activeTimeout: positive(active.metricObservation?.timeoutMilliseconds, d.activeTimeout),
-    utilizations: points?.utilizations?.length ? points.utilizations.join(", ") : d.utilizations, sparseMeanGap: positive(points?.sparseMeanGapMilliseconds, d.sparseMeanGap),
-    phaseDuration: positive(points?.phaseDurationSeconds, d.phaseDuration), postLoadDuration: positive(points?.postLoadDurationSeconds, d.postLoadDuration),
-    requestLifetime: positive(session?.requestLifetimeSeconds ?? points?.requestLifetimeSeconds, d.requestLifetime), deliveryMargin: positive(session?.deliveryMarginMilliseconds ?? points?.deliveryMarginMilliseconds, d.deliveryMargin),
-    framedDecodedRequestUpperBytes: positive(session?.framedDecodedRequestUpperBytes ?? points?.framedDecodedRequestUpperBytes, d.framedDecodedRequestUpperBytes),
-    settling: positive(idle.settlingDurationSeconds, d.settling), idleDuration: positive(idle.durationSeconds, d.idleDuration), idleWindow: positive(idle.metricObservation?.durationSeconds, d.idleWindow),
-    idleInterval: positive(idle.metricObservation?.intervalMilliseconds, d.idleInterval), idleTimeout: positive(idle.metricObservation?.timeoutMilliseconds, d.idleTimeout),
-    retryLimit: finite(spec.retryLimit, d.retryLimit),
+    warmup: finite(spec.activeProtocol.warmupIterations, d.warmup),
+    requestLifetime: positive(session?.requestLifetimeSeconds, d.requestLifetime), deliveryMargin: positive(session?.deliveryMarginMilliseconds, d.deliveryMargin),
+    framedDecodedRequestUpperBytes: positive(session?.framedDecodedRequestUpperBytes, d.framedDecodedRequestUpperBytes),
     meterLag: finite(session?.meterLagSeconds, d.meterLag), minimumPowerWindow: positive(session?.minimumPowerWindowSeconds, d.minimumPowerWindow), midLevelRatio: positive(session?.midLevelRatio, d.midLevelRatio),
     sparseGap: positive(session?.sparseMeanGapSeconds, d.sparseGap), levelLimit: positive(session?.levelDurationLimitSeconds, d.levelLimit), postLoadWindow: positive(session?.postLoadWindowSeconds, d.postLoadWindow),
     confidence: positive(Number(session?.confidenceLevel), d.confidence), observationInterval: positive(session?.observation.intervalMilliseconds, d.observationInterval),
@@ -159,7 +133,7 @@ export function fillDefaults(draft:Draft,context:Context,inherited=false):Draft 
   const defaults=requestDefaults(filled,context.plans,context.profiles)
   if(!defaults)return filled
   const spec=defaults.spec
-  return {...filled,node:filled.node||spec.state.targetNode,trials:filled.trials??spec.trialsPerBatch,protocol:{values:copyAdvanced(spec),from:defaults.source,spec,target:JSON.stringify([filled.model,filled.deviceClass,filled.node||spec.state.targetNode,filled.path,filled.powerMode])}}
+  return {...filled,node:filled.node||spec.state.targetNode,protocol:{values:copyAdvanced(spec),from:defaults.source,spec,target:JSON.stringify([filled.model,filled.deviceClass,filled.node||spec.state.targetNode,filled.path,filled.powerMode])}}
 }
 // Only an explicit Workload choice can bind a changed input tuple.
 export function updateDraft(current:Draft,patch:Partial<Draft>,context:Context,inherited=false):Draft {
@@ -167,21 +141,18 @@ export function updateDraft(current:Draft,patch:Partial<Draft>,context:Context,i
   if(next.model===current.model&&next.preprocessor===current.preprocessor&&next.dataset===current.dataset)return next
   return {...next,workload:patch.workload||"",protocol:next.protocol?.spec?{...next.protocol,spec:{...next.protocol.spec,activeProtocol:{...next.protocol.spec.activeProtocol,workload:undefined}}}:next.protocol}
 }
-const exclusiveZero: Partial<Record<keyof Advanced, true>> = { sparseMeanGap: true, minimumPowerWindow: true, midLevelRatio: true, sparseGap: true, levelLimit: true, postLoadWindow: true }
+const exclusiveZero: Partial<Record<keyof Advanced, true>> = { minimumPowerWindow: true, midLevelRatio: true, sparseGap: true, levelLimit: true, postLoadWindow: true }
 /** Short inline error of one protocol value. */
 export function advancedIssue(values: Advanced, key: keyof Advanced): string {
-  if (key === "utilizations") return values.utilizations.split(",").some(item => !item.trim() || !(Number(item) > 0 && Number(item) < 1)) ? "0과 1 사이 값" : ""
   const field = advancedFields.find(([name]) => name === key)
   if (!field) return ""
   const [, , min, max = 2147483647, step = 1] = field
   const value = values[key]
-  const upper = key === "retryLimit" ? 10 : max
   if (key === "confidence" && !(value >= 0.5 && value < 1)) return "0.5 이상 1 미만"
   if (key === "midLevelRatio" && !(value > 0 && value < 1)) return "0과 1 사이 값"
-  if (!Number.isFinite(value) || (step !== "any" && !Number.isInteger(value)) || value < min || (exclusiveZero[key] && value === 0) || value > upper)
-    return exclusiveZero[key] ? "0보다 큰 값" : key === "retryLimit" ? "0~10 정수" : step === "any" ? `${min} 이상` : `${min} 이상 정수`
-  if ((key === "activeTimeout" && value >= values.activeInterval) || (key === "idleTimeout" && value >= values.idleInterval) || (key === "observationTimeout" && value >= values.observationInterval)) return "기록 간격보다 짧게"
-  if ((key === "activeWindow" && value < values.activeDuration) || (key === "idleWindow" && value < values.idleDuration)) return "측정 시간 이상"
+  if (!Number.isFinite(value) || (step !== "any" && !Number.isInteger(value)) || value < min || (exclusiveZero[key] && value === 0) || value > max)
+    return exclusiveZero[key] ? "0보다 큰 값" : step === "any" ? `${min} 이상` : `${min} 이상 정수`
+  if (key === "observationTimeout" && value >= values.observationInterval) return "기록 간격보다 짧게"
   if (key === "levelLimit" && value <= values.meterLag + values.minimumPowerWindow) return "지연과 최소 관측의 합보다 길게"
   if (key === "deliveryMargin" && value >= values.requestLifetime * 1000) return "요청 수명보다 짧게"
   return ""
@@ -189,7 +160,7 @@ export function advancedIssue(values: Advanced, key: keyof Advanced): string {
 function advancedProblem(values: Advanced) {
   const key = (Object.keys(defaultAdvanced) as (keyof Advanced)[]).find(key => advancedIssue(values, key))
   if (!key) return ""
-  const label = key === "utilizations" ? "운영점 이용률" : advancedFields.find(([name]) => name === key)![1]
+  const label = advancedFields.find(([name]) => name === key)![1]
   return `"${label}": ${advancedIssue(values, key)}`
 }
 export const nodeReason = (node: InventoryNode) => node.ready !== "True" ? "준비 안 됨" : node.schedulingDisabled ? "새 작업 차단됨" : ""
@@ -207,7 +178,6 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
   const preprocessor=preprocessors.find(item=>item.metadata.name===d.preprocessor)
   const dataset=datasets.find(item=>item.metadata.name===d.dataset)
   const protocol: Protocol = d.protocol ?? { values: defaultAdvanced, from: null }
-  const trials = d.trials ?? 3
   const powerMode = cls?.powerModes.length === 1 ? cls.powerModes[0].name : d.powerMode
   const taken = new Set(plans.map(p => p.metadata.name))
   const name = d.name ?? (model && node && path ? measurementRequestName({...d,powerMode}, taken) : "")
@@ -222,9 +192,6 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
         if (!model || !cls || !path || pathReason(model, path, cls)) return "실행 경로 선택 필요"
         if (!cls.powerModes.length) return "등록된 전력 모드가 없는 장치"
         return cls.powerModes.some(m => m.name === powerMode) ? "" : "전력 모드 선택 필요"
-      case "size":
-        if (trials !== 3) return "반복 횟수는 3번"
-        return ""
       case "advanced": return advancedProblem(protocol.values)
       case "name":
         if (!name) return "이름 필요"
@@ -233,19 +200,14 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
       case "review": return ""
     }
   }
-  return { model, cls, path, protocol, trials, powerMode, taken, name, problem }
+  return { model, cls, path, protocol, powerMode, taken, name, problem }
 }
 export function manifest(d: Draft, context: Context, namespace: string) {
   const v = view(d, context)
   const p = v.protocol.values
-  const activeProtocol = v.protocol.spec?.activeProtocol ?? {}
   const spec: MeasurementPlanSpec & {activeProtocol:ActiveProtocol} = {
     state: { candidate: { modelSpec: d.model, preprocessor: d.preprocessor, deviceClass: d.deviceClass, executionPath: d.path, powerMode: v.powerMode }, targetNode: d.node },
-    activeProtocol: { ...activeProtocol, workload: d.workload, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, operatingPoints:{utilizations:p.utilizations.split(",").map(Number),sparseMeanGapMilliseconds:p.sparseMeanGap,phaseDurationSeconds:p.phaseDuration,postLoadDurationSeconds:p.postLoadDuration,requestLifetimeSeconds:p.requestLifetime,deliveryMarginMilliseconds:p.deliveryMargin,framedDecodedRequestUpperBytes:p.framedDecodedRequestUpperBytes}, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
-    idleProtocol: { ...v.protocol.spec?.idleProtocol, settlingDurationSeconds: p.settling, durationSeconds: p.idleDuration, metricObservation: { intervalMilliseconds: p.idleInterval, timeoutMilliseconds: p.idleTimeout, durationSeconds: p.idleWindow } },
-    trialsPerBatch: v.trials,
-    retryLimit: p.retryLimit,
-    ...(v.protocol.spec?.pointPolicy?{pointPolicy:v.protocol.spec.pointPolicy}:{}),
+    activeProtocol: { workload: d.workload, warmupIterations: p.warmup, dataset: d.dataset },
     session: {
       meterLagSeconds: p.meterLag, minimumPowerWindowSeconds: p.minimumPowerWindow, midLevelRatio: p.midLevelRatio, sparseMeanGapSeconds: p.sparseGap,
       levelDurationLimitSeconds: p.levelLimit, postLoadWindowSeconds: p.postLoadWindow, confidenceLevel: String(p.confidence),
@@ -264,7 +226,7 @@ export function begin(from: string | null, context: Context) {
   const s = source.spec
   // A copied name is a selection only while that Workload is still one of the choices.
   const workload = context.workloads.some(item => item.desired.metadata.name === s.activeProtocol.workload) ? s.activeProtocol.workload! : ""
-  const draft: Draft = { workload, model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, trials: s.trialsPerBatch, protocol: { values: copyAdvanced(s), from: source.metadata.name, spec:s, copied:true }, name: null }
+  const draft: Draft = { workload, model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, protocol: { values: copyAdvanced(s), from: source.metadata.name, spec:s, copied:true }, name: null }
   const v = view(draft, context)
   const open = steps.findIndex(step => step !== "name" && step !== "review" && v.problem(step))
   return { draft, index: open < 0 ? steps.indexOf("name") : open, error: open < 0 ? "" : v.problem(steps[open]), copied: true }

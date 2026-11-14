@@ -35,7 +35,7 @@ const columns: Column<MeasurementPlan>[] = [
   { key: "status", header: "상태", cell: p => <RequestStatus plan={p} />, sortValue: p => requestStatus(p).label, width: "9rem" },
   {
     key: "batches", header: "완료 배치", unit: "개", numeric: true, cell: p => (p.spec.session ? p.status?.completedBatches ?? 0 : null), sortValue: p => p.status?.completedBatches,
-    missing: p => `이전 방식 요청, 완료 회차 ${p.status?.completedTrials ?? 0}개`, width: "8rem",
+    missing: () => "이전 방식 요청", width: "8rem",
   },
   { key: "created", header: "생성", cell: p => <TimeText at={p.metadata.creationTimestamp} mode="list" />, sortValue: p => Date.parse(p.metadata.creationTimestamp), width: "8.5rem" },
 ]
