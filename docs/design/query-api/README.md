@@ -21,12 +21,8 @@ ChillServer 중계는 원 사용자 bearer, TokenReview/SAR, namespace, 전달�
 중계가 backend 장애를 측정 실패로 바꾸거나 Kubernetes로 본문을 수선하지 않는다.
 기존 `ConsoleUnavailable`/`ConsoleTimeout`과 wire API version은 공개 계약이다.
 
-활성 preflight는 gateway load-origin resolver를 사용한다. Query의 direct reader는
-cluster-scoped ChillSystem과 release namespace의 gateway Pods를 읽는다.
-이 권한은 Evidence Store 또는 Profiler 활성화와 별개다.
-
-캠페인 통계 adapter는 shared campaign evidence의 `LoadPlan`과 `ReadTrials`로
-동결 계획과 완료 Run을 읽는다. 통계, 빈 입력과 quality 해석은 Query 정책이다.
+Preflight는 요청이 세션으로 풀리는지와 계획한 배치 크기, 최소 표본 수, SLO 분위수를
+답한다. 세션은 대상 Node에서 직접 측정하므로 카탈로그나 요청 겹침을 보고하지 않는다.
 `internal/queryapi/**`는 Serving을 import하지 않으며 조립점이 catalog를 변환한다.
 
 ## Snapshot과 실행 조건
@@ -40,23 +36,22 @@ configVersion을 함께 사용한다. Coverage는 최신 reporting snapshot을 �
 중간 HTTP에 싣지 않는다. namespace cache는 30초 fresh, 최대 5분 stale이다.
 분리 프로세스만으로 serving 간섭 부재나 성능 수용을 주장하지 않는다.
 
-Profile variant와 preflight는 Serving과 같은
+Profile variant는 Serving과 같은
 `profilederivation.PerformanceCondition`을 쓴다. Runtime image/version과 실제
 artifact/preprocessor, 입력 집단, Node/backend, memory/power 조건은 신원에 남는다.
 Observer/window/meter, warmup/초기화 영역과 수집 절차는 별도 provenance로 보존한다.
 실제 RuntimeProvider는 관측으로 남지만 이 semantic key에서는 정규화된다.
 실행 전 모르는 version/provider를 이미지에서 추정하지 않는다.
 
-CurvePlan v1alpha14와 BEO result v1alpha5는 현재 단일 저장 계약이다. 실패/partial의
-현재 선택, 교체 계보와 재사용 확인은 성공 실행조건 그룹과 별개다. 수집조건 변경이
-교체된 측정을 되살리지 않는다. CPU allocation 필터는 없고 실제 CPU 환경은 관측이다.
+BEO result v1alpha6가 현재 단일 저장 계약이다. CPU allocation 필터는 없고 실제 CPU
+환경은 관측이다.
 
 ## 구현 경계
 
 - `internal/queryapi`: typed read model, coverage/variant/summary와 evidence 해석.
 - `internal/queryapi/kube`: cache, 병렬 refresh, native 조회와 bounded retained read.
 - `internal/queryapi/readapi`: query/pagination envelope와 JSON 전송.
-- `cmd/chill-query`: 구성, owner-client, Serving DTO 변환과 campaign 통계 adapter.
+- `cmd/chill-query`: 구성, owner-client와 Serving DTO 변환.
 
 접수와 evidence/측정 완료는 구별한다. Passport HTTP 202는 pending metadata와
 null measurement/evidence를 보존하며 table도 미완료 값을 0으로 표시하지 않는다.

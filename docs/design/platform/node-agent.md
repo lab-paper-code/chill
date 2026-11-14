@@ -36,6 +36,13 @@ grant는 ChillServer 소유다. Metric/workload observer는 독립된 프로토�
 Serving Pod의 supplementalGroups와 runtime access는 측정된 actor 전달에서 재현한다.
 Agent가 별도 장치 GID를 발견해 다른 실행조건을 만들지 않는다.
 
+## Pod 메모리 관측
+
+Agent는 노드 자원 관측에 컨테이너별 현재 메모리와 수명 전체 최댓값을 싣는다.
+최댓값은 cgroup v2 `memory.peak`, v1 `memory.max_usage_in_bytes`다. 측정 세션은
+자기 Pod UID의 컨테이너 표본 중 최댓값을 배치 크기의 메모리로 쓴다(`PodMemoryPeak`).
+최댓값 계수기가 없는 커널에서는 현재값 표본의 최댓값을 쓴다.
+
 ## 노드 전력 요청과 관측
 
 [Node Power Actuation Boundary](../../adr/0015-node-power-actuation-boundary.md)와
@@ -69,7 +76,7 @@ NVIDIA 검증 mismatch/read 오류도 관측을 게시한 뒤 실패 transition�
 
 Agent는 수동 모드 변경을 원하는 모드로 자동 복원하지 않는다. 새 요청자는 실패 또는
 현재 generation과 다른 success를 새 requestedAt으로 다시 요청한다.
-캠페인은 host가 떠난 success를 재요청하고 failed 전환은 실패로 종결한다.
+측정 요청자는 host가 떠난 success를 재요청하고 failed 전환은 실패로 종결한다.
 
 재부팅이 필요한 모드는 변경 전 fence와 pending을 보존한다. 새 agent는 목표 관측과
 boot 변경을 함께 확인한 뒤 verified/settling/success를 기록한다. 재부팅 뒤 읽기 실패는
@@ -86,7 +93,8 @@ Node grant가 한 시점의 요청자를 정한다. ResourceVersion 조건 patch
 |---|---|
 | 계획기 power와 반환 시 낮춤 | ChillServer |
 | Operation/occupancy의 전력 단계 | 루트 측정 taint를 확인한 ChillServer |
-| BEO, ProfilingRun, loaded-idle baseline, 전환 비용 | 자기 루트 taint를 확인한 Profiler |
+| BEO 측정 세션 | 루트 측정 taint를 확인한 ChillServer |
+| ProfilingRun, loaded-idle baseline, 전환 비용 | 자기 루트 taint를 확인한 Profiler |
 
 아직 기한 안의 pending Node는 새 측정에 승인하지 않는다. Operator stop safety도
 pending agent 종료를 막는다. 공통 RequestPowerMode/ServesRequest/PowerModeLeft/

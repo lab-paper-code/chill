@@ -26,7 +26,7 @@ kubectl chill profiles unadopt TASK_NAME -n chill-system --if-match CONFIG_VERSI
 기존 BEO manifest가 요청 계약이다. CLI와 Dashboard는 같은 인증된 ChillServer
 HTTPS를 사용한다. Submit은 production Query preflight 뒤 native create를 한 번
 요청한다. 거절/미가용 preflight는 아무것도 만들지 않는다. 정상 접수는 HTTP 202와
-`request:"Accepted"`이며 trial 완료를 기다리거나 자동 재시도하지 않는다.
+`request:"Accepted"`이며 측정 완료를 기다리거나 자동 재시도하지 않는다.
 
 `--dry-run=server`는 `dryRun=All`로 preflight/native 검증을 수행하고 저장하지 않는다.
 응답은 HTTP 200, `request:"NOT_SUBMITTED"`다. 목록은 namespace의 pending/failed/
@@ -52,8 +52,7 @@ Measurement 삭제는 소유 UID 접두 아래의 S3 객체를 **영구 삭제**
 덮어쓰지 않는다. `deletedEvidence`는 이번 요청이 실제로 나열해 삭제한 key다.
 재시도는 남은 객체만 다시 나열해 삭제한다.
 
-삭제 가능 범위는 현재 observedGeneration의 완료 result 또는 campaign reconciler가
-terminal로 정한 실패다. Pending, Measuring과 복구 가능한 계획 해석 실패를
+삭제 가능 범위는 현재 observedGeneration의 완료 result 또는 terminal 실패다. Pending, Measuring과 복구 가능한 계획 해석 실패를
 delete로 취소할 수 없다. 저장 객체의 schema는 삭제 여부에 영향을 주지 않는다.
 공유 산출물과 이미지는 cleanup 밖이다. scheduler가 준비하는 profile의 측정은
 `chill.dacs.io/measurement-invalid` annotation을 붙이고 다음 profile refresh 뒤

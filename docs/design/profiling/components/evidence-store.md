@@ -81,7 +81,7 @@ credentials remain management/bootstrap credentials.
 
 ## Limits
 
-Profiling, campaign and evaluation objects use the neutral immutable contract.
+Idle baseline Run and evaluation objects use the neutral immutable contract.
 The store owns no domain catalog, profile selection, scientific judgment or
 research indexing. Multi-replica storage, storage-node failover, TLS automation,
 credential rotation and disaster recovery require separate qualification.

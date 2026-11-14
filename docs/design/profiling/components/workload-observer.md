@@ -3,14 +3,16 @@
 [Component contracts](README.md) and [Profiling design index](../README.md)
 
 Whole-node power interpretation needs membership throughout the runtime window.
-The observer records active Pods on the target Node and observation continuity.
+The observer runs only in the model-loaded idle baseline measurement, whose
+result the power-mode transition cost reads. Batch profiles are measured by the
+session in [profile-session.md](../../serving/profile-session.md). The observer
+records active Pods on the target Node and observation continuity.
 Pod presence does not prove resource usage or constant load.
 
 ## Execution ownership
 
 The measurement Job has artifact/preprocessor init containers and runtime,
-MetricObserver and WorkloadObserver containers. Dataset delivery belongs to the
-off-node active load Job. Kubernetes owns Pod lifecycle.
+MetricObserver and WorkloadObserver containers. Kubernetes owns Pod lifecycle.
 
 Before warmup, target-Node field-selected Pod LIST/WATCH probes capability.
 After warmup, runtime requests a fresh retained session. Acknowledgement requires
@@ -64,7 +66,7 @@ measurement role and standard labels needed to identify concurrent CHILL
 measurements. The observer never changes workloads or Node state.
 
 Owner-bound identity uses controller kind/name/UID, phase, images, selected
-labels and replica multiplicity. Same-owner replacement between trials does not
+labels and replica multiplicity. Same-owner replacement between Runs does not
 drift identity merely through Pod name/UID. Unowned Pods remain name/UID-bound.
 Different environments remain separate; stable membership proves no isolation.
 
