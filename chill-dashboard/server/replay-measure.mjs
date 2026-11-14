@@ -243,6 +243,50 @@ export function activeMeasurements(capture, epoch) {
   }
   const synthRuns = t => [...overlay.keys()].flatMap(name => requestItem(name) ? runsOf(requestItem(name), t) : [])
 
+  // Session requests on the first complete profile request's condition, created before the process started.
+  const sessionBase = beoByName[COMPLETE[0]] ?? beos[0]
+  const sessionSpec = { ...sessionBase.spec, session: { meterLagSeconds: 3, minimumPowerWindowSeconds: 15, midLevelRatio: 0.25, sparseMeanGapSeconds: 1, levelDurationLimitSeconds: 300, postLoadWindowSeconds: 60,
+    confidenceLevel: '0.95', requestLifetimeSeconds: 30, deliveryMarginMilliseconds: 100, framedDecodedRequestUpperBytes: 2097152,
+    observation: { intervalMilliseconds: 100, requestTimeoutMilliseconds: 80, maximumOperationSeconds: 600, maximumGapMilliseconds: 500,
+      timing: { changeIntervalP95Seconds: '1', maximumRequestSeconds: '0.08', maximumReceiptGapSeconds: '1', source: 'replay sample values' } } } }
+  const sessionNode = sessionSpec.state.targetNode
+  const sessionItem = (suffix, created) => ({ apiVersion: 'edge.dacs.io/v1alpha1', kind: 'BatchEnergyOptimization',
+    metadata: { name: `session-${suffix}`, namespace: ns, uid: uuid(`session/${suffix}`), resourceVersion: String(385400000 + created % 1000), generation: 1, creationTimestamp: seconds(epoch - created * 1000) }, spec: sessionSpec })
+  const sessionComplete = (at, outcome, message, batches, result) => ({ observedGeneration: 1, phase: result ? 'Complete' : 'Failed', outcome, completedBatches: batches,
+    conditions: [{ type: 'MeasurementComplete', status: result ? 'True' : 'False', observedGeneration: 1, lastTransitionTime: seconds(at), reason: outcome, message }], ...(result ? { result } : {}) })
+  const measured = sessionItem('measured', 7200), refused = sessionItem('meter', 3600)
+  const sessionItems = [
+    { item: measured, status: sessionComplete(epoch - 1800_000, 'CapacityLimit', 'prepare of batch 8 exceeded the memory envelope', 3,
+      { store: STORE, key: `batch-energy-optimizations/${measured.metadata.uid}/result.json`, schemaVersion: 'chill.dacs.io/batch-energy-optimization-result.v1alpha6', size: 48211 }),
+    assessment: { ...assessment('complete'), execution: execution('Complete') } },
+    { item: refused, status: sessionComplete(epoch - 3590_000, 'MeterUndeclared', `no wall meter is configured for Node ${sessionNode}`, 0),
+      assessment: { ...assessment('running'), status: 'failed', displayStatus: 'problem', label: '실패', evidence: { available: false, accepted: false, reasons: [] }, execution: execution('Failed'),
+        failureSummary: [{ requestId: `${ns}/${refused.metadata.name}/${refused.metadata.uid}`, runId: '', runNamespace: '', runName: '', batch: null, code: 'MeterUndeclared', label: '전력계 미선언',
+          exitCode: null, message: `no wall meter is configured for Node ${sessionNode}`, relation: 'unresolved' }] } },
+  ]
+  const parameter = (value, low, high, unit) => ({ status: 'Identified', value, range: [low, high], unit })
+  function sessionView(item) {
+    const c = item.spec.state.candidate, per = MODEL_MS[c.modelSpec] ?? 4, idle = 9.6
+    const batches = [1, 2, 4].map(batch => {
+      const rate = round(batch * 1000 / (per * (1 + 0.6 * Math.log2(batch + 1))), 1), slope = round(0.012 / Math.sqrt(batch), 4)
+      const level = (kind, inputRate, watts, samples, end = 'SamplesReached') => ({ kind, id: `${item.metadata.uid}/${batch}/${kind}`, start: seconds(epoch - 7000_000 + batch * 600_000), end: seconds(epoch - 7000_000 + batch * 600_000 + 90_000),
+        sentInputs: 59 * batch, completedInputs: 59 * batch, completedBatches: 59, endReason: end, inputRate, ...(watts === undefined ? {} : { meanWatts: watts, meanWattsStandardError: round(watts * 0.004, 3) }), powerSamples: samples })
+      const levels = [level('saturation', rate, round(idle + 2.1 + slope * rate, 2), 160), level('mid', round(rate * 0.25, 1), round(idle + 1.8 + slope * rate * 0.25, 2), 240)]
+      if (batch === 1) levels.push(level('sparse', 0.9, round(idle + 0.7, 2), 62))
+      return { batch, serviceRecordCount: 59 * 3 + (batch === 1 ? 59 : 0), saturationInputRate: rate, joulesPerInput: batch === 4 ? { status: 'NotIdentified', range: [0, round(slope * 2, 4)], reason: 'the slope lies within the noise of the fit', unit: 'J' } : parameter(slope, round(slope * 0.8, 4), round(slope * 1.2, 4), 'J'),
+        peakMemoryBytes: Math.round((MEMORY[c.modelSpec] ?? MEMORY['mobilenet-v2-050'])[0] + batch * 4e6), memoryKind: 'peak', dispatchOccupancy: { count: 59, medianNanos: Math.round(per * 1e6 * batch * 0.8) },
+        prepareCostKey: `operation-measurements/${item.metadata.uid}/prepare-${batch}.json`, removeCostKey: `operation-measurements/${item.metadata.uid}/remove-${batch}.json`, levels }
+    })
+    return { schemaVersion: 'chill.dacs.io/batch-energy-optimization-result.v1alpha6',
+      condition: { nodeName: item.spec.state.targetNode, nodeUID: nodeUID[item.spec.state.targetNode] ?? '', deviceClass: c.deviceClass, powerMode: c.powerMode, logicalModel: c.modelSpec, runtimeFamily: 'onnxruntime', backend: 'cpu',
+        runtimeImage: 'registry.local/chill/firstfloor-runtime:replay', artifact: { executionPath: c.executionPath }, preprocessor: { name: c.preprocessor }, actor: {} },
+      settings: { meterLagSeconds: 3, minimumPowerWindowSeconds: 15, midLevelRatio: 0.25, sparseMeanGapSeconds: 1, levelDurationLimitSeconds: 300, postLoadWindowSeconds: 60, minimumSamples: 59, confidenceLevel: 0.95 },
+      power: { idleWatts: parameter(idle, 9.5, 9.7, 'W'), awakeStepWatts: parameter(1.6, 1.3, 1.9, 'W'), holdSeconds: { status: 'NotIdentified', range: [0, 2.5], reason: 'the hold is shorter than the meter lag', unit: 's' },
+        meterIntervalSeconds: 1, settledAtSeconds: 6, postLoadTailSlopeWattsPerSecond: -0.002, fitResidualSquareWatts: 0.04, fitLimitSquareWatts: 0.09,
+        postLoad: Array.from({ length: 60 }, (_, s) => [s, round(idle + 2.4 * Math.exp(-s / 2) + 0.05 * Math.sin(s), 2)]), postLoadSampleCount: 60 },
+      batches, stop: { batch: 8, class: 'CapacityLimit', reason: 'prepare of batch 8 exceeded the memory envelope' }, meterSource: { kind: 'edge-metrics', nodeName: item.spec.state.targetNode } }
+  }
+
   return {
     // Instance profile identity for a serving placement; undefined outside the selected cells.
     profileFor: (node, model, path, mode) => profileByCell[cellID(model, nodeClass[node], path, mode)]?.profile,
@@ -281,6 +325,24 @@ export function activeMeasurements(capture, epoch) {
       return overlay.has(item.metadata?.name) ? { ...item, status: beoStatus(item, t), assessment: beoAssessment(item) } : item
     },
 
+    // Session-run requests (internal/serving/kube/session.go): one Complete with a v1alpha6 result view
+    // (internal/queryapi/session_result_view.go), one Failed before measuring. They own no runs.
+    sessions(t) {
+      return sessionItems.map(({ item, status, assessment: a }) => ({ ...item, status, assessment: a, reason: status.conditions[0].message }))
+        .filter(item => Date.parse(item.metadata.creationTimestamp) <= t)
+    },
+    sessionResult(name, t) {
+      const entry = sessionItems.find(row => row.item.metadata.name === name)
+      if (!entry) return undefined
+      const { item, status, assessment: a } = entry
+      return { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationResult', readAt: iso(t),
+        campaign: { namespace: ns, name, uid: item.metadata.uid, resourceVersion: item.metadata.resourceVersion, generation: 1, spec: item.spec, phase: status.phase, outcome: status.outcome,
+          completedTrials: 0, completedBatches: status.completedBatches, reason: status.conditions[0].message, conditions: status.conditions,
+          storedResult: status.result ? { store: STORE, key: status.result.key, size: status.result.size } : null },
+        result: null, statistics: null, statisticsReason: null, measurementFacts: null, measurementFactsReason: null, assessment: a, resultRows: [],
+        ...(status.result ? { resultFormat: 'Session', session: sessionView(item) } : {}) }
+    },
+
     // Workload supportedInputs from the usable profiles of a model, grouped by execution path.
     supportedInputs(model, paths) {
       const groups = new Map()
@@ -302,6 +364,9 @@ export function activeMeasurements(capture, epoch) {
       if (!cell) return unresolved(`no catalog support row for ${id}`)
       if (cell.support.verdict === 'Incompatible') return unresolved(`execution path ${c.executionPath} is not supported on ${c.deviceClass}`)
       if (!nodeUID[node] || nodeClass[node] !== c.deviceClass) return unresolved(`target Node ${node} is not of DeviceClass ${c.deviceClass}`)
+      // buildSessionPreflight: PrepareSession's planned batch sizes and the Workload's minimum sample count.
+      if (campaign.spec.session) return { ...head, resolves: true, batchPlan: { variantId: null, conditionMatch: 'planned-only', plannedBatches: BATCHES, measuredBatches: [], inProgressBatches: [], missingBatches: BATCHES, searchMayStopEarly: true, reasons: [] },
+        session: { plannedBatchSizes: BATCHES, minimumSamples: 59, sloPercentile: 95 } }
       const plan = curvePlan(cell, node), planned = [...BATCHES, 16], p = profileByCell[id]
       const inProgress = runningIDs.includes(id) ? (id === measuringCell ? BATCHES.slice(measuringBatches(t).length, measuringBatches(t).length + 1) : [4]) : []
       const measured = p ? p.measured : runningIDs.includes(id) ? (id === measuringCell ? measuringBatches(t) : [1, 2]) : []

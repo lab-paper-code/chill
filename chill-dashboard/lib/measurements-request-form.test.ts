@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { advancedIssue, nameIssue, pathSupport } from "./measurements-request-form.ts"
-import type { Advanced } from "./measurement-request.ts"
+import { defaultAdvanced, emptyDraft, manifest, type Advanced } from "./measurement-request.ts"
 import type { InventoryClass, ModelCompatibility } from "./read-types.ts"
 
 const model = { spec: {
@@ -27,7 +27,7 @@ test("path support: static mismatch blocks, server verdict decides the rest", ()
 })
 
 test("advanced issues follow the request validator", () => {
-  const values: Advanced = { warmup: 1, activeDuration: 60, activeWindow: 64, activeInterval: 1000, activeTimeout: 500, settling: 5, idleDuration: 10, idleWindow: 12, idleInterval: 1000, idleTimeout: 500, retryLimit: 2, utilizations: "0.2, 0.5", sparseMeanGap: 10, phaseDuration: 5, postLoadDuration: 1, requestLifetime: 2, deliveryMargin: 1, framedDecodedRequestUpperBytes: 10 }
+  const values: Advanced = { ...defaultAdvanced, warmup: 1, activeDuration: 60, activeWindow: 64, activeInterval: 1000, activeTimeout: 500, settling: 5, idleDuration: 10, idleWindow: 12, idleInterval: 1000, idleTimeout: 500, retryLimit: 2, utilizations: "0.2, 0.5", sparseMeanGap: 10, phaseDuration: 5, postLoadDuration: 1, requestLifetime: 2, deliveryMargin: 1, framedDecodedRequestUpperBytes: 10 }
   for (const key of Object.keys(values) as (keyof Advanced)[]) assert.equal(advancedIssue(values, key), "", key)
   assert.equal(advancedIssue({ ...values, warmup: NaN }, "warmup"), "0 이상 정수")
   assert.equal(advancedIssue({ ...values, retryLimit: 11 }, "retryLimit"), "0~10 정수")
@@ -35,6 +35,33 @@ test("advanced issues follow the request validator", () => {
   assert.equal(advancedIssue({ ...values, activeTimeout: 1000 }, "activeTimeout"), "기록 간격보다 짧게")
   assert.equal(advancedIssue({ ...values, idleWindow: 9 }, "idleWindow"), "측정 시간 이상")
   assert.equal(advancedIssue({ ...values, utilizations: "0.2, 1" }, "utilizations"), "0과 1 사이 값")
+  assert.equal(advancedIssue({ ...values, confidence: 1 }, "confidence"), "0.5 이상 1 미만")
+  assert.equal(advancedIssue({ ...values, midLevelRatio: 1 }, "midLevelRatio"), "0과 1 사이 값")
+  assert.equal(advancedIssue({ ...values, levelLimit: 18 }, "levelLimit"), "지연과 최소 관측의 합보다 길게")
+  assert.equal(advancedIssue({ ...values, deliveryMargin: 2000 }, "deliveryMargin"), "요청 수명보다 짧게")
+  assert.equal(advancedIssue({ ...values, meterLag: 0 }, "meterLag"), "")
+})
+
+test("a new request carries a valid session block without typing any value", () => {
+  const context = { models: [], workloads: [], classes: [], plans: [], preprocessors: [], datasets: [], profiles: [] }
+  const draft = { ...emptyDraft, workload: "mobilenet", model: "mobilenet-v2-050", preprocessor: "mobilenet-imagenet", dataset: "vqav2-val-subset", deviceClass: "jetson", node: "jetsono", path: "firstfloor-ort-cpu-arm64", powerMode: "fixed", name: "session-request" }
+  for (const key of Object.keys(defaultAdvanced) as (keyof Advanced)[]) assert.equal(advancedIssue(defaultAdvanced, key), "", key)
+  const { spec } = manifest(draft, context, "chill-system")
+  const session = spec.session!
+  assert.deepEqual({ ...session, observation: undefined }, {
+    meterLagSeconds: 3, minimumPowerWindowSeconds: 15, midLevelRatio: 0.25, sparseMeanGapSeconds: 1, levelDurationLimitSeconds: 300, postLoadWindowSeconds: 60,
+    confidenceLevel: "0.95", requestLifetimeSeconds: 30, deliveryMarginMilliseconds: 100, framedDecodedRequestUpperBytes: 2097152, observation: undefined,
+  })
+  // The schema's rules on the session block.
+  assert.match(session.confidenceLevel, /^0\.[5-9][0-9]*$/)
+  assert.ok(session.levelDurationLimitSeconds > session.meterLagSeconds + session.minimumPowerWindowSeconds)
+  assert.ok(session.requestLifetimeSeconds * 1000 > session.deliveryMarginMilliseconds)
+  assert.deepEqual(session.observation, { intervalMilliseconds: 100, requestTimeoutMilliseconds: 80, maximumOperationSeconds: 600, maximumGapMilliseconds: 500,
+    timing: { changeIntervalP95Seconds: "1", maximumRequestSeconds: "0.08", maximumReceiptGapSeconds: "1", source: "sample values, not measured: replace with the Node meter's observed timing" } })
+  // The previous method's fields stay filled while the schema requires them.
+  assert.equal(spec.trialsPerBatch, 3)
+  assert.equal(spec.idleProtocol.durationSeconds, 30)
+  assert.equal(spec.activeProtocol.operatingPoints.utilizations.length, 3)
 })
 
 test("request names are DNS-1123 and unique", () => {

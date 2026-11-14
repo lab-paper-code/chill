@@ -545,7 +545,8 @@ function selfCheck() {
       for (const c of st.conditions ?? []) future(`request ${name} condition`, c.lastTransitionTime)
       const result = read(`${NS}batch-energy-optimizations/${enc(name)}/result`, [200, 502])
       if (result.body?.campaign?.name !== name || result.body?.campaign?.uid !== uid) fail(`${name}/result: campaign does not name the request`)
-      if (st.phase === 'Complete' && result.status === 200 && !result.body.resultRows?.length) fail(`${name}/result: complete without rows`)
+      // A session result has batches in its session view, never trial rows.
+      if (st.phase === 'Complete' && result.status === 200 && !(item.spec.session ? result.body.session?.batches?.length : result.body.resultRows?.length)) fail(`${name}/result: complete without rows`)
       if (scene === 'active' && st.phase === 'Complete' && result.status === 200 && item.assessment?.displayStatus === 'usable' && result.body.assessment?.displayStatus !== 'usable') fail(`${name}/result: assessment differs from the list`)
       const children = runsOf(uid)
       if (!children.length && (st.completedTrials || st.phase === 'Measuring' || item.assessment?.failureSummary?.some(row => row.runName))) fail(`${name}: profiling-runs?parentUID returns no runs`)

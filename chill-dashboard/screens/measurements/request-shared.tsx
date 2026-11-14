@@ -80,7 +80,10 @@ export function PreflightSection({ submission, before = [], blocked, control }: 
     ...before,
     { label: "접수 검사", value: mutationBadge(dry, admitted), reason: "검사 전" },
     { label: "실행 계획", value: mutationBadge(pre, answer?.resolves === true, rejected), reason: "검사 전" },
-    ...(batch?.plannedBatches ? [
+    ...(answer?.session ? [
+      { label: "계획 배치", value: list(answer.session.plannedBatchSizes) },
+      { label: "최소 표본 수", value: String(answer.session.minimumSamples), info: `수준마다 모을 처리 시간 기록 수, p${answer.session.sloPercentile} 추정에 필요한 최솟값` },
+    ] : batch?.plannedBatches ? [
       { label: "측정된 배치", value: list(batch.measuredBatches) },
       { label: "측정할 배치", value: list(batch.missingBatches) },
       { label: "탐색 상한", value: batch.plannedBatches.length ? String(Math.max(...batch.plannedBatches)) : null, reason: "미확정" },

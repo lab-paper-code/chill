@@ -4,19 +4,30 @@ import * as React from "react"
 import { DataTable, DetailDrawer, EmptyState, FilterBar, Fields, Hint, QueryBoundary, RawDialog, Section, StatusBadge, TimeText, Button, type Column, type Segment } from "@/components/kit"
 import { executionPathLabel, powerModeLabel } from "@/lib/display-labels"
 import { useChillQuery } from "@/lib/client"
-import { formatNumber, formatWatts, msNumber, wattsNumber } from "@/lib/format"
+import { formatBytes, formatNumber, msNumber, rateNumber, wattsNumber } from "@/lib/format"
 import { measurementQuality, measurementSchedulerUsed } from "@/lib/measurement-assessment"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
-import type { ProfilesView, ResultRow } from "@/lib/read-types"
+import type { ProfileParameter, ProfilesView, ResultRow } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { coverageReason, measurementStatus } from "@/lib/status-labels"
+import { coverageReason, measurementStatus, sessionParameterStatus } from "@/lib/status-labels"
 import { filterChoice, useUrlState } from "./results-shared"
 
 type Profile = NonNullable<ProfilesView["profiles"]>[number]
 const LIMIT = 25
 const FILTERS = ["model", "node", "status"] as const
 
-const representative = (profile: Profile): ResultRow | undefined => profile.resultRows?.find(row => row.rowKind === "direct") ?? profile.resultRows?.[0]
+type ProfileBatch = NonNullable<Profile["batches"]>[number]
+// A session profile's parameter; profiles of the previous method carry none.
+const parameterValue = (p: ProfileParameter | undefined, digits: number) => (p?.value === undefined ? null : formatNumber(p.value, digits))
+const parameterMissing = (p: ProfileParameter | undefined) => (!p ? "이전 방식 측정" : "구분 안 됨")
+const smallestBatch = (profile: Profile) => [...(profile.batches ?? [])].sort((a, b) => a.batch - b.batch)[0]
+const profileBatchColumns: Column<ProfileBatch>[] = [
+  { key: "batch", header: "배치", unit: "건", numeric: true, cell: b => b.batch },
+  { key: "slope", header: "요청당 기울기", unit: "J", numeric: true, cell: b => parameterValue(b.inputSlopeJoules, 3), missing: b => parameterMissing(b.inputSlopeJoules) },
+  { key: "status", header: "구분", cell: b => (b.inputSlopeJoules ? <StatusBadge status={sessionParameterStatus(b.inputSlopeJoules.status)} reason={b.inputSlopeJoules.reason || undefined} /> : null), missingReason: "이전 방식 측정" },
+  { key: "rate", header: "포화 처리율", unit: "req/s", numeric: true, cell: b => (b.saturationInputRate === undefined ? null : rateNumber(b.saturationInputRate)), missingReason: "포화 수준 없음" },
+  { key: "memory", header: "메모리", numeric: true, cell: b => formatBytes(b.memoryBytes) },
+]
 
 function Usage({ profile }: { profile: Profile }) {
   const used = measurementSchedulerUsed(profile.assessment)
@@ -31,9 +42,9 @@ function Quality({ profile }: { profile: Profile }) {
 const columns: Column<Profile>[] = [
   { width: "20%", key: "model", header: "모델", cell: p => p.condition.logicalModel },
   { width: "28%", key: "condition", header: "장치와 조건", cell: p => `${p.nodeName} / ${powerModeLabel(p.condition.powerMode)} / ${executionPathLabel(p.condition.artifact.executionPath)}` },
-  { width: "9%", key: "batch", header: "대표 배치", unit: "건", numeric: true, cell: p => representative(p)?.batch, missingReason: "배치 결과 없음" },
-  { width: "9%", key: "latency", header: "지연 p95", unit: "ms", numeric: true, cell: p => { const v = representative(p)?.p95Milliseconds; return v == null ? null : msNumber(v) }, missingReason: "지연 기록 없음" },
-  { width: "12%", key: "energy", header: "추가 에너지", unit: "J/건", numeric: true, cell: p => { const v = representative(p)?.incrementalJoulesPerItem; return v == null ? null : formatNumber(v, 3) }, missingReason: "에너지 기록 없음" },
+  { width: "11%", key: "idle", header: "유휴 전력", unit: "W", numeric: true, cell: p => parameterValue(p.power?.idleWatts, 1), missing: p => parameterMissing(p.power?.idleWatts) },
+  { width: "11%", key: "awake", header: "깨어 있는 전력 증가", unit: "W", numeric: true, cell: p => parameterValue(p.power?.awakeStepWatts, 1), missing: p => parameterMissing(p.power?.awakeStepWatts) },
+  { width: "11%", key: "slope", header: "최소 배치 기울기", unit: "J", numeric: true, cell: p => parameterValue(smallestBatch(p)?.inputSlopeJoules, 3), missing: p => parameterMissing(smallestBatch(p)?.inputSlopeJoules) },
   { width: "10%", key: "use", header: "사용 여부", cell: p => <Usage profile={p} />, missingReason: "사용 여부 미확인" },
   { key: "quality", header: "품질", cell: p => <Quality profile={p} /> },
 ]
@@ -132,10 +143,16 @@ function ProfileBody({ profile, raw, setRaw }: { profile: Profile; raw: boolean;
         { label: "실행 경로", value: <Hint text={profile.condition.artifact.executionPath}>{executionPathLabel(profile.condition.artifact.executionPath)}</Hint> },
         { label: "전처리기", value: profile.condition.preprocessor.name, reason: "전처리기 없음" },
         { label: "데이터셋", value: profile.condition.activeProtocol.dataset?.name, reason: "기록 없음" },
-        { label: "유휴 전력", value: profile.idleBaselineWatts == null ? null : formatWatts(profile.idleBaselineWatts) },
+        { label: "유휴 전력", value: parameterValue(profile.power?.idleWatts, 1) && `${parameterValue(profile.power?.idleWatts, 1)} W`, reason: parameterMissing(profile.power?.idleWatts), info: "모델을 올린 채 요청이 없고 전력이 가라앉은 노드 전력" },
+        { label: "깨어 있는 전력 증가", value: parameterValue(profile.power?.awakeStepWatts, 1) && `${parameterValue(profile.power?.awakeStepWatts, 1)} W`, reason: parameterMissing(profile.power?.awakeStepWatts), info: "실행 중이거나 실행 뒤 유지 시간 안에 더해지는 전력" },
+        { label: "유지 시간", value: parameterValue(profile.power?.holdSeconds, 2) && `${parameterValue(profile.power?.holdSeconds, 2)}초`, reason: parameterMissing(profile.power?.holdSeconds), info: "실행이 끝난 뒤 장치가 깨어 있는 시간" },
         { label: "측정일", value: <TimeText at={profile.measuredAt} mode="detail" /> },
       ]} />
-      {batchTables.map(({ title, columns }) => (
+      <Section title="배치">
+        <DataTable label="배치" density="compact" rows={[...(profile.batches ?? [])].sort((a, b) => a.batch - b.batch)} rowKey={b => String(b.batch)} columns={profileBatchColumns} pageSize={0} empty={<EmptyState compact title="배치 결과 없음" />} />
+      </Section>
+      {/* Profiles of the previous method keep their trial rows. */}
+      {!!profile.resultRows?.length && batchTables.map(({ title, columns }) => (
         <Section key={title} title={title}>
           <DataTable label={title} density="compact" rows={[...(profile.resultRows ?? [])].sort((a, b) => a.batch - b.batch)} rowKey={r => r.id} columns={columns} pageSize={0} empty={<EmptyState compact title="배치 결과 없음" />} />
         </Section>

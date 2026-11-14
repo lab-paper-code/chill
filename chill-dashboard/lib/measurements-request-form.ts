@@ -1,6 +1,5 @@
 import type { ExecutionPath, ModelSpec } from "./domain.ts"
 import type { InventoryClass, ModelCompatibility } from "./read-types.ts"
-import { advancedFields, type Advanced } from "./measurement-request.ts"
 import { staticCompatibility, type Compatibility } from "./measurement-coverage.ts"
 import { architectureLabel } from "./display-labels.ts"
 import { coverageReason } from "./status-labels.ts"
@@ -23,20 +22,7 @@ export function pathSupport(model: { spec: ModelSpec }, path: ExecutionPath, cls
   return { state: "unknown", reason: reasons || "지원 미확인" }
 }
 
-/** Short inline error of one protocol value; mirrors the validator in measurement-request.ts. */
-export function advancedIssue(values: Advanced, key: keyof Advanced): string {
-  if (key === "utilizations") return values.utilizations.split(",").some(item => !item.trim() || !(Number(item) > 0 && Number(item) < 1)) ? "0과 1 사이 값" : ""
-  const field = advancedFields.find(([name]) => name === key)
-  if (!field) return ""
-  const [, , min, max = 2147483647, step = 1] = field
-  const value = values[key]
-  const upper = key === "retryLimit" ? 10 : max
-  if (!Number.isFinite(value) || (step !== "any" && !Number.isInteger(value)) || value < min || (key === "sparseMeanGap" && value === 0) || value > upper)
-    return key === "sparseMeanGap" ? "0보다 큰 값" : key === "retryLimit" ? "0~10 정수" : `${min} 이상 정수`
-  if ((key === "activeTimeout" && value >= values.activeInterval) || (key === "idleTimeout" && value >= values.idleInterval)) return "기록 간격보다 짧게"
-  if ((key === "activeWindow" && value < values.activeDuration) || (key === "idleWindow" && value < values.idleDuration)) return "측정 시간 이상"
-  return ""
-}
+export { advancedIssue } from "./measurement-request.ts"
 
 const dns1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/
 /** Short inline error of a request name (DNS-1123 subdomain, at most 200 characters). */

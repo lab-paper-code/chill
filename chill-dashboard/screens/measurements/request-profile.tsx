@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useSearchParams } from "next/navigation"
 import { ChevronDown } from "lucide-react"
-import { Button, Fields, FormActions, FormSection, LeaveGuard, Page, PageHeader, QueryBoundary, RawDialog, StatusBadge } from "@/components/kit"
+import { Button, Fields, FormActions, FormSection, InfoHint, LeaveGuard, Page, PageHeader, QueryBoundary, RawDialog, StatusBadge } from "@/components/kit"
 import { InputBlock } from "@/components/custom/blocks/InputBlock"
 import { SelectBlock } from "@/components/custom/blocks/SelectBlock"
 import { Stepper } from "@/components/custom/blocks/StepperBlock"
@@ -149,16 +149,17 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
   const preprocessor = context.preprocessors.find(item => item.metadata.name === d.preprocessor)
   const values = v.protocol.values
   const setValues = (next: Advanced) => update({ protocol: { ...v.protocol, values: next } })
-  const field = (key: keyof Advanced, label: string, unit?: string) => {
+  const field = (key: keyof Advanced, label: string, unit?: string, hint?: string) => {
     const value = values[key]
     const issue = show ? advancedIssue(values, key) : ""
     return key === "utilizations"
       ? <InputBlock key={key} label={label} inputSize="sm" inputMode="decimal" placeholder="0.2, 0.5, 0.8" value={values.utilizations} error={issue} disabled={locked} onChange={event => setValues({ ...values, utilizations: event.target.value })} />
-      : <InputBlock key={key} label={label} inputSize="sm" type="number" inputMode={key === "sparseMeanGap" ? "decimal" : "numeric"} value={typeof value === "number" && !Number.isNaN(value) ? value : ""} error={issue} disabled={locked}
+      : <InputBlock key={key} label={label} inputSize="sm" type="number" inputMode="decimal" value={typeof value === "number" && !Number.isNaN(value) ? value : ""} error={issue} disabled={locked} helperText={hint}
           rightIcon={unit ? suffix(unit) : undefined} onChange={event => setValues({ ...values, [key]: event.target.valueAsNumber })} />
   }
-  const advancedKeys: (keyof Advanced)[] = ["activeWindow", "activeInterval", "activeTimeout", "settling", "idleWindow", "idleInterval", "idleTimeout", "utilizations", "sparseMeanGap", "phaseDuration", "postLoadDuration", "requestLifetime", "deliveryMargin", "framedDecodedRequestUpperBytes"]
-  const advancedErrors = advancedKeys.filter(key => advancedIssue(values, key)).length
+  // The previous method's fields the schema still requires; a session does not read them.
+  const legacyKeys: (keyof Advanced)[] = ["activeDuration", "activeWindow", "activeInterval", "activeTimeout", "settling", "idleDuration", "idleWindow", "idleInterval", "idleTimeout", "retryLimit", "utilizations", "sparseMeanGap", "phaseDuration", "postLoadDuration"]
+  const advancedErrors = legacyKeys.filter(key => advancedIssue(values, key)).length
 
   const supportBadge = selectedSupport
     ? <StatusBadge tone={selectedSupport.state === "candidate" ? "ok" : selectedSupport.state === "unsupported" ? "fail" : "warn"} label={selectedSupport.state === "candidate" ? "지원" : selectedSupport.state === "unsupported" ? "지원 안 함" : "미확인"} reason={selectedSupport.reason || undefined} />
@@ -227,31 +228,46 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
       </>}
 
       {step === 1 && <>
-        <FormSection title="측정 방식" info={v.protocol.from ? `기본값: ${v.protocol.from}` : undefined}>
+        <FormSection title="측정 방식" info={v.protocol.from ? `기본값: ${v.protocol.from}` : "기본값: 저장소 측정 요청 예시"}>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {field("warmup", "예열", "회")}
-            {field("activeDuration", "실행 측정", "초")}
-            {field("idleDuration", "유휴 측정", "초")}
-            {field("retryLimit", "재시도 한도", "회")}
+            {field("warmup", "예열", "회", "측정 전 실행 횟수")}
+            {field("meterLag", "전력계 지연", "초", "수준 시작 뒤 버리는 전력 관측")}
+            {field("minimumPowerWindow", "최소 전력 관측", "초", "수준마다 채울 전력 관측 시간")}
+            {field("midLevelRatio", "중간 수준 비율", undefined, "포화 처리율 대비 중간 수준 요청률")}
+            {field("sparseGap", "저부하 평균 간격", "초", "배치 1 저부하 수준의 평균 유휴 간격")}
+            {field("levelLimit", "수준 시간 한도", "초", "예측 시간이 넘으면 측정하지 않음")}
+            {field("postLoadWindow", "부하 뒤 관측", "초", "마지막 배치 뒤 유지 시간과 유휴 전력 관측")}
+            {field("confidence", "신뢰 수준", undefined, "모든 통계 판단의 수준, 0.5 이상 1 미만")}
+            {field("requestLifetime", "요청 수명", "초", "배치 둘의 처리 시간이 넘으면 서빙 불가")}
+            {field("deliveryMargin", "전달 여유", "ms", "응답 전달에 남기는 시간")}
+            {field("framedDecodedRequestUpperBytes", "요청 프레임 상한", "B", "디코딩된 요청 하나의 최대 크기")}
+          </div>
+        </FormSection>
+        <FormSection title="동작 전력 기록" info="준비와 제거 동작의 전력 기록 조건">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {field("observationInterval", "기록 간격", "ms", "전력계 읽기 간격")}
+            {field("observationTimeout", "대기 한도", "ms", "읽기 하나의 최대 대기")}
+            {field("maximumOperation", "동작 시간 한도", "초", "준비나 제거 하나의 최대 시간")}
+            {field("maximumGap", "최대 공백", "ms", "이보다 긴 기록 공백은 보정 대상")}
           </div>
         </FormSection>
         <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="rounded-xl border border-border bg-card">
           <CollapsibleTrigger className="flex h-12 w-full items-center gap-2 px-5 text-sm font-semibold">
-            고급 값
+            이전 측정 방식 값
+            <InfoHint text="스키마가 아직 요구해 함께 보내는 값, 세션 측정은 쓰지 않음" />
             {show && advancedErrors > 0 && <StatusBadge tone="fail" label={`확인 ${advancedErrors}`} />}
             <ChevronDown className={cn("ml-auto size-4 text-muted-foreground transition-transform", advancedOpen && "rotate-180")} aria-hidden="true" />
           </CollapsibleTrigger>
           <CollapsibleContent>
             <div className="grid gap-6 border-t border-border p-5" inert={!advancedOpen}>
               <AdvancedGroup title="실행 전력 기록">
-                {field("activeWindow", "기록 시간", "초")}{field("activeInterval", "기록 간격", "ms")}{field("activeTimeout", "대기 한도", "ms")}
+                {field("activeDuration", "실행 측정", "초")}{field("activeWindow", "기록 시간", "초")}{field("activeInterval", "기록 간격", "ms")}{field("activeTimeout", "대기 한도", "ms")}
               </AdvancedGroup>
               <AdvancedGroup title="유휴 전력 기록">
-                {field("settling", "안정 시간", "초")}{field("idleWindow", "기록 시간", "초")}{field("idleInterval", "기록 간격", "ms")}{field("idleTimeout", "대기 한도", "ms")}
+                {field("settling", "안정 시간", "초")}{field("idleDuration", "유휴 측정", "초")}{field("idleWindow", "기록 시간", "초")}{field("idleInterval", "기록 간격", "ms")}{field("idleTimeout", "대기 한도", "ms")}
               </AdvancedGroup>
               <AdvancedGroup title="운영점">
-                {field("utilizations", "이용률")}{field("sparseMeanGap", "희소 요청 간격", "ms")}{field("phaseDuration", "운영점별 측정", "초")}{field("postLoadDuration", "부하 후 기록", "초")}
-                {field("requestLifetime", "요청 수명", "초")}{field("deliveryMargin", "전달 여유", "ms")}{field("framedDecodedRequestUpperBytes", "요청 프레임 상한", "B")}
+                {field("utilizations", "이용률")}{field("sparseMeanGap", "희소 요청 간격", "ms")}{field("phaseDuration", "운영점별 측정", "초")}{field("postLoadDuration", "부하 후 기록", "초")}{field("retryLimit", "재시도 한도", "회")}
               </AdvancedGroup>
             </div>
           </CollapsibleContent>
@@ -271,10 +287,10 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
             { label: "전력 모드", value: v.powerMode && powerModeLabel(v.powerMode) },
             { label: "전처리기", value: d.preprocessor },
             { label: "데이터셋", value: d.dataset },
-            { label: "배치별 반복", value: `${v.trials}회` },
             { label: "예열", value: Number.isFinite(values.warmup) ? `${values.warmup}회` : null },
-            { label: "실행 측정", value: Number.isFinite(values.activeDuration) ? formatSeconds(values.activeDuration) : null },
-            { label: "유휴 측정", value: Number.isFinite(values.idleDuration) ? formatSeconds(values.idleDuration) : null },
+            { label: "수준 시간 한도", value: Number.isFinite(values.levelLimit) ? formatSeconds(values.levelLimit) : null },
+            { label: "최소 전력 관측", value: Number.isFinite(values.minimumPowerWindow) ? formatSeconds(values.minimumPowerWindow) : null },
+            { label: "신뢰 수준", value: Number.isFinite(values.confidence) ? String(values.confidence) : null },
           ]} />
         </FormSection>
         {submission.unknown

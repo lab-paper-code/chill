@@ -79,6 +79,44 @@ const measurementPhase: Table = {
 }
 export const measurementPhaseStatus = (code: string | null | undefined) => lookup(measurementPhase, code)
 
+/** Measurement session outcome (BatchEnergyOptimization status.outcome) and stop class (result stop.class). */
+const sessionOutcome: Table = {
+  AllBatchesMeasured: { label: "모든 배치 측정", tone: "ok" },
+  CapacityLimit: { label: "용량 한계에서 종료", tone: "ok" },
+  NotServable: { label: "서빙 불가", tone: "warn" },
+  NotMeasured: { label: "측정하지 않음", tone: "warn" },
+  Failed: { label: "실패", tone: "fail" },
+  ChillServerRestart: { label: "서버 재시작으로 중단", tone: "fail" },
+  SessionSettingsMissing: { label: "설정 없음", tone: "fail" },
+  MeterUndeclared: { label: "전력계 미선언", tone: "fail" },
+  SessionUnresolved: { label: "준비 정보 해석 실패", tone: "fail" },
+}
+export const sessionOutcomeStatus = (code: string | null | undefined) => lookup(sessionOutcome, code)
+
+/** Session parameter status: a value the fit could not separate from the others is "구분 안 됨". */
+const sessionParameter: Table = {
+  Identified: { label: "구분됨", tone: "ok" },
+  NotIdentified: { label: "구분 안 됨", tone: "warn" },
+}
+export const sessionParameterStatus = (code: string | null | undefined) => lookup(sessionParameter, code)
+
+/** Session load level kind and the reason the load driver ended it. */
+const sessionLevel: Table = {
+  saturation: { label: "포화", tone: "idle" },
+  mid: { label: "중간", tone: "idle" },
+  sparse: { label: "저부하", tone: "idle" },
+}
+export const sessionLevelKind = (code: string | null | undefined) => lookup(sessionLevel, code)
+const sessionLevelEnd: Table = {
+  SamplesReached: { label: "표본 충족", tone: "ok" },
+  PredictedDurationExceedsLimit: { label: "시간 한도 초과 예상", tone: "warn" },
+  BatchServiceExceedsLifetime: { label: "요청 수명 초과", tone: "warn" },
+  AllocationFailedBeforeAnyBatch: { label: "첫 배치 전 메모리 할당 실패", tone: "warn" },
+  AllocationFailedAfterCompletedBatch: { label: "메모리 할당 실패", tone: "warn" },
+  Failed: { label: "실패", tone: "fail" },
+}
+export const sessionLevelEndStatus = (code: string | null | undefined) => lookup(sessionLevelEnd, code)
+
 /** Evaluation run phase. */
 const evaluation: Table = {
   Pending: { label: "시작 전", tone: "idle" },

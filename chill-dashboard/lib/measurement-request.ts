@@ -1,5 +1,5 @@
 import type { DatasetResource, DatasetSpec, PreprocessorResource, PreprocessorSpec, ModelResource, WorkloadSummary, ExecutionPath } from "./domain.ts"
-import type { ActiveProtocol, MeasurementPlan, MeasurementPlanSpec, ProfilesView, InventoryClass, InventoryNode } from "./read-types.ts"
+import type { ActiveProtocol, MeasurementPlan, MeasurementPlanSpec, MeasurementTiming, ProfilesView, InventoryClass, InventoryNode } from "./read-types.ts"
 import { measurementRequestName } from "./measurements.ts"
 import { staticCompatibility } from "./measurement-coverage.ts"
 
@@ -81,7 +81,9 @@ export const steps = ["workload", "device", "run", "size", "advanced", "name", "
 export type Step = typeof steps[number]
 const dns1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/
 
-export type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number; utilizations:string; sparseMeanGap:number; phaseDuration:number; postLoadDuration:number; requestLifetime:number; deliveryMargin:number; framedDecodedRequestUpperBytes:number }
+// Session settings are what ChillServer measures with; the other keys fill the previous method's fields the schema still requires.
+export type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number; utilizations:string; sparseMeanGap:number; phaseDuration:number; postLoadDuration:number; requestLifetime:number; deliveryMargin:number; framedDecodedRequestUpperBytes:number
+  meterLag:number; minimumPowerWindow:number; midLevelRatio:number; sparseGap:number; levelLimit:number; postLoadWindow:number; confidence:number; observationInterval:number; observationTimeout:number; maximumOperation:number; maximumGap:number }
 export const advancedFields: [key: keyof Omit<Advanced,"utilizations">, label: string, min: number, max?:number, step?:number|"any"][] = [
   ["warmup", "측정 전 예열 횟수", 0],
   ["activeDuration", "측정 시간 (초)", 1],
@@ -100,6 +102,17 @@ export const advancedFields: [key: keyof Omit<Advanced,"utilizations">, label: s
   ["idleInterval", "쉬는 상태 전력 기록 간격 (밀리초)", 1],
   ["idleTimeout", "쉬는 상태 전력 기록 대기 한도 (밀리초)", 1],
   ["retryLimit", "일시적 인프라 장애 재시도 한도", 0],
+  ["meterLag", "전력계 지연 (초)", 0, 3600, "any"],
+  ["minimumPowerWindow", "최소 전력 관측 (초)", 0, 3600, "any"],
+  ["midLevelRatio", "중간 수준 비율", 0, 1, "any"],
+  ["sparseGap", "저부하 평균 간격 (초)", 0, 3600, "any"],
+  ["levelLimit", "수준 시간 한도 (초)", 0, 86400, "any"],
+  ["postLoadWindow", "부하 뒤 관측 (초)", 0, 3600, "any"],
+  ["confidence", "신뢰 수준", 0.5, 1, "any"],
+  ["observationInterval", "동작 전력 기록 간격 (밀리초)", 1],
+  ["observationTimeout", "동작 전력 기록 대기 한도 (밀리초)", 1],
+  ["maximumOperation", "동작 시간 한도 (초)", 1],
+  ["maximumGap", "전력 기록 최대 공백 (밀리초)", 1],
 ]
 export type Protocol = { values: Advanced; from: string | null; spec?:MeasurementPlanSpec; target?:string; copied?:boolean }
 // model, preprocessor and dataset come from the chosen Workload's spec refs (or a copied plan); the API takes catalog names.
@@ -107,19 +120,34 @@ export type Draft = { workload: string; model: string; preprocessor: string; dat
 export type Context = { models: ModelResource[]; workloads: WorkloadSummary[]; classes: InventoryClass[]; plans: MeasurementPlan[]; preprocessors: PreprocessorResource[]; datasets: DatasetResource[]; profiles:ProfilesView["profiles"]; prefill?:boolean }
 
 export const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", trials: null, protocol: null, name: null }
-const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN, utilizations:"", sparseMeanGap:NaN, phaseDuration:NaN, postLoadDuration:NaN, requestLifetime:NaN, deliveryMargin:NaN, framedDecodedRequestUpperBytes:NaN }
+// config/samples/profiling/edge_v1alpha1_batchenergyoptimization.yaml: an operator can submit without typing any value.
+export const defaultAdvanced: Advanced = {
+  warmup: 20, activeDuration: 180, activeWindow: 181, activeInterval: 1000, activeTimeout: 500, settling: 60, idleDuration: 30, idleWindow: 31, idleInterval: 1000, idleTimeout: 500, retryLimit: 2,
+  utilizations: "0.25, 0.5, 0.75", sparseMeanGap: 1000, phaseDuration: 30, postLoadDuration: 30, requestLifetime: 30, deliveryMargin: 100, framedDecodedRequestUpperBytes: 2097152,
+  meterLag: 3, minimumPowerWindow: 15, midLevelRatio: 0.25, sparseGap: 1, levelLimit: 300, postLoadWindow: 60, confidence: 0.95,
+  observationInterval: 100, observationTimeout: 80, maximumOperation: 600, maximumGap: 500,
+}
+export const defaultTiming: MeasurementTiming = { changeIntervalP95Seconds: "1", maximumRequestSeconds: "0.08", maximumReceiptGapSeconds: "1", source: "sample values, not measured: replace with the Node meter's observed timing" }
+// A copied value the schema rejects (absent, or 0 from a session profile's projected protocol) takes the default.
+const positive = (value: number | undefined, fallback: number) => value !== undefined && value > 0 ? value : fallback
+const finite = (value: number | undefined, fallback: number) => value !== undefined && Number.isFinite(value) ? value : fallback
 function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
-  const active = spec.activeProtocol, idle = spec.idleProtocol
+  const active = spec.activeProtocol, idle = spec.idleProtocol, points = active.operatingPoints, session = spec.session, d = defaultAdvanced
   return {
-    warmup: active.warmupIterations ?? NaN, activeDuration: active.durationSeconds ?? NaN, activeWindow: active.metricObservation?.durationSeconds ?? NaN,
-    activeInterval: active.metricObservation?.intervalMilliseconds ?? NaN, activeTimeout: active.metricObservation?.timeoutMilliseconds ?? NaN,
-    utilizations:active.operatingPoints?.utilizations?.join(", ")??"", sparseMeanGap:active.operatingPoints?.sparseMeanGapMilliseconds??NaN,
-    phaseDuration:active.operatingPoints?.phaseDurationSeconds??NaN, postLoadDuration:active.operatingPoints?.postLoadDurationSeconds??NaN,
-    requestLifetime:active.operatingPoints?.requestLifetimeSeconds??NaN, deliveryMargin:active.operatingPoints?.deliveryMarginMilliseconds??NaN,
-    framedDecodedRequestUpperBytes:active.operatingPoints?.framedDecodedRequestUpperBytes??NaN,
-    settling: idle.settlingDurationSeconds ?? NaN, idleDuration: idle.durationSeconds ?? NaN, idleWindow: idle.metricObservation?.durationSeconds ?? NaN,
-    idleInterval: idle.metricObservation?.intervalMilliseconds ?? NaN, idleTimeout: idle.metricObservation?.timeoutMilliseconds ?? NaN,
-    retryLimit: spec.retryLimit,
+    warmup: finite(active.warmupIterations, d.warmup), activeDuration: positive(active.durationSeconds, d.activeDuration), activeWindow: positive(active.metricObservation?.durationSeconds, d.activeWindow),
+    activeInterval: positive(active.metricObservation?.intervalMilliseconds, d.activeInterval), activeTimeout: positive(active.metricObservation?.timeoutMilliseconds, d.activeTimeout),
+    utilizations: points?.utilizations?.length ? points.utilizations.join(", ") : d.utilizations, sparseMeanGap: positive(points?.sparseMeanGapMilliseconds, d.sparseMeanGap),
+    phaseDuration: positive(points?.phaseDurationSeconds, d.phaseDuration), postLoadDuration: positive(points?.postLoadDurationSeconds, d.postLoadDuration),
+    requestLifetime: positive(session?.requestLifetimeSeconds ?? points?.requestLifetimeSeconds, d.requestLifetime), deliveryMargin: positive(session?.deliveryMarginMilliseconds ?? points?.deliveryMarginMilliseconds, d.deliveryMargin),
+    framedDecodedRequestUpperBytes: positive(session?.framedDecodedRequestUpperBytes ?? points?.framedDecodedRequestUpperBytes, d.framedDecodedRequestUpperBytes),
+    settling: positive(idle.settlingDurationSeconds, d.settling), idleDuration: positive(idle.durationSeconds, d.idleDuration), idleWindow: positive(idle.metricObservation?.durationSeconds, d.idleWindow),
+    idleInterval: positive(idle.metricObservation?.intervalMilliseconds, d.idleInterval), idleTimeout: positive(idle.metricObservation?.timeoutMilliseconds, d.idleTimeout),
+    retryLimit: finite(spec.retryLimit, d.retryLimit),
+    meterLag: finite(session?.meterLagSeconds, d.meterLag), minimumPowerWindow: positive(session?.minimumPowerWindowSeconds, d.minimumPowerWindow), midLevelRatio: positive(session?.midLevelRatio, d.midLevelRatio),
+    sparseGap: positive(session?.sparseMeanGapSeconds, d.sparseGap), levelLimit: positive(session?.levelDurationLimitSeconds, d.levelLimit), postLoadWindow: positive(session?.postLoadWindowSeconds, d.postLoadWindow),
+    confidence: positive(Number(session?.confidenceLevel), d.confidence), observationInterval: positive(session?.observation.intervalMilliseconds, d.observationInterval),
+    observationTimeout: positive(session?.observation.requestTimeoutMilliseconds, d.observationTimeout), maximumOperation: positive(session?.observation.maximumOperationSeconds, d.maximumOperation),
+    maximumGap: positive(session?.observation.maximumGapMilliseconds, d.maximumGap),
   }
 }
 export function fillDefaults(draft:Draft,context:Context,inherited=false):Draft {
@@ -139,14 +167,30 @@ export function updateDraft(current:Draft,patch:Partial<Draft>,context:Context,i
   if(next.model===current.model&&next.preprocessor===current.preprocessor&&next.dataset===current.dataset)return next
   return {...next,workload:patch.workload||"",protocol:next.protocol?.spec?{...next.protocol,spec:{...next.protocol.spec,activeProtocol:{...next.protocol.spec.activeProtocol,workload:undefined}}}:next.protocol}
 }
-function advancedProblem(values: Advanced) {
-  const bad = advancedFields.find(([key, , min, max=2147483647, step=1]) => !Number.isFinite(values[key]) || step!=="any"&&!Number.isInteger(values[key]) || values[key] < min || key==="sparseMeanGap"&&values[key]===0 || values[key] > max)
-  if (bad) return `"${bad[1]}"은 ${bad[2]}${bad[0]==="sparseMeanGap"?" 초과 수": " 이상 정수"}`
-  if(values.utilizations.split(",").some(value=>!value.trim()||!Number.isFinite(Number(value))||Number(value)<=0||Number(value)>=1))return "운영점 이용률은 0 초과 1 미만, 쉼표로 구분"
-  if (values.retryLimit > 10) return "일시적 인프라 장애 재시도 한도는 10번 이하"
-  if (values.activeTimeout >= values.activeInterval || values.idleTimeout >= values.idleInterval) return "전력 기록 대기 한도는 기록 간격 미만"
-  if (values.activeWindow < values.activeDuration || values.idleWindow < values.idleDuration) return "전력 기록 시간은 측정 시간 이상"
+const exclusiveZero: Partial<Record<keyof Advanced, true>> = { sparseMeanGap: true, minimumPowerWindow: true, midLevelRatio: true, sparseGap: true, levelLimit: true, postLoadWindow: true }
+/** Short inline error of one protocol value. */
+export function advancedIssue(values: Advanced, key: keyof Advanced): string {
+  if (key === "utilizations") return values.utilizations.split(",").some(item => !item.trim() || !(Number(item) > 0 && Number(item) < 1)) ? "0과 1 사이 값" : ""
+  const field = advancedFields.find(([name]) => name === key)
+  if (!field) return ""
+  const [, , min, max = 2147483647, step = 1] = field
+  const value = values[key]
+  const upper = key === "retryLimit" ? 10 : max
+  if (key === "confidence" && !(value >= 0.5 && value < 1)) return "0.5 이상 1 미만"
+  if (key === "midLevelRatio" && !(value > 0 && value < 1)) return "0과 1 사이 값"
+  if (!Number.isFinite(value) || (step !== "any" && !Number.isInteger(value)) || value < min || (exclusiveZero[key] && value === 0) || value > upper)
+    return exclusiveZero[key] ? "0보다 큰 값" : key === "retryLimit" ? "0~10 정수" : step === "any" ? `${min} 이상` : `${min} 이상 정수`
+  if ((key === "activeTimeout" && value >= values.activeInterval) || (key === "idleTimeout" && value >= values.idleInterval) || (key === "observationTimeout" && value >= values.observationInterval)) return "기록 간격보다 짧게"
+  if ((key === "activeWindow" && value < values.activeDuration) || (key === "idleWindow" && value < values.idleDuration)) return "측정 시간 이상"
+  if (key === "levelLimit" && value <= values.meterLag + values.minimumPowerWindow) return "지연과 최소 관측의 합보다 길게"
+  if (key === "deliveryMargin" && value >= values.requestLifetime * 1000) return "요청 수명보다 짧게"
   return ""
+}
+function advancedProblem(values: Advanced) {
+  const key = (Object.keys(defaultAdvanced) as (keyof Advanced)[]).find(key => advancedIssue(values, key))
+  if (!key) return ""
+  const label = key === "utilizations" ? "운영점 이용률" : advancedFields.find(([name]) => name === key)![1]
+  return `"${label}": ${advancedIssue(values, key)}`
 }
 export const nodeReason = (node: InventoryNode) => node.ready !== "True" ? "준비 안 됨" : node.schedulingDisabled ? "새 작업 차단됨" : ""
 // Only a proven static mismatch blocks a path; runtime support is checked by preflight.
@@ -162,7 +206,7 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
   const path = model?.spec.executionPaths.find(p => p.name === d.path)
   const preprocessor=preprocessors.find(item=>item.metadata.name===d.preprocessor)
   const dataset=datasets.find(item=>item.metadata.name===d.dataset)
-  const protocol: Protocol = d.protocol ?? { values: blankAdvanced, from: null }
+  const protocol: Protocol = d.protocol ?? { values: defaultAdvanced, from: null }
   const trials = d.trials ?? 3
   const powerMode = cls?.powerModes.length === 1 ? cls.powerModes[0].name : d.powerMode
   const taken = new Set(plans.map(p => p.metadata.name))
@@ -202,6 +246,13 @@ export function manifest(d: Draft, context: Context, namespace: string) {
     trialsPerBatch: v.trials,
     retryLimit: p.retryLimit,
     ...(v.protocol.spec?.pointPolicy?{pointPolicy:v.protocol.spec.pointPolicy}:{}),
+    session: {
+      meterLagSeconds: p.meterLag, minimumPowerWindowSeconds: p.minimumPowerWindow, midLevelRatio: p.midLevelRatio, sparseMeanGapSeconds: p.sparseGap,
+      levelDurationLimitSeconds: p.levelLimit, postLoadWindowSeconds: p.postLoadWindow, confidenceLevel: String(p.confidence),
+      requestLifetimeSeconds: p.requestLifetime, deliveryMarginMilliseconds: p.deliveryMargin, framedDecodedRequestUpperBytes: p.framedDecodedRequestUpperBytes,
+      observation: { intervalMilliseconds: p.observationInterval, requestTimeoutMilliseconds: p.observationTimeout, maximumOperationSeconds: p.maximumOperation, maximumGapMilliseconds: p.maximumGap,
+        timing: v.protocol.spec?.session?.observation.timing ?? defaultTiming },
+    },
   }
   return { apiVersion: "edge.dacs.io/v1alpha1", kind: "BatchEnergyOptimization", metadata: { name: v.name, namespace }, spec }
 }
