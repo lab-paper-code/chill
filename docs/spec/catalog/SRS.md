@@ -119,51 +119,26 @@
 
 구현 설계와 측정 순서는 전력모드 커버리지 계획을 따른다.
 
-## 7. 같은 기종 프로파일 재사용 같은 기종 프로파일 재사용
-
-#### 같은 기종 프로파일 재사용 조건
-원본과 대상은 같은 DeviceClass(기종), 모델과 전처리 산출물과 데이터셋, 내용 고정 실행 이미지, 실행 경로와 runtime 설정, 전력모드와 메모리와 가속기 실행 조건이어야 한다. CPU는 공유 실행을 따르며 관측값의 수치 동일성을 조건으로 삼지 않는다. 다른 계열과 확인하지 않은 배치의 재사용은 거절해야 한다.
-#### 활성과 유휴 동등성 확인
-대상 Node는 원본의 재사용할 모든 배치에서 짧은 활성 측정과 모델 로드 유휴 측정을 수행해야 한다. 원본을 분모로 한 `abs(대상−원본)/원본`을 배치별 평균 서비스 시간과 활성 노드 벽전력과 유휴 벽전력에 각각 적용하고, 모두 설정된 허용 차이 이하일 때만 수락해야 한다. 분모가 0이거나 필수 관측이 없으면 거절해야 한다. 권고 허용 차이는 0.05(5%): 계획 여유 25%의 1/5로 초기 동등성 screening에 사용하며 SLO와 전력 오차의 통계적 상한으로 해석하지 않는다. 값은 (0,1) 안의 설정값이고 5%를 고정 검증하지 않는다.
-#### 재사용 확인 근거와 신원
-원본과 확인 측정의 UID와 불변 결과 참조, 대상 Node UID와 GPU UUID와 전력계, 확인 창과 반복 수, 허용 차이와 실제 차이와 수락/거절 사유를 조회와 재현할 수 있어야 한다. 권고 확인 창은 활성과 유휴 각각 30초 이상, trial 3개 이상이고 원본의 warmup, settling와 관측 품질 조건은 유지한다. 확인 원시 기록을 원본 분포에 합치거나 원본을 덮어쓰지 않는다.
-#### 재사용 후보와 대상별 근거
-수락한 재사용 행은 대상 Node의 실행과 계획 후보가 되어야 한다. GPU UUID 등 물리 개체 고유값과 유휴 기준은 대상 확인 측정의 값을 쓰고, 메모리는 원본과 대상 관측 최대 중 큰 값으로 보수적으로 배정하며 서비스 분포와 증분 에너지는 원본에서 가져온다. 거절과 원본 삭제/무효화와 조건 불일치이면 해당 재사용 행을 제공하지 않고 대상의 독립 측정을 요구해야 한다. d, 준비, 제거와 모드 전환 비용은 자동 공유하지 않는다.
-
-| 수용 시나리오 | 확인 결과 | 요구사항 |
-|---|---|---|
-| genesis2와 genesis3의 같은 조건, 모든 확인 차이 4% | genesis3 UID와 GPU UUID와 meter의 행이 catalog와 planner option에 연결되고 원본/확인 근거와 실제 차이가 조회됨 | [같은 기종 프로파일 재사용 조건](#같은-기종-프로파일-재사용-조건), [활성과 유휴 동등성 확인](#활성과-유휴-동등성-확인), [재사용 확인 근거와 신원](#재사용-확인-근거와-신원), [재사용 후보와 대상별 근거](#재사용-후보와-대상별-근거) |
-| 상대 차이 정확히 5%, 설정 5% | 수락; 설정 3%에서는 거절 | [활성과 유휴 동등성 확인](#활성과-유휴-동등성-확인) |
-| 이미지, 기종과 가속기 실행 조건 불일치 또는 확인 배치/벽전력 누락 | 거절 사유를 제공하고 재사용 행 없음, 독립 측정 요구 | [같은 기종 프로파일 재사용 조건](#같은-기종-프로파일-재사용-조건), [활성과 유휴 동등성 확인](#활성과-유휴-동등성-확인), [재사용 확인 근거와 신원](#재사용-확인-근거와-신원), [재사용 후보와 대상별 근거](#재사용-후보와-대상별-근거) |
-| 5% 초과, 원본 미존재, 무효화와 다른 재사용 행을 원본으로 지정 | 거절 및 근거 보존, 전이적/계열 간 일반화 없음 | [같은 기종 프로파일 재사용 조건](#같은-기종-프로파일-재사용-조건), [활성과 유휴 동등성 확인](#활성과-유휴-동등성-확인), [재사용 확인 근거와 신원](#재사용-확인-근거와-신원), [재사용 후보와 대상별 근거](#재사용-후보와-대상별-근거) |
-| 대상 GPU UUID만 원본과 다름 | 대상의 실측 UUID로 준비와 실물 검증하고 원본 UUID를 target 자원에 사용하지 않음 | [재사용 확인 근거와 신원](#재사용-확인-근거와-신원), [재사용 후보와 대상별 근거](#재사용-후보와-대상별-근거) |
-
-저장과 판정과 genesis2→genesis3 운영 절차는 [같은 기종 프로파일 재사용](../../design/serving/measurement-api.md#같은-기종-프로파일-재사용)에 정의한다.
-
-## 8. 측정 정책의 선택과 동결
+## 7. 측정 정책의 선택과 동결
 
 #### 측정 길이 오차와 신뢰수준
-길이 오차는 ProfilingRun.spec.measurement.durationToleranceSeconds(현재0.5초, finite ≥0와 duration 미만)로 BEO active/idle 및 독립 idle protocol에서 전달한다. BEO.spec.pointPolicy.confidenceLevel은 (0,1) 십진 문자열, 생략 "0.95"이며 campaign point와 serving baseline와 incremental energy CI가 같은 선택값을 쓴다. 독립 idle CR의 기존 CI 소유권은 유지한다. Profile.ConfidenceLevel과 CI 메시지도 실제값이다. 기존 immutable spec와 실행/결과 참조를 재사용하고 중복 snapshot은 없다.
+길이 오차는 ProfilingRun.spec.measurement.durationToleranceSeconds(현재0.5초, finite ≥0와 duration 미만)로 독립 idle protocol에서 전달한다. BEO.spec.session.confidenceLevel은 [0.5, 1) 십진 문자열이고 세션 계산의 모든 통계 판단이 같은 선택값을 쓴다. 독립 idle CR의 기존 CI 소유권은 유지한다. Profile.ConfidenceLevel과 CI 메시지도 실제값이다. 기존 immutable spec와 실행/결과 참조를 재사용하고 중복 snapshot은 없다.
 #### 측정 반복과 공급 정책
-BEO의 trialsPerBatch는 active와 idle 각각 3으로 고정한다. 같은 actor의 loaded-idle baseline 3개를 먼저 완료하고, 배치를 오름차순으로 active trial 3개씩 완료한다. 독립 idle은 pointPolicy.minimumRuns ≥2와 attemptLimit 2~100을 사용하고 attemptLimit≥minimumRuns를 지킨다. 전이는 acceptedCountTarget≥2, attemptLimit≥2와 attemptLimit≥acceptedCountTarget을 지킨다. 점유 측정은 선택한 worker 수, 예열, 측정 길이, 최소 배치 쌍 수, 요청 수명, 전달 여유, 실행 상한과 seed를 동결한 closed-loop 공급을 사용한다.
+독립 idle은 pointPolicy.minimumRuns ≥2와 attemptLimit 2~100을 사용하고 attemptLimit≥minimumRuns를 지킨다. 전이는 acceptedCountTarget≥2, attemptLimit≥2와 attemptLimit≥acceptedCountTarget을 지킨다. 점유 측정은 선택한 worker 수, 예열, 측정 길이, 최소 배치 쌍 수, 요청 수명, 전달 여유, 실행 상한과 seed를 동결한 closed-loop 공급을 사용한다.
 #### 실험 정책 선택과 동결
 실험은 EvaluationRun과 독립 실행 주체를 사용한다. 부모 prepare에서 선택한 부하 정의, 워크로드 적용 정의와 운영 정책을 한 번 동결하고 단계는 그 snapshot을 사용한다. 실행 중 설정 재조회로 조건을 바꾸지 않는다. 장애 주입은 선언한 계획과 공개 Kubernetes API를 사용한다.
 
-#### 재사용 확인 창과 반복 설정
-기존 profile-reuse annotation에서 minimumMeasurementSeconds(finite >0, 생략30)와 minimumTrials(정수 ≥2, 생략3)를 선택한다. active/idle 각각의 최소 창이며 ProfileReuseCheck에 선택값과 실제 길이/trial을 기록한다. reusedProfile 정책 identity에도 두 값을 포함한다. 기존 sourceProfileID와 maximumRelativeDifference와 조건 검사를 유지하며 전역 settings로 재정의하지 않는다.
-
 | 수용 시나리오 | 확인 결과 | 요구사항 |
 |---|---|---|
-| 기본 측정 정책: 오차 0.5초, 신뢰수준 0.95, BEO 3회와 전이 목표 5회 | 현재 수용 결과 유지, CR→불변 실행 입력→집계가 같은 실제값과 출처를 가짐 | [측정 길이 오차와 신뢰수준](#측정-길이-오차와-신뢰수준), [측정 반복과 공급 정책](#측정-반복과-공급-정책) |
-| 비기본 tolerance/CI/trials/target/seed와 경계 입력 | BEO active3/idle3와 독립 idle2 및 전이target2의 유도, 저장, 재로딩과 serving 소비 확인; 기존 기본 결과 유지. baseline 평균, 분산, 자유도, CI와 음수 energy 거절/해상도 처리를 변경 전 .95 계산과 비교 | [측정 길이 오차와 신뢰수준](#측정-길이-오차와-신뢰수준), [측정 반복과 공급 정책](#측정-반복과-공급-정책) |
+| 기본 측정 정책: 오차 0.5초와 전이 목표 5회 | 현재 수용 결과 유지, CR→불변 실행 입력→집계가 같은 실제값과 출처를 가짐 | [측정 길이 오차와 신뢰수준](#측정-길이-오차와-신뢰수준), [측정 반복과 공급 정책](#측정-반복과-공급-정책) |
+| 비기본 tolerance/CI/target/seed와 경계 입력 | 독립 idle2 및 전이target2의 유도, 저장, 재로딩과 serving 소비 확인; 기존 기본 결과 유지. baseline 평균, 분산, 자유도, CI와 음수 energy 거절/해상도 처리를 변경 전 .95 계산과 비교 | [측정 길이 오차와 신뢰수준](#측정-길이-오차와-신뢰수준), [측정 반복과 공급 정책](#측정-반복과-공급-정책) |
 | bind 후 환경 config를 변경하고 실행/분석 | 선택값은 기존 binding 그대로이며 실행 중 config 재조회로 바뀌지 않음; 새 bind만 새 조건을 선택 | [실험 정책 선택과 동결](#실험-정책-선택과-동결) |
 | 기존 실행 함수와 새 생략/명시 기본 config | stage/part 시간, rates, offset, offered와 full/static/factor와 판정을 변경 전과 비교. check의11700/10200/21900/seed 집합도 binding 유도. example만 정답으로 삼지 않음 | [실험 정책 선택과 동결](#실험-정책-선택과-동결) |
-| annotation 최소 창/trials 변경 | 기본30초/3회 수락과 거절 유지, 비기본 정책이 실제 판정과 identity에 반영. 최소 확인 trial 설정의 유효 범위를 따르며 BEO 생성은 고정 3회다 | [재사용 확인 창과 반복 설정](#재사용-확인-창과-반복-설정) |
 
 정확한 추가 CR 필드, 단위, 범위와 기본값 및 binding 키는
 [실험과 환경 입력의 동결](../../design/serving/configuration-hardcoding.md#실험과-환경-입력의-동결)을 따른다.
 
-## 9. 측정 커버리지 조회 API
+## 8. 측정 커버리지 조회 API
 
 화면 요구는 [Dashboard SRS](../dashboard/SRS.md) [측정 범위와 조합 진행](../dashboard/SRS.md#측정-범위와-조합-진행), [서버 측정 상태와 품질 표시](../dashboard/SRS.md#서버-측정-상태와-품질-표시), [서버 집계 커버리지 조회](../dashboard/SRS.md#서버-집계-커버리지-조회), [정확 조건 목록과 회차 연결](../dashboard/SRS.md#정확-조건-목록과-회차-연결), [측정 요청 편집과 점검](../dashboard/SRS.md#측정-요청-편집과-점검), [측정 결과의 수치와 품질](../dashboard/SRS.md#측정-결과의-수치와-품질), [실패 회차의 원인과 후속 조치](../dashboard/SRS.md#실패-회차의-원인과-후속-조치), [점유시간과 변경 비용 표시](../dashboard/SRS.md#점유시간과-변경-비용-표시), [실험 대응 관계와 차이 해석](../dashboard/SRS.md#실험-대응-관계와-차이-해석), [선택 서비스와 공통 부하 추세](../dashboard/SRS.md#선택-서비스와-공통-부하-추세)를 유지하며,
 아래 요구는 그 화면이 소비할 서버/게시자 사실의 소유권을 정한다.
@@ -174,20 +149,10 @@ BEO의 trialsPerBatch는 active와 idle 각각 3으로 고정한다. 같은 acto
   Compatible/Incompatible/Unknown을 구분하고 누락과 모호한 선언이나 조회 실패를 미지원으로
   바꾸지 않아야 한다. 같은 기종이라는 이유로 Node-bound 선언을 모든 Node로 확대하지 않는다.
   전처리/데이터셋과 모드/CPU admission, 현재 준비 상태와 측정 완료는 각각 별도로 확인해야 한다.
-#### 실패 측정의 정확한 소유 회차
-finalized result가 없는 실패 BEO에서도 기존 Run의 controller owner apiVersion/kind/name/UID와
-  기록된 batch/workload mode/attempt를 공개 조회로 연결할 수 있어야 한다. 같은 namespace와
-  정확 BEO UID로 소유를 판정하며 이름 유사성과 label만으로 소유를 확정하거나 회차를 재번호하지 않는다.
-  owner/attempt 부재와 전체 page 미조회는 기록 없음/확인 중으로 구분한다. Passport를 전제로 요구하지 않는다.
-#### 배치별 증분 에너지 통계
-보존된 BEO completed active/idle trial과 frozen curve plan에서 배치별 증분 J/item 평균,
-  독립 active/idle Run 수, 기존 공유 idle 불확실성을 포함한 CI의 실제 level/half-width와 추정 방법,
-  출처를 제공해야 한다. 기존 유도/Student-t 구현과 해당 BEO의 정책을 재사용하고 signed 평균/CI를
-  보존한다. 통계를 추가하려고 sealed result/detail와 raw를 수정하거나 현재 catalog 값으로 바꾸지 않는다.
-#### 완료 호출 통합 지연 분위수
-같은 batch/정확 조건의 완료된 client 추론 호출 latency 원시를 합친 p95(ms)와 표본 수를
-  제공해야 한다. trial별 분위 평균과 최대 p99와 다른 batch/조건 합치기와 batch로 나눈 시간을 통합 p95로
-  표시하지 않는다. 원근거 부재와 읽기 오류와 무효 근거를 구분하고 미제공을 0으로 만들지 않는다.
+#### 배치별 입력당 에너지
+프로파일의 배치 크기별 입력당 줄(J/input)과 구성별 유휴 전력, 깨어 있는 전력 증가, 유지 시간을 각 값의 식별 여부와 식별하지 못한 사유, 값이 움직이는 범위와 함께 제공해야 한다. 식별하지 못한 값을 0이나 다른 값으로 채우지 않는다. 입력당 줄을 식별하지 못한 배치 크기는 서빙에 제공하지 않는 배치 크기로 구분한다. 저장된 세션 결과를 수정하거나 현재 catalog 값으로 바꾸지 않는다.
+#### 처리 시간 분위수
+배치 크기별 처리 시간 기록 중 질의한 직전 유휴 간격에 가장 가까운 N개의 경험적 분위수를 제공해야 한다. N은 백분위의 표본 하한이다. 기록이 N개보다 적으면 측정 없음으로 구분하고 0으로 만들지 않는다. 원근거 부재와 읽기 오류와 무효 근거를 구분한다.
 #### 동작 단계의 실제 시간과 에너지
 OperationCostMeasurement list/detail은 CR이 가리킨 정확 단계의 실제 operation identity,
   실제 시간(ns), 전체 Node 벽에너지(J)와 원 판정과 사유와 출처를 제공해야 한다.
@@ -207,8 +172,7 @@ OperationCostMeasurement list/detail은 CR이 가리킨 정확 단계의 실제 
 | 수용 시나리오 | 확인 결과 | 요구사항 |
 |---|---|---|
 | trusted runtime 충돌, 누락과 중복, 같은 class의 Node-bound GPU | 명시 충돌만 미지원, 부재/모호함은 Unknown; 정확 Node 출처와 조회 오류 유지, POST/preflight는 여전히 별도 | [정적 실행 호환성과 출처](#정적-실행-호환성과-출처) |
-| 실패 BEO result:null와 동명 다른 UID와 Run owner 없음과 attempt 부재와 여러 page | UID 일치 owner만 소유 회차이며 원 batch/mode/attempt 유지; Passport 없어도 조회, 미기록/조회 미완료 구분 | [실패 측정의 정확한 소유 회차](#실패-측정의-정확한-소유-회차) |
-| 비영분산/영분산과 다른 CI level와 음수 하한과 길이 다른 trial latency vector | 기존 CI 수학 유지, 통합 p95는 합친 호출 표본의 값, Run/호출/item 수 구분, 원근거 없으면 기록 없음 | [배치별 증분 에너지 통계](#배치별-증분-에너지-통계), [완료 호출 통합 지연 분위수](#완료-호출-통합-지연-분위수) |
+| 식별하지 못한 값, 기록이 N개보다 적은 배치 크기 | 값과 범위와 식별 사유를 그대로 제공, 질의 간격에 가장 가까운 N개의 분위수, 측정 없음은 0이 아님, 원근거 없으면 기록 없음 | [배치별 입력당 에너지](#배치별-입력당-에너지), [처리 시간 분위수](#처리-시간-분위수) |
 | accepted 0 J와 failed duration, idle와 미실행 후속과 잘못된 step/UID/key와 store 실패 | 정확 단계 시간/J만 제공; null/0/오류와 순서 phase 보존, 계획 시간/다른 최신 비용 대입 없음 | [동작 단계의 실제 시간과 에너지](#동작-단계의-실제-시간과-에너지) |
 | 두 publisher의 서로 다른 workload α, alias와 직접 rate와 한/여러 part와 producer 시작 시차 | α는 workload별 값, 예정 offset과 해당 실제 시작 anchor 구분, 0부하 무anchor와 direct-rate null 사유 보존 | [실험 예정 부하와 시간 출처](#실험-예정-부하와-시간-출처) |
 | 기록 뒤 Workload 재생성과 한 모집단에 여러 definition와 과거 summary | 기록 당시 identity/혼합 사유 유지, 옛 응답은 미기록; 현재 UID/기본값 대입과 과거 publication 재쓰기 없음 | [기록 당시 워크로드 정의 투영](#기록-당시-워크로드-정의-투영) |
