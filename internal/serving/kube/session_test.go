@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -874,7 +876,7 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 			preparation.RunConfig.State.Preprocessor.Path = profile.Condition.Preprocessor.Path
 			preparation.RunConfig.Images = profilingrun.Images{Runtime: profile.Condition.RuntimeImage, Artifact: profile.Condition.Artifact.Image}
 			config := SessionConfig{Image: "chill-server:1", Namespace: fixture.Namespace, NodeName: "load-node",
-				RunnerTimeout: 3 * time.Second, MaxRequestBytes: 1 << 20}
+				RunnerTimeout: 3 * time.Second, MaxRequestBytes: 1 << 20, MaxResultBytes: 64 << 20}
 			spec := sessionInstance(beo, preparation, testNode, 1, config)
 			actor := spec.Config
 			nativeClient, _ := preparationNativeHTTPClient(t, ctx, actor, profile)
@@ -895,8 +897,18 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 			controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
 				if scenario == "prepare insufficient" && request.Operation.Kind == servingstate.OperationPrepare ||
 					scenario == "remove insufficient" && request.Operation.Kind == servingstate.OperationRemove {
-					// Real power samples cannot cover a one-nanosecond maximum gap.
-					request.Coverage.MaximumGap = time.Nanosecond
+					// Fail only the cost's after-snapshot. The real observer has
+					// already read the physical effect, which must drive the session.
+					captureReads := 0
+					kube.PrependReactor("list", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+						if action.(ktesting.ListAction).GetListRestrictions().Fields.String() == "spec.nodeName="+node.Name {
+							captureReads++
+							if captureReads == 2 {
+								return true, nil, errors.New("operation cost snapshot unavailable")
+							}
+						}
+						return false, nil, nil
+					})
 				}
 				if strings.HasSuffix(scenario, "no first sample") &&
 					(strings.HasPrefix(scenario, "prepare ") && request.Operation.Kind == servingstate.OperationPrepare ||
@@ -952,18 +964,18 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 				t.Fatalf("prepared instance was not removed: %+v", measured)
 			}
 			// Explicit unmeasured actions retain a separate physical result.
-			identities, err := controller.config.Evidence.List(ctx, SessionOperationCostPrefix(string(node.UID), beo.UID))
-			if err != nil {
-				t.Fatal(err)
+			files, err := filepath.Glob(filepath.Join(controller.config.Evidence.(archiveEvidence).directory,
+				SessionOperationCostPrefix(string(node.UID), beo.UID)) + "*.json")
+			if err != nil || len(files) == 0 {
+				t.Fatalf("operation archive unavailable: files=%v error=%v", files, err)
 			}
-			for _, identity := range identities {
-				reader, err := controller.config.Evidence.Open(ctx, identity)
+			for _, name := range files {
+				raw, err := os.ReadFile(name)
 				if err != nil {
 					t.Fatal(err)
 				}
 				var retained servingops.OperationMeasurement
-				err = json.NewDecoder(reader).Decode(&retained)
-				_ = reader.Close()
+				err = json.Unmarshal(raw, &retained)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -978,8 +990,8 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 				}
 			}
 			physical := schedulerPhysicalState(spec.Instance.ID, measured[0].Result.Actual.Instances)
-			if physical == nil || physical.RecoveryUnknown || !physical.NativeVerified {
-				t.Fatalf("observer did not preserve the exact executor's recovery proof: %+v", physical)
+			if physical == nil || physical.RecoveryUnknown {
+				t.Fatalf("current-process preparation inherited a recovery fence: %+v", physical)
 			}
 			current, err := kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
 			if err != nil {

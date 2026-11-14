@@ -773,11 +773,11 @@ func (o *Observer) refreshFailure(err error) error {
 
 // Declared images are diagnostics; measured images govern preparations and execution.
 func (o *Observer) recordRuntimeDeclaration(ctx context.Context, pod *corev1.Pod, profile *serving.Profile) {
-	if profile == nil {
-		o.issue("runtime-declaration/"+string(pod.UID), nil)
-		return
+	var desiredImage string
+	var err error
+	if profile != nil {
+		desiredImage, err = o.CurrentRuntimeImage(ctx, profile)
 	}
-	desiredImage, err := o.CurrentRuntimeImage(ctx, profile)
 	o.issue("runtime-declaration/"+string(pod.UID), err)
 	source := o.sources[string(pod.UID)]
 	if source == nil {
