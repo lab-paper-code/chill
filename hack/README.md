@@ -349,32 +349,16 @@ Wrong Workload/Node UID, unsafe mutations, credentials/path scope violations,
 evidence overwrite and diagnostic 401/403 are hard failures. Finite drain or
 early EOF retains partial facts after stopping owned writers.
 
-### Measurement planning and manual soak
+### Measurement requests and manual soak
 
-`hack/measure/gen.py --coverage --output-dir /tmp/coverage-plan-out --preflight`
-reads coverage, catalog and inventory into a frozen external plan. It does not
-create resources. `--pilot` also emits a runtime-family/heavy-model pilot.
-The planner config is `hack/measure/coverage-plan.json`; protocol, runtime
-declarations and active-path policy must match actual selected conditions.
-
-Current completed requests may be reused; current in-progress requests suppress
-duplicates. A failed latest request does not revive an older success.
-The named Workload supplies actual SLO and model/preprocessor/Dataset identity.
-BEO searches batches automatically with exactly three trials per batch.
-CPU request, quota and affinity are neither inherited nor generated.
-Retain operating-point settings, elapsed windows and metric padding.
-
-Memory exclusions bind runtime image, execution path and exact worker limit.
-Changed or unknown conditions require explicit operator policy review before
-request generation. A path-specific rule takes precedence over a class rule.
-Worker limits derive from live Node allocatable, configured memory fraction and
-installed policy ceiling. Missing inputs stay unconfirmed.
-Preserve raw policy evidence; do not hand-edit generated lanes.
+A profile measurement is one session `BatchEnergyOptimization` per node,
+model, execution path and power mode, shaped like
+`config/samples/profiling/edge_v1alpha1_batchenergyoptimization.yaml`. The
+repository has no request planner: operations keeps the condition list and
+submits requests through the product API.
 
 ```sh
-python3 hack/measure/gen.py --coverage --self-check
-python3 hack/measure/feeder.py \
-  --manifest /tmp/coverage-plan-out/resume-plan.json --stages 1,2 --check-manifest
+python3 hack/measure/feeder.py --manifest PATH/resume-plan.json --stages 1,2 --check-manifest
 ```
 
 The feeder gets existing requests before creation: completed ones are skipped,
