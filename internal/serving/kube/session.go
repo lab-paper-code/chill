@@ -27,6 +27,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
@@ -212,14 +213,13 @@ func setSessionPending(beo *edge.BatchEnergyOptimization, message string) {
 
 // sessionRun is one session's progress.
 type sessionRun struct {
-	c         *SchedulerController
-	beo       *edge.BatchEnergyOptimization
-	ref       serving.NodeReference
-	plan      sessionPlan
-	config    SchedulerControllerConfig
-	base      servingops.MeasurementRequest
-	steps     int
-	costError error
+	c      *SchedulerController
+	beo    *edge.BatchEnergyOptimization
+	ref    serving.NodeReference
+	plan   sessionPlan
+	config SchedulerControllerConfig
+	base   servingops.MeasurementRequest
+	steps  int
 	// started precedes the session's first operation.
 	started time.Time
 }
@@ -233,54 +233,23 @@ func (r *sessionRun) measure(ctx context.Context, name string, operation serving
 	request.Operation = operation
 	record, receipt, err := r.c.measureStep(ctx, r.config, request)
 	key := receipt.Object.Key
-	var costSaveErr error
-	if key == "" {
-		costSaveErr = err
-	}
-	if record.Result.StartedAt.IsZero() {
+	if err != nil || record.Verdict != servingstate.MeasurementAccepted {
 		reason := record.Reason
-		if reason == "" && err != nil {
+		if err != nil {
 			reason = err.Error()
 		}
-		record.Reason = "unmeasured action: measurement did not invoke operation"
-		if reason != "" {
-			record.Reason += ": " + reason
-		}
-		if key != "" {
-			operation.ID += ".unmeasured"
-		}
+		ctrllog.FromContext(ctx).WithName("scheduler").Info("operation cost not measured", "operation", operation.ID, "reason", reason)
+	}
+	if record.Result.StartedAt.IsZero() {
 		actionCtx, cancel := context.WithTimeout(ctx, request.OperationBudget)
 		record.Result, err = r.c.measurement.Execute(actionCtx, operation)
 		cancel()
-		record.SchemaVersion, record.Verdict = servingops.OperationMeasurementSchema, servingops.MeasurementInsufficient
-		if record.Request.Meter.ID == "" {
-			record.Request.Meter = r.plan.meter
-		}
-		record.Request.Operation, record.Request.Store = operation, r.config.EvidenceStore
-		raw, encodeErr := json.Marshal(record)
-		costSaveErr = errors.Join(costSaveErr, encodeErr)
-		if encodeErr == nil && r.config.Evidence != nil {
-			writeCtx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			identity := evidencestore.ObjectIdentity{Store: r.config.EvidenceStore, Key: servingops.OperationMeasurementKey(operation), Size: int64(len(raw))}
-			if _, writeErr := r.config.Evidence.PutImmutable(writeCtx, identity, bytes.NewReader(raw)); writeErr == nil {
-				key = identity.Key
-				costSaveErr = nil
-			} else {
-				costSaveErr = errors.Join(costSaveErr, writeErr)
-			}
-			cancelWrite()
-		}
-		if r.config.Evidence == nil {
-			costSaveErr = errors.Join(costSaveErr, errors.New("operation measurement evidence store is not configured"))
-		}
-	}
-	if costSaveErr != nil {
-		r.costError = errors.Join(r.costError, fmt.Errorf("%s: %s: %w", operation.ID, record.Reason, costSaveErr))
+		key = ""
 	}
 	switch operation.Kind {
 	case servingstate.OperationPrepare:
-		instance := schedulerPhysicalState(operation.Prepare.Instance.ID, record.Result.Actual.Instances)
-		if instance != nil && instance.PodUID != "" && record.Result.Actual.Native[instance.ID].Ready {
+		instance, state := r.preparedInstance(operation.Prepare, &record.Result)
+		if instance != nil && instance.PodUID != "" && state != nil && state.Ready {
 			return record, key, nil
 		}
 		if err == nil && record.Reason == "" {
@@ -288,7 +257,7 @@ func (r *sessionRun) measure(ctx context.Context, name string, operation serving
 			switch {
 			case instance == nil || instance.PodUID == "":
 				err = fmt.Errorf("prepare of batch %d left no instance", batch)
-			case record.Result.Actual.Native == nil:
+			case state == nil:
 				err = fmt.Errorf("batch %d instance reported no runtime metadata", batch)
 			default:
 				err = fmt.Errorf("prepare of batch %d left no ready instance", batch)
@@ -311,6 +280,29 @@ func (r *sessionRun) measure(ctx context.Context, name string, operation serving
 		err = errors.New(record.Reason)
 	}
 	return record, key, err
+}
+
+// preparedInstance reads preparation's physical effect independently of its
+// optional cost snapshot, using the exact Pod returned by prepare.
+func (r *sessionRun) preparedInstance(spec *servingstate.PrepareSpec, result *servingstate.OperationResult) (*serving.InstanceState, *native.State) {
+	instance := schedulerPhysicalState(spec.Instance.ID, result.Actual.Instances)
+	if instance != nil {
+		if state, ok := result.Actual.Native[instance.ID]; ok {
+			return instance, &state
+		}
+		if instance.Native != nil {
+			return instance, instance.Native
+		}
+	}
+	if evidence := result.Preparation; evidence != nil {
+		instances := r.c.runtime.Instances()
+		for i := range instances {
+			if instances[i].PodUID == evidence.PodUID {
+				return &instances[i], instances[i].Native
+			}
+		}
+	}
+	return instance, nil
 }
 
 // removePrepared removes only the exact Pod returned by this preparation.
@@ -336,18 +328,11 @@ func (r *sessionRun) removePrepared(ctx context.Context, name string, spec servi
 // first ends the session with the batches before it; at the first, or on any
 // other failure, the session fails with the original sentence.
 func (c *SchedulerController) runSession(ctx context.Context, beo *edge.BatchEnergyOptimization, ref serving.NodeReference, plan sessionPlan, config SchedulerControllerConfig) error {
-	var run *sessionRun
 	finish := func(phase edge.MeasurementPhase, outcome, message string, result *edge.ProfilingRunEvidenceReference, batches int) error {
 		// The final status survives a canceled run; publication is bounded on its own.
 		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		return c.patchMeasurementStatus(statusCtx, beo, func() {
-			setSessionStatus(beo, phase, outcome, message, result, batches)
-			if run != nil && run.costError != nil {
-				apimeta.SetStatusCondition(&beo.Status.Conditions, meta.Condition{Type: "OperationCostEvidence", Status: meta.ConditionFalse,
-					Reason: "CostEvidenceNotStored", Message: run.costError.Error(), ObservedGeneration: beo.Generation})
-			}
-		})
+		return c.patchMeasurementStatus(statusCtx, beo, func() { setSessionStatus(beo, phase, outcome, message, result, batches) })
 	}
 	fail := func(err error) error {
 		return errors.Join(err, finish(edge.MeasurementPhaseFailed, sessionOutcomeFailed, firstLine(err.Error()), nil, 0))
@@ -360,7 +345,7 @@ func (c *SchedulerController) runSession(ctx context.Context, beo *edge.BatchEne
 	if err != nil {
 		return fail(err)
 	}
-	run = &sessionRun{c: c, beo: beo, ref: ref, plan: plan, config: config, base: base, started: started}
+	run := &sessionRun{c: c, beo: beo, ref: ref, plan: plan, config: config, base: base, started: started}
 	if !plan.powered {
 		mode := plan.preparation.RunConfig.State.PowerMode
 		if _, _, err := run.measure(ctx, "power", servingstate.Operation{Kind: servingstate.OperationPower, PowerMode: mode,
@@ -493,18 +478,18 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (outcome s
 		}
 		return outcome, err
 	}
-	instance := schedulerPhysicalState(spec.Instance.ID, prepared.Result.Actual.Instances)
+	instance, state := r.preparedInstance(&spec, &prepared.Result)
 	if instance == nil || instance.PodUID == "" {
 		return outcome, fmt.Errorf("prepare of batch %d left no instance", batch)
 	}
-	if state, ok := prepared.Result.Actual.Native[instance.ID]; ok {
+	if state != nil {
 		metadata := state.Metadata.Runtime
 		outcome.metadata = &metadata
 	}
 	if outcome.metadata == nil {
 		return outcome, fmt.Errorf("batch %d instance reported no runtime metadata", batch)
 	}
-	if !prepared.Result.Actual.Native[instance.ID].Ready {
+	if state == nil || !state.Ready {
 		return outcome, fmt.Errorf("prepare of batch %d left no ready instance", batch)
 	}
 	load := sessionLoad{batch: batch, podUID: instance.PodUID,
@@ -584,11 +569,11 @@ func (r *sessionRun) postLoadInstance(ctx context.Context, batch int) (start, en
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
-	instance := schedulerPhysicalState(spec.Instance.ID, prepared.Result.Actual.Instances)
+	instance, state := r.preparedInstance(&spec, &prepared.Result)
 	if instance == nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("post-load prepare of batch %d left no instance", batch)
 	}
-	if instance.PodUID == "" || !prepared.Result.Actual.Native[instance.ID].Ready {
+	if instance.PodUID == "" || state == nil || !state.Ready {
 		return time.Time{}, time.Time{}, fmt.Errorf("post-load prepare of batch %d left no ready instance", batch)
 	}
 	window, observeErr := r.observePostLoad(ctx, time.Now())

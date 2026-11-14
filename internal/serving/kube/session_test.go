@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -930,8 +928,12 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 				return record, receipt, err
 			}
 			loads := 0
+			readyAtLoad := false
 			kube.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
 				loads++
+				instance := schedulerPhysicalState(spec.Instance.ID, manager.runtime.Instances())
+				readyAtLoad = instance != nil && instance.PodUID == string(fixture.UID) &&
+					!instance.RecoveryUnknown && instance.Native != nil && instance.Native.Ready
 				if !completes {
 					return true, nil, errors.New("session-load creation refused")
 				}
@@ -963,36 +965,6 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 				measured[1].Request.Operation.Kind != servingstate.OperationRemove {
 				t.Fatalf("prepared instance was not removed: %+v", measured)
 			}
-			// Explicit unmeasured actions retain a separate physical result.
-			files, err := filepath.Glob(filepath.Join(controller.config.Evidence.(archiveEvidence).directory,
-				SessionOperationCostPrefix(string(node.UID), beo.UID)) + "*.json")
-			if err != nil || len(files) == 0 {
-				t.Fatalf("operation archive unavailable: files=%v error=%v", files, err)
-			}
-			for _, name := range files {
-				raw, err := os.ReadFile(name)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var retained servingops.OperationMeasurement
-				err = json.Unmarshal(raw, &retained)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for i := range measured {
-					if measured[i].Result.StartedAt.IsZero() && retained.Request.Operation.Kind == measured[i].Request.Operation.Kind &&
-						!retained.Result.StartedAt.IsZero() {
-						if retained.Verdict != servingops.MeasurementInsufficient || !strings.HasPrefix(retained.Reason, "unmeasured action:") || retained.WallJoules != nil {
-							t.Fatalf("unmeasured physical action gained cost: %+v", retained)
-						}
-						measured[i] = retained
-					}
-				}
-			}
-			physical := schedulerPhysicalState(spec.Instance.ID, measured[0].Result.Actual.Instances)
-			if physical == nil || physical.RecoveryUnknown {
-				t.Fatalf("current-process preparation inherited a recovery fence: %+v", physical)
-			}
 			current, err := kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
 			if err != nil {
 				t.Fatal(err)
@@ -1009,8 +981,7 @@ func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
 					remaining++
 				}
 			}
-			if !manager.runtime.Recovery().Unknown || remaining != 0 || holder != "" || loads != 1 ||
-				measured[1].Result.Status != servingstate.NativeOperationComplete ||
+			if !manager.runtime.Recovery().Unknown || !readyAtLoad || remaining != 0 || holder != "" || loads != 1 ||
 				measured[1].Request.Operation.Instance != "" || measured[1].Request.Operation.PodUID != string(fixture.UID) {
 				t.Fatalf("cleanup/handback failed: holder %q pods %d loads %d remove %+v", holder, remaining, loads, measured[1])
 			}
@@ -1036,12 +1007,13 @@ func TestSessionFailedPreparationRemovesExactPod(t *testing.T) {
 			s := newSessionHarness(t)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			sentence := "prepare power window is insufficient"
+			sentence := "native preparation failed: runner exited with status 17"
 			var removed servingstate.Operation
 			s.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
 				record, receipt, err := s.measure(ctx, config, request)
 				if request.Operation.Kind == servingstate.OperationPrepare {
-					record.Verdict, record.Reason = servingops.MeasurementInsufficient, sentence
+					record.Verdict, record.Reason = servingops.MeasurementInsufficient, "prepare power window is insufficient"
+					record.Result.Error = sentence
 					record.Result.Actual.Instances = nil
 					record.Result.Preparation = &servingstate.PreparationEvidence{PodUID: "own-created-pod", Created: true}
 					cancel()
@@ -1073,7 +1045,7 @@ func TestSessionFailedPreparationRemovesExactPod(t *testing.T) {
 	}
 }
 
-func TestSessionCostStorageFailureRetainsDiagnosticWithoutFailingSession(t *testing.T) {
+func TestSessionCompletesWithoutOperationCostKeys(t *testing.T) {
 	s := newSessionHarness(t)
 	s.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
 		record, _, err := s.measure(ctx, config, request)
@@ -1090,14 +1062,13 @@ func TestSessionCostStorageFailureRetainsDiagnosticWithoutFailingSession(t *test
 	if status.Phase != string(edge.MeasurementPhaseComplete) || sessionCondition(status).Status != meta.ConditionTrue || s.holder() != "" {
 		t.Fatalf("cost storage failure changed physical session outcome: %+v", status)
 	}
-	for _, condition := range status.Conditions {
-		if condition.Type == "OperationCostEvidence" {
-			if condition.Status != meta.ConditionFalse || !strings.Contains(condition.Message, "final power read failed") ||
-				!strings.Contains(condition.Message, "cost evidence write refused") {
-				t.Fatalf("cost diagnostic lost original or persistence error: %+v", condition)
-			}
-			return
+	result, stored := s.result(beo)
+	if !stored || len(result.Batches) == 0 {
+		t.Fatalf("session without cost evidence produced no result: %+v", status)
+	}
+	for _, batch := range result.Batches {
+		if batch.PrepareCostKey != "" || batch.RemoveCostKey != "" {
+			t.Fatalf("missing cost evidence gained a key: %+v", batch)
 		}
 	}
-	t.Fatalf("missing cost persistence diagnostic: %+v", status)
 }
