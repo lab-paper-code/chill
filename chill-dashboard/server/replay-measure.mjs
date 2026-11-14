@@ -339,7 +339,7 @@ export function activeMeasurements(capture, epoch) {
         campaign: { namespace: ns, name, uid: item.metadata.uid, resourceVersion: item.metadata.resourceVersion, generation: 1, spec: item.spec, phase: status.phase, outcome: status.outcome,
           completedTrials: 0, completedBatches: status.completedBatches, reason: status.conditions[0].message, conditions: status.conditions,
           storedResult: status.result ? { store: STORE, key: status.result.key, size: status.result.size } : null },
-        result: null, statistics: null, statisticsReason: null, measurementFacts: null, measurementFactsReason: null, assessment: a, resultRows: [],
+        assessment: a, resultRows: [],
         ...(status.result ? { resultFormat: 'Session', session: sessionView(item) } : {}) }
     },
 
@@ -391,22 +391,10 @@ export function activeMeasurements(capture, epoch) {
       const campaign = { namespace: ns, name, uid: item.metadata.uid, resourceVersion: item.metadata.resourceVersion, generation: 1, spec: item.spec, phase: status.phase, ...(status.outcome ? { outcome: status.outcome } : {}),
         completedTrials: status.completedTrials, conditions: status.conditions, storedResult: status.result ? { store: STORE, key: status.result.key, size: status.result.size } : null }
       const readAt = iso(t)
-      if (!o.p) return { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationResult', readAt, campaign, result: null, statistics: null, statisticsReason: 'NoPublishedResult',
-        measurementFacts: null, measurementFactsReason: 'NoPublishedResult', assessment: { ...beoAssessment(item), scope: { schedulerUsed: false, reused: false, facts: [] } }, resultRows: [] }
-      const p = o.p, c = item.spec.state.candidate
-      const runs = runsOf(item, t)
-      const factsBody = { request: { namespace: ns, name, uid: item.metadata.uid }, resultReference: { store: STORE, key: status.result.key, size: status.result.size }, condition: p.condition,
-        pointPolicy: { version: 'point-policy.v1', minimumTrials: TRIALS, confidenceLevel: 0.95 }, batches: p.batchFacts }
+      if (!o.p) return { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationResult', readAt, campaign,
+        assessment: { ...beoAssessment(item), scope: { schedulerUsed: false, reused: false, facts: [] } }, resultRows: [] }
+      const p = o.p
       return { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationResult', readAt, campaign,
-        result: { schemaVersion: 'chill.dacs.io/batch-energy-optimization-result.v1alpha5', outcome: status.outcome,
-          measurementState: { targetNode: p.node, modelSpec: c.modelSpec, deviceClass: c.deviceClass, executionPath: c.executionPath, powerMode: c.powerMode },
-          curvePlan: { store: STORE, key: `batch-energy-optimizations/${item.metadata.uid}/curve-plan.json`, schemaVersion: 'chill.dacs.io/curve-plan.v1alpha14', size: 6120 },
-          completedTrials: runs.map(run => ({ run: { namespace: ns, name: run.name, uid: run.uid }, measurement: { workloadMode: run.spec.measurement.workloadMode, batch: run.spec.measurement.batch },
-            evidence: { store: STORE, key: run.status.evidence.key, schemaVersion: run.status.evidence.schemaVersion, size: run.status.evidence.size } })),
-          excludedTrials: [], detail: { minimumBatch: p.rows.reduce((a, b) => b.incrementalJoulesPerItem < a.incrementalJoulesPerItem ? b : a).batch, searchedBatches: BATCHES } },
-        statistics: { batches: p.batchFacts.map(f => ({ batch: f.batch, incrementalWorkJoulesPerItem: f.incrementalJoulesPerItem, activeTrialCount: TRIALS, idleTrialCount: TRIALS, confidence: f.confidence,
-          latencySampleCount: f.latencySampleCount, latencyP95Milliseconds: f.p95Milliseconds, sources: f.sources })) },
-        statisticsReason: null, measurementFacts: factsBody, measurementFactsReason: null,
         assessment: { ...beoAssessment(item), checklist: { criteriaMet: p.partial ? null : true, version: CHECKLIST, checks: checks(p.rows) } }, resultRows: p.rows }
     },
 

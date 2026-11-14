@@ -262,20 +262,19 @@ export function measurementRequests({ capture, startedAt, ns, nodeUID, measure }
         ...(st.phase ? { phase: st.phase } : {}), ...(st.outcome ? { outcome: st.outcome } : {}), completedTrials: st.completedTrials ?? 0, ...(st.conditions?.length ? { conditions: st.conditions } : {}),
         storedResult: ref ? { store: ref.store, key: ref.key, size: ref.size } : null }
       const listsFailedRuns = st.phase === 'Failed' || (st.phase === 'Complete' && st.outcome === 'BatchDiscoveryComplete')
-      const head = { apiVersion: API, kind: 'BatchEnergyOptimizationResult', readAt: new Date(t).toISOString(), campaign, result: null, statistics: null }
+      const head = { apiVersion: API, kind: 'BatchEnergyOptimizationResult', readAt: new Date(t).toISOString(), campaign }
       const withFailures = assessment => {
         const failureSummary = listsFailedRuns ? requestFailures(scene, own, request, t) : []
         return { ...assessment, scope: { ...assessment.scope, schedulerUsed: false }, ...(failureSummary.length ? { failureSummary } : assessment.displayStatus === 'problem' ? { failureSummary: fallbackFailure(request) } : {}) }
       }
       if (!ref) {
-        const reason = st.phase === 'Failed' ? 'RequestFailed' : 'NoPublishedResult'
-        return [200, { ...head, statisticsReason: reason, measurementFacts: null, measurementFactsReason: reason, assessment: withFailures(requestAssessment(request)), resultRows: [] }]
+        return [200, { ...head, assessment: withFailures(requestAssessment(request)), resultRows: [] }]
       }
       const curve = request.assessment?.reasons?.find(row => row.code === 'InvalidEvidence' && /curve-plan/.test(row.message))?.message ?? 'unsupported curve-plan schema "chill.dacs.io/curve-plan.v1alpha12"'
       const reason = ref.schemaVersion !== RESULT_SCHEMA ? `decode BatchEnergyOptimization ${ns}/${name} result: unsupported batch-energy-optimization result schema "${ref.schemaVersion}"`
         : `read BatchEnergyOptimization ${ns}/${name} statistics: ${curve}`
       const assessment = requestAssessment(request)
-      return [502, { ...head, statisticsReason: 'ResultUnavailable', measurementFacts: null, measurementFactsReason: 'ResultUnavailable', assessment: withFailures(assessment), resultRows: [],
+      return [502, { ...head, assessment: withFailures(assessment), resultRows: [],
         code: 'BatchEnergyOptimizationResultUnavailable', reason, evidenceError: { code: 'BatchEnergyOptimizationResultUnavailable', status: 502 } }]
     },
 
