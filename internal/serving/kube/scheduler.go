@@ -77,6 +77,10 @@ type SessionConfig struct {
 	Image, Namespace, ServiceAccount, NodeName string
 	// MaxResultBytes is the byte limit the catalog reads one session result with.
 	MaxResultBytes int64
+	// RunnerTimeout and MaxRequestBytes bound a measurement instance's native
+	// runner and requests with the values a serving instance gets.
+	RunnerTimeout   time.Duration
+	MaxRequestBytes int64
 }
 
 // SessionPreparation is the measurement request resolved once per session:

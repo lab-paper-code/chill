@@ -55,6 +55,8 @@ func newSchedulerService(
 		Image: opts.sessionLoadImage, Namespace: opts.loadGenerator.Namespace,
 		ServiceAccount: opts.loadGenerator.ServiceAccount, NodeName: opts.loadGenerator.NodeName,
 		MaxResultBytes: opts.maxEvidenceBytes,
+		// The serving preparation reads the same two options.
+		RunnerTimeout: opts.operationTimeout, MaxRequestBytes: opts.maxRequestBytes,
 	}
 	if err == nil {
 		session.Prepare, err = newSessionPrepare(store.Client(), opts)
