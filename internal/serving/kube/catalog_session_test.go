@@ -15,6 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
@@ -176,30 +177,41 @@ func assertCatalogSessionCondition(t *testing.T, p serving.Profile) {
 	}
 }
 
-// A Complete measurement whose result is from before profile sessions, or is
-// not a session result, is a catalog issue saying so, never a profile.
-func TestCatalogReportsOldSchemaResultAsIssue(t *testing.T) {
-	for _, tc := range []struct {
-		payload, schema, want string
-	}{
-		{`{"schemaVersion":"chill.dacs.io/batch-energy-optimization-result.v1alpha5","result":{}}`, "chill.dacs.io/batch-energy-optimization-result.v1alpha5",
-			`has schema "chill.dacs.io/batch-energy-optimization-result.v1alpha5", not "` + profilederivation.SessionResultSchemaVersion + `"; a measurement from before profile sessions is not read: delete it and measure again`},
-		{`not json`, profilederivation.SessionResultSchemaVersion, "is not a decodable session result"},
-	} {
-		catalog, source, _, _ := catalogStoredFixture(t, []byte(tc.payload), tc.schema)
-		view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
-		if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != measurementResultUnreadableCode ||
-			!strings.Contains(view.Insufficiencies[0].Reason, tc.want) {
-			t.Fatalf("payload %q: view=%+v err=%v", tc.payload, view, err)
-		}
+func TestCatalogKeepsIdentifiedBatchesAndQueryKeepsAllMeasurements(t *testing.T) {
+	result := catalogSessionResult(t)
+	result.Batches[1].JoulesPerInput = catalogTestParameter(t, `{"status":"NotIdentified","reason":"the slope is not determined"}`)
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Additive stored fields cannot discard otherwise usable measurements.
+	payload := strings.ReplaceAll(string(raw), `"status":"Identified"`, `"future":true,"status":"Identified"`)
+	payload = strings.TrimSuffix(payload, "}") + `,"future":true}`
+	catalog, source, _, _ := catalogStoredFixture(t, []byte(payload), profilederivation.SessionResultSchemaVersion)
+	view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
+	if err != nil || len(view.Profiles) != 1 || len(view.Profiles[0].Batches) != 1 {
+		t.Fatalf("catalog=%+v err=%v", view, err)
+	}
+	batch := view.Profiles[0].Batches[0]
+	if slope, ok := batch.InputSlopeJoules.Value(); !ok || slope != 0.3 || batch.Batch != 1 || batch.MemoryBytes != 32<<20 {
+		t.Fatalf("identified measurement changed: %+v", batch)
+	}
+	decoded, err := profilederivation.DecodeSessionResult([]byte(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := queryapi.BuildSessionResultView(decoded)
+	if len(query.Batches) != 2 || query.Batches[1].JoulesPerInput.Value != nil ||
+		query.Batches[1].JoulesPerInput.Status != profilederivation.ParameterNotIdentified {
+		t.Fatalf("query lost measured batch: %+v", query.Batches)
 	}
 }
 
 func TestCatalogUnreadableResultPreservesDecoderFailure(t *testing.T) {
-	payload := []byte(`{"schemaVersion":"old","result":{}}`)
+	payload := []byte(`{"schemaVersion":false}`)
 	_, original := profilederivation.DecodeSessionResult(payload)
 	if original == nil {
-		t.Fatal("old schema unexpectedly decoded")
+		t.Fatal("malformed result unexpectedly decoded")
 	}
 	catalog, source, _, _ := catalogStoredFixture(t, payload, "old")
 	view, err := catalog.Refresh(context.Background(), []string{source.Namespace})

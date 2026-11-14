@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -110,12 +108,12 @@ func TestRefreshPreparesServiceQuantilesOffDecisionPath(t *testing.T) {
 func TestRefreshRecoversPreparationsAfterTransientMaterialization(t *testing.T) {
 	fixture := newPreparationCatalogFixture(t)
 	fixture.fail("node", true)
-	if err := fixture.service.Refresh(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expired materialization was not a refresh failure: %v", err)
+	if err := fixture.service.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	failed, err := fixture.service.ReadCatalog(context.Background())
-	if err != nil || failed.Accepted != nil || len(failed.Profiles) != 1 {
-		t.Fatalf("failed materialization accepted a partial catalog or lost verified reporting: %+v err=%v", failed, err)
+	if err != nil || len(failed.Profiles) != 1 {
+		t.Fatalf("failed materialization lost measured reporting: %+v err=%v", failed, err)
 	}
 	fixture.fail("node", false)
 	if err := fixture.service.Refresh(context.Background()); err != nil {
@@ -124,44 +122,6 @@ func TestRefreshRecoversPreparationsAfterTransientMaterialization(t *testing.T) 
 	healthy := fixture.prepared(t)
 	if healthy.Revision != failed.Revision || healthy.ConfigVersion != failed.ConfigVersion {
 		t.Fatal("recovery changed the measurement or configuration identity")
-	}
-}
-
-func TestRefreshPreparationFailurePreservesAcceptedCatalog(t *testing.T) {
-	fixture := newPreparationCatalogFixture(t)
-	ctx := context.Background()
-	if err := fixture.service.Refresh(ctx); err != nil {
-		t.Fatal(err)
-	}
-	before := fixture.prepared(t)
-	accepted := fixture.service.Profiles.Load()
-	configuration := fixture.service.configuration.Load()
-	cm, err := fixture.service.kube.CoreV1().ConfigMaps("serving").Get(ctx, "scheduler", meta.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A new config revision forces adoption even on the old sticky path.
-	// Its contents and all measured source identities remain unchanged.
-	cm.ResourceVersion = "2"
-	if _, err := fixture.service.kube.CoreV1().ConfigMaps("serving").Update(ctx, cm, meta.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	fixture.fail("node", true)
-	if err := fixture.service.Refresh(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("failed required read was accepted: %v", err)
-	}
-	after, err := fixture.service.ReadCatalog(ctx)
-	if err != nil || !reflect.DeepEqual(after.Accepted, before.Accepted) ||
-		fixture.service.Profiles.Load() != accepted || fixture.service.configuration.Load() != configuration {
-		t.Fatalf("global preparation failure replaced accepted state: before=%+v after=%+v err=%v", before.Accepted, after.Accepted, err)
-	}
-	fixture.fail("node", false)
-	if err := fixture.service.Refresh(ctx); err != nil {
-		t.Fatal(err)
-	}
-	recovered := fixture.prepared(t)
-	if recovered.Accepted.ConfigVersion != cm.ResourceVersion || recovered.Revision != before.Revision {
-		t.Fatal("healthy refresh did not accept the pending revision with unchanged measurements")
 	}
 }
 

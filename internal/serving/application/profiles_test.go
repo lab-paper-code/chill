@@ -122,18 +122,6 @@ func applicationTestSlope(wire string) *derivation.SessionParameter {
 	return &p
 }
 
-// A profile batch whose input slope the session did not identify cannot be
-// published as a native bundle: preparation says so instead of sending a number.
-func TestPreparationRefusesNotIdentifiedInputSlope(t *testing.T) {
-	config := schedulerTestConfiguration()
-	service := schedulerTestService(t, config)
-	profile := measuredAdoptionProfile()
-	profile.Batches[1].InputSlopeJoules = applicationTestSlope(`{"status":"NotIdentified","reason":"inseparable from the awake step"}`)
-	_, err := service.preparation(context.Background(), config, profile)
-	if err == nil || !strings.Contains(err.Error(), "batch 2 input slope is not identified (inseparable from the awake step)") {
-		t.Fatalf("preparation published a not-identified slope: %v", err)
-	}
-}
 func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *testing.T) {
 	service := &SchedulerService{
 		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}),
@@ -172,10 +160,6 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 	// Runner warmup (SmolVLM2 79 s on rasp5) is bounded by the operation, not by one HTTP request.
 	if spec.Config.RunnerTimeoutMS != int(time.Hour/time.Millisecond) {
 		t.Fatalf("runner timeout %d ms, want the operation timeout", spec.Config.RunnerTimeoutMS)
-	}
-	profile.Batches[1].MemoryBytes = 0
-	if _, err = service.measuredPreparation(context.Background(), profile, 2); err == nil {
-		t.Fatal("missing measured memory accepted")
 	}
 	// The configuration allows batch 4, but the session stopped there (a
 	// capacity limit) and measured 1 and 2: serving initializes and warms

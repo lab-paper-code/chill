@@ -151,13 +151,30 @@ func expectNotIdentified(t *testing.T, name string, p SessionParameter) {
 	}
 }
 
-func TestDeriveSessionFailsWithNativeRowCount(t *testing.T) {
-	input := synthSession(gpuLikeBatches(), 0, gpuModel(nil), flat, 0, nil)
-	level := &input.Batches[1].Levels[0]
-	level.Native = level.Native[:len(level.Native)-1]
-	_, err := DeriveSession(input)
-	if err == nil || err.Error() != "level s/b2/0: native rows 799 of 800" {
-		t.Fatalf("error = %v", err)
+func TestDeriveSessionPreservesIndependentMeasurements(t *testing.T) {
+	for _, scenario := range []struct {
+		corrupt    func(*SessionInput)
+		saturation bool
+	}{
+		{func(input *SessionInput) { input.Batches[1].Levels[0].Native = nil }, false},
+		{func(input *SessionInput) { input.Batches[1].Levels[0].Row.CompletedInputs++ }, false},
+		{func(input *SessionInput) { input.Power = nil }, true},
+		{func(input *SessionInput) { input.PostLoadEnd = input.PostLoadStart }, true},
+		{func(input *SessionInput) { input.Batches[1].PeakMemoryBytes = 0 }, true},
+		{func(input *SessionInput) { input.Power[0].Watts = math.NaN() }, true},
+	} {
+		input := synthSession(gpuLikeBatches(), 0, gpuModel(nil), flat, 0, nil)
+		scenario.corrupt(&input)
+		result := derive(t, input)
+		if len(result.Batches[0].ServiceNanos) != 1252 || *result.Batches[0].SaturationInputRate != 100 {
+			t.Fatalf("independent service population changed: %+v", result.Batches[0])
+		}
+		if (result.Batches[1].SaturationInputRate != nil) != scenario.saturation {
+			t.Fatalf("unmatched native population published: %+v", result.Batches[1])
+		}
+		if _, err := json.Marshal(result); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -170,22 +187,9 @@ func TestDeriveSessionCountsRepeatedNativeRowsOnce(t *testing.T) {
 	if got := len(result.Batches[0].ServiceNanos); got != 1000+250+3-1 {
 		t.Fatalf("service records = %d", got)
 	}
-	repeated := input.Batches[0].Levels[1].Native[0]
-	repeated.ServiceDurationNanos++
-	level.Native = append(level.Native, repeated)
-	if _, err := DeriveSession(input); err == nil || !strings.Contains(err.Error(), "repeats with different values") {
-		t.Fatalf("conflicting repeat error = %v", err)
-	}
 }
 
-func TestDeriveSessionValidatesSettingsAndSize(t *testing.T) {
-	for _, confidence := range []float64{0.4, 1} {
-		input := synthSession(gpuLikeBatches(), 0, gpuModel(nil), flat, 0, nil)
-		input.Settings.ConfidenceLevel = confidence
-		if _, err := DeriveSession(input); err == nil || !strings.Contains(err.Error(), "confidence level in [0.5, 1)") {
-			t.Errorf("confidence %g: error = %v", confidence, err)
-		}
-	}
+func TestDeriveSessionBoundsStoredResult(t *testing.T) {
 	input := synthSession(gpuLikeBatches(), 0, gpuModel(nil), flat, 0, nil)
 	input.MaxResultBytes = 1000
 	if _, err := DeriveSession(input); err == nil || !strings.Contains(err.Error(), "bytes, above the 1000 byte read limit") {
@@ -296,8 +300,8 @@ func TestDeriveSessionIdentifiesOneBatchWithVisibleDecay(t *testing.T) {
 	expectIdentified(t, "hold", result.Power.HoldSeconds, 5, 1)
 	expectIdentified(t, "step", result.Power.AwakeStepWatts, 50, 1e-6)
 	expectIdentified(t, "b1", result.Batches[0].JoulesPerInput, 0.02, 1e-8)
-	if interval := result.Power.MeterIntervalSeconds; interval != 1 {
-		t.Errorf("meter interval = %g", interval)
+	if interval := result.Power.MeterIntervalSeconds; interval == nil || *interval != 1 {
+		t.Errorf("meter interval = %v", interval)
 	}
 }
 

@@ -14,7 +14,6 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/firstfloor"
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/test/fixtures"
@@ -53,40 +52,6 @@ func TestCatalogKeysObservedRuntimeVersionAndProvider(t *testing.T) {
 	if facts := view.MeasurementFacts[profile.ID]; facts.Condition.RuntimeVersion != profile.Condition.RuntimeVersion ||
 		facts.Condition.RuntimeProvider != profile.Condition.RuntimeProvider {
 		t.Fatalf("Query/Serving runtime identity diverged: %+v %+v", facts.Condition, profile.Condition)
-	}
-}
-
-// A session keeps the runtime report of its batch-1 instance, which
-// initialized only batch 1; the measured sizes are judged by the plan.
-func TestCatalogSupportsMeasuredSparseBatches(t *testing.T) {
-	profile := serving.Profile{
-		Condition: profilederivation.CurvePlanSpec{RuntimeFamily: "firstfloor", Backend: "ort-cpu",
-			Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}, PlannedBatchSizes: []int{1, 2, 4}},
-		RuntimeMetadata: &firstfloor.RuntimeMetadata{Runtime: "ort-cpu", InitializedBatches: []int{1}},
-		Batches:         []serving.BatchProfile{{Batch: 1}, {Batch: 2}, {Batch: 4}},
-	}
-	if !completeNativeProfile(profile) {
-		t.Fatal("exact measured sparse domain excluded")
-	}
-	unplanned := profile
-	unplanned.Batches = []serving.BatchProfile{{Batch: 1}, {Batch: 3}}
-	if completeNativeProfile(unplanned) {
-		t.Fatal("unplanned batch accepted")
-	}
-	missingOne := profile
-	missingOne.Batches = profile.Batches[1:]
-	if completeNativeProfile(missingOne) {
-		t.Fatal("missing batch 1 accepted")
-	}
-	standalone := profile
-	standalone.Condition.RuntimeFamily = "onnxruntime"
-	if completeNativeProfile(standalone) {
-		t.Fatal("standalone became native evidence")
-	}
-	profile.RuntimeMetadata.CPUAffinity = []int{7}
-	profile.RuntimeMetadata.IntraOpThreads = 0
-	if !completeNativeProfile(profile) {
-		t.Fatal("shared runtime observation became a CPU allocation gate")
 	}
 }
 

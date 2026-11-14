@@ -30,7 +30,8 @@ func publicationCatalog(t testing.TB, profiles int) *Catalog {
 	result.Condition.Actor.BatchSizes = nil
 	result.Condition.Actor.WarmupBatchSizes = nil
 	for size := 1; size <= 128; size *= 2 {
-		batch := derivation.SessionBatch{Batch: size, PeakMemoryBytes: 32 << 20, MemoryKind: "peak", JoulesPerInput: *catalogTestSlope("0.2")}
+		rate := float64(size) / (10 * time.Millisecond).Seconds()
+		batch := derivation.SessionBatch{Batch: size, PeakMemoryBytes: 32 << 20, MemoryKind: "peak", JoulesPerInput: *catalogTestSlope("0.2"), SaturationInputRate: &rate}
 		batch.ServiceNanos = make([]int64, publicationRecords/8)
 		batch.PrecedingIdleNanos = make([]int64, publicationRecords/8)
 		for i := range batch.ServiceNanos {
