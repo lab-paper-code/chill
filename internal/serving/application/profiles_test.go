@@ -57,8 +57,8 @@ func measuredAdoptionProfile() serving.Profile {
 			WarmupIterations: 5, InitializedBatches: []int{1, 2, 4},
 		},
 		Batches: []serving.BatchProfile{
-			{Batch: 1, MemoryBytes: 2048, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 2e6), fixtures.ServiceSample("physical-trial", 1, 1e6)}},
-			{Batch: 2, MemoryBytes: 4096, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 3e6), fixtures.ServiceSample("physical-trial", 1, 3e6)}},
+			{Batch: 1, MemoryBytes: 2048, ServiceSamples: fixtures.ServiceSamples("physical-trial", 1e6)},
+			{Batch: 2, MemoryBytes: 4096, ServiceSamples: fixtures.ServiceSamples("physical-trial", 3e6)},
 		},
 	}
 	profile.Condition.Actor = native.Config{
@@ -79,8 +79,9 @@ func measuredAdoptionProfile() serving.Profile {
 	return profile
 }
 
+// A ready actor was warmed, so it always reports its last service end.
 func fixtureAdmissionNative(profile *serving.Profile) *native.State {
-	return &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID,
+	return &native.State{Ready: true, LastServiceEndAgeNanos: new(int64), Metadata: native.Metadata{ProfileID: profile.ID,
 		Policy: native.Policy{ProfileID: profile.ID, MaxBatchSize: profile.Condition.Actor.MaxBatchSize}}}
 }
 

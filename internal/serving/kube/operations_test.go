@@ -70,7 +70,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*servingops.Operations, serving.S
 			RunnerTimeoutMS: 3000, MaxQueueRequests: 4, MaxQueueBytes: 1 << 20, MaxRequestBytes: 1 << 20,
 			MaxBatchSize: 1, BatchSizes: []int{1},
 			Policy: native.Policy{DecisionID: "old-route", ProfileID: profile.ID, MaxBatchSize: 1, DeadlinePolicy: "keep",
-				Batches: []native.BatchProfile{{Size: 1, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 1000000), fixtures.ServiceSample("physical-trial", 1, 1000000)}, EnergyPerItemJ: 1}}},
+				Batches: []native.BatchProfile{{Size: 1, ServiceSamples: fixtures.ServiceSamples("physical-trial", 1000000), EnergyPerItemJ: 1}}},
 		}
 		if err := native.ValidateConfig(&cfg); err != nil {
 			t.Fatal(err)
