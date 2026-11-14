@@ -119,6 +119,28 @@ func resourceCgroupPaths(
 		if err != nil {
 			failures = append(failures, resourceError(hierarchy, "cgroup", err))
 		}
+		// containerd on the cgroupfs driver given a systemd-style cgroupsPath
+		// keeps the literal "slice:cri-containerd:id" name under its own
+		// service cgroup (jetsonx).
+		for i, target := range targets {
+			_, id, ok := strings.Cut(target.ContainerID, "://")
+			if !ok || id == "" || target.PodUID == "" {
+				continue
+			}
+			uid := strings.ReplaceAll(target.PodUID, "-", "_")
+			for _, slice := range []string{"kubepods-burstable-pod", "kubepods-besteffort-pod", "kubepods-pod"} {
+				path := filepath.Join(hierarchy, "system.slice/containerd.service", slice+uid+".slice:cri-containerd:"+id)
+				if info, err := os.Stat(path); err != nil || !info.IsDir() {
+					continue
+				}
+				if paths[i] == nil {
+					paths[i] = map[string]string{}
+				}
+				for _, controller := range controllers {
+					paths[i][controller] = path
+				}
+			}
+		}
 	}
 	return paths, version, failures
 }

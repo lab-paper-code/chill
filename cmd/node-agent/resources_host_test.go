@@ -13,14 +13,15 @@ import (
 // 외부 자원 표본과 누적값 검증: discover real kubelet directories even with a private cgroup namespace.
 func TestResourceCgroupVersionsAndMissingPeak(t *testing.T) {
 	target := observation.ResourceTarget{PodUID: "aa-bb", ContainerID: "containerd://deadbeef"}
-	for _, driver := range []string{"cgroupfs", "systemd"} {
+	for driver, group := range map[string]string{
+		"cgroupfs": "kubepods/burstable/podaa-bb/deadbeef",
+		"systemd":  "kubepods.slice/kubepods-burstable.slice/kubepods-burstable-podaa_bb.slice/cri-containerd-deadbeef.scope",
+		// The jetsonx layout: /proc/<pid>/cgroup of a container there.
+		"containerd-service": "system.slice/containerd.service/kubepods-burstable-podaa_bb.slice:cri-containerd:deadbeef",
+	} {
 		for _, mode := range []string{"v1", "hybrid", "unified", "unified-submount"} {
 			t.Run(driver+"/"+mode, func(t *testing.T) {
 				root := t.TempDir()
-				group := "kubepods/burstable/podaa-bb/deadbeef"
-				if driver == "systemd" {
-					group = "kubepods.slice/kubepods-burstable.slice/kubepods-burstable-podaa_bb.slice/cri-containerd-deadbeef.scope"
-				}
 				// These readable proc records cannot reveal host cgroup paths.
 				writeHostFile(t, root, "proc/77/cgroup", "0::/\n")
 				writeHostFile(t, root, "proc/1/mountinfo", "30 20 0:1 /../../../.. /sys/fs/cgroup rw - cgroup2 cgroup rw\n")
