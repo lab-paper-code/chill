@@ -70,7 +70,7 @@ Kubernetes adapters supply readers/writers. Derivation owns shared dispatch math
 Evaluation service owns application operations without depending on controller
 or HTTP DTOs. Controller owns pool acquisition/asynchronous execution; HTTP
 converts results. Query owns read models/coverage/refresh. Composition roots
-adapt Serving/catalog and campaign-evidence dependencies.
+adapt Serving/catalog dependencies.
 
 Dashboard is a Node deployment unit outside Go architecture lint. Its boundary
 is fixed HTTPS ChillServer; native pnpm/browser checks remain separate.

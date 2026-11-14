@@ -29,7 +29,6 @@ components:
   api: { in: api/v1alpha1 }
   batch-energy-optimization-core: { in: internal/profiling/campaign }
   batch-energy-optimization-controller: { in: internal/profiling/campaign/controller }
-  campaign-evidence: { in: internal/profiling/campaign/evidence }
   idle-baseline-core: { in: internal/profiling/idlebaseline }
   idle-baseline-controller: { in: internal/profiling/idlebaseline/controller }
   entrypoints: { in: [cmd, cmd/**] }
@@ -124,15 +123,6 @@ deps:
       - platform-core
       - model-catalog
 
-  campaign-evidence:
-    mayDependOn:
-      - api
-      - batch-energy-optimization-core
-      - evidence-core
-      - profile-derivation
-      - profiler-evidence
-      - profiling-run
-
   idle-baseline-core:
     mayDependOn:
       - profile-derivation
@@ -182,7 +172,6 @@ deps:
     mayDependOn:
       - api
       - batch-energy-optimization-core
-      - campaign-evidence
       - device-class
       - evidence-core
       - metric-core
@@ -477,7 +466,6 @@ deps:
       - model-compat
       - evidence-core
       - batch-energy-optimization-core
-      - campaign-evidence
       - profile-derivation
       - profiler-evidence
       - profiler-projection

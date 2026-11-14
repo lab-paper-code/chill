@@ -24,26 +24,16 @@ type KubernetesBatchEnergyOptimizationResultQuery struct {
 	reader     client.Reader
 	objects    evidencestore.Reader
 	now        func() time.Time
-	statistics BatchEnergyOptimizationStatisticsReader
 }
-
-// BatchEnergyOptimizationStatisticsReader follows only the sealed result's retained inputs.
-type BatchEnergyOptimizationStatisticsReader func(
-	context.Context, *edgev1alpha1.BatchEnergyOptimization, batchenergyoptimization.ResultRecord,
-) (*queryapi.BatchEnergyOptimizationStatistics, *string, error)
 
 func NewKubernetesBatchEnergyOptimizationResultQuery(
 	reader client.Reader,
 	objects evidencestore.Reader,
-	statistics ...BatchEnergyOptimizationStatisticsReader,
 ) (*KubernetesBatchEnergyOptimizationResultQuery, error) {
 	if reader == nil || objects == nil {
 		return nil, errors.New("Kubernetes BatchEnergyOptimization reader and result object reader are required")
 	}
 	query := &KubernetesBatchEnergyOptimizationResultQuery{reader: reader, objects: objects, now: time.Now}
-	if len(statistics) > 0 {
-		query.statistics = statistics[0]
-	}
 	return query, nil
 }
 
@@ -97,12 +87,6 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) Read(
 		return snapshot, fmt.Errorf("decode BatchEnergyOptimization %s result: %w", key, err)
 	}
 	snapshot.Result = record
-	if q.statistics != nil {
-		snapshot.Statistics, snapshot.StatisticsReason, err = q.statistics(ctx, campaign, record)
-		if err != nil {
-			return snapshot, fmt.Errorf("read BatchEnergyOptimization %s statistics: %w", key, err)
-		}
-	}
 	return snapshot, nil
 }
 

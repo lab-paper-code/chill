@@ -12,6 +12,7 @@ import (
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
@@ -222,7 +223,7 @@ func TestMeasurementResultFailureRetainsNativeRequestWithoutInventingEvidence(t 
 }
 
 func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
-	request, record, _, _, _ := statisticsFixture(t)
+	request, record := resultRequestFixture(t)
 	request.Status.Phase = "Complete"
 	id := queryapi.CoverageRequestID(*request)
 	selected, unselected := true, false
@@ -325,6 +326,36 @@ func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 			}
 		})
 	}
+}
+
+func resultRequestFixture(t *testing.T) (*api.BatchEnergyOptimization, campaign.ResultRecord) {
+	t.Helper()
+	record, err := campaign.NewResultRecord(campaign.ResultRecordSpec{
+		Outcome: "MinimumFound/LocalMinimum",
+		MeasurementState: campaign.ResultMeasurementState{
+			TargetNode: "node", ModelSpec: "model", DeviceClass: "class", ExecutionPath: "ort-cpu", PowerMode: "MODE",
+		},
+		CurvePlan: campaign.StoredObjectReference{
+			Store: "evidence", Key: "plan", SchemaVersion: "chill.dacs.io/curve-plan.v1alpha7", Size: 1,
+		},
+		Detail: json.RawMessage(`{"selectedBatch":1}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &api.BatchEnergyOptimization{
+		ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "campaign", UID: "campaign-uid", Generation: 1},
+		Spec: api.BatchEnergyOptimizationSpec{State: api.MeasurementStateSpec{
+			TargetNode: "node",
+			Candidate: api.ProfilingRunCandidateSpec{
+				ModelSpec: "model", DeviceClass: "class", ExecutionPath: "ort-cpu", PowerMode: "MODE",
+			},
+		}},
+		Status: api.BatchEnergyOptimizationStatus{
+			ObservedGeneration: 1,
+			Result:             &api.ProfilingRunEvidenceReference{Store: "evidence", Key: "result.json", Size: 1},
+		},
+	}, record
 }
 
 type nilPassportReader struct{}

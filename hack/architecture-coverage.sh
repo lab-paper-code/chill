@@ -12,7 +12,6 @@ components=(
   api
   batch-energy-optimization-core
   batch-energy-optimization-controller
-  campaign-evidence
   idle-baseline-core
   idle-baseline-controller
   entrypoints
@@ -76,7 +75,6 @@ component_for() {
     api/v1alpha1) echo api ;;
     internal/profiling/campaign) echo batch-energy-optimization-core ;;
     internal/profiling/campaign/controller) echo batch-energy-optimization-controller ;;
-    internal/profiling/campaign/evidence) echo campaign-evidence ;;
     internal/profiling/idlebaseline) echo idle-baseline-core ;;
     internal/profiling/idlebaseline/controller) echo idle-baseline-controller ;;
     cmd|cmd/*) echo entrypoints ;;

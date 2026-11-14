@@ -38,6 +38,21 @@ func (l queryEvidenceLoader) Load(
 	return l.retained.Load(ctx, run, reference)
 }
 
+func newRetainedEvidenceLoader(
+	reader client.Reader,
+	opts options,
+) (*evidencekube.RetainedLoader, error) {
+	return evidencekube.NewRetainedLoader(
+		reader,
+		func(binding storekube.Binding, credentials storekube.Credentials) (evidencestore.LocationReader, error) {
+			return evidences3.New(evidences3.Config{
+				LogicalStore: binding.Store, Bucket: binding.Bucket, Endpoint: binding.Endpoint, Region: binding.Region,
+				AccessKeyID: credentials.AccessKeyID, SecretAccessKey: credentials.SecretAccessKey, TempDir: opts.tempDir,
+			})
+		},
+	)
+}
+
 // newEvidencePassportQuery keeps passport reads behind retained-evidence verification authority.
 func newEvidencePassportQuery(
 	reader client.Reader,
@@ -75,13 +90,7 @@ func newCampaignResultQuery(
 		reader: reader, resolver: resolver,
 		namespace: opts.namespace, tempDir: opts.tempDir,
 	}
-	loader, err := newRetainedEvidenceLoader(reader, opts)
-	if err != nil {
-		return nil, fmt.Errorf("construct statistics retained evidence loader: %w", err)
-	}
-	results, err := querykube.NewKubernetesBatchEnergyOptimizationResultQuery(
-		reader, objects, newMeasurementStatistics(reader, objects, loader),
-	)
+	results, err := querykube.NewKubernetesBatchEnergyOptimizationResultQuery(reader, objects)
 	if err != nil {
 		return nil, fmt.Errorf("construct batch-energy-optimization result query: %w", err)
 	}
