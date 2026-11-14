@@ -601,15 +601,6 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 // not hold the source lock for the whole refresh.
 const nativeProbeTimeout = 2 * time.Second
 
-func (o *Observer) physicalSourceSpec(pod *corev1.Pod, node *corev1.Node, model string) (firstfloor.Spec, error) {
-	if err := validatePhysicalSource(pod, node); err != nil {
-		return firstfloor.Spec{}, err
-	}
-	status := servingstate.FirstfloorStatus(pod)
-	return firstfloor.Spec{ModelName: model, InstanceID: servingstate.PhysicalID(pod.UID, status.ContainerID),
-		Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}, nil
-}
-
 func matchesNativeSource(pod *corev1.Pod, prepared *native.Config, instance *serving.InstanceState) bool {
 	observed := instance.Native
 	profileID := pod.Annotations[servingstate.ServingProfileAnnotation]
@@ -645,12 +636,17 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 	if node != nil && o.movingNodes[string(node.UID)] {
 		err = errors.New("NodePowerTransition")
 	}
+	if err == nil && admissionErr != nil {
+		err = validatePhysicalSource(pod, node)
+	}
 	var prepared *native.Config
 	if err == nil {
 		prepared, err = servingstate.NativeConfig(ctx, o.store.client, pod)
 	}
 	if err == nil && admissionErr != nil {
-		spec, err = o.physicalSourceSpec(pod, node, prepared.Model)
+		status := servingstate.FirstfloorStatus(pod)
+		spec = firstfloor.Spec{ModelName: prepared.Model, InstanceID: servingstate.PhysicalID(pod.UID, status.ContainerID),
+			Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}
 	}
 	var service *corev1.Service
 	if err == nil {

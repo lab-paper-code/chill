@@ -68,6 +68,15 @@ func TestSessionLoadPrestartTimeoutRetainsWaitingEvidenceAndDeletesJob(t *testin
 					t.Fatal(err)
 				}
 			}
+			// The fake API has no garbage collector. Model the background Job
+			// deletion removing its never-started Pod.
+			h.kube.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+				if scenario.waiting != nil {
+					err := h.kube.Tracker().Delete(core.SchemeGroupVersion.WithResource("pods"), job.Namespace, "session-pod")
+					return false, nil, err
+				}
+				return false, nil, nil
+			})
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			_, err := h.controller.runSessionLoad(ctx, job, 10*time.Millisecond)

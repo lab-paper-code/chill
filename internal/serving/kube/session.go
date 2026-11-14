@@ -230,7 +230,28 @@ func (r *sessionRun) measure(ctx context.Context, name string, operation serving
 	r.steps++
 	request.Operation = operation
 	record, receipt, err := r.c.measureStep(ctx, r.config, request)
+	if err == nil && record.Verdict != servingstate.MeasurementAccepted {
+		err = errors.New(record.Reason)
+	}
 	return record, receipt.Object.Key, err
+}
+
+// removePrepared removes only the exact instance or Pod returned by this
+// preparation. Cleanup survives cancellation; a refusal keeps the Node held.
+func (r *sessionRun) removePrepared(ctx context.Context, name string, spec servingstate.PrepareSpec, prepared servingops.OperationMeasurement) (string, error) {
+	operation := servingstate.Operation{Kind: servingstate.OperationRemove}
+	if instance := schedulerPhysicalState(spec.Instance.ID, prepared.Result.Actual.Instances); instance != nil {
+		operation.Instance = instance.ID
+	} else if evidence := prepared.Result.Preparation; evidence != nil {
+		operation.PodUID = evidence.PodUID
+	}
+	if operation.Instance == "" && operation.PodUID == "" {
+		return "", nil
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.base.Sampling.Duration)
+	defer cancel()
+	_, key, err := r.measure(cleanupCtx, name, operation)
+	return key, err
 }
 
 // runSession measures the batch sizes in increasing order, derives the
@@ -364,10 +385,9 @@ type sessionBatchOutcome struct {
 	postLoad [2]time.Time
 }
 
-// batch prepares a fixed-batch instance, runs its load and removes it; the
-// instance is removed and the load Job deleted on every path.
-func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (sessionBatchOutcome, error) {
-	var outcome sessionBatchOutcome
+// batch prepares a fixed-batch instance, runs its load and attempts removal on
+// every path. A live sender or unconfirmed drain keeps removal unmeasured.
+func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (outcome sessionBatchOutcome, err error) {
 	spec := sessionInstance(r.beo, r.plan.preparation, r.ref, batch, r.config.Session)
 	if err := SessionQueueCapacity(batch, spec.Config.MaxQueueRequests, int64(spec.Config.MaxQueueBytes), r.beo.Spec.Session.FramedDecodedRequestUpperBytes); err != nil {
 		outcome.stop = &profilederivation.SessionStop{Batch: batch, Class: profilederivation.StopCapacityLimit, Reason: err.Error()}
@@ -375,6 +395,14 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (sessionBa
 	}
 	prepareStart := time.Now()
 	prepared, prepareKey, err := r.measure(ctx, "prepare-b"+strconv.Itoa(batch), servingstate.Operation{Kind: servingstate.OperationPrepare, Prepare: &spec})
+	removeOnReturn := true
+	defer func() {
+		if removeOnReturn {
+			_, removeErr := r.removePrepared(ctx, "remove-b"+strconv.Itoa(batch), spec, prepared)
+			// A cleanup refusal explains why the failed session still holds its Node.
+			err = errors.Join(removeErr, err)
+		}
+	}()
 	if err != nil {
 		if failure := prepared.Result.Preparation; failure != nil && failure.Failure != nil && strings.Contains(failure.Failure.ReasonKey, ":OOMKilled:") {
 			outcome.stop = &profilederivation.SessionStop{Batch: batch, Class: profilederivation.StopCapacityLimit, Reason: firstLine(err.Error())}
@@ -391,12 +419,23 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (sessionBa
 		outcome.metadata = &metadata
 	}
 	if outcome.metadata == nil {
-		_, _, removeErr := r.measure(ctx, "remove-b"+strconv.Itoa(batch), servingstate.Operation{Kind: servingstate.OperationRemove, Instance: instance.ID})
-		return outcome, errors.Join(fmt.Errorf("batch %d instance reported no runtime metadata", batch), removeErr)
+		return outcome, fmt.Errorf("batch %d instance reported no runtime metadata", batch)
 	}
-	table, loadErr := r.c.runSessionLoad(ctx, sessionLoadJob(r.beo, r.ref, sessionLoad{batch: batch, podUID: instance.PodUID,
+	load := sessionLoad{batch: batch, podUID: instance.PodUID,
 		servingNamespace: r.c.observer.config.Namespace, minimumSamples: r.plan.minimumSamples, config: r.config.Session,
-		preparation: r.plan.preparation, actor: sessionActorLimits{maxQueueRequests: spec.Config.MaxQueueRequests, maxQueueBytes: spec.Config.MaxQueueBytes}}), r.config.Session.RunnerTimeout)
+		preparation: r.plan.preparation, actor: sessionActorLimits{maxQueueRequests: spec.Config.MaxQueueRequests, maxQueueBytes: spec.Config.MaxQueueBytes}}
+	table, loadErr := r.c.runSessionLoad(ctx, sessionLoadJob(r.beo, r.ref, load), r.config.Session.RunnerTimeout)
+	if errors.Is(loadErr, errSessionLoadDrain) {
+		removeOnReturn = false
+		return outcome, loadErr
+	}
+	drainCtx, cancelDrain := context.WithTimeout(context.WithoutCancel(ctx), r.base.Sampling.Duration)
+	drainErr := r.c.waitSessionIdle(drainCtx, load)
+	cancelDrain()
+	if drainErr != nil {
+		removeOnReturn = false
+		return outcome, errors.Join(drainErr, loadErr)
+	}
 	var levels []profilederivation.DriverLevelRow
 	if loadErr == nil {
 		levels, outcome.stop, loadErr = sessionLevels(table, batch)
@@ -406,9 +445,10 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (sessionBa
 	if loadErr == nil && len(levels) > 0 && (last || outcome.stop != nil && outcome.stop.Class != profilederivation.StopCapacityLimit) {
 		outcome.postLoad, loadErr = r.observePostLoad(ctx, levels[len(levels)-1].End)
 	}
-	_, removeKey, removeErr := r.measure(ctx, "remove-b"+strconv.Itoa(batch), servingstate.Operation{Kind: servingstate.OperationRemove, Instance: instance.ID})
+	removeKey, removeErr := r.removePrepared(ctx, "remove-b"+strconv.Itoa(batch), spec, prepared)
+	removeOnReturn = false
 	removeEnd := time.Now()
-	if err := errors.Join(loadErr, removeErr); err != nil || outcome.stop != nil {
+	if err := errors.Join(removeErr, loadErr); err != nil || outcome.stop != nil {
 		return outcome, err
 	}
 	outcome.input = profilederivation.SessionBatchInput{Batch: batch, PrepareCostKey: prepareKey, RemoveCostKey: removeKey}
@@ -459,9 +499,13 @@ func (r *sessionRun) observePostLoad(ctx context.Context, start time.Time) ([2]t
 
 // postLoadInstance prepares a batch size again and observes the post-load
 // window on it before removing it.
-func (r *sessionRun) postLoadInstance(ctx context.Context, batch int) (time.Time, time.Time, error) {
+func (r *sessionRun) postLoadInstance(ctx context.Context, batch int) (start, end time.Time, err error) {
 	spec := sessionInstance(r.beo, r.plan.preparation, r.ref, batch, r.config.Session)
 	prepared, _, err := r.measure(ctx, "prepare-post-b"+strconv.Itoa(batch), servingstate.Operation{Kind: servingstate.OperationPrepare, Prepare: &spec})
+	defer func() {
+		_, removeErr := r.removePrepared(ctx, "remove-post-b"+strconv.Itoa(batch), spec, prepared)
+		err = errors.Join(removeErr, err)
+	}()
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
@@ -470,8 +514,7 @@ func (r *sessionRun) postLoadInstance(ctx context.Context, batch int) (time.Time
 		return time.Time{}, time.Time{}, fmt.Errorf("post-load prepare of batch %d left no instance", batch)
 	}
 	window, observeErr := r.observePostLoad(ctx, time.Now())
-	_, _, removeErr := r.measure(ctx, "remove-post-b"+strconv.Itoa(batch), servingstate.Operation{Kind: servingstate.OperationRemove, Instance: instance.ID})
-	return window[0], window[1], errors.Join(observeErr, removeErr)
+	return window[0], window[1], observeErr
 }
 
 // sessionLevels maps the level table onto derivation rows and the batch

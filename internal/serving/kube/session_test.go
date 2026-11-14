@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,6 +143,15 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 		s.tables[batch] = s.layOut(batch, &cursor)
 	}
 	h.controller.measureStep = s.measure
+	idle := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(native.State{At: time.Now(), Ready: true})
+	}))
+	t.Cleanup(idle.Close)
+	proxy, err := url.Parse(idle.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.controller.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 	h.controller.sessionReads = sessionReads{
 		native: func(_ context.Context, prefix string, _ time.Time, excluded map[string]bool) (map[string]sessionNativeLevel, error) {
 			s.mu.Lock()
@@ -840,5 +853,281 @@ func TestSessionLostFinishedMemberFailsWithInputCount(t *testing.T) {
 	if status.Phase != string(edge.MeasurementPhaseFailed) ||
 		!strings.Contains(sessionCondition(status).Message, "native inputs 3 of 4") {
 		t.Fatalf("status %+v", status)
+	}
+}
+
+// These sessions use the production operations and observer over a real native
+// actor. Only kubelet transitions, the IPC runner and load Job creation are
+// fixtures; unlike sessionHarness, executor recovery is not replaced.
+func TestSessionFailureCleansPreparedInstanceAndHandsBack(t *testing.T) {
+	for _, scenario := range []string{"prepare insufficient", "load creation failed", "unverified executor"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			fixture, node, profile, class := observerSourceFixture()
+			profile.Condition.Preprocessor.Inputs, profile.Condition.Preprocessor.Outputs = []string{"input"}, []string{"output"}
+			profile.RuntimeMetadata.RuntimeVersion = observerTestRuntime
+			profile.RuntimeMetadata.Inputs, profile.RuntimeMetadata.Outputs = []string{"input"}, []string{"output"}
+			profile.RuntimeMetadata.InitializedBatches = []int{1}
+			beo := sessionRoot(sessionSettingsFixture())
+			beo.UID = "session-uid"
+			beo.Spec.Session.Observation = edge.MeasurementObservationSpec{
+				IntervalMilliseconds: 2, RequestTimeoutMilliseconds: 1, MaximumOperationSeconds: 3, MaximumGapMilliseconds: 10,
+				Timing: &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "0.005", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "empirical fixture"},
+			}
+			preparation := sessionPreparationFixture()
+			preparation.BatchSizes = []int{1}
+			preparation.RunConfig.State.PowerMode = "fixed"
+			preparation.RunConfig.State.Backend = "CPUExecutionProvider"
+			preparation.RunConfig.State.Firstfloor = profile.Condition.Firstfloor
+			preparation.RunConfig.State.ArtifactFiles = profile.Condition.Artifact.Files
+			preparation.RunConfig.State.Preprocessor.Path = profile.Condition.Preprocessor.Path
+			preparation.RunConfig.Images = profilingrun.Images{Runtime: profile.Condition.RuntimeImage, Artifact: profile.Condition.Artifact.Image}
+			config := SessionConfig{Image: "chill-server:1", Namespace: fixture.Namespace, NodeName: "load-node",
+				RunnerTimeout: 3 * time.Second, MaxRequestBytes: 1 << 20}
+			spec := sessionInstance(beo, preparation, testNode, 1, config)
+			actor := spec.Config
+			if scenario == "unverified executor" {
+				// A real actor with the wrong mode must retain its recovery fence.
+				actor.Mode = servingstate.NativeServingMode
+			}
+			nativeClient, _ := preparationNativeHTTPClient(t, ctx, actor, profile)
+			manager, kube, _ := measurementOperations(t, ctx, fixture, node, class, spec, nativeClient,
+				func(manager *managerHarness) { measurementRecoveryBoot(t, manager) })
+			manager.store.client = beoStatusClient{Client: &nodeAPI{Client: manager.store.client, kube: kube}}
+			if err := manager.store.client.Create(ctx, beo); err != nil {
+				t.Fatal(err)
+			}
+			controller := &SchedulerController{reservationState: &manager.reservations.reservation, ctx: ctx, store: manager.store, kube: kube,
+				runtime: manager.runtime, observer: manager.observer, operations: manager.measurement, measurement: manager.measurement,
+				config: manager.measurementConfig, observationLog: manager.observationLog}
+			controller.config.Session = config
+			controller.config.MeasurementNamespaces = []string{fixture.Namespace}
+			var measured []servingops.OperationMeasurement
+			controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
+				if scenario == "prepare insufficient" && request.Operation.Kind == servingstate.OperationPrepare {
+					// Real power samples cannot cover a one-nanosecond maximum gap.
+					request.Coverage.MaximumGap = time.Nanosecond
+				}
+				record, receipt, err := controller.measureOperation(ctx, config, request)
+				measured = append(measured, record)
+				return record, receipt, err
+			}
+			loads := 0
+			kube.PrependReactor("create", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+				loads++
+				return true, nil, errors.New("session-load creation refused")
+			})
+			controller.startSession(node, beo, sessionPlan{preparation: preparation, powered: true}, controller.config)
+			controller.wg.Wait()
+			if err := manager.store.client.Get(ctx, client.ObjectKeyFromObject(beo), beo); err != nil {
+				t.Fatal(err)
+			}
+			if beo.Status.Phase != string(edge.MeasurementPhaseFailed) || beo.Status.Result != nil {
+				t.Fatalf("status %+v", beo.Status)
+			}
+			if len(measured) != 2 || measured[0].Request.Operation.Kind != servingstate.OperationPrepare ||
+				measured[1].Request.Operation.Kind != servingstate.OperationRemove {
+				t.Fatalf("prepared instance was not removed: %+v", measured)
+			}
+			physical := schedulerPhysicalState(spec.Instance.ID, measured[0].Result.Actual.Instances)
+			unverified := scenario == "unverified executor"
+			if physical == nil || physical.RecoveryUnknown != unverified || physical.NativeVerified == unverified {
+				t.Fatalf("observer did not preserve the exact executor's recovery proof: %+v", physical)
+			}
+			current, err := kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			holder, _ := profilingrun.MeasurementHolder(current)
+			pods, err := kube.CoreV1().Pods(fixture.Namespace).List(ctx, meta.ListOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			message := sessionCondition(beo.Status).Message
+			if scenario == "unverified executor" {
+				if !strings.Contains(message, "UnconfirmedInstance: executor recovery unknown") || holder != string(beo.UID) ||
+					len(pods.Items) != 1 || loads != 0 {
+					t.Fatalf("remove refusal lost: status %+v holder %q pods %d loads %d", beo.Status, holder, len(pods.Items), loads)
+				}
+				return
+			}
+			if !manager.runtime.Recovery().Unknown || len(pods.Items) != 0 || holder != "" ||
+				measured[1].Verdict != servingstate.MeasurementAccepted || len(measured[1].Result.DrainNative) != 1 {
+				t.Fatalf("cleanup/handback failed: holder %q pods %d remove %+v", holder, len(pods.Items), measured[1])
+			}
+			if scenario == "prepare insufficient" {
+				if measured[0].Verdict != servingops.MeasurementInsufficient || message != measured[0].Reason || loads != 0 {
+					t.Fatalf("insufficient preparation continued: status %+v loads %d record %+v", beo.Status, loads, measured[0])
+				}
+			} else if message != "session-load creation refused" || loads != 1 {
+				t.Fatalf("load failure changed: status %+v loads %d", beo.Status, loads)
+			}
+		})
+	}
+}
+
+// The orchestration fixture checks lost final Capture and cancellation only;
+// the production observer/recovery boundary is covered above.
+func TestSessionFailedPreparationRemovesExactPod(t *testing.T) {
+	for _, postLoad := range []bool{false, true} {
+		t.Run("post-load="+strconv.FormatBool(postLoad), func(t *testing.T) {
+			s := newSessionHarness(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			sentence := "prepare power window is insufficient"
+			var removed servingstate.Operation
+			s.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
+				record, receipt, err := s.measure(ctx, config, request)
+				if request.Operation.Kind == servingstate.OperationPrepare {
+					record.Verdict, record.Reason = servingops.MeasurementInsufficient, sentence
+					record.Result.Actual.Instances = nil
+					record.Result.Preparation = &servingstate.PreparationEvidence{PodUID: "own-created-pod", Created: true}
+					cancel()
+				} else {
+					if ctx.Err() != nil {
+						t.Errorf("cleanup inherited cancellation: %v", ctx.Err())
+					}
+					removed = request.Operation
+				}
+				return record, receipt, err
+			}
+			beo := sessionRoot(sessionSettingsFixture())
+			base, err := measurementRequestBase(beo.Spec.Session.Observation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := &sessionRun{c: s.controller, beo: beo, ref: testNode, base: base, config: s.controller.config,
+				plan: sessionPlan{preparation: sessionPreparationFixture()}}
+			if postLoad {
+				_, _, err = run.postLoadInstance(ctx, 1)
+			} else {
+				_, err = run.batch(ctx, 1, false)
+			}
+			if err == nil || err.Error() != sentence || removed.Instance != "" || removed.PodUID != "own-created-pod" ||
+				len(s.measured) != 2 || len(s.jobs) != 0 {
+				t.Fatalf("failure %v removal %+v operations %v jobs %d", err, removed, s.measured, len(s.jobs))
+			}
+		})
+	}
+}
+
+func TestSessionLoadWaitsForSenderTerminationBeforeReturning(t *testing.T) {
+	h := newAdmissionHarness(t)
+	waitCtx, stop := context.WithTimeout(context.Background(), time.Second)
+	defer stop()
+	ctx, cancel := context.WithCancel(waitCtx)
+	defer cancel()
+	job := &batchv1.Job{ObjectMeta: meta.ObjectMeta{Name: "sender-drain", Namespace: "chill-system"}}
+	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "sender", Namespace: job.Namespace, Labels: map[string]string{"job-name": job.Name}},
+		Status: core.PodStatus{Phase: core.PodRunning, ContainerStatuses: []core.ContainerStatus{{Name: sessionLoadContainer,
+			State: core.ContainerState{Running: &core.ContainerStateRunning{}}}}}}
+	if _, err := h.kube.CoreV1().Pods(pod.Namespace).Create(ctx, pod, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	readErr := errors.New("load Job read refused")
+	h.kube.PrependReactor("get", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, readErr
+	})
+	deleted := make(chan struct{})
+	h.kube.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		close(deleted)
+		cancel()
+		return false, nil, nil
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.controller.runSessionLoad(ctx, job, time.Second)
+		done <- err
+	}()
+	select {
+	case <-deleted:
+	case <-waitCtx.Done():
+		t.Fatal("load Job deletion was not requested")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("load returned while sender still ran: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	pod.Status.Phase = core.PodSucceeded
+	pod.Status.ContainerStatuses[0].State = core.ContainerState{Terminated: &core.ContainerStateTerminated{}}
+	if _, err := h.kube.CoreV1().Pods(pod.Namespace).UpdateStatus(waitCtx, pod, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, readErr) {
+			t.Fatalf("original load failure changed: %v", err)
+		}
+	case <-waitCtx.Done():
+		t.Fatal("load did not return after sender terminated")
+	}
+}
+
+func TestSessionRemoveStartsAfterNativeLoadDrains(t *testing.T) {
+	s := newSessionHarness(t)
+	busy := &atomic.Bool{}
+	busy.Store(true)
+	probed := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		state := native.State{At: time.Now(), Ready: true, AcceptedRequests: 1}
+		if busy.Load() {
+			state.Requests = []native.RequestState{{}}
+			select {
+			case probed <- struct{}{}:
+			default:
+			}
+		} else {
+			state.CompletedRequests, state.Executions = 1, 1
+		}
+		_ = json.NewEncoder(w).Encode(state)
+	}))
+	defer server.Close()
+	proxy, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.controller.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.admit()
+	}()
+	select {
+	case <-probed:
+	case <-time.After(time.Second):
+		busy.Store(false)
+		t.Fatal("session never checked physical idle before measured removal")
+	}
+	s.mu.Lock()
+	removed := slices.Contains(s.measured, "remove-b1")
+	s.mu.Unlock()
+	busy.Store(false)
+	if removed {
+		t.Fatal("remove began while native counters could still change")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("session did not finish after native load drained")
+	}
+}
+
+func TestSessionDoesNotMeasureRemovalWhenSenderCleanupFails(t *testing.T) {
+	s := newSessionHarness(t)
+	s.kube.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("load sender deletion refused")
+	})
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	s.admit()
+	status := s.status(beo)
+	if status.Phase != string(edge.MeasurementPhaseFailed) ||
+		!strings.Contains(sessionCondition(status).Message, errSessionLoadDrain.Error()) ||
+		slices.Contains(s.measured, "remove-b1") || s.holder() != string(beo.UID) {
+		t.Fatalf("unconfirmed sender overlapped measured removal: status %+v operations %v holder %q", status, s.measured, s.holder())
 	}
 }

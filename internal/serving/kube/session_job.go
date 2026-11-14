@@ -19,6 +19,7 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
+	servingnative "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	batch "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -29,6 +30,8 @@ import (
 // sessionLoadContainer is the load Job container whose termination message
 // is the level table.
 const sessionLoadContainer = "load"
+
+var errSessionLoadDrain = errors.New("session-load Pod termination unconfirmed")
 
 // sessionLoad is what one batch size's load Job needs besides the session.
 type sessionLoad struct {
@@ -155,10 +158,11 @@ func (l sessionLevelWire) row() profilederivation.DriverLevelRow {
 }
 
 // runSessionLoad creates the load Job, waits for it to end and returns the
-// load container's level table. The Job is deleted on every path. A Job that
-// ends without a level table fails with its Pod's failure reason.
+// load container's level table. Cleanup deletes the Job and waits for its
+// sender Pods to stop, including on cancellation or an API failure.
+// A Job that ends without a level table fails with its Pod's failure reason.
 // prestartTimeout bounds creation and startup only, until the load container runs.
-func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job, prestartTimeout time.Duration) (sessionLevelTable, error) {
+func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job, prestartTimeout time.Duration) (table sessionLevelTable, err error) {
 	startCtx, cancelStart := context.WithTimeout(ctx, prestartTimeout)
 	defer cancelStart()
 	jobs := c.kube.BatchV1().Jobs(job.Namespace)
@@ -166,10 +170,34 @@ func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job
 		return sessionLevelTable{}, err
 	}
 	defer func() {
-		// Background propagation removes the Pod; the default orphans it.
+		// Stop every sender before testing native idle: a canceled HTTP request
+		// can leave native work, and a live sender can submit after an empty read.
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		_ = servingstate.IgnoreNotFound(jobs.Delete(cleanupCtx, job.Name, meta.DeleteOptions{PropagationPolicy: ptr.To(meta.DeletePropagationBackground)}))
+		cleanupErr := servingstate.IgnoreNotFound(jobs.Delete(cleanupCtx, job.Name, meta.DeleteOptions{PropagationPolicy: ptr.To(meta.DeletePropagationBackground)}))
+		if cleanupErr == nil {
+			cleanupErr = c.operations.Wait(cleanupCtx, func() (bool, error) {
+				pods, err := c.kube.CoreV1().Pods(job.Namespace).List(cleanupCtx, meta.ListOptions{LabelSelector: "job-name=" + job.Name})
+				if err != nil {
+					return false, err
+				}
+				for _, pod := range pods.Items {
+					stopped := pod.Status.Phase == core.PodSucceeded || pod.Status.Phase == core.PodFailed
+					for _, status := range pod.Status.ContainerStatuses {
+						if status.Name == sessionLoadContainer && status.State.Terminated != nil {
+							stopped = true
+						}
+					}
+					if !stopped {
+						return false, nil
+					}
+				}
+				return true, nil
+			})
+		}
+		if cleanupErr != nil {
+			err = errors.Join(fmt.Errorf("%w: %w", errSessionLoadDrain, cleanupErr), err)
+		}
 	}()
 	var ended *batch.JobCondition
 	var refused string
@@ -207,7 +235,7 @@ func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job
 			return untilStarted && started, nil
 		})
 	}
-	err := wait(startCtx, true)
+	err = wait(startCtx, true)
 	cancelStart()
 	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 		var detail strings.Builder
@@ -232,6 +260,20 @@ func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job
 		return sessionLevelTable{}, errors.New(refused)
 	}
 	return c.sessionLoadResult(ctx, job, ended)
+}
+
+// waitSessionIdle runs after the sender stopped and before Measure(remove)
+// captures its Before counters. removeInstance's own drain starts too late to
+// keep inference outside that measurement window.
+func (c *SchedulerController) waitSessionIdle(ctx context.Context, load sessionLoad) error {
+	spec := servingnative.Spec{
+		Endpoint:  "http://" + servingstate.InstanceServicePrefix + load.podUID + "." + load.servingNamespace + ":8080",
+		ModelName: load.preparation.RunConfig.State.Model,
+	}
+	return c.operations.Wait(ctx, func() (bool, error) {
+		state, err := c.observer.native.State(ctx, spec)
+		return err == nil && len(state.Requests) == 0, err
+	})
 }
 
 func (c *SchedulerController) sessionLoadResult(ctx context.Context, job *batch.Job, ended *batch.JobCondition) (sessionLevelTable, error) {
