@@ -598,8 +598,8 @@ func TestSessionProfilePassesPreparationAndNativeMetadataValidation(t *testing.T
 	var reported native.RuntimeMetadata
 	fixture := newSessionCatalogFixture(t, func(result *derivation.SessionResult) {
 		// RKNNLite is the backend whose preparation needs the measured delivery.
-		result.Condition.Backend, result.Condition.Actor.Backend = "rknnlite", "rknnlite"
-		result.RuntimeMetadata.Runtime, result.RuntimeMetadata.Providers = "rknnlite", nil
+		result.Condition.Backend, result.Condition.Actor.Backend = rknnLiteBackend, rknnLiteBackend
+		result.RuntimeMetadata.Runtime, result.RuntimeMetadata.Providers = rknnLiteBackend, nil
 		result.RuntimeMetadata.AvailableProviders = nil
 		result.RuntimeMetadata.IntraOpThreads, result.RuntimeMetadata.InterOpThreads = 0, 0
 		result.RuntimeDelivery = delivery

@@ -106,10 +106,13 @@ func (o *SchedulerService) preparation(
 	return spec, nil
 }
 
+// rknnLiteBackend runs its model on the RKNN NPU from a measured host delivery.
+const rknnLiteBackend = "rknnlite"
+
 // reproducibleRuntimeAccess rejects measured delivery the generated Pod cannot
 // reproduce. RKNNLite access comes from the frozen delivery at preparation.
 func reproducibleRuntimeAccess(p serving.Profile) error {
-	if p.Condition.Backend == "rknnlite" {
+	if p.Condition.Backend == rknnLiteBackend {
 		if len(p.RuntimeDelivery) == 0 {
 			return fmt.Errorf("measured RKNNLite delivery unavailable")
 		}
@@ -143,7 +146,7 @@ func (o *SchedulerService) measuredPreparation(
 	}
 	runtime := p.RuntimeMetadata
 	// RKNNLite runs no ONNX Runtime threads.
-	rknn := p.Condition.Backend == "rknnlite"
+	rknn := p.Condition.Backend == rknnLiteBackend
 	if err := reproducibleRuntimeAccess(p); err != nil {
 		return spec, err
 	}
