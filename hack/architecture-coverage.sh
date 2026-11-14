@@ -10,8 +10,6 @@ config="$repo_root/.go-arch-lint.yml"
 
 components=(
   api
-  batch-energy-optimization-core
-  batch-energy-optimization-controller
   idle-baseline-core
   idle-baseline-controller
   entrypoints
@@ -73,8 +71,6 @@ component_for() {
 
   case "$package_path" in
     api/v1alpha1) echo api ;;
-    internal/profiling/campaign) echo batch-energy-optimization-core ;;
-    internal/profiling/campaign/controller) echo batch-energy-optimization-controller ;;
     internal/profiling/idlebaseline) echo idle-baseline-core ;;
     internal/profiling/idlebaseline/controller) echo idle-baseline-controller ;;
     cmd|cmd/*) echo entrypoints ;;

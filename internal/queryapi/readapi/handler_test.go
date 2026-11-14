@@ -14,7 +14,6 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -85,8 +84,7 @@ func TestHandlerServesCampaignResultWithoutStoreCredentials(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Kind != "BatchEnergyOptimizationResult" || result.Campaign.Name != "campaign" ||
-		len(result.Result.CompletedTrials) != 1 {
+	if result.Kind != "BatchEnergyOptimizationResult" || result.Campaign.Name != "campaign" {
 		t.Fatalf("result = %#v", result)
 	}
 	if strings.Contains(response.Body.String(), "accessKey") {
@@ -106,12 +104,6 @@ func TestR18RequestResultPreservesCurrentSelectionScope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			snapshot := campaignResultSnapshot(t)
 			snapshot.SchedulerUsed = &tc.used
-			snapshot.MeasurementFacts = &profilederivation.MeasurementFacts{
-				Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1}},
-			}
-			snapshot.Campaign.Annotations = map[string]string{
-				"chill.dacs.io/profile-reuse": `{"sourceProfileID":"other/source/source-uid"}`,
-			}
 			reader := &recordingCampaignResultReader{snapshot: snapshot}
 			handler, err := NewHandler(&recordingPassportReader{}, reader, &recordingPreflightReader{})
 			if err != nil {
@@ -128,16 +120,6 @@ func TestR18RequestResultPreservesCurrentSelectionScope(t *testing.T) {
 			used := result.Assessment.Scope.SchedulerUsed
 			if response.Code != http.StatusOK || used == nil || *used != tc.used {
 				t.Fatalf("request selection lost: status=%d scope=%+v want=%v", response.Code, result.Assessment.Scope, tc.used)
-			}
-			for _, row := range result.ResultRows {
-				rowUsed := row.Assessment.Scope.SchedulerUsed
-				if row.RowKind == queryapi.ResultRowSourceReference {
-					if rowUsed != nil {
-						t.Fatal("source reference inherited confirmation selection")
-					}
-				} else if rowUsed == nil || *rowUsed != tc.used {
-					t.Fatalf("confirmation selection lost: %+v", row.Assessment.Scope)
-				}
 			}
 			if !result.ReadAt.Equal(snapshot.ReadAt) {
 				t.Fatal("selection join changed the request snapshot time")
@@ -627,46 +609,17 @@ func passportSnapshot() queryapi.EvidencePassportSnapshot {
 
 func campaignResultSnapshot(t *testing.T) queryapi.BatchEnergyOptimizationResultSnapshot {
 	t.Helper()
-	record, err := batchenergyoptimization.NewResultRecord(batchenergyoptimization.ResultRecordSpec{
-		Outcome: "MinimumFound/LocalMinimum",
-		MeasurementState: batchenergyoptimization.ResultMeasurementState{
-			TargetNode: "jetsono", ModelSpec: "mobilenet-v2-050",
-			DeviceClass: "jetson-agx-orin-64g", ExecutionPath: "ort-cpu", PowerMode: "MODE_50W",
-		},
-		CurvePlan: batchenergyoptimization.StoredObjectReference{
-			Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha14", Size: 2459,
-		},
-		CompletedTrials: []batchenergyoptimization.CompletedTrialReference{{
-			Run: batchenergyoptimization.RunReference{
-				Namespace: testNamespace, Name: "campaign-active-b1-a1", UID: "run-uid",
-			},
-			Measurement: batchenergyoptimization.ResultMeasurement{
-				WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1,
-			},
-			Evidence: batchenergyoptimization.StoredObjectReference{
-				Store: "chill-evidence-store", Key: "profiling-runs/run-uid/execution.json",
-				SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, Size: 23188,
-			},
-		}},
-		Detail: json.RawMessage(`{"selectedBatch":1}`),
-	})
-	if err != nil {
-		t.Fatalf("build result record: %v", err)
-	}
 	return queryapi.BatchEnergyOptimizationResultSnapshot{
 		ReadAt: time.Unix(0, 0).UTC(),
 		Campaign: edgev1alpha1.BatchEnergyOptimization{
 			ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "campaign", UID: "campaign-uid"},
 			Status: edgev1alpha1.BatchEnergyOptimizationStatus{
-				Phase: "Complete", Outcome: "MinimumFound/LocalMinimum", CompletedTrials: 3,
+				Phase: "Complete", Outcome: "Complete",
 				Result: &edgev1alpha1.ProfilingRunEvidenceReference{
-					Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/result.json",
-					Size: 1024, SchemaVersion: record.SchemaVersion(),
+					Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/result.json", Size: 1024,
 				},
 			},
 		},
-		Result: record,
 	}
 }
 

@@ -6,9 +6,7 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/queryapi"
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -17,9 +15,8 @@ import (
 // cluster: the projection is what is being asked about, so the object travels
 // in rather than being fetched by name.
 type KubernetesBatchEnergyOptimizationPreflightQuery struct {
-	reader    client.Reader
-	projector func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error)
-	now       func() time.Time
+	reader client.Reader
+	now    func() time.Time
 	// Session resolves a request with session settings, the call the session
 	// runner prepares a measurement with.
 	Session func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (queryapi.SessionPreflightPlan, error)
@@ -27,15 +24,11 @@ type KubernetesBatchEnergyOptimizationPreflightQuery struct {
 
 func NewKubernetesBatchEnergyOptimizationPreflightQuery(
 	reader client.Reader,
-	projector func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error),
 ) (*KubernetesBatchEnergyOptimizationPreflightQuery, error) {
 	if reader == nil {
 		return nil, errors.New("a Kubernetes preflight reader is required")
 	}
-	if projector == nil {
-		return nil, errors.New("a curve-plan projector is required")
-	}
-	return &KubernetesBatchEnergyOptimizationPreflightQuery{reader: reader, projector: projector, now: time.Now}, nil
+	return &KubernetesBatchEnergyOptimizationPreflightQuery{reader: reader, now: time.Now}, nil
 }
 
 // Read records projection failures as reasons because an unresolved request is
@@ -64,35 +57,8 @@ func (q *KubernetesBatchEnergyOptimizationPreflightQuery) Read(
 		snapshot.SessionPlan = &plan
 		return snapshot, nil
 	}
-
-	plan, err := q.projector(ctx, campaign)
-	snapshot := queryapi.BatchEnergyOptimizationPreflightSnapshot{
+	return queryapi.BatchEnergyOptimizationPreflightSnapshot{
 		ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy(),
-	}
-	if err != nil {
-		snapshot.Reason = err.Error()
-		return snapshot, nil
-	}
-	snapshot.Plan = plan
-	var requests edgev1alpha1.BatchEnergyOptimizationList
-	if err := q.reader.List(ctx, &requests, client.InNamespace(campaign.Namespace)); err != nil {
-		return snapshot, nil
-	}
-	snapshot.RequestsComplete = true
-	for i := range requests.Items {
-		request := &requests.Items[i]
-		current, proposed := request.Spec, campaign.Spec
-		if !apiequality.Semantic.DeepEqual(current, proposed) {
-			continue
-		}
-		projected, err := q.projector(ctx, request)
-		if err != nil {
-			snapshot.RequestsComplete = false
-			continue
-		}
-		snapshot.Requests = append(snapshot.Requests, queryapi.BatchEnergyOptimizationPreflightRequest{
-			Campaign: *request.DeepCopy(), Plan: projected,
-		})
-	}
-	return snapshot, nil
+		Reason: "a measurement request needs session settings",
+	}, nil
 }

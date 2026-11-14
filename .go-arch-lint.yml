@@ -27,8 +27,6 @@ excludeFiles:
 # component. Keep this mapping synchronized with architecture-coverage.sh.
 components:
   api: { in: api/v1alpha1 }
-  batch-energy-optimization-core: { in: internal/profiling/campaign }
-  batch-energy-optimization-controller: { in: internal/profiling/campaign/controller }
   idle-baseline-core: { in: internal/profiling/idlebaseline }
   idle-baseline-controller: { in: internal/profiling/idlebaseline/controller }
   entrypoints: { in: [cmd, cmd/**] }
@@ -98,31 +96,6 @@ deps:
   api:
     anyVendorDeps: true
 
-  batch-energy-optimization-core:
-    anyVendorDeps: true
-    mayDependOn:
-      # The terminal-status predicate reads the native campaign status and the
-      # Run's terminal resolution reasons; its controller and the deletion
-      # owner both call it.
-      - api
-      - profile-derivation
-      - profiling-run
-
-  batch-energy-optimization-controller:
-    mayDependOn:
-      - api
-      - batch-energy-optimization-core
-      - evidence-core
-      - profile-derivation
-      - profiler-app
-      - profiler-projection
-      - profiler-controller
-      - profiler-evidence
-      - profiling-run
-      # Node power-mode label and generation.
-      - platform-core
-      - model-catalog
-
   idle-baseline-core:
     mayDependOn:
       - profile-derivation
@@ -156,7 +129,6 @@ deps:
   query-api-kube:
     mayDependOn:
       - api
-      - batch-energy-optimization-core
       - device-class
       - evidence-core
       - query-api
@@ -171,7 +143,6 @@ deps:
   query-api:
     mayDependOn:
       - api
-      - batch-energy-optimization-core
       - device-class
       - evidence-core
       - metric-core
@@ -377,7 +348,6 @@ deps:
       - api
       - evidence-core
       - firstfloor
-      - batch-energy-optimization-core
       - profiling-run
       - query-api
       - serving-core
@@ -465,7 +435,6 @@ deps:
       - model-catalog
       - model-compat
       - evidence-core
-      - batch-energy-optimization-core
       - profile-derivation
       - profiler-evidence
       - profiler-projection
@@ -494,8 +463,6 @@ deps:
       - api
       - platform-core
       - evidence-core
-      # Executable children authenticate the recorded campaign identity and plan.
-      - batch-energy-optimization-core
       - profile-derivation
       - evidence-kube
       - profiler-app

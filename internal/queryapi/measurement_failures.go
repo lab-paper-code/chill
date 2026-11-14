@@ -6,8 +6,14 @@ import (
 	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// Failure classes a ProfilingRun's runtime termination records.
+const (
+	failureClassExpectedStop     = "ExpectedStop"
+	failureClassRetryableFailure = "RetryableFailure"
+	failureClassUnknownFailure   = "UnknownFailure"
 )
 
 var (
@@ -104,12 +110,12 @@ func classifyMeasurementFailure(termination *api.ProfilingRunRuntimeTermination,
 }
 
 func classifyTypedMeasurementFailure(termination *api.ProfilingRunRuntimeTermination) MeasurementReason {
-	executionStop := termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) &&
+	executionStop := termination.Class == failureClassExpectedStop &&
 		termination.Container == "runtime" && termination.Stage == "Execution"
 	switch {
-	case termination.Class == string(batchenergyoptimization.FailureClassRetryableFailure):
+	case termination.Class == failureClassRetryableFailure:
 		return MeasurementReason{Code: "RetryableInfrastructureFailure", Label: "일시적 인프라 중단", Message: "일시적 인프라 중단이 확인되었습니다. 요청의 재시도 한도와 현재 상태를 확인해 주세요."}
-	case termination.Class == string(batchenergyoptimization.FailureClassUnknownFailure):
+	case termination.Class == failureClassUnknownFailure:
 		return MeasurementReason{Code: "UnknownFailure", Label: "종료 원인 미확인", Message: "실행 종료 원인을 확인하지 못했습니다. 원본 상태와 로그를 확인해 주세요."}
 	case termination.Reason == "OOMKilled" && termination.Container == "runtime":
 		if executionStop {

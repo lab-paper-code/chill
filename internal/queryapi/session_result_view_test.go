@@ -90,15 +90,17 @@ func TestSessionResultDecodesIntoTheView(t *testing.T) {
 
 func TestPreviousFormatResultIsAnExplicitState(t *testing.T) {
 	t.Parallel()
-	campaign, _, record := campaignResultFixture(t)
-	view, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{Campaign: *campaign, Result: record})
+	campaign := sessionCampaign("Complete", "Complete", "")
+	campaign.Spec.Session = nil
+	campaign.Status.Result = &edgev1alpha1.ProfilingRunEvidenceReference{Store: "store", Key: "batch-energy-optimizations/old-uid/result.json", Size: 1}
+	view, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{Campaign: campaign})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if view.ResultFormat != ResultFormatPrevious || !strings.Contains(view.ResultFormatMessage, "measure again") || view.Session != nil {
 		t.Fatalf("format = %q %q", view.ResultFormat, view.ResultFormatMessage)
 	}
-	failed := BuildBatchEnergyOptimizationResultError(BatchEnergyOptimizationResultSnapshot{Campaign: *campaign}, 502, "Unavailable", "store down")
+	failed := BuildBatchEnergyOptimizationResultError(BatchEnergyOptimizationResultSnapshot{Campaign: campaign}, 502, "Unavailable", "store down")
 	if failed.ResultFormat != ResultFormatPrevious {
 		t.Fatalf("an old request whose read failed has format %q", failed.ResultFormat)
 	}

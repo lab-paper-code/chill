@@ -201,9 +201,6 @@ spec:
             # an absent fact source instead of making startup depend on it.
             - {{ printf "--fact-source-config-map=%s" (include "chill.profilerFactSourceName" .) | quote }}
             - {{ printf "--execution-facts-key=%s" .Values.profiler.factSource.executionFactsKey | quote }}
-            - {{ printf "--metric-sources-key=%s" .Values.profiler.factSource.metricSourcesKey | quote }}
-            - {{ printf "--workload-observation-key=%s" .Values.profiler.factSource.workloadObservationKey | quote }}
-            - {{ printf "--actuation-policies-key=%s" .Values.profiler.factSource.actuationPoliciesKey | quote }}
             - {{ printf "--execution-policies-key=%s" .Values.profiler.factSource.executionPoliciesKey | quote }}
             - {{ printf "--measurement-memory-fraction=%v" .Values.profiler.measurementMemoryFraction | quote }}
           env:

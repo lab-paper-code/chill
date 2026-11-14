@@ -14,12 +14,9 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
-	bscontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerapp "github.com/lab-paper-code/chill/internal/profiling/profiler"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
-	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/queryapi/readapi"
@@ -102,84 +99,11 @@ func newCampaignPreflightQuery(
 	reader client.Reader,
 	opts options,
 ) (*querykube.KubernetesBatchEnergyOptimizationPreflightQuery, error) {
-	candidates, err := profilerkube.NewKubernetesCandidateResolver(
-		reader,
-		profilerkube.CandidateResolverOptions{
-			Namespace:     opts.namespace,
-			ConfigMapName: opts.factSourceConfigMap,
-			ConfigMapKey:  opts.executionFactsKey,
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct candidate resolver: %w", err)
-	}
 	nodes, err := profilerkube.NewKubernetesNodeResolver(reader)
 	if err != nil {
 		return nil, fmt.Errorf("construct Node resolver: %w", err)
 	}
-	metrics, err := profilerkube.NewKubernetesMetricSourceResolver(
-		reader,
-		profilerkube.MetricSourceResolverOptions{
-			Namespace:     opts.namespace,
-			ConfigMapName: opts.factSourceConfigMap,
-			ConfigMapKey:  opts.metricSourcesKey,
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct metric-source resolver: %w", err)
-	}
-	workloads, err := profilerkube.NewKubernetesWorkloadObservationResolver(
-		reader,
-		profilerkube.WorkloadObservationResolverOptions{
-			Namespace:     opts.namespace,
-			ConfigMapName: opts.factSourceConfigMap,
-			ConfigMapKey:  opts.workloadObservationKey,
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct workload-observation resolver: %w", err)
-	}
-	actuation, err := profilerkube.NewKubernetesActuationPolicyResolver(
-		reader,
-		profilerkube.ActuationPolicyResolverOptions{
-			Namespace:     opts.namespace,
-			ConfigMapName: opts.factSourceConfigMap,
-			ConfigMapKey:  opts.actuationPoliciesKey,
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct actuation-policy resolver: %w", err)
-	}
-	execution, err := profilerkube.NewKubernetesExecutionPolicyResolver(
-		reader, profilerkube.ExecutionPolicyResolverOptions{
-			Namespace: opts.namespace, ConfigMapName: opts.factSourceConfigMap,
-			ConfigMapKey: opts.executionPoliciesKey, MeasurementMemoryFraction: opts.measurementMemoryFraction,
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct execution-policy resolver: %w", err)
-	}
-	preparer, err := profilerapp.NewPreparer(
-		candidates, nodes, metrics, workloads, actuation, execution,
-		func(ctx context.Context, node string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
-			return profilerkube.ResolveGatewayLoadOrigin(ctx, reader, opts.namespace, opts.systemName, node)
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct Run preparer: %w", err)
-	}
-	projector, err := bscontroller.NewCurvePlanProjector(reader, candidates, preparer)
-	if err != nil {
-		return nil, fmt.Errorf("construct curve-plan projector: %w", err)
-	}
-	preflights, err := querykube.NewKubernetesBatchEnergyOptimizationPreflightQuery(
-		reader,
-		func(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error) {
-			// Preflight reads the plan but cannot act on the projected transition.
-			plan, _, err := projector.Project(ctx, campaign)
-			return plan, err
-		},
-	)
+	preflights, err := querykube.NewKubernetesBatchEnergyOptimizationPreflightQuery(reader)
 	if err != nil {
 		return nil, fmt.Errorf("construct batch-energy-optimization preflight query: %w", err)
 	}

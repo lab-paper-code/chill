@@ -63,12 +63,11 @@ func BuildBatchEnergyOptimizationResultError(
 		Execution: &MeasurementExecution{Phase: task.Status.Phase, Generation: task.Generation,
 			ObservedGeneration: task.Status.ObservedGeneration}, Attempted: true, SourcesComplete: false,
 	})
-	assessment.FailureSummary = MeasurementRequestFailures(task, snapshot.FailedRuns, assessment)
-	unavailable := "ResultUnavailable"
+	assessment.FailureSummary = MeasurementRequestFailures(task, nil, assessment)
 	view := BatchEnergyOptimizationResult{
 		APIVersion: BatchEnergyOptimizationResultAPIVersion, Kind: "BatchEnergyOptimizationResult", ReadAt: snapshot.ReadAt.UTC(),
 		Campaign:   resultCampaign(&task),
-		Assessment: assessment, StatisticsReason: &unavailable, MeasurementFactsReason: &unavailable, ResultRows: []ResultRow{},
+		Assessment: assessment, ResultRows: []ResultRow{},
 	}
 	view.Campaign.StoredResult = stored
 	// An old request's result stays unreadable however its read failed.

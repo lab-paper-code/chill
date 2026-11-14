@@ -2,79 +2,13 @@ package kube
 
 import (
 	"context"
-	"errors"
-	"reflect"
-	"strings"
 	"testing"
-	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
-
-const preflightProjectorFailure = "referenced DeviceClass does not exist"
-
-func TestBatchEnergyOptimizationPreflightQueryReturnsResolvedPlan(t *testing.T) {
-	t.Parallel()
-	plan := batchEnergyOptimizationPreflightQueryPlan(t)
-	campaign := batchEnergyOptimizationPreflightQueryCampaign()
-	tolerance := 0.5
-	campaign.Spec.ActiveProtocol.DurationToleranceSeconds = &tolerance
-	projector := &recordingCurvePlanProjector{plan: plan}
-	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
-		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(), projector.Project,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	readAt := time.Date(2026, 8, 19, 6, 0, 0, 0, time.FixedZone("KST", 9*60*60))
-	query.now = func() time.Time { return readAt }
-
-	got, err := query.Read(context.Background(), campaign)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if projector.calls != 1 || projector.campaign != campaign {
-		t.Fatalf("projector calls/campaign = %d, %#v", projector.calls, projector.campaign)
-	}
-	if !got.ReadAt.Equal(readAt.UTC()) || got.ReadAt.Location() != time.UTC ||
-		got.Campaign.Namespace != campaign.Namespace || got.Campaign.Name != campaign.Name ||
-		!reflect.DeepEqual(got.Plan.Shared(), plan.Shared()) || got.Reason != "" {
-		t.Fatalf("snapshot = %#v", got)
-	}
-
-	*got.Campaign.Spec.ActiveProtocol.DurationToleranceSeconds = 1
-	if *campaign.Spec.ActiveProtocol.DurationToleranceSeconds == 1 {
-		t.Fatal("query returned a mutable alias of the submitted campaign")
-	}
-}
-
-func TestBatchEnergyOptimizationPreflightQueryRecordsProjectionFailure(t *testing.T) {
-	t.Parallel()
-	campaign := batchEnergyOptimizationPreflightQueryCampaign()
-	projector := &recordingCurvePlanProjector{
-		plan: batchEnergyOptimizationPreflightQueryPlan(t),
-		err:  errors.New(preflightProjectorFailure),
-	}
-	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
-		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(), projector.Project,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := query.Read(context.Background(), campaign)
-	if err != nil {
-		t.Fatalf("Read() error = %v, want nil", err)
-	}
-	if got.Reason != preflightProjectorFailure || got.Plan.SchemaVersion() != "" ||
-		got.Campaign.Namespace != campaign.Namespace || got.Campaign.Name != campaign.Name {
-		t.Fatalf("snapshot = %#v", got)
-	}
-}
 
 func TestBatchEnergyOptimizationPreflightQueryRejectsInvalidCampaign(t *testing.T) {
 	t.Parallel()
@@ -91,12 +25,10 @@ func TestBatchEnergyOptimizationPreflightQueryRejectsInvalidCampaign(t *testing.
 	tests["space-suffixed name"].Name += " "
 
 	for name, campaign := range tests {
-		name, campaign := name, campaign
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			projector := &recordingCurvePlanProjector{}
 			query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
-				fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(), projector.Project,
+				fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -104,73 +36,26 @@ func TestBatchEnergyOptimizationPreflightQueryRejectsInvalidCampaign(t *testing.
 			if _, err := query.Read(context.Background(), campaign); err == nil {
 				t.Fatal("invalid campaign was accepted")
 			}
-			if projector.calls != 0 {
-				t.Fatalf("invalid campaign reached projector: calls = %d", projector.calls)
-			}
 		})
 	}
 }
 
-func TestNewBatchEnergyOptimizationPreflightQueryRejectsNilProjector(t *testing.T) {
+func TestPreflightWithoutSessionSettingsIsUnresolved(t *testing.T) {
 	t.Parallel()
-	if _, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
-		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(), nil,
-	); err == nil ||
-		!strings.Contains(err.Error(), "curve-plan projector is required") {
-		t.Fatalf("constructor error = %v", err)
-	}
-}
-
-func TestPreflightQueryBuildReportsCurrentRequestsAsPlannedOnly(t *testing.T) {
-	campaign := batchEnergyOptimizationPreflightQueryCampaign()
-	pending := campaign.DeepCopy()
-	pending.Name = "pending"
-	pending.Status.Phase = "Measuring"
-	otherNamespace := pending.DeepCopy()
-	otherNamespace.Namespace = "other"
 	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
-		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(pending, otherNamespace).Build(),
-		(&recordingCurvePlanProjector{plan: batchEnergyOptimizationPreflightQueryPlan(t)}).Project,
+		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := query.Read(context.Background(), campaign)
+	snapshot, err := query.Read(context.Background(), batchEnergyOptimizationPreflightQueryCampaign())
 	if err != nil {
 		t.Fatal(err)
 	}
 	view, err := queryapi.BuildBatchEnergyOptimizationPreflight(snapshot)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || view.Resolves || view.Reason == "" {
+		t.Fatalf("view = %+v, err = %v", view, err)
 	}
-	if !snapshot.RequestsComplete || len(snapshot.Requests) != 1 ||
-		view.BatchPlan.ConditionMatch != "planned-only" || len(view.BatchPlan.MeasuredBatches) != 0 ||
-		len(view.BatchPlan.InProgressBatches) != 0 || !reflect.DeepEqual(view.BatchPlan.MissingBatches, []int{1, 2, 4}) {
-		t.Fatalf("planned request projection = %#v", view.BatchPlan)
-	}
-	found := false
-	for _, reason := range view.BatchPlan.Reasons {
-		found = found || reason.Code == "PlannedRequestOverlap"
-	}
-	if !found {
-		t.Fatal("planned-only overlap was not reported")
-	}
-}
-
-type recordingCurvePlanProjector struct {
-	plan     profilederivation.CurvePlan
-	err      error
-	campaign *edgev1alpha1.BatchEnergyOptimization
-	calls    int
-}
-
-func (p *recordingCurvePlanProjector) Project(
-	_ context.Context,
-	campaign *edgev1alpha1.BatchEnergyOptimization,
-) (profilederivation.CurvePlan, error) {
-	p.calls++
-	p.campaign = campaign
-	return p.plan, p.err
 }
 
 func batchEnergyOptimizationPreflightQueryCampaign() *edgev1alpha1.BatchEnergyOptimization {
@@ -179,61 +64,5 @@ func batchEnergyOptimizationPreflightQueryCampaign() *edgev1alpha1.BatchEnergyOp
 		Spec: edgev1alpha1.BatchEnergyOptimizationSpec{
 			State: edgev1alpha1.MeasurementStateSpec{TargetNode: "orangepi"},
 		},
-	}
-}
-
-func batchEnergyOptimizationPreflightQueryPlan(t *testing.T) profilederivation.CurvePlan {
-	t.Helper()
-	active := batchEnergyOptimizationPreflightQueryProtocol("empirical-cadence-fixed-batch")
-	active.WarmupIterations = 20
-	active.Dataset = &profilederivation.CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
-	active.OperatingPoints = &profilederivation.OperatingPointsContract{
-		Utilizations: []float64{.5}, SparseMeanGapMilliseconds: 1000,
-		PhaseDurationSeconds: 30, PostLoadDurationSeconds: 30, RequestLifetimeSeconds: 30,
-		DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 32768,
-	}
-	active.DurationSeconds, active.MetricDurationSeconds = 120, 121
-	idle := batchEnergyOptimizationPreflightQueryProtocol("idle-model-loaded")
-	idle.SettlingDurationSeconds = 5
-	plan, err := profilederivation.NewCurvePlan(profilederivation.CurvePlanSpec{
-		Name: "mobilenet-rknn-curve", LogicalModel: "mobilenet-v2-050",
-		DeviceClass: "orangepi-5-plus-16g",
-		NodeUID:     "node-uid", RuntimeFamily: "rknnlite", Backend: "not-applicable",
-		RuntimeImage: "registry.example/chill/runtime@sha256:" + strings.Repeat("a", 64), PowerMode: "fixed",
-		MetricSource: profilederivation.CurveMetricSourceContract{
-			SourceKind: "prometheus", NodeName: "orangepi", Endpoint: "http://metrics",
-			PowerMetric: "power_watts",
-		},
-		ActiveProtocol: active,
-		IdleProtocol:   idle,
-		Conversion: profilederivation.CurveConversionContract{
-			TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
-		},
-		Artifact: profilederivation.CurveArtifactContract{
-			ExecutionPath: "rknnlite", Name: "artifact",
-			Files: []string{"/artifact/model.rknn"}, Image: "registry.example/chill/artifact:v1",
-		},
-		Preprocessor: profilederivation.CurvePreprocessorContract{
-			Name: "mobilenet-imagenet", Image: "registry.example/chill/preprocessor:v1", Architecture: "arm64",
-			Path: "/artifact/mobilenet-nhwc", Inputs: []string{"image"}, Outputs: []string{"label"},
-		},
-		PlannedBatchSizes: []int{1, 2, 4},
-	})
-	if err != nil {
-		t.Fatalf("build curve plan: %v", err)
-	}
-	return plan
-}
-
-func batchEnergyOptimizationPreflightQueryProtocol(mode string) profilederivation.CurveProtocolContract {
-	return profilederivation.CurveProtocolContract{
-		WorkloadMode:               mode,
-		DurationSeconds:            30,
-		MetricIntervalMilliseconds: 1000,
-		MetricTimeoutMilliseconds:  900,
-		MetricDurationSeconds:      31,
-		MetricObserverImage:        "registry.example/chill/metric-observer:v1",
-		WorkloadObserverImage:      "registry.example/chill/workload-observer:v1",
-		WorkloadSchemaVersion:      "chill.dacs.io/workload-contract.v1alpha1",
 	}
 }

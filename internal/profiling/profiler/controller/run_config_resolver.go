@@ -6,9 +6,7 @@ import (
 	"fmt"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -23,14 +21,13 @@ type RunConfigResolver struct {
 	preparer  RunPreparer
 	execution profiler.ExecutionPolicyResolver
 	reader    client.Reader
-	readPlan  func(context.Context, types.UID) (profilederivation.CurvePlan, error)
 }
 
-func NewRunConfigResolver(preparer RunPreparer, execution profiler.ExecutionPolicyResolver, reader client.Reader, readPlan func(context.Context, types.UID) (profilederivation.CurvePlan, error)) (*RunConfigResolver, error) {
-	if preparer == nil || execution == nil || reader == nil || readPlan == nil {
-		return nil, errors.New("Run preparer, execution-policy resolver, authoritative reader and recorded plan reader are required")
+func NewRunConfigResolver(preparer RunPreparer, execution profiler.ExecutionPolicyResolver, reader client.Reader) (*RunConfigResolver, error) {
+	if preparer == nil || execution == nil || reader == nil {
+		return nil, errors.New("Run preparer, execution-policy resolver and authoritative reader are required")
 	}
-	return &RunConfigResolver{preparer: preparer, execution: execution, reader: reader, readPlan: readPlan}, nil
+	return &RunConfigResolver{preparer: preparer, execution: execution, reader: reader}, nil
 }
 
 func (r *RunConfigResolver) Resolve(ctx context.Context, run *edgev1alpha1.ProfilingRun) (ResolvedRun, error) {

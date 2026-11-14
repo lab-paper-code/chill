@@ -117,16 +117,9 @@ func TestR6FailureSummaryClassifiesOwnedRuntimeLog(t *testing.T) {
 	)
 	projection := queryapi.BuildMeasurementCoverage(base, task.Namespace, queryapi.CoverageQuery{})
 	cell := projection.Cells[0]
-	snapshot := queryapi.BatchEnergyOptimizationResultSnapshot{Campaign: task, FailedRuns: []api.ProfilingRun{run}}
-	detail, err := queryapi.BuildBatchEnergyOptimizationResult(snapshot)
-	if err != nil || detail.Assessment.DisplayStatus != queryapi.MeasurementProblem ||
-		len(detail.Assessment.FailureSummary) != 1 || detail.MeasurementFactsReason == nil ||
-		*detail.MeasurementFactsReason != "RequestFailed" {
-		t.Fatalf("failed request detail became pending/empty: %+v %v", detail, err)
-	}
 	foreign := *run.DeepCopy()
 	foreign.Namespace = "outside"
-	got := queryapi.MeasurementRequestFailures(task, []api.ProfilingRun{foreign}, detail.Assessment)
+	got := queryapi.MeasurementRequestFailures(task, []api.ProfilingRun{foreign}, assessment)
 	if len(got) != 1 || got[0].RunID != "" {
 		t.Fatalf("foreign Run borrowed as failure cause: %+v", got)
 	}
@@ -157,7 +150,7 @@ func TestR6FailureSummaryClassifiesOwnedRuntimeLog(t *testing.T) {
 	}
 	for _, summary := range [][]queryapi.MeasurementFailure{
 		failures, projection.Entities.Requests[0].FailureSummary,
-		listAssessment.FailureSummary, detail.Assessment.FailureSummary,
+		listAssessment.FailureSummary,
 		queryapi.AssessProfilingRun(run).FailureSummary,
 	} {
 		if len(summary) != 1 || summary[0].Code != last.Code || summary[0].Label != last.Label ||

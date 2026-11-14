@@ -22,9 +22,6 @@ type options struct {
 	namespace                                   string
 	factSourceConfigMap                         string
 	executionFactsKey                           string
-	metricSourcesKey                            string
-	workloadObservationKey                      string
-	actuationPoliciesKey                        string
 	executionPoliciesKey                        string
 	measurementMemoryFraction                   float64
 	kubeAPIQPS                                  float64
@@ -69,19 +66,6 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 	)
 	flags.StringVar(&o.factSourceConfigMap, "fact-source-config-map", "", "Profiler fact-source ConfigMap name.")
 	flags.StringVar(&o.executionFactsKey, "execution-facts-key", "", "ConfigMap key containing execution facts.")
-	flags.StringVar(&o.metricSourcesKey, "metric-sources-key", "", "ConfigMap key containing Node metric sources.")
-	flags.StringVar(
-		&o.workloadObservationKey,
-		"workload-observation-key",
-		"",
-		"ConfigMap key containing the WorkloadObserver image.",
-	)
-	flags.StringVar(
-		&o.actuationPoliciesKey,
-		"actuation-policies-key",
-		"",
-		"ConfigMap key containing versioned Node actuation policies.",
-	)
 	flags.StringVar(
 		&o.executionPoliciesKey, "execution-policies-key", "",
 		"ConfigMap key containing versioned worker execution envelopes.",
@@ -113,14 +97,11 @@ func (o options) validate() error {
 		return errors.New("evidence temporary directory must be an absolute path without surrounding whitespace")
 	}
 	for name, value := range map[string]string{
-		"system name":              o.systemName,
-		"namespace":                o.namespace,
-		"fact-source ConfigMap":    o.factSourceConfigMap,
-		"execution-facts key":      o.executionFactsKey,
-		"metric-sources key":       o.metricSourcesKey,
-		"workload-observation key": o.workloadObservationKey,
-		"actuation-policies key":   o.actuationPoliciesKey,
-		"execution-policies key":   o.executionPoliciesKey,
+		"system name":            o.systemName,
+		"namespace":              o.namespace,
+		"fact-source ConfigMap":  o.factSourceConfigMap,
+		"execution-facts key":    o.executionFactsKey,
+		"execution-policies key": o.executionPoliciesKey,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)

@@ -3,18 +3,14 @@ package kube
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,7 +22,7 @@ const queryTestNamespace = "chill-system"
 
 func TestBatchEnergyOptimizationResultQueryFollowsCampaignReferenceAndPreservesSources(t *testing.T) {
 	t.Parallel()
-	campaign, identity, record, payload := campaignResultFixture(t)
+	campaign, identity, payload := campaignResultFixture(t)
 	objects := &recordingObjectReader{payload: payload}
 	query, err := NewKubernetesBatchEnergyOptimizationResultQuery(
 		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(campaign).Build(),
@@ -48,7 +44,7 @@ func TestBatchEnergyOptimizationResultQueryFollowsCampaignReferenceAndPreservesS
 	if !got.ReadAt.Equal(readAt.UTC()) || got.ReadAt.Location() != time.UTC ||
 		got.Campaign.UID != campaign.UID ||
 		got.Campaign.Status.Outcome != campaign.Status.Outcome ||
-		!reflect.DeepEqual(got.Result.Spec(), record.Spec()) {
+		got.Session == nil || got.Session.Stop == nil {
 		t.Fatalf("snapshot = %#v", got)
 	}
 
@@ -59,7 +55,7 @@ func TestBatchEnergyOptimizationResultQueryFollowsCampaignReferenceAndPreservesS
 }
 
 func TestCampaignWithoutResultStillExposesFailureAndDoesNotReadStore(t *testing.T) {
-	campaign, _, _, _ := campaignResultFixture(t)
+	campaign, _, _ := campaignResultFixture(t)
 	campaign.Status.Result = nil
 	campaign.Status.Phase = "Failed"
 	campaign.Status.Conditions = []metav1.Condition{{
@@ -81,154 +77,36 @@ func TestCampaignWithoutResultStillExposesFailureAndDoesNotReadStore(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if objects.calls != 0 || view.Result != nil || view.Campaign.StoredResult != nil ||
+	if objects.calls != 0 || view.Campaign.StoredResult != nil ||
 		view.Campaign.Phase != "Failed" || len(view.Campaign.Conditions) != 1 ||
 		view.Campaign.Conditions[0].Reason != "CurvePlanResolutionFailed" {
 		t.Fatalf("missing result hid the actual campaign failure: %#v", view)
 	}
 }
 
-func TestBatchEnergyOptimizationResultQueryRetainsExpectedStopChildren(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		phase       string
-		discovery   bool
-		prefix      int
-		wantFailure bool
-		allocation  bool
-	}{
-		{name: "completed discovery", phase: "Complete", discovery: true, prefix: 1, wantFailure: true},
-		{name: "completed allocation discovery", phase: "Complete", discovery: true, prefix: 1, wantFailure: true, allocation: true},
-		{name: "completed empty discovery", phase: "Complete", discovery: true, wantFailure: true},
-		{name: "ordinary failure", phase: "Failed", wantFailure: true},
-		{name: "legacy terminal result", phase: "Complete"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			campaign, _, record, payload := campaignResultFixture(t)
-			campaign.Generation, campaign.Status.ObservedGeneration = 1, 1
-			campaign.Status.Phase = test.phase
-			controller := true
-			run := &edgev1alpha1.ProfilingRun{
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: campaign.Namespace, Name: "expected-stop", UID: "expected-stop-uid", Generation: 1,
-					OwnerReferences: []metav1.OwnerReference{{
-						APIVersion: edgev1alpha1.GroupVersion.String(), Kind: "BatchEnergyOptimization",
-						Name: campaign.Name, UID: campaign.UID, Controller: &controller,
-					}},
-				},
-				Status: edgev1alpha1.ProfilingRunStatus{
-					ObservedGeneration: 1,
-					Conditions: []metav1.Condition{{
-						Type: edgev1alpha1.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionFalse,
-						Reason: "JobFailed", ObservedGeneration: 1,
-					}},
-					RuntimeTermination: &edgev1alpha1.ProfilingRunRuntimeTermination{
-						Class: "ExpectedStop", Container: "runtime", Stage: "Execution", Reason: "OOMKilled", ExitCode: 137,
-					},
-				},
-			}
-			if test.allocation {
-				run.Status.RuntimeTermination.Reason = "Error"
-				run.Status.RuntimeTermination.ExitCode = 3
-				run.Status.RuntimeTermination.FailureReason = "MemoryAllocationFailed"
-			}
-			if test.discovery {
-				spec := record.Spec()
-				spec.Outcome = batchenergyoptimization.BatchDiscoveryComplete
-				template := spec.CompletedTrials[0]
-				spec.CompletedTrials = nil
-				measurements := []batchenergyoptimization.Measurement{{WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1}}
-				prefix := []int{}
-				if test.prefix == 1 {
-					measurements = append(measurements, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1})
-					prefix = append(prefix, 1)
-				}
-				for _, measurement := range measurements {
-					for attempt := 1; attempt <= 3; attempt++ {
-						trial := template
-						trial.Measurement = batchenergyoptimization.ResultMeasurement(measurement)
-						trial.Run.Name = fmt.Sprintf("campaign-%s-b1-a%d", measurement.WorkloadMode, attempt)
-						trial.Run.UID = trial.Run.Name + "-uid"
-						trial.Evidence.Key = "profiling-runs/" + trial.Run.UID + "/execution.json"
-						spec.CompletedTrials = append(spec.CompletedTrials, trial)
-					}
-				}
-				stop := &spec.ExcludedTrials[0]
-				stop.Run = batchenergyoptimization.RunReference{Namespace: run.Namespace, Name: run.Name, UID: string(run.UID)}
-				stop.Measurement = batchenergyoptimization.ResultMeasurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1 << test.prefix}
-				stop.Attempt, stop.Reasons = 1, []string{"OOM"}
-				var err error
-				spec.Detail, err = json.Marshal(batchenergyoptimization.DiscoveryResult{
-					MeasuredBatchSizes: prefix,
-					Stop: batchenergyoptimization.DiscoveryStop{
-						Reason: batchenergyoptimization.DiscoveryStopOOM, Attempt: stop.Attempt, Run: &stop.Run,
-						FailedMeasurement: &batchenergyoptimization.Measurement{WorkloadMode: stop.Measurement.WorkloadMode, Batch: stop.Measurement.Batch},
-					},
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				record, err = batchenergyoptimization.NewResultRecord(spec)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, discovery, err := batchenergyoptimization.DecodeDiscoveryResult(record, []int{1, 2}); err != nil || !discovery {
-					t.Fatalf("invalid stored discovery: discovery=%t err=%v", discovery, err)
-				}
-				payload, err = record.CanonicalJSON()
-				if err != nil {
-					t.Fatal(err)
-				}
-				campaign.Status.Outcome = batchenergyoptimization.BatchDiscoveryComplete
-				campaign.Status.Result.Size = int64(len(payload))
-			}
-			foreignUID := run.DeepCopy()
-			foreignUID.Name, foreignUID.UID = "foreign-uid", "foreign-run-uid"
-			foreignUID.OwnerReferences[0].UID = "other-campaign-uid"
-			foreignNamespace := run.DeepCopy()
-			foreignNamespace.Namespace = "other-namespace"
-			query, err := NewKubernetesBatchEnergyOptimizationResultQuery(
-				fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(campaign, run, foreignUID, foreignNamespace).Build(),
-				&recordingObjectReader{payload: payload},
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			snapshot, err := query.Read(context.Background(), campaign.Namespace, campaign.Name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			view, err := queryapi.BuildBatchEnergyOptimizationResult(snapshot)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if view.Campaign.Phase != test.phase || view.Campaign.Outcome != campaign.Status.Outcome ||
-				view.Result == nil || !reflect.DeepEqual(view.Result.Detail, record.Spec().Detail) {
-				t.Fatalf("reader changed terminal result: %+v", view)
-			}
-			if test.phase == "Complete" && (view.Assessment.Status == queryapi.MeasurementFailed ||
-				view.Assessment.Execution == nil || view.Assessment.Execution.Phase != "Complete") {
-				t.Fatalf("expected-stop child changed completed parent: %+v", view.Assessment)
-			}
-			failures := view.Assessment.FailureSummary
-			wantCode := "HostOOM"
-			if test.allocation {
-				wantCode = "MemoryAllocationFailed"
-			}
-			if !test.wantFailure {
-				if len(failures) != 0 {
-					t.Fatalf("legacy terminal result gained child failures: %+v", failures)
-				}
-			} else if len(failures) != 1 || failures[0].Code != wantCode || failures[0].RunID != string(run.UID) {
-				t.Fatalf("owned expected-stop cause missing or foreign Run included: %+v", failures)
-			}
-		})
+func TestRequestWithoutSessionSettingsKeepsItsResultUnread(t *testing.T) {
+	campaign, _, _ := campaignResultFixture(t)
+	campaign.Spec.Session = nil
+	objects := &recordingObjectReader{err: errors.New("an old result is never read")}
+	query, err := NewKubernetesBatchEnergyOptimizationResultQuery(
+		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(campaign).Build(), objects,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := query.Read(context.Background(), campaign.Namespace, campaign.Name)
+	if err != nil || objects.calls != 0 || snapshot.Session != nil {
+		t.Fatalf("snapshot = %+v calls = %d err = %v", snapshot, objects.calls, err)
+	}
+	view, err := queryapi.BuildBatchEnergyOptimizationResult(snapshot)
+	if err != nil || view.ResultFormat != queryapi.ResultFormatPrevious {
+		t.Fatalf("view = %+v err = %v", view, err)
 	}
 }
 
 func TestBatchEnergyOptimizationResultQueryRejectsUnusableResultReference(t *testing.T) {
 	t.Parallel()
-	validCampaign, _, _, _ := campaignResultFixture(t)
+	validCampaign, _, _ := campaignResultFixture(t)
 	tests := []struct {
 		name   string
 		mutate func(*edgev1alpha1.BatchEnergyOptimization)
@@ -301,7 +179,7 @@ func TestBatchEnergyOptimizationResultQueryReportsAMissingCampaignAsNotFound(t *
 
 func TestBatchEnergyOptimizationResultQueryPreservesObjectReadFailure(t *testing.T) {
 	t.Parallel()
-	campaign, _, _, _ := campaignResultFixture(t)
+	campaign, _, _ := campaignResultFixture(t)
 	want := errors.New("object unavailable")
 	query, err := NewKubernetesBatchEnergyOptimizationResultQuery(
 		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(campaign).Build(),
@@ -318,7 +196,7 @@ func TestBatchEnergyOptimizationResultQueryPreservesObjectReadFailure(t *testing
 
 func TestBatchEnergyOptimizationResultQueryRejectsContentTheReferenceDoesNotDescribe(t *testing.T) {
 	t.Parallel()
-	campaign, _, _, payload := campaignResultFixture(t)
+	campaign, _, payload := campaignResultFixture(t)
 	tests := map[string]struct {
 		payload []byte
 		match   string
@@ -327,9 +205,9 @@ func TestBatchEnergyOptimizationResultQueryRejectsContentTheReferenceDoesNotDesc
 		"trailing content": {payload: append(bytes.Clone(payload), ' '), match: "where the reference declares"},
 		"unsupported schema": {
 			payload: bytes.Replace(
-				payload, []byte("batch-energy-optimization-result.v1alpha5"), []byte("batch-energy-optimization-result.v9alpha9"), 1,
+				payload, []byte("batch-energy-optimization-result.v1alpha6"), []byte("batch-energy-optimization-result.v9alpha9"), 1,
 			),
-			match: "unsupported batch-energy-optimization result schema",
+			match: "unsupported session result schema",
 		},
 	}
 	if bytes.Equal(tests["unsupported schema"].payload, payload) {
@@ -401,71 +279,52 @@ func (r *recordingObjectReader) Open(
 	return io.NopCloser(bytes.NewReader(r.payload)), nil
 }
 
-// campaignResultFixture builds the record through its own constructor so the
-// fixture cannot drift from the schema the decoder accepts.
+const sessionResultPayload = `{
+ "schemaVersion": "chill.dacs.io/batch-energy-optimization-result.v1alpha6",
+ "condition": {"nodeName": "jetsono", "nodeUID": "node-uid", "deviceClass": "jetson-agx-orin-64g", "powerMode": "MAXN",
+  "logicalModel": "mobilenet-v2-050", "runtimeFamily": "onnxruntime", "backend": "cpu", "runtimeImage": "registry/firstfloor:1",
+  "artifact": {}, "preprocessor": {}, "actor": {}},
+ "settings": {"meterLagSeconds": 3, "minimumPowerWindowSeconds": 15, "midLevelRatio": 0.25, "sparseMeanGapSeconds": 1,
+  "levelDurationLimitSeconds": 300, "postLoadWindowSeconds": 60, "minimumSamples": 59, "confidenceLevel": 0.95},
+ "power": {"idleWatts": {"status": "Identified", "value": 7.5, "range": [7.4, 7.6]},
+  "awakeStepWatts": {"status": "NotIdentified", "range": [0, 1.2], "reason": "the hold has no breakpoint"},
+  "holdSeconds": {"status": "Identified", "value": 0.2, "range": [0.1, 0.3]},
+  "meterIntervalSeconds": 1, "settledAtSeconds": 4, "postLoad": [[0, 9.1], [1, 8.2], [2, 7.6]],
+  "holdSegmentsSearched": 0, "holdResolutionWatts": 0},
+ "batches": [{"batch": 1, "serviceNanos": [10, 20, 30], "precedingIdleNanos": [1, 2, 3],
+  "dispatchOccupancyNanos": [40, 10, 30, 20], "saturationInputRate": 80,
+  "joulesPerInput": {"status": "Identified", "value": 0.05, "range": [0.04, 0.06]},
+  "peakMemoryBytes": 1048576, "memoryKind": "host", "prepareCostKey": "prepare-1", "removeCostKey": "remove-1",
+  "levels": [{"kind": "saturation", "id": "b1-saturation", "start": "2026-11-14T00:00:00Z", "end": "2026-11-14T00:01:00Z",
+   "sentInputs": 59, "completedInputs": 59, "completedBatches": 59, "endReason": "Samples", "inputRate": 80,
+   "meanWatts": 12.5, "meanWattsStandardError": 0.1, "powerSamples": 57}]}],
+ "stop": {"batch": 2, "class": "CapacityLimit", "reason": "batch 2 exceeds the memory envelope"},
+ "meterSource": {"kind": "prometheus"}
+}`
+
+// campaignResultFixture is a completed session request with its stored result.
 func campaignResultFixture(t *testing.T) (
 	*edgev1alpha1.BatchEnergyOptimization,
 	evidencestore.ObjectIdentity,
-	batchenergyoptimization.ResultRecord,
 	[]byte,
 ) {
 	t.Helper()
-	record, err := batchenergyoptimization.NewResultRecord(batchenergyoptimization.ResultRecordSpec{
-		Outcome: "MinimumFound/LocalMinimum",
-		MeasurementState: batchenergyoptimization.ResultMeasurementState{
-			TargetNode: "jetsono", ModelSpec: "mobilenet-v2-050",
-			DeviceClass: "jetson-agx-orin-64g", ExecutionPath: "ort-cpu", PowerMode: "MODE_50W",
-		},
-		CurvePlan: batchenergyoptimization.StoredObjectReference{
-			Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha7", Size: 2459,
-		},
-		CompletedTrials: []batchenergyoptimization.CompletedTrialReference{{
-			Run: batchenergyoptimization.RunReference{
-				Namespace: queryTestNamespace, Name: "campaign-active-b1-a1", UID: "run-uid",
-			},
-			Measurement: batchenergyoptimization.ResultMeasurement{
-				WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1,
-			},
-			Evidence: batchenergyoptimization.StoredObjectReference{
-				Store: "chill-evidence-store", Key: "profiling-runs/run-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha14", Size: 23188,
-			},
-		}},
-		ExcludedTrials: []batchenergyoptimization.ExcludedTrialReference{{
-			Run: batchenergyoptimization.RunReference{
-				Namespace: queryTestNamespace, Name: "campaign-active-b1-a2", UID: "excluded-uid",
-			},
-			Measurement: batchenergyoptimization.ResultMeasurement{
-				WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1,
-			},
-			Attempt: 2,
-			Reasons: []string{"PowerWindowCoverage"},
-		}},
-		Detail: json.RawMessage(`{"selectedBatch":1}`),
-	})
-	if err != nil {
-		t.Fatalf("build result record: %v", err)
-	}
-	payload, err := record.CanonicalJSON()
-	if err != nil {
-		t.Fatalf("encode result record: %v", err)
-	}
+	payload := []byte(sessionResultPayload)
 	identity := evidencestore.ObjectIdentity{
-		Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/result.json",
+		Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign-uid/result.json",
 		Size: int64(len(payload)),
 	}
 	campaign := &edgev1alpha1.BatchEnergyOptimization{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: queryTestNamespace, Name: "campaign", UID: "campaign-uid",
 		},
+		Spec: edgev1alpha1.BatchEnergyOptimizationSpec{Session: &edgev1alpha1.BatchEnergyOptimizationSessionSpec{}},
 		Status: edgev1alpha1.BatchEnergyOptimizationStatus{
-			Phase: "Complete", Outcome: "MinimumFound/LocalMinimum", CompletedTrials: 27,
+			Phase: "Complete", Outcome: "CapacityLimit",
 			Result: &edgev1alpha1.ProfilingRunEvidenceReference{
 				Store: identity.Store, Key: identity.Key, Size: identity.Size,
-				SchemaVersion: record.SchemaVersion(),
 			},
 		},
 	}
-	return campaign, identity, record, payload
+	return campaign, identity, payload
 }

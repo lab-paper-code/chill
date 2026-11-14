@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -18,10 +17,6 @@ func TestSessionPreflightResolvesWithPrepareSession(t *testing.T) {
 	campaign.Spec.Session = &edgev1alpha1.BatchEnergyOptimizationSessionSpec{}
 	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
 		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(),
-		func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error) {
-			t.Error("a session request is not projected to a curve plan")
-			return profilederivation.CurvePlan{}, errors.New("unused")
-		},
 	)
 	if err != nil {
 		t.Fatal(err)

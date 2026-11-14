@@ -95,36 +95,6 @@ namespace, followed by a resource-set comparison. The optional
 `make deployment-graph-check` command verifies the review view without
 replacing that evidence.
 
-## How does a BatchEnergyOptimization search advance?
-
-`cmd/profiler/controller_setup.go` reuses the Profiler's candidate, preparation,
-Job-backed Run record, Evidence Store, and retained-evidence dependencies and calls the
-batch-energy optimization reconciler's `SetupWithManager`. Registration in
-`internal/profiling/campaign/controller/setup.go` uses:
-
-```text
-For(BatchEnergyOptimization) + Owns(ProfilingRun)
-  -> controller-runtime event delivery
-  -> BatchEnergyOptimizationReconciler.Reconcile
-```
-
-The reconciler polls the target Node's power mode with `RequeueAfter` while it
-settles.
-
-The reconciler lists labeled child Runs and the projection verifies the exact
-controller-owner UID before pure decision logic is called. Required evidence:
-setup and projection source plus the two focused Profiler envtest campaigns.
-The event edge is `framework-derived`, not a direct Go call.
-
-The shared Run terminal-failure interpreter consumes permanent `EvidenceInvalid`
-conditions. Immutable evidence contradictions use that condition and stop the
-campaign under its fatal-failure policy, enabling the normal Node handback.
-Transient finalization failures remain `Unknown/EvidenceVerificationFailed`;
-the recorded Job is reverified without creating another execution attempt.
-Previously retained `False/EvidenceVerificationFailed` Runs take the same
-reverification path. Focused finalizer, Run-recovery, campaign-projection and
-admission handback tests cover those boundaries.
-
 ## Regression commands
 
 ```bash

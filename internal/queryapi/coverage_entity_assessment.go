@@ -5,7 +5,6 @@ import (
 	"slices"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
@@ -113,7 +112,7 @@ func AssessMeasurementRequest(
 func measurementProfileTargets(task *api.BatchEnergyOptimization, facts *profilederivation.MeasurementFacts, profile *CoverageProfile) []int {
 	planned := facts.Condition.PlannedBatchSizes
 	if task.Status.Phase != string(api.MeasurementPhaseComplete) || task.Status.ObservedGeneration != task.Generation ||
-		task.Status.Outcome != string(batchenergyoptimization.BatchDiscoveryComplete) || profile.Reuse != nil ||
+		task.Status.Outcome != "BatchDiscoveryComplete" || profile.Reuse != nil ||
 		facts.Request.Namespace != task.Namespace || facts.Request.Name != task.Name || facts.Request.UID != string(task.UID) ||
 		facts.ResultReference.Key == "" || len(facts.Batches) == 0 || len(facts.Batches) > len(planned) ||
 		!reflect.DeepEqual(&profile.Condition, &facts.Condition) {

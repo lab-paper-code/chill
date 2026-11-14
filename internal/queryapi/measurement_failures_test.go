@@ -10,41 +10,6 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-func TestExpectedStopChildDoesNotFailCompletedCampaignProjection(t *testing.T) {
-	task, _, record := campaignResultFixture(t)
-	run := api.ProfilingRun{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: task.Namespace, Name: "oom-child", UID: "oom-run-uid", Generation: 1,
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimization",
-				Name: task.Name, UID: task.UID, Controller: ptr.To(true),
-			}},
-		},
-		Status: api.ProfilingRunStatus{
-			ObservedGeneration: 1,
-			Conditions: []metav1.Condition{{
-				Type: api.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionFalse,
-				Reason: "JobFailed", ObservedGeneration: 1,
-			}},
-			RuntimeTermination: &api.ProfilingRunRuntimeTermination{
-				Class: "ExpectedStop", Container: "runtime", Stage: "Execution", Reason: "OOMKilled", ExitCode: 137,
-			},
-		},
-	}
-	view, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{
-		Campaign: *task, Result: record, FailedRuns: []api.ProfilingRun{run},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if view.Campaign.Phase != "Complete" || view.Assessment.Status == MeasurementFailed ||
-		view.Assessment.Execution == nil || view.Assessment.Execution.Phase != "Complete" || !view.Assessment.Evidence.Accepted ||
-		len(view.Assessment.FailureSummary) != 1 || view.Assessment.FailureSummary[0].Code != "HostOOM" ||
-		view.Assessment.FailureSummary[0].RunID != string(run.UID) {
-		t.Fatalf("expected-stop child changed campaign verdict: %+v", view.Assessment)
-	}
-}
-
 func TestMeasurementFailureClassificationIsSharedAndSafe(t *testing.T) {
 	for _, test := range []struct {
 		name          string
@@ -131,16 +96,11 @@ func TestMeasurementFailureClassificationIsSharedAndSafe(t *testing.T) {
 			if reason.Code != test.code || reason.Label == "" || reason.Message == "" {
 				t.Fatalf("classification = %+v; want %s", reason, test.code)
 			}
-			detail, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{Campaign: task, FailedRuns: []api.ProfilingRun{run}})
-			if err != nil {
-				t.Fatal(err)
-			}
 			list := BuildProfilingRuns(ProfilingRunsSnapshot{Runs: []api.ProfilingRun{run}})
 			for _, failures := range [][]MeasurementFailure{
 				assessment.FailureSummary,
 				list.Runs[0].Assessment.FailureSummary,
-				detail.Assessment.FailureSummary,
-				MeasurementRequestFailures(task, []api.ProfilingRun{run}, detail.Assessment),
+				MeasurementRequestFailures(task, []api.ProfilingRun{run}, assessment),
 			} {
 				if len(failures) != 1 {
 					t.Fatalf("failure summary = %+v", failures)

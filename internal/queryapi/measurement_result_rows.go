@@ -6,15 +6,7 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
-// MeasurementResultRows projects independent measurements, never a mixed reused profile.
-func MeasurementResultRows(facts profilederivation.MeasurementFacts, profileID string, reused, used bool) []ResultRow {
-	rows := make([]ResultRow, 0, len(facts.Batches))
-	for _, batch := range facts.Batches {
-		rows = append(rows, MeasurementResultRow(facts, batch, profileID, reused, used))
-	}
-	return rows
-}
-
+// MeasurementResultRow projects one independent measurement, never a mixed reused profile.
 func MeasurementResultRow(facts profilederivation.MeasurementFacts, batch profilederivation.MeasurementBatchFacts, profileID string, reused, used bool) ResultRow {
 	kind := "direct"
 	if reused {

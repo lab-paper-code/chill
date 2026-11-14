@@ -3,14 +3,10 @@ package controller
 import (
 	"context"
 	"errors"
-	"slices"
 	"strconv"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/evidencestore"
-	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
-	"github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -51,8 +47,6 @@ func (r *RunConfigResolver) authorizedRequest(ctx context.Context, run *edgev1al
 	}
 	key := types.NamespacedName{Namespace: run.Namespace, Name: owner.Name}
 	switch owner.Kind {
-	case "BatchEnergyOptimization":
-		return r.authorizedCampaignRequest(ctx, run, owner, key)
 	case "ModelLoadedIdleBaseline":
 		return r.authorizedIdleRequest(ctx, run, owner, key)
 	default:
@@ -78,79 +72,6 @@ func grantedAuthorityNode(ctx context.Context, reader client.Reader, root types.
 		return invalidAuthority(err.Error())
 	}
 	return err
-}
-
-func (r *RunConfigResolver) authorizedCampaignRequest(ctx context.Context, run *edgev1alpha1.ProfilingRun, owner *metav1.OwnerReference, key types.NamespacedName) (profiler.PreparationRequest, error) {
-	root := &edgev1alpha1.BatchEnergyOptimization{}
-	if err := r.reader.Get(ctx, key, root); err != nil {
-		if apierrors.IsNotFound(err) {
-			return profiler.PreparationRequest{}, invalidAuthority("measurement root does not exist")
-		}
-		return profiler.PreparationRequest{}, err
-	}
-	if root.UID != owner.UID {
-		return profiler.PreparationRequest{}, invalidAuthority("measurement root UID mismatch")
-	}
-	if err := admitRunRoot(root.Annotations); err != nil {
-		return profiler.PreparationRequest{}, err
-	}
-	plan, err := r.readPlan(ctx, root.UID)
-	if err != nil {
-		if apierrors.IsNotFound(err) || errors.Is(err, evidencestore.ErrNotFound) {
-			return profiler.PreparationRequest{}, invalidAuthority("recorded curve plan does not exist")
-		}
-		return profiler.PreparationRequest{}, err
-	}
-	shared := plan.Shared()
-	trial := run.Spec.CampaignTrial
-	if trial == nil || trial.Attempt < 1 || !slices.Contains(plan.PlannedBatchSizes(), int(trial.Batch)) {
-		return profiler.PreparationRequest{}, invalidAuthority("child trial is outside recorded curve plan")
-	}
-	mode := campaign.WorkloadModeIdle
-	protocol := shared.IdleProtocol
-	batch := profilingrun.IdleExecutionBatch(shared.Backend, int(trial.Batch))
-	if run.Spec.Measurement.WorkloadMode == profilingrun.EmpiricalCadenceFixedBatchWorkloadMode {
-		mode = campaign.WorkloadModeActive
-		protocol = shared.ActiveProtocol
-		batch = int(trial.Batch)
-	} else if run.Spec.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
-		return profiler.PreparationRequest{}, invalidAuthority("invalid campaign child mode")
-	}
-	if err := grantedAuthorityNode(ctx, r.reader, root.UID, root.Spec.State.TargetNode, shared.NodeUID); err != nil {
-		return profiler.PreparationRequest{}, err
-	}
-	settling := int32(protocol.SettlingDurationSeconds)
-	tolerance := protocol.DurationToleranceSeconds
-	spec := edgev1alpha1.ProfilingRunSpec{MeasurementStateSpec: root.Spec.State,
-		Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{Batch: int32(batch), WorkloadMode: protocol.WorkloadMode,
-			WarmupIterations: int32(protocol.WarmupIterations), StartupWarmupIterations: int32(protocol.StartupWarmupIterations),
-			SettlingDurationSeconds: &settling, DurationSeconds: int32(protocol.DurationSeconds), DurationToleranceSeconds: &tolerance,
-			Workload: protocol.WorkloadName},
-		MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{IntervalMilliseconds: int32(protocol.MetricIntervalMilliseconds), TimeoutMilliseconds: int32(protocol.MetricTimeoutMilliseconds), DurationSeconds: int32(protocol.MetricDurationSeconds)}}
-	if protocol.Dataset != nil {
-		spec.Measurement.Dataset = protocol.Dataset.Name
-	}
-	if points := protocol.OperatingPoints; points != nil {
-		spec.Measurement.OperatingPoints = &edgev1alpha1.MeasurementOperatingPointsSpec{
-			Utilizations: slices.Clone(points.Utilizations), SparseMeanGapMilliseconds: points.SparseMeanGapMilliseconds,
-			PhaseDurationSeconds: int32(points.PhaseDurationSeconds), RequestLifetimeSeconds: int32(points.RequestLifetimeSeconds),
-			PostLoadDurationSeconds:        int32(points.PostLoadDurationSeconds),
-			DeliveryMarginMilliseconds:     int32(points.DeliveryMarginMilliseconds),
-			FramedDecodedRequestUpperBytes: points.FramedDecodedRequestUpperBytes,
-		}
-	}
-	for _, k := range shared.Actor.WarmupBatchSizes {
-		spec.Measurement.WarmupBatchSizes = append(spec.Measurement.WarmupBatchSizes, int32(k))
-	}
-	request, err := ProjectRequest(spec)
-	if err != nil {
-		return profiler.PreparationRequest{}, invalidAuthority(err.Error())
-	}
-	if mode == campaign.WorkloadModeActive {
-		projection.ApplyFrozenActiveProtocol(&request.Preparation.Measurement, protocol)
-		request.Preparation.Workload = request.Preparation.Measurement.WorkloadName
-	}
-	return request.Preparation, nil
 }
 
 func (r *RunConfigResolver) authorizedIdleRequest(ctx context.Context, run *edgev1alpha1.ProfilingRun, owner *metav1.OwnerReference, key types.NamespacedName) (profiler.PreparationRequest, error) {

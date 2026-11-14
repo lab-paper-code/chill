@@ -16,7 +16,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
-	batchcontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
 	idlebaselinecontroller "github.com/lab-paper-code/chill/internal/profiling/idlebaseline/controller"
 	profilerapp "github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
@@ -40,7 +39,6 @@ type profilerControllerShared struct {
 	stores            profilercontroller.EvidenceStoreBindingResolver
 	evidence          *currentEvidenceStore
 	retainedEvidence  *evidencekube.RetainedLoader
-	curvePlans        *batchcontroller.CurvePlanSource
 }
 
 func setupProfilerControllers(mgr ctrl.Manager, opts options) error {
@@ -51,8 +49,6 @@ func setupProfilerControllers(mgr ctrl.Manager, opts options) error {
 	if err := setupRunController(mgr, opts, shared); err != nil {
 		return err
 	}
-	// ChillServer runs BatchEnergyOptimization measurement sessions; no
-	// campaign controller here reconciles them.
 	if err := setupModelLoadedIdleBaselineController(mgr, opts, shared); err != nil {
 		return err
 	}
@@ -70,7 +66,6 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 		shared.preparer,
 		shared.executionPolicies,
 		shared.reader,
-		shared.curvePlans.ReadRecorded,
 	)
 	if err != nil {
 		return fmt.Errorf("construct RunConfig resolver: %w", err)
@@ -197,22 +192,11 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct Run preparer: %w", err)
 	}
-	curvePlans, err := batchcontroller.NewCurvePlanSource(
-		reader, candidates, preparer, evidence,
-		batchcontroller.CurvePlanSourceOptions{
-			Store:          component.EvidenceStoreServiceName(opts.systemName),
-			MaxObjectBytes: profilingResultMaximumObjectBytes,
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct immutable curve-plan source: %w", err)
-	}
 	return &profilerControllerShared{
 		reader: reader, candidates: candidates, nodes: nodes, power: power,
 		actuationPolicies: actuationPolicies, preparer: preparer,
 		executionPolicies: executionPolicies, stores: stores,
 		evidence: evidence, retainedEvidence: retainedEvidence,
-		curvePlans: curvePlans,
 	}, nil
 }
 

@@ -43,47 +43,6 @@ func TestMeasurementResultRowPreservesSignedConfidenceZeroAndUnknown(t *testing.
 	}
 }
 
-func TestResultMeasurementFactsMissingReasons(t *testing.T) {
-	campaign, _, record := campaignResultFixture(t)
-	missing := "RetainedEvidenceMissing"
-	published, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{
-		Campaign: *campaign, Result: record, StatisticsReason: &missing,
-	})
-	if err != nil || published.MeasurementFacts != nil || published.MeasurementFactsReason == nil || *published.MeasurementFactsReason != missing {
-		t.Fatalf("retained evidence absence changed: %+v error=%v", published, err)
-	}
-	campaign.Status.Result = nil
-	unpublished, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{Campaign: *campaign})
-	if err != nil || unpublished.MeasurementFacts != nil || unpublished.MeasurementFactsReason == nil ||
-		*unpublished.MeasurementFactsReason != "NoPublishedResult" || unpublished.Result != nil || len(unpublished.ResultRows) != 0 {
-		t.Fatalf("unpublished result became observed zero: %+v error=%v", unpublished, err)
-	}
-}
-
-func TestRetainedResultSeparatesReuseConfirmationAndSourceReference(t *testing.T) {
-	campaign, _, record := campaignResultFixture(t)
-	campaign.Annotations = map[string]string{"chill.dacs.io/profile-reuse": `{"sourceProfileID":"namespace/source/source-uid","maximumRelativeDifference":0.05}`}
-	total := 90.0
-	facts := &profilederivation.MeasurementFacts{
-		Condition: profilederivation.CurvePlanSpec{NodeUID: "confirmation-node"},
-		Batches:   []profilederivation.MeasurementBatchFacts{{Batch: 1, TotalJoulesPerItem: &total}},
-	}
-	view, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{Campaign: *campaign, Result: record, MeasurementFacts: facts})
-	if err != nil || len(view.ResultRows) != 2 {
-		t.Fatalf("reuse rows=%+v error=%v", view.ResultRows, err)
-	}
-	confirmation, source := view.ResultRows[0], view.ResultRows[1]
-	if confirmation.RowKind != ResultRowConfirmation || confirmation.TotalJoulesPerItem == nil || *confirmation.TotalJoulesPerItem != total ||
-		source.RowKind != ResultRowSourceReference || source.ProfileID != "namespace/source/source-uid" || source.TotalJoulesPerItem != nil ||
-		source.ActiveWatts != nil || source.Confidence != nil || source.Assessment.Status != MeasurementUnknown {
-		t.Fatalf("independent confirmation/source reference mixed: %+v", view.ResultRows)
-	}
-	condition, ok := source.Condition.(map[string]string)
-	if !ok || len(condition) != 1 || condition["sourceProfileId"] != source.ProfileID {
-		t.Fatalf("source reference forged target physical condition: %+v", source.Condition)
-	}
-}
-
 func TestR18PowerPolicyReasonPreservesUnknownAndFailure(t *testing.T) {
 	failed, passed := false, true
 	for _, tc := range []struct {

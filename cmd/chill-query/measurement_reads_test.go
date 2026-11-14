@@ -12,7 +12,6 @@ import (
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
@@ -159,6 +158,7 @@ func TestMeasurementResultFailureRetainsNativeRequestWithoutInventingEvidence(t 
 		t.Run(phase, func(t *testing.T) {
 			task := &api.BatchEnergyOptimization{
 				ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "request", UID: "request-uid", Generation: 1},
+				Spec:       api.BatchEnergyOptimizationSpec{Session: &api.BatchEnergyOptimizationSessionSpec{}},
 				Status: api.BatchEnergyOptimizationStatus{
 					ObservedGeneration: 1,
 					Phase:              phase,
@@ -200,8 +200,6 @@ func TestMeasurementResultFailureRetainsNativeRequestWithoutInventingEvidence(t 
 				body.Campaign.Phase != phase ||
 				body.Campaign.CompletedTrials != 3 ||
 				body.Campaign.Conditions[0].Message != "runtime failed repeatedly" ||
-				body.Result != nil ||
-				body.MeasurementFacts != nil ||
 				body.Assessment.Evidence.Accepted {
 				t.Fatalf("native failure or original error lost: %d %s", response.Code, response.Body.String())
 			}
@@ -223,7 +221,7 @@ func TestMeasurementResultFailureRetainsNativeRequestWithoutInventingEvidence(t 
 }
 
 func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
-	request, record := resultRequestFixture(t)
+	request := resultRequestFixture(t)
 	request.Status.Phase = "Complete"
 	id := queryapi.CoverageRequestID(*request)
 	selected, unselected := true, false
@@ -293,10 +291,7 @@ func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 						t.Fatalf("request identity changed: %s/%s", namespace, name)
 					}
 					return queryapi.BatchEnergyOptimizationResultSnapshot{
-						ReadAt: readAt, Campaign: *request, Result: record,
-						MeasurementFacts: &profilederivation.MeasurementFacts{
-							Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1}},
-						},
+						ReadAt: readAt, Campaign: *request,
 					}, nil
 				},
 				Catalog: queryCatalogSource(service.catalog),
@@ -315,10 +310,10 @@ func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 				t.Fatal(err)
 			}
-			if response.Code != http.StatusOK || !result.ReadAt.Equal(readAt) || len(result.ResultRows) != 1 {
+			if response.Code != http.StatusOK || !result.ReadAt.Equal(readAt) {
 				t.Fatalf("result/source time changed: status=%d result=%+v", response.Code, result)
 			}
-			for _, scope := range []queryapi.MeasurementScope{result.Assessment.Scope, result.ResultRows[0].Assessment.Scope} {
+			for _, scope := range []queryapi.MeasurementScope{result.Assessment.Scope} {
 				if (scope.SchedulerUsed == nil) != (tc.want == nil) ||
 					tc.want != nil && *scope.SchedulerUsed != *tc.want {
 					t.Fatalf("selection=%v scope=%+v want=%v", tc.currentIDs, scope, tc.want)
@@ -328,21 +323,8 @@ func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 	}
 }
 
-func resultRequestFixture(t *testing.T) (*api.BatchEnergyOptimization, campaign.ResultRecord) {
+func resultRequestFixture(t *testing.T) *api.BatchEnergyOptimization {
 	t.Helper()
-	record, err := campaign.NewResultRecord(campaign.ResultRecordSpec{
-		Outcome: "MinimumFound/LocalMinimum",
-		MeasurementState: campaign.ResultMeasurementState{
-			TargetNode: "node", ModelSpec: "model", DeviceClass: "class", ExecutionPath: "ort-cpu", PowerMode: "MODE",
-		},
-		CurvePlan: campaign.StoredObjectReference{
-			Store: "evidence", Key: "plan", SchemaVersion: "chill.dacs.io/curve-plan.v1alpha7", Size: 1,
-		},
-		Detail: json.RawMessage(`{"selectedBatch":1}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	return &api.BatchEnergyOptimization{
 		ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "campaign", UID: "campaign-uid", Generation: 1},
 		Spec: api.BatchEnergyOptimizationSpec{State: api.MeasurementStateSpec{
@@ -355,7 +337,7 @@ func resultRequestFixture(t *testing.T) (*api.BatchEnergyOptimization, campaign.
 			ObservedGeneration: 1,
 			Result:             &api.ProfilingRunEvidenceReference{Store: "evidence", Key: "result.json", Size: 1},
 		},
-	}, record
+	}
 }
 
 type nilPassportReader struct{}

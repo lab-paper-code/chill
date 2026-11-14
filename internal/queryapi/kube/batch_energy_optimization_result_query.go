@@ -9,7 +9,6 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	"k8s.io/apimachinery/pkg/types"
@@ -21,9 +20,9 @@ import (
 // acceptance, so this query bounds the read and projects the sealed result
 // without interpreting the measurement method that produced it.
 type KubernetesBatchEnergyOptimizationResultQuery struct {
-	reader     client.Reader
-	objects    evidencestore.Reader
-	now        func() time.Time
+	reader  client.Reader
+	objects evidencestore.Reader
+	now     func() time.Time
 }
 
 func NewKubernetesBatchEnergyOptimizationResultQuery(
@@ -51,19 +50,8 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) Read(
 		return queryapi.BatchEnergyOptimizationResultSnapshot{}, fmt.Errorf("get BatchEnergyOptimization %s: %w", key, err)
 	}
 	snapshot := queryapi.BatchEnergyOptimizationResultSnapshot{ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy()}
-	session := campaign.Spec.Session != nil
-	var failedRuns edgev1alpha1.ProfilingRunList
-	// A completed discovery can retain an expected-stop child without failing
-	// the request. A session owns no Run.
-	if !session && (campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseFailed) ||
-		(campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseComplete) &&
-			campaign.Status.Outcome == batchenergyoptimization.BatchDiscoveryComplete)) {
-		if err := q.reader.List(ctx, &failedRuns, client.InNamespace(namespace)); err != nil {
-			return snapshot, fmt.Errorf("list failed request Runs: %w", err)
-		}
-	}
-	snapshot.FailedRuns = failedRuns.Items
-	if campaign.Status.Result == nil {
+	// A request without session settings carries a result no reader decodes.
+	if campaign.Status.Result == nil || campaign.Spec.Session == nil {
 		return snapshot, nil
 	}
 	identity, err := terminalResultIdentity(campaign.Status.Result)
@@ -74,19 +62,11 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) Read(
 	if err != nil {
 		return snapshot, fmt.Errorf("read BatchEnergyOptimization %s result: %w", key, err)
 	}
-	if session {
-		result, err := profilederivation.DecodeSessionResult(payload)
-		if err != nil {
-			return snapshot, fmt.Errorf("decode BatchEnergyOptimization %s result: %w", key, err)
-		}
-		snapshot.Session = &result
-		return snapshot, nil
-	}
-	record, err := batchenergyoptimization.DecodeResultRecord(payload)
+	result, err := profilederivation.DecodeSessionResult(payload)
 	if err != nil {
 		return snapshot, fmt.Errorf("decode BatchEnergyOptimization %s result: %w", key, err)
 	}
-	snapshot.Result = record
+	snapshot.Session = &result
 	return snapshot, nil
 }
 
