@@ -791,3 +791,17 @@ func BenchmarkSessionNativeBatchFold(b *testing.B) {
 		})
 	}
 }
+
+func TestSessionRefusesMissingLoadNode(t *testing.T) {
+	s := newSessionHarness(t)
+	s.controller.config.Session.NodeName = ""
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	s.admit()
+	status := s.status(beo)
+	if status.Phase != string(edge.MeasurementPhaseFailed) ||
+		!strings.Contains(sessionCondition(status).Message, "Session.NodeName") ||
+		len(s.measured) != 0 || len(s.jobs) != 0 {
+		t.Fatalf("status %+v operations %v jobs %d", status, s.measured, len(s.jobs))
+	}
+}

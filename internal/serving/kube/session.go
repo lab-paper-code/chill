@@ -123,6 +123,9 @@ func (c *SchedulerController) sessionRefusal(ctx context.Context, beo *edge.Batc
 	if settings == nil {
 		return plan, refusedSessionMissing, "measurement request has no session settings", false
 	}
+	if in.config.Session.NodeName == "" {
+		return plan, refusedSessionUnresolved, "measurement session requires Session.NodeName for the ChillServer load generator", false
+	}
 	if node.Name == in.config.Session.NodeName {
 		return plan, refusedSessionUnresolved, "the load generator runs on this Node, so its power would be measured as the model's", false
 	}
