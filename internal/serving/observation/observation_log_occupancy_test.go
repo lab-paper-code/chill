@@ -400,7 +400,7 @@ func TestNativeBatchJoinMissingFinishedNeverPublishesOccupancy(t *testing.T) {
 				samples[i] = profilederivation.NativeServiceSample{
 					BatchID: row.BatchID, BatchSize: row.BatchSize, RecordIDs: make([]string, row.BatchSize),
 					ServiceSample: native.ServiceSample{ServiceDurationNanos: row.ServiceDurationNanos, TrialID: uid},
-					StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, LatestEnqueuedAt: row.LatestEnqueuedAt,
+					StartedAt:     row.StartedAt, FinishedAt: row.FinishedAt, LatestEnqueuedAt: row.LatestEnqueuedAt,
 				}
 			}
 			occupancy := profilederivation.SaturationDispatchOccupancy(samples, 2)
