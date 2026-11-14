@@ -587,3 +587,59 @@ func preparationSessionResult(t *testing.T, condition derivation.SessionConditio
 	}
 	return result
 }
+
+// A catalog profile built from a session result reaches serving preparation
+// with the executor's runtime report, its delivery and its memory envelope, and
+// a native runner reporting that runtime passes the client's metadata check.
+// Dropping the result's runtime metadata or delivery in the catalog mapping
+// fails preparation; altering the runtime report fails the probe.
+func TestSessionProfilePassesPreparationAndNativeMetadataValidation(t *testing.T) {
+	delivery := json.RawMessage(`{"hostLibraries":["/usr/lib/librknnrt.so"],"supplementalGroups":[44]}`)
+	var reported native.RuntimeMetadata
+	fixture := newSessionCatalogFixture(t, func(result *derivation.SessionResult) {
+		// RKNNLite is the backend whose preparation needs the measured delivery.
+		result.Condition.Backend, result.Condition.Actor.Backend = "rknnlite", "rknnlite"
+		result.RuntimeMetadata.Runtime, result.RuntimeMetadata.Providers = "rknnlite", nil
+		result.RuntimeMetadata.AvailableProviders = nil
+		result.RuntimeMetadata.IntraOpThreads, result.RuntimeMetadata.InterOpThreads = 0, 0
+		result.RuntimeDelivery = delivery
+		reported = *result.RuntimeMetadata
+	})
+	if err := fixture.service.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fixture.prepared(t)
+	profile := fixture.service.Profiles.Load().Profiles[0]
+	spec := fixture.service.Profiles.Load().Preparations[profile.ID]
+	if !bytes.Equal(spec.Delivery.RKNNLite, delivery) || len(profile.Batches) != 2 || profile.Batches[1].MemoryBytes != 4096 {
+		t.Fatalf("preparation lost the session's delivery or batches: delivery=%s batches=%+v", spec.Delivery.RKNNLite, profile.Batches)
+	}
+	state := native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{
+		Model: spec.Config.Model, Mode: "serving", Runtime: reported, ProfileID: profile.ID, AppliedAt: time.Now().UTC(),
+		Policy: spec.Config.Policy, MaxQueueRequests: spec.Instance.Capacity, MaxBatchSize: spec.Instance.MaxBatch, ModelInstanceCount: 1,
+	}}
+	runner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v2/models/"+spec.Config.Model+"/state" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(state); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(runner.Close)
+	probe := func() error {
+		_, err := (&sdk.Client{HTTPClient: runner.Client()}).Probe(context.Background(), sdk.Spec{
+			Endpoint: runner.URL, ModelName: spec.Config.Model, InstanceID: spec.Instance.ID, Node: spec.Instance.Node,
+			Profile: &profile, Weight: 1, Capacity: spec.Instance.Capacity, ExpectedRuntime: profile.RuntimeMetadata,
+		})
+		return err
+	}
+	if err := probe(); err != nil {
+		t.Fatalf("native reporting the session's runtime failed metadata validation: %v", err)
+	}
+	state.Metadata.Runtime.Device = "npu1"
+	if err := probe(); err == nil {
+		t.Fatal("native runtime differing from the session's report passed metadata validation")
+	}
+}
