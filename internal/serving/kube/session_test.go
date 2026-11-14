@@ -433,18 +433,29 @@ func TestSessionRuntimeFactDifferingAcrossInstancesFails(t *testing.T) {
 	}
 }
 
-func TestSessionNativeRowCountMismatchFailsWithTheNumbers(t *testing.T) {
+func TestSessionNativeRowCountMismatchExcludesOnlyThatLevel(t *testing.T) {
 	s := newSessionHarness(t)
 	s.dropRow = "session-uid/2/mid"
 	beo := sessionRoot(sessionSettingsFixture())
 	s.create(beo)
 	s.admit()
-	status := s.status(beo)
-	if message := sessionCondition(status).Message; status.Phase != string(edge.MeasurementPhaseFailed) || !strings.Contains(message, "native inputs 118 of 120") {
-		t.Fatalf("status %+v message %q", status, message)
+	result, stored := s.result(beo)
+	if !stored || s.holder() != "" {
+		t.Fatalf("status %+v holder %q", s.status(beo), s.holder())
 	}
-	if _, stored := s.result(beo); stored || s.holder() != "" {
-		t.Fatalf("result stored or Node held %q", s.holder())
+	excluded := 0
+	for _, batch := range result.Batches {
+		for _, level := range batch.Levels {
+			if level.Excluded {
+				excluded++
+				if level.ID != "session-uid/2/mid" || !strings.Contains(level.Detail, "native") {
+					t.Fatalf("excluded level %+v", level.DriverLevelRow)
+				}
+			}
+		}
+	}
+	if excluded != 1 {
+		t.Fatalf("excluded levels %d", excluded)
 	}
 }
 
@@ -840,7 +851,7 @@ func TestSessionLostFinishedMemberFailsWithInputCount(t *testing.T) {
 	s.admit()
 	status := s.status(beo)
 	if status.Phase != string(edge.MeasurementPhaseFailed) ||
-		!strings.Contains(sessionCondition(status).Message, "native inputs 3 of 4") {
+		!strings.Contains(sessionCondition(status).Message, "native rows 1 of 2") {
 		t.Fatalf("status %+v", status)
 	}
 }

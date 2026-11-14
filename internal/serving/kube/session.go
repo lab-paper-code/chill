@@ -108,9 +108,11 @@ func observedSessionReads(log *observation.ObservationLog) sessionReads {
 			}
 			rows := make(map[string]sessionNativeLevel, len(joins))
 			for uid, join := range joins {
+				// A level whose rows do not join stays without rows; derivation excludes it.
 				batches, err := join.Batches()
 				if err != nil {
-					return nil, err
+					ctrllog.FromContext(ctx).WithName("scheduler").Info("session level rows not joined", "level", uid, "reason", err.Error())
+					continue
 				}
 				rows[uid] = sessionNativeLevel{rows: batches, inputs: join.CompletedInputs()}
 			}
@@ -525,16 +527,15 @@ func (r *sessionRun) batch(ctx context.Context, batch int, last bool) (outcome s
 	if err != nil {
 		return outcome, err
 	}
+	// Derivation compares each level's native rows with the driver's count.
 	for _, level := range levels {
-		native := rows[level.ID]
-		if !level.Excluded && native.inputs != level.CompletedInputs {
-			return outcome, fmt.Errorf("level %s: native inputs %d of %d", level.ID, native.inputs, level.CompletedInputs)
-		}
-		outcome.input.Levels = append(outcome.input.Levels, profilederivation.SessionLevelInput{Row: level, Native: native.rows})
+		outcome.input.Levels = append(outcome.input.Levels, profilederivation.SessionLevelInput{Row: level, Native: rows[level.ID].rows})
 	}
 	peak, err := r.c.sessionReads.memory(ctx, instance.PodUID, prepareStart, removeEnd)
 	if err != nil {
-		return outcome, err
+		// The batch keeps its service records without a memory figure.
+		ctrllog.FromContext(ctx).WithName("scheduler").Info("session memory not observed", "batch", batch, "reason", err.Error())
+		return outcome, nil
 	}
 	outcome.input.PeakMemoryBytes, outcome.input.MemoryKind = int64(peak.Bytes), "current-sample-maximum"
 	if peak.Lifetime {

@@ -8,6 +8,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"gonum.org/v1/gonum/stat"
@@ -150,7 +151,16 @@ func DeriveSession(input SessionInput) (SessionResult, error) {
 	}
 
 	if !slices.ContainsFunc(result.Batches, func(batch SessionBatch) bool { return batch.SaturationInputRate != nil }) {
-		return SessionResult{}, errors.New("session has no batch with a valid saturation level")
+		// The failure carries why each saturation level was not usable.
+		var reasons []string
+		for _, batch := range result.Batches {
+			for _, level := range batch.Levels {
+				if level.Kind == LevelSaturation && level.Detail != "" {
+					reasons = append(reasons, level.Detail)
+				}
+			}
+		}
+		return SessionResult{}, fmt.Errorf("session has no batch with a valid saturation level: %s", strings.Join(reasons, "; "))
 	}
 	postLoad, err := analysePostLoad(power, input.PostLoadStart, input.PostLoadEnd, lag, minimum, tests)
 	if err != nil {
