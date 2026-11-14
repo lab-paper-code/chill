@@ -65,6 +65,16 @@ func (o *SchedulerService) preparation(
 	if profile.RuntimeMetadata == nil {
 		return servingstate.PrepareSpec{}, errors.New("verified physical allocation unavailable")
 	}
+	// The runner ranks batch sizes by each batch's input slope; a bundle
+	// never carries a slope the session did not identify.
+	for _, batch := range profile.Batches {
+		if batch.InputSlopeJoules == nil {
+			return servingstate.PrepareSpec{}, fmt.Errorf("profile batch %d has no input slope; firstfloor batching needs one", batch.Batch)
+		}
+		if _, ok := batch.InputSlopeJoules.Value(); !ok {
+			return servingstate.PrepareSpec{}, fmt.Errorf("profile batch %d input slope is not identified (%s); firstfloor batching needs one", batch.Batch, batch.InputSlopeJoules.Reason())
+		}
+	}
 	spec, err := o.measuredPreparation(ctx, profile, config.Settings.ServingMemoryBytes)
 	if err != nil {
 		return spec, err
@@ -78,16 +88,6 @@ func (o *SchedulerService) preparation(
 			// Keep fresh Node and queue checks above; reuse only the object.
 			spec.Bundle = published.Bundle
 			return spec, nil
-		}
-	}
-	// The runner ranks batch sizes by each batch's input slope; a bundle
-	// never carries a slope the session did not identify.
-	for _, batch := range profile.Batches {
-		if batch.InputSlopeJoules == nil {
-			return spec, fmt.Errorf("profile batch %d has no input slope; firstfloor batching needs one", batch.Batch)
-		}
-		if _, ok := batch.InputSlopeJoules.Value(); !ok {
-			return spec, fmt.Errorf("profile batch %d input slope is not identified (%s); firstfloor batching needs one", batch.Batch, batch.InputSlopeJoules.Reason())
 		}
 	}
 	raw, err := json.Marshal(profile.NativeBundle())

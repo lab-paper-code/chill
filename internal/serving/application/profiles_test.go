@@ -59,8 +59,8 @@ func measuredAdoptionProfile() serving.Profile {
 			WarmupIterations: 5, InitializedBatches: []int{1, 2, 4},
 		},
 		Batches: []serving.BatchProfile{
-			{Batch: 1, MemoryBytes: 2048, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 2e6), fixtures.ServiceSample("physical-trial", 1, 1e6)}},
-			{Batch: 2, MemoryBytes: 4096, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 3e6), fixtures.ServiceSample("physical-trial", 1, 3e6)}},
+			{Batch: 1, MemoryBytes: 2048, InputSlopeJoules: applicationTestSlope(`{"status":"Identified","value":0.3}`), ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 2e6), fixtures.ServiceSample("physical-trial", 1, 1e6)}},
+			{Batch: 2, MemoryBytes: 4096, InputSlopeJoules: applicationTestSlope(`{"status":"Identified","value":0.2}`), ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 3e6), fixtures.ServiceSample("physical-trial", 1, 3e6)}},
 		},
 	}
 	profile.Condition.Actor = native.Config{
@@ -88,8 +88,8 @@ func fixtureAdmissionNative(profile *serving.Profile) *native.State {
 
 func TestPositiveProfileCarriesPairedServiceToNativeConsumer(t *testing.T) {
 	profile := measuredAdoptionProfile()
-	profile.Batches[0].EnergyPerInputJoules = 0.5
-	profile.Batches[1].EnergyPerInputJoules = 1
+	profile.Batches[0].InputSlopeJoules = applicationTestSlope(`{"status":"Identified","value":0.5}`)
+	profile.Batches[1].InputSlopeJoules = applicationTestSlope(`{"status":"Identified","value":1}`)
 	payload, err := json.Marshal(profile.NativeBundle())
 	if err != nil {
 		t.Fatal(err)
@@ -112,6 +112,27 @@ func TestPositiveProfileCarriesPairedServiceToNativeConsumer(t *testing.T) {
 		if service, _, ok := distribution.QuantileNanos(&gap, 50); !ok || service != profile.Batches[j].ServiceSamples[1].ServiceDurationNanos {
 			t.Fatalf("known-gap pair lost across native bundle wire: %d %v", service, ok)
 		}
+	}
+}
+
+func applicationTestSlope(wire string) *derivation.SessionParameter {
+	var p derivation.SessionParameter
+	if err := json.Unmarshal([]byte(wire), &p); err != nil {
+		panic(err)
+	}
+	return &p
+}
+
+// A profile batch whose input slope the session did not identify cannot be
+// published as a native bundle: preparation says so instead of sending a number.
+func TestPreparationRefusesNotIdentifiedInputSlope(t *testing.T) {
+	config := schedulerTestConfiguration()
+	service := schedulerTestService(t, config)
+	profile := measuredAdoptionProfile()
+	profile.Batches[1].InputSlopeJoules = applicationTestSlope(`{"status":"NotIdentified","reason":"inseparable from the awake step"}`)
+	_, err := service.preparation(context.Background(), config, profile)
+	if err == nil || !strings.Contains(err.Error(), "batch 2 input slope is not identified (inseparable from the awake step)") {
+		t.Fatalf("preparation published a not-identified slope: %v", err)
 	}
 }
 func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *testing.T) {

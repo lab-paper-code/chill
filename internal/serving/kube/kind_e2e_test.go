@@ -424,7 +424,7 @@ func kindProfile(base serving.Profile, node *core.Node, model string) *serving.P
 	profile.MeasuredAt = time.Now()
 	profile.Reference = evidencestore.ObjectIdentity{Store: "raw", Key: "curve-" + model, Size: 1}
 	profile.Evidence = []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile-" + model, Size: 1}}
-	profile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: catalogServiceSamples(int64(10 * time.Millisecond)), EnergyPerInputJoules: 1, MemoryBytes: 1024}}
+	profile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: catalogServiceSamples(int64(10 * time.Millisecond)), InputSlopeJoules: catalogTestSlope("1"), MemoryBytes: 1024}}
 	var err error
 	profile.Batches[0].ServiceDistribution, err = native.NewServiceDistribution(profile.Batches[0].ServiceSamples)
 	if err != nil {

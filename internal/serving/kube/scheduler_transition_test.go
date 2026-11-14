@@ -651,7 +651,7 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			old.Routable = map[string]bool{uid: true}
 			oldProfile := *old.Profile
 			oldProfile.Batches = []serving.BatchProfile{{
-				Batch: 1, MemoryBytes: old.Allocation.MemoryBytes, EnergyPerInputJoules: 1,
+				Batch: 1, MemoryBytes: old.Allocation.MemoryBytes, InputSlopeJoules: catalogTestSlope("1"),
 				ServiceSamples: catalogServiceSamples(int64(30 * time.Millisecond)),
 			}}
 			old.Profile = &oldProfile
