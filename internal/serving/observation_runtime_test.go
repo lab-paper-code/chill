@@ -3,6 +3,7 @@ package serving
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -258,6 +259,56 @@ func TestRecoveryIsExecutorLocalAndRequiresFreshExactEmptyProof(t *testing.T) {
 	}
 	if detached, err := r.DetachNode(a.State.Node.UID); err != nil || detached {
 		t.Fatalf("healthy sibling justified reuse of an unknown occupied node: %v %v", detached, err)
+	}
+}
+
+func TestCreatedPodDoesNotInheritPreviousProcessRecovery(t *testing.T) {
+	for _, mode := range []string{"serving", "profiling"} {
+		for _, watchFirst := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s watch first %t", mode, watchFirst), func(t *testing.T) {
+				r, instance, _, log, _ := runtimeAsyncFixture(t, true)
+				instance.State.ID, instance.State.PodUID = "created-pod/container", "created-pod"
+				instance.State.NativeVerified = false
+				instance.State.Native = &firstfloor.State{Ready: true, Metadata: firstfloor.Metadata{Mode: mode},
+					Requests: []firstfloor.RequestState{{Phase: phaseRunning}}}
+				inherited := instance
+				inherited.State.ID, inherited.State.PodUID = "inherited-pod/container", "inherited-pod"
+				if watchFirst {
+					if err := r.InstallInstances([]ReadyInstance{instance, inherited}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := r.RecordCreatedPod(instance.State.PodUID, instance.State.Node); err != nil {
+					t.Fatal(err)
+				}
+				if r.InstanceRecoveryUnknown(instance.State.ID) {
+					t.Fatal("successful creation required a native probe to exclude previous-process work")
+				}
+				if err := r.InstallInstances([]ReadyInstance{instance, inherited}); err != nil {
+					t.Fatal(err)
+				}
+				if r.InstanceRecoveryUnknown(instance.State.ID) || !r.InstanceRecoveryUnknown(inherited.State.ID) {
+					t.Fatal("creation receipt did not exclude only its own Pod from recovery")
+				}
+				for _, state := range r.Instances() {
+					if state.PodUID == instance.State.PodUID && (!state.CreatedThisRun || state.NativeVerified || state.RecoveryUnknown) {
+						t.Fatalf("created Pod recovery depended on a verified native read: %+v", state)
+					}
+				}
+				log.boot.Started = time.Now()
+				restarted, err := NewRuntime(context.Background(), RuntimeConfig{ObservationLog: log})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(restarted.JoinExecutions)
+				if err := restarted.InstallInstances([]ReadyInstance{instance}); err != nil {
+					t.Fatal(err)
+				}
+				if !restarted.InstanceRecoveryUnknown(instance.State.ID) {
+					t.Fatal("another process inherited the previous process's creation exemption")
+				}
+			})
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,6 +32,12 @@ import (
 )
 
 const measurementProfileID = "chill-system/session/session-uid"
+
+type measurementNativeTransport func(*http.Request) (*http.Response, error)
+
+func (transport measurementNativeTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
+}
 
 // archiveEvidence writes operation measurements as the evidence store does.
 type archiveEvidence struct{ managerArchive }
@@ -80,6 +87,19 @@ func TestMeasurementInstanceIsMeasuredWithoutProfile(t *testing.T) {
 					measurementRecoveryBoot(t, manager)
 				}
 			})
+			var firstNativeRead atomic.Bool
+			transport := nativeHTTPClient.Transport
+			nativeHTTPClient.Transport = measurementNativeTransport(func(request *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(request.URL.Path, "/state") && firstNativeRead.CompareAndSwap(false, true) {
+					// The create receipt must exclude recovery before the real
+					// observer has received any native response.
+					id := servingstate.PhysicalID(fixture.UID, servingstate.FirstfloorStatus(fixture).ContainerID)
+					if manager.runtime.InstanceRecoveryUnknown(id) {
+						t.Error("new Pod required native proof before its first response")
+					}
+				}
+				return transport.RoundTrip(request)
+			})
 
 			prepared := measure(servingstate.Operation{ID: "session.1.prepare", Kind: servingstate.OperationPrepare, Node: spec.Instance.Node, Prepare: &spec})
 			pod := &core.Pod{}
@@ -87,9 +107,12 @@ func TestMeasurementInstanceIsMeasuredWithoutProfile(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertMeasurementInstance(t, ctx, kube, pod, prepared, 1)
+			if !firstNativeRead.Load() {
+				t.Fatal("prepare did not reach the real native observer")
+			}
 			for _, instance := range manager.runtime.Instances() {
-				if instance.RecoveryUnknown || !instance.NativeVerified {
-					t.Fatalf("prepared executor did not clear recovery through the observer: %+v", instance)
+				if instance.RecoveryUnknown || !instance.CreatedThisRun {
+					t.Fatalf("this process's prepared Pod inherited a recovery fence: %+v", instance)
 				}
 			}
 

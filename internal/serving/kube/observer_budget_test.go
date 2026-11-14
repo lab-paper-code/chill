@@ -69,16 +69,6 @@ func newObserverAPI(t *testing.T, instances int) *observerAPI {
 		pod.Name = "instance-" + string(rune('a'+i))
 		pod.UID = types.UID("pod-uid-" + string(rune('a'+i)))
 		pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
-		startup, err := json.Marshal(native.Config{Model: profile.Condition.Actor.Model, Mode: servingstate.NativeServingMode})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := manager.store.client.Create(context.Background(), &core.ConfigMap{
-			ObjectMeta: meta.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
-			Data:       map[string]string{"config.json": string(startup)},
-		}); err != nil {
-			t.Fatal(err)
-		}
 		service := observerServiceFixture(pod)
 		pods[pod.Name], services[service.Name] = pod, service
 		podList.Items = append(podList.Items, *pod)

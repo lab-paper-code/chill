@@ -20,7 +20,6 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
-	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -601,14 +600,25 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 // not hold the source lock for the whole refresh.
 const nativeProbeTimeout = 2 * time.Second
 
-func matchesNativeSource(pod *corev1.Pod, prepared *native.Config, instance *serving.InstanceState) bool {
+func (o *Observer) physicalSourceSpec(ctx context.Context, pod *corev1.Pod, node *corev1.Node) (firstfloor.Spec, error) {
+	if err := validatePhysicalSource(pod, node); err != nil {
+		return firstfloor.Spec{}, err
+	}
+	model, err := servingstate.NativeModel(ctx, o.store.client, pod)
+	if err != nil {
+		return firstfloor.Spec{}, err
+	}
+	status := servingstate.FirstfloorStatus(pod)
+	return firstfloor.Spec{ModelName: model, InstanceID: servingstate.PhysicalID(pod.UID, status.ContainerID),
+		Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}, nil
+}
+
+func matchesNativeSource(pod *corev1.Pod, model string, instance *serving.InstanceState) bool {
 	observed := instance.Native
 	profileID := pod.Annotations[servingstate.ServingProfileAnnotation]
-	// Recovery trusts an empty probe only from the executor prepared for this
-	// Pod. Its mounted startup Config owns the mode: measurement is profiling,
-	// serving is serving. A runner reporting the other mode cannot clear it.
-	return observed != nil && observed.Ready && observed.Metadata.Model == prepared.Model &&
-		observed.Metadata.Mode == prepared.Mode &&
+	// Both native modes report the same executor request inventory. Serving
+	// admission validates mode separately; it does not strengthen empty proof.
+	return observed != nil && observed.Ready && observed.Metadata.Model == model &&
 		profileID != "" && observed.Metadata.ProfileID == profileID
 }
 
@@ -637,16 +647,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		err = errors.New("NodePowerTransition")
 	}
 	if err == nil && admissionErr != nil {
-		err = validatePhysicalSource(pod, node)
-	}
-	var prepared *native.Config
-	if err == nil {
-		prepared, err = servingstate.NativeConfig(ctx, o.store.client, pod)
-	}
-	if err == nil && admissionErr != nil {
-		status := servingstate.FirstfloorStatus(pod)
-		spec = firstfloor.Spec{ModelName: prepared.Model, InstanceID: servingstate.PhysicalID(pod.UID, status.ContainerID),
-			Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}
+		spec, err = o.physicalSourceSpec(ctx, pod, node)
 	}
 	var service *corev1.Service
 	if err == nil {
@@ -669,7 +670,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 			return serving.ReadyInstance{}, false, nil
 		}
 		if probeErr == nil || instance.State.Native != nil {
-			instance.State.NativeVerified = readSucceeded && matchesNativeSource(pod, prepared, &instance.State)
+			instance.State.NativeVerified = readSucceeded && matchesNativeSource(pod, spec.ModelName, &instance.State)
 			if probeErr != nil {
 				instance.State.Reason = probeErr.Error()
 			}
@@ -772,6 +773,10 @@ func (o *Observer) refreshFailure(err error) error {
 
 // Declared images are diagnostics; measured images govern preparations and execution.
 func (o *Observer) recordRuntimeDeclaration(ctx context.Context, pod *corev1.Pod, profile *serving.Profile) {
+	if profile == nil {
+		o.issue("runtime-declaration/"+string(pod.UID), nil)
+		return
+	}
 	desiredImage, err := o.CurrentRuntimeImage(ctx, profile)
 	o.issue("runtime-declaration/"+string(pod.UID), err)
 	source := o.sources[string(pod.UID)]

@@ -46,23 +46,20 @@ func PhysicalID(podUID types.UID, containerID string) string {
 	return string(podUID) + "/" + containerID
 }
 
-// NativeConfig reads the startup Config mounted by the physical executor.
-func NativeConfig(ctx context.Context, reader client.Reader, pod *corev1.Pod) (*native.Config, error) {
-	config := &native.Config{}
+// NativeModel reads the startup Config mounted by the physical executor.
+func NativeModel(ctx context.Context, reader client.Reader, pod *corev1.Pod) (string, error) {
 	cm := &corev1.ConfigMap{}
 	if err := reader.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, cm); err != nil {
-		return config, err
+		return "", err
 	}
-	if err := json.Unmarshal([]byte(cm.Data["config.json"]), config); err != nil {
-		return config, err
+	var config native.Config
+	if err := json.Unmarshal([]byte(cm.Data["config.json"]), &config); err != nil {
+		return "", err
 	}
 	if config.Model == "" {
-		return config, errors.New("native startup Config model required")
+		return "", errors.New("native startup Config model required")
 	}
-	if config.Mode != NativeServingMode && config.Mode != NativeProfilingMode {
-		return config, errors.New("native startup Config mode must be serving or profiling")
-	}
-	return config, nil
+	return config.Model, nil
 }
 
 func FirstfloorStatus(pod *corev1.Pod) *corev1.ContainerStatus {
