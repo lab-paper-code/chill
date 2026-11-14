@@ -50,6 +50,13 @@ const (
 	sessionAllocationBeforeBatch = "AllocationFailedBeforeAnyBatch"
 )
 
+// SessionOperationCostPrefix holds a session's operation-cost records, whose
+// operation IDs are <UID>.<step>.<name> (sessionRun.measure). The dot ends the
+// UID, so one session's prefix never matches another's.
+func SessionOperationCostPrefix(nodeUID string, uid types.UID) string {
+	return servingops.OperationMeasurementPrefix + nodeUID + "/" + string(uid) + "."
+}
+
 // sessionPlan is what admission resolved for a granted session.
 type sessionPlan struct {
 	preparation    SessionPreparation

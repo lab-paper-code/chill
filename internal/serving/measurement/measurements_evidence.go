@@ -10,6 +10,7 @@ import (
 	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	batch "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
@@ -43,8 +44,13 @@ func (o *Service) deletionPrefixes(
 		return task, nil, apierrors.NewConflict(resource, name, errors.New("native UID or resourceVersion changed"))
 	}
 	// The campaign reconciler stops writing the plan, result and Runs only once
-	// it records a current terminal status; Pending and Measuring are not.
-	if !campaign.TerminalStatusCurrent(task) {
+	// it records a current terminal status; Pending and Measuring are not. A
+	// session's status is written by ChillServer after its last write.
+	terminal := campaign.TerminalStatusCurrent(task)
+	if task.Spec.Session != nil {
+		terminal = task.Status.Terminal(task.Generation)
+	}
+	if !terminal {
 		return task, nil, measurementInUse("only a current terminal measurement can be deleted; " +
 			"cancellation and recoverable failure interruption are unsupported")
 	}
@@ -93,6 +99,18 @@ func (o *Service) measurementPrefixes(ctx context.Context, task *api.BatchEnergy
 		"batch-energy-optimizations/" + uid + "/",
 		"serving/profiles/" + profile,
 		"serving/profile-reuse/" + profile,
+	}
+	// A session's operation costs are keyed by its measured Node's UID; a
+	// published profile of the session cites them and goes with it. A Node
+	// that is gone leaves no key to list them by.
+	if task.Spec.Session != nil {
+		node, err := o.kube.CoreV1().Nodes().Get(ctx, task.Spec.State.TargetNode, meta.GetOptions{})
+		switch {
+		case err == nil:
+			prefixes = append(prefixes, servingkube.SessionOperationCostPrefix(string(node.UID), task.UID))
+		case !apierrors.IsNotFound(err):
+			return nil, err
+		}
 	}
 	runs := &api.ProfilingRunList{}
 	if err := o.client.List(ctx, runs, client.InNamespace(task.Namespace)); err != nil {
