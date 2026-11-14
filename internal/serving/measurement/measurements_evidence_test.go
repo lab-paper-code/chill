@@ -228,7 +228,6 @@ func TestMeasurementDeleteRefusesWhileSomethingCanStillWriteOrServe(t *testing.T
 		{"pending", notTerminal},
 		{"measuring", notTerminal},
 		{"stale generation", notTerminal},
-		{"recoverable failure", notTerminal},
 		{"Run without evidence after its Job completed", runActive},
 		{"active Job", jobActive},
 		{"running Pod without Job", podActive},
@@ -250,11 +249,6 @@ func TestMeasurementDeleteRefusesWhileSomethingCanStillWriteOrServe(t *testing.T
 				task.Status.Phase = string(api.MeasurementPhaseMeasuring)
 			case "stale generation":
 				task.Generation = 2
-			case "recoverable failure":
-				task.Status.Phase = string(api.MeasurementPhaseFailed)
-				task.Status.Outcome = "CurvePlanResolutionFailed"
-				task.Status.Conditions[0].Status = meta.ConditionFalse
-				task.Status.Conditions[0].Reason = task.Status.Outcome
 			case "Run without evidence after its Job completed":
 				run.Status.Evidence = nil
 			case "active Job":

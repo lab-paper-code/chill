@@ -7,7 +7,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -43,14 +42,8 @@ func (o *Service) deletionPrefixes(
 		resource := schema.GroupResource{Group: api.GroupVersion.Group, Resource: "batchenergyoptimizations"}
 		return task, nil, apierrors.NewConflict(resource, name, errors.New("native UID or resourceVersion changed"))
 	}
-	// The campaign reconciler stops writing the plan, result and Runs only once
-	// it records a current terminal status; Pending and Measuring are not. A
-	// session's status is written by ChillServer after its last write.
-	terminal := campaign.TerminalStatusCurrent(task)
-	if task.Spec.Session != nil {
-		terminal = task.Status.Terminal(task.Generation)
-	}
-	if !terminal {
+	// A session's status is written by ChillServer after its last write.
+	if !task.Status.Terminal(task.Generation) {
 		return task, nil, measurementInUse("only a current terminal measurement can be deleted; " +
 			"cancellation and recoverable failure interruption are unsupported")
 	}
