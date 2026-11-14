@@ -123,6 +123,8 @@ type managerHarness struct {
 	observationLog *observation.ObservationLog
 	observer       *Observer
 	reservations   *ClusterState
+	measurement       *servingops.Operations
+	measurementConfig SchedulerControllerConfig
 }
 
 func newManagerHarness(t *testing.T) (*managerHarness, observation.ObservationLogConfig) {

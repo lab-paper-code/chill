@@ -58,30 +58,58 @@ func measurementInstanceSpec(node *core.Node, profile serving.Profile) servingst
 // Measure(remove). The instance becomes ready on the native runtime's own
 // state read through its Pod-owned Service.
 func TestMeasurementInstanceIsMeasuredWithoutProfile(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	fixture, node, profile, class := observerSourceFixture()
-	// The profile only supplies the runner fixture's initialization facts;
-	// the catalog holds no profile.
-	profile.Condition.Preprocessor.Inputs, profile.Condition.Preprocessor.Outputs = []string{"input"}, []string{"output"}
-	profile.RuntimeMetadata.RuntimeVersion = observerTestRuntime
-	profile.RuntimeMetadata.Inputs, profile.RuntimeMetadata.Outputs = []string{"input"}, []string{"output"}
-	profile.RuntimeMetadata.InitializedBatches = []int{1}
-	spec := measurementInstanceSpec(node, profile)
-	nativeHTTPClient, _ := preparationNativeHTTPClient(t, ctx, spec.Config, profile)
-	manager, kube, measure := measurementOperations(t, ctx, fixture, node, class, spec, nativeHTTPClient)
+	for _, recovering := range []bool{false, true} {
+		name := "known recovery"
+		if recovering {
+			name = "unknown recovery"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			fixture, node, profile, class := observerSourceFixture()
+			// The profile only supplies the runner fixture's initialization facts;
+			// the catalog holds no profile.
+			profile.Condition.Preprocessor.Inputs, profile.Condition.Preprocessor.Outputs = []string{"input"}, []string{"output"}
+			profile.RuntimeMetadata.RuntimeVersion = observerTestRuntime
+			profile.RuntimeMetadata.Inputs, profile.RuntimeMetadata.Outputs = []string{"input"}, []string{"output"}
+			profile.RuntimeMetadata.InitializedBatches = []int{1}
+			spec := measurementInstanceSpec(node, profile)
+			nativeHTTPClient, _ := preparationNativeHTTPClient(t, ctx, spec.Config, profile)
+			manager, kube, measure := measurementOperations(t, ctx, fixture, node, class, spec, nativeHTTPClient, func(manager *managerHarness) {
+				if recovering {
+					measurementRecoveryBoot(t, manager)
+				}
+			})
 
-	prepared := measure(servingstate.Operation{ID: "session.1.prepare", Kind: servingstate.OperationPrepare, Node: spec.Instance.Node, Prepare: &spec})
-	pod := &core.Pod{}
-	if err := manager.store.client.Get(ctx, types.NamespacedName{Namespace: fixture.Namespace, Name: spec.Name}, pod); err != nil {
-		t.Fatal(err)
+			prepared := measure(servingstate.Operation{ID: "session.1.prepare", Kind: servingstate.OperationPrepare, Node: spec.Instance.Node, Prepare: &spec})
+			pod := &core.Pod{}
+			if err := manager.store.client.Get(ctx, types.NamespacedName{Namespace: fixture.Namespace, Name: spec.Name}, pod); err != nil {
+				t.Fatal(err)
+			}
+			assertMeasurementInstance(t, ctx, kube, pod, prepared, 1)
+			for _, instance := range manager.runtime.Instances() {
+				if instance.RecoveryUnknown || !instance.NativeVerified {
+					t.Fatalf("prepared executor did not clear recovery through the observer: %+v", instance)
+				}
+			}
+
+			id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
+			removed := measure(servingstate.Operation{ID: "session.2.remove", Kind: servingstate.OperationRemove, Node: spec.Instance.Node, Instance: id})
+			if _, drained := removed.Result.DrainNative[id]; !drained || len(removed.Result.Actual.Pods) != 0 {
+				t.Fatalf("remove left the measurement instance: %+v", removed.Result)
+			}
+		})
 	}
-	assertMeasurementInstance(t, ctx, kube, pod, prepared, 1)
+}
 
-	id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
-	removed := measure(servingstate.Operation{ID: "session.2.remove", Kind: servingstate.OperationRemove, Node: spec.Instance.Node, Instance: id})
-	if _, drained := removed.Result.DrainNative[id]; !drained || len(removed.Result.Actual.Pods) != 0 {
-		t.Fatalf("remove left the measurement instance: %+v", removed.Result)
+func measurementRecoveryBoot(t *testing.T, manager *managerHarness) {
+	t.Helper()
+	controller := &SchedulerController{runtime: manager.runtime, observer: manager.observer,
+		observationLog: manager.observationLog, operations: &servingops.Operations{}}
+	recoveryBootRuntime(t, controller)
+	manager.runtime = controller.runtime
+	if !manager.runtime.Recovery().Unknown {
+		t.Fatal("fixture did not start with an unclean predecessor")
 	}
 }
 
@@ -90,9 +118,12 @@ func TestMeasurementInstanceIsMeasuredWithoutProfile(t *testing.T) {
 // stand in for the kubelet, nativeClient reaches the instance's runtime, and
 // measure runs Measure(operation) and requires an accepted record.
 func measurementOperations(t *testing.T, ctx context.Context, fixture *core.Pod, node *core.Node, class edge.DeviceClass,
-	spec servingstate.PrepareSpec, nativeClient *http.Client) (*managerHarness, *kubefake.Clientset, func(servingstate.Operation) servingops.OperationMeasurement) {
+	spec servingstate.PrepareSpec, nativeClient *http.Client, setup ...func(*managerHarness)) (*managerHarness, *kubefake.Clientset, func(servingstate.Operation) servingops.OperationMeasurement) {
 	t.Helper()
 	manager, _ := newManagerHarness(t)
+	for _, configure := range setup {
+		configure(manager)
+	}
 	node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "session-uid", Effect: core.TaintEffectNoSchedule}}
 	kube := kubefake.NewSimpleClientset(node)
 	kube.PrependReactor("create", "services", func(action ktesting.Action) (bool, runtime.Object, error) {
@@ -172,6 +203,7 @@ func measurementOperations(t *testing.T, ctx context.Context, fixture *core.Pod,
 	config := SchedulerControllerConfig{EvidenceStore: "evidence", Evidence: evidence,
 		Meters:      []servingops.MeterDeclaration{{ID: "meter", Node: spec.Instance.Node, Scope: servingstate.MeasurementWallScope, Source: source.Identity()}},
 		MeterSource: func(metricobserver.SourceIdentity) (metricobserver.Source, error) { return source, nil }}
+	manager.measurement, manager.measurementConfig = operations, config
 	measure := func(operation servingstate.Operation) servingops.OperationMeasurement {
 		t.Helper()
 		request := servingops.MeasurementRequest{Operation: operation,
@@ -180,7 +212,7 @@ func measurementOperations(t *testing.T, ctx context.Context, fixture *core.Pod,
 			OperationBudget: 3 * time.Second, Coverage: powerwindow.Policy{MaximumGap: 10 * time.Millisecond}}
 		record, receipt, err := controller.measureOperation(ctx, config, request)
 		if err != nil {
-			t.Fatalf("Measure(%s) of a measurement instance: %v", operation.Kind, err)
+			t.Fatalf("Measure(%s) of a measurement instance: %v; verdict %s: %s; before %v; after %v", operation.Kind, err, record.Verdict, record.Reason, record.Result.Before.Reasons, record.Result.Actual.Reasons)
 		}
 		assertRetainedOperationMeasurement(t, evidence.directory, receipt, request, record, err)
 		if record.Verdict != servingstate.MeasurementAccepted || record.WallJoules == nil {
