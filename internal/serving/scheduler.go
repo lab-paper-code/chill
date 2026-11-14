@@ -336,7 +336,8 @@ type SchedulerInstance struct {
 	LastServiceEndAgeUpperNanos *int64    `json:"lastServiceEndAgeUpperNanos,omitempty"`
 	AdmissionIdleUnknown        bool      `json:"admissionIdleUnknown,omitempty"`
 	// LastServiceEndAgeNanos is worker-clock idle age at the native span anchor.
-	// With an upper age it is an interval bound; nil means physical startup.
+	// With an upper age it is an interval bound. Nil only before readiness: a
+	// ready actor was warmed, and a ready instance without it is not planned.
 	LastServiceEndAgeNanos *int64 `json:"lastServiceEndAgeNanos,omitempty"`
 	// ArrivalAgesMS freezes the native actor's bounded, most-recent-first
 	// accepted arrival history at ObservedAt, including already finished work.

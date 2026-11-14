@@ -31,7 +31,7 @@ func TestFeedbackConsumerBusyPotentialUsesNextBatchGap(t *testing.T) {
 		elapsed := int64(20e6)
 		life := time.Millisecond
 		snapshot.Outstanding = []SchedulerRequest{
-			{ID: "running", Definition: snapshot.Workloads[0], Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &native, ExchangeElapsedNanos: &elapsed},
+			{ID: "running", Definition: snapshot.Workloads[0], Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &native, PrecedingIdleNanos: new(int64), ExchangeElapsedNanos: &elapsed},
 			{ID: "waiting", Definition: snapshot.Workloads[0], Phase: phaseQueued, Instance: "i1", CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &sender, RemainingLifetime: &life},
 		}
 		result := feedbackEvaluateForTest(t, settings, snapshot, candidate)

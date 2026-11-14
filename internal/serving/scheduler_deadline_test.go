@@ -27,7 +27,7 @@ func TestReplayCompletionIsNativeCompletionPlusMargin(t *testing.T) {
 			if phase == phaseRunning {
 				r.RunningElapsed = 20 * time.Millisecond
 				exchangeElapsed := int64(r.RunningElapsed)
-				r.ExchangeElapsedNanos = &exchangeElapsed
+				r.ExchangeElapsedNanos, r.PrecedingIdleNanos = &exchangeElapsed, new(int64)
 				r.Elapsed += r.RunningElapsed
 				r.ReceivedAt = r.ReceivedAt.Add(-r.RunningElapsed)
 			}

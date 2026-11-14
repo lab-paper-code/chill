@@ -18,7 +18,9 @@ func runtimeTestNative(p *Profile) *native.State {
 	for _, b := range p.Batches {
 		maxBatch = max(maxBatch, b.Batch)
 	}
-	return &native.State{Ready: true, Metadata: native.Metadata{Policy: native.Policy{ProfileID: p.ID, MaxBatchSize: maxBatch}}}
+	// A ready actor was warmed, so it reports the age of its last service end.
+	idle := int64(0)
+	return &native.State{Ready: true, LastServiceEndAgeNanos: &idle, Metadata: native.Metadata{Policy: native.Policy{ProfileID: p.ID, MaxBatchSize: maxBatch}}}
 }
 
 // routingRuntime installs one instance compatible with a controlled and a disabled
@@ -1034,23 +1036,23 @@ func TestSelectiveTargetPreservesUnreadyWorkloadAC39(t *testing.T) {
 	}
 }
 
+// The running exchange's gap selects the 100ms law's window (59 records of
+// 20ms); 5ms exchange elapsed plus 3ms observation age leave a 12ms residual.
+// A started exchange without a gap has no measured service: it is a visible
+// UnknownNativeServiceEnd reason, never a guessed gap.
 func TestRuntimeReplayRunningResidualUsesExchangeGapAndElapsed(t *testing.T) {
-	for _, startup := range []bool{false, true} {
+	for _, unanchored := range []bool{false, true} {
 		settings, snapshot := schedulerFixture()
 		settings.AutonomousWorkloads = nil
 		settings.DefaultDispatchOccupancyNanos = 0
 		d := snapshot.Workloads[0]
 		d.SLO.TargetLatency = time.Second
-		busy, long := int64(0), int64(100*time.Millisecond)
+		long := int64(100 * time.Millisecond)
 		b := &snapshot.Instances[0].Profile.Batches[0]
-		*b = schedulerTestPairedBatch(*b, []native.ServiceSample{
-			{ServiceDurationNanos: int64(30 * time.Millisecond), TrialID: "physical-a"},
-			{ServiceDurationNanos: int64(2 * time.Millisecond), PrecedingIdleNanos: &busy, TrialID: "physical-a"},
-			{ServiceDurationNanos: int64(20 * time.Millisecond), PrecedingIdleNanos: &long, TrialID: "physical-a"},
-		})
+		*b = schedulerTestPairedBatch(*b, schedulerTestGapLaws([2]int64{0, int64(2 * time.Millisecond)}, [2]int64{long, int64(20 * time.Millisecond)}))
 		elapsed := int64(5 * time.Millisecond)
 		prior := &long
-		if startup {
+		if unanchored {
 			prior = nil
 		}
 		call := &Call{
@@ -1071,14 +1073,14 @@ func TestRuntimeReplayRunningResidualUsesExchangeGapAndElapsed(t *testing.T) {
 		}
 		snapshot.Outstanding = runtime.SchedulerInputs(func() time.Time { return snapshot.At }).Outstanding
 		got := schedulerKeepForTest(t, settings, snapshot)
-		estimate := schedulerRequireEstimate(t, got, d.UID)
-		// Frozen S10 + captured N53 + conditioned service residual12 (startup22).
-		want := float64(75 * time.Millisecond)
-		if startup {
-			want = float64(85 * time.Millisecond)
+		if unanchored {
+			schedulerRequireReason(t, got.Reasons, "UnknownNativeServiceEnd:i1")
+			continue
 		}
-		if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != want {
-			t.Fatalf("startup=%t residual must use actual prior gap and exchange age, not actor elapsed: %+v reasons=%v", startup, estimate, got.Reasons)
+		estimate := schedulerRequireEstimate(t, got, d.UID)
+		// Frozen S10 + captured N53 + conditioned service residual12.
+		if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != float64(75*time.Millisecond) {
+			t.Fatalf("residual must use actual prior gap and exchange age, not actor elapsed: %+v reasons=%v", estimate, got.Reasons)
 		}
 	}
 }

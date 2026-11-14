@@ -19,7 +19,7 @@ func feedbackCohortFixture() (SchedulerSettings, SchedulerSnapshot, []SchedulerC
 	post, sender, native := 7.0, 11.0, 20e6
 	elapsed, lifetime := int64(20e6), time.Millisecond
 	snapshot.Outstanding = []SchedulerRequest{
-		{ID: "running", Definition: &frozen, Phase: phaseRunning, Instance: "i1", BatchID: "actual", CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &native, ExchangeElapsedNanos: &elapsed, RemainingLifetime: &lifetime},
+		{ID: "running", Definition: &frozen, Phase: phaseRunning, Instance: "i1", BatchID: "actual", CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &native, PrecedingIdleNanos: new(int64), ExchangeElapsedNanos: &elapsed, RemainingLifetime: &lifetime},
 		{ID: "queued", Definition: &frozen, Phase: phaseQueued, Instance: "i1", QueueOrder: 1, CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &native},
 		{ID: "pending", Definition: &frozen, Phase: phasePending, CompletionMarginMS: &post},
 	}

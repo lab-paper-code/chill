@@ -696,7 +696,7 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 			s.out.reasons = appendUnique(s.out.reasons, "MissingFeedbackProfile:"+i.config.ID)
 			return false
 		}
-		if i.idleUnknown && len(i.batch) == 0 {
+		if (i.idleUnknown || !i.hasNativeFinish) && len(i.batch) == 0 {
 			s.out.reasons = appendUnique(s.out.reasons, "UnknownNativeServiceEnd:"+i.config.ID)
 			return false
 		}

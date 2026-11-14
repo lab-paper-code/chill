@@ -736,18 +736,18 @@ func (s *schedulerReplayState) initializeRunning() bool {
 			i.batchIdle, i.hasBatchIdle = *head.source.PrecedingIdleNanos, true
 		}
 		gap := head.source.PrecedingIdleNanos
-		if head.source.ExchangeElapsedNanos == nil {
-			if i.idleUnknown {
-				s.out.reasons = appendUnique(s.out.reasons, "UnknownNativeServiceEnd:"+i.config.ID)
-				return false
-			}
+		if head.source.ExchangeElapsedNanos == nil && !i.idleUnknown {
 			// Actor-running begins before packing/IPC. No native S has elapsed;
 			// current idle age is a lower-bound decision approximation of G.
 			gap = i.idleNanos(s.now)
-			if gap != nil {
-				s.out.assumptions = appendUnique(s.out.assumptions,
-					"pending native exchange uses current idle-age lower-bound approximation before IPC")
-			}
+			s.out.assumptions = appendUnique(s.out.assumptions,
+				"pending native exchange uses current idle-age lower-bound approximation before IPC")
+		}
+		// A warmed actor always has a last service end; without one the
+		// running service is not measured.
+		if gap == nil {
+			s.out.reasons = appendUnique(s.out.reasons, "UnknownNativeServiceEnd:"+i.config.ID)
+			return false
 		}
 		percentile := head.source.Definition.SLO.Percentile
 		service, support, ok := b.ServiceDistribution.SampleResidual(gap, elapsed, percentile, s.rng)

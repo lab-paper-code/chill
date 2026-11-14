@@ -143,7 +143,7 @@ func TestFeedbackConsumerRunningExpiryUsesSameResidualSample(t *testing.T) {
 	post, sender, native := 0.0, 0.0, 20e6
 	elapsed := int64(20e6)
 	life := time.Millisecond
-	snapshot.Outstanding = []SchedulerRequest{{ID: "running", Definition: snapshot.Workloads[0], Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &native, ExchangeElapsedNanos: &elapsed, RemainingLifetime: &life}}
+	snapshot.Outstanding = []SchedulerRequest{{ID: "running", Definition: snapshot.Workloads[0], Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &native, PrecedingIdleNanos: new(int64), ExchangeElapsedNanos: &elapsed, RemainingLifetime: &life}}
 	result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 	score := result.Workloads[0]
 	if score.Timeout != 1 || score.OnTime+score.Late != 0 || score.SuccessQuantileNanos != nil || score.PotentialExcess == nil || math.Abs(*score.PotentialExcess-2) > 1e-12 {

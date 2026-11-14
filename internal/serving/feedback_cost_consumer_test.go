@@ -37,7 +37,7 @@ func TestReplayCostConsumerEquivalence(t *testing.T) {
 					request.Instance = ""
 				}
 				if phase == phaseRunning {
-					request.ExchangeElapsedNanos, request.RemainingLifetime = &elapsed, &life
+					request.ExchangeElapsedNanos, request.PrecedingIdleNanos, request.RemainingLifetime = &elapsed, new(int64), &life
 				}
 				if phase == phaseReturning {
 					request.NativeOutcome = firstfloor.OutcomeBatchError

@@ -47,7 +47,14 @@ func (c *QuantileCache) maximumQuery(d *ServiceDistribution, lower, upper, elaps
 			return result.value, result.support, result.known
 		}
 	}
-	value, support, known := d.MaximumResidualQuantileNanos(lower, upper, elapsed, percentile)
+	var value int64
+	var support ConditionalSupport
+	var known bool
+	if residual {
+		value, support, known = d.MaximumResidualQuantileNanos(lower, upper, elapsed, percentile)
+	} else {
+		value, support, known = d.MaximumQuantileNanos(lower, upper, percentile)
+	}
 	if c != nil {
 		if c.entries == nil {
 			c.entries = make(map[quantileQuery]quantileResult)
