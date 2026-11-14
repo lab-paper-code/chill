@@ -731,9 +731,13 @@ func TestRetainedCatalogUsesActualGapServicePairs(t *testing.T) {
 	short, long := int64(1_001_000), int64(100_001_000)
 	shortService, _, shortOK := distribution.QuantileNanos(&short, .95)
 	longService, _, longOK := distribution.QuantileNanos(&long, .95)
-	startupService, _, startupOK := distribution.QuantileNanos(nil, .95)
-	if !shortOK || !longOK || !startupOK || shortService != 1500000 || longService != 500000 || startupService != 500000 {
-		t.Fatalf("retained pairs lost their actual gap/startup conditions: short=%d long=%d startup=%d", shortService, longService, startupService)
+	if !shortOK || !longOK || shortService != 1500000 || longService != 500000 {
+		t.Fatalf("retained pairs lost their actual gap conditions: short=%d long=%d", shortService, longService)
+	}
+	// Records without a preceding gap are dropped at hydration: no startup
+	// regime remains, and an unanchored query is not a measurement.
+	if _, _, ok := distribution.QuantileNanos(nil, .95); ok || distribution.DroppedFirstExecutions() == 0 {
+		t.Fatalf("gapless records still answer: dropped=%d", distribution.DroppedFirstExecutions())
 	}
 }
 
