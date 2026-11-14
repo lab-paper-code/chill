@@ -11,12 +11,14 @@ Node agent는 hardware/online CPU 관측과 host 전력 적용을 소유한다.
 | Online CPU | `/sys/devices/system/cpu/online`을 `edge.dacs.io/cpus` annotation으로 기록; 실행 환경 관측 |
 | GPU | 동일 Node UID의 검증된 profile GPU UUID; allocatable 수와 예약 GPU 검사는 유지 |
 | 요청 가능 전력모드 | 현재 DeviceClass의 non-Fixed 모드와 configured actuation policy |
-| Wall meter | Profiler metricSources의 meter ID, Node 신원과 전력 source |
+| Wall meter | ChillServer 설정의 전력계 선언(`servingops.MeterDeclaration`)이 가진 meter ID, Node 신원과 전력 source. 측정 세션은 대상 Node UID와 일치하는 선언을 계획의 전력계(`plan.meter`)로 쓰고 선언이 없으면 요청을 거절한다 |
 | Reserved | 운영자 선언 memory/GPU 예산 |
 
 현재 scheduler allocation은 memoryBytes와 GPUUUID를 사용한다.
 GPU 미측정 장치는 후보에 나오지 않는다. Meter ID/source를 노드 이름으로 대체하면
 기존 비용 근거와 연결할 수 없으므로 원래 신원을 보존한다.
+
+자원 수집은 첫 Node 조회가 실패하면 종료하지 않고 다음 전송 주기마다 다시 조회한다.
 
 바이너리 `cmd/node-agent`, 이미지와 operator 설정은 공통이고 권한별 DaemonSet은
 분리한다.
@@ -127,4 +129,4 @@ session timeout까지 대기할 수 있다. Process는 모든 stream을 올린 �
 
 Go worker 바이너리와 runtime image 분리는 보류한 설계다. 현재 Dockerfile은 worker와
 서버 바이너리를 runtime image 안에 빌드/복사한다. 분리 완료나 기존 측정과의 신원
-동등성을 주장하지 않는다. 캠페인 저장 계약과 d 재측정 영향은 실행 변경 전에 결정한다.
+동등성을 주장하지 않는다. d 재측정 영향은 실행 변경 전에 결정한다.
