@@ -22,6 +22,7 @@ import (
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	gateway "github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
 // session-load drives the load levels of one batch size of a profile
@@ -42,12 +43,13 @@ const (
 	sessionMid        = "mid"
 	sessionSparse     = "sparse"
 
-	sessionSamplesReached        = "SamplesReached"
-	sessionPredictedOverLimit    = "PredictedDurationExceedsLimit"
-	sessionServiceOverLifetime   = "BatchServiceExceedsLifetime"
-	sessionAllocationBeforeBatch = "AllocationFailedBeforeAnyBatch"
-	sessionAllocationAfterBatch  = "AllocationFailedAfterCompletedBatch"
-	sessionFailed                = "Failed"
+	sessionSamplesReached         = "SamplesReached"
+	sessionPredictedOverLimit     = "PredictedDurationExceedsLimit"
+	sessionServiceOverLifetime    = "BatchServiceExceedsLifetime"
+	sessionAllocationBeforeBatch  = "AllocationFailedBeforeAnyBatch"
+	sessionAllocationAfterBatch   = "AllocationFailedAfterCompletedBatch"
+	sessionFailed                 = "Failed"
+	sessionRequestLifetimeExpired = "RequestLifetimeExpired"
 )
 
 type sessionLoadConfig struct {
@@ -140,10 +142,6 @@ func parseSessionLoad(args []string) (sessionLoadConfig, error) {
 		return c, fmt.Errorf("session-load --session must make %q a native workload identifier: "+
 			"at most %d bytes of UTF-8 without spaces or control characters", c.workloadUID(sessionSaturation),
 			sessionIdentifierBytes)
-	case int64(2*c.batch) > min(int64(c.maxQueueRequests), c.maxQueueBytes/c.requestUpperBytes):
-		return c, fmt.Errorf("saturation keeps %d requests (two batches of %d) outstanding, above the native "+
-			"queue limit of %d requests or %d bytes at %d bytes per request",
-			2*c.batch, c.batch, c.maxQueueRequests, c.maxQueueBytes, c.requestUpperBytes)
 	case !(c.sloPercentile > 0 && c.sloPercentile <= 100) || c.sloTarget <= 0 || c.margin <= 0 || c.lifetime <= c.margin:
 		return c, errors.New("session-load requires an SLO and a request lifetime longer than its delivery margin")
 	case c.meterLag < 0 || c.powerWindow <= 0 || c.sparseMeanGap <= 0 || c.levelLimit <= c.meterLag+c.powerWindow ||
@@ -151,7 +149,7 @@ func parseSessionLoad(args []string) (sessionLoadConfig, error) {
 		return c, errors.New("session-load requires a level limit above meter lag plus power window, " +
 			"a positive sparse mean gap and a mid ratio between 0 and 1")
 	}
-	return c, nil
+	return c, servingkube.SessionQueueCapacity(c.batch, c.maxQueueRequests, c.maxQueueBytes, c.requestUpperBytes)
 }
 
 // sessionIdentifier mirrors the native request identity rule.
@@ -182,9 +180,9 @@ func newSessionLoad(c sessionLoadConfig, records []profilingRecord) *sessionLoad
 	return s
 }
 
-// runSessionLoad runs saturation, mid and, when asked, sparse. Any level end
-// other than reaching its samples ends the run without error; the level table
-// carries the fact.
+// runSessionLoad runs saturation, mid and, when asked, sparse. Duration
+// predictions outside saturation and mid lifetime expiry preserve the early
+// end reason and allow the following level to run.
 func runSessionLoad(ctx context.Context, c sessionLoadConfig) ([]sessionLevel, error) {
 	records, err := readProfilingRecords(ctx, c.dataset, c.fields, c.requestUpperBytes)
 	if err != nil {
@@ -206,7 +204,8 @@ func runSessionLoad(ctx context.Context, c sessionLoadConfig) ([]sessionLevel, e
 		}
 		level, err := s.level(ctx, kind, rate)
 		levels = append(levels, level)
-		if err != nil || level.EndReason != sessionSamplesReached {
+		endedEarly := level.EndReason == sessionPredictedOverLimit || level.EndReason == sessionRequestLifetimeExpired
+		if err != nil || level.EndReason != sessionSamplesReached && (kind == sessionSaturation || !endedEarly) {
 			return levels, err
 		}
 	}
@@ -386,6 +385,11 @@ func (l *sessionLevelRun) receive(result sessionResult) {
 		l.end(sessionAllocationBeforeBatch, nativeErr.message, nil)
 	case isNative && nativeErr.allocation:
 		l.end(sessionAllocationAfterBatch, nativeErr.message, nil)
+	case isNative && l.row.Kind == sessionMid && nativeErr.status == http.StatusRequestTimeout:
+		// Drain healthy requests without cancelling their native execution:
+		// every finished batch must remain in the driver's completion count.
+		l.row.EndReason, l.row.Detail = sessionRequestLifetimeExpired, sessionBounded(nativeErr.message, sessionDetailBytes)
+		l.terminal = true
 	case isNative && l.row.Kind != sessionMid && nativeErr.status == http.StatusRequestTimeout:
 		// Without queueing behind other levels' work, a saturation or sparse
 		// request outlives its lifetime only behind a too long batch.

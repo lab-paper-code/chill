@@ -194,7 +194,7 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 		Kind:       "BatchEnergyOptimizationResult",
 		ReadAt:     snapshot.ReadAt.UTC(),
 		Campaign:   resultCampaign(campaign),
-		Result: result, Statistics: statistics, StatisticsReason: reason,
+		Result:     result, Statistics: statistics, StatisticsReason: reason,
 		MeasurementFacts: facts, MeasurementFactsReason: factsReason,
 		ResultRows: rows,
 		Assessment: AssessMeasurement(MeasurementAssessmentInput{

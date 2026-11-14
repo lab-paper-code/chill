@@ -7,6 +7,11 @@ import (
 	serving "github.com/lab-paper-code/chill/internal/serving"
 )
 
+// OccupancyTail is the configured native delivery tail of occupancy reads.
+func (l *ObservationLog) OccupancyTail() time.Duration {
+	return l.config.OccupancyTail
+}
+
 // ScanOccupancyRows reads only the requested interval and its configured native
 // delivery tail. Two passes over immutable decoded rows select request IDs, then
 // visit their assignments, finals and late native supplements. Nested row data

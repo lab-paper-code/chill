@@ -46,20 +46,22 @@ func TestCatalogKeysObservedRuntimeVersionAndProvider(t *testing.T) {
 	}
 }
 
-func TestCatalogSupportsExactlyInitializedMeasuredSparseBatches(t *testing.T) {
+// A session keeps the runtime report of its batch-1 instance, which
+// initialized only batch 1; the measured sizes are judged by the plan.
+func TestCatalogSupportsMeasuredSparseBatches(t *testing.T) {
 	profile := serving.Profile{
 		Condition: profilederivation.CurvePlanSpec{RuntimeFamily: "firstfloor", Backend: "ort-cpu",
-			Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}, PlannedBatchSizes: []int{1, 2, 3, 4}},
-		RuntimeMetadata: &firstfloor.RuntimeMetadata{Runtime: "ort-cpu", InitializedBatches: []int{1, 2, 4}},
+			Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}, PlannedBatchSizes: []int{1, 2, 4}},
+		RuntimeMetadata: &firstfloor.RuntimeMetadata{Runtime: "ort-cpu", InitializedBatches: []int{1}},
 		Batches:         []serving.BatchProfile{{Batch: 1}, {Batch: 2}, {Batch: 4}},
 	}
 	if !completeNativeProfile(profile) {
 		t.Fatal("exact measured sparse domain excluded")
 	}
-	uninitialized := profile
-	uninitialized.Batches = []serving.BatchProfile{{Batch: 1}, {Batch: 3}}
-	if completeNativeProfile(uninitialized) {
-		t.Fatal("uninitialized batch accepted")
+	unplanned := profile
+	unplanned.Batches = []serving.BatchProfile{{Batch: 1}, {Batch: 3}}
+	if completeNativeProfile(unplanned) {
+		t.Fatal("unplanned batch accepted")
 	}
 	missingOne := profile
 	missingOne.Batches = profile.Batches[1:]

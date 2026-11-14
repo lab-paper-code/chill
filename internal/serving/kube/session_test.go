@@ -24,6 +24,7 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
+	servingnative "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	batchv1 "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
@@ -56,6 +57,9 @@ type sessionHarness struct {
 	// dropRow removes one native row of this workload identifier.
 	dropRow string
 	nextID  uint64
+	// runtime replaces a batch size's captured native runtime metadata; a
+	// nil entry captures no native state.
+	runtime map[int]*native.RuntimeMetadata
 }
 
 func sessionSettingsFixture() *edge.BatchEnergyOptimizationSessionSpec {
@@ -136,12 +140,22 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 	}
 	h.controller.measureStep = s.measure
 	h.controller.sessionReads = sessionReads{
-		native: func(_ context.Context, workloadUID string, _, _ time.Time) ([]profilederivation.NativeBatchRow, error) {
+		native: func(_ context.Context, prefix string, _ time.Time) (map[string][]profilederivation.NativeBatchRow, error) {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			rows := slices.Clone(s.native[workloadUID])
-			if workloadUID == s.dropRow {
-				rows = rows[1:]
+			// The fake API assigns the BEO UID; tables use a fixed fixture UID.
+			prefix = "session-uid" + prefix[strings.IndexByte(prefix, '/'):]
+			rows := map[string][]profilederivation.NativeBatchRow{}
+			for uid, nativeRows := range s.native {
+				if strings.HasPrefix(uid, prefix) {
+					rows[uid] = slices.Clone(nativeRows)
+					if uid == s.dropRow {
+						rows[uid] = rows[uid][1:]
+					}
+				}
+			}
+			if len(rows) == 0 {
+				return nil, fmt.Errorf("fixture has no native rows for prefix %q", prefix)
 			}
 			return rows, nil
 		},
@@ -239,7 +253,14 @@ func (s *sessionHarness) measure(_ context.Context, _ SchedulerControllerConfig,
 		pod := "pod-b" + strconv.Itoa(batch)
 		id := pod + "/containerd://runtime"
 		record.Result.Actual.Instances = []serving.InstanceState{{ID: id, PodUID: pod, TargetID: prepare.Instance.ID}}
-		record.Result.Actual.Native = map[string]native.State{id: {Ready: true, Metadata: native.Metadata{Runtime: native.RuntimeMetadata{RuntimeVersion: "1.20"}}}}
+		metadata := &native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.20", Providers: []string{"CPUExecutionProvider"},
+			ModelFiles: []string{"/model/model.onnx"}, Device: "cpu", InitializedBatches: []int{batch}}
+		if replaced, set := s.runtime[batch]; set {
+			metadata = replaced
+		}
+		if metadata != nil {
+			record.Result.Actual.Native = map[string]native.State{id: {Ready: true, Metadata: native.Metadata{Runtime: *metadata}}}
+		}
 	}
 	return record, receipt, nil
 }
@@ -386,6 +407,25 @@ func TestSessionLoadFailureCarriesTheOriginalSentence(t *testing.T) {
 	}
 }
 
+// Every batch size runs on its own instance; the result keeps one runtime
+// report, so the facts profile consumers read must be the same on all of them.
+func TestSessionRuntimeFactDifferingAcrossInstancesFails(t *testing.T) {
+	s := newSessionHarness(t)
+	s.runtime = map[int]*native.RuntimeMetadata{2: {Runtime: "ort-cpu", RuntimeVersion: "1.20", Providers: []string{"CUDAExecutionProvider"},
+		ModelFiles: []string{"/model/model.onnx"}, Device: "cpu", InitializedBatches: []int{2}}}
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	s.admit()
+	status := s.status(beo)
+	want := "the batch 2 instance reports providers [CUDAExecutionProvider], the batch 1 instance [CPUExecutionProvider]"
+	if _, stored := s.result(beo); stored || status.Phase != string(edge.MeasurementPhaseFailed) || sessionCondition(status).Message != want {
+		t.Fatalf("status %+v message %q", status, sessionCondition(status).Message)
+	}
+	if s.holder() != "" || !slices.Contains(s.measured, "remove-b2") {
+		t.Fatalf("measured %v holder %q", s.measured, s.holder())
+	}
+}
+
 func TestSessionNativeRowCountMismatchFailsWithTheNumbers(t *testing.T) {
 	s := newSessionHarness(t)
 	s.dropRow = "session-uid/2/mid"
@@ -491,5 +531,263 @@ func TestSessionRestartFailsAndHandsBack(t *testing.T) {
 	}
 	if len(s.measured) != 0 {
 		t.Fatalf("a cut-off session measured again: %v", s.measured)
+	}
+}
+
+// sessionObservedRuntime is a runtime whose observation log stores what the
+// observer passes it, as in ChillServer.
+func sessionObservedRuntime(t *testing.T) (*serving.Runtime, *observation.ObservationLog) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
+		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()},
+		OccupancyTail: 3 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := log.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{ObservationLog: log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rt, log
+}
+
+// emitSessionBatches passes the progress lines native prints for batches of
+// two requests of one level to the runtime, as the observer's log follow does:
+// one line per request and phase, the batch's service only on finished. skew
+// shifts the executor clock.
+func emitSessionBatches(t *testing.T, rt *serving.Runtime, uid string, start time.Time, batches int, skew time.Duration) {
+	t.Helper()
+	const service = 20 * time.Millisecond
+	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+	var lastEnd time.Time
+	for b := range batches {
+		received := start.Add(skew + time.Duration(b)*50*time.Millisecond)
+		running := received.Add(5 * time.Millisecond)
+		finished := running.Add(service)
+		sample := &native.ServiceSample{ServiceDurationNanos: service.Nanoseconds(), TrialID: uid}
+		if !lastEnd.IsZero() {
+			gap := running.Sub(lastEnd).Nanoseconds()
+			sample.PrecedingIdleNanos = &gap
+		}
+		lastEnd = finished
+		for m := range 2 {
+			queued := received.Add(time.Duration(m) * time.Millisecond)
+			base := native.Progress{RequestID: fmt.Sprintf("saturation-%d", 2*b+m), WorkloadUID: uid, Definition: "42", ProfileID: "profile", DecisionID: "decision"}
+			lines := []native.Progress{base, base, base}
+			lines[0].Phase, lines[0].At, lines[0].QueueMS, lines[0].NativeElapsedMS = "queued", queued, 0, 0
+			lines[1].Phase, lines[1].At, lines[1].BatchID, lines[1].BatchSize = "running", running, uint64(b+1), 2
+			lines[1].QueueMS, lines[1].NativeElapsedMS = ms(running.Sub(queued)), ms(running.Sub(queued))
+			lines[2].Phase, lines[2].At, lines[2].BatchID, lines[2].BatchSize, lines[2].ExecutionComplete = "finished", finished, uint64(b+1), 2, true
+			lines[2].QueueMS, lines[2].ServiceMS, lines[2].BackendMS, lines[2].NativeElapsedMS = ms(running.Sub(queued)), ms(service), ms(service), ms(finished.Sub(queued))
+			lines[2].Outcome, lines[2].ServiceSample, lines[2].Units = "completed", sample, 1
+			for _, line := range lines {
+				raw, err := json.Marshal(line)
+				if err != nil {
+					t.Fatal(err)
+				}
+				progress, err := servingnative.ParseProgress(append([]byte("2026-11-14T00:00:00Z CHILL_PROGRESS "), raw...))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := rt.ObserveBackend("pod-b2/containerd://runtime", progress); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+}
+
+// The session's reads join a request's per-phase supplement rows before
+// folding per batch: no single stored row has running, finished and service.
+// Rows are selected by the level identifier, whatever the executor clock
+// reads against ChillServer's.
+func TestSessionReadsJoinNativeProgressLines(t *testing.T) {
+	for _, skew := range []time.Duration{0, 30 * time.Second, -30 * time.Second} {
+		t.Run(skew.String(), func(t *testing.T) {
+			rt, log := sessionObservedRuntime(t)
+			uid := "session-uid/2/saturation"
+			start := time.Now().UTC()
+			emitSessionBatches(t, rt, uid, start, 3, skew)
+			byLevel, err := observedSessionReads(log).native(context.Background(), uid, start)
+			rows := byLevel[uid]
+			if err != nil || len(rows) != 3 {
+				t.Fatalf("native batch rows %d err %v", len(rows), err)
+			}
+			for i, row := range rows {
+				running := start.Add(skew + time.Duration(i)*50*time.Millisecond + 5*time.Millisecond)
+				if row.BatchID != uint64(i+1) || row.BatchSize != 2 || !row.StartedAt.Equal(running) || !row.FinishedAt.Equal(running.Add(20*time.Millisecond)) ||
+					row.ServiceDurationNanos != (20*time.Millisecond).Nanoseconds() || !row.LatestEnqueuedAt.Equal(running.Add(-4*time.Millisecond)) ||
+					(row.PrecedingIdleNanos == nil) != (i == 0) || i > 0 && *row.PrecedingIdleNanos != (30*time.Millisecond).Nanoseconds() {
+					t.Fatalf("batch %d row %+v", i, row)
+				}
+			}
+		})
+	}
+}
+
+func TestSessionQueueCapacityStopsBeforePreparing(t *testing.T) {
+	for _, upper := range []int64{200 << 10, 600 << 10} {
+		t.Run(strconv.FormatInt(upper, 10), func(t *testing.T) {
+			s := newSessionHarness(t)
+			settings := sessionSettingsFixture()
+			settings.FramedDecodedRequestUpperBytes = upper
+			beo := sessionRoot(settings)
+			s.create(beo)
+			s.admit()
+			status := s.status(beo)
+			if status.Outcome != string(profilederivation.StopCapacityLimit) ||
+				!strings.Contains(sessionCondition(status).Message, "queue limit") {
+				t.Fatalf("status %+v", status)
+			}
+			if upper == 600<<10 {
+				if status.Phase != string(edge.MeasurementPhaseFailed) || slices.Contains(s.measured, "prepare-b1") {
+					t.Fatalf("status %+v operations %v", status, s.measured)
+				}
+			} else if result, ok := s.result(beo); !ok || len(result.Batches) != 2 ||
+				slices.Contains(s.measured, "prepare-b4") {
+				t.Fatalf("result %+v stored %v operations %v", result, ok, s.measured)
+			}
+		})
+	}
+}
+
+func TestSessionMissingRuntimeFailsBeforeLoadAndRemovesInstance(t *testing.T) {
+	s := newSessionHarness(t)
+	s.runtime = map[int]*native.RuntimeMetadata{1: nil}
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	s.admit()
+	status := s.status(beo)
+	if status.Phase != string(edge.MeasurementPhaseFailed) ||
+		!strings.Contains(sessionCondition(status).Message, "instance reported no runtime metadata") ||
+		len(s.jobs) != 0 || !slices.Contains(s.measured, "remove-b1") {
+		t.Fatalf("status %+v jobs %d operations %v", status, len(s.jobs), s.measured)
+	}
+}
+
+func TestSessionRefusesLoadNodeAsMeasurementNode(t *testing.T) {
+	s := newSessionHarness(t)
+	s.controller.config.Session.NodeName = testNode.Name
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	s.admit()
+	status := s.status(beo)
+	if status.Phase != string(edge.MeasurementPhaseFailed) ||
+		!strings.Contains(sessionCondition(status).Message, "load generator runs on this Node") ||
+		len(s.measured) != 0 {
+		t.Fatalf("status %+v operations %v", status, s.measured)
+	}
+}
+
+func TestSessionResolutionTransportFailureRemainsPending(t *testing.T) {
+	s := newSessionHarness(t)
+	prepare := s.controller.config.Session.Prepare
+	s.controller.config.Session.Prepare = func(context.Context, *edge.BatchEnergyOptimization) (SessionPreparation, error) {
+		return SessionPreparation{}, &SessionResolutionRetry{Err: errors.New("get ModelSpec: connection reset by peer")}
+	}
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	s.admit()
+	if status := s.status(beo); status.Terminal(beo.Generation) || len(s.measured) != 0 ||
+		sessionCondition(status).Message != "get ModelSpec: connection reset by peer" {
+		t.Fatalf("status %+v operations %v", status, s.measured)
+	}
+	s.controller.config.Session.Prepare = prepare
+	s.admit()
+	if status := s.status(beo); status.Phase != string(edge.MeasurementPhaseComplete) {
+		t.Fatalf("status after retry %+v", status)
+	}
+}
+
+func TestSessionCancellationBeforeDerivationPublishesNothing(t *testing.T) {
+	s := newSessionHarness(t)
+	beo := sessionRoot(sessionSettingsFixture())
+	s.create(beo)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	power := s.controller.sessionReads.power
+	s.controller.sessionReads.power = func(ctx context.Context, meter servingops.MeterDeclaration, from, to time.Time) ([]profilederivation.Sample, error) {
+		rows, err := power(ctx, meter, from, to)
+		cancel()
+		return rows, err
+	}
+	plan := sessionPlan{preparation: sessionPreparationFixture(), meter: s.controller.config.Meters[0], powered: true, confidence: .95}
+	plan.minimumSamples, _ = native.MinimumServiceSamples(plan.preparation.SLOPercentile)
+	err := s.controller.runSession(ctx, beo, testNode, plan, s.controller.config)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run error %v", err)
+	}
+	if status := s.status(beo); status.Terminal(beo.Generation) || status.Result != nil {
+		t.Fatalf("canceled run published status %+v", status)
+	}
+	if _, stored := s.result(beo); stored {
+		t.Fatal("canceled derivation stored a result")
+	}
+}
+
+func TestSessionMidLifetimeExpiryKeepsLevelAndLaterBatches(t *testing.T) {
+	for _, enoughPower := range []bool{false, true} {
+		t.Run(strconv.FormatBool(enoughPower), func(t *testing.T) {
+			s := newSessionHarness(t)
+			const sentence = "native inference HTTP 408: request lifetime expired"
+			table := s.tables[1]
+			level := &table.Levels[1]
+			level.EndReason, level.Detail = sessionRequestLifetimeExpired, sentence
+			if !enoughPower {
+				level.EndedAt = level.StartedAt.Add(100 * time.Millisecond)
+				level.SentInputs, level.CompletedInputs, level.CompletedBatches = 1, 0, 0
+				s.native[level.WorkloadUID] = nil
+			}
+			s.tables[1] = table
+			beo := sessionRoot(sessionSettingsFixture())
+			s.create(beo)
+			s.admit()
+			result, stored := s.result(beo)
+			if !stored || len(result.Batches) != 3 || len(result.Batches[0].Levels) != 3 ||
+				result.Batches[0].Levels[1].EndReason != sessionRequestLifetimeExpired ||
+				result.Batches[0].Levels[1].Detail != sentence {
+				t.Fatalf("result %+v stored %v", result, stored)
+			}
+			mid := result.Batches[0].Levels[1]
+			if (mid.MeanWatts != nil) != enoughPower || enoughPower && mid.PowerSamples == 0 {
+				t.Fatalf("stored power eligibility %+v enough power %v", mid, enoughPower)
+			}
+		})
+	}
+}
+
+func BenchmarkSessionNativeBatchFold(b *testing.B) {
+	for _, count := range []int{75_000, 150_000} {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
+			start := time.Unix(1000, 0)
+			end := start.Add(time.Millisecond)
+			rows := make([]serving.RequestRow, count*4)
+			for i := range rows {
+				queued := start.Add(time.Duration(i%4) * time.Nanosecond)
+				rows[i] = serving.RequestRow{Kind: serving.RequestRowNative, RequestID: strconv.Itoa(i), BatchID: uint64(i/4 + 1),
+					BatchSize: 4, NativeQueuedAt: &queued, NativeRunningAt: &start, NativeFinishedAt: &end, ServiceDurationNanos: time.Millisecond.Nanoseconds()}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				join := serving.NewNativeBatchJoin()
+				for _, row := range rows {
+					join.Add(row)
+				}
+				folded, err := join.Batches()
+				if err != nil || len(folded) != count {
+					b.Fatalf("folded %d batches: %v", len(folded), err)
+				}
+			}
+			b.ReportMetric(float64(len(rows)), "rows/op")
+		})
 	}
 }

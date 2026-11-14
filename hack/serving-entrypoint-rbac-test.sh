@@ -206,6 +206,14 @@ if not load or not grants(load[0], "jobs", "create"):
 facts = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoint-profiler-facts"]
 if not facts or not grants(facts[0], "configmaps", "get"):
     sys.exit("Profiler facts ConfigMap get is missing")
+# Session resolution gets every object it reads with ChillServer's own client.
+server_resources, _ = effective("chill-serving-entrypoint")
+for group, kind in (("edge.dacs.io", "workloads"), ("edge.dacs.io", "modelspecs"), ("edge.dacs.io", "deviceclasses"),
+                    ("edge.dacs.io", "preprocessors"), ("edge.dacs.io", "datasets"), ("", "nodes")):
+    if ("*", group, kind, "get", ()) not in server_resources:
+        sys.exit("server SA lacks cluster-scope " + kind + " get for session resolution")
+if ("chill-system", "", "configmaps", "get", ("chill-profiler-facts",)) not in server_resources:
+    sys.exit("server SA lacks Profiler facts ConfigMap get for session resolution")
 
 # measurements.go requires create (collection) / delete (named) as the caller.
 # authorizer.go separately checks the lowercase HTTP verb and /chill-prefixed path.

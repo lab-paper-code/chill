@@ -316,6 +316,67 @@ func TestMeasurementDeleteRefusesWhileSomethingCanStillWriteOrServe(t *testing.T
 	}
 }
 
+// A session's own status is its terminal record, whatever its outcome: every
+// batch size measured, a stop, the session failure, a refusal or a restart.
+// Its operation costs are stored under its Node and go with it.
+func TestMeasurementDeleteSessionRunTakesItsOperationCosts(t *testing.T) {
+	for _, tc := range []struct {
+		phase   api.MeasurementPhase
+		outcome string
+	}{
+		{api.MeasurementPhaseComplete, "AllBatchesMeasured"},
+		{api.MeasurementPhaseComplete, "CapacityLimit"},
+		{api.MeasurementPhaseFailed, "Failed"},
+		{api.MeasurementPhaseFailed, "SessionUnresolved"},
+		{api.MeasurementPhaseFailed, "NotServable"},
+		{api.MeasurementPhaseFailed, "ChillServerRestart"},
+	} {
+		t.Run(tc.outcome, func(t *testing.T) {
+			ctx := context.Background()
+			task := terminalDeletionTask()
+			task.Spec.Session = &api.BatchEnergyOptimizationSessionSpec{}
+			task.Spec.State.TargetNode = "node-a"
+			task.Status.Phase, task.Status.Outcome = string(tc.phase), tc.outcome
+			task.Status.Conditions[0].Reason = tc.outcome
+			if tc.phase == api.MeasurementPhaseFailed {
+				task.Status.Conditions[0].Status, task.Status.Result = meta.ConditionFalse, nil
+			}
+			owned := []string{
+				"batch-energy-optimizations/native-uid/result.json",
+				"serving/operation-measurements/node-uid/native-uid.0.power.json",
+				"serving/operation-measurements/node-uid/native-uid.1.prepare-b1.json",
+			}
+			foreign := []string{
+				"serving/operation-measurements/node-uid/native-uid-2.0.power.json",
+				"serving/operation-measurements/other-node-uid/native-uid-2.1.prepare-b1.json",
+				"serving/operation-measurements/node-uid/prepare:measured-0123.json",
+			}
+			stored := map[string][]byte{}
+			for _, key := range append(owned, foreign...) {
+				stored[key] = []byte(`{}`)
+			}
+			storage := deletionStore(t, stored)
+			native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(task).Build()
+			service := deletionService(native, storage)
+			service.kube = kubefake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node-a", UID: "node-uid"}})
+			result, err := service.Delete(ctx, task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
+			if err != nil || !result.EvidenceDeleted || len(result.DeletedEvidence) != len(owned) {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+			for _, key := range owned {
+				if storage.contains(key) {
+					t.Errorf("owned object remains: %s", key)
+				}
+			}
+			for _, key := range foreign {
+				if !storage.contains(key) {
+					t.Errorf("object of another owner deleted: %s", key)
+				}
+			}
+		})
+	}
+}
+
 func TestMeasurementDeleteRetryCompletesAfterStoreFailure(t *testing.T) {
 	ctx := context.Background()
 	task := terminalDeletionTask()

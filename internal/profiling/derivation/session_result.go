@@ -234,6 +234,8 @@ type DriverLevelRow struct {
 	CompletedInputs  int       `json:"completedInputs"`
 	CompletedBatches int       `json:"completedBatches"`
 	EndReason        string    `json:"endReason"`
+	// Detail preserves the driver's sentence for an abnormal level end.
+	Detail string `json:"detail,omitempty"`
 	// PredictedSeconds and LimitSeconds are present when the driver ended the
 	// level as not measured because its predicted duration exceeded the limit.
 	PredictedSeconds *float64 `json:"predictedSeconds,omitempty"`

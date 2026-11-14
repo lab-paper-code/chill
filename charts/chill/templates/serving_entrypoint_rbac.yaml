@@ -37,9 +37,10 @@ rules:
   - apiGroups: [edge.dacs.io]
     resources: [workloads/finalizers]
     verbs: [update]
+  # Session resolution gets the candidate's DeviceClass.
   - apiGroups: [edge.dacs.io]
     resources: [deviceclasses]
-    verbs: [list]
+    verbs: [get, list]
   - apiGroups: [""]
     resources: [nodes]
     verbs: [get, list, patch]

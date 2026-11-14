@@ -21,16 +21,17 @@ import (
 // are queued, reports the given service time and records per-level
 // outstanding requests. A failure answers every member of that batch.
 type sessionFake struct {
-	t       testing.TB
-	batch   int
-	service func(batch uint64) (reported, sleep time.Duration)
-	failure func(kind string, ordinal int) (int, string)
-	calls   chan sessionFakeCall
-	done    chan struct{}
-	mu      sync.Mutex
-	open    map[string]int
-	maxOpen map[string]int
-	server  *httptest.Server
+	t        testing.TB
+	batch    int
+	service  func(batch uint64) (reported, sleep time.Duration)
+	failure  func(kind string, ordinal int) (int, string)
+	calls    chan sessionFakeCall
+	done     chan struct{}
+	mu       sync.Mutex
+	open     map[string]int
+	maxOpen  map[string]int
+	finished map[string]int
+	server   *httptest.Server
 }
 
 type sessionFakeCall struct {
@@ -48,7 +49,7 @@ func newSessionFake(
 ) *sessionFake {
 	f := &sessionFake{
 		t: t, batch: batch, service: service, failure: failure, calls: make(chan sessionFakeCall),
-		done: make(chan struct{}), open: map[string]int{}, maxOpen: map[string]int{},
+		done: make(chan struct{}), open: map[string]int{}, maxOpen: map[string]int{}, finished: map[string]int{},
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	go f.execute()
@@ -128,7 +129,7 @@ func (f *sessionFake) execute() {
 			idle = &gap
 		}
 		lastEnd = time.Now()
-		for _, member := range members {
+		for index, member := range members {
 			if f.failure != nil {
 				if status, body := f.failure(kind, ordinals[kind]); status != 0 {
 					member.reply <- sessionFakeReply{status: status, body: []byte(body)}
@@ -148,6 +149,11 @@ func (f *sessionFake) execute() {
 			})
 			if err != nil {
 				f.t.Error(err)
+			}
+			if index == 0 {
+				f.mu.Lock()
+				f.finished[kind]++
+				f.mu.Unlock()
 			}
 			member.reply <- sessionFakeReply{status: http.StatusOK, body: body}
 		}
@@ -269,6 +275,12 @@ func TestSessionLoadPredictedDurationEndsLevel(t *testing.T) {
 				t.Fatal(err)
 			}
 			last := levels[len(levels)-1]
+			if test.kind == sessionMid {
+				if len(levels) != 3 || levels[2].Kind != sessionSparse || levels[2].EndReason != sessionSamplesReached {
+					t.Fatalf("mid prediction did not continue to sparse: %+v", levels)
+				}
+				last = levels[1]
+			}
 			if last.Kind != test.kind || last.EndReason != sessionPredictedOverLimit ||
 				last.CompletedBatches != test.batches || last.LimitSeconds != 1 || last.PredictedSeconds <= 1 ||
 				last.EndedAt.Sub(last.StartedAt) >= c.levelLimit ||
@@ -490,5 +502,45 @@ func TestSessionCounterRetainsFixedStateOverRequests(t *testing.T) {
 	}
 	if counter.inputs != 1_600_000 || counter.samples != 400_000 {
 		t.Fatalf("counter = %+v", counter)
+	}
+}
+
+func TestSessionLoadMidLifetimeExpiryContinuesToSparse(t *testing.T) {
+	const body = `{"error":"request lifetime expired"}`
+	fake := newSessionFake(t, 1, fixedService(time.Millisecond), func(kind string, _ int) (int, string) {
+		if kind == sessionMid {
+			return http.StatusRequestTimeout, body
+		}
+		return 0, ""
+	})
+	config := sessionTestConfig(t, fake.server.URL, 1)
+	config.sparse = true
+	levels, err := runSessionLoad(context.Background(), config)
+	if err != nil || len(levels) != 3 || levels[1].EndReason != "RequestLifetimeExpired" ||
+		levels[1].Detail != "native inference HTTP 408: "+body || levels[2].EndReason != sessionSamplesReached {
+		t.Fatalf("levels %+v error %v", levels, err)
+	}
+}
+
+func TestSessionLoadMidExpiryDrainsNativeFinishedBatches(t *testing.T) {
+	fake := newSessionFake(t, 1, fixedService(5*time.Millisecond), func(kind string, ordinal int) (int, string) {
+		if kind == sessionMid && ordinal == 15 {
+			return http.StatusRequestTimeout, `{"error":"request lifetime expired"}`
+		}
+		return 0, ""
+	})
+	config := sessionTestConfig(t, fake.server.URL, 1)
+	config.sparse, config.midRatio, config.minSamples = true, .99, 100
+	levels, err := runSessionLoad(context.Background(), config)
+	if err != nil || len(levels) != 3 {
+		t.Fatalf("levels %+v error %v", levels, err)
+	}
+	fake.mu.Lock()
+	finished := fake.finished[sessionMid]
+	fake.mu.Unlock()
+	mid := levels[1]
+	if mid.EndReason != sessionRequestLifetimeExpired || finished == 0 ||
+		mid.CompletedBatches != finished || mid.CompletedInputs != finished || mid.SentInputs != finished+1 {
+		t.Fatalf("mid %+v native finished %d", mid, finished)
 	}
 }

@@ -238,6 +238,10 @@ func replacementCampaignSelection(campaigns []edgev1alpha1.BatchEnergyOptimizati
 	return diagnostics
 }
 
+// completeNativeProfile checks the measured batch sizes against the
+// configuration. Each batch size ran on its own instance, which initialized
+// only that size; the serving instance initializes the measured sizes itself,
+// so the kept runtime report's initialized sizes have no reader here.
 func completeNativeProfile(profile serving.Profile) bool {
 	condition := profile.Condition
 	if condition.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily || condition.Firstfloor == nil ||
@@ -248,8 +252,7 @@ func completeNativeProfile(profile serving.Profile) bool {
 	previous := 0
 	for _, batch := range profile.Batches {
 		if batch.Batch <= previous || batch.Batch > int(condition.Firstfloor.MaxBatchSize) ||
-			!slices.Contains(condition.PlannedBatchSizes, batch.Batch) ||
-			!slices.Contains(profile.RuntimeMetadata.InitializedBatches, batch.Batch) {
+			!slices.Contains(condition.PlannedBatchSizes, batch.Batch) {
 			return false
 		}
 		previous = batch.Batch
@@ -304,7 +307,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: err.Error()}}, nil
 	}
 	if !completeNativeProfile(profile) {
-		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor requires exact measured batch 1 and initialized measured sizes within selected maxBatchSize"}}, nil
+		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor requires exact measured batch 1, a runtime report of the measured backend and planned measured sizes within selected maxBatchSize"}}, nil
 	}
 	facts := serving.MeasurementFacts{
 		Request:         profilederivation.MeasurementRequestReference{Namespace: campaign.Namespace, Name: campaign.Name, UID: string(campaign.UID)},

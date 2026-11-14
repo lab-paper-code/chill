@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"runtime/debug"
+	"syscall"
 	"time"
 
 	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
@@ -21,6 +23,7 @@ import (
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -152,11 +155,11 @@ func newSessionPrepare(
 			Workload: protocol.Workload, WarmupIterations: int(protocol.WarmupIterations),
 		})
 		if err != nil {
-			return servingkube.SessionPreparation{}, err
+			return servingkube.SessionPreparation{}, sessionResolutionError(err)
 		}
 		meter, err := metrics.ResolveMetricSource(ctx, state.TargetNode)
 		if err != nil {
-			return servingkube.SessionPreparation{}, fmt.Errorf("resolve Node meter: %w", err)
+			return servingkube.SessionPreparation{}, sessionResolutionError(fmt.Errorf("resolve Node meter: %w", err))
 		}
 		config := session.RunConfig
 		delivery, err := json.Marshal(config.Delivery)
@@ -175,4 +178,15 @@ func newSessionPrepare(
 			},
 		}, nil
 	}, nil
+}
+
+func sessionResolutionError(err error) error {
+	var network net.Error
+	if apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsTooManyRequests(err) ||
+		apierrors.IsServiceUnavailable(err) || apierrors.IsInternalError(err) ||
+		errors.Is(err, context.DeadlineExceeded) || errors.As(err, &network) ||
+		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
+		return &servingkube.SessionResolutionRetry{Err: err}
+	}
+	return err
 }
