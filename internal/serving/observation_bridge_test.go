@@ -182,18 +182,18 @@ func TestNativeHTTPServicePairsReachPersistedRequestConsumers(t *testing.T) {
 		if len(populations[kind]) != 4 || unknown[kind] != 1 {
 			t.Fatalf("%s consumer lost canonical/legacy population: %+v, unknown=%d", kind, populations[kind], unknown[kind])
 		}
-		distribution, err := native.NewServiceDistribution(populations[kind])
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, pair := range []struct {
-			gap     *int64
-			service int64
-		}{{nil, 2_000_001}, {&zero, 3_000_001}, {&short, 5_000_001}, {&long, 80_000_001}} {
-			service, _, ok := distribution.QuantileNanos(pair.gap, 95)
-			if !ok || service != pair.service {
-				t.Fatalf("%s persisted G/S conditional support: gap=%v service=%d, supported=%v", kind, pair.gap, service, ok)
+		// Every persisted pair keeps its gap and service; hydration drops only
+		// the gapless first execution.
+		for j, want := range samples[:4] {
+			got := populations[kind][j]
+			if got.ServiceDurationNanos != want.ServiceDurationNanos || (got.PrecedingIdleNanos == nil) != (want.PrecedingIdleNanos == nil) ||
+				got.PrecedingIdleNanos != nil && *got.PrecedingIdleNanos != *want.PrecedingIdleNanos {
+				t.Fatalf("%s persisted G/S pair %d: got %+v want %+v", kind, j, got, *want)
 			}
+		}
+		distribution, err := native.NewServiceDistribution(populations[kind])
+		if err != nil || distribution.DroppedFirstExecutions() != 1 {
+			t.Fatalf("%s hydration: %v", kind, err)
 		}
 	}
 }

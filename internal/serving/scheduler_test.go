@@ -37,10 +37,12 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
 	path := ModelPath{Name: "cpu", Artifact: "model", Files: []string{"/model"}, Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Firstfloor: settings}
-	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, Preprocessor: Preprocessor{Name: "pre", Input: []RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &DatasetReference{Name: "data", UID: "data-uid"}, SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}, Admission: Admission{Policy: AdmissionPolicyReject, MaxQueuedRequests: 1024}}
+	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, Preprocessor: Preprocessor{Name: "pre", Input: []RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &DatasetReference{Name: "data", UID: "data-uid"}, SLO: SLO{Percentile: 95, TargetLatency: 100 * time.Millisecond}, Admission: Admission{Policy: AdmissionPolicyReject, MaxQueuedRequests: 1024}}
 	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{float64(10 * time.Millisecond)})}}
 	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelFiles: []string{"/model/model"}, Inputs: []string{"x"}, Outputs: []string{"y"}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
-	i := SchedulerInstance{ID: "i1", Node: node.Node, Profile: p, WorkloadUID: d.UID, Allocation: SchedulerAllocation{MemoryBytes: 1000}, Ready: true, Routable: map[string]bool{d.UID: true}, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, ArrivalAgesMS: map[string][]float64{}, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
+	// A ready actor was warmed, so it always has a last service end.
+	idle := int64(0)
+	i := SchedulerInstance{ID: "i1", Node: node.Node, Profile: p, WorkloadUID: d.UID, Allocation: SchedulerAllocation{MemoryBytes: 1000}, Ready: true, Routable: map[string]bool{d.UID: true}, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, LastServiceEndAgeNanos: &idle, ArrivalAgesMS: map[string][]float64{}, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
 	b := NodeBaseline{ID: "unloaded-n1", Node: node.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-n1", Scope: schedulerNodeWallScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle"}}
 	b.Reference.Size = 1
 	p.Evidence[0].Size = 1
@@ -48,15 +50,20 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	return s, snap
 }
 
-// Synthetic policy fixtures explicitly give the same service law to startup and
-// a known busy gap. Real evidence never receives fabricated gap/trial fields.
+// schedulerTestFloor identifies the 99th percentile, the highest the tests use.
+const schedulerTestFloor = 459
+
+// Synthetic policy fixtures give one service law at every gap: the durations
+// repeat in whole cycles, all at gap 0, until the 99th percentile's sample
+// floor is covered. Real evidence never receives fabricated gap/trial fields.
 func schedulerTestBatchProfile(batch BatchProfile, durations []float64) BatchProfile {
 	batch.ServiceSamples = nil
-	for _, duration := range durations {
-		gap := int64(0)
-		batch.ServiceSamples = append(batch.ServiceSamples,
-			firstfloor.ServiceSample{ServiceDurationNanos: int64(duration), TrialID: "synthetic"},
-			firstfloor.ServiceSample{ServiceDurationNanos: int64(duration), PrecedingIdleNanos: &gap, TrialID: "synthetic"})
+	for len(batch.ServiceSamples) < schedulerTestFloor {
+		for _, duration := range durations {
+			gap := int64(0)
+			batch.ServiceSamples = append(batch.ServiceSamples,
+				firstfloor.ServiceSample{ServiceDurationNanos: int64(duration), PrecedingIdleNanos: &gap, TrialID: "synthetic"})
+		}
 	}
 	return schedulerTestPairedBatch(batch, batch.ServiceSamples)
 }
@@ -310,7 +317,7 @@ func TestSchedulerNonpreemptiveBlockingAndResidual(t *testing.T) {
 	snap.Instances[0].Profile.Batches[0] = schedulerTestBatchProfile(snap.Instances[0].Profile.Batches[0], []float64{float64(100 * time.Millisecond)})
 	snap.Outstanding = []SchedulerRequest{{ID: "running-a", Definition: a, ReceivedAt: snap.At.Add(-40 * time.Millisecond), Elapsed: 40 * time.Millisecond, Phase: phaseRunning, Instance: "i1", BatchID: "native-7", RunningElapsed: 40 * time.Millisecond}, {ID: "queued-b", Definition: &b, ReceivedAt: snap.At, Phase: "queued", Instance: "i1"}}
 	exchangeElapsed := int64(40 * time.Millisecond)
-	snap.Outstanding[0].ExchangeElapsedNanos = &exchangeElapsed
+	snap.Outstanding[0].ExchangeElapsedNanos, snap.Outstanding[0].PrecedingIdleNanos = &exchangeElapsed, new(int64)
 	zero := 0.0
 	snap.Outstanding[0].NativeSenderElapsedMS = &zero
 	snap.Outstanding[1].NativeSenderElapsedMS = &zero
@@ -890,6 +897,8 @@ func reserveTargetForTest(snapshot *SchedulerSnapshot, target *SchedulerCandidat
 	snapshot.Reservations = append(snapshot.Reservations, reservation)
 }
 
+// Each law is one 95th-percentile window (59 records) at its gap, so a query
+// at that gap reads exactly its service and any other gap reads its nearest law.
 func TestReplayChoosesActualServiceAtNativeIdleAge(t *testing.T) {
 	busy, idle := int64(0), int64(120*time.Millisecond)
 	for _, tc := range []struct {
@@ -897,7 +906,6 @@ func TestReplayChoosesActualServiceAtNativeIdleAge(t *testing.T) {
 		gap  *int64
 		want time.Duration
 	}{
-		{name: "startup", want: 30 * time.Millisecond},
 		{name: "busy", gap: &busy, want: 2 * time.Millisecond},
 		{name: "long idle", gap: &idle, want: 20 * time.Millisecond},
 	} {
@@ -907,13 +915,8 @@ func TestReplayChoosesActualServiceAtNativeIdleAge(t *testing.T) {
 			settings.DefaultDispatchOccupancyNanos = 0
 			d := snapshot.Workloads[0]
 			d.SLO.TargetLatency = time.Second
-			short, long := int64(0), int64(100*time.Millisecond)
 			b := &snapshot.Instances[0].Profile.Batches[0]
-			*b = schedulerTestPairedBatch(*b, []firstfloor.ServiceSample{
-				{ServiceDurationNanos: int64(30 * time.Millisecond), TrialID: "physical-a"},
-				{ServiceDurationNanos: int64(2 * time.Millisecond), PrecedingIdleNanos: &short, TrialID: "physical-a"},
-				{ServiceDurationNanos: int64(20 * time.Millisecond), PrecedingIdleNanos: &long, TrialID: "physical-a"},
-			})
+			*b = schedulerTestPairedBatch(*b, schedulerTestGapLaws([2]int64{0, int64(2 * time.Millisecond)}, [2]int64{int64(100 * time.Millisecond), int64(20 * time.Millisecond)}))
 			snapshot.Instances[0].LastServiceEndAgeNanos = tc.gap
 			zero := 0.0
 			snapshot.Outstanding = []SchedulerRequest{{ID: "query", Definition: d, ReceivedAt: snapshot.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero}}
@@ -922,20 +925,34 @@ func TestReplayChoosesActualServiceAtNativeIdleAge(t *testing.T) {
 			if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != float64(tc.want) {
 				t.Fatalf("idle age must select an actual S without adding G to latency: %+v reasons=%v", estimate, got.Reasons)
 			}
-			if got.ConditionalService == nil || got.ConditionalService.MinimumTrialCount != 1 {
+			if got.ConditionalService == nil || got.ConditionalService.MinimumRecordCount != 59 {
 				t.Fatalf("conditional support not retained: %+v", got)
 			}
 			if tc.name == "long idle" && (got.ConditionalService.MaximumDistanceNanos != int64(20*time.Millisecond) || got.ConditionalService.OutsideSupportQueries == 0) {
 				t.Fatalf("endpoint extrapolation was concealed: %+v", got.ConditionalService)
 			}
-			if tc.gap == nil {
-				*b = schedulerTestPairedBatch(*b, b.ServiceSamples[1:])
-				if missing := schedulerKeepForTest(t, settings, snapshot); missing.ExpectedJoules != nil {
-					t.Fatalf("missing startup evidence silently used known-gap service: %+v", missing)
-				}
-			}
 		})
 	}
+}
+
+// schedulerTestGapLaws gives each {gap, service} law one 95th-percentile
+// window: 59 records of that service at that gap.
+func schedulerTestGapLaws(laws ...[2]int64) []firstfloor.ServiceSample {
+	samples := make([]firstfloor.ServiceSample, 0, 59*len(laws))
+	for _, law := range laws {
+		for range 59 {
+			samples = append(samples, firstfloor.ServiceSample{ServiceDurationNanos: law[1], PrecedingIdleNanos: &law[0], TrialID: "physical-a"})
+		}
+	}
+	return samples
+}
+
+// A ready actor was warmed, so a ready instance without an idle age is a
+// visible reason, never a planner-chosen gap or a silent drop.
+func TestSchedulerReadyInstanceWithoutIdleAgeIsUnknown(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	snapshot.Instances[0].LastServiceEndAgeNanos = nil
+	schedulerRequireReason(t, schedulerKeepForTest(t, settings, snapshot).Reasons, "UnknownNativeServiceEnd:i1")
 }
 
 func TestReplayNextGapStartsAtNativeFinishNotOccupancyOrReturn(t *testing.T) {
@@ -946,10 +963,7 @@ func TestReplayNextGapStartsAtNativeFinishNotOccupancyOrReturn(t *testing.T) {
 	d.SLO.TargetLatency = time.Second
 	busy, occupancyGap := int64(0), int64(30*time.Millisecond)
 	b := &snapshot.Instances[0].Profile.Batches[0]
-	*b = schedulerTestPairedBatch(*b, []firstfloor.ServiceSample{
-		{ServiceDurationNanos: int64(2 * time.Millisecond), PrecedingIdleNanos: &busy, TrialID: "physical-a"},
-		{ServiceDurationNanos: int64(20 * time.Millisecond), PrecedingIdleNanos: &occupancyGap, TrialID: "physical-a"},
-	})
+	*b = schedulerTestPairedBatch(*b, schedulerTestGapLaws([2]int64{busy, int64(2 * time.Millisecond)}, [2]int64{occupancyGap, int64(20 * time.Millisecond)}))
 	snapshot.Instances[0].LastServiceEndAgeNanos = &busy
 	condition := snapshot.Instances[0].Profile.Condition
 	snapshot.DispatchOccupancy = []DispatchOccupancy{{

@@ -6,8 +6,6 @@ import (
 	"math"
 	"testing"
 	"time"
-
-	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 func TestReplayRestoresDerivedNativeSpanAnchorAndGapBounds(t *testing.T) {
@@ -50,11 +48,7 @@ func TestReplayUsesCompletionGapEnvelopeUntilNextServiceEnd(t *testing.T) {
 	s := replayAdmissionState(t)
 	zero, thirty := int64(0), int64(30*time.Millisecond)
 	profile := *s.snap.Instances[0].Profile
-	profile.Batches = []BatchProfile{schedulerTestPairedBatch(BatchProfile{Batch: 1}, []firstfloor.ServiceSample{
-		{TrialID: "a", ServiceDurationNanos: int64(20 * time.Millisecond)},
-		{TrialID: "a", PrecedingIdleNanos: &zero, ServiceDurationNanos: int64(20 * time.Millisecond)},
-		{TrialID: "a", PrecedingIdleNanos: &thirty, ServiceDurationNanos: int64(50 * time.Millisecond)},
-	})}
+	profile.Batches = []BatchProfile{schedulerTestPairedBatch(BatchProfile{Batch: 1}, schedulerTestGapLaws([2]int64{zero, int64(20 * time.Millisecond)}, [2]int64{thirty, int64(50 * time.Millisecond)}))}
 	config := &s.snap.Instances[0]
 	config.Profile, config.MaxBatch = &profile, 1
 	config.NativeSpanAt = s.snap.At

@@ -19,7 +19,7 @@ func pairedSample(trial string, gapMS, serviceMS int64) ServiceSample {
 	return ServiceSample{TrialID: trial, PrecedingIdleNanos: &gap, ServiceDurationNanos: serviceMS * int64(time.Millisecond)}
 }
 
-func TestConditionalNativeQuantilePreservesTrialWeightsAndTiedRecords(t *testing.T) {
+func TestConditionalNativeQuantilePoolsTrialsAndUsesTheSampleFloor(t *testing.T) {
 	batch := pairedBatch(t, 1, 1,
 		pairedSample("a", 0, 2), pairedSample("a", 0, 2), pairedSample("a", 0, 2), pairedSample("a", 20, 200),
 		pairedSample("b", 10, 80),
@@ -34,7 +34,7 @@ func TestConditionalNativeQuantilePreservesTrialWeightsAndTiedRecords(t *testing
 		gap  *int64
 		want string
 	}{
-		{nil, OutcomeDeadlineDrop},
+		{nil, ReasonMissingConditionalSupport},
 		{new(int64), ReasonAvailableEnergy},
 		{func() *int64 { g := int64(10 * time.Millisecond); return &g }(), OutcomeDeadlineDrop},
 	} {
@@ -44,50 +44,50 @@ func TestConditionalNativeQuantilePreservesTrialWeightsAndTiedRecords(t *testing
 		}
 	}
 	gap := int64(10 * time.Millisecond)
+	// Floors: one record at p50, four at p70: on the log scale the window of
+	// four at 10 ms is gaps 0, 0, 10 and 20 ms. Five records leave p87.5
+	// (floor 16) unidentified.
 	for _, tc := range []struct {
 		percentile float64
 		want       int64
-	}{{0, 2}, {37.5, 2}, {50, 80}, {87.5, 80}, {95, 200}, {100, 200}} {
+	}{{50, 80}, {70, 80}, {87.5, 0}, {100, 0}} {
 		got, _, ok := batch.Distribution.QuantileNanos(&gap, tc.percentile)
-		if !ok || got != tc.want*int64(time.Millisecond) {
-			t.Fatalf("p%g got %d, want %dms", tc.percentile, got, tc.want)
+		if ok != (tc.want > 0) || got != tc.want*int64(time.Millisecond) {
+			t.Fatalf("p%g got %d %v, want %dms", tc.percentile, got, ok, tc.want)
 		}
 	}
 	rng := rand.New(rand.NewPCG(19, 40))
-	long, medium, short := 0, 0, 0
+	short := 0
 	for range 8000 {
-		s, _, ok := batch.Distribution.Sample(&gap, rng)
+		service, _, ok := batch.Distribution.Sample(&gap, 70, rng)
 		if !ok {
 			t.Fatal("known-gap support disappeared")
 		}
-		switch s.ServiceDurationNanos / int64(time.Millisecond) {
+		switch service / int64(time.Millisecond) {
 		case 2:
 			short++
-		case 80:
-			medium++
-		case 200:
-			long++
+		case 80, 200:
 		default:
-			t.Fatalf("sampling invented a service duration: %+v", s)
+			t.Fatalf("sampling left the selection: %d", service)
 		}
 	}
-	if short < 2700 || short > 3300 || medium < 3700 || medium > 4300 || long < 800 || long > 1200 {
-		t.Fatalf("uniform physical trials then all nearest actual records: short=%d medium=%d long=%d", short, medium, long)
+	if short < 3700 || short > 4300 {
+		t.Fatalf("draws must be uniform over the four window records: short=%d", short)
 	}
-	long = 0
+	long := 0
 	for range 4000 {
-		s, _, ok := batch.Distribution.SampleResidual(&gap, int64(50*time.Millisecond), rng)
-		if !ok {
-			t.Fatal("surviving conditional support disappeared")
+		service, support, ok := batch.Distribution.SampleResidual(&gap, int64(50*time.Millisecond), 70, rng)
+		if !ok || support.Records != 4 {
+			t.Fatalf("surviving conditional support: %+v %v", support, ok)
 		}
-		if s.ServiceDurationNanos == int64(200*time.Millisecond) {
+		if service == int64(200*time.Millisecond) {
 			long++
-		} else if s.ServiceDurationNanos != int64(80*time.Millisecond) {
-			t.Fatalf("invalid surviving service: %+v", s)
+		} else if service != int64(80*time.Millisecond) {
+			t.Fatalf("invalid surviving service: %d", service)
 		}
 	}
-	if long < 650 || long > 950 {
-		t.Fatalf("residual draw must retain posterior trial weights: long=%d", long)
+	if long < 1800 || long > 2200 {
+		t.Fatalf("residual draw must be uniform over both survivors: long=%d", long)
 	}
 }
 
@@ -98,7 +98,10 @@ func TestEnergyFillUsesFutureIdleAndResetsCompetingServiceAnchor(t *testing.T) {
 		pairedBatch(t, 2, 1, pairedSample("a", 0, 2), pairedSample("a", 10, 60)),
 	}
 	gap := int64(0)
+	// Two records per batch are below the p95 floor and would pool both gaps;
+	// the 50th percentile's single-record floor keeps the answer gap-local.
 	q := testState("a", 50, 100)
+	q.Context.SLO.Percentile = 50
 	if choice := ChooseBatch(p, []RequestState{q}, &gap); choice.WaitMS != 0 || choice.Size != 1 {
 		t.Fatalf("long-idle service after planned fill cannot borrow short-gap slack: %+v", choice)
 	}
@@ -109,6 +112,7 @@ func TestEnergyFillUsesFutureIdleAndResetsCompetingServiceAnchor(t *testing.T) {
 	gap = int64(10 * time.Millisecond)
 	q = testState("a", 200, 100)
 	other := testState("b", 25, 0)
+	q.Context.SLO.Percentile, other.Context.SLO.Percentile = 50, 50
 	q.Context.SenderElapsedMS = 176 // make a the EDF head with 24ms remaining
 	if choice := ChooseBatch(p, []RequestState{q, other}, &gap); choice.WaitMS != 10 || choice.Reason != "measured_energy_gain_fill" {
 		t.Fatalf("competing queue must use post-service zero-age approximation: %+v", choice)

@@ -98,7 +98,6 @@ func TestProfilingInferWithoutBundleUsesFixedBatchHTTP(t *testing.T) {
 		}()
 		return done
 	}
-	var previous *ServiceSample
 	var lastBatch uint64
 	for batch := range 2 {
 		ids := []string{fmt.Sprintf("batch-%d-a", batch), fmt.Sprintf("batch-%d-b", batch)}
@@ -120,11 +119,13 @@ func TestProfilingInferWithoutBundleUsesFixedBatchHTTP(t *testing.T) {
 		if replies[0].Progress.BatchID != replies[1].Progress.BatchID || !reflect.DeepEqual(replies[0].Progress.ServiceSample, replies[1].Progress.ServiceSample) || replies[0].Progress.BatchID <= lastBatch {
 			t.Fatalf("requests must share one new physical batch: %+v", replies)
 		}
+		// Ready marks the warm-up's service end: every exchange, the first
+		// included, has an actual nonnegative preceding idle gap.
 		sample := replies[0].Progress.ServiceSample
-		if previous == nil && sample.PrecedingIdleNanos != nil || previous != nil && (sample.PrecedingIdleNanos == nil || *sample.PrecedingIdleNanos < 0) {
+		if sample.PrecedingIdleNanos == nil || *sample.PrecedingIdleNanos < 0 {
 			t.Fatalf("preceding idle must use actual exchange anchors: %+v", sample)
 		}
-		previous, lastBatch = sample, replies[0].Progress.BatchID
+		lastBatch = replies[0].Progress.BatchID
 	}
 	state := awaitActorState(t, s, func(state State) bool { return state.CompletedRequests == 4 })
 	if state.Executions != 2 || state.AcceptedRequests != 4 {

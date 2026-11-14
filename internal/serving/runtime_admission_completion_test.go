@@ -100,6 +100,10 @@ func TestRuntimeAdmissionCompletionRequiresPhysicalIdentityAndProof(t *testing.T
 				q.Phase, q.BatchID, q.BatchSize = phaseQueued, 0, 0
 			}
 			i.State.Native.Requests = []firstfloor.RequestState{q}
+			// The warmed actor's last service end is an hour old; only a proven
+			// execution may move it.
+			warm := int64(time.Hour)
+			i.State.Native.LastServiceEndAgeNanos = &warm
 			c := &Call{receipt: Receipt{ID: q.Context.RequestID, UID: q.Context.WorkloadUID}, identity: q.Context.Definition, instance: i,
 				assignment: &Assignment{Instance: i.State.ID, Node: i.State.Node, DispatchedAt: time.Now().Add(-10 * time.Millisecond)}, backendDone: true,
 				progress: &BackendProgress{Phase: phaseFinished, BatchID: q.BatchID, BatchSize: q.BatchSize, ExecutionComplete: true}}
@@ -124,7 +128,7 @@ func TestRuntimeAdmissionCompletionRequiresPhysicalIdentityAndProof(t *testing.T
 			if !c.transportDone && i.outstanding != 1 {
 				t.Fatal("native proof released open HTTP transport occupancy")
 			}
-			if name == noExecution && i.State.Native.LastServiceEndAgeNanos != nil {
+			if age := i.State.Native.LastServiceEndAgeNanos; name == noExecution && (age == nil || *age < int64(time.Hour)) {
 				t.Fatal("no-execution proof invented a service completion")
 			}
 		})
@@ -143,6 +147,8 @@ func TestRuntimeAdmissionCompletionPreservesRunningMembersAndRejectsStaleProbe(t
 		q.Phase, q.BatchID, q.BatchSize = phaseRunning, 12742, 2
 	}
 	observed.Requests = []firstfloor.RequestState{a, b}
+	warm := int64(time.Hour) // the warmed actor's last service end
+	observed.LastServiceEndAgeNanos = &warm
 	i.State.Native = &observed
 	i.outstanding = 2
 	for j, q := range []firstfloor.RequestState{a, b} {
@@ -153,7 +159,7 @@ func TestRuntimeAdmissionCompletionPreservesRunningMembersAndRejectsStaleProbe(t
 		if len(i.State.Native.Requests) != 1-j {
 			t.Fatal("completed batch member remained in admission state")
 		}
-		if j == 0 && i.State.Native.LastServiceEndAgeNanos != nil {
+		if age := i.State.Native.LastServiceEndAgeNanos; j == 0 && (age == nil || *age < int64(time.Hour)) {
 			t.Fatal("partial batch completion made the executor idle")
 		}
 	}

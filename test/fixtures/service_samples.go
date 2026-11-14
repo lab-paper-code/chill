@@ -14,3 +14,14 @@ func ServiceSample(trialID string, callIndex uint64, serviceNanos int64) firstfl
 	}
 	return sample
 }
+
+// ServiceSamples is one constant service law identified at every SLO
+// percentile the tests use: the gapless first execution (dropped at
+// hydration) and 459 known-gap calls, the 99th percentile's sample floor.
+func ServiceSamples(trialID string, serviceNanos int64) []firstfloor.ServiceSample {
+	samples := make([]firstfloor.ServiceSample, 460)
+	for i := range samples {
+		samples[i] = ServiceSample(trialID, uint64(i), serviceNanos)
+	}
+	return samples
+}

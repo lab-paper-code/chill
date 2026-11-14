@@ -39,7 +39,7 @@ func TestStaticExclusiveBaselineThenSwappedTargetDrainsPhysicalBinding(t *testin
 		physical := instance.ID
 		instances = append(instances, ReadyInstance{
 			State: InstanceState{ID: physical, Node: instance.Node, Profile: instance.Profile.ID, Ready: true, ObservedAt: time.Now(),
-				Native: &firstfloor.State{Metadata: firstfloor.Metadata{Policy: firstfloor.Policy{ProfileID: instance.Profile.ID, MaxBatchSize: instance.MaxBatch}}}},
+				Native: &firstfloor.State{LastServiceEndAgeNanos: new(int64), Metadata: firstfloor.Metadata{Policy: firstfloor.Policy{ProfileID: instance.Profile.ID, MaxBatchSize: instance.MaxBatch}}}},
 			Profile: instance.Profile, Capacity: 1,
 			Execute: func(context.Context, Dispatch) (BackendResult, error) {
 				if physical == "i1" {

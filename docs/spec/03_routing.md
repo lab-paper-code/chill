@@ -112,7 +112,7 @@ gateway와 replay가 쓰는 `EstimateAdmission`은 native snapshot의 나이, �
 BatchID별 한 번만 세고, service 경과를 조건으로 한 생존 분위수를 남은 시간으로
 쓴다. batch별 service 분위수와 수락 때 동결한 POST reserve를 합친 **판단 규칙**이다.
 이 규칙으로 E2E 분위수를 보장하지 않는다. service 표본이 남지 않거나 필요한 입력이 없으면 판단은
-unknown이다. idle은 기존 nearest-gap 모형을 유지하며, 관측 idle 지원 범위 밖의
+unknown이다. idle은 로그 gap 최근접 N개 모형(N은 SLO 분위수의 표본 하한)을 쓰며, 관측 idle 지원 범위 밖의
 예측이 거절을 결정했으면 `outsideSupport: true`를 거절 metadata에 남긴다.
 
 정상 요청과 지연 요청은 하나의 gateway 소유 큐에 보존하고 두 번의 유한 순회로

@@ -84,15 +84,21 @@ cold trial load는 입력 순서의 작은 window에서 최대 8개의 execution
 
 ## 실제 S와 G의 조건부 법칙
 
-S는 Go runner IPC 교환 전체, G는 직전 교환 종료부터 다음 교환 시작까지 같은 monotonic clock의 경과다. 첫 anchor가 없으면 G는 null이다. 각 표본은 물리 TrialID와 결합을 유지한다.
+S는 Go runner IPC 교환 전체, G는 직전 교환 종료부터 다음 교환 시작까지 같은 monotonic clock의 경과다. runner는 초기화한 모든 batch 크기를 warmup한 뒤 ready를 보내므로 ready 시각이 첫 anchor다. 첫 교환도 G를 가진다. G가 없는 옛 기록(시작 후 첫 실행)은 hydration에서 버리고 그 수를 센다. 각 표본은 물리 TrialID와 결합을 유지한다.
+
+ready actor는 ready 직전에 warmup service를 마쳤으므로 마지막 service 종료 age를 항상 가진다. native runner는 ready 시각을 마지막 종료로 두고, observer와 ChillServer 재시작 뒤 runtime은 native가 보고한 age를 그대로 쓴다. ready인데 age가 없는 instance와 G가 없는 실행 중 교환은 `UnknownNativeServiceEnd` 사유가 되어 측정 없음과 같은 경로로 처리된다. gap을 대신 고르지 않는다. 아직 실행 중이 아닌 option과 준비 중 instance는 Workload 부하가 정하는 gap(도착률 λ에서 1/λ)으로 질의한다. replay에서 prepare가 끝나면 그 시각이 마지막 종료이고, capacity 창의 합성 actor는 창 replay 시작에 ready다.
 
 현재 active 측정은 frozen operatingPoints와 off-node producer를 사용한다. sparse, saturation과 utilization의 실제 S/G와 공급, post-load idle을 구분한다. 원래 target gap으로 실제 G를 대체하거나 donor trace를 import하지 않는다.
 
-profile은 불변 trial별 gap/service index를 한 번 만든다. gap 거리는1-nearest로 선택한다. trial을 균등 선택하고 각 trial에서 가장 가까운 모든 실제 record를 균등 선택한다. 양쪽 gap 동률도 포함한다. quantile은 같은 mixture CDF이며 tie를 평탄화하거나 평균/보간하지 않는다.
+profile은 batch 크기마다 모든 물리 trial의 기록을 하나로 모아 gap 순서로 한 번 정렬한다. trial 사이 편차도 스케줄러가 마주하는 분포의 일부다. 모형 이름은 `log-gap-nearest-sample-floor`다. gap g의 분위수 p는 `ln(1+g)` 거리로 가장 가까운 기록 N개의 경험 분위수다. N은 p의 표본 하한 `ceil(ln(1−p)/ln(p))`(95분위 59)다. gap은 native monotonic clock의 정수 나노초이며 그 단위 1을 더해 0 gap도 로그 척도에 둔다. N개 창은 gap 순서의 연속 구간이다. 거리 동률이면 작은 gap을 고르고, 같은 gap의 기록은 g를 향한 쪽부터 저장 순서로 고른다. N은 창의 최댓값이 신뢰도 p로 분위수를 넘는 개수이므로 창의 경험 분위수는 점추정이지 상한이 아니다. 기록이 N보다 적으면 분위수는 식별되지 않는다. 질의는 unknown이고 각 소비자는 profile 부재와 같은 경로로 처리한다. p=100은 유한 하한이 없어 식별되지 않는다.
+
+로그 거리를 쓰는 근거: gap은 1 ms 미만부터 1 s 이상까지 여섯 자릿수에 걸치고 처리 시간의 gap 의존도 자릿수 단위로 바뀐다(GPU host b1은 10 ms 이상에서 약 2.7배). 저장된 229개 측정의 trial 단위 교차검증에서 절대 거리와 로그 거리의 95분위 적중률과 pinball 손실은 모든 gap 자릿수에서 1 % 안쪽으로 같았다. 이 데이터에서 둘은 구별되지 않으므로 척도 문제에 맞는 로그 거리를 쓴다.
+
+분위수마다 모든 창의 값을 처음 쓸 때 한 번 계산해 최댓값 segment tree로 둔다. 한 gap 질의와 gap 범위 최댓값 질의는 이진 탐색과 tree 질의이며 heap 할당이 없다. 기록 n개, 창 n−N+1개에 대해 분위수 하나당 16(n−N+1) byte이고 150,000개 기록에서 약 2.4 MB다. 생존 조건 잔여와 표본 추출은 같은 창에서 계산한다.
 
 replay의 arrival과 실행 완료가 g를 결정하므로 측정 G를 지연에 다시 더하지 않는다. actor는 pack과 IPC 전 running이 될 수 있어 그 decision-age gap은 실제 G의 근사다. exchange elapsed가 있으면 실제 시작 G와 경과를 residual에 사용한다.
 
-running residual은 원래 nearest/trial mixture에서 `S > elapsed`로 조건화하고 생존 비율의 posterior trial mass를 유지한다. nearest 집합에 생존이 전혀 없을 때만 trial별 생존 표본 안의 같은 nearest 규칙으로 재선택한다.
+running residual은 같은 N개 창을 `S > elapsed`로 조건화한다. 창은 넓히지 않는다. 창 안에 생존 기록이 없으면 잔여 분위수는 unknown이다.
 
 모든 표본이 이미 elapsed 이하이면 원래 같은-gap service를 남은 시간으로 새로 뽑는 `same-gap-service-restart` 대체를 사용한다. 실제 잔여는 더 짧거나 길 수 있고 순위 bias도 양방향이다. RunningResidualBeyondSupport와 조건부 근거를 기록한다. 원래 gap support 부재는 이 대체로 숨기지 않는다.
 

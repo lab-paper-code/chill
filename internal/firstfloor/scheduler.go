@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"os"
 	"reflect"
 	"sort"
@@ -421,7 +420,7 @@ func (a *schedulerActor) expireQueued(now time.Time) time.Time {
 		for _, r := range *pending {
 			e := requestError(r, now)
 			state := RequestState{Context: r.context, ElapsedMS: milliseconds(now.Sub(r.received))}
-			drop := e == nil && a.cfg.Mode == modeServing && index == 0 && a.cfg.Policy.FixedBatchSize == 0 && requestDeadlinePolicy(state) == DeadlineDrop && !math.IsInf(minimumService(a.cfg.Policy, state, gap, &costs), 1)
+			drop := e == nil && a.cfg.Mode == modeServing && index == 0 && a.cfg.Policy.FixedBatchSize == 0 && requestDeadlinePolicy(state) == DeadlineDrop && serviceIdentified(a.cfg.Policy, state, gap, &costs)
 			if e == nil && drop && SLOExpired(state) {
 				e = ErrDeadlineInfeasible
 			}

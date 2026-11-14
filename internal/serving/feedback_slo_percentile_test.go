@@ -147,8 +147,6 @@ func TestFeedbackConsumerCapacityWindowAllowsConfiguredTail(t *testing.T) {
 		{"p99 one drop", 1, 99, true},
 		{"p99 ten drops", 10, 99, true},
 		{"p99 eleven drops", 11, 99, false},
-		{"p100 exact target", 0, 100, true},
-		{"p100 one drop", 1, 100, false},
 		{"p99.9 one drop", 1, 99.9, true},
 		{"p99.9 two drops", 2, 99.9, false},
 	} {
@@ -160,7 +158,18 @@ func TestFeedbackConsumerCapacityWindowAllowsConfiguredTail(t *testing.T) {
 			option := snapshot.Options[0]
 			option.Instance.MaxBatch = 1
 			definition.Admission.Policy = AdmissionPolicyReject
-			option.Instance.Profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{1e6})}
+			// One service law covering the percentile's sample floor (6905
+			// records at p99.9); the Workload API rejects p100.
+			floor, err := firstfloor.MinimumServiceSamples(tc.percentile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gap := int64(0)
+			samples := make([]firstfloor.ServiceSample, floor)
+			for j := range samples {
+				samples[j] = firstfloor.ServiceSample{ServiceDurationNanos: 1e6, PrecedingIdleNanos: &gap, TrialID: "synthetic"}
+			}
+			option.Instance.Profile.Batches = []BatchProfile{schedulerTestPairedBatch(BatchProfile{Batch: 1, EnergyPerInputJoules: 1, MemoryBytes: 100}, samples)}
 			// Isolated arrivals complete at exactly 1ms. A middle simultaneous
 			// burst drops precisely misses requests, then isolated work continues.
 			gaps := make([]float64, n)

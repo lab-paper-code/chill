@@ -23,7 +23,9 @@ func (s *schedulerReplayState) completeActions() bool {
 				if i != nil {
 					i.loaded = true
 					i.ready = true
-					i.hasNativeFinish = false // preparation creates a new physical actor
+					// Preparation creates a new physical actor whose ready ends
+					// its warm-up service, so its idle age starts here.
+					i.lastNativeFinish, i.hasNativeFinish, i.hasNativeFinishBounds = a.finish, true, false
 					i.arrivalsKnown = true
 					clear(i.arrivalTimes)
 				}

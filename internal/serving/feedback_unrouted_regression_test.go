@@ -14,7 +14,7 @@ func TestFeedbackConsumerUnroutedCohortPreservesSharedActorInterference(t *testi
 	snapshot.Arrivals = append(snapshot.Arrivals, SchedulerArrival{ID: "fixed-arrival", At: snapshot.Arrivals[0].At, Definition: &fixed, Accepted: true})
 	zero, native := 0.0, 20e6
 	elapsed := int64(20e6)
-	snapshot.Outstanding = []SchedulerRequest{{ID: "fixed-running", Definition: &fixed, Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &zero, NativeSenderElapsedMS: &zero, NativeElapsedNanos: &native, ExchangeElapsedNanos: &elapsed}}
+	snapshot.Outstanding = []SchedulerRequest{{ID: "fixed-running", Definition: &fixed, Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &zero, NativeSenderElapsedMS: &zero, NativeElapsedNanos: &native, PrecedingIdleNanos: new(int64), ExchangeElapsedNanos: &elapsed}}
 	result, err := EvaluateFeedbackCandidate(context.Background(), settings, snapshot, candidate, 1)
 	if err != nil || len(result.InvalidReasons) != 0 || len(result.Workloads) != 2 {
 		t.Fatalf("unrouted cohort must not invalidate an otherwise executable replay: %+v %v", result, err)

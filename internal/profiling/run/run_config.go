@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/prometheus/common/model"
 )
@@ -104,19 +105,6 @@ func (m MeasurementContract) ValidateDurationTolerance() error {
 		return errors.New("measurement duration tolerance must be finite, nonnegative and less than duration")
 	}
 	return nil
-}
-
-// MinimumServiceSamples is quantile coverage at the existing 95% confidence
-// convention, not precision of a percentile estimate or a capacity proof.
-func MinimumServiceSamples(percentile float64) (int, error) {
-	if math.IsNaN(percentile) || math.IsInf(percentile, 0) || percentile <= 0 || percentile >= 100 {
-		return 0, errors.New("Workload SLO percentile must be finite and in (0, 100) for finite sample coverage")
-	}
-	count := math.Ceil(math.Log(.05) / math.Log(percentile/100))
-	if count > float64(int(^uint(0)>>1)) {
-		return 0, errors.New("Workload SLO sample count exceeds the supported range")
-	}
-	return int(count), nil
 }
 
 func (i RunConfig) validateDelivery() error {
@@ -258,7 +246,7 @@ func (i RunConfig) validateMeasurementMode() error {
 	if i.Measurement.SettlingDurationSeconds != 0 {
 		return errors.New("active measurement cannot contain settlingDurationSeconds")
 	}
-	minimum, err := MinimumServiceSamples(i.Measurement.SLOPercentile)
+	minimum, err := firstfloor.MinimumServiceSamples(i.Measurement.SLOPercentile)
 	if err != nil {
 		return err
 	}

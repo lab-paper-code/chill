@@ -107,6 +107,10 @@ spec:
               slo:
                 properties:
                   percentile:
+                    description: |-
+                      Percentile is in (0,100). Its service quantile rests on the sample floor
+                      ceil(ln(1-p)/ln(p)) records, which is infinite at 100.
+                    exclusiveMaximum: true
                     exclusiveMinimum: true
                     maximum: 100
                     minimum: 0
@@ -220,6 +224,10 @@ spec:
                   slo:
                     properties:
                       percentile:
+                        description: |-
+                          Percentile is in (0,100). Its service quantile rests on the sample floor
+                          ceil(ln(1-p)/ln(p)) records, which is infinite at 100.
+                        exclusiveMaximum: true
                         exclusiveMinimum: true
                         maximum: 100
                         minimum: 0

@@ -13,7 +13,7 @@ func TestFeedbackConsumerFrozenDefinitionSLOSurvivesCurrentRelaxation(t *testing
 	definition := snapshot.Workloads[0]
 	frozen := *definition
 	frozen.SLO.TargetLatency = 100 * time.Millisecond
-	frozen.SLO.Percentile = 100
+	frozen.SLO.Percentile = 95
 	frozen.Admission.Policy = AdmissionPolicyDelay
 	definition.Generation++
 	definition.SLO.TargetLatency = time.Second
@@ -42,7 +42,7 @@ func TestFeedbackConsumerFrozenDefinitionPercentileSurvivesCurrentChange(t *test
 	definition := snapshot.Workloads[0]
 	definition.SLO.TargetLatency = 50 * time.Millisecond
 	frozen := *definition
-	frozen.SLO.Percentile = 100
+	frozen.SLO.Percentile = 95
 	frozen.Admission.Policy = AdmissionPolicyDelay
 	definition.Generation++
 	definition.SLO.Percentile = 1
@@ -57,6 +57,6 @@ func TestFeedbackConsumerFrozenDefinitionPercentileSurvivesCurrentChange(t *test
 	}
 	score := result.Workloads[0]
 	if score.Satisfied || score.OnTime != 1 || score.Late != 1 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 60e6 {
-		t.Fatalf("old p100 must judge 30/60ms at 60ms despite current p1: %+v", result)
+		t.Fatalf("old p95 must judge 30/60ms at 60ms despite current p1: %+v", result)
 	}
 }

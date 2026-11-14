@@ -696,7 +696,7 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 			s.out.reasons = appendUnique(s.out.reasons, "MissingFeedbackProfile:"+i.config.ID)
 			return false
 		}
-		if i.idleUnknown && len(i.batch) == 0 {
+		if (i.idleUnknown || !i.hasNativeFinish) && len(i.batch) == 0 {
 			s.out.reasons = appendUnique(s.out.reasons, "UnknownNativeServiceEnd:"+i.config.ID)
 			return false
 		}
@@ -786,16 +786,15 @@ func (s *schedulerReplayState) startChosenBatch(i *schedulerReplayInstance, choi
 	var durationNanos int64
 	var support firstfloor.ConditionalSupport
 	var ok bool
+	percentile := i.batch[0].source.Definition.SLO.Percentile
 	if upper := i.idleUpperNanos(s.now); upper != nil && gap != nil {
 		i.hasBatchIdleBounds, i.batchIdleUpper = true, *upper
-		durationNanos, _, support, ok = b.ServiceDistribution.MaximumQuantileNanos(*gap, *upper, s.rng.Float64()*100)
+		durationNanos, support, ok = b.ServiceDistribution.SampleMaximum(*gap, *upper, percentile, s.rng)
 		s.out.assumptions = appendUnique(s.out.assumptions, "gateway-completion gap interval uses the exact maximum conditional inverse-CDF envelope until the next simulated service completion")
 	} else {
-		var sample firstfloor.ServiceSample
-		sample, support, ok = b.ServiceDistribution.Sample(gap, s.rng)
-		durationNanos = sample.ServiceDurationNanos
+		durationNanos, support, ok = b.ServiceDistribution.Sample(gap, percentile, s.rng)
 	}
-	s.out.conditional.record(gap, support)
+	s.out.conditional.record(support)
 	if !ok {
 		s.out.reasons = append(s.out.reasons, "MissingConditionalServiceSupport:"+i.config.ID)
 		return false

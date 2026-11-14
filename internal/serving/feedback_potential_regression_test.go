@@ -43,7 +43,7 @@ func TestFeedbackConsumerFailurePotentialIncludesBusyResidual(t *testing.T) {
 				snapshot.Instances[0].Capacity = 2
 			}
 			snapshot.Outstanding = []SchedulerRequest{
-				{ID: "running", Definition: snapshot.Workloads[0], Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &zero, NativeSenderElapsedMS: &zero, NativeElapsedNanos: &native, ExchangeElapsedNanos: &elapsed},
+				{ID: "running", Definition: snapshot.Workloads[0], Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &zero, NativeSenderElapsedMS: &zero, NativeElapsedNanos: &native, PrecedingIdleNanos: new(int64), ExchangeElapsedNanos: &elapsed},
 				waiting,
 			}
 			result := feedbackEvaluateForTest(t, settings, snapshot, candidate)

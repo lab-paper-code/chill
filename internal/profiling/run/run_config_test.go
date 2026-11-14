@@ -21,20 +21,6 @@ func TestRunConfigAcceptsTaggedRuntimeImage(t *testing.T) {
 }
 
 func TestSampleCoverageDerivesFromWorkloadPercentile(t *testing.T) {
-	for _, test := range []struct {
-		percentile float64
-		want       int
-	}{{95, 59}, {99, 299}, {90, 29}} {
-		got, err := MinimumServiceSamples(test.percentile)
-		if err != nil || got != test.want {
-			t.Fatalf("percentile %g: count=%d err=%v", test.percentile, got, err)
-		}
-	}
-	for _, percentile := range []float64{0, -1, 100, 101} {
-		if _, err := MinimumServiceSamples(percentile); err == nil {
-			t.Fatalf("accepted percentile %g", percentile)
-		}
-	}
 	config := validRunConfig()
 	config.SchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha18"
 	if err := config.Validate(); err == nil {

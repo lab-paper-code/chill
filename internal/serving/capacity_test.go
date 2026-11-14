@@ -352,18 +352,13 @@ func TestCapacityConditionalSupportWithDispatchOccupancy(t *testing.T) {
 	settings.CapacityWindow, settings.CapacityWindows, settings.CapacityPassingWindows = time.Second, 1, 1
 	settings.CapacityTailSamples = 10
 	settings.DefaultDispatchOccupancyNanos = 0
-	short, long := int64(0), int64(time.Second)
+	// On the ln(1+gap) scale the 1ms-gap and 10s-gap laws meet at
+	// sqrt(1e6*1e10) ns = 100ms: busy and arrival gaps below 100ms read the
+	// fast law, quieter gaps the slow one. Each law is one p95 window (59
+	// records). From 50 req/s fewer than 1% of Poisson gaps exceed 100ms.
+	short, long := int64(time.Millisecond), int64(10*time.Second)
 	batch := &snapshot.Instances[0].Profile.Batches[0]
-	batch.ServiceSamples = []firstfloor.ServiceSample{
-		{ServiceDurationNanos: int64(time.Millisecond), TrialID: "synthetic"},
-		{ServiceDurationNanos: int64(time.Millisecond), PrecedingIdleNanos: &short, TrialID: "synthetic"},
-		{ServiceDurationNanos: int64(100 * time.Millisecond), PrecedingIdleNanos: &long, TrialID: "synthetic"},
-	}
-	var err error
-	batch.ServiceDistribution, err = firstfloor.NewServiceDistribution(batch.ServiceSamples)
-	if err != nil {
-		t.Fatal(err)
-	}
+	*batch = schedulerTestPairedBatch(*batch, schedulerTestGapLaws([2]int64{short, int64(time.Millisecond)}, [2]int64{long, int64(100 * time.Millisecond)}))
 	snapshot.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: 50 * time.Millisecond}
 	without := capacityBuildForTest(t, settings, snapshot)
 	// A marginal mean closes search below 30 req/s despite fast recorded
@@ -376,7 +371,7 @@ func TestCapacityConditionalSupportWithDispatchOccupancy(t *testing.T) {
 	if with.Kappa == nil || *with.Kappa >= *without.Kappa {
 		t.Fatalf("conditional service discarded dispatch occupancy: without=%+v with=%+v", without, with)
 	}
-	if with.ConditionalService == nil || with.ConditionalService.Queries == 0 || with.ConditionalService.MinimumTrialCount != 1 {
+	if with.ConditionalService == nil || with.ConditionalService.Queries == 0 || with.ConditionalService.MinimumRecordCount != 59 {
 		t.Fatalf("conditional support evidence missing: %+v", with)
 	}
 }

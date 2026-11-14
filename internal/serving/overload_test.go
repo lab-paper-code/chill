@@ -33,7 +33,7 @@ func TestHeapOverloadRejectsNewRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = r.InstallInstances([]ReadyInstance{{State: InstanceState{ID: "i", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(),
-		Native: &firstfloor.State{Metadata: firstfloor.Metadata{Policy: firstfloor.Policy{ProfileID: p.ID, MaxBatchSize: snapshot.Instances[0].MaxBatch}}}}, Profile: p, Capacity: 4,
+		Native: &firstfloor.State{LastServiceEndAgeNanos: new(int64), Metadata: firstfloor.Metadata{Policy: firstfloor.Policy{ProfileID: p.ID, MaxBatchSize: snapshot.Instances[0].MaxBatch}}}}, Profile: p, Capacity: 4,
 		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}}); err != nil {
 		t.Fatal(err)
 	}

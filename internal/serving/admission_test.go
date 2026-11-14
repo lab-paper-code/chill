@@ -14,8 +14,10 @@ func admissionTestPolicy() firstfloor.Policy {
 	return firstfloor.Policy{ProfileID: "profile", MaxBatchSize: 2, Batches: (&Profile{ID: "profile", Batches: []BatchProfile{one, two}}).NativeBundle().Batches}
 }
 
+// The 95th percentile's 59-record window keeps survivors for a running
+// batch's residual; a 50th percentile window holds one record.
 func admissionTestRequest(id string) firstfloor.RequestState {
-	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: id, WorkloadUID: "w", Definition: "d", AdmissionPolicy: "Reject", SLO: firstfloor.SLO{Percentile: 50, TargetMS: 1000}}, Phase: phaseQueued}
+	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: id, WorkloadUID: "w", Definition: "d", AdmissionPolicy: "Reject", SLO: firstfloor.SLO{Percentile: 95, TargetMS: 1000}}, Phase: phaseQueued}
 }
 
 func TestAdmissionCompletionIncludesResidualOnceAndSnapshotAge(t *testing.T) {
@@ -78,7 +80,7 @@ func TestAdmissionUsesNormalEDFBeforeDeferredAndAssignment(t *testing.T) {
 	first.Context.WorkloadUID = schedulerTestOther
 	assigned := admissionTestRequest("unobserved")
 	assigned.Context.WorkloadUID = "third"
-	got := EstimateAdmission(AdmissionInput{Policy: admissionTestPolicy(), Observed: []firstfloor.RequestState{first}, Assignments: []firstfloor.RequestState{assigned}, Candidate: candidate})
+	got := EstimateAdmission(AdmissionInput{Policy: admissionTestPolicy(), LastServiceEndAgeNanos: new(int64), Observed: []firstfloor.RequestState{first}, Assignments: []firstfloor.RequestState{assigned}, Candidate: candidate})
 	if !got.Known || got.Completion != 63*time.Millisecond {
 		t.Fatalf("normal/assignment precedence or reserve lost: %+v", got)
 	}
@@ -87,7 +89,7 @@ func TestAdmissionUsesNormalEDFBeforeDeferredAndAssignment(t *testing.T) {
 func TestAdmissionRejectCandidateStillPredictsInfeasibleCompletion(t *testing.T) {
 	candidate := admissionTestRequest("candidate")
 	candidate.Context.SLO.TargetMS = 10
-	got := EstimateAdmission(AdmissionInput{Policy: admissionTestPolicy(), Candidate: candidate})
+	got := EstimateAdmission(AdmissionInput{Policy: admissionTestPolicy(), LastServiceEndAgeNanos: new(int64), Candidate: candidate})
 	if !got.Known || got.Completion != 20*time.Millisecond {
 		t.Fatalf("infeasible candidate lost predicted completion: %+v", got)
 	}
@@ -100,17 +102,14 @@ func TestAdmissionSharedFillWaitIsBounded(t *testing.T) {
 	p.Batches[1].Distribution = p.Batches[0].Distribution
 	candidate := admissionTestRequest("candidate")
 	candidate.ArrivalRate = 100
-	got := EstimateAdmission(AdmissionInput{Policy: p, Candidate: candidate})
+	got := EstimateAdmission(AdmissionInput{Policy: p, LastServiceEndAgeNanos: new(int64), Candidate: candidate})
 	if !got.Known || got.Completion != 40*time.Millisecond {
 		t.Fatalf("fill wait did not consume fixed budget: %+v", got)
 	}
 }
 
 func TestAdmissionPreservesNearestGapOutsideSupportEvidence(t *testing.T) {
-	gap := int64(time.Second)
-	batch := schedulerTestPairedBatch(BatchProfile{Batch: 1}, []firstfloor.ServiceSample{
-		{TrialID: "physical", ServiceDurationNanos: int64(20 * time.Millisecond), PrecedingIdleNanos: &gap},
-	})
+	batch := schedulerTestPairedBatch(BatchProfile{Batch: 1}, schedulerTestGapLaws([2]int64{int64(time.Second), int64(20 * time.Millisecond)}))
 	p := firstfloor.Policy{MaxBatchSize: 1, Batches: (&Profile{Batches: []BatchProfile{batch}}).NativeBundle().Batches}
 	idle := int64(0)
 	got := EstimateAdmission(AdmissionInput{Policy: p, LastServiceEndAgeNanos: &idle, Candidate: admissionTestRequest("candidate")})
@@ -125,7 +124,7 @@ func TestAdmissionProjectionExpiresLifetimeWithoutMutatingSnapshot(t *testing.T)
 			running := admissionTestRequest("running")
 			running.Phase, running.BatchID, running.BatchSize = phaseRunning, 1, 1
 			elapsed := int64(0)
-			running.ExchangeElapsedNanos = &elapsed
+			running.ExchangeElapsedNanos, running.PrecedingIdleNanos = &elapsed, new(int64)
 			remaining := float64(5)
 			queued := admissionTestRequest("expires")
 			queued.Context.SLO.TargetMS = 100
@@ -154,7 +153,7 @@ func TestAdmissionProjectionKeepsLifetimeExpiredRunningOccupancy(t *testing.T) {
 	running.Phase, running.BatchID, running.BatchSize = phaseRunning, 1, 1
 	elapsed := int64(0)
 	remaining := float64(0)
-	running.ExchangeElapsedNanos = &elapsed
+	running.ExchangeElapsedNanos, running.PrecedingIdleNanos = &elapsed, new(int64)
 	running.RemainingLifetimeMS = &remaining
 	got := EstimateAdmission(AdmissionInput{Policy: admissionTestPolicy(), Observed: []firstfloor.RequestState{running}, Candidate: admissionTestRequest("candidate")})
 	if !got.Known || got.Completion != 40*time.Millisecond {
@@ -168,12 +167,12 @@ func TestAdmissionCandidateLifetimeMissIsKnownInfeasible(t *testing.T) {
 			candidate := admissionTestRequest("candidate")
 			lifetime := float64(5)
 			candidate.RemainingLifetimeMS = &lifetime
-			in := AdmissionInput{Policy: admissionTestPolicy(), Candidate: candidate}
+			in := AdmissionInput{Policy: admissionTestPolicy(), LastServiceEndAgeNanos: new(int64), Candidate: candidate}
 			if waiting {
 				running := admissionTestRequest("running")
 				running.Phase, running.BatchID, running.BatchSize = phaseRunning, 1, 1
 				elapsed := int64(0)
-				running.ExchangeElapsedNanos = &elapsed
+				running.ExchangeElapsedNanos, running.PrecedingIdleNanos = &elapsed, new(int64)
 				in.Observed = []firstfloor.RequestState{running}
 			}
 			got := EstimateAdmission(in)
@@ -194,7 +193,7 @@ func TestAdmissionCompletionAtLifetimeIsInfeasible(t *testing.T) {
 	candidate := admissionTestRequest("candidate")
 	lifetime := float64(20)
 	candidate.RemainingLifetimeMS = &lifetime
-	got := EstimateAdmission(AdmissionInput{Policy: admissionTestPolicy(), Candidate: candidate})
+	got := EstimateAdmission(AdmissionInput{Policy: admissionTestPolicy(), LastServiceEndAgeNanos: new(int64), Candidate: candidate})
 	if !got.Known || !got.Infeasible || got.Completion != 20*time.Millisecond || lifetime != 20 {
 		t.Fatalf("completion at native timeout must be infeasible without mutating lifetime: %+v remaining=%v", got, lifetime)
 	}
@@ -210,7 +209,7 @@ func TestAdmissionFillWakesAtEarliestQueuedLifetime(t *testing.T) {
 	expiring.ArrivalRate = 100
 	remaining := float64(5)
 	expiring.RemainingLifetimeMS = &remaining
-	got := EstimateAdmission(AdmissionInput{Policy: p, Observed: []firstfloor.RequestState{expiring}, Candidate: admissionTestRequest("candidate")})
+	got := EstimateAdmission(AdmissionInput{Policy: p, LastServiceEndAgeNanos: new(int64), Observed: []firstfloor.RequestState{expiring}, Candidate: admissionTestRequest("candidate")})
 	if !got.Known || got.Infeasible || got.Completion != 25*time.Millisecond || remaining != 5 {
 		t.Fatalf("fill skipped earlier native lifetime wake: %+v remaining=%v", got, remaining)
 	}

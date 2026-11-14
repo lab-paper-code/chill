@@ -276,7 +276,7 @@ type RequestState struct {
 	DecisionID          string         `json:"decisionID,omitempty"`
 	RemainingLifetimeMS *float64       `json:"remainingLifetimeMS,omitempty"`
 	// Actual IPC-boundary fields. Both are nil until the exchange begins;
-	// a nil preceding idle with nonnil elapsed identifies a startup exchange.
+	// a nil preceding idle with nonnil elapsed is an exchange without an anchor.
 	PrecedingIdleNanos   *int64 `json:"precedingIdleNanos"`
 	ExchangeElapsedNanos *int64 `json:"exchangeElapsedNanos"`
 }

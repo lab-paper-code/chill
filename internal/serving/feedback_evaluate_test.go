@@ -143,7 +143,7 @@ func TestFeedbackConsumerRunningExpiryUsesSameResidualSample(t *testing.T) {
 	post, sender, native := 0.0, 0.0, 20e6
 	elapsed := int64(20e6)
 	life := time.Millisecond
-	snapshot.Outstanding = []SchedulerRequest{{ID: "running", Definition: snapshot.Workloads[0], Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &native, ExchangeElapsedNanos: &elapsed, RemainingLifetime: &life}}
+	snapshot.Outstanding = []SchedulerRequest{{ID: "running", Definition: snapshot.Workloads[0], Phase: phaseRunning, Instance: "i1", BatchID: "actual", Elapsed: 20 * time.Millisecond, CompletionMarginMS: &post, NativeSenderElapsedMS: &sender, NativeElapsedNanos: &native, PrecedingIdleNanos: new(int64), ExchangeElapsedNanos: &elapsed, RemainingLifetime: &life}}
 	result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 	score := result.Workloads[0]
 	if score.Timeout != 1 || score.OnTime+score.Late != 0 || score.SuccessQuantileNanos != nil || score.PotentialExcess == nil || math.Abs(*score.PotentialExcess-2) > 1e-12 {
@@ -167,7 +167,7 @@ func TestFeedbackConsumerSeedAndConditionalSupportRemainDeterministic(t *testing
 	snapshot.PathFeedback = []PathFeedback{{WorkloadUID: snapshot.Workloads[0].UID, TotalNanos: 20e6, PostNanos: 10e6}}
 	one := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 	two := feedbackEvaluateForTest(t, settings, snapshot, candidate)
-	if !reflect.DeepEqual(one, two) || one.ConditionalService == nil || one.ConditionalService.Queries != 2 || one.ConditionalService.StartupQueries != 1 {
+	if !reflect.DeepEqual(one, two) || one.ConditionalService == nil || one.ConditionalService.Queries != 2 {
 		t.Fatalf("same seed/input changed raw conditional sampling: %+v %+v", one, two)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

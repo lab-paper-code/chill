@@ -309,6 +309,22 @@ func schedulerProfileMatches(d *Definition, p *Profile) bool {
 	return d != nil && profilePath(d, p) != nil
 }
 
+// PrepareServiceQuantiles builds, when profiles are loaded and off the decision
+// path, the quantile tables of each definition's SLO percentile in every
+// profile that can serve it. A percentile registered later builds on its first
+// query.
+func PrepareServiceQuantiles(definitions []*Definition, profiles []Profile) {
+	for _, d := range definitions {
+		for j := range profiles {
+			if schedulerProfileMatches(d, &profiles[j]) {
+				for _, b := range profiles[j].Batches {
+					b.ServiceDistribution.Prepare(d.SLO.Percentile)
+				}
+			}
+		}
+	}
+}
+
 func schedulerPlan(settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate) []Action {
 	p := schedulerPlanState{settings: settings, snap: snap, target: &c, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
 	p.changeNodes(c)

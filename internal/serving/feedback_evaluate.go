@@ -332,12 +332,14 @@ func (s *schedulerReplayState) potentialLatency(instance *schedulerReplayInstanc
 	}
 	base += residual
 	count := s.potentialBatchCount(instance, request)
-	var gap *int64
+	// An instance still preparing serves this waiting request as soon as it is
+	// ready, so its first batch follows the warm-up service with no idle.
+	instance.gapNanos = 0
+	gap := &instance.gapNanos
 	if instance.ready {
 		if len(instance.batch) > 0 {
 			// The next decision follows this batch's service and retained occupancy.
 			instance.gapNanos = int64(max(0, instance.finish-instance.nativeFinish))
-			gap = &instance.gapNanos
 		} else {
 			gap = instance.idleNanos(s.now)
 		}
@@ -348,7 +350,7 @@ func (s *schedulerReplayState) potentialLatency(instance *schedulerReplayInstanc
 			continue
 		}
 		service, support, ok := batch.ServiceDistribution.QuantileNanos(gap, request.source.Definition.SLO.Percentile)
-		s.out.conditional.record(gap, support)
+		s.out.conditional.record(support)
 		if ok {
 			best = min(best, base+float64(service)+float64(batch.Batch)*instance.occupancyNanos)
 		}

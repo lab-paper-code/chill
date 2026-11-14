@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -100,6 +101,9 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 		return err
 	}
 	view.Insufficiencies = append(view.Insufficiencies, issues...)
+	// Build the registered services' quantile tables now, outside the lock and
+	// before any control round queries these profiles.
+	serving.PrepareServiceQuantiles(o.execution.SchedulerInputs(time.Now).Workloads, view.Profiles)
 	o.Lock.Lock()
 	defer o.Lock.Unlock()
 	if err := ctx.Err(); err != nil {

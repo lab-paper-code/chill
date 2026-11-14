@@ -28,7 +28,7 @@ Workload는 모델, 전처리, 선택 Dataset, SLO, 과부하 정책과 요청 �
 | `metadata.name`, `metadata.uid` | 이름 변경 불가. 동명 재등록은 새 UID |
 | `spec.modelRef.name`, `spec.preprocessorRef.name` | 필수 catalog 참조 |
 | `spec.datasetRef.name` | 선택 측정 Dataset. 없으면 등록 가능, MissingDataset 대기 |
-| `spec.slo.percentile` | 유한한 `(0,100]` |
+| `spec.slo.percentile` | 유한한 `(0,100)`. 100은 표본 하한 `ceil(ln(1−p)/ln(p))`이 무한해 처리 시간 분위수를 측정할 수 없으므로 거부 |
 | `spec.slo.targetLatency` | 명시 단위의 양수 Go duration |
 | `spec.admission.policy` | `Reject` 또는 `Delay`, 기본 Reject |
 | `spec.admission.maxQueuedRequests` | 양수, 기본1024 |

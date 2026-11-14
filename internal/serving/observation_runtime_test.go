@@ -146,7 +146,7 @@ func runtimeAsyncFixture(t *testing.T, unknown bool) (*Runtime, ReadyInstance, *
 	if err := r.PublishClosed(d, "RestartDrain"); err != nil {
 		t.Fatal(err)
 	}
-	instance := ReadyInstance{State: InstanceState{ID: actual.ID, PodUID: "pod-a", Node: actual.Node, Profile: actual.Profile.ID, Ready: true, NativeVerified: true, ObservedAt: time.Now(), Native: &firstfloor.State{Ready: true, Metadata: firstfloor.Metadata{Policy: firstfloor.Policy{ProfileID: actual.Profile.ID, MaxBatchSize: actual.MaxBatch}}}}, Profile: actual.Profile, OwnerWorkloadUID: d.UID, Routing: map[string]int32{d.UID: 1}, Capacity: 1,
+	instance := ReadyInstance{State: InstanceState{ID: actual.ID, PodUID: "pod-a", Node: actual.Node, Profile: actual.Profile.ID, Ready: true, NativeVerified: true, ObservedAt: time.Now(), Native: &firstfloor.State{Ready: true, LastServiceEndAgeNanos: new(int64), Metadata: firstfloor.Metadata{Policy: firstfloor.Policy{ProfileID: actual.Profile.ID, MaxBatchSize: actual.MaxBatch}}}}, Profile: actual.Profile, OwnerWorkloadUID: d.UID, Routing: map[string]int32{d.UID: 1}, Capacity: 1,
 		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil }}
 	return r, instance, d, log, base
 }

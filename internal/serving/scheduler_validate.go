@@ -122,6 +122,10 @@ func schedulerValidateObservationTimes(snapshot *SchedulerSnapshot) []string {
 		if !i.NativeSpanAt.IsZero() && (i.NativeSpanAt.Before(i.ObservedAt) || i.NativeSpanAt.After(snapshot.At)) {
 			reasons = appendUnique(reasons, "InvalidNativeSpanAnchor:"+i.ID)
 		}
+		// A ready actor was warmed, so its last service end is known.
+		if i.LastServiceEndAgeNanos == nil {
+			reasons = appendUnique(reasons, "UnknownNativeServiceEnd:"+i.ID)
+		}
 		if upper := i.LastServiceEndAgeUpperNanos; upper != nil && (i.LastServiceEndAgeNanos == nil || *i.LastServiceEndAgeNanos < 0 || *upper < *i.LastServiceEndAgeNanos) {
 			reasons = appendUnique(reasons, "InvalidNativeServiceEndBounds:"+i.ID)
 		}
