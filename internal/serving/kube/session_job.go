@@ -1,12 +1,15 @@
 package kube
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"path"
 	"strconv"
@@ -147,16 +150,16 @@ func (l sessionLevelWire) row() profilederivation.DriverLevelRow {
 	return row
 }
 
-// runSessionLoad creates the load Job, waits for it to end and returns the
-// load container's level table. Cleanup deletes the Job on every exit.
+// runSessionLoad creates the load Job and reads its level table and completed
+// batch rows after it ends. Cleanup deletes the Job on every exit.
 // A Job that ends without a level table fails with its Pod's failure reason.
 // prestartTimeout bounds creation and startup only, until the load container runs.
-func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job, prestartTimeout time.Duration) (table sessionLevelTable, err error) {
+func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job, prestartTimeout time.Duration, maxLogBytes int64) (table sessionLevelTable, rows map[string][]profilederivation.NativeBatchRow, err error) {
 	startCtx, cancelStart := context.WithTimeout(ctx, prestartTimeout)
 	defer cancelStart()
 	jobs := c.kube.BatchV1().Jobs(job.Namespace)
 	if _, err := jobs.Create(startCtx, job, meta.CreateOptions{}); err != nil {
-		return sessionLevelTable{}, err
+		return table, nil, err
 	}
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
@@ -212,18 +215,36 @@ func (c *SchedulerController) runSessionLoad(ctx context.Context, job *batch.Job
 				}
 			}
 		}
-		return sessionLevelTable{}, fmt.Errorf("session-load did not start within %s: %w%s", prestartTimeout, err, detail.String())
+		return table, nil, fmt.Errorf("session-load did not start within %s: %w%s", prestartTimeout, err, detail.String())
 	}
 	if err == nil && ended == nil && refused == "" {
 		err = wait(ctx, false)
 	}
 	if err != nil {
-		return sessionLevelTable{}, err
+		return table, nil, err
 	}
 	if refused != "" {
-		return sessionLevelTable{}, errors.New(refused)
+		return table, nil, errors.New(refused)
 	}
-	return c.sessionLoadResult(ctx, job, ended)
+	table, err = c.sessionLoadResult(ctx, job, ended)
+	if err != nil || table.Error != "" {
+		return table, nil, err
+	}
+	rows, err = c.sessionLoadRows(ctx, job, maxLogBytes)
+	return table, rows, err
+}
+
+func (c *SchedulerController) sessionLoadRows(ctx context.Context, job *batch.Job, maxBytes int64) (rows map[string][]profilederivation.NativeBatchRow, err error) {
+	pod, err := c.sessionLoadPod(ctx, job)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := c.sessionLoadLog(ctx, pod)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, stream.Close()) }()
+	return readSessionBatchRows(stream, maxBytes)
 }
 
 func (c *SchedulerController) sessionLoadResult(ctx context.Context, job *batch.Job, ended *batch.JobCondition) (sessionLevelTable, error) {
@@ -253,6 +274,33 @@ func (c *SchedulerController) sessionLoadResult(ctx context.Context, job *batch.
 		return sessionLevelTable{}, fmt.Errorf("session-load Pod %s: %s", pod.Status.Reason, pod.Status.Message)
 	}
 	return sessionLevelTable{}, fmt.Errorf("session-load Job %s: %s", ended.Reason, ended.Message)
+}
+
+// readSessionBatchRows streams the finished load log under the existing
+// session result byte limit, without a Pod-log tail or delivery-time window.
+func readSessionBatchRows(stream io.Reader, maxBytes int64) (map[string][]profilederivation.NativeBatchRow, error) {
+	limited := &io.LimitedReader{R: stream, N: maxBytes + 1}
+	scanner := bufio.NewScanner(limited)
+	rows := map[string][]profilederivation.NativeBatchRow{}
+	for scanner.Scan() {
+		line, prefixed := bytes.CutPrefix(scanner.Bytes(), []byte(profilederivation.SessionBatchRowPrefix))
+		if !prefixed {
+			continue
+		}
+		var record profilederivation.SessionBatchRow
+		if err := json.Unmarshal(line, &record); err != nil {
+			return nil, fmt.Errorf("decode session batch row: %w", err)
+		}
+		if record.WorkloadUID == "" {
+			return nil, errors.New("session batch row has no workload identifier")
+		}
+		row := record.NativeRow()
+		rows[record.WorkloadUID] = append(rows[record.WorkloadUID], row)
+	}
+	if limited.N == 0 {
+		return nil, fmt.Errorf("session-load log exceeds the %d byte session result limit", maxBytes)
+	}
+	return rows, scanner.Err()
 }
 
 // sessionLoadPod is the load Job's Pod, nil before the Job created it.

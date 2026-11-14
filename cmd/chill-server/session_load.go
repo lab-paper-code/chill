@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -20,13 +21,13 @@ import (
 	"unicode/utf8"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	gateway "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 )
 
-// session-load drives the load levels of one batch size of a profile
-// measurement session against a native instance's Service address. It keeps
-// counters only and reports one level table as the container termination
-// message.
+// session-load drives one batch size's levels through the native Service.
+// Completed response batches go to stdout; the level table goes to the
+// container termination message.
 
 const (
 	sessionTerminationPath = "/dev/termination-log"
@@ -88,13 +89,12 @@ func sessionLoadCommand(args []string, terminationPath string, stdout io.Writer)
 	config, err := parseSessionLoad(args)
 	var levels []sessionLevel
 	if err == nil {
-		levels, err = runSessionLoad(context.Background(), config)
+		levels, err = runSessionLoad(context.Background(), config, stdout)
 	}
 	message, encodeErr := sessionTerminationMessage(levels, err)
 	if encodeErr != nil {
 		return errors.Join(err, encodeErr)
 	}
-	_, _ = stdout.Write(append(message, '\n'))
 	return errors.Join(err, os.WriteFile(terminationPath, message, 0o600))
 }
 
@@ -147,9 +147,27 @@ type sessionLoad struct {
 	client    *gateway.Client
 	transport *http.Transport
 	inferURL  string
+	output    sessionBatchOutput
 	// sent indexes dataset records over the run; batches counts completed
 	// batches of earlier levels.
 	sent, batches int
+}
+
+// sessionBatchOutput keeps stdout off the request loop. Its bufio writer
+// encodes into memory during a level and drains stdout only after requests end.
+type sessionBatchOutput struct {
+	buffer bytes.Buffer
+	writer *bufio.Writer
+	stdout io.Writer
+}
+
+func (o *sessionBatchOutput) flush() error {
+	if err := o.writer.Flush(); err != nil {
+		return err
+	}
+	_, err := o.buffer.WriteTo(o.stdout)
+	o.buffer.Reset()
+	return err
 }
 
 func newSessionLoad(c sessionLoadConfig, records []profilingRecord) *sessionLoad {
@@ -158,24 +176,28 @@ func newSessionLoad(c sessionLoadConfig, records []profilingRecord) *sessionLoad
 		config: c, records: records, client: client, transport: transport,
 		inferURL: strings.TrimRight(c.endpoint, "/") + "/v2/models/" + url.PathEscape(c.model) + "/infer",
 	}
+	s.output.writer = bufio.NewWriter(&s.output.buffer)
+	s.output.stdout = io.Discard
 	s.source.fields, s.source.upperBytes = c.fields, c.requestUpperBytes
 	return s
 }
 
 // runSessionLoad runs saturation, mid and, when asked, sparse. A mid lifetime
 // expiry preserves its row and allows sparse to run after physical idle.
-func runSessionLoad(ctx context.Context, c sessionLoadConfig) ([]sessionLevel, error) {
+func runSessionLoad(ctx context.Context, c sessionLoadConfig, stdout io.Writer) (levels []sessionLevel, err error) {
 	records, err := readProfilingRecords(ctx, c.dataset, c.fields, c.requestUpperBytes)
 	if err != nil {
 		return nil, err
 	}
 	s := newSessionLoad(c, records)
 	defer s.transport.CloseIdleConnections()
+	s.output.stdout = stdout
+	defer func() { err = errors.Join(err, s.output.flush()) }()
 	kinds := []string{sessionSaturation, sessionMid}
 	if c.sparse {
 		kinds = append(kinds, sessionSparse)
 	}
-	levels := make([]sessionLevel, 0, len(kinds))
+	levels = make([]sessionLevel, 0, len(kinds))
 	for _, kind := range kinds {
 		var rate float64
 		if kind == sessionMid {
@@ -184,6 +206,10 @@ func runSessionLoad(ctx context.Context, c sessionLoadConfig) ([]sessionLevel, e
 			}
 		}
 		level, err := s.level(ctx, kind, rate)
+		if flushErr := s.output.flush(); flushErr != nil {
+			level.EndReason, level.Detail = sessionFailed, flushErr.Error()
+			err = errors.Join(err, flushErr)
+		}
 		// Cancelled or expired requests may still execute natively.
 		endedEarly := level.EndReason == sessionRequestLifetimeExpired || level.EndReason == sessionLevelLimitReached
 		if err == nil && endedEarly {
@@ -402,7 +428,7 @@ func (l *sessionLevelRun) receive(result sessionResult) {
 		// Saturation requires two batches plus delivery margin within lifetime.
 		l.end(sessionServiceOverLifetime, nativeErr.message, nil)
 	default:
-		l.end(sessionFailed, "", result.err)
+		l.end(sessionFailed, result.err.Error(), result.err)
 	}
 }
 
@@ -410,10 +436,26 @@ func (l *sessionLevelRun) count(result sessionResult) {
 	if !result.at.Before(l.lagEnd) {
 		l.counter.afterLag++
 	}
-	service, completed := l.counter.add(result.progress)
-	if !completed || l.terminal {
+	row, completed, err := l.counter.add(result.progress)
+	if err != nil {
+		l.end(sessionFailed, err.Error(), err)
 		return
 	}
+	if !completed {
+		return
+	}
+	raw, err := json.Marshal(profilederivation.SessionBatchRow{WorkloadUID: l.row.WorkloadUID, NativeBatchRow: row})
+	if err == nil {
+		_, err = fmt.Fprintf(l.s.output.writer, "%s%s\n", profilederivation.SessionBatchRowPrefix, raw)
+	}
+	if err != nil {
+		l.end(sessionFailed, err.Error(), err)
+		return
+	}
+	if l.terminal {
+		return
+	}
+	service := time.Duration(row.ServiceDurationNanos)
 	c := l.s.config
 	switch l.row.Kind {
 	case sessionSparse:
@@ -440,44 +482,63 @@ func (l *sessionLevelRun) finish() sessionLevel {
 	return row
 }
 
-// sessionProgress is the part of a native response the session counts.
+// sessionProgress is the finished executor evidence carried by a response.
 type sessionProgress struct {
-	BatchID       uint64                `json:"batchID"`
-	BatchSize     int                   `json:"batchSize"`
-	ServiceSample *native.ServiceSample `json:"serviceSample"`
+	BatchID       uint64                    `json:"batchID"`
+	BatchSize     int                       `json:"batchSize"`
+	At            time.Time                 `json:"at"`
+	ServiceSample *native.ServiceSample     `json:"serviceSample"`
+	NativeHTTP    *native.HTTPRequestTiming `json:"nativeHTTP"`
 }
 
 // sessionCounter is a level's whole retained state: batches still awaiting
 // member responses, bounded by the outstanding requests, and counts.
 type sessionCounter struct {
-	open                               map[uint64]int
+	open                               map[uint64]sessionOpenBatch
 	batches, inputs, afterLag, samples int
 }
 
-func newSessionCounter() sessionCounter {
-	return sessionCounter{open: make(map[uint64]int)}
+type sessionOpenBatch struct {
+	row       profilederivation.NativeBatchRow
+	remaining int
 }
 
-// add counts one member response and reports the batch's service time when
-// this response completes the batch. A batch counts as a service sample once;
-// a startup execution, which has no preceding idle gap, does not.
-func (c *sessionCounter) add(p sessionProgress) (time.Duration, bool) {
-	c.inputs++
-	service := time.Duration(p.ServiceSample.ServiceDurationNanos)
-	remaining, seen := c.open[p.BatchID]
+func newSessionCounter() sessionCounter {
+	return sessionCounter{open: make(map[uint64]sessionOpenBatch)}
+}
+
+// add folds member responses and counts only complete batches. The first
+// execution, without a preceding idle gap, is not a service sample.
+func (c *sessionCounter) add(p sessionProgress) (profilederivation.NativeBatchRow, bool, error) {
+	known, seen := c.open[p.BatchID]
 	if !seen {
-		remaining = p.BatchSize
-		if p.ServiceSample.PrecedingIdleNanos != nil {
-			c.samples++
-		}
+		known = sessionOpenBatch{remaining: p.BatchSize, row: profilederivation.NativeBatchRow{
+			BatchID: p.BatchID, BatchSize: p.BatchSize, FinishedAt: p.At,
+			ServiceDurationNanos: p.ServiceSample.ServiceDurationNanos, PrecedingIdleNanos: p.ServiceSample.PrecedingIdleNanos,
+		}}
+	} else if row := known.row; row.BatchSize != p.BatchSize || !row.FinishedAt.Equal(p.At) ||
+		row.ServiceDurationNanos != p.ServiceSample.ServiceDurationNanos ||
+		(row.PrecedingIdleNanos == nil) != (p.ServiceSample.PrecedingIdleNanos == nil) ||
+		row.PrecedingIdleNanos != nil && *row.PrecedingIdleNanos != *p.ServiceSample.PrecedingIdleNanos {
+		return profilederivation.NativeBatchRow{}, false,
+			fmt.Errorf("members of native batch %d report different batch timing", p.BatchID)
 	}
-	if remaining--; remaining > 0 {
-		c.open[p.BatchID] = remaining
-		return service, false
+	enqueued := p.NativeHTTP.HandlerEnteredAt.Add(time.Duration(*p.NativeHTTP.EnqueueNanos))
+	if enqueued.After(known.row.LatestEnqueuedAt) {
+		known.row.LatestEnqueuedAt = enqueued
+	}
+	c.inputs++
+	known.remaining--
+	if known.remaining > 0 {
+		c.open[p.BatchID] = known
+		return known.row, false, nil
 	}
 	delete(c.open, p.BatchID)
 	c.batches++
-	return service, true
+	if known.row.PrecedingIdleNanos != nil {
+		c.samples++
+	}
+	return known.row, true, nil
 }
 
 type sessionResult struct {
@@ -525,9 +586,14 @@ func (s *sessionLoad) send(
 		}
 		if err := json.Unmarshal(response.Bytes(), &body); err != nil {
 			result.err = fmt.Errorf("decode native inference response: %w", err)
-		} else if p := body.Progress; p.BatchID == 0 || p.BatchSize != s.config.batch || p.ServiceSample == nil ||
-			p.ServiceSample.ServiceDurationNanos <= 0 {
-			result.err = fmt.Errorf("native inference response lacks the service of a completed batch of %d", s.config.batch)
+		} else if p := body.Progress; p.BatchID == 0 || p.At.IsZero() ||
+			p.ServiceSample == nil || p.ServiceSample.ServiceDurationNanos <= 0 ||
+			p.ServiceSample.PrecedingIdleNanos != nil && *p.ServiceSample.PrecedingIdleNanos < 0 ||
+			p.NativeHTTP == nil || p.NativeHTTP.HandlerEnteredAt.IsZero() ||
+			p.NativeHTTP.EnqueueNanos == nil || *p.NativeHTTP.EnqueueNanos < 0 {
+			result.err = fmt.Errorf("native inference response lacks the timing of a completed batch of %d", s.config.batch)
+		} else if body.Progress.BatchSize != s.config.batch {
+			result.err = fmt.Errorf("members of native batch %d report different batch timing", body.Progress.BatchID)
 		}
 		result.progress = body.Progress
 	}

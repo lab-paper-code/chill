@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +18,7 @@ import (
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 // sessionFake is a fixed-batch native executor: it answers once B requests
@@ -176,14 +179,14 @@ func (f *sessionFake) execute() {
 		if status == 0 || expired {
 			f.finished[kind]++
 			f.nativeRows[kind] = append(f.nativeRows[kind], profilederivation.NativeBatchRow{BatchID: id, BatchSize: f.batch,
-				StartedAt: started, FinishedAt: lastEnd, ServiceDurationNanos: int64(reported),
+				StartedAt: lastEnd.Add(-reported), FinishedAt: lastEnd, ServiceDurationNanos: int64(reported),
 				PrecedingIdleNanos: idle, LatestEnqueuedAt: started})
 		}
 		for _, member := range members {
 			delete(f.active, member.id)
 		}
 		f.mu.Unlock()
-		for _, member := range members {
+		for index, member := range members {
 			if expired {
 				continue
 			}
@@ -199,6 +202,11 @@ func (f *sessionFake) execute() {
 					BatchID: id, BatchSize: f.batch, BatchRequestIDs: ids,
 					ServiceSample: &native.ServiceSample{
 						ServiceDurationNanos: int64(reported), PrecedingIdleNanos: idle, TrialID: member.trial,
+					},
+					At: lastEnd,
+					NativeHTTP: &native.HTTPRequestTiming{
+						HandlerEnteredAt: started.Add(-time.Duration(f.batch-index) * time.Nanosecond),
+						EnqueueNanos:     sessionNanos(1),
 					},
 				},
 			})
@@ -273,7 +281,8 @@ func TestSessionLoadLevelsWaitForPowerWindowAfterSamples(t *testing.T) {
 			fake := newSessionFake(t, 2, fixedService(time.Millisecond), nil)
 			c := sessionTestConfig(t, fake.server.URL, 2)
 			c.sparse = sparse
-			levels, err := runSessionLoad(context.Background(), c)
+			var stdout bytes.Buffer
+			levels, err := runSessionLoad(context.Background(), c, &stdout)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -284,6 +293,7 @@ func TestSessionLoadLevelsWaitForPowerWindowAfterSamples(t *testing.T) {
 			if len(levels) != len(kinds) {
 				t.Fatalf("levels = %+v", levels)
 			}
+			assertSessionBatchOutput(t, stdout.String(), levels, fake)
 			for index, kind := range kinds {
 				level := levels[index]
 				if level.Kind != kind || level.WorkloadUID != "sess/2/"+kind || level.EndReason != sessionSamplesReached ||
@@ -310,7 +320,7 @@ func TestSessionLevelDeadlineRetainsCompletedCounts(t *testing.T) {
 	}, nil)
 	config := sessionTestConfig(t, fake.server.URL, 2)
 	config.minSamples, config.levelLimit = 1000, 150*time.Millisecond
-	levels, _ := runSessionLoad(context.Background(), config)
+	levels, _ := runSessionLoad(context.Background(), config, io.Discard)
 	if len(levels) != 1 {
 		t.Fatalf("level limit lost its actual outcome: %+v", levels)
 	}
@@ -365,7 +375,7 @@ func TestSessionLoadSparseBatchBeyondLifetimeEndsRun(t *testing.T) {
 	})
 	c := sessionTestConfig(t, fake.server.URL, 2)
 	c.minSamples, c.sparse = 50, true
-	levels, err := runSessionLoad(context.Background(), c)
+	levels, err := runSessionLoad(context.Background(), c, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +402,7 @@ func TestSessionLoadAllocationFailureSaysWhetherABatchCompleted(t *testing.T) {
 				}
 				return 0, ""
 			})
-			levels, err := runSessionLoad(context.Background(), sessionTestConfig(t, fake.server.URL, 1))
+			levels, err := runSessionLoad(context.Background(), sessionTestConfig(t, fake.server.URL, 1), io.Discard)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -433,7 +443,8 @@ func TestSessionLoadCommandLeadsWithNativeFailureWithinBound(t *testing.T) {
 			}
 			if err == nil || !strings.HasPrefix(err.Error(), test.want) || len(message) > sessionTerminationBytes ||
 				!bytes.HasPrefix(message, []byte(`{"error":"native inference HTTP 503: `)) ||
-				stdout.String() != string(message)+"\n" || json.Unmarshal(message, &report) != nil ||
+				!strings.HasPrefix(stdout.String(), profilederivation.SessionBatchRowPrefix) ||
+				json.Unmarshal(message, &report) != nil ||
 				!strings.HasPrefix(report.Error, test.want) || len(report.Error) > sessionErrorBytes {
 				t.Fatalf("error %v, termination message %d bytes: %s", err, len(message), message)
 			}
@@ -475,14 +486,19 @@ func TestSessionCounterRetainsFixedStateOverRequests(t *testing.T) {
 	counter := newSessionCounter()
 	idle := int64(1)
 	for id := uint64(1); counter.batches < 400_000; id += 2 {
-		first := sessionProgress{BatchID: id, BatchSize: 4, ServiceSample: &native.ServiceSample{
-			ServiceDurationNanos: 1e6, PrecedingIdleNanos: &idle}}
+		first := sessionProgress{BatchID: id, BatchSize: 4, At: time.Unix(100, 0),
+			NativeHTTP:    &native.HTTPRequestTiming{HandlerEnteredAt: time.Unix(99, 0), EnqueueNanos: &idle},
+			ServiceSample: &native.ServiceSample{ServiceDurationNanos: 1e6, PrecedingIdleNanos: &idle}}
 		second := first
 		second.BatchID++
 		// Two batches answer interleaved, as outstanding batches do.
 		for range 4 {
-			counter.add(first)
-			counter.add(second)
+			if _, _, err := counter.add(first); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := counter.add(second); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if len(counter.open) != 0 {
 			t.Fatalf("%d completed batches still retained after batch %d", len(counter.open), id)
@@ -503,7 +519,7 @@ func TestSessionLoadMidLifetimeExpiryContinuesToSparse(t *testing.T) {
 	})
 	config := sessionTestConfig(t, fake.server.URL, 1)
 	config.sparse = true
-	levels, err := runSessionLoad(context.Background(), config)
+	levels, err := runSessionLoad(context.Background(), config, io.Discard)
 	if err != nil || len(levels) != 3 || levels[1].EndReason != "RequestLifetimeExpired" ||
 		levels[1].Detail != "native inference HTTP 408: "+body || levels[2].EndReason != sessionSamplesReached {
 		t.Fatalf("levels %+v error %v", levels, err)
@@ -519,7 +535,7 @@ func TestSessionLoadMidExpiryWaitsForPhysicalCompletion(t *testing.T) {
 	})
 	config := sessionTestConfig(t, fake.server.URL, 1)
 	config.sparse, config.midRatio, config.minSamples = true, .99, 100
-	levels, err := runSessionLoad(context.Background(), config)
+	levels, err := runSessionLoad(context.Background(), config, io.Discard)
 	if err != nil || len(levels) != 3 {
 		t.Fatalf("levels %+v error %v", levels, err)
 	}
@@ -579,9 +595,199 @@ func TestSessionLoadExpiryIdleWaitIsBounded(t *testing.T) {
 	fake.mu.Unlock()
 	config := sessionTestConfig(t, fake.server.URL, 1)
 	config.sparse, config.levelLimit = true, 200*time.Millisecond
-	levels, err := runSessionLoad(context.Background(), config)
+	levels, err := runSessionLoad(context.Background(), config, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "did not become idle within 200ms") ||
 		!strings.Contains(err.Error(), "native inference HTTP 408") || len(levels) != 2 {
 		t.Fatalf("levels %+v error %v", levels, err)
+	}
+}
+
+func sessionNanos(n int64) *int64 { return &n }
+
+func assertSessionBatchOutput(t testing.TB, stdout string, levels []sessionLevel, fake *sessionFake) {
+	t.Helper()
+	byLevel := map[string][]profilederivation.NativeBatchRow{}
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		raw, found := strings.CutPrefix(line, profilederivation.SessionBatchRowPrefix)
+		var record profilederivation.SessionBatchRow
+		if !found || json.Unmarshal([]byte(raw), &record) != nil {
+			t.Fatalf("invalid batch line %q", line)
+		}
+		byLevel[record.WorkloadUID] = append(byLevel[record.WorkloadUID], record.NativeRow())
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	for _, level := range levels {
+		rows := byLevel[level.WorkloadUID]
+		expected := fake.nativeRows[level.Kind]
+		if len(rows) != level.CompletedBatches || len(rows) != len(expected) {
+			t.Fatalf("%s emitted %d batches, table %d, executor %d",
+				level.Kind, len(rows), level.CompletedBatches, len(expected))
+		}
+		for index, row := range rows {
+			want := expected[index]
+			sameIdle := (row.PrecedingIdleNanos == nil) == (want.PrecedingIdleNanos == nil) &&
+				(row.PrecedingIdleNanos == nil || *row.PrecedingIdleNanos == *want.PrecedingIdleNanos)
+			if row.BatchID != want.BatchID || row.BatchSize != want.BatchSize || !row.FinishedAt.Equal(want.FinishedAt) ||
+				row.ServiceDurationNanos != want.ServiceDurationNanos || !row.StartedAt.Equal(want.StartedAt) ||
+				!sameIdle || !row.LatestEnqueuedAt.Equal(want.LatestEnqueuedAt) {
+				t.Fatalf("emitted batch %+v, executor %+v", row, want)
+			}
+		}
+	}
+}
+
+func TestSessionCounterRejectsConflictingBatchTiming(t *testing.T) {
+	base := sessionProgress{BatchID: 1, BatchSize: 2, At: time.Unix(100, 0),
+		ServiceSample: &native.ServiceSample{ServiceDurationNanos: 100, PrecedingIdleNanos: sessionNanos(5)},
+		NativeHTTP:    &native.HTTPRequestTiming{HandlerEnteredAt: time.Unix(99, 0), EnqueueNanos: sessionNanos(1)}}
+	for _, change := range []string{"size", "finish", "service", "idle presence", "idle value"} {
+		t.Run(change, func(t *testing.T) {
+			counter := newSessionCounter()
+			if _, completed, err := counter.add(base); completed || err != nil {
+				t.Fatalf("first member completed %v: %v", completed, err)
+			}
+			next := base
+			sample := *base.ServiceSample
+			next.ServiceSample = &sample
+			switch change {
+			case "size":
+				next.BatchSize++
+			case "finish":
+				next.At = next.At.Add(time.Nanosecond)
+			case "service":
+				sample.ServiceDurationNanos++
+			case "idle presence":
+				sample.PrecedingIdleNanos = nil
+			case "idle value":
+				sample.PrecedingIdleNanos = sessionNanos(6)
+			}
+			if _, completed, err := counter.add(next); completed || err == nil ||
+				err.Error() != "members of native batch 1 report different batch timing" {
+				t.Fatalf("conflict completed %v: %v", completed, err)
+			}
+		})
+	}
+}
+
+type sessionFailWriter struct{ err error }
+
+func (w sessionFailWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestSessionLoadStdoutFailureFailsJob(t *testing.T) {
+	fake := newSessionFake(t, 2, fixedService(time.Millisecond), nil)
+	sentence := errors.New("stdout pipe closed")
+	config := sessionTestConfig(t, fake.server.URL, 2)
+	levels, err := runSessionLoad(context.Background(), config, sessionFailWriter{sentence})
+	if !errors.Is(err, sentence) || len(levels) != 1 ||
+		levels[0].EndReason != sessionFailed || levels[0].Detail != sentence.Error() {
+		t.Fatalf("stdout failure lost: levels %+v error %v", levels, err)
+	}
+}
+
+// The real actor, HTTP handler and ORT runner provide every batch row through
+// the load driver's response path. No instance Pod log is read.
+func TestSessionMeasurementRealNative(t *testing.T) {
+	command := fixtures.RealFirstfloorCommand(t)
+	root, directory := command[2], command[3]
+	const batch = 2
+	config := native.Config{Mode: "profiling", Backend: "ort-cpu", Model: "classifier", Inputs: []string{"image"},
+		Outputs: []string{"label"}, BatchSizes: []int{batch}, MaxBatchSize: batch, WarmupIterations: 2,
+		MaxQueueRequests: 64, MaxQueueBytes: 64 << 20, MaxRequestBytes: 4 << 20, RunnerTimeoutMS: 60_000,
+		Policy: native.Policy{FixedBatchSize: batch}}
+	config.BuildRunnerCommand()
+	relocate := map[string]string{
+		"/opt/chill/runtime/firstfloor/runner.py": filepath.Join(root, "runtime/firstfloor/runner.py"),
+		"/model":        filepath.Join(directory, "model"),
+		"/preprocessor": filepath.Join(directory, "preprocessor"),
+	}
+	for index, argument := range config.RunnerCommand {
+		if path, ok := relocate[argument]; ok {
+			config.RunnerCommand[index] = path
+		}
+	}
+	if err := native.ValidateConfig(&config); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	runner, err := native.StartRunner(ctx, &config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := native.NewScheduler(ctx, &config, runner)
+	defer func() {
+		cancel()
+		<-scheduler.Done()
+	}()
+	server := httptest.NewServer(native.NewHandler(scheduler))
+	defer server.Close()
+	for !scheduler.Ready() {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	load := sessionTestConfig(t, server.URL, batch)
+	load.dataset = filepath.Join(directory, "dataset")
+	var stdout bytes.Buffer
+	termination := filepath.Join(t.TempDir(), "termination-log")
+	if err := sessionLoadCommand(sessionTestArgs(load), termination, &stdout); err != nil {
+		t.Fatal(err)
+	}
+	message, err := os.ReadFile(termination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var table struct {
+		Levels []sessionLevel `json:"levels"`
+	}
+	if err := json.Unmarshal(message, &table); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		raw, ok := strings.CutPrefix(line, profilederivation.SessionBatchRowPrefix)
+		var record profilederivation.SessionBatchRow
+		if !ok || json.Unmarshal([]byte(raw), &record) != nil {
+			t.Fatalf("invalid batch line %q", line)
+		}
+		row := record.NativeRow()
+		if row.BatchID == 0 || row.BatchSize != batch || row.FinishedAt.IsZero() || row.ServiceDurationNanos <= 0 ||
+			!row.StartedAt.Equal(row.FinishedAt.Add(-time.Duration(row.ServiceDurationNanos))) ||
+			row.LatestEnqueuedAt.IsZero() || row.PrecedingIdleNanos == nil || *row.PrecedingIdleNanos < 0 {
+			t.Fatalf("real executor batch lacks timing: %+v", row)
+		}
+		counts[record.WorkloadUID]++
+	}
+	if len(table.Levels) != 3 || len(counts) != len(table.Levels) {
+		t.Fatalf("driver levels %+v emitted counts %v", table.Levels, counts)
+	}
+	for _, level := range table.Levels {
+		if level.EndReason != sessionSamplesReached || counts[level.WorkloadUID] != level.CompletedBatches ||
+			level.CompletedInputs != level.CompletedBatches*batch {
+			t.Fatalf("real driver level %+v emitted %d batches", level, counts[level.WorkloadUID])
+		}
+	}
+}
+
+func TestSessionLoadUnexpectedBatchSizeFailsWithBatchTimingSentence(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		now := time.Now().UTC()
+		response := native.Response{Progress: native.Progress{BatchID: 1, BatchSize: 3, At: now,
+			ServiceSample: &native.ServiceSample{ServiceDurationNanos: 1},
+			NativeHTTP:    &native.HTTPRequestTiming{HandlerEnteredAt: now.Add(-time.Second), EnqueueNanos: sessionNanos(1)}}}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	config := sessionTestConfig(t, server.URL, 2)
+	levels, err := runSessionLoad(context.Background(), config, io.Discard)
+	const sentence = "members of native batch 1 report different batch timing"
+	if err == nil || err.Error() != sentence || len(levels) != 1 ||
+		levels[0].EndReason != sessionFailed || levels[0].Detail != sentence || levels[0].CompletedBatches != 0 {
+		t.Fatalf("batch disagreement lost: levels %+v error %v", levels, err)
 	}
 }

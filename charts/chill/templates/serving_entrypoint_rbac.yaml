@@ -135,7 +135,7 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{- $loadRole := printf "%s-load" $name }}
 ---
-# Dispatch-occupancy measurements run their load Job here.
+# Dispatch-occupancy and profile-session measurements run their load Job here.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -147,6 +147,9 @@ rules:
   - apiGroups: [batch]
     resources: [jobs]
     verbs: [create, get, list, delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

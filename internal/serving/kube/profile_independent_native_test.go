@@ -31,10 +31,9 @@ import (
 // Covered: a profile-less fixed-batch measurement instance prepared through
 // the operations path reaches native ready, and saturation requests carrying
 // the session's level workload identifier execute in batches of B, every one
-// after a known idle gap (warm-up covered B). Not covered: reading those rows
-// back through the observation log (the observer ingests native progress from
-// the Pod log stream, which no fake carries), deriving and publishing a
-// profile from them, and serving from that profile.
+// after a known idle gap (warm-up covered B). The cmd/chill-server real-native
+// test covers folding response batches and emitting the load driver's rows.
+// Deriving and publishing a profile and serving from it are not covered here.
 func TestSessionMeasurementRealNative(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
