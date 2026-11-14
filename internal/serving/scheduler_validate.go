@@ -244,11 +244,8 @@ func schedulerValidateService(i SchedulerInstance, reasons []string) ([]string, 
 		if len(b.ServiceSamples) == 0 || b.ServiceDistribution == nil || !identified || slope < 0 || !schedulerFinite(slope) {
 			reasons = appendUnique(reasons, "MissingServiceEnergyEvidence:"+i.ID)
 		}
-		for _, sample := range b.ServiceSamples {
-			if sample.ServiceDurationNanos <= 0 || sample.PrecedingIdleNanos != nil && *sample.PrecedingIdleNanos < 0 {
-				reasons = appendUnique(reasons, "InvalidServiceSample:"+i.ID)
-			}
-		}
+		// Hydration validates every record once. The published distribution is
+		// immutable; rescanning raw records here would put profile size in Tick.
 	}
 	if !single {
 		reasons = appendUnique(reasons, "MissingSingleBatchEvidence:"+i.ID)

@@ -130,13 +130,7 @@ func capacityThroughput(p *Profile, b int) float64 {
 		if batch.Batch > b {
 			continue
 		}
-		minimum := int64(math.MaxInt64)
-		for _, sample := range batch.ServiceSamples {
-			if sample.ServiceDurationNanos > 0 {
-				minimum = min(minimum, sample.ServiceDurationNanos)
-			}
-		}
-		if minimum != math.MaxInt64 {
+		if minimum, ok := batch.ServiceDistribution.MinimumNanos(); ok {
 			mu = max(mu, float64(batch.Batch)/float64(minimum)*1e9)
 		}
 	}
@@ -173,10 +167,8 @@ func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy
 	minimum := math.Inf(1)
 	for _, batch := range o.Instance.Profile.Batches {
 		if batch.Batch <= o.Instance.MaxBatch {
-			for _, sample := range batch.ServiceSamples {
-				if sample.ServiceDurationNanos > 0 {
-					minimum = min(minimum, float64(sample.ServiceDurationNanos))
-				}
+			if service, ok := batch.ServiceDistribution.MinimumNanos(); ok {
+				minimum = min(minimum, float64(service))
 			}
 		}
 	}

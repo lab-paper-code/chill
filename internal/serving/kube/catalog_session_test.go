@@ -194,3 +194,19 @@ func TestCatalogReportsOldSchemaResultAsIssue(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalogUnreadableResultPreservesDecoderFailure(t *testing.T) {
+	payload := []byte(`{"schemaVersion":"old","result":{}}`)
+	_, original := profilederivation.DecodeSessionResult(payload)
+	if original == nil {
+		t.Fatal("old schema unexpectedly decoded")
+	}
+	catalog, source, _, _ := catalogStoredFixture(t, payload, "old")
+	view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
+	if err != nil || len(view.Insufficiencies) != 1 {
+		t.Fatalf("view=%+v err=%v", view, err)
+	}
+	if !strings.Contains(view.Insufficiencies[0].Reason, original.Error()) {
+		t.Fatalf("catalog lost original decoder failure %q: %s", original, view.Insufficiencies[0].Reason)
+	}
+}

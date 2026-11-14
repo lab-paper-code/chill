@@ -84,10 +84,14 @@ func (o *SchedulerService) preparation(
 	spec.Instance.Profile = &profile
 	if accepted := o.Profiles.Load(); accepted != nil {
 		if published, ok := accepted.Preparations[profile.ID]; ok {
-			// Profile identity includes the immutable measurement identity.
-			// Keep fresh Node and queue checks above; reuse only the object.
-			spec.Bundle = published.Bundle
-			return spec, nil
+			// The native population comes from one immutable session result.
+			// A BEO revision may change annotations without changing that result.
+			for _, previous := range accepted.Profiles {
+				if previous.ID == profile.ID && previous.Reference == profile.Reference {
+					spec.Bundle = published.Bundle
+					return spec, nil
+				}
+			}
 		}
 	}
 	raw, err := json.Marshal(profile.NativeBundle())
@@ -97,8 +101,11 @@ func (o *SchedulerService) preparation(
 	if int64(len(raw)) > o.opts.MaxEvidenceBytes {
 		return spec, errors.New("verified profile bundle exceeds immutable object bound")
 	}
+	// Content addressing separates both new evidence and a new bundle wire
+	// format from any already stored immutable bundle.
+	hash := sha256.Sum256(raw)
 	spec.Bundle = evidencestore.ObjectIdentity{
-		Store: o.opts.StoreName, Key: "serving/profiles/" + profile.ID + "/bundle.json", Size: int64(len(raw)),
+		Store: o.opts.StoreName, Key: "serving/profiles/" + profile.ID + "/" + hex.EncodeToString(hash[:]) + "/bundle.json", Size: int64(len(raw)),
 	}
 	if _, err = o.objects.PutImmutable(ctx, spec.Bundle, bytes.NewReader(raw)); err != nil {
 		return spec, &preparationSourceError{err}

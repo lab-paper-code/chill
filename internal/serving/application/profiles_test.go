@@ -99,17 +99,15 @@ func TestPositiveProfileCarriesPairedServiceToNativeConsumer(t *testing.T) {
 	if err := json.Unmarshal(payload, &bundle); err != nil {
 		t.Fatal(err)
 	}
-	// Each batch holds one gapless first execution (dropped at hydration) and
-	// one known-gap pair; p50 needs a single record, so the pair answers itself.
+	// Hydration drops the first unanchored execution before bundle delivery.
+	// The remaining known-gap records keep their conditional percentile.
 	for j, batch := range bundle.Batches {
-		distribution, err := native.NewServiceDistribution(batch.ServiceSamples)
-		if err != nil {
-			t.Fatal(err)
+		distribution := batch.Distribution
+		expected := len(profile.Batches[j].ServiceSamples) - profile.Batches[j].ServiceDistribution.DroppedFirstExecutions()
+		if distribution.RecordCount() != expected || distribution.DroppedFirstExecutions() != 0 {
+			t.Fatal("native bundle retained an unanchored first execution")
 		}
-		if distribution.DroppedFirstExecutions() != 1 {
-			t.Fatalf("gapless first execution not dropped across native bundle wire: %d", distribution.DroppedFirstExecutions())
-		}
-		gap := *batch.ServiceSamples[1].PrecedingIdleNanos
+		gap := *profile.Batches[j].ServiceSamples[1].PrecedingIdleNanos
 		if service, _, ok := distribution.QuantileNanos(&gap, 50); !ok || service != profile.Batches[j].ServiceSamples[1].ServiceDurationNanos {
 			t.Fatalf("known-gap pair lost across native bundle wire: %d %v", service, ok)
 		}

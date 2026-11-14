@@ -82,6 +82,9 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 	occupancy, skipped := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
 	signature := refreshSourceSignature(config, view, costs, factsVersion)
 	currentProfiles := view.CurrentProfiles()
+	// Build the registered services' quantile tables now, outside the lock and
+	// before any control round queries these profiles.
+	serving.PrepareServiceQuantiles(o.execution.SchedulerInputs(time.Now).Workloads, view.Profiles)
 	o.Lock.Lock()
 	accepted := o.Profiles.Load()
 	sameInputs := o.Controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources && accepted != nil
@@ -94,9 +97,6 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 		return err
 	}
 	view.Insufficiencies = append(view.Insufficiencies, issues...)
-	// Build the registered services' quantile tables now, outside the lock and
-	// before any control round queries these profiles.
-	serving.PrepareServiceQuantiles(o.execution.SchedulerInputs(time.Now).Workloads, view.Profiles)
 	o.Lock.Lock()
 	defer o.Lock.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -175,7 +175,7 @@ func refreshSourceSignature(config SchedulerConfiguration, view servingkube.Cata
 		sources = append(sources, "meter:"+meter.ID+"/"+meter.Node.UID)
 	}
 	for _, p := range view.Profiles {
-		sources = append(sources, p.ID)
+		sources = append(sources, fmt.Sprintf("profile:%s/%s/%s/%s/%d", p.ID, p.SourceVersion, p.Reference.Store, p.Reference.Key, p.Reference.Size))
 	}
 	for _, measurement := range view.CurrentMeasurements {
 		sources = append(sources, "current:"+measurement.ID+"/"+measurement.MeasuredAt.Format(time.RFC3339Nano))

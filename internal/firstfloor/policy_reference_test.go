@@ -12,7 +12,7 @@ func pairedBatch(t *testing.T, size int, energy float64, samples ...ServiceSampl
 	if err != nil {
 		t.Fatal(err)
 	}
-	return BatchProfile{Size: size, EnergyPerItemJ: energy, ServiceSamples: samples, Distribution: d}
+	return BatchProfile{Size: size, EnergyPerItemJ: energy, Distribution: d}
 }
 func pairedSample(trial string, gapMS, serviceMS int64) ServiceSample {
 	gap := gapMS * int64(time.Millisecond)

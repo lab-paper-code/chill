@@ -57,6 +57,10 @@ func routeAcknowledgmentFixture(t *testing.T) (*servingops.Operations, serving.S
 	pods := []*core.Pod{}
 	ready := []serving.ReadyInstance{}
 	target := serving.SchedulerCandidate{ID: "withdraw-route", Routing: map[string]map[string]int32{definition.UID: {}}}
+	distribution, err := native.NewServiceDistribution(fixtures.ServiceSamples("physical-trial", 1000000))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for index, name := range []string{"a", "b"} {
 		pod := fixture.DeepCopy()
 		pod.Name, pod.UID = name, types.UID("pod-"+name)
@@ -70,7 +74,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*servingops.Operations, serving.S
 			RunnerTimeoutMS: 3000, MaxQueueRequests: 4, MaxQueueBytes: 1 << 20, MaxRequestBytes: 1 << 20,
 			MaxBatchSize: 1, BatchSizes: []int{1},
 			Policy: native.Policy{DecisionID: "old-route", ProfileID: profile.ID, MaxBatchSize: 1, DeadlinePolicy: "keep",
-				Batches: []native.BatchProfile{{Size: 1, ServiceSamples: fixtures.ServiceSamples("physical-trial", 1000000), EnergyPerItemJ: 1}}},
+				Batches: []native.BatchProfile{{Size: 1, Distribution: distribution, EnergyPerItemJ: 1}}},
 		}
 		if err := native.ValidateConfig(&cfg); err != nil {
 			t.Fatal(err)
