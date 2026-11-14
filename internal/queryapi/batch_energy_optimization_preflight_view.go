@@ -38,7 +38,6 @@ type MeasurementBatchPlanReason struct {
 }
 
 type MeasurementBatchPlan struct {
-	VariantID          *string                      `json:"variantId"`
 	ConditionMatch     string                       `json:"conditionMatch"`
 	PlannedBatches     []int                        `json:"plannedBatches"`
 	MeasuredBatches    []int                        `json:"measuredBatches"`

@@ -360,12 +360,12 @@ export function activeMeasurements(capture, epoch) {
       const c = campaign?.spec?.state?.candidate ?? {}, node = campaign?.spec?.state?.targetNode ?? ''
       const id = cellID(c.modelSpec, c.deviceClass, c.executionPath, c.powerMode), cell = cells[id]
       const head = { apiVersion: 'console.chill.dacs.io/v1alpha1', kind: 'BatchEnergyOptimizationPreflight', readAt: iso(t), campaign: { namespace: ns, name: campaign?.metadata?.name ?? '', spec: campaign?.spec ?? {} } }
-      const unresolved = reason => ({ ...head, resolves: false, reason, batchPlan: { variantId: null, conditionMatch: 'unknown', plannedBatches: [], measuredBatches: [], inProgressBatches: [], missingBatches: [], searchMayStopEarly: false, reasons: [{ code: 'PlanUnresolved', message: reason }] } })
+      const unresolved = reason => ({ ...head, resolves: false, reason, batchPlan: { conditionMatch: 'unknown', plannedBatches: [], measuredBatches: [], inProgressBatches: [], missingBatches: [], searchMayStopEarly: false, reasons: [{ code: 'PlanUnresolved', message: reason }] } })
       if (!cell) return unresolved(`no catalog support row for ${id}`)
       if (cell.support.verdict === 'Incompatible') return unresolved(`execution path ${c.executionPath} is not supported on ${c.deviceClass}`)
       if (!nodeUID[node] || nodeClass[node] !== c.deviceClass) return unresolved(`target Node ${node} is not of DeviceClass ${c.deviceClass}`)
       // buildSessionPreflight: PrepareSession's planned batch sizes and the Workload's minimum sample count.
-      if (campaign.spec.session) return { ...head, resolves: true, batchPlan: { variantId: null, conditionMatch: 'planned-only', plannedBatches: BATCHES, measuredBatches: [], inProgressBatches: [], missingBatches: BATCHES, searchMayStopEarly: true, reasons: [] },
+      if (campaign.spec.session) return { ...head, resolves: true, batchPlan: { conditionMatch: 'planned-only', plannedBatches: BATCHES, measuredBatches: [], inProgressBatches: [], missingBatches: BATCHES, searchMayStopEarly: true, reasons: [] },
         session: { plannedBatchSizes: BATCHES, minimumSamples: 59, sloPercentile: 95 } }
       return unresolved('the measurement has no session settings')
     },
