@@ -139,7 +139,7 @@ type DispatchOccupancy struct {
 // DispatchOccupancyProvenance records the selected operational value and facts
 // behind it without making a refreshed observation a new numerical capacity row.
 type DispatchOccupancyProvenance struct {
-	Source    string           `json:"source"` // measured, dom or default
+	Source    string           `json:"source"` // measured, profile, dom or default
 	Pairs     int              `json:"pairs"`
 	Window    *OccupancyWindow `json:"window,omitempty"`
 	UpdatedAt time.Time        `json:"updatedAt"`
@@ -148,14 +148,16 @@ type DispatchOccupancyProvenance struct {
 
 const (
 	occupancySourceMeasured = "measured"
+	occupancySourceProfile  = "profile"
 	occupancySourceDOM      = "dom"
 	occupancySourceDefault  = "default"
 )
 
-// ResolveDispatchOccupancy selects cache-qualified measured B, then legacy DOM,
-// then the configured default. The cache admits B using configured minimumPairs;
-// core never promotes raw Observed burst records into accepted evidence.
-// Both measured B and DOM must match the immutable profile and batch condition.
+// ResolveDispatchOccupancy selects cache-qualified measured B, then the median
+// of the profile batch's own saturation samples (the cache's statistic), then
+// legacy DOM, then the configured default. The cache admits B using configured
+// minimumPairs; core never promotes raw Observed burst records into accepted
+// evidence. Measured B and DOM must match the immutable profile and batch condition.
 //
 //nolint:gocyclo // Keep source priority and exact cell matching together.
 func ResolveDispatchOccupancy(settings SchedulerSettings, occupancy []DispatchOccupancy, i SchedulerInstance) *DispatchOccupancy {
@@ -184,6 +186,11 @@ func ResolveDispatchOccupancy(settings SchedulerSettings, occupancy []DispatchOc
 		}
 	}
 	selected := measured
+	if b := schedulerBatch(i.Profile, i.MaxBatch); selected == nil && b != nil && len(b.DispatchOccupancyNanos) > 0 {
+		value := int64(math.Round(max(directStatistics(slices.Clone(b.DispatchOccupancyNanos)).Median, 0)))
+		selected = &DispatchOccupancy{PerRequest: time.Duration(value), RuntimeImage: c.RuntimeImage,
+			Provenance: &DispatchOccupancyProvenance{Source: occupancySourceProfile, Pairs: len(b.DispatchOccupancyNanos), UpdatedAt: i.Profile.MeasuredAt}}
+	}
 	if selected == nil {
 		selected = dom
 	}
