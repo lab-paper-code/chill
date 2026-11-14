@@ -145,7 +145,7 @@ The loss guard reads measurement roots and owned native Jobs across all namespac
 at preflight and immediately before upgrade. Incomplete or unfrozen work, pending
 cleanup and deleting roots stop ordinary deployment. Terminal dispatch-occupancy
 measurements need no `spec.conditions`. The runner preserves blockers without
-draining or deleting them. Narrow image-only exceptions are described below.
+draining or deleting them. The narrow image-only exception is described below.
 
 ### Image-only measurement-preserving boundaries
 
@@ -160,32 +160,7 @@ and fields except the dashboard container image in `<release>-dashboard`.
 Missing, duplicate, malformed or undecidable objects stop execution. Hook bodies
 must be unchanged. Proven dashboard-only upgrades use `--no-hooks`.
 
-`prejobRepairOnly: true` selects exactly `server`, `query`, `profiler` and retains
-all other images and live values. It rejects values overrides, custom phases,
-tool sources, generated values, runtime activation, configuration checks or
-mutation inputs, publication-only roles, inspection requests and profile-loss
-overrides. The same static endpoint and render checks apply. Only these image
-slots may change:
-
-- `serving-entrypoint` container in `<release>-serving-entrypoint`.
-- `query` container in `<release>-query`.
-- Top-level `image` in `<release>-profiler-config`'s embedded `config.yaml`.
-
-The selected source's `hack/prejob-retirement-check` authority must prove every
-current blocker eligible using exact parent/child UID and generation at both
-captures. Eligibility requires a frozen plan, three verified idle trials and one
-owned active child at batch size one, first attempt, reaching the typed
-`ExecutionPolicyInvalid` capacity rejection without previous active execution
-or native Job. Existing Jobs, ownership mismatches, unknown states, store/API
-errors, missing buckets, published results and unrelated blockers stop repair.
-An absent-plan/no-run proof is insufficient.
-
-This mode upgrades with `--no-hooks` and server dry-runs only the three
-image-bearing resources. It performs no CRD changes, runtime probes, serving
-quiescence, scheduler settings changes or measurement-resource writes.
-It installs images; retained requests remain intact.
-
-Both exceptions preserve all-namespace raw objects, owned Jobs and blockers.
+The exception preserves all-namespace raw objects, owned Jobs and blockers.
 Disk, revision, authentication, backup, chart review, registry, readiness and
 acceptance gates still apply. Other changes follow the
 [durable stored-contract compatibility decision](../docs/adr/0019-durable-stored-contract-compatibility.md).
