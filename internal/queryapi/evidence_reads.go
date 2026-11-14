@@ -65,23 +65,18 @@ func BuildBatchEnergyOptimizationResultError(
 	})
 	assessment.FailureSummary = MeasurementRequestFailures(task, snapshot.FailedRuns, assessment)
 	unavailable := "ResultUnavailable"
+	view := BatchEnergyOptimizationResult{
+		APIVersion: BatchEnergyOptimizationResultAPIVersion, Kind: "BatchEnergyOptimizationResult", ReadAt: snapshot.ReadAt.UTC(),
+		Campaign:   resultCampaign(&task),
+		Assessment: assessment, StatisticsReason: &unavailable, MeasurementFactsReason: &unavailable, ResultRows: []ResultRow{},
+	}
+	view.Campaign.StoredResult = stored
+	// An old request's result stays unreadable however its read failed.
+	if previousFormat(&task) {
+		view.ResultFormat, view.ResultFormatMessage = ResultFormatPrevious, resultFormatPreviousMessage
+	}
 	return BatchEnergyOptimizationResultError{
-		BatchEnergyOptimizationResult: BatchEnergyOptimizationResult{
-			APIVersion: BatchEnergyOptimizationResultAPIVersion, Kind: "BatchEnergyOptimizationResult", ReadAt: snapshot.ReadAt.UTC(),
-			Campaign: BatchEnergyOptimizationResultCampaign{
-				Namespace:       task.Namespace,
-				Name:            task.Name,
-				UID:             string(task.UID),
-				ResourceVersion: task.ResourceVersion,
-				Generation:      task.Generation,
-				Spec:            task.Spec,
-				Phase:           task.Status.Phase,
-				Outcome:         task.Status.Outcome,
-				CompletedTrials: task.Status.CompletedTrials,
-				Conditions:      task.Status.Conditions,
-				StoredResult:    stored,
-			},
-			Assessment: assessment, StatisticsReason: &unavailable, MeasurementFactsReason: &unavailable, ResultRows: []ResultRow{},
-		}, Code: code, Reason: reason, EvidenceError: EvidenceReadError{Code: code, Status: status},
+		BatchEnergyOptimizationResult: view,
+		Code:                          code, Reason: reason, EvidenceError: EvidenceReadError{Code: code, Status: status},
 	}
 }

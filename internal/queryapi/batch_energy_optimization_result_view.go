@@ -28,6 +28,8 @@ type BatchEnergyOptimizationResultSnapshot struct {
 	// SchedulerUsed is nil when the accepted catalog could not be read.
 	// It is a read-time selection fact, not part of the sealed result.
 	SchedulerUsed *bool
+	// Session is the decoded session result; the fields above stay empty.
+	Session *profilederivation.SessionResult
 }
 
 const BatchEnergyOptimizationResultAPIVersion = "console.chill.dacs.io/v1alpha1"
@@ -46,6 +48,11 @@ type BatchEnergyOptimizationResult struct {
 	MeasurementFactsReason *string                               `json:"measurementFactsReason"`
 	Assessment             MeasurementAssessment                 `json:"assessment"`
 	ResultRows             []ResultRow                           `json:"resultRows"`
+	// ResultFormat is ResultFormatSession or ResultFormatPrevious once a
+	// result is published, absent before.
+	ResultFormat        string             `json:"resultFormat,omitempty"`
+	ResultFormatMessage string             `json:"resultFormatMessage,omitempty"`
+	Session             *SessionResultView `json:"session,omitempty"`
 }
 
 type BatchEnergyOptimizationResultCampaign struct {
@@ -58,8 +65,12 @@ type BatchEnergyOptimizationResultCampaign struct {
 	Phase           string                                   `json:"phase,omitempty"`
 	Outcome         string                                   `json:"outcome,omitempty"`
 	CompletedTrials int32                                    `json:"completedTrials"`
-	Conditions      []metav1.Condition                       `json:"conditions,omitempty"`
-	StoredResult    *evidencestore.ObjectIdentity            `json:"storedResult"`
+	// CompletedBatches counts the batch sizes a session measured.
+	CompletedBatches int32 `json:"completedBatches"`
+	// Reason is the current MeasurementComplete condition's message.
+	Reason       string                        `json:"reason,omitempty"`
+	Conditions   []metav1.Condition            `json:"conditions,omitempty"`
+	StoredResult *evidencestore.ObjectIdentity `json:"storedResult"`
 }
 
 // BatchEnergyOptimizationResultRecord republishes the stored record as it was sealed.
@@ -88,6 +99,9 @@ type BatchEnergyOptimizationBatchStatistics struct {
 }
 
 func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSnapshot) (BatchEnergyOptimizationResult, error) {
+	if snapshot.Session != nil {
+		return buildSessionResult(snapshot)
+	}
 	if snapshot.Campaign.Status.Result == nil && snapshot.Result.SchemaVersion() != "" {
 		return BatchEnergyOptimizationResult{}, errors.New("batch-energy-optimization snapshot has no stored result reference")
 	}
@@ -179,15 +193,7 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 		APIVersion: BatchEnergyOptimizationResultAPIVersion,
 		Kind:       "BatchEnergyOptimizationResult",
 		ReadAt:     snapshot.ReadAt.UTC(),
-		Campaign: BatchEnergyOptimizationResultCampaign{
-			Namespace: campaign.Namespace, Name: campaign.Name, UID: string(campaign.UID),
-			ResourceVersion: campaign.ResourceVersion, Generation: campaign.Generation,
-			Spec:  campaign.Spec,
-			Phase: campaign.Status.Phase, Outcome: campaign.Status.Outcome,
-			CompletedTrials: campaign.Status.CompletedTrials,
-			Conditions:      append([]metav1.Condition(nil), campaign.Status.Conditions...),
-			StoredResult:    storedResult,
-		},
+		Campaign:   resultCampaign(campaign),
 		Result: result, Statistics: statistics, StatisticsReason: reason,
 		MeasurementFacts: facts, MeasurementFactsReason: factsReason,
 		ResultRows: rows,
@@ -198,6 +204,32 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 			Attempted: true, SourcesComplete: true, Children: children, Reasons: assessmentReasons,
 		}),
 	}
+	view.Campaign.StoredResult = storedResult
+	if previousFormat(campaign) {
+		view.ResultFormat, view.ResultFormatMessage = ResultFormatPrevious, resultFormatPreviousMessage
+	}
 	view.Assessment.FailureSummary = MeasurementRequestFailures(*campaign, snapshot.FailedRuns, view.Assessment)
+	return view, nil
+}
+
+func buildSessionResult(snapshot BatchEnergyOptimizationResultSnapshot) (BatchEnergyOptimizationResult, error) {
+	campaign := snapshot.Campaign.DeepCopy()
+	reference := campaign.Status.Result
+	if reference == nil {
+		return BatchEnergyOptimizationResult{}, errors.New("batch-energy-optimization snapshot has no stored result reference")
+	}
+	session := BuildSessionResultView(*snapshot.Session)
+	view := BatchEnergyOptimizationResult{
+		APIVersion: BatchEnergyOptimizationResultAPIVersion, Kind: "BatchEnergyOptimizationResult",
+		ReadAt: snapshot.ReadAt.UTC(), Campaign: resultCampaign(campaign),
+		ResultRows: []ResultRow{}, ResultFormat: ResultFormatSession, Session: &session,
+		Assessment: AssessMeasurement(MeasurementAssessmentInput{
+			Execution: &MeasurementExecution{Phase: campaign.Status.Phase, Generation: campaign.Generation, ObservedGeneration: campaign.Status.ObservedGeneration},
+			Available: true, Accepted: campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseComplete),
+			SchedulerUsed: snapshot.SchedulerUsed, Attempted: true, SourcesComplete: true,
+		}),
+	}
+	view.Campaign.StoredResult = &evidencestore.ObjectIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size}
+	view.Assessment.FailureSummary = MeasurementRequestFailures(*campaign, nil, view.Assessment)
 	return view, nil
 }

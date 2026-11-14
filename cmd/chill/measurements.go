@@ -191,14 +191,15 @@ func executeMeasurements(ctx context.Context, args []string, stdout, stderr io.W
 		if opts.output == outputFormatJSON {
 			return writeOperationJSON(stdout, tasks)
 		}
-		if _, err := fmt.Fprintln(table, "NAMESPACE\tMEASUREMENT_TASK\tPHASE\tTRIALS\tOUTCOME"); err != nil {
+		if _, err := fmt.Fprintln(table, "NAMESPACE\tMEASUREMENT_TASK\tPHASE\tBATCHES\tTRIALS\tOUTCOME\tREASON"); err != nil {
 			return err
 		}
 		for i := range tasks.Items {
 			task := &tasks.Items[i]
-			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%s\n",
-				task.Namespace, task.Name, display(task.Status.Phase),
-				task.Status.CompletedTrials, display(task.Status.Outcome)); err != nil {
+			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
+				task.Namespace, task.Name, display(task.Status.Phase), task.Status.CompletedBatches,
+				task.Status.CompletedTrials, display(task.Status.Outcome),
+				display(queryapi.MeasurementReasonSentence(*task))); err != nil {
 				return err
 			}
 		}
@@ -211,9 +212,10 @@ func executeMeasurements(ctx context.Context, args []string, stdout, stderr io.W
 			return writeOperationJSON(stdout, result)
 		}
 		task := result.Campaign
-		const taskHeader = "NAMESPACE\tMEASUREMENT_TASK\tPHASE\tTRIALS\tOUTCOME\n"
-		if _, err := fmt.Fprintf(table, taskHeader+"%s\t%s\t%s\t%d\t%s\n",
-			task.Namespace, task.Name, display(task.Phase), task.CompletedTrials, display(task.Outcome)); err != nil {
+		const taskHeader = "NAMESPACE\tMEASUREMENT_TASK\tPHASE\tBATCHES\tTRIALS\tOUTCOME\tREASON\n"
+		if _, err := fmt.Fprintf(table, taskHeader+"%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
+			task.Namespace, task.Name, display(task.Phase), task.CompletedBatches, task.CompletedTrials,
+			display(task.Outcome), display(task.Reason)); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(table, "\nCONDITION\tSTATUS\tREASON\tMESSAGE"); err != nil {
@@ -231,6 +233,84 @@ func executeMeasurements(ctx context.Context, args []string, stdout, stderr io.W
 				return err
 			}
 		}
+		if result.ResultFormat == queryapi.ResultFormatPrevious {
+			if _, err := fmt.Fprintf(table, "\nRESULT_FORMAT\n%s\n", result.ResultFormatMessage); err != nil {
+				return err
+			}
+		}
+		if result.Session != nil {
+			if err := renderSessionResult(table, *result.Session); err != nil {
+				return err
+			}
+		}
 	}
 	return table.Flush()
+}
+
+// renderSessionResult prints a session result's power parameters, its batch
+// sizes, each batch's levels and the stop.
+func renderSessionResult(table io.Writer, session queryapi.SessionResultView) error {
+	if _, err := fmt.Fprintln(table, "\nPOWER_PARAMETER\tSTATUS\tVALUE\tRANGE\tUNIT"); err != nil {
+		return err
+	}
+	for _, parameter := range []struct {
+		name  string
+		value queryapi.SessionParameterView
+	}{
+		{"idleWatts", session.Power.IdleWatts},
+		{"awakeStepWatts", session.Power.AwakeStepWatts},
+		{"holdSeconds", session.Power.HoldSeconds},
+	} {
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", parameter.name, parameter.value.Status,
+			sessionValue(parameter.value.Value), sessionRange(parameter.value.Range), parameter.value.Unit); err != nil {
+			return err
+		}
+	}
+	const batchHeader = "\nBATCH\tSERVICE_RECORDS\tSATURATION_INPUTS_PER_S\tJOULES_PER_INPUT\tSTATUS\tRANGE\tPEAK_MEMORY_BYTES\tMEMORY_KIND\tOCCUPANCY_SAMPLES\tOCCUPANCY_MEDIAN_NS"
+	if _, err := fmt.Fprintln(table, batchHeader); err != nil {
+		return err
+	}
+	for _, batch := range session.Batches {
+		if _, err := fmt.Fprintf(table, "%d\t%d\t%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\n",
+			batch.Batch, batch.ServiceRecordCount, sessionValue(batch.SaturationInputRate),
+			sessionValue(batch.JoulesPerInput.Value), batch.JoulesPerInput.Status, sessionRange(batch.JoulesPerInput.Range),
+			batch.PeakMemoryBytes, display(batch.MemoryKind), batch.DispatchOccupancy.Count,
+			sessionValue(batch.DispatchOccupancy.MedianNanos)); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(table, "\nBATCH\tLEVEL\tINPUTS_PER_S\tMEAN_WATTS\tSTANDARD_ERROR\tPOWER_SAMPLES\tCOMPLETED_INPUTS\tEND_REASON"); err != nil {
+		return err
+	}
+	for _, batch := range session.Batches {
+		for _, level := range batch.Levels {
+			if _, err := fmt.Fprintf(table, "%d\t%s\t%.4g\t%s\t%s\t%d\t%d\t%s\n",
+				batch.Batch, level.Kind, level.InputRate, sessionValue(level.MeanWatts),
+				sessionValue(level.MeanWattsStandardError), level.PowerSamples, level.CompletedInputs,
+				display(level.EndReason)); err != nil {
+				return err
+			}
+		}
+	}
+	if stop := session.Stop; stop != nil {
+		if _, err := fmt.Fprintf(table, "\nSTOP_BATCH\tSTOP_CLASS\tSTOP_REASON\n%d\t%s\t%s\n",
+			stop.Batch, stop.Class, display(stop.Reason)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sessionValue(value *float64) string {
+	if value == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.4g", *value)
+}
+
+func sessionRange(bounds *[2]float64) string {
+	if bounds == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.4g..%.4g", bounds[0], bounds[1])
 }

@@ -252,13 +252,45 @@ func (p *coverageProjection) addRequest(task api.BatchEnergyOptimization) {
 	cell.History = append(cell.History, MeasurementHistory{
 		RequestID: requestID, Status: assessment.Status,
 	})
-	if len(p.profiles[requestID]) == 0 {
+	switch {
+	case task.Spec.Session != nil:
+		p.addSessionVariant(cell, task, assessment)
+	case len(p.profiles[requestID]) == 0:
 		p.addPlannedVariant(cell, task, assessment)
-	}
-	for _, profile := range p.profiles[requestID] {
-		p.addProfile(cell, task, profile)
+	default:
+		for _, profile := range p.profiles[requestID] {
+			p.addProfile(cell, task, profile)
+		}
 	}
 	cell.FailureSummary = append(cell.FailureSummary, failures...)
+}
+
+// addSessionVariant shows a session request from its status and its catalog
+// profile: the batch sizes it measured, the class of its stop and whether its
+// power parameters are identified. A session has no trial facts.
+func (p *coverageProjection) addSessionVariant(
+	cell *MeasurementCoverageCell, task api.BatchEnergyOptimization, assessment MeasurementAssessment,
+) {
+	requestID := CoverageRequestID(task)
+	variant := CoverageFindVariant(cell, requestID, task.Spec, p.out.Scope.GoalBasis)
+	variant.MeasuredAt = CoverageMeasurementTime(task, time.Time{})
+	variant.RequestIDs = append(variant.RequestIDs, requestID)
+	variant.Assessment = assessment
+	if task.Status.Phase == string(api.MeasurementPhaseComplete) {
+		switch class := profilederivation.StopClass(task.Status.Outcome); class {
+		case profilederivation.StopCapacityLimit, profilederivation.StopNotServable, profilederivation.StopNotMeasured:
+			variant.StopClass = string(class)
+		}
+	}
+	for _, profile := range p.base.Catalog.Profiles {
+		if profile.ID != requestID {
+			continue
+		}
+		variant.MeasuredAt = CoverageMeasurementTime(task, profile.MeasuredAt)
+		variant.ProfileIDs = append(variant.ProfileIDs, profile.ID)
+		variant.BatchProgress.Measured = append(variant.BatchProgress.Measured, profile.Batches...)
+		variant.PowerIdentified = profile.PowerIdentified
+	}
 }
 
 func (p *coverageProjection) addPlannedVariant(

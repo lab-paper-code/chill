@@ -83,6 +83,11 @@ type MeasurementCoverageVariant struct {
 	RunIDs        []string                 `json:"runIds"`
 	ProfileIDs    []string                 `json:"profileIds"`
 	MeasuredAt    time.Time                `json:"measuredAt"`
+	// StopClass is why a session's batch search stopped before the path's
+	// largest batch; PowerIdentified whether its profile identified every
+	// power parameter. Both are absent for a request without session settings.
+	StopClass       string `json:"stopClass,omitempty"`
+	PowerIdentified *bool  `json:"powerIdentified,omitempty"`
 }
 type MeasurementSupport struct {
 	Verdict     string                     `json:"verdict"`

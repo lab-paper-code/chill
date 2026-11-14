@@ -26,6 +26,8 @@ type CoverageProfile struct {
 	Batches      []int
 	Reuse        *CoverageReuseIdentity
 	ReusePayload any
+	// PowerIdentified is nil for a profile without a session power model.
+	PowerIdentified *bool
 }
 
 type CoverageReuseIdentity struct {

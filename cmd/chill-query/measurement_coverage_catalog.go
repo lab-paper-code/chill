@@ -61,6 +61,7 @@ func queryCoverageProfile(profile serving.Profile) queryapi.CoverageProfile {
 		ID: profile.ID, Reference: profile.Reference, Condition: profile.Condition,
 		NodeName: profile.NodeName, MeasuredAt: profile.MeasuredAt,
 		Batches: make([]int, len(profile.Batches)), Reuse: queryCoverageReuse(profile.Reuse),
+		PowerIdentified: powerIdentified(profile.Power),
 	}
 	if profile.Reuse != nil {
 		out.ReusePayload = profile.Reuse
@@ -106,6 +107,7 @@ func queryCoverageSnapshot(read servingkube.CatalogSnapshot) queryapi.CoverageCa
 			ID: profile.ID, Reference: profile.Reference, Condition: profile.Condition,
 			NodeName: profile.NodeName, MeasuredAt: profile.MeasuredAt,
 			Batches: make([]int, len(profile.Batches)), Reuse: queryCoverageReuse(profile.Reuse),
+			PowerIdentified: powerIdentified(profile.Power),
 		}
 		if profile.Reuse != nil {
 			out.Profiles[i].ReusePayload = profile.Reuse
@@ -132,4 +134,16 @@ func queryCoverageIssues(issues []servingkube.CatalogIssue) []queryapi.CoverageC
 		out[i] = queryapi.CoverageCatalogIssue{Source: issue.Source, Code: issue.Code, Reason: issue.Reason}
 	}
 	return out
+}
+
+// powerIdentified reports whether a session profile identified all three
+// power parameters, nil for a profile without a power model.
+func powerIdentified(power *serving.ProfilePower) *bool {
+	if power == nil {
+		return nil
+	}
+	identified := power.IdleWatts.Status() == profilederivation.ParameterIdentified &&
+		power.AwakeStepWatts.Status() == profilederivation.ParameterIdentified &&
+		power.HoldSeconds.Status() == profilederivation.ParameterIdentified
+	return &identified
 }

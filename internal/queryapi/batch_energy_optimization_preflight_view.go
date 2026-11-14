@@ -26,6 +26,21 @@ type BatchEnergyOptimizationPreflightSnapshot struct {
 	RequestsComplete bool
 	ExactEvidence    []MeasurementPreflightEvidence
 	BatchPlanReasons []MeasurementBatchPlanReason
+	// SessionPlan is what PrepareSession resolved for a request with session
+	// settings, nil when it did not resolve (Reason says why) or for a request
+	// without them.
+	SessionPlan *SessionPreflightPlan
+}
+
+// SessionPreflightPlan is the part of a resolved measurement session a
+// requester decides on. No duration is predicted: levels end on service
+// record counts, so their length depends on the device's throughput.
+type SessionPreflightPlan struct {
+	PlannedBatchSizes []int `json:"plannedBatchSizes"`
+	// MinimumSamples is the service record count N each level ends on, the
+	// fewest that estimate the Workload's SLO percentile.
+	MinimumSamples int     `json:"minimumSamples"`
+	SLOPercentile  float64 `json:"sloPercentile"`
 }
 
 type BatchEnergyOptimizationPreflightRequest struct {
@@ -75,6 +90,8 @@ type BatchEnergyOptimizationPreflight struct {
 	Reason     string                                   `json:"reason,omitempty"`
 	Plan       json.RawMessage                          `json:"plan,omitempty"`
 	BatchPlan  MeasurementBatchPlan                     `json:"batchPlan"`
+	// Session is present when a request with session settings resolves.
+	Session *SessionPreflightPlan `json:"session,omitempty"`
 }
 
 type BatchEnergyOptimizationPreflightCampaign struct {
@@ -86,6 +103,9 @@ type BatchEnergyOptimizationPreflightCampaign struct {
 func BuildBatchEnergyOptimizationPreflight(
 	snapshot BatchEnergyOptimizationPreflightSnapshot,
 ) (BatchEnergyOptimizationPreflight, error) {
+	if snapshot.Campaign.Spec.Session != nil {
+		return buildSessionPreflight(snapshot)
+	}
 	resolved := snapshot.Plan.SchemaVersion() != ""
 	switch {
 	case resolved && strings.TrimSpace(snapshot.Reason) != "":
@@ -117,6 +137,39 @@ func BuildBatchEnergyOptimizationPreflight(
 		Reason:    snapshot.Reason,
 		Plan:      plan,
 		BatchPlan: BuildMeasurementBatchPlan(snapshot),
+	}, nil
+}
+
+// buildSessionPreflight answers whether a request with session settings
+// resolves, with the batch sizes the session may measure. A session measures
+// on its own Node, so no catalog or request overlap is reported.
+func buildSessionPreflight(snapshot BatchEnergyOptimizationPreflightSnapshot) (BatchEnergyOptimizationPreflight, error) {
+	resolved := snapshot.SessionPlan != nil
+	switch {
+	case resolved && strings.TrimSpace(snapshot.Reason) != "":
+		return BatchEnergyOptimizationPreflight{}, errors.New("a resolved preflight carries no reason")
+	case !resolved && strings.TrimSpace(snapshot.Reason) == "":
+		return BatchEnergyOptimizationPreflight{}, errors.New("an unresolved preflight requires a reason")
+	}
+	plan := MeasurementBatchPlan{
+		ConditionMatch: "unknown", PlannedBatches: []int{}, MeasuredBatches: []int{}, InProgressBatches: []int{},
+		MissingBatches: []int{}, Reasons: []MeasurementBatchPlanReason{},
+	}
+	if resolved {
+		plan.ConditionMatch, plan.SearchMayStopEarly = "planned-only", true
+		plan.PlannedBatches = append(plan.PlannedBatches, snapshot.SessionPlan.PlannedBatchSizes...)
+		plan.MissingBatches = append(plan.MissingBatches, snapshot.SessionPlan.PlannedBatchSizes...)
+	} else {
+		plan.Reasons = append(plan.Reasons, MeasurementBatchPlanReason{"PlanUnresolved", snapshot.Reason})
+	}
+	campaign := snapshot.Campaign.DeepCopy()
+	return BatchEnergyOptimizationPreflight{
+		APIVersion: BatchEnergyOptimizationPreflightAPIVersion, Kind: "BatchEnergyOptimizationPreflight",
+		ReadAt: snapshot.ReadAt.UTC(),
+		Campaign: BatchEnergyOptimizationPreflightCampaign{
+			Namespace: campaign.Namespace, Name: campaign.Name, Spec: campaign.Spec,
+		},
+		Resolves: resolved, Reason: snapshot.Reason, BatchPlan: plan, Session: snapshot.SessionPlan,
 	}, nil
 }
 
