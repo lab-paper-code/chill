@@ -38,7 +38,7 @@ type options struct {
 	profileObjectSize                                                                int64
 	schedulerConfigMap, schedulerConfigKey                                           string
 	factsNamespace, factsConfigMap, actuationPoliciesKey, metricSourcesKey           string
-	executionFactsKey, executionPoliciesKey, workloadObservationKey                  string
+	executionFactsKey, executionPoliciesKey                                          string
 	measurementMemoryFraction                                                        float64
 	sessionLoadImage                                                                 string
 	diagnosticDirectory                                                              string
@@ -133,8 +133,6 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 		"Current runtime declaration key in the Profiler facts ConfigMap.")
 	f.StringVar(&o.executionPoliciesKey, "execution-policies-key", "execution-policies.yaml",
 		"Execution policy key in the Profiler facts ConfigMap; sessions take the actor memory envelope from it.")
-	f.StringVar(&o.workloadObservationKey, "workload-observation-key", "workload-observation.yaml",
-		"Workload observation key in the Profiler facts ConfigMap.")
 	f.Float64Var(&o.measurementMemoryFraction, "measurement-memory-fraction", 0,
 		"Fraction of Node allocatable memory a session's actor may use (0 < fraction < 1); required with Profiler facts.")
 	f.StringVar(&o.sessionLoadImage, "session-load-image", "", "Image of the session-load Job; the ChillServer image.")
@@ -290,7 +288,6 @@ func (o options) validateFacts() error {
 		len(validation.IsConfigMapKey(o.actuationPoliciesKey)) != 0 ||
 		len(validation.IsConfigMapKey(o.executionFactsKey)) != 0 ||
 		len(validation.IsConfigMapKey(o.executionPoliciesKey)) != 0 ||
-		len(validation.IsConfigMapKey(o.workloadObservationKey)) != 0 ||
 		len(validation.IsConfigMapKey(o.metricSourcesKey)) != 0 ||
 		!(o.measurementMemoryFraction > 0 && o.measurementMemoryFraction < 1) || o.sessionLoadImage == "") {
 		return errors.New("valid Profiler facts namespace, ConfigMap name, keys, measurement memory fraction " +

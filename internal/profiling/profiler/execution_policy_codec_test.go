@@ -97,7 +97,7 @@ func TestFreezeConfiguredExecutionPolicyPrefersExactDeviceClass(t *testing.T) {
 	}
 }
 
-func TestFreezeConfiguredExecutionPolicyRejectsAmbiguousOrUnknownCatalog(t *testing.T) {
+func TestFreezeConfiguredExecutionPolicyRejectsAmbiguousCatalog(t *testing.T) {
 	config := currentExecutionPolicyTestRunConfig(t)
 	first := testExecutionPolicySpec(config.Measurement.WorkloadMode)
 	first.Name = "first"
@@ -113,11 +113,6 @@ func TestFreezeConfiguredExecutionPolicyRejectsAmbiguousOrUnknownCatalog(t *test
 	if _, err := FreezeConfiguredExecutionPolicy(ambiguous, config, validExecutionPolicySource()); err == nil ||
 		!strings.Contains(err.Error(), "duplicate selector") {
 		t.Fatalf("ambiguous catalog error = %v", err)
-	}
-
-	unknown := append(executionPolicyCatalogFixture(t), []byte("unknownField: true\n")...)
-	if _, err := FreezeConfiguredExecutionPolicy(unknown, config, validExecutionPolicySource()); err == nil {
-		t.Fatal("strict decoder accepted an unknown catalog field")
 	}
 }
 

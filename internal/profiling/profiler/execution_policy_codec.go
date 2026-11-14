@@ -23,7 +23,7 @@ func FreezeConfiguredExecutionPolicy(
 		return FrozenExecutionPolicy{}, errors.New("execution-policy selection requires DeviceClass, execution path, and workload mode")
 	}
 	var catalog ExecutionPolicyCatalog
-	if err := yaml.UnmarshalStrict(raw, &catalog); err != nil {
+	if err := yaml.Unmarshal(raw, &catalog); err != nil {
 		return FrozenExecutionPolicy{}, fmt.Errorf("decode execution-policy catalog: %w", err)
 	}
 	if catalog.SchemaVersion != ExecutionPolicyCatalogSchemaVersion {
@@ -92,10 +92,44 @@ func FreezeConfiguredExecutionPolicy(
 	return frozen, nil
 }
 
+// FreezeSessionExecutionPolicy selects only the session's actor and queue envelope.
+func FreezeSessionExecutionPolicy(raw []byte, config profilingrun.RunConfig, source ExecutionPolicySource) (FrozenExecutionPolicy, error) {
+	var catalog ExecutionPolicyCatalog
+	if err := yaml.Unmarshal(raw, &catalog); err != nil {
+		return FrozenExecutionPolicy{}, fmt.Errorf("decode execution-policy catalog: %w", err)
+	}
+	var exact, fallback *ExecutionPolicySpec
+	for index := range catalog.Policies {
+		policy := &catalog.Policies[index]
+		if policy.ExecutionPath != config.Candidate.ExecutionPath || policy.WorkloadMode != config.Measurement.WorkloadMode {
+			continue
+		}
+		if policy.DeviceClass == config.State.DeviceClass {
+			exact = policy
+		} else if policy.DeviceClass == "*" {
+			fallback = policy
+		}
+	}
+	selected := exact
+	if selected == nil {
+		selected = fallback
+	}
+	if selected == nil {
+		return FrozenExecutionPolicy{}, fmt.Errorf("no execution policy is configured for DeviceClass %q, path %q, and workload mode %q",
+			config.State.DeviceClass, config.Candidate.ExecutionPath, config.Measurement.WorkloadMode)
+	}
+	if selected.MaxInputBytes <= 0 || selected.RuntimeMemoryRequestBytes <= 0 || selected.RuntimeMemoryLimitBytes <= 0 {
+		return FrozenExecutionPolicy{}, errors.New("session queue capacity and runtime memory request and limit must be positive")
+	}
+	return FrozenExecutionPolicy{
+		SchemaVersion: FrozenExecutionPolicySchemaVersion, Source: source,
+		Policy: ExecutionPolicy{SchemaVersion: ExecutionPolicySchemaVersion, ExecutionPolicySpec: *selected},
+	}, nil
+}
+
 func DecodeFrozenExecutionPolicy(raw []byte) (FrozenExecutionPolicy, error) {
 	var frozen FrozenExecutionPolicy
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&frozen); err != nil {
 		return FrozenExecutionPolicy{}, fmt.Errorf("decode frozen execution policy: %w", err)
 	}

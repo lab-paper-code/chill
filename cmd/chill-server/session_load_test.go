@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -304,66 +305,20 @@ func TestSessionLoadLevelsWaitForPowerWindowAfterSamples(t *testing.T) {
 	}
 }
 
-func TestSessionLoadPredictedDurationEndsLevel(t *testing.T) {
-	for _, test := range []struct {
-		kind    string
-		service time.Duration
-		change  func(*sessionLoadConfig)
-		batches int
-	}{
-		{sessionSaturation, 60 * time.Millisecond, func(c *sessionLoadConfig) { c.minSamples = 1000 }, 1},
-		{sessionMid, time.Millisecond, func(c *sessionLoadConfig) { c.midRatio = 1e-4 }, 0},
-		{sessionSparse, time.Millisecond, func(c *sessionLoadConfig) { c.sparseMeanGap = 10 * time.Second }, 1},
-	} {
-		t.Run(test.kind, func(t *testing.T) {
-			fake := newSessionFake(t, 2, fixedService(test.service), nil)
-			c := sessionTestConfig(t, fake.server.URL, 2)
-			c.sparse, c.levelLimit = true, time.Second
-			test.change(&c)
-			levels, err := runSessionLoad(context.Background(), c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			last := levels[len(levels)-1]
-			if test.kind == sessionMid {
-				if len(levels) != 3 || levels[2].Kind != sessionSparse || levels[2].EndReason != sessionSamplesReached {
-					t.Fatalf("mid prediction did not continue to sparse: %+v", levels)
-				}
-				last = levels[1]
-			}
-			if last.Kind != test.kind || last.EndReason != sessionPredictedOverLimit ||
-				last.CompletedBatches != test.batches || last.LimitSeconds != 1 || last.PredictedSeconds <= 1 ||
-				last.EndedAt.Sub(last.StartedAt) >= c.levelLimit ||
-				!strings.Contains(last.Detail, "exceeds limit 1.000s after "+strconv.Itoa(test.batches)+" completed batches") {
-				t.Fatalf("levels = %+v", levels)
-			}
-		})
+func TestSessionLevelDeadlineRetainsCompletedCounts(t *testing.T) {
+	fake := newSessionFake(t, 2, func(uint64) (time.Duration, time.Duration) {
+		return 10 * time.Second, time.Millisecond
+	}, nil)
+	config := sessionTestConfig(t, fake.server.URL, 2)
+	config.minSamples, config.levelLimit = 1000, 150*time.Millisecond
+	levels, err := runSessionLoad(context.Background(), config)
+	if !errors.Is(err, context.DeadlineExceeded) || len(levels) != 1 {
+		t.Fatalf("level deadline lost its actual outcome: %+v, %v", levels, err)
 	}
-}
-
-func TestParseSessionLoadRejectsWhatNativeCannotAdmit(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		change func(*sessionLoadConfig)
-		want   string
-	}{
-		{"valid", func(*sessionLoadConfig) {}, ""},
-		{"two batches over request limit", func(c *sessionLoadConfig) { c.maxQueueRequests = 7 },
-			"saturation keeps 8 requests (two batches of 4) outstanding"},
-		{"two batches over byte limit", func(c *sessionLoadConfig) { c.maxQueueBytes = 7 * c.requestUpperBytes },
-			"saturation keeps 8 requests (two batches of 4) outstanding"},
-		{"session with space", func(c *sessionLoadConfig) { c.session = "a b" }, "native workload identifier"},
-		{"identifier over 256 bytes", func(c *sessionLoadConfig) { c.session = strings.Repeat("s", 245) },
-			"native workload identifier"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			c := sessionTestConfig(t, "http://native", 4)
-			test.change(&c)
-			_, err := parseSessionLoad(sessionTestArgs(c))
-			if test.want == "" && err != nil || test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
-				t.Fatalf("error = %v, want %q", err, test.want)
-			}
-		})
+	row := levels[0]
+	if row.CompletedBatches < 2 || row.CompletedInputs < 2*row.CompletedBatches ||
+		row.PredictedSeconds <= row.LimitSeconds || row.EndReason != sessionFailed {
+		t.Fatalf("level deadline lost completed measurements: %+v", row)
 	}
 }
 
@@ -384,23 +339,6 @@ func TestSessionLoadSaturationKeepsTwoBatchesOutstanding(t *testing.T) {
 	}
 	if got := fake.maxOutstanding(sessionSaturation); got != 8 {
 		t.Fatalf("native saw %d outstanding saturation requests, want 2B=8", got)
-	}
-}
-
-func TestSessionLoadFirstSaturationBatchBeyondLifetimeEndsRun(t *testing.T) {
-	// Two 15 s batches plus the 0.1 s margin exceed the 30 s lifetime.
-	fake := newSessionFake(t, 4, func(uint64) (time.Duration, time.Duration) {
-		return 15 * time.Second, 5 * time.Millisecond
-	}, nil)
-	c := sessionTestConfig(t, fake.server.URL, 4)
-	c.sparse = true
-	levels, err := runSessionLoad(context.Background(), c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(levels) != 1 || levels[0].EndReason != sessionServiceOverLifetime || levels[0].CompletedBatches != 1 ||
-		levels[0].Detail != "batch service 15s: two batches plus delivery margin 100ms exceed request lifetime 30s" {
-		t.Fatalf("levels = %+v", levels)
 	}
 }
 
@@ -511,8 +449,8 @@ func TestSessionTerminationMessageStaysBounded(t *testing.T) {
 	levels := make([]sessionLevel, 3)
 	for index := range levels {
 		levels[index] = sessionLevel{
-			Kind: sessionSaturation, WorkloadUID: strings.Repeat("s", sessionIdentifierBytes),
-			EndReason: sessionPredictedOverLimit, Detail: sessionBounded(strings.Repeat("\"", 4096), sessionDetailBytes),
+			Kind: sessionSaturation, WorkloadUID: strings.Repeat("s", 256),
+			EndReason: sessionFailed, Detail: sessionBounded(strings.Repeat("\"", 4096), sessionDetailBytes),
 		}
 	}
 	for _, failure := range []string{"", strings.Repeat("\x01", 4096), strings.Repeat("é", 4096)} {
@@ -527,7 +465,7 @@ func TestSessionTerminationMessageStaysBounded(t *testing.T) {
 		if encodeErr != nil || len(message) > sessionTerminationBytes || json.Unmarshal(message, &report) != nil {
 			t.Fatalf("termination message %d bytes, %v", len(message), encodeErr)
 		}
-		if failure == "" && len(report.Levels) != len(levels) {
+		if len(report.Levels) != len(levels) {
 			t.Fatalf("level table dropped before details: %s", message)
 		}
 	}

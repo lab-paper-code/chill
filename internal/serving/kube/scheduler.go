@@ -108,8 +108,6 @@ type SessionPreparation struct {
 	SLOTarget     time.Duration
 	// Dataset is the dataset the load Job samples.
 	Dataset profilingrun.DatasetContract
-	// Meter is the wall meter of the target Node.
-	Meter metricobserver.SourceIdentity
 }
 
 type SchedulerControllerState struct {

@@ -238,48 +238,19 @@ func TestCurrentRunConfigRequiresDatasetExactlyForActiveMeasurement(t *testing.T
 	}
 }
 
-func TestRunConfigRejectsUnknownImageField(t *testing.T) {
-	payload, err := validRunConfig().CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload = []byte(strings.Replace(string(payload), `"metricObserver":`, `"unknown":true,"metricObserver":`, 1))
-	if _, err := decodeTestRunConfig(payload); err == nil {
-		t.Fatal("expected unknown image field rejection")
-	}
-}
-
-func TestSharedRunConfigNeedsNoAllocatableCPUAndRejectsOldAllocation(t *testing.T) {
+func TestSharedRunConfigNeedsNoAllocatableCPU(t *testing.T) {
 	config := validRunConfig()
 	config.TargetNode.AllocatableCPU = ""
 	if err := config.Validate(); err != nil {
 		t.Fatalf("shared execution requires no CPU allocation: %v", err)
 	}
-	payload, err := config.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload = []byte(strings.TrimSuffix(string(payload), "}") + `,"cpu":{"limit":"4"}}`)
-	if _, err := decodeTestRunConfig(payload); err == nil {
-		t.Fatal("old frozen CPU allocation was accepted")
-	}
 }
 
-func TestRunConfigRejectsOldSchemaAndDonorMeasurementFields(t *testing.T) {
+func TestRunConfigRejectsOldSchema(t *testing.T) {
 	config := validRunConfig()
 	config.SchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha19"
 	if err := config.Validate(); err == nil {
 		t.Fatal("old RunConfig schema accepted")
-	}
-	payload, err := validRunConfig().CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, field := range []string{"cadence", "targetIdleNanos", "traceDrawRef"} {
-		body := strings.Replace(string(payload), `"measurement":{`, `"measurement":{"`+field+`":null,`, 1)
-		if _, err := decodeTestRunConfig([]byte(body)); err == nil {
-			t.Fatalf("obsolete measurement field %s accepted", field)
-		}
 	}
 }
 

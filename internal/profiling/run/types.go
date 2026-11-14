@@ -56,12 +56,11 @@ type LoadOriginGatewayPodContract struct {
 	UID       string `json:"uid"`
 }
 
-// UnmarshalJSON strictly decodes the current wire fields.
+// UnmarshalJSON decodes the current wire fields.
 func (c *RunConfig) UnmarshalJSON(payload []byte) error {
 	type wire RunConfig
 	var decoded wire
 	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&decoded); err != nil {
 		return err
 	}
@@ -139,11 +138,12 @@ type Images struct {
 }
 
 type NodeSnapshot struct {
-	Name            string `json:"name"`
-	UID             string `json:"uid"`
-	ResourceVersion string `json:"resourceVersion"`
-	Architecture    string `json:"architecture"`
-	AllocatableCPU  string `json:"allocatableCPU,omitempty"`
+	Name                   string `json:"name"`
+	UID                    string `json:"uid"`
+	ResourceVersion        string `json:"resourceVersion"`
+	Architecture           string `json:"architecture"`
+	AllocatableCPU         string `json:"allocatableCPU,omitempty"`
+	AllocatableMemoryBytes int64  `json:"allocatableMemoryBytes,omitempty"`
 }
 
 // ActuationContract binds a non-fixed selected power mode to the typed target

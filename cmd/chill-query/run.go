@@ -174,12 +174,27 @@ func newCampaignPreflightQuery(
 	if err != nil {
 		return nil, fmt.Errorf("construct batch-energy-optimization preflight query: %w", err)
 	}
+	sessionCandidates, candidateErr := profilerkube.NewKubernetesSessionCandidateResolver(reader, profilerkube.CandidateResolverOptions{
+		Namespace: opts.namespace, ConfigMapName: opts.factSourceConfigMap, ConfigMapKey: opts.executionFactsKey,
+	})
+	sessionWorkloads, workloadErr := profilerkube.NewKubernetesSessionWorkloadResolver(reader)
+	sessionExecution, executionErr := profilerkube.NewKubernetesSessionExecutionPolicyResolver(reader, profilerkube.ExecutionPolicyResolverOptions{
+		Namespace: opts.namespace, ConfigMapName: opts.factSourceConfigMap,
+		ConfigMapKey: opts.executionPoliciesKey, MeasurementMemoryFraction: opts.measurementMemoryFraction,
+	})
+	if err := errors.Join(candidateErr, workloadErr, executionErr); err != nil {
+		return nil, fmt.Errorf("construct session resolvers: %w", err)
+	}
+	sessionPreparer, err := profilerapp.NewSessionPreparer(sessionCandidates, nodes, sessionWorkloads, sessionExecution)
+	if err != nil {
+		return nil, fmt.Errorf("construct session preparer: %w", err)
+	}
 	// The same call and request ChillServer's session runner prepares with.
 	preflights.Session = func(
 		ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization,
 	) (queryapi.SessionPreflightPlan, error) {
 		state, protocol := campaign.Spec.State, campaign.Spec.ActiveProtocol
-		session, err := preparer.PrepareSession(ctx, profilerapp.SessionRequest{
+		session, err := sessionPreparer.PrepareSession(ctx, profilerapp.SessionRequest{
 			Candidate: profilerapp.CandidateSelection{
 				ModelSpec: state.Candidate.ModelSpec, DeviceClass: state.Candidate.DeviceClass, Node: state.TargetNode,
 				ExecutionPath: state.Candidate.ExecutionPath, PowerMode: state.Candidate.PowerMode,
@@ -189,9 +204,6 @@ func newCampaignPreflightQuery(
 		})
 		if err != nil {
 			return queryapi.SessionPreflightPlan{}, err
-		}
-		if len(session.PlannedBatchSizes) == 0 {
-			return queryapi.SessionPreflightPlan{}, errors.New("measurement session resolved no batch size")
 		}
 		return queryapi.SessionPreflightPlan{
 			PlannedBatchSizes: session.PlannedBatchSizes,

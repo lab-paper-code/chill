@@ -17,7 +17,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilerapp "github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
-	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/application"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
@@ -114,33 +113,20 @@ func newSessionPrepare(
 		return nil, nil
 	}
 	namespace, name := opts.factsNamespace, opts.factsConfigMap
-	candidates, candidateErr := profilerkube.NewKubernetesCandidateResolver(reader, profilerkube.CandidateResolverOptions{
+	candidates, candidateErr := profilerkube.NewKubernetesSessionCandidateResolver(reader, profilerkube.CandidateResolverOptions{
 		Namespace: namespace, ConfigMapName: name, ConfigMapKey: opts.executionFactsKey,
 	})
 	nodes, nodeErr := profilerkube.NewKubernetesNodeResolver(reader)
-	metrics, metricErr := profilerkube.NewKubernetesMetricSourceResolver(reader, profilerkube.MetricSourceResolverOptions{
-		Namespace: namespace, ConfigMapName: name, ConfigMapKey: opts.metricSourcesKey,
-	})
-	workloads, workloadErr := profilerkube.NewKubernetesWorkloadObservationResolver(reader,
-		profilerkube.WorkloadObservationResolverOptions{
-			Namespace: namespace, ConfigMapName: name, ConfigMapKey: opts.workloadObservationKey,
-		})
-	actuation, actuationErr := profilerkube.NewKubernetesActuationPolicyResolver(reader,
-		profilerkube.ActuationPolicyResolverOptions{
-			Namespace: namespace, ConfigMapName: name, ConfigMapKey: opts.actuationPoliciesKey,
-		})
-	execution, executionErr := profilerkube.NewKubernetesExecutionPolicyResolver(reader,
+	workloads, workloadErr := profilerkube.NewKubernetesSessionWorkloadResolver(reader)
+	execution, executionErr := profilerkube.NewKubernetesSessionExecutionPolicyResolver(reader,
 		profilerkube.ExecutionPolicyResolverOptions{
 			Namespace: namespace, ConfigMapName: name, ConfigMapKey: opts.executionPoliciesKey,
 			MeasurementMemoryFraction: opts.measurementMemoryFraction,
 		})
-	if err := errors.Join(candidateErr, nodeErr, metricErr, workloadErr, actuationErr, executionErr); err != nil {
+	if err := errors.Join(candidateErr, nodeErr, workloadErr, executionErr); err != nil {
 		return nil, fmt.Errorf("construct session resolvers: %w", err)
 	}
-	preparer, err := profilerapp.NewPreparer(candidates, nodes, metrics, workloads, actuation, execution,
-		func(ctx context.Context, node string) (string, profilingrun.LoadOriginGatewayPodContract, error) {
-			return profilerkube.ResolveGatewayLoadOrigin(ctx, reader, namespace, opts.resourceSystem, node)
-		})
+	preparer, err := profilerapp.NewSessionPreparer(candidates, nodes, workloads, execution)
 	if err != nil {
 		return nil, fmt.Errorf("construct session preparer: %w", err)
 	}
@@ -157,10 +143,6 @@ func newSessionPrepare(
 		if err != nil {
 			return servingkube.SessionPreparation{}, sessionResolutionError(err)
 		}
-		meter, err := metrics.ResolveMetricSource(ctx, state.TargetNode)
-		if err != nil {
-			return servingkube.SessionPreparation{}, sessionResolutionError(fmt.Errorf("resolve Node meter: %w", err))
-		}
 		config := session.RunConfig
 		delivery, err := json.Marshal(config.Delivery)
 		if err != nil {
@@ -171,11 +153,6 @@ func newSessionPrepare(
 			RunConfig: config, MemoryBytes: uint64(config.Actor.MemoryLimitBytes), RuntimeDelivery: delivery,
 			BatchSizes: session.PlannedBatchSizes, SLOPercentile: config.Measurement.SLOPercentile,
 			SLOTarget: time.Duration(config.Measurement.SLOTargetLatencyNanos), Dataset: *config.Measurement.Dataset,
-			// The same mapping declares ChillServer's meters from these facts.
-			Meter: metricobserver.SourceIdentity{
-				Kind: meter.Kind, NodeName: state.TargetNode, Endpoint: meter.Endpoint, Metric: meter.PowerMetric,
-				MetricLabels: meter.MetricLabels,
-			},
 		}, nil
 	}, nil
 }

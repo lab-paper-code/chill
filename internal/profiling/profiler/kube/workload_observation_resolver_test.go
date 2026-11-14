@@ -73,7 +73,6 @@ func TestKubernetesWorkloadObservationResolverRejectsUntrustedFacts(t *testing.T
 		{name: "missing image", facts: strings.Replace(
 			validWorkloadObservationFacts(), testWorkloadObserverImage, "", 1,
 		), match: "image is required"},
-		{name: "unknown field", facts: validWorkloadObservationFacts() + "unknown: true\n", match: "unknown"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

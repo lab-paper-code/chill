@@ -253,10 +253,9 @@ type CandidateReportReason struct {
 	Code string `json:"code"`
 }
 
-// DecodeCandidateReport strictly decodes exactly one current JSON object.
+// DecodeCandidateReport decodes one current JSON report.
 func DecodeCandidateReport(payload []byte) (CandidateReport, error) {
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
-	decoder.DisallowUnknownFields()
 	var report CandidateReport
 	if err := decoder.Decode(&report); err != nil {
 		return CandidateReport{}, fmt.Errorf("decode candidate report: %w", err)

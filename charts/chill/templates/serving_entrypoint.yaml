@@ -88,7 +88,6 @@ spec:
             - {{ printf "--execution-facts-key=%s" .Values.profiler.factSource.executionFactsKey | quote }}
             # Measurement sessions resolve their actor and Workload from the same facts.
             - {{ printf "--execution-policies-key=%s" .Values.profiler.factSource.executionPoliciesKey | quote }}
-            - {{ printf "--workload-observation-key=%s" .Values.profiler.factSource.workloadObservationKey | quote }}
             - {{ printf "--measurement-memory-fraction=%v" .Values.profiler.measurementMemoryFraction | quote }}
             {{- end }}
             # The session-load Job runs this image's session-load subcommand.

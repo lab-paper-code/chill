@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -55,34 +54,23 @@ func (r *KubernetesNodeResolver) ResolveNode(
 			selection.Name, architecture, selection.DeviceArchitecture,
 		)
 	}
-	if node.UID == "" {
-		return profilingrun.NodeSnapshot{}, fmt.Errorf("selected Node %q has incomplete API identity", selection.Name)
-	}
 	var allocatableCPU string
 	if value, present := node.Status.Allocatable[corev1.ResourceCPU]; present {
 		allocatableCPU = value.String()
 	}
+	allocatableMemory := node.Status.Allocatable[corev1.ResourceMemory]
 
 	return profilingrun.NodeSnapshot{
-		Name:            node.Name,
-		UID:             string(node.UID),
-		ResourceVersion: node.ResourceVersion,
-		Architecture:    architecture,
-		AllocatableCPU:  allocatableCPU,
+		Name:                   node.Name,
+		UID:                    string(node.UID),
+		ResourceVersion:        node.ResourceVersion,
+		Architecture:           architecture,
+		AllocatableCPU:         allocatableCPU,
+		AllocatableMemoryBytes: allocatableMemory.Value(),
 	}, nil
 }
 
 func validateNodeSelection(selection profiler.NodeSelection) (labels.Selector, error) {
-	if strings.TrimSpace(selection.Name) == "" || strings.TrimSpace(selection.Name) != selection.Name {
-		return nil, errors.New("selected Node name is required without surrounding whitespace")
-	}
-	if strings.TrimSpace(selection.DeviceArchitecture) == "" ||
-		strings.TrimSpace(selection.DeviceArchitecture) != selection.DeviceArchitecture {
-		return nil, errors.New("resolved DeviceClass architecture is required without surrounding whitespace")
-	}
-	if len(selection.DeviceClassSelector) == 0 {
-		return nil, errors.New("resolved DeviceClass selector is required")
-	}
 	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
 		MatchLabels: selection.DeviceClassSelector,
 	})

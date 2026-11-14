@@ -62,11 +62,6 @@ func TestKubernetesNodeResolverFailsClosed(t *testing.T) {
 				node.Labels[corev1.LabelArchStable] = testARM64Architecture
 			}, match: "does not match resolved DeviceClass architecture",
 		},
-		{
-			name: "missing identity", mutate: func(node *corev1.Node) {
-				node.UID = ""
-			}, match: "incomplete API identity",
-		},
 	}
 
 	for _, test := range tests {

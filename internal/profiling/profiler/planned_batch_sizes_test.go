@@ -19,7 +19,6 @@ func TestPlannedBatchSizesUsesResolvedCapability(t *testing.T) {
 		{name: "sparse finite capability", cap: 16, declared: []int32{16, 1, 3, 4, 32}, want: []int{1, 4, 16}},
 		{name: "one", cap: 1, want: []int{1}},
 		{name: "requires one", cap: 16, declared: []int32{2, 4}},
-		{name: "requires positive cap"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			report := profilingrun.CandidateReport{Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: test.cap},

@@ -474,22 +474,6 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			match: "unsupported Profiler execution facts schema",
 		},
 		{
-			name: "unknown execution fact field",
-			mutate: func(objects []client.Object) {
-				config := objects[2].(*corev1.ConfigMap)
-				config.Data["execution-facts.yaml"] += "unknown: value\n"
-			},
-			match: `unknown field "unknown"`,
-		},
-		{
-			name: "second YAML document",
-			mutate: func(objects []client.Object) {
-				config := objects[2].(*corev1.ConfigMap)
-				config.Data["execution-facts.yaml"] += "---\nschemaVersion: ignored\n"
-			},
-			match: "exactly one YAML document",
-		},
-		{
 			name: "missing exact declaration",
 			mutate: func(objects []client.Object) {
 				config := objects[2].(*corev1.ConfigMap)

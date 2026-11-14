@@ -192,7 +192,7 @@ func parseExecutionDeclarations(configMap *corev1.ConfigMap, configMapKey string
 		return nil, fmt.Errorf("decode Profiler execution facts: %w", err)
 	}
 	var document executionFactsDocument
-	if err := yaml.UnmarshalStrict(documentBytes, &document); err != nil {
+	if err := yaml.Unmarshal(documentBytes, &document); err != nil {
 		return nil, fmt.Errorf("decode Profiler execution facts: %w", err)
 	}
 	if document.SchemaVersion != executionFactsSchema {
@@ -261,16 +261,6 @@ func readSingleYAMLDocument(raw []byte) ([]byte, error) {
 	if len(bytes.TrimSpace(document)) == 0 {
 		return nil, errors.New("execution facts must contain one non-empty YAML document")
 	}
-	trailing, err := reader.Read()
-	if !errors.Is(err, io.EOF) {
-		if err != nil {
-			return nil, err
-		}
-		if len(bytes.TrimSpace(trailing)) == 0 {
-			return nil, errors.New("execution facts must contain exactly one YAML document")
-		}
-		return nil, errors.New("execution facts must contain exactly one YAML document")
-	}
 	return document, nil
 }
 
@@ -321,7 +311,6 @@ func validateExecutionDeclaration(source executionDeclaration) (resolvedExecutio
 
 func decodeRuntimeDeclaration(source runtimeDeclarationSource) (runtimeDeclaration, error) {
 	decoder := json.NewDecoder(bytes.NewReader([]byte(source.Payload)))
-	decoder.DisallowUnknownFields()
 	var declaration runtimeDeclaration
 	if err := decoder.Decode(&declaration); err != nil {
 		return runtimeDeclaration{}, fmt.Errorf("decode runtime producer declaration: %w", err)

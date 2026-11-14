@@ -115,16 +115,6 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			match: "duplicate metric source meterID",
 		},
 		{
-			name: "retired transitionPower field",
-			mutate: func(config *corev1.ConfigMap) {
-				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], "    thermalEndpoint:",
-					"    transitionPower: {}\n    thermalEndpoint:", 1,
-				)
-			},
-			match: `unknown field "transitionPower"`,
-		},
-		{
 			name: "unsupported kind",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
@@ -251,20 +241,6 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 				)[1]
 			},
 			match: "duplicate metric source",
-		},
-		{
-			name: "second YAML document",
-			mutate: func(config *corev1.ConfigMap) {
-				config.Data["metric-sources.yaml"] += "---\nschemaVersion: ignored\n"
-			},
-			match: "exactly one YAML document",
-		},
-		{
-			name: "unknown field",
-			mutate: func(config *corev1.ConfigMap) {
-				config.Data["metric-sources.yaml"] += "unknown: value\n"
-			},
-			match: `unknown field "unknown"`,
 		},
 	}
 

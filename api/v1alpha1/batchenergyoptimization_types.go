@@ -11,25 +11,24 @@ import (
 
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="BatchEnergyOptimization spec is immutable"
 type BatchEnergyOptimizationSpec struct {
-	State          MeasurementStateSpec `json:"state"`
-	ActiveProtocol ActiveProtocolSpec   `json:"activeProtocol"`
-	IdleProtocol   IdleProtocolSpec     `json:"idleProtocol"`
+	State MeasurementStateSpec `json:"state"`
+	// +optional
+	ActiveProtocol ActiveProtocolSpec `json:"activeProtocol,omitempty,omitzero"`
+	// +optional
+	IdleProtocol IdleProtocolSpec `json:"idleProtocol,omitempty,omitzero"`
 
 	// TrialsPerBatch is the number of completed active and idle observations used
 	// to compare each batch under the minimum-energy objective.
-	// +kubebuilder:validation:Minimum=3
-	// +kubebuilder:validation:Maximum=3
-	TrialsPerBatch int32 `json:"trialsPerBatch"`
+	// +optional
+	TrialsPerBatch int32 `json:"trialsPerBatch,omitempty"`
 
 	// +optional
-	// +kubebuilder:default={}
-	PointPolicy BatchEnergyOptimizationPointPolicySpec `json:"pointPolicy,omitempty"`
+	PointPolicy BatchEnergyOptimizationPointPolicySpec `json:"pointPolicy,omitempty,omitzero"`
 
 	// RetryLimit bounds retries at the same batch after retryable infrastructure
 	// failures. Runtime OOM, execution failures and invalid evidence do not retry.
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=10
-	RetryLimit int32 `json:"retryLimit"`
+	// +optional
+	RetryLimit int32 `json:"retryLimit,omitempty"`
 
 	// Session holds the settings of a ChillServer measurement session.
 	// +optional
@@ -38,7 +37,6 @@ type BatchEnergyOptimizationSpec struct {
 
 // BatchEnergyOptimizationSessionSpec holds the measurement request's session
 // settings. Durations are seconds unless the name says otherwise.
-// +kubebuilder:validation:XValidation:rule="self.levelDurationLimitSeconds > self.meterLagSeconds + self.minimumPowerWindowSeconds",message="levelDurationLimitSeconds must exceed meterLagSeconds plus minimumPowerWindowSeconds"
 // +kubebuilder:validation:XValidation:rule="self.requestLifetimeSeconds * 1000 > self.deliveryMarginMilliseconds",message="requestLifetimeSeconds must exceed deliveryMarginMilliseconds"
 type BatchEnergyOptimizationSessionSpec struct {
 	// MeterLagSeconds is the power meter lag discarded at each level start.
@@ -63,15 +61,12 @@ type BatchEnergyOptimizationSessionSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	LevelDurationLimitSeconds float64 `json:"levelDurationLimitSeconds"`
 	// PostLoadWindowSeconds observes the loaded actor without inference after the last level.
-	// +kubebuilder:validation:ExclusiveMinimum=true
-	// +kubebuilder:validation:Minimum=0
-	PostLoadWindowSeconds float64 `json:"postLoadWindowSeconds"`
+	// +optional
+	PostLoadWindowSeconds float64 `json:"postLoadWindowSeconds,omitempty"`
 	// ConfidenceLevel, a decimal in [0.5, 1), is the level of every statistical
 	// decision the derivation makes.
-	// +kubebuilder:validation:Pattern=`^0\.[5-9][0-9]*$`
-	ConfidenceLevel string `json:"confidenceLevel"`
-	// +kubebuilder:validation:Minimum=1
-	RequestLifetimeSeconds int32 `json:"requestLifetimeSeconds"`
+	ConfidenceLevel        string `json:"confidenceLevel"`
+	RequestLifetimeSeconds int32  `json:"requestLifetimeSeconds"`
 	// +kubebuilder:validation:Minimum=1
 	DeliveryMarginMilliseconds int32 `json:"deliveryMarginMilliseconds"`
 	// +kubebuilder:validation:Minimum=1
@@ -81,13 +76,11 @@ type BatchEnergyOptimizationSessionSpec struct {
 	Observation MeasurementObservationSpec `json:"observation"`
 }
 
-var sessionConfidenceDecimal = regexp.MustCompile(`^0\.[5-9][0-9]*$`)
-
 // Confidence returns ConfidenceLevel as a number in [0.5, 1).
 func (s BatchEnergyOptimizationSessionSpec) Confidence() (float64, error) {
 	confidence, err := strconv.ParseFloat(s.ConfidenceLevel, 64)
-	if err != nil || !sessionConfidenceDecimal.MatchString(s.ConfidenceLevel) {
-		return 0, fmt.Errorf("session.confidenceLevel must be a decimal in [0.5, 1), got %q", s.ConfidenceLevel)
+	if err != nil || math.IsNaN(confidence) || confidence < 0.5 || confidence >= 1 {
+		return 0, fmt.Errorf("session.confidenceLevel must be in [0.5, 1), got %q", s.ConfidenceLevel)
 	}
 	return confidence, nil
 }
@@ -96,8 +89,6 @@ func (s BatchEnergyOptimizationSessionSpec) Confidence() (float64, error) {
 // incremental-energy estimates for this measurement.
 type BatchEnergyOptimizationPointPolicySpec struct {
 	// +optional
-	// +kubebuilder:default="0.95"
-	// +kubebuilder:validation:Pattern=`^0\.[0-9]*[1-9][0-9]*$`
 	ConfidenceLevel string `json:"confidenceLevel,omitempty"`
 }
 
@@ -116,32 +107,27 @@ func (p BatchEnergyOptimizationPointPolicySpec) Confidence() (float64, error) {
 	return confidence, nil
 }
 
-// +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"
-// +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.durationSeconds",message="metricObservation.durationSeconds must cover durationSeconds"
 type ActiveProtocolSpec struct {
 	// Workload supplies the actual SLO percentile and latency for this sweep.
-	// +kubebuilder:validation:MinLength=1
 	Workload string `json:"workload"`
 
 	// +kubebuilder:validation:Minimum=0
 	WarmupIterations int32 `json:"warmupIterations"`
 
-	// +kubebuilder:validation:Minimum=30
-	DurationSeconds int32 `json:"durationSeconds"`
+	// +optional
+	DurationSeconds int32 `json:"durationSeconds,omitempty"`
 
 	// +optional
-	// +kubebuilder:default=0.5
-	// +kubebuilder:validation:Minimum=0
 	DurationToleranceSeconds *float64 `json:"durationToleranceSeconds,omitempty"`
 
 	// Dataset names the cluster-scoped Dataset whose profiling records every
 	// active child Run samples.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
 	Dataset string `json:"dataset"`
 
-	MetricObservation ProfilingRunMetricObservationSpec `json:"metricObservation"`
-	OperatingPoints   MeasurementOperatingPointsSpec    `json:"operatingPoints"`
+	// +optional
+	MetricObservation ProfilingRunMetricObservationSpec `json:"metricObservation,omitempty,omitzero"`
+	// +optional
+	OperatingPoints MeasurementOperatingPointsSpec `json:"operatingPoints,omitempty,omitzero"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"
@@ -172,7 +158,6 @@ type BatchEnergyOptimizationStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// +optional
-	// +kubebuilder:validation:Enum=Measuring;Complete;Failed
 	Phase string `json:"phase,omitempty"`
 
 	// +optional
@@ -183,7 +168,6 @@ type BatchEnergyOptimizationStatus struct {
 	CompletedBatches int32 `json:"completedBatches,omitempty"`
 
 	// +optional
-	// +kubebuilder:validation:MaxLength=128
 	Outcome string `json:"outcome,omitempty"`
 
 	// +optional
@@ -208,7 +192,6 @@ func (s BatchEnergyOptimizationStatus) Terminal(generation int64) bool {
 // BatchEnergyOptimization searches one batch-size space for the minimum
 // incremental energy per completed item by owning the ProfilingRun objects it
 // creates.
-// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 200",message="name must be at most 200 characters so generated Run names fit"
 type BatchEnergyOptimization struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
