@@ -57,7 +57,7 @@ func TestCapacityFrozenStartsZeroCostAndNoDemand(t *testing.T) {
 	p := capacityDeltaTiny([]float64{0, 0}, 0)
 	for _, plans := range p.plans {
 		for _, plan := range plans {
-			plan.items[0][0].e, plan.retained[0][0].e = 0, 0
+			plan.items[0][0].model, plan.retained[0][0].model = schedulerTestModel(0), schedulerTestModel(0)
 		}
 	}
 	p.settings.PlanPricedStart = true

@@ -21,7 +21,7 @@ func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
 	snap.DispatchOccupancy = []DispatchOccupancy{{Node: snap.Nodes[0].Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel,
 		ProfileID: snap.Instances[0].Profile.ID, ExecutionPath: c.Artifact.ExecutionPath, Batch: snap.Instances[0].MaxBatch, Source: "fixture"}}
 	p := *snap.Instances[0].Profile
-	p.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 0.01, MemoryBytes: 100}, []float64{8e5, 1e6, 1.2e6})}
+	p.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, InputSlopeJoules: schedulerTestSlope(0.01), MemoryBytes: 100}, []float64{8e5, 1e6, 1.2e6})}
 	snap.Instances[0].Profile = &p
 	snap.Options[0].Instance = snap.Instances[0]
 	snap.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: 20 * time.Millisecond}

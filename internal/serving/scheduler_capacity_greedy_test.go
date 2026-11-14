@@ -139,7 +139,7 @@ func capacityDeltaTiny(rates []float64, rate float64) *capacityPlanner {
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{Percentile: 100, TargetLatency: time.Second}}, rate: rate}}
 	for n, mu := range rates {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
-		item := capacityItem{id: fmt.Sprint("i", n), routingWeight: profileRoutingWeight(mu), throughput: mu, serviceNanos: 20e6, e: float64(n + 1), weight: 1}
+		item := capacityItem{id: fmt.Sprint("i", n), routingWeight: profileRoutingWeight(mu), throughput: mu, serviceNanos: 20e6, order: float64(n + 1), model: schedulerTestModel(float64(n + 1)), weight: 1}
 		p.plans = append(p.plans, []*capacityPlan{{keep: true, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, record: SchedulerNodePlan{Key: "keep", Eligible: true}}})
 		p.compared = append(p.compared, true)
 	}

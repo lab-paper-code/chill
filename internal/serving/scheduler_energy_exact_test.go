@@ -25,8 +25,8 @@ func TestIdleSingleInstanceUsesItsProfileBase(t *testing.T) {
 	snap.Nodes[0].PowerMode = energyTestGPUMode
 	snap.Baselines[0].Watts, snap.Baselines[0].PowerMode = 53.14, energyTestFixedMode
 	snap.Instances[0].Profile.Condition.PowerMode = energyTestGPUMode
-	snap.Instances[0].Profile.IdleBaselineWatts = 118.44
-	snap.Instances[0].Profile.Batches[0].EnergyPerInputJoules = 8.77
+	snap.Instances[0].Profile.Power = schedulerTestPower(118.44)
+	snap.Instances[0].Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(8.77)
 	s.MinimumDemand = map[string]float64{"w1": 1}
 	p := capacityPlannerForTest(t, s, snap)
 	got := p.evaluateEnergyForRoutes([]int{0}, 0, nil, 1, p.keep.Routing)
@@ -57,9 +57,9 @@ func TestCapacityOtherModeIdleCannotDecideEnergyMove(t *testing.T) {
 	snap.Nodes[len(snap.Nodes)-1].PowerMode = energyTestFixedMode
 	wanted := poolsInstance(snap.Instances[0], "new", n, energyTestFixedMode, "w1")
 	wanted.IdleScope = schedulerNodeWallScope
-	wanted.Profile.IdleBaselineWatts = 1
+	wanted.Profile.Power = schedulerTestPower(1)
 	wanted.Profile.Batches = append([]BatchProfile(nil), wanted.Profile.Batches...)
-	wanted.Profile.Batches[0].EnergyPerInputJoules = .01
+	wanted.Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(.01)
 	snap.Options = append(snap.Options, poolsOption(wanted))
 	snap.Costs = append(snap.Costs, poolsCost("prepare", n, "unloaded", schedulerState(wanted), energyTestFixedMode), poolsCost("remove", snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", schedulerTestEcoMode))
 	capacityLoad(s, &snap, snap.Workloads[0], 10)
@@ -86,10 +86,10 @@ func TestCapacityTransferredPrepareOnlyBlocksEnergyMove(t *testing.T) {
 		t.Run(map[bool]string{false: "energy", true: "recovery"}[recovery], func(t *testing.T) {
 			s, snap := schedulerFixture()
 			s.ComparisonPeriod = 600 * time.Second
-			snap.Instances[0].Profile.IdleBaselineWatts = 1000
+			snap.Instances[0].Profile.Power = schedulerTestPower(1000)
 			n := poolsAddNode(&snap, "n2", map[string]float64{energyTestFixedMode: 1})
 			wanted := poolsInstance(snap.Instances[0], "new", n, energyTestFixedMode, "w1")
-			wanted.Profile.IdleBaselineWatts = 1
+			wanted.Profile.Power = schedulerTestPower(1)
 			snap.Options = append(snap.Options, poolsOption(wanted))
 			transferred := poolsCost("prepare", n, "unloaded", "different-profile", energyTestFixedMode)
 			snap.Costs = append(snap.Costs, transferred, poolsCost("remove", snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", energyTestFixedMode))
@@ -125,7 +125,7 @@ func TestCapacityIdenticalUnknownIdleCancelsForRouteChange(t *testing.T) {
 	snap.Nodes[len(snap.Nodes)-1].PowerMode = energyTestFixedMode
 	cheap := poolsInstance(old, "ready-cheap", n, energyTestFixedMode, "w1")
 	cheap.Profile.Batches = append([]BatchProfile(nil), cheap.Profile.Batches...)
-	cheap.Profile.Batches[0].EnergyPerInputJoules = .01
+	cheap.Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(.01)
 	cheap.IdleScope = schedulerNodeWallScope
 	snap.Instances = append(snap.Instances, cheap)
 	snap.Options = append(snap.Options, poolsOption(cheap))
@@ -154,8 +154,8 @@ func TestIdleExactCellRequiresMatchingMeter(t *testing.T) {
 	snap.Baselines[0].State = []string{schedulerState(snap.Instances[0])}
 	snap.Baselines[0].Meter = "another-node-wall-meter"
 	snap.Baselines[0].Watts = 53.14
-	snap.Instances[0].Profile.IdleBaselineWatts = 118.44
-	snap.Instances[0].Profile.Batches[0].EnergyPerInputJoules = 8.77
+	snap.Instances[0].Profile.Power = schedulerTestPower(118.44)
+	snap.Instances[0].Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(8.77)
 	p := capacityPlannerForTest(t, s, snap)
 	got := p.evaluateEnergyForRoutes([]int{0}, 0, nil, 1, p.keep.Routing)
 	if math.Abs(got.joules-(118.44+8.77)) > 1e-8 {
@@ -206,10 +206,10 @@ func TestCapacityEnergyUndecidableSkipsReplayWithoutChangingSelection(t *testing
 					s.PlanSearchStrategy, s.PlanPostFilterFinalists = protocol.V2, postfilter
 					s.PlanSearchEvaluations, s.PlanExactFinalists = 1000, 1
 					s.ComparisonPeriod = 600 * time.Second
-					snap.Instances[0].Profile.IdleBaselineWatts = 1000
+					snap.Instances[0].Profile.Power = schedulerTestPower(1000)
 					node := poolsAddNode(&snap, "n2", map[string]float64{energyTestFixedMode: 1})
 					wanted := poolsInstance(snap.Instances[0], "new", node, energyTestFixedMode, "w1")
-					wanted.Profile.IdleBaselineWatts = 1
+					wanted.Profile.Power = schedulerTestPower(1)
 					snap.Options = append(snap.Options, poolsOption(wanted))
 					snap.Costs = append(snap.Costs,
 						poolsCost("prepare", node, "unloaded", "different-profile", energyTestFixedMode),

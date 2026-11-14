@@ -16,9 +16,9 @@ func TestSchedulerEnergyRecordScopesPredictionsAndDeduplicatesCells(t *testing.T
 	snapshot.Nodes[len(snapshot.Nodes)-1].PowerMode = energyTestFixedMode
 	wanted := poolsInstance(snapshot.Instances[0], "cheap", node, energyTestFixedMode, "w1")
 	wanted.IdleScope = schedulerNodeWallScope
-	wanted.Profile.IdleBaselineWatts = 1
+	wanted.Profile.Power = schedulerTestPower(1)
 	wanted.Profile.Batches = append([]BatchProfile(nil), wanted.Profile.Batches...)
-	wanted.Profile.Batches[0].EnergyPerInputJoules = .01
+	wanted.Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(.01)
 	snapshot.Options = append(snapshot.Options, poolsOption(wanted))
 	snapshot.Costs = append(snapshot.Costs, poolsCost("prepare", node, "unloaded", schedulerState(wanted), energyTestFixedMode), poolsCost("remove", snapshot.Instances[0].Node, schedulerState(snapshot.Instances[0]), "unloaded", schedulerTestEcoMode))
 	capacityLoad(settings, &snapshot, snapshot.Workloads[0], 10)

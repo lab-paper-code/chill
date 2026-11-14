@@ -48,7 +48,7 @@ func capacityScalarProductFixture() *capacityPlanner {
 	for n := range p.plans {
 		keep := p.plans[n][0]
 		keep.before = 10
-		keep.items[0][0].e, keep.retained[0][0].e = 0, 0
+		keep.items[0][0].model, keep.retained[0][0].model = schedulerTestModel(0), schedulerTestModel(0)
 		plan := *keep
 		plan.keep, plan.record.Key = false, "move"
 		if n == 0 {

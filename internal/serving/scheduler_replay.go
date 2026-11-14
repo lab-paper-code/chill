@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
@@ -111,7 +112,10 @@ type schedulerReplayInstance struct {
 }
 
 type schedulerReplayResult struct {
-	energy           float64
+	energy float64
+	// energyUnknown names node loads whose watts the profiles do not
+	// identify; the replay then has no expected energy.
+	energyUnknown    []string
 	requestJoules    float64
 	samples          map[string][]float64
 	definitions      map[string]*Definition
@@ -232,8 +236,12 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 	if len(c.Reasons) != 0 {
 		return c, ctx.Err()
 	}
-	energy := r.energy
-	c.ExpectedJoules = &energy
+	if len(r.energyUnknown) == 0 {
+		energy := r.energy
+		c.ExpectedJoules = &energy
+	} else {
+		c.Assumptions = appendUnique(c.Assumptions, "expected energy not comparable: "+strings.Join(r.energyUnknown, ","))
+	}
 	c.Status = schedulerStatusFeasible
 	c.SLO, c.Feedback = feedbackReplayEstimates(snapshot, r, capacity == nil), r.feedback
 	c.WorstExceedance = 0
@@ -423,7 +431,7 @@ func (s *schedulerReplayState) addLoadEnergy() {
 	}
 	for _, load := range nodeLoadWatts(rates) {
 		if !load.known {
-			s.out.reasons = appendUnique(s.out.reasons, "LoadPowerNotIdentified:"+load.key)
+			s.out.energyUnknown = appendUnique(s.out.energyUnknown, "LoadPowerNotIdentified:"+load.key)
 			continue
 		}
 		joules := load.watts * s.horizon / 1e9

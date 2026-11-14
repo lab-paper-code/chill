@@ -21,8 +21,8 @@ func feedbackFixture() (SchedulerSettings, SchedulerSnapshot, SchedulerCandidate
 	settings.ComparisonPeriod = time.Millisecond
 	profile := snapshot.Instances[0].Profile
 	profile.Batches = []BatchProfile{
-		schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 2, MemoryBytes: 100}, []float64{30e6}),
-		schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{70e6}),
+		schedulerTestBatchProfile(BatchProfile{Batch: 1, InputSlopeJoules: schedulerTestSlope(2), MemoryBytes: 100}, []float64{30e6}),
+		schedulerTestBatchProfile(BatchProfile{Batch: 2, InputSlopeJoules: schedulerTestSlope(1), MemoryBytes: 100}, []float64{70e6}),
 	}
 	snapshot.Instances[0].MaxBatch = 2
 	snapshot.Options[0].Instance = snapshot.Instances[0]

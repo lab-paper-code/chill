@@ -60,7 +60,11 @@ func TestSchedulerRunningResidualBeyondSupportRestartsSameGap(t *testing.T) {
 	if !state.initializeRunning() || instance.nativeFinish != float64(10*time.Millisecond) {
 		t.Fatalf("restart finish must use whole fresh service: %+v", state.out)
 	}
-	wantJoules := batch.EnergyPerInputJoules * 5 / 60
+	// 5/60 of the batch's input lies within the horizon; with no awake step
+	// the node's load joules are the input slope times those inputs.
+	state.addLoadEnergy()
+	slope, _ := batch.InputSlopeJoules.Value()
+	wantJoules := slope * 5 / 60
 	if math.Abs(state.out.requestJoules-wantJoules) > 1e-12 || state.out.energy != state.out.requestJoules {
 		t.Fatalf("restart energy must use remaining/(elapsed+remaining): got %g want %g", state.out.requestJoules, wantJoules)
 	}

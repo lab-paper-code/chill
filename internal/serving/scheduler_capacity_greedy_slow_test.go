@@ -16,7 +16,7 @@ func TestCapacityDeltaSlow(t *testing.T) {
 		s.ComparisonPeriod = time.Minute
 		s.ScaleDownHeadroomFraction = 0.2
 		profile := *snap.Instances[0].Profile
-		profile.Batches = append(slices.Clone(profile.Batches), schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 0.8, MemoryBytes: 100}, []float64{float64(15 * time.Millisecond)}))
+		profile.Batches = append(slices.Clone(profile.Batches), schedulerTestBatchProfile(BatchProfile{Batch: 2, InputSlopeJoules: schedulerTestSlope(0.8), MemoryBytes: 100}, []float64{float64(15 * time.Millisecond)}))
 		snap.Instances[0].Profile = &profile
 		option := snap.Instances[0]
 		option.MaxBatch = 2
@@ -104,7 +104,9 @@ func TestCapacityDeltaRetainedArithmetic(t *testing.T) {
 	for n, plans := range p.plans {
 		plan := plans[0]
 		plan.retained[0][0].weight = int32([]int{643, 357, 13}[n])
-		plan.retained[0][0].e = []float64{0.07068, 0.07453, 0.32292}[n]
+		// One instance has one power model, before and after the route.
+		plan.retained[0][0].model = schedulerTestModel([]float64{0.07068, 0.07453, 0.32292}[n])
+		plan.items[0][0].model = plan.retained[0][0].model
 		other := plan.retained[0][0]
 		other.id += "-second"
 		other.weight, other.routingWeight = 29, 0.125

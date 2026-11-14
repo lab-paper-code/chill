@@ -9,8 +9,8 @@ import (
 )
 
 func admissionTestPolicy() firstfloor.Policy {
-	one := schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 2}, []float64{float64(20 * time.Millisecond)})
-	two := schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 1}, []float64{float64(100 * time.Millisecond), float64(200 * time.Millisecond)})
+	one := schedulerTestBatchProfile(BatchProfile{Batch: 1, InputSlopeJoules: schedulerTestSlope(2)}, []float64{float64(20 * time.Millisecond)})
+	two := schedulerTestBatchProfile(BatchProfile{Batch: 2, InputSlopeJoules: schedulerTestSlope(1)}, []float64{float64(100 * time.Millisecond), float64(200 * time.Millisecond)})
 	return firstfloor.Policy{ProfileID: "profile", MaxBatchSize: 2, Batches: (&Profile{ID: "profile", Batches: []BatchProfile{one, two}}).NativeBundle().Batches}
 }
 

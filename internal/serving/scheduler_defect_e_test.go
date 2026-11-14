@@ -30,7 +30,8 @@ func TestDefectEIdleKeepRetainsUnavailablePhysicalTarget(t *testing.T) {
 				snap.Instances[k].UnroutedSince = &since
 				// Cleanup must repay its measured removal over H.
 				profile := *snap.Instances[k].Profile
-				profile.IdleBaselineWatts += 10
+				idle, _ := profile.Power.IdleWatts.Value()
+				profile.Power = schedulerTestPower(idle + 10)
 				snap.Instances[k].Profile = &profile
 				snap.Options[k].Instance.Profile = &profile
 			}
