@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving/observation"
@@ -40,12 +41,12 @@ func SampleResources(root string, targets []observation.ResourceTarget, at time.
 		})
 	}
 	for _, zone := range zones {
-		kind, err := os.ReadFile(filepath.Join(zone, "type"))
+		kind, err := readSysfs(filepath.Join(zone, "type"))
 		if err != nil {
 			sample.Errors = append(sample.Errors, resourceError(zone, "type", err))
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(zone, "temp"))
+		raw, err := readSysfs(filepath.Join(zone, "temp"))
 		if err != nil {
 			sample.Errors = append(sample.Errors, resourceError(zone, "temperature", err))
 			continue
@@ -258,4 +259,22 @@ func readContainerResources(row *observation.ContainerResources, paths map[strin
 		row.MemoryCurrentBytes = read("memory", "memory.usage_in_bytes", "memoryCurrentBytes")
 		row.MemoryPeakBytes = read("memory", "memory.max_usage_in_bytes", "memoryPeakBytes")
 	}
+}
+
+// readSysfs reads one sysfs attribute with plain system calls. os.ReadFile
+// registers a sysfs file with the runtime poller and then waits forever when
+// the driver answers EAGAIN, as the Orin Nano cv0..cv2 thermal zones do while
+// their sensors are off; here that answer is returned as the read error.
+func readSysfs(path string) ([]byte, error) {
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	defer func() { _ = syscall.Close(fd) }()
+	buffer := make([]byte, 256)
+	n, err := syscall.Read(fd, buffer)
+	if err != nil {
+		return nil, &os.PathError{Op: "read", Path: path, Err: err}
+	}
+	return buffer[:n], nil
 }

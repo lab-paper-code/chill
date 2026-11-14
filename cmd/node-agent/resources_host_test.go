@@ -175,3 +175,26 @@ func writeHostFile(t *testing.T, root, name, value string) {
 		t.Fatal(err)
 	}
 }
+
+// A thermal zone whose read fails becomes a sample error and the other zones
+// are still read. The EAGAIN wait itself needs the device's sysfs driver and
+// is not reproducible in a temporary directory.
+func TestSampleResourcesKeepsOtherZonesWhenAThermalReadFails(t *testing.T) {
+	root := t.TempDir()
+	writeHostFile(t, root, "sys/class/thermal/thermal_zone0/type", "cpu\n")
+	writeHostFile(t, root, "sys/class/thermal/thermal_zone0/temp", "41000\n")
+	writeHostFile(t, root, "sys/class/thermal/thermal_zone1/type", "cv0\n")
+	if err := os.Mkdir(filepath.Join(root, "sys/class/thermal/thermal_zone1/temp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan observation.ResourceSample, 1)
+	go func() { done <- SampleResources(root, nil, time.Now()) }()
+	select {
+	case sample := <-done:
+		if len(sample.Thermal) != 1 || sample.Thermal[0].MilliCelsius != 41000 || len(sample.Errors) != 1 {
+			t.Fatalf("sample %+v", sample)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("sampling did not return")
+	}
+}
