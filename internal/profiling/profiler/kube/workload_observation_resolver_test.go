@@ -34,7 +34,8 @@ func TestMeasurementWorkloadFreezesActualSLOAndRejectsDifferentInputs(t *testing
 	resolver := &KubernetesWorkloadObservationResolver{reader: reader}
 	selection := profiler.CandidateSelection{ModelSpec: "model", Preprocessor: "preprocessor", Dataset: "data"}
 	stop, err := resolver.ResolveMeasurementWorkload(context.Background(), "service", selection)
-	if err != nil || stop.MinServiceSamples != 299 || stop.SLOPercentile != 99 ||
+	// p99 needs ceil(ln(0.01)/ln(0.99)) = 459 known-gap records.
+	if err != nil || stop.MinServiceSamples != 459 || stop.SLOPercentile != 99 ||
 		stop.WorkloadUID != "workload-uid" || stop.WorkloadResourceVersion != "7" ||
 		stop.SLOTargetLatencyNanos != int64(time.Second) {
 		t.Fatalf("actual Workload stop policy=%+v err=%v", stop, err)

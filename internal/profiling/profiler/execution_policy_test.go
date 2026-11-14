@@ -153,7 +153,8 @@ func TestFrozenDeadlineCoversP99BatchEightSparseSamplesDrainsAndPostLoad(t *test
 	config.Actor.MaxBatchSize = 8
 	config.Delivery.ArtifactCapability.DeclaredBatchSizes = nil
 	config.Measurement.SLOPercentile = 99
-	config.Measurement.MinServiceSamples = 299
+	// ceil(ln(0.01)/ln(0.99)) = 459 records identify the 99th percentile.
+	config.Measurement.MinServiceSamples = 459
 	points := config.Measurement.OperatingPoints
 	points.PostLoadDurationSeconds = 30
 	config.Measurement.DurationSeconds = points.PhaseDurationSeconds*(len(points.Utilizations)+2) + points.PostLoadDurationSeconds
@@ -162,12 +163,17 @@ func TestFrozenDeadlineCoversP99BatchEightSparseSamplesDrainsAndPostLoad(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The 459-sample sparse phase outlasts the catalog fixture's metric result
+	// budget; this test checks deadlines, so give it an adequate envelope.
+	frozen.Policy.MaxMetricResultBytes = 32 << 20
+	frozen.Policy.ObserverMemoryLimitBytes = 256 << 20
 	plan, err := DeriveExecutionPlan(config, frozen)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The collector needs one unknown-gap batch before its 299 known-gap samples.
-	sparse := 2400 * time.Second
+	// The collector needs one unknown-gap batch before its 459 known-gap
+	// samples: (459+1) batches of 8 at the 1s sparse mean gap.
+	sparse := 3680 * time.Second
 	otherPhases := time.Duration(points.PhaseDurationSeconds*(len(points.Utilizations)+1)) * time.Second
 	drain := time.Duration(points.RequestLifetimeSeconds)*time.Second + time.Duration(points.DeliveryMarginMilliseconds)*time.Millisecond
 	drains := time.Duration(len(points.Utilizations)+2) * drain
