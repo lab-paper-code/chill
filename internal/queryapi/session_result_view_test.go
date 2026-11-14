@@ -22,7 +22,6 @@ const sessionResultPayload = `{
   "awakeStepWatts": {"status": "NotIdentified", "range": [0, 1.2], "reason": "the hold has no breakpoint"},
   "holdSeconds": {"status": "Identified", "value": 0.2, "range": [0.1, 0.3]},
   "meterIntervalSeconds": 1, "settledAtSeconds": 4, "postLoad": [[0, 9.1], [1, 8.2], [2, 7.6]],
-  "postLoadTailSlopeWattsPerSecond": 0, "fitResidualSquareWatts": 0.1, "fitLimitSquareWatts": 0.2,
   "holdSegmentsSearched": 0, "holdResolutionWatts": 0},
  "batches": [{"batch": 1, "serviceNanos": [10, 20, 30], "precedingIdleNanos": [1, 2, 3],
   "dispatchOccupancyNanos": [40, 10, 30, 20], "saturationInputRate": 80,

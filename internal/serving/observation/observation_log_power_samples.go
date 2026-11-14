@@ -2,7 +2,7 @@ package observation
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
 	"time"
@@ -23,22 +23,23 @@ type MeterSamples struct {
 }
 
 // PowerSamples reads the samples of one configured meter observed in
-// [from, to]. A sample repeated by overlapping records counts once; the same
-// time with other watts, or a record from another source, is an error.
+// [from, to]. Identical repeats count once. Conflicting values at one timestamp
+// remain raw facts so integration excludes only windows that contain them.
+// A source mismatch makes this meter's power unavailable.
 func (l *ObservationLog) PowerSamples(ctx context.Context, meter OperatingPowerMeter, from, to time.Time) (MeterSamples, error) {
 	result := MeterSamples{Samples: []metricobserver.Sample{}, Failures: []metricobserver.Failure{}}
-	if from.IsZero() || !from.Before(to) {
-		return result, &serving.Error{Code: serving.CodeInvalidQuery, Message: "power samples require a positive from/to range"}
-	}
 	seen := map[time.Time]float64{}
 	failed := map[time.Time]bool{}
+	unavailable := false
 	coverage, err := l.readOperatingPower(ctx, from, to, func(records func(func(*SchedulerObservation) error) error) error {
 		return records(func(event *SchedulerObservation) error {
 			if event.Power == nil || !matchesOperatingMeter(meter, event) {
 				return nil
 			}
 			if len(event.Power.Samples) > 0 && !reflect.DeepEqual(event.Power.Source, meter.Source) {
-				return fmt.Errorf("meter %s recorded samples from another source at %s", meter.Meter, event.At.Format(time.RFC3339Nano))
+				slog.Warn("meter samples came from another source", "meter", meter.Meter, "at", event.At)
+				unavailable = true
+				return nil
 			}
 			for _, sample := range event.Power.Samples {
 				at := sample.ObservedAt.UTC()
@@ -47,7 +48,8 @@ func (l *ObservationLog) PowerSamples(ctx context.Context, meter OperatingPowerM
 				}
 				if watts, exists := seen[at]; exists {
 					if watts != sample.Watts {
-						return fmt.Errorf("meter %s recorded %v W and %v W at %s", meter.Meter, watts, sample.Watts, at.Format(time.RFC3339Nano))
+						slog.Warn("conflicting meter sample", "meter", meter.Meter, "at", at, "watts", watts, "otherWatts", sample.Watts)
+						result.Samples = append(result.Samples, sample)
 					}
 					continue
 				}
@@ -64,7 +66,14 @@ func (l *ObservationLog) PowerSamples(ctx context.Context, meter OperatingPowerM
 			return nil
 		})
 	})
+	if err != nil && ctx.Err() == nil {
+		slog.Warn("meter samples unavailable", "meter", meter.Meter, "reason", err)
+		unavailable, err = true, nil
+	}
 	result.Coverage, result.GapUntil = coverage, coverage.GapUntil(from)
+	if unavailable {
+		result.Samples = nil
+	}
 	sort.Slice(result.Samples, func(i, j int) bool { return result.Samples[i].ObservedAt.Before(result.Samples[j].ObservedAt) })
 	sort.Slice(result.Failures, func(i, j int) bool { return result.Failures[i].ObservedAt.Before(result.Failures[j].ObservedAt) })
 	return result, err

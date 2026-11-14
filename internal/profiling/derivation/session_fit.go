@@ -80,7 +80,6 @@ func fitPower(result *SessionResult, levels []fitLevel, idle float64, decay *Ses
 		value, _ := decay.Value()
 		design := fit.design(fit.fractions(value))
 		x, residual := nonNegativeLeastSquares(design, fit.observed)
-		result.Power.FitResidualSquareWatts = residual
 		fit.limit = residual + jointQuantile(tests.confidence, 1+slopes)*noise
 		best = acceptedFit{design, x}
 		parameters := fit.linearParameters(slices.Clone(x), 1, []acceptedFit{best})
@@ -89,7 +88,6 @@ func fitPower(result *SessionResult, levels []fitLevel, idle float64, decay *Ses
 	} else {
 		awakeColumns = 2
 		search := fit.searchHold(tests.confidence, noise, resolution)
-		result.Power.FitResidualSquareWatts = search.best.residual
 		result.Power.HoldSegmentsSearched, result.Power.HoldResolutionWatts = search.segments, resolution
 		best = acceptedFit{search.best.design, search.best.x}
 		fits := make([]acceptedFit, len(search.acceptable))
@@ -101,7 +99,6 @@ func fitPower(result *SessionResult, levels []fitLevel, idle float64, decay *Ses
 		step, slope = parameters[0], parameters[1:]
 		hold = fit.holdParameter(search, step)
 	}
-	result.Power.FitLimitSquareWatts = fit.limit
 	result.Power.AwakeStepWatts, result.Power.HoldSeconds = step, hold
 	for index, column := range fit.slopeColumn {
 		result.Batches[index].JoulesPerInput = slope[column]

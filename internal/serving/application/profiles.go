@@ -18,20 +18,14 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
 const preparationUnavailable = "PreparationUnavailable"
 
-// preparationSourceError separates failed source IO from incompatible evidence.
-type preparationSourceError struct{ error }
-
-func (e *preparationSourceError) Unwrap() error { return e.error }
-
-// preparations builds one PrepareSpec per profile. Incompatible profiles become
-// CatalogIssues; API, store, and context failures leave the accepted catalog intact.
+// preparations builds each available profile independently. A failed source
+// withholds only its preparation; cancellation stops the refresh.
 func (o *SchedulerService) preparations(
 	ctx context.Context, config SchedulerConfiguration, profiles []serving.Profile,
 ) (map[string]servingstate.PrepareSpec, []servingkube.CatalogIssue, error) {
@@ -43,10 +37,6 @@ func (o *SchedulerService) preparations(
 		}
 		spec, err := o.preparation(ctx, config, profile)
 		if err != nil {
-			var sourceError *preparationSourceError
-			if errors.As(err, &sourceError) {
-				return nil, nil, err
-			}
 			source := strings.SplitN(profile.ID, "/", 3)
 			issues = append(issues, servingkube.CatalogIssue{
 				Source: types.NamespacedName{Namespace: source[0], Name: source[1]},
@@ -62,18 +52,8 @@ func (o *SchedulerService) preparations(
 func (o *SchedulerService) preparation(
 	ctx context.Context, config SchedulerConfiguration, profile serving.Profile,
 ) (servingstate.PrepareSpec, error) {
-	if profile.RuntimeMetadata == nil {
-		return servingstate.PrepareSpec{}, errors.New("verified physical allocation unavailable")
-	}
-	// The runner ranks batch sizes by each batch's input slope; a bundle
-	// never carries a slope the session did not identify.
-	for _, batch := range profile.Batches {
-		if batch.InputSlopeJoules == nil {
-			return servingstate.PrepareSpec{}, fmt.Errorf("profile batch %d has no input slope; firstfloor batching needs one", batch.Batch)
-		}
-		if _, ok := batch.InputSlopeJoules.Value(); !ok {
-			return servingstate.PrepareSpec{}, fmt.Errorf("profile batch %d input slope is not identified (%s); firstfloor batching needs one", batch.Batch, batch.InputSlopeJoules.Reason())
-		}
+	if profile.Batches[0].Batch != 1 {
+		return servingstate.PrepareSpec{}, errors.New("measured batch-1 required")
 	}
 	spec, err := o.measuredPreparation(ctx, profile, config.Settings.ServingMemoryBytes)
 	if err != nil {
@@ -108,7 +88,7 @@ func (o *SchedulerService) preparation(
 		Store: o.opts.StoreName, Key: "serving/profiles/" + profile.ID + "/" + hex.EncodeToString(hash[:]) + "/bundle.json", Size: int64(len(raw)),
 	}
 	if _, err = o.objects.PutImmutable(ctx, spec.Bundle, bytes.NewReader(raw)); err != nil {
-		return spec, &preparationSourceError{err}
+		return spec, err
 	}
 	return spec, nil
 }
@@ -148,9 +128,6 @@ func (o *SchedulerService) measuredPreparation(
 	ctx context.Context, p serving.Profile, servingMemory uint64,
 ) (servingstate.PrepareSpec, error) {
 	var spec servingstate.PrepareSpec
-	if p.RuntimeMetadata == nil || p.Condition.Firstfloor == nil {
-		return spec, fmt.Errorf("verified native runtime/settings unavailable")
-	}
 	runtime := p.RuntimeMetadata
 	// RKNNLite runs no ONNX Runtime threads.
 	rknn := p.Condition.Backend == rknnLiteBackend
@@ -159,10 +136,7 @@ func (o *SchedulerService) measuredPreparation(
 	}
 	node, err := o.kube.CoreV1().Nodes().Get(ctx, p.NodeName, meta.GetOptions{})
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return spec, err
-		}
-		return spec, &preparationSourceError{err}
+		return spec, err
 	}
 	if string(node.UID) != p.Condition.NodeUID {
 		return spec, fmt.Errorf("measured Node UID required")
@@ -176,17 +150,9 @@ func (o *SchedulerService) measuredPreparation(
 		Store: o.opts.StoreName, Endpoint: o.opts.StoreEndpoint, Bucket: o.opts.StoreBucket,
 		Region: o.opts.StoreRegion, CredentialsSecretName: o.opts.StoreCredentialsSecret,
 	}
-	if err = binding.Validate(); err != nil {
-		return spec, err
-	}
 	hash := sha256.Sum256([]byte(p.ID))
 	name := "measured-" + hex.EncodeToString(hash[:12])
 	settings := p.Condition.Firstfloor
-	if p.Condition.Backend != "ort-cpu" && p.Condition.Backend != "ort-cuda" && !rknn {
-		return spec, fmt.Errorf(
-			"preparation override required for measured backend %s host delivery contract", p.Condition.Backend,
-		)
-	}
 	actor := p.Condition.Actor
 	// Serving initializes and warms exactly the measured batch sizes: a size
 	// the session stopped at (a capacity limit) or never reached has no
@@ -228,14 +194,8 @@ func (o *SchedulerService) measuredPreparation(
 // The measured resource envelope remains fixed when user queue headroom changes.
 func measuredQueueBytes(p serving.Profile, servingMemory uint64) (uint64, error) {
 	memory := p.Condition.Actor.MemoryLimitBytes
-	if memory <= 0 {
-		return 0, fmt.Errorf("measured actor memory envelope required")
-	}
 	var peak uint64
 	for _, batch := range p.Batches {
-		if batch.MemoryBytes == 0 {
-			return 0, fmt.Errorf("profile batch %d lacks measured memory", batch.Batch)
-		}
 		peak = max(peak, batch.MemoryBytes)
 	}
 	if peak >= uint64(memory) {

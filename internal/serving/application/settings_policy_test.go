@@ -278,15 +278,12 @@ func TestPreparationReusesAcceptedBundleButChecksCurrentBoundaries(t *testing.T)
 		t.Fatal("settings RV change lost bundle reuse or queue derivation")
 	}
 	newID := addPolicyCatalogSibling(t, fixture)
-	accepted = service.Profiles.Load()
 	for range 2 {
-		if err := service.Refresh(context.Background()); err == nil {
-			t.Fatal("failed first upload accepted a partial catalog")
-		}
-		if service.Profiles.Load() != accepted {
-			t.Fatal("failed first upload discarded the accepted catalog")
+		if err := service.Refresh(context.Background()); err != nil {
+			t.Fatal(err)
 		}
 	}
+	accepted = service.Profiles.Load()
 	// A newly qualified identity is never allowed to borrow the old bundle.
 	if _, exists := accepted.Preparations[newID]; exists {
 		t.Fatal("new profile became prepared without a successful upload")

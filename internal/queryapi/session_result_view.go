@@ -43,14 +43,11 @@ type SessionParameterView struct {
 }
 
 type SessionPowerView struct {
-	IdleWatts                       SessionParameterView `json:"idleWatts"`
-	AwakeStepWatts                  SessionParameterView `json:"awakeStepWatts"`
-	HoldSeconds                     SessionParameterView `json:"holdSeconds"`
-	MeterIntervalSeconds            float64              `json:"meterIntervalSeconds"`
-	SettledAtSeconds                float64              `json:"settledAtSeconds"`
-	PostLoadTailSlopeWattsPerSecond float64              `json:"postLoadTailSlopeWattsPerSecond"`
-	FitResidualSquareWatts          float64              `json:"fitResidualSquareWatts"`
-	FitLimitSquareWatts             float64              `json:"fitLimitSquareWatts"`
+	IdleWatts            SessionParameterView `json:"idleWatts"`
+	AwakeStepWatts       SessionParameterView `json:"awakeStepWatts"`
+	HoldSeconds          SessionParameterView `json:"holdSeconds"`
+	MeterIntervalSeconds *float64             `json:"meterIntervalSeconds,omitempty"`
+	SettledAtSeconds     *float64             `json:"settledAtSeconds,omitempty"`
 	// PostLoad is the stored (seconds after load stopped, watts) series, not
 	// reduced: one sample per meter interval over the post-load window.
 	PostLoad            [][2]float64 `json:"postLoad"`
@@ -62,7 +59,7 @@ type SessionBatchView struct {
 	ServiceRecordCount  int                  `json:"serviceRecordCount"`
 	SaturationInputRate *float64             `json:"saturationInputRate,omitempty"`
 	JoulesPerInput      SessionParameterView `json:"joulesPerInput"`
-	PeakMemoryBytes     int64                `json:"peakMemoryBytes"`
+	PeakMemoryBytes     int64                `json:"peakMemoryBytes,omitempty"`
 	MemoryKind          string               `json:"memoryKind"`
 	DispatchOccupancy   SessionOccupancyView `json:"dispatchOccupancy"`
 	PrepareCostKey      string               `json:"prepareCostKey"`
@@ -82,16 +79,13 @@ func BuildSessionResultView(result profilederivation.SessionResult) SessionResul
 		SchemaVersion: result.SchemaVersion, Condition: result.Condition, Settings: result.Settings,
 		Stop: result.Stop, MeterSource: result.MeterSource,
 		Power: SessionPowerView{
-			IdleWatts:                       parameterView(result.Power.IdleWatts, "W"),
-			AwakeStepWatts:                  parameterView(result.Power.AwakeStepWatts, "W"),
-			HoldSeconds:                     parameterView(result.Power.HoldSeconds, "s"),
-			MeterIntervalSeconds:            result.Power.MeterIntervalSeconds,
-			SettledAtSeconds:                result.Power.SettledAtSeconds,
-			PostLoadTailSlopeWattsPerSecond: result.Power.PostLoadTailSlopeWattsPerSecond,
-			FitResidualSquareWatts:          result.Power.FitResidualSquareWatts,
-			FitLimitSquareWatts:             result.Power.FitLimitSquareWatts,
-			PostLoad:                        result.Power.PostLoad,
-			PostLoadSampleCount:             len(result.Power.PostLoad),
+			IdleWatts:            parameterView(result.Power.IdleWatts, "W"),
+			AwakeStepWatts:       parameterView(result.Power.AwakeStepWatts, "W"),
+			HoldSeconds:          parameterView(result.Power.HoldSeconds, "s"),
+			MeterIntervalSeconds: result.Power.MeterIntervalSeconds,
+			SettledAtSeconds:     result.Power.SettledAtSeconds,
+			PostLoad:             result.Power.PostLoad,
+			PostLoadSampleCount:  len(result.Power.PostLoad),
 		},
 		Batches: make([]SessionBatchView, len(result.Batches)),
 	}
@@ -130,7 +124,7 @@ func parameterView(parameter profilederivation.SessionParameter, unit string) Se
 
 // median is the empirical median, the mean of the middle pair for an even count.
 func median(values []float64) *float64 {
-	if len(values) == 0 {
+	if len(values) < 2 {
 		return nil
 	}
 	sorted := slices.Clone(values)

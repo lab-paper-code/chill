@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"math"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
@@ -105,6 +105,11 @@ type SessionParameter struct {
 }
 
 func identifiedParameter(value float64, bounds [2]float64) SessionParameter {
+	for _, number := range [3]float64{value, bounds[0], bounds[1]} {
+		if math.IsNaN(number) || math.IsInf(number, 0) {
+			return notIdentified("power parameter or its range is not finite")
+		}
+	}
 	return SessionParameter{status: ParameterIdentified, value: value, bounds: bounds, hasBounds: true}
 }
 
@@ -113,6 +118,11 @@ func notIdentified(reason string) SessionParameter {
 }
 
 func notIdentifiedWithin(reason string, bounds [2]float64) SessionParameter {
+	for _, number := range bounds {
+		if math.IsNaN(number) || math.IsInf(number, 0) {
+			return notIdentified(reason)
+		}
+	}
 	return SessionParameter{status: ParameterNotIdentified, reason: reason, bounds: bounds, hasBounds: true}
 }
 
@@ -155,7 +165,6 @@ func (p SessionParameter) MarshalJSON() ([]byte, error) {
 func (p *SessionParameter) UnmarshalJSON(raw []byte) error {
 	var wire sessionParameterWire
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
 		return err
 	}
@@ -183,21 +192,12 @@ type SessionPower struct {
 	AwakeStepWatts SessionParameter `json:"awakeStepWatts"`
 	HoldSeconds    SessionParameter `json:"holdSeconds"`
 	// MeterIntervalSeconds is the median spacing of the post-load samples.
-	MeterIntervalSeconds float64 `json:"meterIntervalSeconds"`
+	MeterIntervalSeconds *float64 `json:"meterIntervalSeconds,omitempty"`
 	// SettledAtSeconds is where the settled idle mean starts, in seconds after
 	// load stopped.
-	SettledAtSeconds float64 `json:"settledAtSeconds"`
+	SettledAtSeconds *float64 `json:"settledAtSeconds,omitempty"`
 	// PostLoad holds (seconds after load stopped, watts) samples.
 	PostLoad [][2]float64 `json:"postLoad"`
-	// PostLoadTailSlopeWattsPerSecond is the least squares slope of the
-	// post-load power over the last minimum power window after the settle
-	// point, an observation that decides nothing.
-	PostLoadTailSlopeWattsPerSecond float64 `json:"postLoadTailSlopeWattsPerSecond"`
-	// FitResidualSquareWatts is the best fit's residual sum of squares over
-	// the fitted levels; FitLimitSquareWatts is the residual bound of the
-	// fits the ranges are taken over.
-	FitResidualSquareWatts float64 `json:"fitResidualSquareWatts"`
-	FitLimitSquareWatts    float64 `json:"fitLimitSquareWatts"`
 	// HoldSegmentsSearched is the number of hold segments the search solved
 	// and HoldResolutionWatts the predicted-power change below which
 	// breakpoints were merged; both are zero when the decay gives the hold.
@@ -217,7 +217,7 @@ type SessionBatch struct {
 	// second, absent when the batch has no saturation level.
 	SaturationInputRate *float64         `json:"saturationInputRate,omitempty"`
 	JoulesPerInput      SessionParameter `json:"joulesPerInput"`
-	PeakMemoryBytes     int64            `json:"peakMemoryBytes"`
+	PeakMemoryBytes     int64            `json:"peakMemoryBytes,omitempty"`
 	MemoryKind          string           `json:"memoryKind"`
 	PrepareCostKey      string           `json:"prepareCostKey"`
 	RemoveCostKey       string           `json:"removeCostKey"`
@@ -247,7 +247,7 @@ type DriverLevelRow struct {
 // SessionLevel is a driver row with what the derivation measured over it.
 type SessionLevel struct {
 	DriverLevelRow
-	InputRate float64 `json:"inputRate"`
+	InputRate float64 `json:"inputRate,omitempty"`
 	// NativeStartOffsetNanos is the first native start minus the driver's
 	// level start; the two clocks are never compared.
 	NativeStartOffsetNanos *int64 `json:"nativeStartOffsetNanos,omitempty"`
@@ -283,21 +283,20 @@ type SessionStop struct {
 	Reason string    `json:"reason"`
 }
 
-// DecodeSessionResult strict-decodes a stored session result.
+// DecodeSessionResult decodes the known fields of a stored session result.
 func DecodeSessionResult(raw []byte) (SessionResult, error) {
 	var result SessionResult
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
 		return SessionResult{}, fmt.Errorf("decode session result: %w", err)
-	}
-	if err := decoder.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
-		return SessionResult{}, errors.New("session result contains a trailing JSON value")
 	}
 	if result.SchemaVersion != SessionResultSchemaVersion {
 		return SessionResult{}, fmt.Errorf("unsupported session result schema %q", result.SchemaVersion)
 	}
-	for _, batch := range result.Batches {
+	for index, batch := range result.Batches {
+		if batch.Batch < 1 || index > 0 && batch.Batch <= result.Batches[index-1].Batch {
+			return SessionResult{}, errors.New("session batch sizes must be positive and increasing")
+		}
 		if len(batch.ServiceNanos) != len(batch.PrecedingIdleNanos) {
 			return SessionResult{}, fmt.Errorf("batch %d has %d service durations and %d idle gaps", batch.Batch, len(batch.ServiceNanos), len(batch.PrecedingIdleNanos))
 		}

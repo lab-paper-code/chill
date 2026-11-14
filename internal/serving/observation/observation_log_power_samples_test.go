@@ -2,14 +2,13 @@ package observation
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 )
 
 // A session reads its meter's recorded samples as stored: overlapping
 // records' shared samples once, nothing interpolated at the window edges,
-// another meter's samples never, and a conflicting repeat as an error.
+// another meter's samples never, and ambiguous raw points remain unchosen.
 func TestPowerSamplesReturnsRecordedSamplesOfOneMeter(t *testing.T) {
 	for _, scenario := range []operatingPowerScenario{{name: "recorded"}, {name: "conflict", conflictingSample: true}} {
 		t.Run(scenario.name, func(t *testing.T) {
@@ -21,8 +20,9 @@ func TestPowerSamplesReturnsRecordedSamplesOfOneMeter(t *testing.T) {
 			clock.set(to)
 			got, err := observationLog.PowerSamples(context.Background(), meters[0], from.Add(time.Second), to)
 			if scenario.conflictingSample {
-				if err == nil || !strings.Contains(err.Error(), "recorded") {
-					t.Fatalf("conflicting repeated sample read without error: %v %+v", err, got)
+				if err != nil || len(got.Samples) != 3 || !got.Samples[0].ObservedAt.Equal(got.Samples[1].ObservedAt) ||
+					got.Samples[0].Watts == got.Samples[1].Watts {
+					t.Fatalf("conflicting raw readings were lost or chosen: %v %+v", err, got)
 				}
 				return
 			}

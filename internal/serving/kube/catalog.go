@@ -1,13 +1,13 @@
 package kube
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"reflect"
 	"slices"
@@ -245,28 +245,6 @@ func replacementCampaignSelection(campaigns []edgev1alpha1.BatchEnergyOptimizati
 	return diagnostics
 }
 
-// completeNativeProfile checks the measured batch sizes against the
-// configuration. Each batch size ran on its own instance, which initialized
-// only that size; the serving instance initializes the measured sizes itself,
-// so the kept runtime report's initialized sizes have no reader here.
-func completeNativeProfile(profile serving.Profile) bool {
-	condition := profile.Condition
-	if condition.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily || condition.Firstfloor == nil ||
-		profile.RuntimeMetadata == nil || profile.RuntimeMetadata.Runtime != condition.Backend || len(profile.Batches) == 0 ||
-		profile.Batches[0].Batch != 1 {
-		return false
-	}
-	previous := 0
-	for _, batch := range profile.Batches {
-		if batch.Batch <= previous || batch.Batch > int(condition.Firstfloor.MaxBatchSize) ||
-			!slices.Contains(condition.PlannedBatchSizes, batch.Batch) {
-			return false
-		}
-		previous = batch.Batch
-	}
-	return true
-}
-
 // CurrentProfiles is the executable selection, separate from public history.
 // A latest failed measurement has no profile, so cannot revive an old success.
 func (view CatalogView) CurrentProfiles() []serving.Profile {
@@ -283,9 +261,7 @@ func (view CatalogView) CurrentProfiles() []serving.Profile {
 	return profiles
 }
 
-// readProfile builds the profile of one Complete measurement from its stored
-// session result alone. A result of another schema version is a measurement
-// from before profile sessions: it is reported, never read.
+// readProfile builds one serving profile from the stored session result.
 func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization) (serving.Profile, []CatalogIssue, error) {
 	source := types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}
 	if campaign.Status.Result == nil {
@@ -307,7 +283,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	}
 	result, err := profilederivation.DecodeSessionResult(raw)
 	if err != nil {
-		issues := []CatalogIssue{{Source: source, Code: measurementResultUnreadableCode, Reason: unreadableResultReason(reference, raw, err)}}
+		issues := []CatalogIssue{{Source: source, Code: measurementResultUnreadableCode, Reason: fmt.Sprintf("stored result %s: %v", reference.Key, err)}}
 		c.current[source] = catalogProfile{uid: campaign.UID, version: campaign.ResourceVersion, issues: issues}
 		return serving.Profile{}, slices.Clone(issues), nil
 	}
@@ -315,8 +291,8 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	if err != nil {
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: err.Error()}}, nil
 	}
-	if !completeNativeProfile(profile) {
-		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor requires exact measured batch 1, a runtime report of the measured backend and planned measured sizes within selected maxBatchSize"}}, nil
+	if len(profile.Batches) == 0 {
+		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "the session has no batch with service samples, measured memory, a valid saturation level and identified joules per input"}}, nil
 	}
 	facts := serving.MeasurementFacts{
 		Request:         profilederivation.MeasurementRequestReference{Namespace: campaign.Namespace, Name: campaign.Name, UID: string(campaign.UID)},
@@ -329,32 +305,17 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	return profile, nil, nil
 }
 
-// unreadableResultReason names why a stored result is not read: another schema
-// version, or no decodable session result at all.
-func unreadableResultReason(reference evidencestore.ObjectIdentity, raw []byte, err error) string {
-	var header struct {
-		SchemaVersion string `json:"schemaVersion"`
-	}
-	if json.Unmarshal(raw, &header) == nil && header.SchemaVersion != profilederivation.SessionResultSchemaVersion {
-		return fmt.Sprintf("stored result %s has schema %q, not %q; a measurement from before profile sessions is not read: delete it and measure again (%v)",
-			reference.Key, header.SchemaVersion, profilederivation.SessionResultSchemaVersion, err)
-	}
-	return fmt.Sprintf("stored result %s is not a decodable session result (%v); delete the measurement and measure again", reference.Key, err)
-}
-
 // sessionProfile maps a session result onto the serving profile. The condition
 // keeps the curve-plan shape its readers use: the planned batch sizes are the
 // measured ones, and the runtime version and provider come from the executor's
 // runtime report.
 func sessionProfile(campaign *edgev1alpha1.BatchEnergyOptimization, reference evidencestore.ObjectIdentity, result profilederivation.SessionResult) (serving.Profile, error) {
-	if len(result.Batches) == 0 {
-		return serving.Profile{}, errors.New("the session measured no batch size")
+	if result.Condition.Firstfloor == nil || result.RuntimeMetadata == nil {
+		return serving.Profile{}, errors.New("native runtime/settings unavailable")
 	}
 	var meter metricobserver.SourceIdentity
-	decoder := json.NewDecoder(bytes.NewReader(result.MeterSource))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&meter); err != nil {
-		return serving.Profile{}, fmt.Errorf("session meter source is not a metric source identity: %w", err)
+	if err := json.Unmarshal(result.MeterSource, &meter); err != nil {
+		slog.Warn("session meter source unavailable", "reason", err)
 	}
 	session := result.Condition
 	condition := profilederivation.CurvePlanSpec{
@@ -380,8 +341,11 @@ func sessionProfile(campaign *edgev1alpha1.BatchEnergyOptimization, reference ev
 		Power: &serving.ProfilePower{IdleWatts: result.Power.IdleWatts, AwakeStepWatts: result.Power.AwakeStepWatts, HoldSeconds: result.Power.HoldSeconds},
 	}
 	for _, batch := range result.Batches {
-		if batch.PeakMemoryBytes <= 0 {
-			return serving.Profile{}, fmt.Errorf("batch %d has no measured memory peak", batch.Batch)
+		if _, identified := batch.JoulesPerInput.Value(); !identified {
+			continue
+		}
+		if batch.PeakMemoryBytes <= 0 || batch.SaturationInputRate == nil || len(batch.ServiceNanos) < 2 {
+			continue
 		}
 		samples := make([]firstfloor.ServiceSample, len(batch.ServiceNanos))
 		for k, service := range batch.ServiceNanos {
@@ -389,7 +353,8 @@ func sessionProfile(campaign *edgev1alpha1.BatchEnergyOptimization, reference ev
 		}
 		distribution, err := firstfloor.NewServiceDistribution(samples)
 		if err != nil {
-			return serving.Profile{}, fmt.Errorf("hydrate batch %d service records: %w", batch.Batch, err)
+			slog.Warn("batch service records unavailable", "batch", batch.Batch, "reason", err)
+			continue
 		}
 		slope := batch.JoulesPerInput
 		out := serving.BatchProfile{
@@ -453,7 +418,7 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 }
 
 func (c *Catalog) readObject(ctx context.Context, identity evidencestore.ObjectIdentity) ([]byte, error) {
-	if err := identity.Validate(); err != nil {
+	if err := identity.Location().Validate(); err != nil {
 		return nil, err
 	}
 	if c.maxObjectBytes < 1 || c.maxObjectBytes == 1<<63-1 {
@@ -469,7 +434,7 @@ func (c *Catalog) readObject(ctx context.Context, identity evidencestore.ObjectI
 		return nil, readErr
 	}
 	if closeErr != nil {
-		return nil, closeErr
+		slog.Warn("closing stored session result", "key", identity.Key, "reason", closeErr)
 	}
 	if int64(len(payload)) > c.maxObjectBytes {
 		return nil, errors.New("catalog object exceeds configured byte limit")
