@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useSearchParams } from "next/navigation"
 import { ChevronDown } from "lucide-react"
-import { Button, Fields, FormActions, FormSection, InfoHint, LeaveGuard, Page, PageHeader, QueryBoundary, RawDialog, StatusBadge } from "@/components/kit"
+import { Button, Fields, FormActions, FormSection, LeaveGuard, Page, PageHeader, QueryBoundary, RawDialog, StatusBadge } from "@/components/kit"
 import { InputBlock } from "@/components/custom/blocks/InputBlock"
 import { SelectBlock } from "@/components/custom/blocks/SelectBlock"
 import { Stepper } from "@/components/custom/blocks/StepperBlock"
@@ -252,9 +252,8 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
           </div>
         </FormSection>
         <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="rounded-xl border border-border bg-card">
-          <CollapsibleTrigger className="flex h-12 w-full items-center gap-2 px-5 text-sm font-semibold">
+          <CollapsibleTrigger className="flex h-12 w-full items-center gap-2 px-5 text-sm font-semibold" title="스키마가 아직 요구해 함께 보내는 값, 세션 측정은 쓰지 않음">
             이전 측정 방식 값
-            <InfoHint text="스키마가 아직 요구해 함께 보내는 값, 세션 측정은 쓰지 않음" />
             {show && advancedErrors > 0 && <StatusBadge tone="fail" label={`확인 ${advancedErrors}`} />}
             <ChevronDown className={cn("ml-auto size-4 text-muted-foreground transition-transform", advancedOpen && "rotate-180")} aria-hidden="true" />
           </CollapsibleTrigger>
