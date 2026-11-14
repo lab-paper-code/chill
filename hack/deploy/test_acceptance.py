@@ -28,8 +28,18 @@ def snapshot():
     return {
         'profiles': {'profiles': [
             {'id': identity, 'assessment': {'displayStatus': 'usable'},
-             'batches': [{'batch': 1, 'energyPerInputJoules': Decimal('0.123456789012345678901'),
-                          'meanWallWatts': Decimal('5.000000000000000001')}]}
+             'power': {
+                 field: {'status': 'Identified', 'value': value, 'range': [value, value]}
+                 for field, value in (('idleWatts', Decimal('7.1234567890123456789')),
+                                      ('awakeStepWatts', Decimal('2.5')),
+                                      ('holdSeconds', Decimal('3.5')))},
+             'batches': [{'batch': 1,
+                          'inputSlopeJoules': {
+                              'status': 'Identified',
+                              'value': Decimal('0.123456789012345678901'),
+                              'range': [Decimal('0.1'), Decimal('0.2')]},
+                          'saturationInputRate': Decimal('5.000000000000000001'),
+                          'memoryBytes': 1234, 'memoryBasis': {'observation': 'peak'}}]}
             for identity in ('p1', 'p2')]},
         'coverage': {'summary': {'countsByDisplayStatus': {'usable': 2}},
                      'sources': [{'complete': True, 'error': None}]},
@@ -40,9 +50,34 @@ class AcceptanceChecks(unittest.TestCase):
     def test_decimal_preservation(self):
         before = snapshot()
         after = copy.deepcopy(before)
-        after['profiles']['profiles'][0]['batches'][0]['energyPerInputJoules'] = Decimal('0.1234567890123456789010')
+        after['profiles']['profiles'][0]['batches'][0]['inputSlopeJoules']['value'] = Decimal('0.1234567890123456789010')
         self.assertTrue(acceptance.compare(before, after)['passed'])
-        after['profiles']['profiles'][0]['batches'][0]['energyPerInputJoules'] = Decimal('0.123456789012345678902')
+        after['profiles']['profiles'][0]['batches'][0]['inputSlopeJoules']['value'] = Decimal('0.123456789012345678902')
+        self.assertFalse(acceptance.compare(before, after)['passed'])
+
+    def test_session_measurement_changes(self):
+        before = snapshot()
+        for path in (('power', 'idleWatts', 'value'), ('power', 'awakeStepWatts', 'value'),
+                     ('power', 'holdSeconds', 'range', 1),
+                     ('batches', 0, 'inputSlopeJoules', 'range', 1),
+                     ('batches', 0, 'saturationInputRate'), ('batches', 0, 'memoryBytes')):
+            with self.subTest(path=path):
+                after = copy.deepcopy(before)
+                row = after['profiles']['profiles'][0]
+                for key in path[:-1]:
+                    row = row[key]
+                row[path[-1]] += 1
+                self.assertFalse(acceptance.compare(before, after)['checks']['batchMeasurementsPreserved'])
+
+    def test_unidentified_estimates_preserve_ranges(self):
+        before = snapshot()
+        before['profiles']['profiles'][0]['power']['holdSeconds'] = {
+            'status': 'NotIdentified', 'range': [0, Decimal('2.5')], 'reason': 'Noise limit'}
+        before['profiles']['profiles'][0]['batches'][0]['inputSlopeJoules'] = {
+            'status': 'NotIdentified', 'range': [0, Decimal('0.2')], 'reason': 'Noise limit'}
+        self.assertTrue(acceptance.compare(before, before)['passed'])
+        after = copy.deepcopy(before)
+        after['profiles']['profiles'][0]['power']['holdSeconds']['range'][1] += 1
         self.assertFalse(acceptance.compare(before, after)['passed'])
 
     def test_duplicate_identities(self):
@@ -67,7 +102,7 @@ class AcceptanceChecks(unittest.TestCase):
         self.assertFalse(acceptance.compare(before, after, ['p1', 'p2'])['passed'])
 
     def test_missing_measurement_and_status(self):
-        for field in ('energyPerInputJoules', 'meanWallWatts'):
+        for field in ('inputSlopeJoules', 'saturationInputRate', 'memoryBytes'):
             after = snapshot()
             del after['profiles']['profiles'][0]['batches'][0][field]
             report = acceptance.compare(snapshot(), after)
@@ -237,22 +272,19 @@ class AcceptanceChecks(unittest.TestCase):
                     'runtimeImage': 'registry/runtime@sha256:historical',
                     'cpu': {'policy': 'ConfiguredCPUQuota', 'request': '3'},
                     'artifact': {'image': 'registry/artifact@sha256:historical'}},
-                'confidenceLevel': Decimal('0.95'), 'idleBaselineWatts': Decimal('7.1234567890123456789'),
                 'measuredAt': '2026-11-02T01:33:29Z', 'metricSource': {'kind': 'edge-metrics'},
                 'runtimeMetadata': {'cpuAffinity': [0, 1], 'intraOpThreads': 3},
             })
-            profile['batches'][0]['memoryBytes'] = 1234
-            profile['batches'][0]['serviceSamples'] = [{
-                'serviceDurationNanos': 1234567890, 'precedingIdleNanos': 9000000, 'trialID': 'physical-trial'}]
         after = copy.deepcopy(before)
         after['profiles']['profiles'][0]['assessment']['scope'] = {'schedulerUsed': False}
         after['profiles']['profiles'][0]['assessment']['currentCompatibility'] = 'changed'
         self.assertTrue(acceptance.compare_records(before, after)['passed'])
         paths = [('condition', 'runtimeImage'), ('condition', 'artifact', 'image'),
-                 ('reference', 'key'), ('evidence', 0, 'key'), ('idleBaselineWatts',),
-                 ('batches', 0, 'memoryBytes'), ('batches', 0, 'serviceSamples', 0, 'serviceDurationNanos'),
-                 ('batches', 0, 'serviceSamples', 0, 'precedingIdleNanos'),
-                 ('batches', 0, 'serviceSamples', 0, 'trialID'),
+                 ('reference', 'key'), ('evidence', 0, 'key'), ('power', 'idleWatts', 'value'),
+                 ('power', 'awakeStepWatts', 'value'), ('power', 'holdSeconds', 'value'),
+                 ('batches', 0, 'inputSlopeJoules', 'value'),
+                 ('batches', 0, 'saturationInputRate'), ('batches', 0, 'memoryBytes'),
+                 ('batches', 0, 'memoryBasis', 'observation'),
                  ('runtimeMetadata', 'intraOpThreads'), ('measuredAt',)]
         for path in paths:
             with self.subTest(path=path):
@@ -353,10 +385,14 @@ class AcceptanceChecks(unittest.TestCase):
             config = {'apiBase': 'https://localhost:%d' % server.server_port,
                       'caFile': str(cert), 'tokenFile': str(token)}
             expected = snapshot()
-            profiles_body = json.dumps(expected['profiles'], default=str)
-            for value in expected['profiles']['profiles'][0]['batches'][0].values():
-                if isinstance(value, Decimal):
-                    profiles_body = profiles_body.replace(json.dumps(str(value)), str(value))
+            decimal_texts = set()
+            def decimal_text(value):
+                text = str(value)
+                decimal_texts.add(text)
+                return text
+            profiles_body = json.dumps(expected['profiles'], default=decimal_text)
+            for text in decimal_texts:
+                profiles_body = profiles_body.replace(json.dumps(text), text)
             healthy = [(200, expected['coverage']), (200, profiles_body.encode())]
             clock = [0]
             worker = threading.Thread(target=server.serve_forever)

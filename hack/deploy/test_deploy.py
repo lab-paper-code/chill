@@ -348,8 +348,14 @@ class DeploymentCLI(unittest.TestCase):
                 elif self.path == '/api/v1/scheduler/profiles':
                     state = json.loads((cls.directory / 'state.json').read_text())
                     metric = 4 if state.get('upgraded') and state.get('changeMetrics') else 3
-                    body = {'profiles': [{'id': 'profile-1', 'assessment': {'displayStatus': 'usable'}, 'batches': [{'batch': 1, 'energyPerInputJoules': metric, 'meanWallWatts': 5}]}]}
-                    body['profiles'][0].update(reference={'store': 'fixture', 'key': 'result', 'size': 1}, evidence=[], nodeName='fixture-node', condition={'runtimeImage': 'recorded-runtime', 'backend': 'ort-cpu'}, confidenceLevel=0.95, idleBaselineWatts=1, measuredAt='2026-11-03T00:00:00Z', metricSource={})
+                    body = {'profiles': [{'id': 'profile-1', 'assessment': {'displayStatus': 'usable'},
+                             'power': {field: {'status': 'Identified', 'value': 1, 'range': [1, 1]}
+                                       for field in ('idleWatts', 'awakeStepWatts', 'holdSeconds')},
+                             'batches': [{'batch': 1,
+                                          'inputSlopeJoules': {'status': 'Identified', 'value': metric, 'range': [metric, metric]},
+                                          'saturationInputRate': 5, 'memoryBytes': 1234,
+                                          'memoryBasis': {'observation': 'peak'}}]}]}
+                    body['profiles'][0].update(reference={'store': 'fixture', 'key': 'result', 'size': 1}, evidence=[], nodeName='fixture-node', condition={'runtimeImage': 'recorded-runtime', 'backend': 'ort-cpu'}, measuredAt='2026-11-03T00:00:00Z', metricSource={})
                 else:
                     body = {'ok': True}
                 data = json.dumps(body).encode()
@@ -1115,7 +1121,7 @@ shutil.disk_usage = disk_usage
         self.cli('--execute', '--evidence', str(self.out))
         report = json.loads((self.out / 'after/acceptance.json').read_text())
         self.assertFalse(report['passed'])
-        self.assertEqual(report['numericChanges'][0]['field'], 'energyPerInputJoules')
+        self.assertEqual(report['numericChanges'][0]['field'], 'inputSlopeJoules')
         self.assertFalse(report['checks']['expectedProfileCount'])
         status = json.loads((self.out / 'state.json').read_text())
         self.assertTrue(status['ready'])
@@ -1127,7 +1133,13 @@ shutil.disk_usage = disk_usage
         self.recipe['readinessSeconds'] = 15
         frozen = self.directory / 'incomplete-baseline'
         frozen.mkdir()
-        (frozen / 'profiles.json').write_text(json.dumps({'profiles': [{'id': 'profile-1', 'assessment': {'displayStatus': 'usable'}, 'batches': [{'batch': 1, 'energyPerInputJoules': 3, 'meanWallWatts': 5}]}]}))
+        (frozen / 'profiles.json').write_text(json.dumps({'profiles': [{
+            'id': 'profile-1', 'assessment': {'displayStatus': 'usable'},
+            'power': {field: {'status': 'Identified', 'value': 1, 'range': [1, 1]}
+                      for field in ('idleWatts', 'awakeStepWatts', 'holdSeconds')},
+            'batches': [{'batch': 1, 'inputSlopeJoules': {'status': 'Identified', 'value': 3, 'range': [3, 3]},
+                         'saturationInputRate': 5, 'memoryBytes': 1234,
+                         'memoryBasis': {'observation': 'peak'}}]}]}))
         (frozen / 'coverage.json').write_text(json.dumps({'summary': {'countsByDisplayStatus': {'usable': None}}, 'sources': [{'complete': False}]}))
         self.recipe.update(baselineDirectory=str(frozen), expectedProfileCount=1)
         self.cli('--execute', '--evidence', str(self.out))

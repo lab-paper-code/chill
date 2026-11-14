@@ -225,6 +225,11 @@ must apply external ConfigMap changes.
 
 Profile IDs, counts, batch values, usable coverage and measurement comparisons
 are report-only diagnostics. Keep failures and unknown values visible.
+Session profile diagnostics retain `power` (idle, awake step, hold), per-batch
+`inputSlopeJoules` estimates and ranges, `saturationInputRate`, and `memoryBytes`.
+An unidentified estimate remains valid without a point value; its range and
+status remain part of preservation diagnostics. Retained-record comparisons
+also cover the memory evidence basis and immutable profile provenance.
 `expectedProfileCount`, `expectedCoverageUsable` and optional `baselineDirectory`
 support reporting; preserve original baseline evidence separately from current
 before/after captures. `inspectionCells` and `inspectionRequests` project assessed

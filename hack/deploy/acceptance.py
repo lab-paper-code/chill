@@ -15,6 +15,15 @@ def _numeric(value):
     return Decimal(value)
 
 
+def _estimate(value):
+    if not isinstance(value['status'], str):
+        raise ValueError('Missing estimate status')
+    if value['status'] == 'Identified':
+        _numeric(value['value'])
+    for bound in value['range']:
+        _numeric(bound)
+
+
 def _index(rows, field):
     if not isinstance(rows, list):
         raise ValueError('Expected an array of ' + field + ' identities')
@@ -41,9 +50,12 @@ def _profiles(snapshot):
     for profile in rows.values():
         if not isinstance(profile['assessment']['displayStatus'], str):
             raise ValueError('Missing profile display status')
+        for field in ('idleWatts', 'awakeStepWatts', 'holdSeconds'):
+            _estimate(profile['power'][field])
         batches = _index(profile['batches'], 'batch')
         for batch in batches.values():
-            for field in ('energyPerInputJoules', 'meanWallWatts'):
+            _estimate(batch['inputSlopeJoules'])
+            for field in ('saturationInputRate', 'memoryBytes'):
                 _numeric(batch[field])
     return rows
 
@@ -143,13 +155,16 @@ def compare(before, after, allowed_lost_ids=(), out=None, expected_coverage_usab
             a, b = old[identity], new[identity]
             if a['assessment']['displayStatus'] != 'usable' or b['assessment']['displayStatus'] != 'usable':
                 unusable.append(identity)
+            if not _same_record(a['power'], b['power']):
+                changes.append({'id': identity, 'field': 'power',
+                                'before': a['power'], 'after': b['power']})
             aa, bb = _index(a['batches'], 'batch'), _index(b['batches'], 'batch')
             if set(aa) != set(bb):
                 changes.append({'id': identity, 'error': 'batch identities changed'})
                 continue
             for batch in aa:
-                for field in ('energyPerInputJoules', 'meanWallWatts'):
-                    if _numeric(aa[batch][field]) != _numeric(bb[batch][field]):
+                for field in ('inputSlopeJoules', 'saturationInputRate', 'memoryBytes'):
+                    if not _same_record(aa[batch][field], bb[batch][field]):
                         changes.append({'id': identity, 'batch': batch, 'field': field,
                                         'before': aa[batch][field], 'after': bb[batch][field]})
         report.update({'before': len(old), 'after': len(new), 'actualLost': sorted(lost),
@@ -203,9 +218,9 @@ def _same_record(a, b):
 def compare_records(before, after, out=None):
     """Report retained-record drift; authorized migrations may intentionally differ."""
     report = {'passed': False, 'recordChanges': [], 'errors': []}
-    required = ('reference', 'evidence', 'nodeName', 'condition', 'confidenceLevel',
-                'idleBaselineWatts', 'measuredAt', 'metricSource')
-    optional = ('trialsPerBatch', 'runtimeMetadata', 'reuse')
+    required = ('reference', 'evidence', 'nodeName', 'condition', 'power',
+                'measuredAt', 'metricSource')
+    optional = ('runtimeMetadata', 'reuse')
     try:
         old, new = _profiles(before), _profiles(after)
         report['lost'] = sorted(set(old) - set(new))
