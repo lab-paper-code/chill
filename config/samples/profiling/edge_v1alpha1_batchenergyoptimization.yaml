@@ -38,3 +38,38 @@ spec:
       durationSeconds: 31
   trialsPerBatch: 3
   retryLimit: 2
+  # ChillServer runs the measurement as one session with these settings. The
+  # fields above stay required by the schema until the per-batch Run method is
+  # removed; a session reads only state, the Workload, the dataset and the
+  # warm-up count from them.
+  session:
+    # The 1 s power meter reports 2-3 s late (profile-session.md).
+    meterLagSeconds: 3
+    minimumPowerWindowSeconds: 15
+    midLevelRatio: 0.25
+    sparseMeanGapSeconds: 1
+    # A level ends on N service records (N=59 for a p95 Workload). The sparse
+    # level takes about N x 1 s = 60 s; the mid level at 0.25 of saturation
+    # takes 59 / (0.25 x saturation) s, 236 s for a model saturating at 1
+    # input/s. 300 s keeps both; a p99 Workload (N=459) ends its sparse level
+    # NotMeasured and needs a larger limit.
+    levelDurationLimitSeconds: 300
+    postLoadWindowSeconds: 60
+    confidenceLevel: "0.95"
+    requestLifetimeSeconds: 30
+    deliveryMarginMilliseconds: 100
+    framedDecodedRequestUpperBytes: 2097152
+    # Sampling, request timeout and gap are what the 65 field operation-cost
+    # measurements of 2026-10 ran with; 600 s bounds a model prepare on an
+    # edge device, the slow case (61 of them used 120 s). Those records do
+    # not retain the timing inputs: the timing below is a placeholder.
+    observation:
+      intervalMilliseconds: 100
+      requestTimeoutMilliseconds: 80
+      maximumOperationSeconds: 600
+      maximumGapMilliseconds: 500
+      timing:
+        changeIntervalP95Seconds: "1"
+        maximumRequestSeconds: "0.08"
+        maximumReceiptGapSeconds: "1"
+        source: "sample values, not measured: replace with the Node meter's observed timing"
