@@ -196,9 +196,9 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 			profile := *base.Instances[0].Profile
 			profile.ID, profile.NodeName = c.id, node.Node.Name
 			profile.Condition.NodeUID = node.Node.UID
-			profile.IdleBaselineWatts = c.opt.idle
+			profile.Power = schedulerTestPower(c.opt.idle)
 			service := 1e9 / c.opt.mu
-			profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: c.opt.e, MemoryBytes: 100}, []float64{service})}
+			profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, InputSlopeJoules: schedulerTestSlope(c.opt.e), MemoryBytes: 100}, []float64{service})}
 			instance := base.Instances[0]
 			instance.ID, instance.Node, instance.Profile = c.id, node.Node, &profile
 			instance.WorkloadUID, instance.Weight = e5Workloads[c.w].name, weights[c.id]
@@ -213,7 +213,7 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 			instance := instances[c.id]
 			service := float64(instance.Profile.Batches[0].ServiceSamples[0].ServiceDurationNanos)
 			mu := capacityThroughput(instance.Profile, instance.MaxBatch)
-			return capacityItem{id: c.id, routingWeight: profileRoutingWeight(mu), throughput: mu, serviceNanos: service, e: c.opt.e, weight: weights[c.id], prepare: !current[c.id]}
+			return capacityItem{id: c.id, routingWeight: profileRoutingWeight(mu), throughput: mu, serviceNanos: service, order: c.opt.e, node: node.Node, model: newSchedulerLoadModel(instance.Profile, instance.MaxBatch), weight: weights[c.id], prepare: !current[c.id]}
 		}
 		watts := func(set []e5Pair) float64 {
 			x := options[0].unloaded
@@ -248,7 +248,7 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 				}
 			}
 			for w := range plan.items {
-				slices.SortFunc(plan.items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.e, b.e), cmp.Compare(a.id, b.id)) })
+				slices.SortFunc(plan.items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.order, b.order), cmp.Compare(a.id, b.id)) })
 			}
 			plan.mid, plan.after = watts(mid), watts(set)
 			plan.replaces = len(mid) > len(now) && plan.postMean > 0

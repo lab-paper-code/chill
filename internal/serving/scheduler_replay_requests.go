@@ -845,15 +845,11 @@ func (s *schedulerReplayState) transitionQueuedChoice(i *schedulerReplayInstance
 	return true
 }
 
-// addBatchEnergy attributes a started batch's incremental joules within the
-// horizon; total energy counts only compared Nodes.
-func (s *schedulerReplayState) addBatchEnergy(i *schedulerReplayInstance, b *BatchProfile, duration float64) {
+// addBatchEnergy counts a started batch's inputs within the horizon; the
+// replay charges them as node load energy at its end (addLoadEnergy).
+func (s *schedulerReplayState) addBatchEnergy(i *schedulerReplayInstance, _ *BatchProfile, duration float64) {
 	if s.now < s.horizon {
-		joules := b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(duration, s.horizon-s.now) / duration
-		s.out.requestJoules += joules
-		if s.counted(i.config.Node) {
-			s.out.energy += joules
-		}
+		i.inputs += float64(len(i.batch)) * math.Min(duration, s.horizon-s.now) / duration
 	}
 }
 

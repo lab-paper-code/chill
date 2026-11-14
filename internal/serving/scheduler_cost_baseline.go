@@ -59,9 +59,11 @@ func schedulerBaseline(settings SchedulerSettings, baselines []NodeBaseline, nod
 	if len(instances) == 1 {
 		i := instances[0]
 		if p := i.Profile; p != nil && p.Condition.NodeUID == node.Node.UID && p.Condition.PowerMode == node.PowerMode &&
-			i.IdleMeter != "" && i.IdleScope == schedulerNodeWallScope && schedulerFinite(p.IdleBaselineWatts) && p.IdleBaselineWatts >= 0 {
-			provenance := IdlePowerProvenance{Source: operationSourceExact, Watts: p.IdleBaselineWatts, References: []string{p.ID}}
-			return provenance.Watts, i.IdleMeter, provenance, nil
+			i.IdleMeter != "" && i.IdleScope == schedulerNodeWallScope {
+			if idle, ok := profileIdleWatts(p); ok {
+				provenance := IdlePowerProvenance{Source: operationSourceExact, Watts: idle, References: []string{p.ID}}
+				return provenance.Watts, i.IdleMeter, provenance, nil
+			}
 		}
 	}
 	if unloaded != nil {
@@ -92,17 +94,27 @@ func reconstructIdlePower(unloaded *NodeBaseline, instances []SchedulerInstance,
 	for _, i := range instances {
 		effective, ok := schedulerIdleAtMode(i, mode, options)
 		p := effective.Profile
-		if !ok || p == nil || !schedulerFinite(p.IdleBaselineWatts) || p.IdleBaselineWatts < 0 ||
-			effective.IdleMeter != unloaded.Meter || effective.IdleScope != schedulerNodeWallScope {
+		idle, identified := profileIdleWatts(p)
+		if !ok || !identified || effective.IdleMeter != unloaded.Meter || effective.IdleScope != schedulerNodeWallScope {
 			return IdlePowerProvenance{}, false
 		}
-		watts += p.IdleBaselineWatts - unloaded.Watts
+		watts += idle - unloaded.Watts
 		sources = appendUnique(sources, p.ID)
 	}
 	if !schedulerFinite(watts) || watts < 0 {
 		return IdlePowerProvenance{}, false
 	}
 	return IdlePowerProvenance{Source: "reconstructed", Watts: watts, References: sources, Reconstructed: true}, true
+}
+
+// profileIdleWatts is a profile's settled idle watts with the model loaded,
+// when its session identified them.
+func profileIdleWatts(p *Profile) (float64, bool) {
+	if p == nil || p.Power == nil {
+		return 0, false
+	}
+	idle, ok := p.Power.IdleWatts.Value()
+	return idle, ok && schedulerFinite(idle) && idle >= 0
 }
 
 func schedulerIdleAtMode(i SchedulerInstance, mode string, options []SchedulerOption) (SchedulerInstance, bool) {

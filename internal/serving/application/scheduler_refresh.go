@@ -2,7 +2,6 @@ package application
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -73,9 +72,6 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	if err = o.retainProfileReuseChecks(ctx, &view); err != nil {
-		return err
-	}
 	// Coverage consumes verified measurement facts independently of operation
 	// costs and scheduler preparation/adoption. No raw evidence is read here.
 	o.catalogRead.Store(&ProfilesView{ConfigVersion: cm.ResourceVersion, CatalogView: view})
@@ -84,10 +80,7 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 		return err
 	}
 	occupancy, skipped := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
-	signature, err := refreshSourceSignature(config, view, costs, factsVersion)
-	if err != nil {
-		return err
-	}
+	signature := refreshSourceSignature(config, view, costs, factsVersion)
 	currentProfiles := view.CurrentProfiles()
 	o.Lock.Lock()
 	accepted := o.Profiles.Load()
@@ -175,7 +168,7 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 	return nil
 }
 
-func refreshSourceSignature(config SchedulerConfiguration, view servingkube.CatalogView, costs servingkube.CostView, factsVersion string) (string, error) {
+func refreshSourceSignature(config SchedulerConfiguration, view servingkube.CatalogView, costs servingkube.CostView, factsVersion string) string {
 	sources := costs.Sources
 	sources = append(sources, "profiler-facts:"+factsVersion)
 	for _, meter := range config.Meters {
@@ -194,14 +187,6 @@ func refreshSourceSignature(config SchedulerConfiguration, view servingkube.Cata
 	for _, issue := range view.Insufficiencies {
 		sources = append(sources, "catalog:"+issue.Code+":"+issue.Source.String())
 	}
-	if len(view.ReuseChecks) != 0 {
-		checks, err := json.Marshal(view.ReuseChecks)
-		if err != nil {
-			return "", err
-		}
-		sources = append(sources, "profile-reuse:"+string(checks))
-	}
 	slices.Sort(sources)
-	signature := strings.Join(sources, "\x00")
-	return signature, nil
+	return strings.Join(sources, "\x00")
 }

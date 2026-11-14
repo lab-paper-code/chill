@@ -55,7 +55,7 @@ func TestCapacityPolishEndpointMatchesFrozenEnergy(t *testing.T) {
 	p.keepWatts = 10
 	keep := p.plans[0][0]
 	keep.before = 10
-	keep.items[0][0].e, keep.retained[0][0].e = 0, 0
+	keep.items[0][0].model, keep.retained[0][0].model = schedulerTestModel(0), schedulerTestModel(0)
 	move := *keep
 	move.keep, move.record.Key, move.after = false, "lower-idle", 9
 	p.plans[0] = append(p.plans[0], &move)

@@ -136,7 +136,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			settings.MinimumDemand = map[string]float64{w2.UID: 0}
 			c.config.Preparations = map[string]servingstate.PrepareSpec{}
 			for _, profile := range profiles {
-				profile.IdleBaselineWatts = 10
+				profile.Power = catalogTestPower("10")
 				spec := measuredCPUPreparationFixture()
 				spec.Instance = serving.SchedulerInstance{ID: "option-" + profile.ID, Node: serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID}, Profile: &profile, Allocation: serving.SchedulerAllocation{MemoryBytes: 1024}, MaxBatch: 1, Capacity: 4}
 				spec.Config.Policy.ProfileID = profile.ID
@@ -330,11 +330,11 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	settings.MinimumDemand = map[string]float64{uid: 2}
 	profiles := c.observer.Profiles()
 	for index := range profiles {
-		profiles[index].IdleBaselineWatts = 100
+		profiles[index].Power = catalogTestPower("100")
 		if profiles[index].NodeName == "b" {
-			profiles[index].IdleBaselineWatts = 20
+			profiles[index].Power = catalogTestPower("20")
 		}
-		profiles[index].Batches[0].EnergyPerInputJoules = 0
+		profiles[index].Batches[0].InputSlopeJoules = catalogTestSlope("0")
 	}
 	c.observer.SetProfiles(profiles)
 	initial, err := c.capture(ctx, time.Now(), c.config)

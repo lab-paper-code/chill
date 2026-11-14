@@ -275,7 +275,8 @@ func TestSchedulerCatalogSerializerErrorPrecedesRecordError(t *testing.T) {
 	_, snapshot := schedulerFixture()
 	profile := *snapshot.Instances[0].Profile
 	profile.Batches = append([]serving.BatchProfile(nil), profile.Batches...)
-	profile.Batches[0].EnergyPerInputJoules = math.NaN()
+	nan := math.NaN()
+	profile.Batches[0].SaturationInputRate = &nan
 	snapshot.Instances[0].Profile = &profile
 	err := log.SchedulerRecord(SchedulerObservation{At: observationTestHour, Snapshot: &snapshot,
 		Action: &SchedulerActionObservation{ID: "invalid-record", Expected: json.RawMessage(`{"invalid":`)}})

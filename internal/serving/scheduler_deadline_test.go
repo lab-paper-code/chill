@@ -113,7 +113,7 @@ func TestSchedulerReplayDeferredFIFOAndNormalEDF(t *testing.T) {
 	normal.UID = "normal"
 	normal.SLO.TargetLatency = 20 * time.Millisecond
 	snap.Instances[0].MaxBatch = 2
-	snap.Instances[0].Profile.Batches = append(snap.Instances[0].Profile.Batches, schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{float64(5 * time.Millisecond)}))
+	snap.Instances[0].Profile.Batches = append(snap.Instances[0].Profile.Batches, schedulerTestBatchProfile(BatchProfile{Batch: 2, InputSlopeJoules: schedulerTestSlope(1), MemoryBytes: 100}, []float64{float64(5 * time.Millisecond)}))
 	zero := 0.0
 	snap.Outstanding = []SchedulerRequest{
 		{ID: "deferred-a", QueueOrder: 0, Definition: d, ReceivedAt: snap.At, Phase: phaseDeferred, Instance: "i1", NativeSenderElapsedMS: &zero},
@@ -155,7 +155,7 @@ func TestSchedulerReplayDelayOverdueUsesMinimumServiceCost(t *testing.T) {
 	d.Admission.Policy = AdmissionPolicyDelay
 	d.SLO.TargetLatency = time.Millisecond
 	snap.Instances[0].MaxBatch = 2
-	snap.Instances[0].Profile.Batches = append(snap.Instances[0].Profile.Batches, schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 5, MemoryBytes: 100}, []float64{float64(5 * time.Millisecond)}))
+	snap.Instances[0].Profile.Batches = append(snap.Instances[0].Profile.Batches, schedulerTestBatchProfile(BatchProfile{Batch: 2, InputSlopeJoules: schedulerTestSlope(5), MemoryBytes: 100}, []float64{float64(5 * time.Millisecond)}))
 	zero := 0.0
 	for _, id := range []string{"a", "b", "c"} {
 		snap.Outstanding = append(snap.Outstanding, SchedulerRequest{ID: id, Definition: d, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero})

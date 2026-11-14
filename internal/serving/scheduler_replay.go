@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
@@ -69,7 +70,10 @@ type schedulerReplayRequest struct {
 }
 
 type schedulerReplayInstance struct {
-	config                   SchedulerInstance
+	config SchedulerInstance
+	// inputs counts the inputs this instance serves within the horizon; the
+	// replay's load energy is charged from them per node at the end.
+	inputs                   float64
 	loaded                   bool
 	ready                    bool
 	stopped                  bool
@@ -108,7 +112,10 @@ type schedulerReplayInstance struct {
 }
 
 type schedulerReplayResult struct {
-	energy           float64
+	energy float64
+	// energyUnknown names node loads whose watts the profiles do not
+	// identify; the replay then has no expected energy.
+	energyUnknown    []string
 	requestJoules    float64
 	samples          map[string][]float64
 	definitions      map[string]*Definition
@@ -229,8 +236,12 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 	if len(c.Reasons) != 0 {
 		return c, ctx.Err()
 	}
-	energy := r.energy
-	c.ExpectedJoules = &energy
+	if len(r.energyUnknown) == 0 {
+		energy := r.energy
+		c.ExpectedJoules = &energy
+	} else {
+		c.Assumptions = appendUnique(c.Assumptions, "expected energy not comparable: "+strings.Join(r.energyUnknown, ","))
+	}
 	c.Status = schedulerStatusFeasible
 	c.SLO, c.Feedback = feedbackReplayEstimates(snapshot, r, capacity == nil), r.feedback
 	c.WorstExceedance = 0
@@ -398,10 +409,37 @@ func (s *schedulerReplayState) run(ctx context.Context) error {
 		}
 		s.now = next
 	}
+	s.addLoadEnergy()
 	if !schedulerFinite(s.out.energy) || s.out.energy < 0 {
 		s.out.reasons = append(s.out.reasons, "ExpectedEnergyOutsidePhysicalNumericalRange")
 	}
 	return ctx.Err()
+}
+
+// addLoadEnergy charges every node's load watts (schedulerLoadWatts) over the
+// horizon at the input rates its instances served in it. A node whose load
+// watts are not identified leaves the replay without an expected energy.
+func (s *schedulerReplayState) addLoadEnergy() {
+	if s.horizon <= 0 {
+		return
+	}
+	var rates []schedulerRate
+	for _, i := range s.instances {
+		if i.inputs > 0 {
+			rates = append(rates, schedulerRate{id: i.config.ID, node: i.config.Node, model: newSchedulerLoadModel(i.config.Profile, i.config.MaxBatch), rate: i.inputs / (s.horizon / 1e9)})
+		}
+	}
+	for _, load := range nodeLoadWatts(rates) {
+		if !load.known {
+			s.out.energyUnknown = appendUnique(s.out.energyUnknown, "LoadPowerNotIdentified:"+load.key)
+			continue
+		}
+		joules := load.watts * s.horizon / 1e9
+		s.out.requestJoules += joules
+		if s.counted(load.node) {
+			s.out.energy += joules
+		}
+	}
 }
 
 func (s *schedulerReplayState) blockedReplayPrerequisite() bool {
@@ -775,12 +813,8 @@ func (s *schedulerReplayState) initializeRunning() bool {
 			return false
 		}
 		i.nativeFinish, i.finish = remaining, remaining
-		joules := b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(remaining, s.horizon) / (float64(elapsed) + remaining)
-		s.out.requestJoules += joules
-		if s.counted(i.config.Node) {
-			s.out.energy += joules
-		}
-		s.out.assumptions = appendUnique(s.out.assumptions, "running incremental joules spread uniformly over sampled conditioned service interval")
+		i.inputs += float64(len(i.batch)) * math.Min(remaining, s.horizon) / (float64(elapsed) + remaining)
+		s.out.assumptions = appendUnique(s.out.assumptions, "running batch inputs spread uniformly over sampled conditioned service interval")
 	}
 	return true
 }

@@ -14,8 +14,8 @@ func (p *capacityPlanner) scalarProblem(t *planTable, deadline time.Time) protoc
 	t.initSearch(p)
 	table := &protocol.Table{ByPlan: t.byPlan, Index: t.index, RoutingRate: t.routingRate, RoutingRateServiceNanos: t.routingRateServiceNanos, RetainedRoutingRate: t.retainedRoutingRate,
 		Count: t.count, Keep: t.keep, Searchable: t.searchable, KeyParts: t.keyParts, Compared: p.compared,
-		Mid: t.mid, After: t.after, TPre: t.tPre, Period: p.periodSeconds, Energy: t.energy, EnergyLowerBound: t.energyLowerBound, Pruned: t.pruned,
-		NodeUID: make([]string, len(p.plans)), Options: make([]string, len(t.index)), Modes: make([]string, len(t.index)), PlanKeys: make([]string, len(t.index)), Placement: make([]string, len(t.index)), Nonnegative: t.nonnegative}
+		Mid: t.mid, After: t.after, TPre: t.tPre, Period: p.periodSeconds, Energy: t.energy, Pruned: t.pruned,
+		NodeUID: make([]string, len(p.plans)), Options: make([]string, len(t.index)), Modes: make([]string, len(t.index)), PlanKeys: make([]string, len(t.index)), Placement: make([]string, len(t.index))}
 	for n := range p.plans {
 		table.NodeUID[n] = p.snapshot.Nodes[n].Node.UID
 	}

@@ -38,7 +38,7 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
 	path := ModelPath{Name: "cpu", Artifact: "model", Files: []string{"/model"}, Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Firstfloor: settings}
 	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, Preprocessor: Preprocessor{Name: "pre", Input: []RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &DatasetReference{Name: "data", UID: "data-uid"}, SLO: SLO{Percentile: 95, TargetLatency: 100 * time.Millisecond}, Admission: Admission{Policy: AdmissionPolicyReject, MaxQueuedRequests: 1024}}
-	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{float64(10 * time.Millisecond)})}}
+	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, Power: schedulerTestPower(12), MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, InputSlopeJoules: schedulerTestSlope(1), MemoryBytes: 100}, []float64{float64(10 * time.Millisecond)})}}
 	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelFiles: []string{"/model/model"}, Inputs: []string{"x"}, Outputs: []string{"y"}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
 	// A ready actor was warmed, so it always has a last service end.
 	idle := int64(0)
@@ -56,6 +56,9 @@ const schedulerTestFloor = 459
 // Synthetic policy fixtures give one service law at every gap: the durations
 // repeat in whole cycles, all at gap 0, until the 99th percentile's sample
 // floor is covered. Real evidence never receives fabricated gap/trial fields.
+// A batch without a saturation input rate gets the one its service implies,
+// b inputs per mean service time, so node power picks the batch that covers a
+// rate as a session profile does.
 func schedulerTestBatchProfile(batch BatchProfile, durations []float64) BatchProfile {
 	batch.ServiceSamples = nil
 	for len(batch.ServiceSamples) < schedulerTestFloor {
@@ -65,10 +68,23 @@ func schedulerTestBatchProfile(batch BatchProfile, durations []float64) BatchPro
 				firstfloor.ServiceSample{ServiceDurationNanos: int64(duration), PrecedingIdleNanos: &gap, TrialID: "synthetic"})
 		}
 	}
+	if batch.SaturationInputRate == nil && batch.Batch > 0 {
+		mean := 0.0
+		for _, duration := range durations {
+			mean += duration / float64(len(durations))
+		}
+		rate := float64(batch.Batch) * 1e9 / mean
+		batch.SaturationInputRate = &rate
+	}
 	return schedulerTestPairedBatch(batch, batch.ServiceSamples)
 }
 
+// A fixture batch that names no input slope has an identified zero slope, the
+// energy such fixtures had before the slope replaced the per-input energy.
 func schedulerTestPairedBatch(batch BatchProfile, samples []firstfloor.ServiceSample) BatchProfile {
+	if batch.InputSlopeJoules == nil {
+		batch.InputSlopeJoules = schedulerTestSlope(0)
+	}
 	batch.ServiceSamples = samples
 	var err error
 	batch.ServiceDistribution, err = firstfloor.NewServiceDistribution(samples)
@@ -151,21 +167,24 @@ func schedulerReplayForTest(s SchedulerSettings, snap SchedulerSnapshot, c Sched
 	return result
 }
 
-func TestReplayEnergyRemainsNonnegativeWithResolutionMarker(t *testing.T) {
-	for _, below := range []bool{false, true} {
-		for _, energy := range []float64{-1, 0, 1} {
-			_, snapshot := schedulerFixture()
-			instance := snapshot.Instances[0]
-			instance.Profile.Batches[0].EnergyPerInputJoules = energy
-			instance.Profile.Batches[0].EnergyBelowResolution = below
-			reasons, _ := schedulerValidateService(instance, nil)
-			if rejected := slices.Contains(reasons, "MissingServiceEnergyEvidence:"+instance.ID); rejected != (energy < 0) {
-				t.Fatalf("energy %g, below-resolution %t: %v", energy, below, reasons)
-			}
-			policy := schedulerPolicy(instance)
-			if policy.Batches[0].EnergyPerItemJ != energy || instance.Profile.Batches[0].EnergyBelowResolution != below {
-				t.Fatal("replay policy changed energy or the serving resolution marker")
-			}
+// Native batching needs an identified, nonnegative input slope per batch, and
+// the policy carries that slope; a not-identified slope is refused.
+func TestReplayPolicyCarriesIdentifiedInputSlope(t *testing.T) {
+	for _, slope := range []*derivation.SessionParameter{schedulerTestSlope(-1), schedulerTestSlope(0), schedulerTestSlope(1), nil} {
+		_, snapshot := schedulerFixture()
+		instance := snapshot.Instances[0]
+		if slope == nil {
+			missing := schedulerTestNotIdentified("inseparable from the awake step")
+			slope = &missing
+		}
+		instance.Profile.Batches[0].InputSlopeJoules = slope
+		value, identified := slope.Value()
+		reasons, _ := schedulerValidateService(instance, nil)
+		if rejected := slices.Contains(reasons, "MissingServiceEnergyEvidence:"+instance.ID); rejected != (!identified || value < 0) {
+			t.Fatalf("slope %+v: %v", slope, reasons)
+		}
+		if policy := schedulerPolicy(instance); identified && policy.Batches[0].EnergyPerItemJ != value || !identified && !math.IsNaN(policy.Batches[0].EnergyPerItemJ) {
+			t.Fatalf("policy energy %g for slope %+v", policy.Batches[0].EnergyPerItemJ, slope)
 		}
 	}
 }
@@ -595,7 +614,7 @@ func TestSchedulerLoadedPowerWitnessAndNewBundleReadiness(t *testing.T) {
 	p := *old.Profile
 	p.ID = "eco-profile"
 	p.Condition.PowerMode = schedulerTestEcoMode
-	p.IdleBaselineWatts = 8
+	p.Power = schedulerTestPower(8)
 	target.Profile = &p
 	snap.Options = []SchedulerOption{{Instance: target, CompatibleUIDs: []string{old.WorkloadUID}}}
 	unloaded := snap.Baselines[0]
@@ -802,12 +821,12 @@ func TestSchedulerCurrentBatchPolicyUsesFrozenNativeSenderContext(t *testing.T) 
 func TestSchedulerDerivedBaselinePreservesMeasuredSignedIdleDelta(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.AutonomousWorkloads = nil
-	snap.Instances[0].Profile.IdleBaselineWatts = 8
+	snap.Instances[0].Profile.Power = schedulerTestPower(8)
 	keep := SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}
 	if joules := schedulerReplayForTest(s, snap, keep).energy; math.Abs(joules-0.8) > 1e-9 {
 		t.Fatalf("derived unloaded + measured signed loaded-idle delta must retain exact subtraction: %g", joules)
 	}
-	snap.Instances[0].Profile.IdleBaselineWatts = 1
+	snap.Instances[0].Profile.Power = schedulerTestPower(1)
 	other := schedulerTestCPU(snap.Instances[0])
 	other.ID = schedulerTestOther
 	snap.Instances = append(snap.Instances, other)
@@ -822,7 +841,7 @@ func TestSchedulerEnergyOverflowRemainsUnknownNotJSONInfinity(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.AutonomousWorkloads = nil
 	d := snap.Workloads[0]
-	snap.Instances[0].Profile.Batches[0].EnergyPerInputJoules = math.MaxFloat64
+	snap.Instances[0].Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(math.MaxFloat64)
 	snap.Arrivals = []SchedulerArrival{{ID: "one", At: snap.At.Add(-s.ObservationWindow), Definition: d, Compute: true}, {ID: "two", At: snap.At.Add(-s.ObservationWindow + time.Millisecond), Definition: d, Compute: true}}
 	result := schedulerReplayForTest(s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances})
 	schedulerRequireReason(t, result.reasons, "ExpectedEnergyOutsidePhysicalNumericalRange")

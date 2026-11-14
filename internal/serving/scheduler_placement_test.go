@@ -10,7 +10,7 @@ import (
 func placementFixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 	s, snap := schedulerFixture()
 	profile := *snap.Instances[0].Profile
-	profile.Batches = append(slices.Clone(profile.Batches), schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{float64(15 * time.Millisecond)}))
+	profile.Batches = append(slices.Clone(profile.Batches), schedulerTestBatchProfile(BatchProfile{Batch: 2, InputSlopeJoules: schedulerTestSlope(1), MemoryBytes: 100}, []float64{float64(15 * time.Millisecond)}))
 	snap.Instances[0].Profile, snap.Instances[0].MaxBatch = &profile, 2
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	same := poolsInstance(snap.Instances[0], "same", n2, "fixed", "w1")

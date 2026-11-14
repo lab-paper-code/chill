@@ -36,8 +36,8 @@ func TestCapacityTableZeroRoutingDoesNotPruneProfile(t *testing.T) {
 }
 
 func TestCapacityTableScalars(t *testing.T) {
-	item := capacityItem{id: "new", routingWeight: 3, throughput: 2, serviceNanos: 7e6, e: 5, weight: 7, prepare: true}
-	retained := capacityItem{id: "old", routingWeight: 11, throughput: 10, e: 13, weight: 17}
+	item := capacityItem{id: "new", routingWeight: 3, throughput: 2, serviceNanos: 7e6, order: 5, model: schedulerTestModel(5), weight: 7, prepare: true}
+	retained := capacityItem{id: "old", routingWeight: 11, throughput: 10, order: 13, model: schedulerTestModel(13), weight: 17}
 	plan := &capacityPlan{option: "option", mode: "mode", items: [][]capacityItem{{item}}, retained: [][]capacityItem{{retained}},
 		others: 2, preMean: 19, preMax: 23, postMean: 29, postMax: 31, preJ: 37, postJ: 41,
 		before: 43, mid: 47, after: 53, replaces: true, reduces: true,
@@ -45,10 +45,15 @@ func TestCapacityTableScalars(t *testing.T) {
 	p := &capacityPlanner{ws: []capacityWorkload{{rate: 1}}, plans: [][]*capacityPlan{{{keep: true}, plan}}}
 	tab := p.planTable()
 	q := tab.byPlan[0][1]
-	got := []float64{tab.routingRate[q][0], tab.routingRateServiceNanos[q][0], tab.energyRate[q][0], tab.retainedRoutingRate[q][0], tab.weightRet[q][0], tab.energyWeightRet[q][0],
+	got := []float64{tab.routingRate[q][0], tab.routingRateServiceNanos[q][0], tab.retainedRoutingRate[q][0], tab.weightRet[q][0],
 		tab.before[q], tab.mid[q], tab.after[q], tab.tauPre[q], tab.tPre[q], tab.tauPost[q]}
-	want := []float64{2, 14e6, 10, 10, 17, 221, 43, 47, 53, 19, 23, 29}
-	if !slices.Equal(got, want) || tab.count[q][0] != 1 || tab.others[q] != 2 || !tab.nonnegative[q] {
+	want := []float64{2, 14e6, 10, 17, 43, 47, 53, 19, 23, 29}
+	// The load columns keep each instance's model in its own slot: the final
+	// entry (throughput 2, weight 7) and the retained one (weight 17).
+	load := []tableLoad{tab.loadFinal[q][0][0], tab.loadRetained[q][0][0]}
+	if !slices.Equal(got, want) || tab.count[q][0] != 1 || tab.others[q] != 2 || len(tab.loadModels[q]) != 2 ||
+		load[0] != (tableLoad{slot: 0, throughput: 2, weight: 7}) || load[1] != (tableLoad{slot: 1, throughput: 10, weight: 17}) ||
+		tab.loadModels[q][0] != item.model || tab.loadModels[q][1] != retained.model || !slices.Equal(tab.loadWorkloads[q], []int{0}) {
 		t.Fatalf("scalar extraction: got=%v want=%v table=%+v", got, want, tab)
 	}
 }
@@ -99,7 +104,7 @@ func TestCapacityTableVariants(t *testing.T) {
 					}
 					for k, item := range first.items[w] {
 						other := plan.items[w][k]
-						if item.e != other.e || item.weight != other.weight || item.prepare != other.prepare {
+						if item.order != other.order || item.weight != other.weight || item.prepare != other.prepare {
 							t.Fatalf("mix %d option %q: non-cap item fields differ: %+v vs %+v", mix, entry.Option, item, other)
 						}
 					}

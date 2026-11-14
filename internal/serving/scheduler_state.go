@@ -19,13 +19,18 @@ type orderKey struct {
 }
 
 type searchSum struct {
-	routingRate, retainedRoutingRate, serviceNanos                     float64
-	retainedServiceNanos                                               float64
-	energyRate, weight, weightedEnergy, retainedWeight, retainedEnergy float64
-	count, pending                                                     int
+	routingRate, retainedRoutingRate, serviceNanos float64
+	retainedServiceNanos                           float64
+	weight, retainedWeight                         float64
+	count, pending                                 int
 }
 
-// searchState keeps additive Tick-fixed terms. Delta never queries raw service
+// searchState keeps additive Tick-fixed Workload sums and each node's load
+// watts for the current choice. A node's load watts are not additive per
+// instance (the awake step is added once per node and is concave in load),
+// so a move recomputes them with schedulerLoadWatts for every node whose
+// inputs the move changes and keeps the others: the move's load term is the
+// exact difference over those nodes. Delta never queries raw service
 // distributions, allocates integer routes, or invokes demand replay.
 type searchState struct {
 	planner *capacityPlanner
@@ -36,13 +41,28 @@ type searchState struct {
 	tPre    []float64
 	r       float64
 	result  orderKey
+	// Per node, the load watts before and after the route for choice, and
+	// whether they are identified.
+	loadInitial, loadFinal     []float64
+	loadInitialOK, loadFinalOK []bool
+	// Scratch for one move: the moved Workload sums, which Workloads changed,
+	// and one plan's instance input rates.
+	next    []searchSum
+	changed []bool
+	rates   []float64
 }
 
 func newSearchState(p *capacityPlanner, t *planTable, choice []int) *searchState {
 	t.initSearch(p)
 	n, w := len(p.plans), len(p.ws)
+	slots := 0
+	for _, models := range t.loadModels {
+		slots = max(slots, len(models))
+	}
 	s := &searchState{planner: p, table: t, choice: make([]int, n), sums: make([]searchSum, w), tPre: make([]float64, n),
-		result: orderKey{choice: make([]int, n), excesses: make([]float64, w), demand: make([]float64, w), supply: make([]float64, w), satisfied: make([]bool, w), table: t}}
+		result:      orderKey{choice: make([]int, n), excesses: make([]float64, w), demand: make([]float64, w), supply: make([]float64, w), satisfied: make([]bool, w), table: t},
+		loadInitial: make([]float64, n), loadFinal: make([]float64, n), loadInitialOK: make([]bool, n), loadFinalOK: make([]bool, n),
+		next: make([]searchSum, w), changed: make([]bool, w), rates: make([]float64, slots)}
 	s.reset(choice)
 	return s
 }
@@ -63,6 +83,9 @@ func (s *searchState) recount() {
 			s.total += s.table.count[q][w]
 		}
 	}
+	for n, q := range s.choice {
+		s.loadInitial[n], s.loadFinal[n], s.loadInitialOK[n], s.loadFinalOK[n] = s.loadWatts(q, s.sums)
+	}
 }
 func (s *searchState) addPlan(sum *searchSum, q, w int, sign float64) {
 	t := s.table
@@ -70,13 +93,57 @@ func (s *searchState) addPlan(sum *searchSum, q, w int, sign float64) {
 	sum.retainedRoutingRate += sign * t.retainedRoutingRate[q][w]
 	sum.serviceNanos += sign * t.routingRateServiceNanos[q][w]
 	sum.retainedServiceNanos += sign * t.retainedRoutingRateServiceNanos[q][w]
-	sum.energyRate += sign * t.energyRate[q][w]
 	sum.weight += sign * t.weight[q][w]
-	sum.weightedEnergy += sign * t.weightedEnergy[q][w]
 	sum.retainedWeight += sign * t.weightRet[q][w]
-	sum.retainedEnergy += sign * t.energyWeightRet[q][w]
 	sum.count += int(sign) * t.count[q][w]
 	sum.pending += int(sign) * t.pending[q][w]
+}
+
+// finalShare is an entry's share of its Workload's inputs after the route:
+// by profile throughput when routing is controlled, otherwise by route weight.
+func (s *searchState) finalShare(sum *searchSum, l tableLoad) float64 {
+	if s.planner.settings.Controls.Routing && sum.routingRate > 0 {
+		return l.throughput / sum.routingRate
+	}
+	if sum.weight > 0 {
+		return l.weight / sum.weight
+	}
+	return 0
+}
+
+// loadWatts is plan q's node load watts (schedulerLoadWatts) under the
+// Workload sums, before the route (retained instances serve up to their
+// routing rate, the rest follows the final shares) and after it.
+func (s *searchState) loadWatts(q int, sums []searchSum) (initial, final float64, initialOK, finalOK bool) {
+	t, p := s.table, s.planner
+	models := t.loadModels[q]
+	if len(models) == 0 {
+		return 0, 0, true, true
+	}
+	rates := s.rates[:len(models)]
+	clear(rates)
+	for _, w := range t.loadWorkloads[q] {
+		rate, sum := p.ws[w].rate, &sums[w]
+		for _, l := range t.loadFinal[q][w] {
+			rates[l.slot] += rate * s.finalShare(sum, l)
+		}
+	}
+	final, finalOK = schedulerLoadWatts(models, rates)
+	clear(rates)
+	for _, w := range t.loadWorkloads[q] {
+		rate, sum := p.ws[w].rate, &sums[w]
+		if sum.retainedWeight > 0 {
+			for _, l := range t.loadRetained[q][w] {
+				rates[l.slot] += min(rate, sum.retainedRoutingRate) * l.weight / sum.retainedWeight
+			}
+		}
+		overflow := max(0, rate-sum.retainedRoutingRate)
+		for _, l := range t.loadFinal[q][w] {
+			rates[l.slot] += overflow * s.finalShare(sum, l)
+		}
+	}
+	initial, initialOK = schedulerLoadWatts(models, rates)
+	return initial, final, initialOK, finalOK
 }
 
 // Rebase committed moves in canonical order. This avoids accumulated roundoff
@@ -89,6 +156,7 @@ func (s *searchState) apply(n, q int) {
 	s.recount()
 }
 
+//nolint:gocyclo // One pass ranks a move: idle, node load, then Workload terms.
 func (s *searchState) delta(n, q int) orderKey {
 	p, t := s.planner, s.table
 	key := s.result
@@ -112,6 +180,41 @@ func (s *searchState) delta(n, q int) orderKey {
 			key.joules += t.energy(current, key.route, p.periodSeconds)
 		}
 	}
+	old := s.choice[n]
+	for w := range p.ws {
+		s.changed[w] = t.routingRate[old][w] != t.routingRate[q][w] || t.weight[old][w] != t.weight[q][w] ||
+			t.retainedRoutingRate[old][w] != t.retainedRoutingRate[q][w] || t.weightRet[old][w] != t.weightRet[q][w]
+		s.next[w] = s.sums[w]
+		if s.changed[w] {
+			s.addPlan(&s.next[w], old, w, -1)
+			s.addPlan(&s.next[w], q, w, 1)
+		}
+	}
+	// Node load watts: recomputed where the move changes a node's plan or the
+	// sums of a Workload it serves, cached elsewhere. A load whose watts are not
+	// identified adds nothing here; a non-keep plan carrying one is not
+	// searchable, and exact evaluation reports its missing cell.
+	before, after := min(key.route, p.periodSeconds), max(0, p.periodSeconds-key.route)
+	for node, current := range key.choice {
+		initial, final, initialOK, finalOK := s.loadInitial[node], s.loadFinal[node], s.loadInitialOK[node], s.loadFinalOK[node]
+		if node == n || s.affected(current) {
+			initial, final, initialOK, finalOK = s.loadWatts(current, s.next)
+		}
+		if before > 0 {
+			if initialOK {
+				key.joules += initial * before
+			} else if !t.keep[current] {
+				key.searchable = false
+			}
+		}
+		if after > 0 {
+			if finalOK {
+				key.joules += final * after
+			} else if !t.keep[current] {
+				key.searchable = false
+			}
+		}
+	}
 	total := s.total + t.others[q] - t.others[s.choice[n]]
 	for w, ws := range p.ws {
 		sum := s.sums[w]
@@ -127,18 +230,6 @@ func (s *searchState) delta(n, q int) orderKey {
 		key.feasible = key.feasible && key.satisfied[w]
 		key.final = key.feasible
 		key.searchable = key.searchable && eligible
-		mean := 0.0
-		if p.settings.Controls.Routing && sum.routingRate > 0 {
-			mean = sum.energyRate / sum.routingRate
-		} else if sum.weight > 0 {
-			mean = sum.weightedEnergy / sum.weight
-		}
-		initial := 0.0
-		if sum.retainedWeight > 0 {
-			initial = min(ws.rate, sum.retainedRoutingRate) * sum.retainedEnergy / sum.retainedWeight
-		}
-		before := min(key.route, p.periodSeconds)
-		key.joules += initial*before + max(0, ws.rate-sum.retainedRoutingRate)*before*mean + ws.rate*mean*max(0, p.periodSeconds-key.route)
 	}
 	key.bounded = key.bounded && total <= p.settings.MaxInstances
 	key.instances = total
@@ -148,6 +239,16 @@ func (s *searchState) delta(n, q int) orderKey {
 	}
 	slices.SortFunc(key.excesses[t.priorityCount:], func(a, b float64) int { return cmp.Compare(b, a) })
 	return key
+}
+
+// affected reports whether plan q serves a Workload whose sums the move changes.
+func (s *searchState) affected(q int) bool {
+	for _, w := range s.table.loadWorkloads[q] {
+		if s.changed[w] {
+			return true
+		}
+	}
+	return false
 }
 
 // capacityHeuristic uses the exact finite cohort for phase populations and

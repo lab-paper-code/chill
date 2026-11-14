@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -8,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"math"
 	"reflect"
 	"slices"
 	"strings"
@@ -18,11 +18,8 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/firstfloor"
-	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
-	campaignevidence "github.com/lab-paper-code/chill/internal/profiling/campaign/evidence"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
-	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
-	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"k8s.io/apimachinery/pkg/types"
@@ -32,19 +29,18 @@ import (
 const invalidEvidenceCode = "InvalidEvidence"
 const catalogCompletePhase = "Complete"
 
-// Catalog lists native Campaigns and retains one verified terminal profile per
-// name/UID/resourceVersion. Inference never reads campaigns or downloads
-// evidence; callers own the mutable parts of each returned view.
-// Loader verification proves stored structure and binding, not admission.
-// Batch distributions retain every raw RUNNER SERVICE sample in nanoseconds,
-// never client roundtrip or backend-call time. Energy uses the existing exact
-// incremental wall-energy/item estimator; memory is measured lifetime peak.
+// measurementResultUnreadableCode reports a Complete measurement whose stored
+// result is not a session result this catalog reads.
+const measurementResultUnreadableCode = "MeasurementResultUnreadable"
+
+// Catalog lists measurement requests and retains one profile per
+// name/UID/resourceVersion, built from the request's one stored session
+// result object and nothing else. Inference never reads requests or downloads
+// results; callers own the mutable parts of each returned view.
 type Catalog struct {
 	store           *Store
 	objects         evidencestore.LocationReader
-	loader          *profilerevidence.Loader
 	maxObjectBytes  int64
-	evidence        campaignevidence.Reader
 	current         map[types.NamespacedName]catalogProfile
 	sourceMu        sync.RWMutex
 	sourceCheckedAt time.Time
@@ -69,38 +65,29 @@ type CatalogView struct {
 	Profiles            []serving.Profile                        `json:"profiles"`
 	CurrentMeasurements []profilederivation.MeasurementSelection `json:"currentMeasurements"`
 	Insufficiencies     []CatalogIssue                           `json:"insufficiencies"`
-	ReuseChecks         []serving.ProfileReuseCheck              `json:"reuseChecks,omitempty"`
-	MeasurementFacts    map[string]serving.MeasurementFacts      `json:"measurementFacts"`
-	SourceCheckedAt     time.Time                                `json:"-"`
-	SourceError         string                                   `json:"-"`
-	Revision            string                                   `json:"-"`
+	// ReuseChecks is always empty: profiles are measured per node. The field
+	// stays until its query readers move to the session result.
+	ReuseChecks      []serving.ProfileReuseCheck         `json:"reuseChecks,omitempty"`
+	MeasurementFacts map[string]serving.MeasurementFacts `json:"measurementFacts"`
+	SourceCheckedAt  time.Time                           `json:"-"`
+	SourceError      string                              `json:"-"`
+	Revision         string                              `json:"-"`
 }
 
 func NewCatalog(store *Store, objects evidencestore.LocationReader, maxObjectBytes int64) (*Catalog, error) {
 	if store == nil || store.client == nil {
 		return nil, errors.New("native Kubernetes store is required")
 	}
-	loader, err := profilerevidence.NewLoader(objects, maxObjectBytes)
-	if err != nil {
-		return nil, err
+	if objects == nil {
+		return nil, errors.New("catalog object reader is required")
 	}
-	catalog := &Catalog{
-		store: store, objects: objects, loader: loader, maxObjectBytes: maxObjectBytes,
+	return &Catalog{
+		store: store, objects: objects, maxObjectBytes: maxObjectBytes,
 		current: make(map[types.NamespacedName]catalogProfile),
-	}
-	catalog.evidence = campaignevidence.Reader{
-		Runs: store.client, ReadObject: catalog.readObject,
-		LoadActive: func(ctx context.Context, _ *edgev1alpha1.ProfilingRun, identity evidencestore.ObjectIdentity) (profilerevidence.VerifiedEvidence, error) {
-			return catalog.loader.Load(ctx, identity)
-		},
-		LoadIdle: func(ctx context.Context, _ *edgev1alpha1.ProfilingRun, identity evidencestore.ObjectIdentity) (profilerevidence.VerifiedIdleEvidence, error) {
-			return catalog.loader.LoadIdle(ctx, identity)
-		},
-	}
-	return catalog, nil
+	}, nil
 }
 
-// Refresh reads every Complete campaign in namespaces. A bad source cannot
+// Refresh reads every Complete measurement in namespaces. A bad source cannot
 // contribute a partial profile; other sources remain usable. Cancellation
 // returns no view, so callers cannot publish a partial refresh.
 func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view CatalogView, err error) {
@@ -116,7 +103,6 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 	view = CatalogView{Profiles: []serving.Profile{}, Insufficiencies: []CatalogIssue{}, MeasurementFacts: map[string]serving.MeasurementFacts{}}
 	var revisions []string
 	seen := map[types.NamespacedName]struct{}{}
-	reuseRequests := map[string]string{}
 	var candidates []profilederivation.MeasurementSelection
 	var replacedProfiles []serving.Profile
 	names, replacements := map[string]string{}, map[string]string{}
@@ -142,13 +128,7 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 			if campaign.DeletionTimestamp != nil {
 				continue
 			}
-			var completedAt time.Time
-			for _, condition := range campaign.Status.Conditions {
-				if condition.Type == "MeasurementComplete" {
-					completedAt = condition.LastTransitionTime.Time
-					break
-				}
-			}
+			completedAt := measurementCompletedAt(campaign)
 			state := campaign.Spec.State.Candidate
 			candidateIndex := len(candidates)
 			candidates = append(candidates, profilederivation.MeasurementSelection{
@@ -188,7 +168,7 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 				if ctx.Err() != nil {
 					return CatalogView{}, ctx.Err()
 				}
-				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: "InvalidEvidence", Reason: err.Error()})
+				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: invalidEvidenceCode, Reason: err.Error()})
 				continue
 			}
 			view.Insufficiencies = append(view.Insufficiencies, issues...)
@@ -196,9 +176,6 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 			if len(profile.Batches) > 0 {
 				view.Profiles = append(view.Profiles, profile)
 				view.MeasurementFacts[profile.ID] = cloneMeasurementFacts(c.current[source].facts)
-				if request, found := campaign.Annotations[profileReuseAnnotation]; found {
-					reuseRequests[profile.ID] = request
-				}
 			}
 		}
 	}
@@ -211,15 +188,20 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 	if err != nil {
 		return CatalogView{}, err
 	}
-	view, err = applyProfileReuse(view, reuseRequests)
-	if err != nil {
-		return CatalogView{}, err
-	}
 	view.CurrentMeasurements = profilederivation.CurrentMeasurements(candidates, profilederivation.ReplacedMeasurements(replacements, names))
 	slices.Sort(revisions)
 	view.Revision = fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(revisions, "\x00"))))
 	view.SourceCheckedAt = time.Now().UTC()
 	return view, nil
+}
+
+func measurementCompletedAt(campaign *edgev1alpha1.BatchEnergyOptimization) time.Time {
+	for _, condition := range campaign.Status.Conditions {
+		if condition.Type == "MeasurementComplete" {
+			return condition.LastTransitionTime.Time
+		}
+	}
+	return time.Time{}
 }
 
 // SourceStatus reports the last real source check, not the snapshot read time.
@@ -284,246 +266,136 @@ func (view CatalogView) CurrentProfiles() []serving.Profile {
 	}
 	profiles := make([]serving.Profile, 0, len(current))
 	for _, profile := range view.Profiles {
-		id := profile.ID
-		if profile.Reuse != nil {
-			id = profile.Reuse.ConfirmationProfileID
-		}
-		if current[id] {
+		if current[profile.ID] {
 			profiles = append(profiles, profile)
 		}
 	}
 	return profiles
 }
 
-//nolint:gocyclo // This refresh boundary follows the explicit ordered campaign, plan, Run, and raw-evidence checks.
+// readProfile builds the profile of one Complete measurement from its stored
+// session result alone. A result of another schema version is a measurement
+// from before profile sessions: it is reported, never read.
 func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization) (serving.Profile, []CatalogIssue, error) {
 	source := types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}
 	if campaign.Status.Result == nil {
 		delete(c.current, source)
-		return serving.Profile{}, nil, errors.New("completed campaign has no terminal result reference")
+		return serving.Profile{}, nil, errors.New("completed measurement has no stored result reference")
 	}
 	if admitted, found := c.current[source]; found &&
 		admitted.uid == campaign.UID && admitted.version == campaign.ResourceVersion {
 		return cloneCatalogProfile(admitted.profile), nil, nil
 	}
-	// A new native identity/version must pass the full evidence boundary.
-	// Never retain the old success if that new admission fails.
+	// A new identity/version is read again; the old success is never retained
+	// if that read fails.
 	delete(c.current, source)
-	retained, err := c.evidence.Read(ctx, campaign)
+	stored := campaign.Status.Result
+	reference := evidencestore.ObjectIdentity{Store: stored.Store, Key: stored.Key, Size: stored.Size}
+	raw, err := c.readObject(ctx, reference)
 	if err != nil {
-		return serving.Profile{}, nil, err
+		return serving.Profile{}, nil, fmt.Errorf("read stored result %s: %w", reference.Key, err)
 	}
-	resultReference := retained.ResultIdentity
-	plan := retained.Plan
-	condition := plan.Shared()
-	discovery, sequential, err := batchenergyoptimization.DecodeDiscoveryResult(retained.Result, plan.PlannedBatchSizes())
+	result, err := profilederivation.DecodeSessionResult(raw)
 	if err != nil {
-		return serving.Profile{}, nil, err
+		return serving.Profile{}, []CatalogIssue{{Source: source, Code: measurementResultUnreadableCode, Reason: unreadableResultReason(reference, raw, err)}}, nil
 	}
-	if condition.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily {
-		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "standalone experiment execution is not same-firstfloor serving evidence"}}, nil
-	}
-
-	trials, err := c.evidence.ReadTrials(ctx, campaign, retained)
+	profile, err := sessionProfile(campaign, reference, result)
 	if err != nil {
-		return serving.Profile{}, nil, err
-	}
-	active, idle := trials.Active, trials.Idle
-	measuredAt, evidenceReferences := trials.MeasuredAt, trials.Evidence
-	activeSources, idleSources := trials.ActiveSources, trials.IdleSources
-	if sequential && len(discovery.MeasuredBatchSizes) == 0 {
-		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "batch discovery completed without a fully measured batch prefix"}}, nil
-	}
-	if len(active) == 0 || len(idle) == 0 {
-		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "completed active and model-loaded idle raw trials are required"}}, nil
-	}
-	idleTrials := make([]profilederivation.IdleTrial, len(idle))
-	var idleMemory profilederivation.MemoryObservation
-	for index, verified := range idle {
-		idleTrials[index], err = profilerprojection.IdleTrial(verified, idle[0])
-		if err != nil {
-			return serving.Profile{}, nil, err
-		}
-		execution, raw, err := verified.Records()
-		if err != nil {
-			return serving.Profile{}, nil, err
-		}
-		idleMemory = profilederivation.MaxMemory(idleMemory, profilederivation.ObservedMemory(
-			raw.Runtime.MemoryBytes, raw.Runtime.MemorySource, "idle",
-			profilederivation.RawEvidenceIdentity{Store: execution.RawMeasurement.Store, Key: execution.RawMeasurement.Key, Size: execution.RawMeasurement.Size}))
-	}
-	confidence, err := campaign.Spec.PointPolicy.Confidence()
-	if err != nil {
-		return serving.Profile{}, nil, err
-	}
-	energyPolicy := profilederivation.PointPolicy{
-		Version: "serving-energy-resolution-v1", MinimumTrials: int(campaign.Spec.TrialsPerBatch), ConfidenceLevel: confidence,
-	}
-	baseline, err := profilederivation.DeriveIdleBaseline(idleTrials, energyPolicy)
-	if err != nil {
-		return serving.Profile{}, nil, fmt.Errorf("restore measured idle baseline: %w", err)
-	}
-	idleExecution, idleRaw, err := idle[0].Records()
-	if err != nil {
-		return serving.Profile{}, nil, err
-	}
-	metricSource := idleRaw.Metrics.Source
-	batches := make(map[int]*catalogBatch)
-	var runtimeMetadata *profilingrun.FirstfloorRuntimeEvidence
-	var delivery profilingrun.CandidateRuntimeDelivery
-	for _, verified := range active {
-		execution, raw, err := verified.Records()
-		if err != nil {
-			return serving.Profile{}, nil, err
-		}
-		if err := profilerprojection.ValidateCurvePlanRunConfigs(
-			execution.RunConfig, idleExecution.RunConfig,
-			execution.Terminal.Node.UID, idleExecution.Terminal.Node.UID, condition,
-		); err != nil {
-			return serving.Profile{}, nil, err
-		}
-		if raw.Runtime.Firstfloor != nil {
-			if runtimeMetadata == nil {
-				runtimeMetadata, delivery = raw.Runtime.Firstfloor, raw.RunConfig.Delivery
-			} else if a, b := runtimeMetadata.Runtime, raw.Runtime.Firstfloor.Runtime; a.Runtime != b.Runtime || a.Device != b.Device || a.GPUUUID != b.GPUUUID || !slices.Equal(a.ModelFiles, b.ModelFiles) || !slices.Equal(a.Providers, b.Providers) || !slices.Equal(a.Inputs, b.Inputs) || !slices.Equal(a.Outputs, b.Outputs) {
-				return serving.Profile{}, nil, errors.New("firstfloor trials have different actual initialized runner conditions")
-			}
-		}
-		if sequential && !slices.Contains(discovery.MeasuredBatchSizes, execution.RunConfig.Measurement.Batch) {
-			continue
-		}
-		trial, err := profilerprojection.Trial(verified)
-		if err != nil {
-			return serving.Profile{}, nil, err
-		}
-		energy, err := profilederivation.IncrementalWorkTrial(trial, baseline)
-		if err != nil {
-			return serving.Profile{}, nil, fmt.Errorf("derive measured energy for batch %d: %w", trial.Batch, err)
-		}
-		batch := batches[trial.Batch]
-		if batch == nil {
-			batch = &catalogBatch{profile: serving.BatchProfile{Batch: trial.Batch}}
-			batches[trial.Batch] = batch
-		}
-		if err := batch.add(trial, energy, raw.Runtime.MemoryBytes); err != nil {
-			return serving.Profile{}, nil, err
-		}
-		batch.memory = profilederivation.MaxMemory(batch.memory, profilederivation.ObservedMemory(
-			raw.Runtime.MemoryBytes, raw.Runtime.MemorySource, "active",
-			profilederivation.RawEvidenceIdentity{Store: execution.RawMeasurement.Store, Key: execution.RawMeasurement.Key, Size: execution.RawMeasurement.Size}))
-		quality := profilerprojection.MeasurementQuality(raw.RunConfig, raw.Metrics, trial.WindowStart, trial.WindowEnd, condition.ActiveProtocol)
-		quality.TrialID = trial.TrialID
-		batch.quality = append(batch.quality, quality)
-	}
-	if runtimeMetadata != nil {
-		for _, verified := range idle {
-			_, raw, err := verified.Records()
-			if err != nil {
-				return serving.Profile{}, nil, err
-			}
-			if raw.Runtime.Firstfloor == nil {
-				return serving.Profile{}, nil, errors.New("idle firstfloor actual runner facts are missing")
-			}
-			if a, b := runtimeMetadata.Runtime, raw.Runtime.Firstfloor.Runtime; a.Runtime != b.Runtime || a.Device != b.Device || a.GPUUUID != b.GPUUUID || !slices.Equal(a.ModelFiles, b.ModelFiles) || !slices.Equal(a.Providers, b.Providers) || !slices.Equal(a.Inputs, b.Inputs) || !slices.Equal(a.Outputs, b.Outputs) {
-				return serving.Profile{}, nil, errors.New("idle and active actual firstfloor runner conditions differ")
-			}
-		}
-	}
-	condition, err = profilerprojection.ProjectMeasuredCurveCondition(condition, active[0])
-	if err != nil {
-		return serving.Profile{}, nil, err
-	}
-	profile := serving.Profile{
-		ID: source.String() + "/" + string(campaign.UID), Reference: resultReference,
-		NodeName: idleExecution.RunConfig.TargetNode.Name, Condition: condition, Evidence: evidenceReferences,
-		ConfidenceLevel: confidence, IdleBaselineWatts: baseline.ModelLoadedIdleMeanWallWatts,
-		MeasuredAt:     measuredAt,
-		MetricSource:   metricSource,
-		TrialsPerBatch: int(campaign.Spec.TrialsPerBatch),
-	}
-	facts := serving.MeasurementFacts{
-		Request:         profilederivation.MeasurementRequestReference{Namespace: campaign.Namespace, Name: campaign.Name, UID: string(campaign.UID)},
-		ResultReference: profilederivation.RawEvidenceIdentity{Store: resultReference.Store, Key: resultReference.Key, Size: resultReference.Size},
-		Condition:       condition, PointPolicy: energyPolicy, Batches: []profilederivation.MeasurementBatchFacts{},
-	}
-	if runtimeMetadata != nil {
-		profile.RuntimeMetadata = &runtimeMetadata.Runtime
-		if profile.RuntimeDelivery, err = json.Marshal(delivery); err != nil {
-			return serving.Profile{}, nil, err
-		}
-	}
-	var issues []CatalogIssue
-	for _, batchSize := range condition.PlannedBatchSizes {
-		batch := batches[batchSize]
-		if batch == nil && batchSize == 1 {
-			issues = append(issues, CatalogIssue{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor serving requires exact measured batch 1"})
-		}
-		if batch == nil {
-			continue // A terminal minimum search need not measure the whole plan.
-		}
-		if batch.missingMemory {
-			issues = append(issues, CatalogIssue{Source: source, Code: "MemoryEvidenceMissing", Reason: fmt.Sprintf("batch %d has no measured runtime memory bytes for every trial", batchSize)})
-			continue
-		}
-		if batch.trials < int(campaign.Spec.TrialsPerBatch) {
-			issues = append(issues, CatalogIssue{Source: source, Code: "MeasurementEvidenceMissing", Reason: fmt.Sprintf("batch %d has %d completed raw trials; campaign requires %d", batchSize, batch.trials, campaign.Spec.TrialsPerBatch)})
-			continue
-		}
-		memory := profilederivation.MaxMemory(batch.memory, idleMemory)
-		batch.profile.ServiceDistribution, err = firstfloor.NewServiceDistribution(batch.profile.ServiceSamples)
-		if err != nil {
-			return serving.Profile{}, nil, fmt.Errorf("hydrate batch %d service pairs: %w", batchSize, err)
-		}
-		batch.profile.MemoryBytes, batch.profile.MemoryBasis = memory.Bytes, memory.Basis
-		batch.profile.EnergyPerInputJoules = batch.energySum / float64(batch.trials)
-		point, err := profilederivation.Aggregate(batch.energyTrials, energyPolicy)
-		if err != nil {
-			return serving.Profile{}, nil, fmt.Errorf("derive measured energy confidence for batch %d: %w", batchSize, err)
-		}
-		if batch.profile.EnergyPerInputJoules < 0 {
-			lower := point.MeanIncrementalWorkJoulesPerItem - point.Confidence.HalfWidth
-			upper := point.MeanIncrementalWorkJoulesPerItem + point.Confidence.HalfWidth
-			if upper < 0 {
-				issues = append(issues, CatalogIssue{Source: source, Code: "NegativeIncrementalEnergy",
-					Reason: fmt.Sprintf("batch %d incremental energy %g J/item has %g%% CI [%g, %g] J/item below zero; remeasurement required", batchSize, point.MeanIncrementalWorkJoulesPerItem, confidence*100, lower, upper)})
-				continue
-			}
-			batch.profile.EnergyPerInputJoules = 0
-			batch.profile.EnergyBelowResolution = true
-		}
-		profile.Batches = append(profile.Batches, batch.profile)
-		row := profilederivation.MeasurementPointFacts(point, baseline, batch.clientLatencies, batch.completedItems, batch.completedCalls)
-		row.PowerSource = profilerprojection.MeasurementPowerSource(metricSource)
-		row.Quality = append(row.Quality, batch.quality...)
-		for _, verified := range idle {
-			execution, raw, err := verified.Records()
-			if err != nil {
-				return serving.Profile{}, nil, err
-			}
-			windowStart, windowEnd, err := raw.Runtime.MeasurementWindow()
-			if err != nil {
-				return serving.Profile{}, nil, err
-			}
-			quality := profilerprojection.MeasurementQuality(raw.RunConfig, raw.Metrics, windowStart, windowEnd, condition.IdleProtocol)
-			quality.TrialID = execution.Terminal.Pod.UID
-			row.Quality = append(row.Quality, quality)
-		}
-		for _, reference := range append(slices.Clone(idleSources), activeSources[batchSize]...) {
-			row.Sources = append(row.Sources, profilederivation.RawEvidenceIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size})
-		}
-		facts.Batches = append(facts.Batches, row)
-		profile.Batches[len(profile.Batches)-1].MeanWallWatts = batch.wallPowerSum / float64(batch.trials)
-	}
-	if len(issues) != 0 {
-		return serving.Profile{}, issues, nil
+		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: err.Error()}}, nil
 	}
 	if !completeNativeProfile(profile) {
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor requires exact measured batch 1 and initialized measured sizes within selected maxBatchSize"}}, nil
 	}
+	facts := serving.MeasurementFacts{
+		Request:         profilederivation.MeasurementRequestReference{Namespace: campaign.Namespace, Name: campaign.Name, UID: string(campaign.UID)},
+		ResultReference: profilederivation.RawEvidenceIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size},
+		Condition:       profile.Condition, Batches: []profilederivation.MeasurementBatchFacts{},
+	}
 	c.current[source] = catalogProfile{
 		uid: campaign.UID, version: campaign.ResourceVersion, profile: cloneCatalogProfile(profile), facts: cloneMeasurementFacts(facts),
 	}
-	return profile, issues, nil
+	return profile, nil, nil
+}
+
+// unreadableResultReason names why a stored result is not read: another schema
+// version, or no decodable session result at all.
+func unreadableResultReason(reference evidencestore.ObjectIdentity, raw []byte, err error) string {
+	var header struct {
+		SchemaVersion string `json:"schemaVersion"`
+	}
+	if json.Unmarshal(raw, &header) == nil && header.SchemaVersion != profilederivation.SessionResultSchemaVersion {
+		return fmt.Sprintf("stored result %s has schema %q, not %q; a measurement from before profile sessions is not read: delete it and measure again",
+			reference.Key, header.SchemaVersion, profilederivation.SessionResultSchemaVersion)
+	}
+	return fmt.Sprintf("stored result %s is not a decodable session result (%v); delete the measurement and measure again", reference.Key, err)
+}
+
+// sessionProfile maps a session result onto the serving profile. The condition
+// keeps the curve-plan shape its readers use: the planned batch sizes are the
+// measured ones, and the runtime version and provider come from the executor's
+// runtime report.
+func sessionProfile(campaign *edgev1alpha1.BatchEnergyOptimization, reference evidencestore.ObjectIdentity, result profilederivation.SessionResult) (serving.Profile, error) {
+	if len(result.Batches) == 0 {
+		return serving.Profile{}, errors.New("the session measured no batch size")
+	}
+	var meter metricobserver.SourceIdentity
+	decoder := json.NewDecoder(bytes.NewReader(result.MeterSource))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&meter); err != nil {
+		return serving.Profile{}, fmt.Errorf("session meter source is not a metric source identity: %w", err)
+	}
+	session := result.Condition
+	condition := profilederivation.CurvePlanSpec{
+		LogicalModel: session.LogicalModel, DeviceClass: session.DeviceClass, NodeUID: session.NodeUID,
+		RuntimeFamily: session.RuntimeFamily, Backend: session.Backend, Firstfloor: session.Firstfloor,
+		RuntimeAccess: session.RuntimeAccess, RuntimeImage: session.RuntimeImage, Actor: session.Actor,
+		PowerMode: session.PowerMode, Artifact: session.Artifact, Preprocessor: session.Preprocessor,
+		MetricSource:   profilederivation.CurveMetricSourceContract{SourceKind: meter.Kind, NodeName: meter.NodeName, Endpoint: meter.Endpoint, PowerMetric: meter.Metric},
+		ActiveProtocol: profilederivation.CurveProtocolContract{Dataset: session.Dataset},
+	}
+	if metadata := result.RuntimeMetadata; metadata != nil {
+		condition.RuntimeVersion = metadata.RuntimeVersion
+		if len(metadata.Providers) > 0 {
+			condition.RuntimeProvider = metadata.Providers[0]
+		}
+	}
+	profile := serving.Profile{
+		ID: types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}.String() + "/" + string(campaign.UID), Reference: reference,
+		Evidence: []evidencestore.ObjectIdentity{reference}, NodeName: session.NodeName,
+		MeasuredAt: measurementCompletedAt(campaign), RuntimeMetadata: result.RuntimeMetadata,
+		RuntimeDelivery: slices.Clone(result.RuntimeDelivery), MetricSource: meter,
+		Power: &serving.ProfilePower{IdleWatts: result.Power.IdleWatts, AwakeStepWatts: result.Power.AwakeStepWatts, HoldSeconds: result.Power.HoldSeconds},
+	}
+	for _, batch := range result.Batches {
+		if batch.PeakMemoryBytes <= 0 {
+			return serving.Profile{}, fmt.Errorf("batch %d has no measured memory peak", batch.Batch)
+		}
+		samples := make([]firstfloor.ServiceSample, len(batch.ServiceNanos))
+		for k, service := range batch.ServiceNanos {
+			idle := batch.PrecedingIdleNanos[k]
+			samples[k] = firstfloor.ServiceSample{ServiceDurationNanos: service, PrecedingIdleNanos: &idle, TrialID: string(campaign.UID)}
+		}
+		distribution, err := firstfloor.NewServiceDistribution(samples)
+		if err != nil {
+			return serving.Profile{}, fmt.Errorf("hydrate batch %d service records: %w", batch.Batch, err)
+		}
+		slope := batch.JoulesPerInput
+		out := serving.BatchProfile{
+			Batch: batch.Batch, ServiceSamples: samples, ServiceDistribution: distribution,
+			MemoryBytes: uint64(batch.PeakMemoryBytes),
+			MemoryBasis: profilederivation.MemoryBasis{Observation: batch.MemoryKind,
+				Evidence: profilederivation.RawEvidenceIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size}},
+			InputSlopeJoules: &slope, DispatchOccupancyNanos: slices.Clone(batch.DispatchOccupancyNanos),
+		}
+		if batch.SaturationInputRate != nil {
+			rate := *batch.SaturationInputRate
+			out.SaturationInputRate = &rate
+		}
+		condition.PlannedBatchSizes = append(condition.PlannedBatchSizes, batch.Batch)
+		profile.Batches = append(profile.Batches, out)
+	}
+	profile.Condition = condition
+	return profile, nil
 }
 
 // Only mutable ownership is copied; source facts are not decoded or validated
@@ -532,7 +404,21 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 	profile.Evidence = slices.Clone(profile.Evidence)
 	profile.Batches = slices.Clone(profile.Batches)
 	for i := range profile.Batches {
-		profile.Batches[i].ServiceSamples = firstfloor.CloneServiceSamples(profile.Batches[i].ServiceSamples)
+		batch := &profile.Batches[i]
+		batch.ServiceSamples = firstfloor.CloneServiceSamples(batch.ServiceSamples)
+		batch.DispatchOccupancyNanos = slices.Clone(batch.DispatchOccupancyNanos)
+		if batch.InputSlopeJoules != nil {
+			slope := *batch.InputSlopeJoules
+			batch.InputSlopeJoules = &slope
+		}
+		if batch.SaturationInputRate != nil {
+			rate := *batch.SaturationInputRate
+			batch.SaturationInputRate = &rate
+		}
+	}
+	if profile.Power != nil {
+		power := *profile.Power
+		profile.Power = &power
 	}
 	profile.Condition = profilederivation.CloneCurvePlanSpec(profile.Condition)
 	if profile.RuntimeMetadata != nil {
@@ -547,19 +433,6 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 		metadata.RKNN = slices.Clone(metadata.RKNN)
 		profile.RuntimeMetadata = &metadata
 	}
-	if profile.Reuse != nil {
-		check := *profile.Reuse
-		check.Batches = slices.Clone(check.Batches)
-		if check.IdlePowerRelativeDifference != nil {
-			value := *check.IdlePowerRelativeDifference
-			check.IdlePowerRelativeDifference = &value
-		}
-		if check.Record != nil {
-			reference := *check.Record
-			check.Record = &reference
-		}
-		profile.Reuse = &check
-	}
 	profile.RuntimeDelivery = slices.Clone(profile.RuntimeDelivery)
 	profile.MetricSource.MetricLabels = maps.Clone(profile.MetricSource.MetricLabels)
 	if profile.MetricSource.ThermalMetrics != nil {
@@ -567,48 +440,6 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 		profile.MetricSource.ThermalMetrics = &thermal
 	}
 	return profile
-}
-
-type catalogBatch struct {
-	profile         serving.BatchProfile
-	trials          int
-	energySum       float64
-	energyTrials    []profilederivation.EnergyTrial
-	missingMemory   bool
-	memory          profilederivation.MemoryObservation
-	wallPowerSum    float64
-	clientLatencies []float64
-	completedItems  int
-	completedCalls  int
-	quality         []profilederivation.MeasurementTrialQuality
-}
-
-func (b *catalogBatch) add(trial profilederivation.Trial, energy profilederivation.EnergyTrial, memoryBytes uint64) error {
-	if len(trial.NativeSamples) == 0 || len(trial.NativeSamples) != len(trial.LatencyMilliseconds) ||
-		math.IsNaN(energy.IncrementalWorkJoulesPerItem) || math.IsInf(energy.IncrementalWorkJoulesPerItem, 0) {
-		return errors.New("correlated runner service or measured energy evidence is missing or invalid")
-	}
-	wallPower := energy.ActiveWindowWallJoulesPerItem / energy.IdleBaselineSecondsPerItem
-	if !(energy.IdleBaselineSecondsPerItem > 0) || wallPower < 0 || math.IsNaN(wallPower) || math.IsInf(wallPower, 0) {
-		return errors.New("measured active wall power or duration is missing or invalid")
-	}
-	for _, sample := range trial.NativeSamples {
-		b.profile.ServiceSamples = append(b.profile.ServiceSamples, sample.ServiceSample.Clone())
-	}
-	b.trials++
-	b.clientLatencies = append(b.clientLatencies, trial.LatencyMilliseconds...)
-	b.completedItems += trial.CompletedItems
-	b.completedCalls += trial.CompletedCalls
-	b.energySum += energy.IncrementalWorkJoulesPerItem
-	// Confidence needs only trial sufficient statistics, not another sample copy.
-	energy.NativeSamples, energy.ClientLatencyMilliseconds = nil, nil
-	b.energyTrials = append(b.energyTrials, energy)
-	b.wallPowerSum += wallPower
-	if math.IsNaN(b.energySum) || math.IsInf(b.energySum, 0) || math.IsNaN(b.wallPowerSum) || math.IsInf(b.wallPowerSum, 0) {
-		return errors.New("measured energy or wall power aggregate is not finite")
-	}
-	b.missingMemory = b.missingMemory || memoryBytes == 0
-	return nil
 }
 
 func (c *Catalog) readObject(ctx context.Context, identity evidencestore.ObjectIdentity) ([]byte, error) {

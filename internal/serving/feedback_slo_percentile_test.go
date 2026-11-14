@@ -169,7 +169,7 @@ func TestFeedbackConsumerCapacityWindowAllowsConfiguredTail(t *testing.T) {
 			for j := range samples {
 				samples[j] = firstfloor.ServiceSample{ServiceDurationNanos: 1e6, PrecedingIdleNanos: &gap, TrialID: "synthetic"}
 			}
-			option.Instance.Profile.Batches = []BatchProfile{schedulerTestPairedBatch(BatchProfile{Batch: 1, EnergyPerInputJoules: 1, MemoryBytes: 100}, samples)}
+			option.Instance.Profile.Batches = []BatchProfile{schedulerTestPairedBatch(BatchProfile{Batch: 1, InputSlopeJoules: schedulerTestSlope(1), MemoryBytes: 100}, samples)}
 			// Isolated arrivals complete at exactly 1ms. A middle simultaneous
 			// burst drops precisely misses requests, then isolated work continues.
 			gaps := make([]float64, n)
@@ -184,7 +184,9 @@ func TestFeedbackConsumerCapacityWindowAllowsConfiguredTail(t *testing.T) {
 			if err != nil || window.met != tc.met {
 				t.Fatalf("capacity consumer rejected allowed tail or admitted excess: %+v %v", window, err)
 			}
-			if tc.met && (window.requests != n || window.latencyMS != 1 || window.requestJoules != float64(n-tc.misses)) {
+			// Load joules are slope x input rate x horizon, so equal to the
+			// served inputs at 1 J each up to rounding.
+			if tc.met && (window.requests != n || window.latencyMS != 1 || math.Abs(window.requestJoules-float64(n-tc.misses)) > 1e-9) {
 				t.Fatalf("passing window lost full population or success-only evidence: %+v", window)
 			}
 		})

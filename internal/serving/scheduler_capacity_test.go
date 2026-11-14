@@ -145,7 +145,7 @@ func capacityE1Fixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 	genesis3 := poolsAddNode(&snap, "genesis3", map[string]float64{"fixed": 30})
 	q2 := poolsInstance(snap.Instances[0], "q2", genesis3, "fixed", "w1")
 	profile := *q2.Profile
-	profile.IdleBaselineWatts = 60
+	profile.Power = schedulerTestPower(60)
 	q2.Profile = &profile
 	snap.Options = append(snap.Options, poolsOption(lut), poolsOption(q2))
 	prepareLUT := poolsCost(schedulerActionPrepare, lutNode, "unloaded", schedulerState(lut), "fixed")
@@ -209,7 +209,7 @@ func TestCapacityMinimumDemandPreservesCapacityAtNoLoad(t *testing.T) {
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", "w1")
 	profile := *i2.Profile
-	profile.IdleBaselineWatts = 20 // removing i2 saves 10 W
+	profile.Power = schedulerTestPower(20) // removing i2 saves 10 W
 	i2.Profile = &profile
 	snap.Instances = append(snap.Instances, i2)
 	snap.Options = append(snap.Options, poolsOption(i2))
@@ -275,7 +275,7 @@ func TestCapacityRateCoversOnlyTheObservedWindow(t *testing.T) {
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", "w1")
 	profile := *i2.Profile
-	profile.IdleBaselineWatts = 20 // removing i2 saves 10 W
+	profile.Power = schedulerTestPower(20) // removing i2 saves 10 W
 	i2.Profile = &profile
 	snap.Instances = append(snap.Instances, i2)
 	snap.Options = append(snap.Options, poolsOption(i2))
@@ -309,7 +309,7 @@ func TestCapacityPartialWindowOnlyExpands(t *testing.T) {
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", "w1")
 	profile := *i2.Profile
-	profile.IdleBaselineWatts = 20 // removing i2 saves 10 W
+	profile.Power = schedulerTestPower(20) // removing i2 saves 10 W
 	i2.Profile = &profile
 	n3 := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10})
 	i3 := poolsInstance(snap.Instances[0], "i3", n3, "fixed", "w1")
@@ -385,7 +385,7 @@ func TestCapacityRecentDemandExpandsWithOutstandingOnce(t *testing.T) {
 		}
 	}
 	// Both instances share batch-1 energy, so every λW input has that cost.
-	want := rate * res.period * capacityInputEnergy(snap.Instances[0])
+	want := rate * res.period * capacityEnergyOrder(snap.Instances[0])
 	if math.Abs(res.joules-background-want) > 1e-8 {
 		t.Fatalf("energy used another rate: request J %g want %g", res.joules-background, want)
 	}
@@ -446,7 +446,7 @@ func TestCapacityNeverPreparesAnUnroutedInstance(t *testing.T) {
 	genesis3 := poolsAddNode(&snap, "genesis3", map[string]float64{"fixed": 49.97})
 	g3 := poolsInstance(lut, "g3", genesis3, "fixed", "w1")
 	profile := *g3.Profile
-	profile.IdleBaselineWatts = 49.80
+	profile.Power = schedulerTestPower(49.80)
 	g3.Profile = &profile
 	snap.Instances = append(snap.Instances, q2)
 	snap.Options = append(snap.Options, poolsOption(q2), poolsOption(g3))
@@ -481,11 +481,11 @@ func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
 	genesis3 := poolsAddNode(&snap, "genesis3", map[string]float64{"fixed": 30})
 	q2 := poolsInstance(rasp5, "g3-q2", genesis3, "fixed", "w1")
 	profile := *q2.Profile
-	profile.IdleBaselineWatts = 60
+	profile.Power = schedulerTestPower(60)
 	q2.Profile = &profile
 	q1 := poolsInstance(rasp5, "g3-q1", genesis3, "fixed", "w1")
 	cheaper := *q1.Profile
-	cheaper.ID, cheaper.IdleBaselineWatts = "profile-q1@genesis3", 50
+	cheaper.ID, cheaper.Power = "profile-q1@genesis3", schedulerTestPower(50)
 	q1.Profile = &cheaper
 	snap.Instances = append(snap.Instances, q2)
 	snap.Nodes[len(snap.Nodes)-1].MemoryBytes = q2.Allocation.MemoryBytes
@@ -991,7 +991,7 @@ func capacityRawPlannerForTest(p *capacityPlanner) {
 					instance.Profile.ID += "-" + item.id
 					metadata := *instance.Profile.RuntimeMetadata
 					instance.Profile.RuntimeMetadata = &metadata
-					instance.Profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: item.e, MemoryBytes: 100}, []float64{float64(time.Second) / float64(item.routingWeight)})}
+					instance.Profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, InputSlopeJoules: schedulerTestSlope(item.order), MemoryBytes: 100}, []float64{float64(time.Second) / float64(item.routingWeight)})}
 					item.serviceNanos = float64(time.Second) / float64(item.routingWeight)
 					instance.Weight = item.weight
 					if instance.Weight <= 0 {
@@ -1038,7 +1038,10 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int, percentile floa
 			plan.record.Eligible, plan.record.Key = true, fmt.Sprint("plan-", j)
 			for w := range workloads {
 				for k := range rng.IntN(3) {
-					item := capacityItem{id: fmt.Sprint(n, "-", j, "-", w, "-", k), routingWeight: profileRoutingWeight(60 * rng.Float64()), e: rng.Float64(), weight: 1}
+					// Draw the routing weight before the slope, as the fixture always has.
+					routing := profileRoutingWeight(60 * rng.Float64())
+					e := rng.Float64()
+					item := capacityItem{id: fmt.Sprint(n, "-", j, "-", w, "-", k), routingWeight: routing, order: e, model: schedulerTestModel(e), weight: 1}
 					item.throughput = float64(item.routingWeight)
 					plan.items[w] = append(plan.items[w], item)
 					if plan.keep || rng.IntN(2) == 0 {
@@ -1106,11 +1109,11 @@ func capacityThreeNodeSwap() *capacityPlanner {
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 29}}
 	for n := range 3 {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
-		item := capacityItem{id: fmt.Sprint("i", n), routingWeight: 10, throughput: 10, e: 1}
+		item := capacityItem{id: fmt.Sprint("i", n), routingWeight: 10, throughput: 10, order: 1, model: schedulerTestModel(1)}
 		keep := &capacityPlan{keep: true, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
 		other := &capacityPlan{items: [][]capacityItem{nil}, retained: [][]capacityItem{{item}}}
 		if n == 0 {
-			other.items, other.after = [][]capacityItem{{{id: "big", routingWeight: 30, throughput: 30, e: 1}}}, 25
+			other.items, other.after = [][]capacityItem{{{id: "big", routingWeight: 30, throughput: 30, order: 1, model: schedulerTestModel(1)}}}, 25
 		}
 		keep.record.Eligible, other.record.Eligible, other.record.Key = true, true, "swap"
 		p.sum(keep)
@@ -1160,8 +1163,8 @@ func capacityTwinSwap(gain, bound float64) *capacityPlanner {
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 10}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
 	a, b := SchedulerInstance{ID: "a"}, SchedulerInstance{ID: "b"}
-	keep := &capacityPlan{keep: true, instances: []SchedulerInstance{a}, items: [][]capacityItem{{{id: "a", routingWeight: 50, throughput: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", routingWeight: 50, throughput: 50, e: 1}}}, before: 10}
-	swap := &capacityPlan{instances: []SchedulerInstance{b}, items: [][]capacityItem{{{id: "b", routingWeight: 50, throughput: 50, e: 1}}}, retained: [][]capacityItem{{{id: "a", routingWeight: 50, throughput: 50, e: 1}}}, mid: 10, after: 10 - gain/60}
+	keep := &capacityPlan{keep: true, instances: []SchedulerInstance{a}, items: [][]capacityItem{{{id: "a", routingWeight: 50, throughput: 50, order: 1, model: schedulerTestModel(1)}}}, retained: [][]capacityItem{{{id: "a", routingWeight: 50, throughput: 50, order: 1, model: schedulerTestModel(1)}}}, before: 10}
+	swap := &capacityPlan{instances: []SchedulerInstance{b}, items: [][]capacityItem{{{id: "b", routingWeight: 50, throughput: 50, order: 1, model: schedulerTestModel(1)}}}, retained: [][]capacityItem{{{id: "a", routingWeight: 50, throughput: 50, order: 1, model: schedulerTestModel(1)}}}, mid: 10, after: 10 - gain/60}
 	source := schedulerBoundSource{reference: evidencestore.ObjectIdentity{Store: "raw", Key: "swap", Size: 1}, trial: 0}
 	swap.operationBounds = schedulerEnergyBounds{source: bound}
 	keep.record.Eligible, swap.record.Eligible, swap.record.Key = true, true, "swap"
@@ -1226,7 +1229,7 @@ func TestCapacityOperationUncertaintyChangesMinimumGain(t *testing.T) {
 	var nominal float64
 	for _, bound := range []float64{0, 1e6} {
 		s, snap, node, _ := capacityR5Fixture()
-		snap.Instances[1].Profile.IdleBaselineWatts = 60 // removing saves about 10 W
+		snap.Instances[1].Profile.Power = schedulerTestPower(60) // removing saves about 10 W
 		for i := range snap.Costs {
 			snap.Costs[i].Trials[0].EnergyUncertaintyJoules = bound
 			// A mean of two equally uncertain trials still has bound B, not B/sqrt(2).
@@ -1272,11 +1275,10 @@ func TestCapacityMinimumGainExactBaselineIgnoresProfileCI(t *testing.T) {
 	loaded.Reference = evidencestore.ObjectIdentity{Store: "raw", Key: "exact-loaded", Size: 1}
 	snap.Baselines = append(snap.Baselines, loaded)
 	var nominalKeep, nominalBest, threshold float64
-	for trial, confidence := range []float64{0.5, 0.999999} {
-		// Profile CI confidence and its unselected fallback mean are irrelevant
-		// when the exact loaded-state measurement supplies nominal idle power.
-		snap.Instances[1].Profile.ConfidenceLevel = confidence
-		snap.Instances[1].Profile.IdleBaselineWatts = 1 + float64(trial)*1e6
+	for trial := range 2 {
+		// The profile's unselected settled idle is irrelevant when the exact
+		// loaded-state measurement supplies nominal idle power.
+		snap.Instances[1].Profile.Power = schedulerTestPower(1 + float64(trial)*1e6)
 		p := capacityPlannerForTest(t, s, snap)
 		n := slices.IndexFunc(p.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == node })
 		watts, _, sources, _ := schedulerBaseline(schedulerEstimateSettingsForTest(), p.snapshot.Baselines, p.snapshot.Nodes[n], []SchedulerInstance{snap.Instances[1]}, p.snapshot.Options)
@@ -1334,7 +1336,7 @@ func TestCapacityDeterministicBoundsComposeAndCancelSharedEvidence(t *testing.T)
 func TestCapacityBaselineUncertaintyPreservesSignedReconstruction(t *testing.T) {
 	_, snap := schedulerFixture()
 	snap.Baselines[0].WattsUncertainty = 2
-	snap.Instances[0].Profile.IdleBaselineWatts = 8 // negative loaded-minus-unloaded delta
+	snap.Instances[0].Profile.Power = schedulerTestPower(8) // negative loaded-minus-unloaded delta
 	instances := []SchedulerInstance{}
 	for count := 0; count <= 2; count++ {
 		watts, _, sources, _ := schedulerBaseline(schedulerEstimateSettingsForTest(), snap.Baselines, snap.Nodes[0], instances, snap.Options)
@@ -1389,13 +1391,13 @@ func TestCapacitySearchEmptyStartFindsFourNodeChange(t *testing.T) {
 	for n := range 4 {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
 		i := SchedulerInstance{ID: fmt.Sprint("i", n), WorkloadUID: "w"}
-		item := capacityItem{id: i.ID, routingWeight: 10, throughput: 10, e: 1}
+		item := capacityItem{id: i.ID, routingWeight: 10, throughput: 10, order: 1, model: schedulerTestModel(1)}
 		keep := &capacityPlan{keep: true, instances: []SchedulerInstance{i}, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
 		empty := &capacityPlan{items: [][]capacityItem{nil}, retained: [][]capacityItem{{item}}}
 		plans := []*capacityPlan{keep, empty}
 		if n == 0 {
 			big := SchedulerInstance{ID: "big", WorkloadUID: "w"}
-			plans = append(plans, &capacityPlan{instances: []SchedulerInstance{big}, items: [][]capacityItem{{{id: "big", routingWeight: 40, throughput: 40, e: 1}}}, retained: [][]capacityItem{{item}}, after: 35})
+			plans = append(plans, &capacityPlan{instances: []SchedulerInstance{big}, items: [][]capacityItem{{{id: "big", routingWeight: 40, throughput: 40, order: 1, model: schedulerTestModel(1)}}}, retained: [][]capacityItem{{item}}, after: 35})
 		}
 		for j, plan := range plans {
 			plan.record.Eligible, plan.record.Key = true, fmt.Sprint("plan-", j)
@@ -1594,10 +1596,10 @@ func TestCapacityIntegerWeightsIgnoreRate(t *testing.T) {
 // full-E5-3m-12: all destinations share the same profile-rate-normalized utilization.
 func TestCapacityRouteWeights3m12(t *testing.T) {
 	items := []capacityItem{
-		{id: "nano", routingWeight: 10.191, e: 1},
-		{id: "rasp5", routingWeight: 26.498, e: 2},
-		{id: "jetsonx", routingWeight: 15.976, e: 3},
-		{id: "orangepi", routingWeight: 36.859, e: 4},
+		{id: "nano", routingWeight: 10.191, order: 1, model: schedulerTestModel(1)},
+		{id: "rasp5", routingWeight: 26.498, order: 2, model: schedulerTestModel(2)},
+		{id: "jetsonx", routingWeight: 15.976, order: 3, model: schedulerTestModel(3)},
+		{id: "orangepi", routingWeight: 36.859, order: 4, model: schedulerTestModel(4)},
 	}
 	for _, rate := range []float64{73.8, 0, 100} {
 		weights, y, ok := capacityWeights(rate, items)
@@ -1653,7 +1655,7 @@ func TestCapacityBacklogDoesNotChangeWeightsOrRequestEnergy(t *testing.T) {
 	for n, k := range support {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
 		keep := &capacityPlan{keep: true, items: [][]capacityItem{nil}, retained: [][]capacityItem{nil}}
-		add := &capacityPlan{items: [][]capacityItem{{{id: fmt.Sprint("i", n), routingWeight: profileRoutingWeight(k), throughput: k, e: float64(n + 1)}}}, retained: [][]capacityItem{nil}}
+		add := &capacityPlan{items: [][]capacityItem{{{id: fmt.Sprint("i", n), routingWeight: profileRoutingWeight(k), throughput: k, order: float64(n + 1), model: schedulerTestModel(float64(n + 1))}}}, retained: [][]capacityItem{nil}}
 		p.plans = append(p.plans, []*capacityPlan{keep, add})
 		p.compared = append(p.compared, true)
 		choice = append(choice, 1)
@@ -1689,7 +1691,7 @@ func TestCapacityBatchLimitChangeIsPolicyRoute(t *testing.T) {
 	profile.RuntimeMetadata = &metadata
 	profile.Condition.PlannedBatchSizes = []int{1, 2}
 	profile.Condition.Firstfloor.MaxBatchSize = 2
-	profile.Batches = append(slices.Clone(profile.Batches), schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 0.8, MemoryBytes: 100}, []float64{float64(15 * time.Millisecond)}))
+	profile.Batches = append(slices.Clone(profile.Batches), schedulerTestBatchProfile(BatchProfile{Batch: 2, InputSlopeJoules: schedulerTestSlope(0.8), MemoryBytes: 100}, []float64{float64(15 * time.Millisecond)}))
 	snap.Instances[0].Profile = &profile
 	option := snap.Instances[0]
 	option.MaxBatch = 2
@@ -1773,7 +1775,7 @@ func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	add := poolsInstance(snap.Instances[0], "add", n2, "fixed", "w1")
 	profile := *add.Profile
-	profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 3, MemoryBytes: 100}, []float64{float64(time.Millisecond)})}
+	profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, InputSlopeJoules: schedulerTestSlope(3), MemoryBytes: 100}, []float64{float64(time.Millisecond)})}
 	add.Profile = &profile
 	snap.Options = append(snap.Options, poolsOption(add))
 	prepare := poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(add), "fixed")
@@ -1792,14 +1794,14 @@ func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 	// The target runs for the full configured steady window after routing.
 	mean := 0.0
 	for id, weight := range res.weights[0] {
-		energy := capacityInputEnergy(snap.Instances[0])
+		energy := capacityEnergyOrder(snap.Instances[0])
 		if id != snap.Instances[0].ID {
-			energy = capacityInputEnergy(add)
+			energy = capacityEnergyOrder(add)
 		}
 		mean += float64(weight) / schedulerRouteUnits * energy
 	}
 	retained := min(150.0, res.sums[0][1])
-	want := retained*10*capacityInputEnergy(snap.Instances[0]) + (150-retained)*10*mean + 150*(res.period-10)*mean
+	want := retained*10*capacityEnergyOrder(snap.Instances[0]) + (150-retained)*10*mean + 150*(res.period-10)*mean
 	if p.periodSeconds != 60 || math.Abs(res.joules-node-want) > 1e-6 {
 		t.Fatalf("request energy %g, want %g (T %g)", res.joules-node, want, p.periodSeconds)
 	}
@@ -2044,7 +2046,7 @@ func TestCapacityExactTieKeepsCurrent(t *testing.T) {
 	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 60, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 50}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
-	item := capacityItem{id: "i", routingWeight: 100, throughput: 100, e: 1, weight: 1}
+	item := capacityItem{id: "i", routingWeight: 100, throughput: 100, order: 1, model: schedulerTestModel(1), weight: 1}
 	keep := &capacityPlan{keep: true, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
 	twin := item
 	twin.id = "a-twin"
@@ -2091,7 +2093,7 @@ func TestCapacityProportionalWeightsIgnoreDemandAndBacklog(t *testing.T) {
 	p.keep.Routing = map[string]map[string]int32{"w": {"q1": 643, "lut": 357}}
 	for n, id := range ids {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
-		item := capacityItem{id: id, routingWeight: profileRoutingWeight(support[n]), throughput: support[n], e: float64(n + 1)}
+		item := capacityItem{id: id, routingWeight: profileRoutingWeight(support[n]), throughput: support[n], order: float64(n + 1), model: schedulerTestModel(float64(n + 1))}
 		p.plans = append(p.plans, []*capacityPlan{{keep: true, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}}})
 		p.compared = append(p.compared, true)
 	}
@@ -2127,7 +2129,7 @@ func capacityR5Fixture() (SchedulerSettings, SchedulerSnapshot, NodeReference, N
 	opi := poolsInstance(snap.Instances[0], "opi", orangepi, "fixed", "w1")
 	for _, i := range []*SchedulerInstance{&g3, &opi} {
 		profile := *i.Profile
-		profile.IdleBaselineWatts = map[string]float64{"g3": 49.80, "opi": 2.71}[i.ID]
+		profile.Power = schedulerTestPower(map[string]float64{"g3": 49.80, "opi": 2.71}[i.ID])
 		i.Profile = &profile
 	}
 	snap.Instances = append(snap.Instances, g3, opi)
@@ -2178,7 +2180,7 @@ func TestCapacityIdleInstancesWithNegativeGainStay(t *testing.T) {
 func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 	s, snap, genesis3, orangepi := capacityR5Fixture()
 	profitable := *snap.Instances[1].Profile
-	profitable.IdleBaselineWatts = 60
+	profitable.Power = schedulerTestPower(60)
 	snap.Instances[1].Profile = &profitable
 	snap.Options[1].Instance.Profile = &profitable
 	// Otherwise routing may legitimately bind the Ready owned slot to w1,
@@ -2193,7 +2195,7 @@ func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 	// to remove it, independently of the idle-cleanup postprocessing path.
 	originalProfile := snap.Instances[2].Profile
 	profile := *snap.Instances[2].Profile
-	profile.IdleBaselineWatts = 60
+	profile.Power = schedulerTestPower(60)
 	snap.Instances[2].Profile = &profile
 	optionIndex := slices.IndexFunc(snap.Options, func(o SchedulerOption) bool { return o.Instance.ID == snap.Instances[2].ID })
 	snap.Options[optionIndex].Instance.Profile = &profile
@@ -2220,7 +2222,7 @@ func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 // when removal saves energy.
 func TestCapacityHeldInstanceIsNotRemoved(t *testing.T) {
 	s, snap, genesis3, _ := capacityR5Fixture()
-	snap.Instances[1].Profile.IdleBaselineWatts = 60 // removal saves 10 W
+	snap.Instances[1].Profile.Power = schedulerTestPower(60) // removal saves 10 W
 	d := capacityDecideForTest(t, s, snap)
 	if d.Target == nil || poolsOn(*d.Target, genesis3) {
 		t.Fatalf("fixture must remove genesis3 for energy: %+v", d.Target)
@@ -2244,7 +2246,7 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	energy := func(i *SchedulerInstance, e float64) {
 		profile := *i.Profile
 		profile.Batches = slices.Clone(profile.Batches)
-		profile.Batches[0].EnergyPerInputJoules, profile.IdleBaselineWatts = e, 12
+		profile.Batches[0].InputSlopeJoules, profile.Power = schedulerTestSlope(e), schedulerTestPower(12)
 		i.Profile = &profile
 	}
 	energy(&snap.Instances[0], 3)
@@ -2294,7 +2296,7 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 			for k := range plans[0].items[w] {
 				plans[0].items[w][k].routingWeight = 1
 				plans[0].items[w][k].throughput = 1
-				plans[0].instances[k].Profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: capacityInputEnergy(plans[0].instances[k]), MemoryBytes: 100}, []float64{float64(time.Second)})}
+				plans[0].instances[k].Profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, InputSlopeJoules: schedulerTestSlope(capacityEnergyOrder(plans[0].instances[k])), MemoryBytes: 100}, []float64{float64(time.Second)})}
 			}
 		}
 		p.sum(plans[0])

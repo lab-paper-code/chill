@@ -203,7 +203,7 @@ func TestCapacityFunnelPostFilterReverts(t *testing.T) {
 func capacityV2MultiOptionFixture() *capacityPlanner {
 	p := capacityThreeNodeSwap()
 	alternative := *p.plans[0][1]
-	alternative.items = [][]capacityItem{{{id: "faster", routingWeight: 40, throughput: 40, e: .5}}}
+	alternative.items = [][]capacityItem{{{id: "faster", routingWeight: 40, throughput: 40, order: .5, model: schedulerTestModel(.5)}}}
 	alternative.record.Key, alternative.after = "faster", 26
 	p.plans[0] = append(p.plans[0], &alternative)
 	p.settings.ComparisonPeriod, p.periodSeconds = time.Second, 1
@@ -364,7 +364,7 @@ func capacityZeroWitnessFixture() (SchedulerSettings, SchedulerSnapshot, NodeRef
 	snapshot.Options = append(snapshot.Options, poolsOption(secondInstance))
 	recoveryNode := poolsAddNode(&snapshot, "recovery", map[string]float64{"fixed": 10})
 	recovery := poolsInstance(snapshot.Instances[0], "recovery", recoveryNode, "fixed", first.UID)
-	recovery.Profile.IdleBaselineWatts = 30
+	recovery.Profile.Power = schedulerTestPower(30)
 	snapshot.Options = append(snapshot.Options, SchedulerOption{Instance: recovery, CompatibleUIDs: []string{first.UID, second.UID}})
 	snapshot.Routing = map[string]map[string]int32{first.UID: {snapshot.Instances[0].ID: schedulerRouteUnits}, second.UID: {secondInstance.ID: schedulerRouteUnits}}
 	snapshot.Costs = []OperationCost{
@@ -494,7 +494,7 @@ func TestSchedulerV2FeasibleFinalAdmissionUsesOriginalEnergy(t *testing.T) {
 	settings, snapshot, retired, _ := capacityR5Fixture()
 	settings.PlanSearchStrategy = protocol.V2
 	settings.Controls.Routing = false
-	snapshot.Instances[1].Profile.IdleBaselineWatts = 60
+	snapshot.Instances[1].Profile.Power = schedulerTestPower(60)
 	snapshot.Options[1].Instance.Profile = snapshot.Instances[1].Profile
 	since := snapshot.At.Add(-settings.ObservationWindow)
 	snapshot.Instances[1].UnroutedSince = &since

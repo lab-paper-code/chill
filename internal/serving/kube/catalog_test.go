@@ -24,36 +24,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestCatalogPreservesRawDistributionAndMissingMemory(t *testing.T) {
-	batch := catalogBatch{profile: serving.BatchProfile{Batch: 2}}
-	trial := profilederivation.Trial{Batch: 2, LatencyMilliseconds: []float64{1.25, 4, 2}}
-	trial.NativeSamples = []profilederivation.NativeServiceSample{
-		{BatchID: 1, BatchSize: 2, ServiceSample: firstfloor.ServiceSample{ServiceDurationNanos: 250000, TrialID: "physical-trial"}},
-		{BatchID: 2, BatchSize: 2, ServiceSample: firstfloor.ServiceSample{ServiceDurationNanos: 3000000, TrialID: "physical-trial"}},
-		{BatchID: 3, BatchSize: 2, ServiceSample: firstfloor.ServiceSample{ServiceDurationNanos: 1000000, TrialID: "physical-trial"}},
-	}
-	energy := profilederivation.EnergyTrial{Batch: 2, IncrementalWorkJoulesPerItem: 0.7,
-		ActiveWindowWallJoulesPerItem: 2, IdleBaselineSecondsPerItem: .1}
-	if err := batch.add(trial, energy, 1024); err != nil {
-		t.Fatal(err)
-	}
-	if err := batch.add(trial, energy, 2048); err != nil {
-		t.Fatal(err)
-	}
-	want := []int64{250000, 3000000, 1000000, 250000, 3000000, 1000000}
-	for index, sample := range want {
-		if batch.profile.ServiceSamples[index].ServiceDurationNanos != sample {
-			t.Fatalf("raw duration %d = %d, want %d", index, batch.profile.ServiceSamples[index].ServiceDurationNanos, sample)
-		}
-	}
-	if batch.missingMemory || batch.wallPowerSum/float64(batch.trials) != 20 {
-		t.Fatalf("measured trial aggregation = %+v", batch)
-	}
-	if err := batch.add(trial, energy, 0); err != nil || !batch.missingMemory {
-		t.Fatalf("absent measured memory was filled: %+v, %v", batch, err)
-	}
-}
-
 func catalogServiceSamples(duration int64) []firstfloor.ServiceSample {
 	return fixtures.ServiceSamples("catalog-physical-trial", duration)
 }
@@ -152,7 +122,8 @@ func TestCatalogBoundsAndStrictlyDecodesTerminalObjects(t *testing.T) {
 	if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || objects.opens != 1 {
 		t.Fatalf("malformed source became eligible or was read twice: %+v, opens=%d, err=%v", view, objects.opens, err)
 	}
-	identity := apiObjectIdentity(campaign.Status.Result)
+	stored := campaign.Status.Result
+	identity := evidencestore.ObjectIdentity{Store: stored.Store, Key: stored.Key, Size: stored.Size}
 	objects.payload = append(payload, ' ')
 	if _, err := catalog.readObject(context.Background(), identity); err != nil {
 		t.Fatalf("harmless retained formatting change blocked reading: %v", err)
@@ -266,8 +237,8 @@ func TestCatalogOfflineSemanticSelectionPreservesEvidence(t *testing.T) {
 			t.Fatal("batch population changed", profile.ID)
 		}
 		for index, batch := range profile.Batches {
-			if batch.EnergyPerInputJoules != old.Batches[index].EnergyPerInputJoules || batch.MeanWallWatts != old.Batches[index].MeanWallWatts {
-				t.Fatal("historical energy or wall power changed", profile.ID, batch.Batch)
+			if batch.Batch != old.Batches[index].Batch || batch.MemoryBytes != old.Batches[index].MemoryBytes {
+				t.Fatal("historical batch changed", profile.ID, batch.Batch)
 			}
 		}
 		delete(original, profile.ID)

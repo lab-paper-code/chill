@@ -65,6 +65,16 @@ func (o *SchedulerService) preparation(
 	if profile.RuntimeMetadata == nil {
 		return servingstate.PrepareSpec{}, errors.New("verified physical allocation unavailable")
 	}
+	// The runner ranks batch sizes by each batch's input slope; a bundle
+	// never carries a slope the session did not identify.
+	for _, batch := range profile.Batches {
+		if batch.InputSlopeJoules == nil {
+			return servingstate.PrepareSpec{}, fmt.Errorf("profile batch %d has no input slope; firstfloor batching needs one", batch.Batch)
+		}
+		if _, ok := batch.InputSlopeJoules.Value(); !ok {
+			return servingstate.PrepareSpec{}, fmt.Errorf("profile batch %d input slope is not identified (%s); firstfloor batching needs one", batch.Batch, batch.InputSlopeJoules.Reason())
+		}
+	}
 	spec, err := o.measuredPreparation(ctx, profile, config.Settings.ServingMemoryBytes)
 	if err != nil {
 		return spec, err
@@ -74,7 +84,7 @@ func (o *SchedulerService) preparation(
 	spec.Instance.Profile = &profile
 	if accepted := o.Profiles.Load(); accepted != nil {
 		if published, ok := accepted.Preparations[profile.ID]; ok {
-			// Profile identity includes immutable campaign and reuse-policy identity.
+			// Profile identity includes the immutable measurement identity.
 			// Keep fresh Node and queue checks above; reuse only the object.
 			spec.Bundle = published.Bundle
 			return spec, nil
@@ -96,42 +106,13 @@ func (o *SchedulerService) preparation(
 	return spec, nil
 }
 
-// Retain both Accepted and Rejected comparisons before publishing the catalog.
-// Content-addressed records preserve earlier decisions when annotations change.
-func (o *SchedulerService) retainProfileReuseChecks(ctx context.Context, view *servingkube.CatalogView) error {
-	for index, check := range view.ReuseChecks {
-		check.Record = nil
-		raw, err := json.Marshal(struct {
-			SchemaVersion string                    `json:"schemaVersion"`
-			Check         serving.ProfileReuseCheck `json:"check"`
-		}{"chill.dacs.io/profile-reuse-check.v1alpha1", check})
-		if err != nil {
-			return err
-		}
-		if int64(len(raw)) > o.opts.MaxEvidenceBytes {
-			return errors.New("profile reuse check exceeds immutable object bound")
-		}
-		reference := evidencestore.ObjectIdentity{Store: o.opts.StoreName,
-			Key:  fmt.Sprintf("serving/profile-reuse/%s/%x.json", check.ConfirmationProfileID, sha256.Sum256(raw)),
-			Size: int64(len(raw))}
-		if _, err := o.objects.PutImmutable(ctx, reference, bytes.NewReader(raw)); err != nil {
-			return err
-		}
-		view.ReuseChecks[index].Record = &reference
-		for profileIndex := range view.Profiles {
-			profile := &view.Profiles[profileIndex]
-			if profile.Reuse != nil && profile.Reuse.ConfirmationProfileID == check.ConfirmationProfileID {
-				profile.Reuse.Record = &reference
-			}
-		}
-	}
-	return nil
-}
+// rknnLiteBackend runs its model on the RKNN NPU from a measured host delivery.
+const rknnLiteBackend = "rknnlite"
 
 // reproducibleRuntimeAccess rejects measured delivery the generated Pod cannot
 // reproduce. RKNNLite access comes from the frozen delivery at preparation.
 func reproducibleRuntimeAccess(p serving.Profile) error {
-	if p.Condition.Backend == "rknnlite" {
+	if p.Condition.Backend == rknnLiteBackend {
 		if len(p.RuntimeDelivery) == 0 {
 			return fmt.Errorf("measured RKNNLite delivery unavailable")
 		}
@@ -165,7 +146,7 @@ func (o *SchedulerService) measuredPreparation(
 	}
 	runtime := p.RuntimeMetadata
 	// RKNNLite runs no ONNX Runtime threads.
-	rknn := p.Condition.Backend == "rknnlite"
+	rknn := p.Condition.Backend == rknnLiteBackend
 	if err := reproducibleRuntimeAccess(p); err != nil {
 		return spec, err
 	}

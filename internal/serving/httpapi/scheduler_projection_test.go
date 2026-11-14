@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
+	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
@@ -19,7 +20,7 @@ func TestSchedulerCurrentProjectionBoundsRawProfileSamples(t *testing.T) {
 		samples[i] = fixtures.ServiceSample("physical-trial", uint64(i), 123456789)
 	}
 	profile := &serving.Profile{ID: "measured", Batches: []serving.BatchProfile{{
-		Batch: 1, ServiceSamples: samples, EnergyPerInputJoules: 0, EnergyBelowResolution: true, MemoryBytes: 8192,
+		Batch: 1, ServiceSamples: samples, InputSlopeJoules: httpapiTestSlope(`{"status":"Identified","value":0}`), MemoryBytes: 8192,
 	}}}
 	instance := serving.SchedulerInstance{ID: "physical", Profile: profile}
 	state := servingkube.SchedulerControllerState{Snapshot: serving.SchedulerSnapshot{
@@ -47,10 +48,10 @@ func TestSchedulerCurrentProjectionBoundsRawProfileSamples(t *testing.T) {
 		var wire struct {
 			Profiles map[string]struct {
 				Batches []struct {
-					ServiceSamples        []firstfloor.ServiceSample `json:"serviceSamples"`
-					DurationSampleCount   int                        `json:"durationSampleCount"`
-					EnergyBelowResolution bool                       `json:"energyBelowResolution"`
-					MemoryBytes           uint64                     `json:"memoryBytes"`
+					ServiceSamples      []firstfloor.ServiceSample   `json:"serviceSamples"`
+					DurationSampleCount int                          `json:"durationSampleCount"`
+					InputSlopeJoules    *derivation.SessionParameter `json:"inputSlopeJoules"`
+					MemoryBytes         uint64                       `json:"memoryBytes"`
 				} `json:"batches"`
 			} `json:"profiles"`
 		}
@@ -58,7 +59,8 @@ func TestSchedulerCurrentProjectionBoundsRawProfileSamples(t *testing.T) {
 			t.Fatal(err)
 		}
 		batch := wire.Profiles["measured"].Batches[0]
-		if len(batch.ServiceSamples) != 0 || batch.DurationSampleCount != len(samples) || !batch.EnergyBelowResolution || batch.MemoryBytes != 8192 {
+		slope, identified := batch.InputSlopeJoules.Value()
+		if len(batch.ServiceSamples) != 0 || batch.DurationSampleCount != len(samples) || !identified || slope != 0 || batch.MemoryBytes != 8192 {
 			t.Fatalf("profile projection lost scalar evidence: %+v", batch)
 		}
 	}
@@ -189,4 +191,12 @@ func TestSchedulerCompactOmitsUnusedPlanPopulations(t *testing.T) {
 		t.Fatal("compact changed full/exact-record evidence")
 	}
 	t.Logf("full=%d compact=%d bytes", len(full), len(raw))
+}
+
+func httpapiTestSlope(wire string) *derivation.SessionParameter {
+	var p derivation.SessionParameter
+	if err := json.Unmarshal([]byte(wire), &p); err != nil {
+		panic(err)
+	}
+	return &p
 }

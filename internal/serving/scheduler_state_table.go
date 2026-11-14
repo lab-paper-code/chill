@@ -46,20 +46,12 @@ func (t *planTable) initSearch(p *capacityPlanner) {
 	}
 }
 
+// energy is one plan's idle and operation joules; the per-node load joules
+// are added by the search state (searchState.loadWatts).
 func (t *planTable) energy(q int, r, period float64) float64 {
 	if t.keep[q] {
 		return t.before[q] * period
 	}
 	// Preserve main's clamped durations and addition order bit for bit.
 	return t.preJ[q] + t.mid[q]*max(0, min(r, period)-t.tauPre[q]) + t.postJ[q] + t.after[q]*max(0, period-r-t.tauPost[q])
-}
-
-// energyLowerBound minimizes each clamped duration separately over [low, high].
-// With nonnegative watts, each term is <= its value at every route in the
-// interval. Adding these minima cannot overestimate even across clamp bends.
-func (t *planTable) energyLowerBound(q int, low, high, period float64) float64 {
-	if t.keep[q] {
-		return t.before[q] * period
-	}
-	return t.preJ[q] + t.mid[q]*max(0, min(low, period)-t.tauPre[q]) + t.postJ[q] + t.after[q]*max(0, period-high-t.tauPost[q])
 }

@@ -22,13 +22,15 @@ type capacityWorkload struct {
 // profileRoutingWeight is optimistic observed support, not an SLO certificate.
 type profileRoutingWeight float64
 
-// capacityItem holds Tick-fixed profile terms and original per-input energy.
+// capacityItem holds Tick-fixed profile terms and the instance's power model.
 type capacityItem struct {
 	id            string
 	routingWeight profileRoutingWeight
 	throughput    float64
 	serviceNanos  float64
-	e             float64
+	order         float64 // capacityEnergyOrder, a routing tie order
+	node          NodeReference
+	model         *schedulerLoadModel
 	weight        int32
 	prepare       bool
 }
@@ -97,13 +99,6 @@ func (p *capacityPlanner) resolveCapacity() {
 	for _, instance := range p.snapshot.Instances {
 		resolve(instance)
 	}
-}
-
-func capacityInputEnergy(i SchedulerInstance) float64 {
-	if b := schedulerBatch(i.Profile, 1); b != nil {
-		return b.EnergyPerInputJoules
-	}
-	return 0
 }
 
 // fixed reports an instance autonomous control never moves: a strict baseline,
@@ -447,7 +442,8 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		w, ok := p.index[i.WorkloadUID]
 		if weight := p.keep.Routing[i.WorkloadUID][i.ID]; ok && !stopped[i.ID] && i.Ready && !i.Stopped && weight > 0 {
 			item := p.currentCapacity[currentCapacityKey(i)]
-			item.id, item.e, item.weight = i.ID, capacityInputEnergy(i), weight
+			item.id, item.order, item.weight = i.ID, capacityEnergyOrder(i), weight
+			item.node, item.model = i.Node, p.loadModels.of(i)
 			plan.retained[w] = append(plan.retained[w], item)
 		}
 	}
@@ -558,7 +554,8 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 		}
 		item := chosen[i.ID]
 		existing := slices.ContainsFunc(p.snapshot.Instances, func(c SchedulerInstance) bool { return c.ID == i.ID })
-		item.id, item.e, item.weight, item.prepare = i.ID, capacityInputEnergy(i), i.Weight, !existing
+		item.id, item.order, item.weight, item.prepare = i.ID, capacityEnergyOrder(i), i.Weight, !existing
+		item.node, item.model = i.Node, p.loadModels.of(i)
 		if weight, current := p.keep.Routing[i.WorkloadUID][i.ID]; current || existing {
 			item.weight = weight
 		}
@@ -574,7 +571,7 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 		plan.items[w] = append(plan.items[w], item)
 	}
 	for w := range plan.items {
-		slices.SortFunc(plan.items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.e, b.e), cmp.Compare(a.id, b.id)) })
+		slices.SortFunc(plan.items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.order, b.order), cmp.Compare(a.id, b.id)) })
 	}
 }
 

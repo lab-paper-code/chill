@@ -58,11 +58,10 @@ type Table struct {
 	// These heuristic inputs are independent of routing weights and tested-rate capacity witnesses.
 	RoutingRate, RetainedRoutingRate, RoutingRateServiceNanos [][]float64
 	Count                                                     [][]int
-	Keep, Searchable, Compared, Nonnegative                   []bool
+	Keep, Searchable, Compared                                []bool
 	Mid, After, TPre                                          []float64
 	Period                                                    float64
 	Energy                                                    func(int, float64, float64) float64
-	EnergyLowerBound                                          func(int, float64, float64, float64) float64
 	Pruned                                                    map[string]int
 }
 

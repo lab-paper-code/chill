@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
@@ -183,18 +184,16 @@ func (d *Definition) SameExecution(o *Definition) bool {
 }
 
 type BatchProfile struct {
-	Batch                 int                             `json:"batch"`
-	ServiceSamples        []firstfloor.ServiceSample      `json:"serviceSamples"`
-	ServiceDistribution   *firstfloor.ServiceDistribution `json:"-"`
-	EnergyPerInputJoules  float64                         `json:"energyPerInputJoules"`
-	EnergyBelowResolution bool                            `json:"energyBelowResolution,omitempty"`
-	MemoryBytes           uint64                          `json:"memoryBytes"`
+	Batch               int                             `json:"batch"`
+	ServiceSamples      []firstfloor.ServiceSample      `json:"serviceSamples"`
+	ServiceDistribution *firstfloor.ServiceDistribution `json:"-"`
+	MemoryBytes         uint64                          `json:"memoryBytes"`
 	// MemoryBasis is transient derivation lineage; retained observation profile
 	// bodies keep their existing stored contract. Catalog reads expose it.
-	MemoryBasis   profilederivation.MemoryBasis `json:"-"`
-	MeanWallWatts float64                       `json:"meanWallWatts,omitempty"`
-	// InputSlopeJoules, SaturationInputRate and DispatchOccupancyNanos come
-	// from a measurement session; profiles from older measurements omit them.
+	MemoryBasis profilederivation.MemoryBasis `json:"-"`
+	// InputSlopeJoules is the energy one more input per second adds to node
+	// power at this batch size, with its identification status.
+	// SaturationInputRate and DispatchOccupancyNanos come from the same session.
 	InputSlopeJoules       *profilederivation.SessionParameter `json:"inputSlopeJoules,omitempty"`
 	SaturationInputRate    *float64                            `json:"saturationInputRate,omitempty"`
 	DispatchOccupancyNanos []float64                           `json:"dispatchOccupancyNanos,omitempty"`
@@ -211,25 +210,25 @@ type ProfilePower struct {
 // Profile retains the frozen measurement condition and its raw evidence. It is
 // built once by the evidence boundary, not decoded or revalidated per request.
 type Profile struct {
-	ID              string                          `json:"id"`
-	Reference       evidencestore.ObjectIdentity    `json:"reference"`
-	Evidence        []evidencestore.ObjectIdentity  `json:"evidence"`
-	NodeName        string                          `json:"nodeName"`
-	Condition       profilederivation.CurvePlanSpec `json:"condition"`
-	Batches         []BatchProfile                  `json:"batches"`
-	ConfidenceLevel float64                         `json:"confidenceLevel"`
-	TrialsPerBatch  int                             `json:"trialsPerBatch,omitempty"`
-	// IdleBaselineWatts is the exact baseline subtracted by the incremental
-	// estimator. Whole-node prediction adds it back according to its scope.
+	ID        string                          `json:"id"`
+	Reference evidencestore.ObjectIdentity    `json:"reference"`
+	Evidence  []evidencestore.ObjectIdentity  `json:"evidence"`
+	NodeName  string                          `json:"nodeName"`
+	Condition profilederivation.CurvePlanSpec `json:"condition"`
+	Batches   []BatchProfile                  `json:"batches"`
+	// IdleBaselineWatts is no longer read by the scheduler (Power.IdleWatts is);
+	// it stays until the offline holdout tool moves to session results.
 	IdleBaselineWatts float64                       `json:"idleBaselineWatts"`
 	MeasuredAt        time.Time                     `json:"measuredAt"`
 	RuntimeMetadata   *firstfloor.RuntimeMetadata   `json:"runtimeMetadata,omitempty"`
 	MetricSource      metricobserver.SourceIdentity `json:"metricSource"`
-	// RuntimeDelivery is the JSON delivery of the measured RunConfig, read from
-	// the same verified raw evidence. Preparation projects RKNNLite host access
-	// and the runner's delivery file from it; views and observation logs omit it.
-	RuntimeDelivery json.RawMessage    `json:"-"`
-	Reuse           *ProfileReuseCheck `json:"reuse,omitempty"`
+	// RuntimeDelivery is the JSON delivery of the measured runtime, read from
+	// the session result. Preparation projects RKNNLite host access and the
+	// runner's delivery file from it; views and observation logs omit it.
+	RuntimeDelivery json.RawMessage `json:"-"`
+	// Reuse is never set: profiles are measured per node. It stays until its
+	// query readers move to the session result.
+	Reuse *ProfileReuseCheck `json:"reuse,omitempty"`
 	// Power is absent for profiles from older measurements.
 	Power *ProfilePower `json:"power,omitempty"`
 }
@@ -267,8 +266,6 @@ type ProfileReuseBatchCheck struct {
 	PowerRelativeDifference   float64 `json:"powerRelativeDifference"`
 }
 
-// NativeBundle projects this catalog-verified profile for immutable startup
-// delivery. Both the publisher and consumer derive identity from this producer.
 // MeanNanos is the mean measured execution time of batch b.
 func (p *Profile) MeanNanos(b int) (float64, bool) {
 	for _, batch := range p.Batches {
@@ -283,12 +280,23 @@ func (p *Profile) MeanNanos(b int) (float64, bool) {
 	return 0, false
 }
 
+// NativeBundle projects this profile for immutable startup delivery. The
+// runner's per-item energy is the batch's input slope: native ranks batch sizes
+// by it, and the awake step it leaves out is shared by every batch size. A
+// slope that is not identified becomes NaN, which native refuses as an invalid
+// measured batch; preparation reports that before publishing a bundle.
 func (p *Profile) NativeBundle() firstfloor.ProfileBundle {
 	bundle := firstfloor.ProfileBundle{ProfileID: p.ID, Batches: make([]firstfloor.BatchProfile, len(p.Batches))}
 	for i, batch := range p.Batches {
+		energy := math.NaN()
+		if batch.InputSlopeJoules != nil {
+			if slope, ok := batch.InputSlopeJoules.Value(); ok {
+				energy = slope
+			}
+		}
 		bundle.Batches[i] = firstfloor.BatchProfile{
 			Size: batch.Batch, ServiceSamples: batch.ServiceSamples, Distribution: batch.ServiceDistribution,
-			EnergyPerItemJ: batch.EnergyPerInputJoules,
+			EnergyPerItemJ: energy,
 		}
 	}
 	return bundle

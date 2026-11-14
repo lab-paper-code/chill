@@ -36,7 +36,7 @@ func TestPlannerRetirementUsesSLOAndHorizonGain(t *testing.T) {
 				i.UnroutedSince = &since
 				if i.Node == idleNode {
 					profile := *i.Profile
-					profile.IdleBaselineWatts = tc.loaded
+					profile.Power = schedulerTestPower(tc.loaded)
 					i.Profile = &profile
 					i.WorkloadUID, i.OwnerWorkloadUID = "", ""
 					i.Terminated, i.Ready = tc.terminated, !tc.terminated
@@ -82,7 +82,7 @@ func TestPlannerCrossNodeRecoveryAllowsHigherEnergy(t *testing.T) {
 	old := snap.Instances[0]
 	destination := poolsAddNode(&snap, "recovery-b", map[string]float64{"fixed": 10})
 	replacement := poolsInstance(old, "recovery-b-option", destination, "fixed", "w1")
-	replacement.Profile.IdleBaselineWatts = 30
+	replacement.Profile.Power = schedulerTestPower(30)
 	snap.Options = append(snap.Options, poolsOption(replacement))
 	snap.Routing = map[string]map[string]int32{"w1": {old.ID: schedulerRouteUnits}}
 	snap.Costs = []OperationCost{

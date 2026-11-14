@@ -162,12 +162,11 @@ test-deploy: ## Exercise the deployment CLI offline with process-backed tools an
 
 .PHONY: test
 test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow test-serving-entrypoint-rbac test-deployment-config test-deploy ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -skip '^TestProfileIndependentNativeCommitCatalogCapacity$$' -coverprofile cover.out
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -skip '^TestSessionMeasurementRealNative$$' -coverprofile cover.out
 
 .PHONY: test-native
-test-native: envtest ## Run the real firstfloor native profiling integration test.
-	go build -o $(LOCALBIN)/chill-server ./cmd/chill-server
-	CHILL_TEST_CHILL_SERVER="$(LOCALBIN)/chill-server" KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./internal/serving/kube -run '^TestProfileIndependentNativeCommitCatalogCapacity$$' -count=1
+test-native: envtest ## Run the real firstfloor native session measurement test.
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./internal/serving/kube -run '^TestSessionMeasurementRealNative$$' -count=1 -timeout 600s
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e

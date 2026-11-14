@@ -137,7 +137,7 @@ func schedulerReadyExpansionInputs(settings SchedulerSettings, snapshot Schedule
 		energy := func(id string) float64 {
 			for _, i := range instances {
 				if i.ID == id {
-					return capacityInputEnergy(i)
+					return capacityEnergyOrder(i)
 				}
 			}
 			return 0
@@ -220,6 +220,7 @@ type capacityResult struct {
 	reserves                          []SchedulerTransitionReserve
 	bridge                            *schedulerBridgeSchedule
 	missingCells                      []SchedulerMissingEnergyCell
+	loadUnknowns                      []schedulerLoadUnknown
 	replaySkipped                     bool
 }
 
@@ -329,7 +330,8 @@ func (p *capacityPlanner) assessResult(res capacityResult) capacityResult {
 	return res
 }
 
-// evaluateEnergyAtWindow preserves the original node/request energy equations.
+// evaluateEnergyForRoutes adds the idle energy of compared nodes and the load
+// energy of every node (schedulerLoadWatts) under the routing it computes.
 // Replay energy is deliberately not consumed by native planner accounting.
 func (p *capacityPlanner) evaluateEnergyAtWindow(choice []int, r float64, bridge *schedulerBridgeSchedule, t float64) capacityResult {
 	return p.evaluateEnergyForRoutes(choice, r, bridge, t, nil)
@@ -351,54 +353,35 @@ func (p *capacityPlanner) evaluateEnergyForRoutes(choice []int, r float64, bridg
 		}
 	}
 	for w, ws := range p.ws {
-		slices.SortFunc(items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.e, b.e), cmp.Compare(a.id, b.id)) })
-		retainedRate, weightSum := 0.0, 0.0
+		slices.SortFunc(items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.order, b.order), cmp.Compare(a.id, b.id)) })
+		retainedRate := 0.0
 		for _, item := range retained[w] {
 			retainedRate += float64(item.routingWeight)
-			weightSum += float64(item.weight)
 		}
 		var weights []int32
-		var load []float64
 		var ok bool
 		if frozen != nil {
 			for k := range items[w] {
 				items[w][k].weight = frozen[ws.d.UID][items[w][k].id]
 			}
-			weights, load, ok = capacityFixedWeights(ws.rate, items[w])
+			weights, _, ok = capacityFixedWeights(ws.rate, items[w])
 		} else if p.settings.Controls.Routing {
-			weights, load, ok = capacityWeights(ws.rate, items[w])
+			weights, _, ok = capacityWeights(ws.rate, items[w])
 		} else {
-			weights, load, ok = capacityFixedWeights(ws.rate, items[w])
+			weights, _, ok = capacityFixedWeights(ws.rate, items[w])
 		}
 		if !ok {
 			res.exclusion = "MissingProfileRouting"
 		}
 		routes := p.weightRoutes(&res, items[w], weights)
-		mu, served, mean := 0.0, 0.0, 0.0
+		mu := 0.0
 		for k, item := range items[w] {
 			if weights[k] > 0 {
 				mu += float64(item.routingWeight)
 			}
-			served += load[k]
-			mean += load[k] * item.e
-		}
-		if served > 0 {
-			mean /= served
 		}
 		if len(routes) == 0 && (ws.rate > 0 || ws.queued > 0) {
 			res.exclusion = "NoRoute:" + ws.d.UID
-		}
-		initial := 0.0
-		if weightSum > 0 {
-			for _, item := range retained[w] {
-				initial += min(ws.rate, retainedRate) * float64(item.weight) / weightSum * item.e
-			}
-		}
-		if bridge != nil {
-			res.joules += p.bridgeRequestJoules(bridge, ws, mean, r, t)
-		} else {
-			before := min(r, t)
-			res.joules += initial*before + max(0, ws.rate-retainedRate)*before*mean + (served*mean+max(0, ws.rate-served)*mean)*max(0, t-r)
 		}
 		res.weights = append(res.weights, routes)
 		res.sums = append(res.sums, [2]float64{mu, retainedRate})
@@ -416,6 +399,16 @@ func (p *capacityPlanner) evaluateEnergyForRoutes(choice []int, r float64, bridg
 				res.keep = false
 			}
 		}
+	}
+	initial, final := p.requestRates(res)
+	if bridge != nil {
+		for _, segment := range p.bridgeSegments(res, t) {
+			res.addLoadJoules(segment.rates, schedulerEnergyPhaseBefore, segment.end-segment.start)
+		}
+		res.addLoadJoules(final, schedulerEnergyPhaseAfter, max(0, t-r))
+	} else {
+		res.addLoadJoules(initial, schedulerEnergyPhaseBefore, min(r, t))
+		res.addLoadJoules(final, schedulerEnergyPhaseAfter, max(0, t-r))
 	}
 	reason, reserves := p.transitionConstraints(choice)
 	res.exclusion, res.reserves = cmp.Or(res.exclusion, reason), reserves
