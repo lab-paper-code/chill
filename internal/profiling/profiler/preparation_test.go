@@ -168,6 +168,37 @@ func TestPreparerFreezesPreprocessorAndActiveDataset(t *testing.T) {
 	}
 }
 
+func TestPrepareSessionFreezesTheActorPrepareFreezes(t *testing.T) {
+	expected, candidateBytes := preparationFixture(t)
+	request := fixtureRequest(expected)
+	prepared, err := newFixturePreparer(t, fixtureResolvers(expected, candidateBytes)).Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvers := fixtureResolvers(expected, candidateBytes)
+	session, err := newFixturePreparer(t, resolvers).PrepareSession(context.Background(), SessionRequest{
+		Candidate: request.Candidate, Workload: request.Workload,
+		WarmupIterations: request.Measurement.StartupWarmupIterations,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(session.RunConfig.Actor, prepared.RunConfig.Actor) {
+		t.Fatalf("session actor differs from Prepare\nwant: %#v\n got: %#v", prepared.RunConfig.Actor, session.RunConfig.Actor)
+	}
+	if !reflect.DeepEqual(session.RunConfig.Delivery, prepared.RunConfig.Delivery) ||
+		!reflect.DeepEqual(session.RunConfig.Measurement.Dataset, prepared.RunConfig.Measurement.Dataset) ||
+		session.RunConfig.Measurement.SLOTargetLatencyNanos != prepared.RunConfig.Measurement.SLOTargetLatencyNanos {
+		t.Fatalf("session lost the delivery, dataset or SLO: %+v", session.RunConfig)
+	}
+	if len(session.PlannedBatchSizes) == 0 || session.PlannedBatchSizes[0] != 1 {
+		t.Fatalf("planned batch sizes = %v", session.PlannedBatchSizes)
+	}
+	if resolvers.metrics.calls != 0 || resolvers.workloads.calls != 0 || resolvers.actuation.calls != 0 {
+		t.Fatal("session resolved a metric source, workload observer or actuation policy")
+	}
+}
+
 func TestPreparerFreezesSharedExecutionForORTAndRKNNLite(t *testing.T) {
 	for _, runtimePath := range []string{"ort", "rknn"} {
 		t.Run(runtimePath, func(t *testing.T) {

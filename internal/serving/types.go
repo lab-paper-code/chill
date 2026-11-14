@@ -193,6 +193,19 @@ type BatchProfile struct {
 	// bodies keep their existing stored contract. Catalog reads expose it.
 	MemoryBasis   profilederivation.MemoryBasis `json:"-"`
 	MeanWallWatts float64                       `json:"meanWallWatts,omitempty"`
+	// InputSlopeJoules, SaturationInputRate and DispatchOccupancyNanos come
+	// from a measurement session; profiles from older measurements omit them.
+	InputSlopeJoules       *profilederivation.SessionParameter `json:"inputSlopeJoules,omitempty"`
+	SaturationInputRate    *float64                            `json:"saturationInputRate,omitempty"`
+	DispatchOccupancyNanos []float64                           `json:"dispatchOccupancyNanos,omitempty"`
+}
+
+// ProfilePower is a session's node power model: settled idle watts, the step
+// while awake, and how long the node stays awake after an execution.
+type ProfilePower struct {
+	IdleWatts      profilederivation.SessionParameter `json:"idleWatts"`
+	AwakeStepWatts profilederivation.SessionParameter `json:"awakeStepWatts"`
+	HoldSeconds    profilederivation.SessionParameter `json:"holdSeconds"`
 }
 
 // Profile retains the frozen measurement condition and its raw evidence. It is
@@ -217,6 +230,8 @@ type Profile struct {
 	// and the runner's delivery file from it; views and observation logs omit it.
 	RuntimeDelivery json.RawMessage    `json:"-"`
 	Reuse           *ProfileReuseCheck `json:"reuse,omitempty"`
+	// Power is absent for profiles from older measurements.
+	Power *ProfilePower `json:"power,omitempty"`
 }
 
 // ProfileReuseCheck retains the comparison without merging either raw population.

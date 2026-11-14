@@ -1,4 +1,4 @@
-package controller
+package profiler
 
 import (
 	"slices"
@@ -8,7 +8,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-func TestResolvePlannedBatchSizesUsesResolvedCapability(t *testing.T) {
+func TestPlannedBatchSizesUsesResolvedCapability(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		cap      int32
@@ -24,7 +24,7 @@ func TestResolvePlannedBatchSizesUsesResolvedCapability(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			report := profilingrun.CandidateReport{Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: test.cap},
 				ArtifactCapability: &profilingrun.CandidateArtifactCapability{DeclaredBatchSizes: test.declared}}
-			got, err := resolvePlannedBatchSizes(report)
+			got, err := PlannedBatchSizes(report)
 			if test.want == nil {
 				if err == nil {
 					t.Fatal("unsupported capability accepted")

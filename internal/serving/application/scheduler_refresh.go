@@ -131,6 +131,7 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 		CostIssues: costs.Issues, DispatchOccupancy: costs.DispatchOccupancy, CatalogIssues: view.Insufficiencies,
 		DispatchOccupancySnapshot: o.occupancy.selected,
 		LoadGenerator:             o.opts.LoadGenerator,
+		Session:                   o.opts.Session,
 		GatewayRequestTimeout:     o.GatewayRequestTimeout,
 		Meters:                    config.Meters, PowerPolicies: policies,
 		StaticRouting: len(config.StaticRouting) > 0, MeasurementNamespaces: namespaces,

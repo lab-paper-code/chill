@@ -236,6 +236,83 @@ spec:
                 maximum: 10
                 minimum: 0
                 type: integer
+              session:
+                description: Session holds the settings of a ChillServer measurement
+                  session.
+                properties:
+                  confidenceLevel:
+                    description: |-
+                      ConfidenceLevel, a decimal in [0.5, 1), is the level of every statistical
+                      decision the derivation makes.
+                    pattern: ^0\.[5-9][0-9]*$
+                    type: string
+                  deliveryMarginMilliseconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  framedDecodedRequestUpperBytes:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  levelDurationLimitSeconds:
+                    description: LevelDurationLimitSeconds is the longest predicted
+                      duration of one level.
+                    exclusiveMinimum: true
+                    minimum: 0
+                    type: number
+                  meterLagSeconds:
+                    description: MeterLagSeconds is the power meter lag discarded
+                      at each level start.
+                    minimum: 0
+                    type: number
+                  midLevelRatio:
+                    description: MidLevelRatio is the mid level arrival rate as a
+                      ratio of saturation throughput.
+                    exclusiveMaximum: true
+                    exclusiveMinimum: true
+                    maximum: 1
+                    minimum: 0
+                    type: number
+                  minimumPowerWindowSeconds:
+                    description: MinimumPowerWindowSeconds is the shortest power observation
+                      of a level.
+                    exclusiveMinimum: true
+                    minimum: 0
+                    type: number
+                  postLoadWindowSeconds:
+                    description: PostLoadWindowSeconds observes the loaded actor without
+                      inference after the last level.
+                    exclusiveMinimum: true
+                    minimum: 0
+                    type: number
+                  requestLifetimeSeconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  sparseMeanGapSeconds:
+                    description: SparseMeanGapSeconds is the sparse level's mean idle
+                      gap.
+                    exclusiveMinimum: true
+                    minimum: 0
+                    type: number
+                required:
+                - confidenceLevel
+                - deliveryMarginMilliseconds
+                - framedDecodedRequestUpperBytes
+                - levelDurationLimitSeconds
+                - meterLagSeconds
+                - midLevelRatio
+                - minimumPowerWindowSeconds
+                - postLoadWindowSeconds
+                - requestLifetimeSeconds
+                - sparseMeanGapSeconds
+                type: object
+                x-kubernetes-validations:
+                - message: levelDurationLimitSeconds must exceed meterLagSeconds plus
+                    minimumPowerWindowSeconds
+                  rule: self.levelDurationLimitSeconds > self.meterLagSeconds + self.minimumPowerWindowSeconds
+                - message: requestLifetimeSeconds must exceed deliveryMarginMilliseconds
+                  rule: self.requestLifetimeSeconds * 1000 > self.deliveryMarginMilliseconds
               state:
                 description: |-
                   MeasurementStateSpec fixes the execution state every trial of one
@@ -311,6 +388,10 @@ spec:
               rule: self == oldSelf
           status:
             properties:
+              completedBatches:
+                description: CompletedBatches counts the batch sizes a session measured.
+                format: int32
+                type: integer
               completedTrials:
                 format: int32
                 type: integer

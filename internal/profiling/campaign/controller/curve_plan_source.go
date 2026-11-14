@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -158,7 +157,7 @@ func (p *CurvePlanProjector) resolveCandidateReportAndBatches(
 	if err != nil {
 		return profilingrun.CandidateReport{}, nil, fmt.Errorf("decode curve-plan candidate report: %w", err)
 	}
-	plannedBatchSizes, err := resolvePlannedBatchSizes(report)
+	plannedBatchSizes, err := profiler.PlannedBatchSizes(report)
 	if err != nil {
 		return profilingrun.CandidateReport{}, nil, profiler.NewTerminalResolutionError(profilingrun.ResolutionReasonInvalidRunSpec, err)
 	}
@@ -334,31 +333,6 @@ func bindTransitionToPlan(
 		return nil, errors.New("transition Node UID does not match the frozen curve plan")
 	}
 	return material, nil
-}
-
-func resolvePlannedBatchSizes(report profilingrun.CandidateReport) ([]int, error) {
-	if report.Firstfloor == nil || report.Firstfloor.MaxBatchSize < 1 {
-		return nil, errors.New("BatchEnergyOptimization requires a positive resolved firstfloor maxBatchSize")
-	}
-	cap := int(report.Firstfloor.MaxBatchSize)
-	var declared []int32
-	if report.ArtifactCapability != nil {
-		declared = report.ArtifactCapability.DeclaredBatchSizes
-	}
-	if len(declared) != 0 && !slices.Contains(declared, int32(1)) {
-		return nil, errors.New("BatchEnergyOptimization requires artifact capability at batch one")
-	}
-	var planned []int
-	for batch := 1; batch <= cap; {
-		if len(declared) == 0 || slices.Contains(declared, int32(batch)) {
-			planned = append(planned, batch)
-		}
-		if batch > cap/2 {
-			break
-		}
-		batch *= 2
-	}
-	return planned, nil
 }
 
 func (p *CurvePlanProjector) prepare(

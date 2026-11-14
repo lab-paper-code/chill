@@ -162,10 +162,10 @@ subjects:
   - kind: ServiceAccount
     name: {{ $name }}
     namespace: {{ .Release.Namespace }}
-{{- if .Values.profiler.enabled }}
 {{- $factsRole := printf "%s-profiler-facts" $name }}
 ---
-# Power requests and wall meters are derived from the Profiler facts.
+# Power requests, wall meters and measurement sessions are derived from the
+# Profiler facts.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -194,7 +194,6 @@ subjects:
   - kind: ServiceAccount
     name: {{ $name }}
     namespace: {{ .Release.Namespace }}
-{{- end }}
 {{- $profileRole := printf "%s-profiles" $name }}
 {{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
 ---
@@ -221,7 +220,7 @@ rules:
     verbs: [get, patch]
   # ChillServer is the only writer of the measurements it runs.
   - apiGroups: [edge.dacs.io]
-    resources: [operationcostmeasurements/status, dispatchoccupancymeasurements/status]
+    resources: [batchenergyoptimizations/status, operationcostmeasurements/status, dispatchoccupancymeasurements/status]
     verbs: [patch]
   # Power mode transition cost preparations are owned ConfigMaps named after the measurement.
   - apiGroups: [""]

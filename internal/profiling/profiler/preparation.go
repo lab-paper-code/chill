@@ -264,10 +264,10 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	runConfig.Actor.MemoryLimitBytes = executionPolicy.Policy.RuntimeMemoryLimitBytes
 	if runConfig.Measurement.OperatingPoints != nil {
 		points := *runConfig.Measurement.OperatingPoints
-		if points.QueueBytesCap != 0 && points.QueueBytesCap != min(executionPolicy.Policy.MaxInputBytes, int64(64<<20)) {
+		if points.QueueBytesCap != 0 && points.QueueBytesCap != queueBytesCap(executionPolicy) {
 			return PreparedRun{}, InvalidExecutionPolicy("selected queue capacity differs from the frozen measurement protocol")
 		}
-		points.QueueBytesCap = min(executionPolicy.Policy.MaxInputBytes, int64(64<<20))
+		points.QueueBytesCap = queueBytesCap(executionPolicy)
 		if points.FramedDecodedRequestUpperBytes > points.QueueBytesCap {
 			return PreparedRun{}, InvalidExecutionPolicy("measurement queue cannot hold one framed request")
 		}
@@ -282,6 +282,121 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 		ActuationPolicy: policy,
 	}
 	return prepared, nil
+}
+
+// queueBytesCap is the native queue byte capacity a measurement freezes.
+func queueBytesCap(policy FrozenExecutionPolicy) int64 {
+	return min(policy.Policy.MaxInputBytes, int64(64<<20))
+}
+
+// SessionRequest names what one measurement session measures. Candidate.Node
+// is the target Node and Candidate.Dataset the dataset the load samples.
+type SessionRequest struct {
+	Candidate        CandidateSelection
+	Workload         string
+	WarmupIterations int
+}
+
+// PreparedSession is the frozen configuration of one measurement session.
+type PreparedSession struct {
+	// RunConfig carries the candidate, Node, runtime delivery, dataset,
+	// Workload SLO and the actor configuration with its memory envelope and
+	// queue capacity. It has no metric source, observer, actuation, load
+	// origin or batch: ChillServer meters the Node, drives the load and
+	// prepares one fixed-batch instance per planned batch size.
+	RunConfig profilingrun.RunConfig
+	// PlannedBatchSizes are the batch sizes the session may measure, ascending.
+	PlannedBatchSizes []int
+}
+
+// PrepareSession resolves a measurement session with the steps of Prepare a
+// session uses: the Workload SLO, the candidate, the Node, the runtime
+// delivery, the frozen configuration and the execution policy's memory
+// envelope and queue capacity.
+func (p *Preparer) PrepareSession(ctx context.Context, request SessionRequest) (PreparedSession, error) {
+	if request.Workload == "" || request.Candidate.Node == "" || request.Candidate.Dataset == "" ||
+		request.WarmupIterations < 0 {
+		return PreparedSession{}, errors.New("session requires a Workload, a target Node, a dataset and non-negative warm-up iterations")
+	}
+	stop, err := p.workloads.ResolveMeasurementWorkload(ctx, request.Workload, request.Candidate)
+	if err != nil {
+		return PreparedSession{}, fmt.Errorf("resolve measurement Workload: %w", err)
+	}
+	candidate, err := p.candidates.ResolveCandidate(ctx, request.Candidate)
+	if err != nil {
+		return PreparedSession{}, fmt.Errorf("resolve static candidate: %w", err)
+	}
+	if err := validateResolvedCandidate(request.Candidate, candidate); err != nil {
+		return PreparedSession{}, err
+	}
+	node, err := p.nodes.ResolveNode(ctx, NodeSelection{
+		Name:                request.Candidate.Node,
+		DeviceArchitecture:  candidate.DeviceArchitecture,
+		DeviceClassSelector: candidate.DeviceNodeSelector,
+	})
+	if err != nil {
+		return PreparedSession{}, fmt.Errorf("resolve target Node: %w", err)
+	}
+	if candidate.State.Preprocessor.Architecture != node.Architecture {
+		return PreparedSession{}, fmt.Errorf("preprocessor artifact architecture %q does not match target Node architecture %q",
+			candidate.State.Preprocessor.Architecture, node.Architecture)
+	}
+	report, err := profilingrun.DecodeCandidateReport(candidate.ReportBytes)
+	if err != nil {
+		return PreparedSession{}, fmt.Errorf("decode resolved candidate report: %w", err)
+	}
+	planned, err := PlannedBatchSizes(report)
+	if err != nil {
+		return PreparedSession{}, err
+	}
+	runConfig, err := p.freeze(PreparationRequest{
+		Candidate: request.Candidate, TargetNode: request.Candidate.Node, Workload: request.Workload,
+		Measurement: profilingrun.MeasurementContract{
+			StartupWarmupIterations: request.WarmupIterations,
+			WorkloadMode:            profilingrun.EmpiricalCadenceFixedBatchWorkloadMode,
+			SLOPercentile:           stop.SLOPercentile, SLOTargetLatencyNanos: stop.SLOTargetLatencyNanos,
+			MinServiceSamples: stop.MinServiceSamples, WorkloadName: stop.WorkloadName,
+			WorkloadUID: stop.WorkloadUID, WorkloadResourceVersion: stop.WorkloadResourceVersion,
+		},
+	}, candidate, report.RuntimeDelivery(), node, ResolvedMetricSource{}, ResolvedWorkloadObservation{}, nil)
+	if err != nil {
+		return PreparedSession{}, err
+	}
+	executionPolicy, err := p.execution.Resolve(ctx, runConfig)
+	if err != nil {
+		return PreparedSession{}, fmt.Errorf("resolve actor memory envelope: %w", err)
+	}
+	runConfig.Actor.MemoryRequestBytes = executionPolicy.Policy.RuntimeMemoryRequestBytes
+	runConfig.Actor.MemoryLimitBytes = executionPolicy.Policy.RuntimeMemoryLimitBytes
+	runConfig.Actor.MaxQueueBytes = int(queueBytesCap(executionPolicy))
+	return PreparedSession{RunConfig: runConfig, PlannedBatchSizes: planned}, nil
+}
+
+// PlannedBatchSizes are the powers of two up to the resolved maximum batch
+// size, restricted to the artifact's declared batch sizes when it declares any.
+func PlannedBatchSizes(report profilingrun.CandidateReport) ([]int, error) {
+	if report.Firstfloor == nil || report.Firstfloor.MaxBatchSize < 1 {
+		return nil, errors.New("BatchEnergyOptimization requires a positive resolved firstfloor maxBatchSize")
+	}
+	cap := int(report.Firstfloor.MaxBatchSize)
+	var declared []int32
+	if report.ArtifactCapability != nil {
+		declared = report.ArtifactCapability.DeclaredBatchSizes
+	}
+	if len(declared) != 0 && !slices.Contains(declared, int32(1)) {
+		return nil, errors.New("BatchEnergyOptimization requires artifact capability at batch one")
+	}
+	var planned []int
+	for batch := 1; batch <= cap; {
+		if len(declared) == 0 || slices.Contains(declared, int32(batch)) {
+			planned = append(planned, batch)
+		}
+		if batch > cap/2 {
+			break
+		}
+		batch *= 2
+	}
+	return planned, nil
 }
 
 func (p *Preparer) resolveActuation(
