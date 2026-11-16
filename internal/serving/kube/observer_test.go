@@ -874,3 +874,35 @@ func TestObserverMeasuredImageStillRequiresPhysicalSafety(t *testing.T) {
 		})
 	}
 }
+
+func TestObserverRetireAbsentStoppedSource(t *testing.T) {
+	for _, repeat := range []bool{false, true} {
+		t.Run(fmt.Sprintf("repeat=%v", repeat), func(t *testing.T) {
+			pod, _, _, _ := observerSourceFixture()
+			observer := newTestObserver(t)
+			containerID := pod.Status.ContainerStatuses[0].ContainerID
+			follow, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			source := &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: containerID, podState: pod, stopped: true, terminated: map[string]bool{containerID: true}, follow: follow, cancel: cancel}
+			observer.sources[string(pod.UID)] = source
+			if err := observer.publishLedger(nil); err != nil {
+				t.Fatal(err)
+			}
+			if len(observer.runtime.Instances()) != 1 {
+				t.Fatal("missing retained instance")
+			}
+			observer.reconcileSources(context.Background(), map[types.UID]bool{pod.UID: false})
+			if len(observer.runtime.Instances()) != 0 || observer.sources[string(pod.UID)] != nil {
+				t.Fatal("absent stopped source retained")
+			}
+			if follow.Err() == nil {
+				t.Fatal("log follow remains active")
+			}
+			if repeat {
+				if err := observer.RetireRemovedSource(pod.UID, observer.runtime); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}

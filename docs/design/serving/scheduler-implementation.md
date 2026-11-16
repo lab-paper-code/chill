@@ -67,6 +67,8 @@ desired/native DecisionID만 다르면 PolicyAckPending이다. 실제 identity�
 
 Ready 공급은 Ready로 확인한 실물만 센다. unknown 실물은 해당 노드 새 physical 작업을 막는다. 독립 노드 판단은 계속한다. route-only의 양수 목적지는 정확한 executor 확인을 사용하므로 다른 co-resident의 unknown을 전체 목적지 거절로 확대하지 않는다.
 
+종료가 확인된 source의 Pod가 namespace 목록에서 같은 이름과 UID로 존재하지 않으면 observer도 ledger 발행, runtime retirement, follow 중단과 source 삭제를 수행한다. 이후 remove의 중복 retirement는 성공하며 실제 retirement 오류는 유지한다. 목록 조회 실패는 Pod 부재로 취급하지 않는다.
+
 retirement는 exact 종료 뒤 finalizer와 Service/config cleanup, 정확한 UID 삭제 확인이다. Pod 없음, GET 실패와 DeletionTimestamp만으로 종료를 추정하지 않는다. Pending Pod의 executor 흔적이 전혀 없는 경우 DELETE 요청은 가능해도 반환 proof는 별도다.
 
 정확히 종료된 Pod-only `ID=PodUID`, Stopped와 Terminated는 executor stop/drain 없이 기존 remove를 쓴다. container가 있거나 종료 미확정이면 적용하지 않는다. late probe는 종료나 퇴역을 되돌릴 수 없다.

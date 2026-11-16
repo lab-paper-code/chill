@@ -443,6 +443,10 @@ func (o *Observer) reconcileSources(ctx context.Context, observed map[types.UID]
 		pod := byName[source.pod.Name]
 		if pod != nil && pod.UID == source.uid {
 			o.observeTermination(pod)
+		} else if latestErr == nil && source.stopped {
+			if err := o.retireRemovedSourceLocked(uid, o.runtime); err != nil {
+				_, _ = o.sourceUnavailable(source.uid, source.pod.String(), err)
+			}
 		} else if !source.stopped {
 			err := latestErr
 			if err == nil {

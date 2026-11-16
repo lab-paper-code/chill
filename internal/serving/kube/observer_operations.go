@@ -38,6 +38,10 @@ func (o *Observer) ObserveRemovalStopped(pod *core.Pod) bool {
 func (o *Observer) RetireRemovedSource(uid types.UID, runtime *serving.Runtime) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	return o.retireRemovedSourceLocked(uid, runtime)
+}
+
+func (o *Observer) retireRemovedSourceLocked(uid types.UID, runtime *serving.Runtime) error {
 	if source := o.sources[string(uid)]; source != nil {
 		source.instance.State.Stopped = true
 	}
@@ -46,6 +50,9 @@ func (o *Observer) RetireRemovedSource(uid types.UID, runtime *serving.Runtime) 
 	}
 	if err := runtime.RetirePod(string(uid)); err != nil {
 		return err
+	}
+	if source := o.sources[string(uid)]; source != nil {
+		source.stopFollow()
 	}
 	delete(o.sources, string(uid))
 	return nil

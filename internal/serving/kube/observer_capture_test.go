@@ -237,11 +237,6 @@ func TestSchedulerSharedCaptureChangesTerminationAbsenceAndFailure(t *testing.T)
 	if len(terminal.Instances) != 1 || !terminal.Instances[0].Terminated || !terminal.Instances[0].Stopped || terminal.Instances[0].Ready || len(terminal.Nodes[0].NonServing) != 0 {
 		t.Fatalf("terminal raw facts changed scheduler occupancy or executor proof: %+v", terminal)
 	}
-	api.setPods()
-	missing := capture()
-	if len(missing.Instances) != 1 || !missing.Instances[0].Terminated || len(api.inventoryQueries()) != 2 {
-		t.Fatalf("missing Pod erased retained terminal proof or skipped reconciliation: %+v queries=%v", missing.Instances, api.inventoryQueries())
-	}
 	api.mu.Lock()
 	api.failPods = true
 	api.mu.Unlock()
@@ -267,6 +262,17 @@ func TestSchedulerSharedCaptureChangesTerminationAbsenceAndFailure(t *testing.T)
 	}
 	if ready != 1 || stopped != 1 {
 		t.Fatalf("recovery lost old executor proof or new native readiness: %+v", recovered.Instances)
+	}
+	status.State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ContainerID: status.ContainerID}}
+	pod.Status.Phase = core.PodSucceeded
+	api.setPods(pod)
+	if ended := capture(); len(ended.Instances) != 2 || !ended.Instances[0].Terminated || !ended.Instances[1].Terminated {
+		t.Fatalf("second termination was not observed: %+v", ended.Instances)
+	}
+	api.setPods()
+	missing := capture()
+	if len(missing.Instances) != 0 || len(api.inventoryQueries()) != 2 {
+		t.Fatalf("absent Pod kept its terminated source or skipped reconciliation: %+v queries=%v", missing.Instances, api.inventoryQueries())
 	}
 }
 
