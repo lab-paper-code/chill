@@ -38,6 +38,7 @@ func TestCoverageLatestCellNeverUnionsHistoricalBatches(t *testing.T) {
 		},
 	}}
 	base.Compatibility.NodeRows = []ModelCompatibilityView{{
+		Selection: base.Compatibility.Rows[0].Selection, Verdict: MeasurementSupportCompatible,
 		Inputs: ModelCompatibilityInputs{
 			RuntimeDeclaration: &ModelCompatibilityRuntimeInput{Image: "current"},
 		},
@@ -262,7 +263,7 @@ func TestCoverageCurrentFailedMeasurementIsNotHiddenByOldProfiles(t *testing.T) 
 	base.Requests.Items = append(base.Requests.Items, failed)
 	response := BuildMeasurementCoverage(base, coverageSizeNamespace, CoverageQuery{})
 	candidate := failed.Spec.State.Candidate
-	id := CoverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
+	id := CoverageCellID(candidate.ModelSpec, candidate.DeviceClass, failed.Spec.State.TargetNode, candidate.ExecutionPath, candidate.PowerMode)
 	for _, cell := range response.Cells {
 		if cell.ID != id {
 			continue
@@ -330,8 +331,8 @@ func TestCoverageMeasurementTimeUsesOnlyCurrentTerminalEvidence(t *testing.T) {
 func TestCoveragePreservesNonBlockingCompatibilityDiagnostics(t *testing.T) {
 	cell := CoverageNewCell(MeasurementCoverageGroup{
 		Model: MeasurementIdentity{Name: "model"}, DeviceClass: MeasurementIdentity{Name: "class"},
-	}, "cpu", "fixed", map[string]ModelCompatibilityView{
-		"model/class/cpu": {
+	}, MeasurementIdentity{Name: "node"}, "cpu", "fixed", map[string]ModelCompatibilityView{
+		"model/class/node/cpu": {
 			Verdict: MeasurementSupportCompatible, Diagnostics: []string{coverageDuplicateDiagnostic},
 		},
 	})

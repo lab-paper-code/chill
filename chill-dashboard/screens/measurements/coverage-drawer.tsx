@@ -39,8 +39,8 @@ export function CellDrawer({ cell, namespace, returnTo, onClose }: { cell: Cell;
   const reasons = cellReasons(cell)
   const measuredAt = cell.currentMeasurement?.measuredAt ?? variant?.measuredAt
   const occupancyHref = occupancy[0] ? coverageOccupancyRequestHref(cell, occupancy[0], namespace)
-    : occupancyRequestHref(namespace, { model: cell.model.name, deviceClass: cell.deviceClass.name, path: cell.executionPath, powerMode: cell.powerMode, measurementID: cell.currentMeasurement?.id })
-  const history = `/measurements/requests?${new URLSearchParams({ model: cell.model.name, deviceClass: cell.deviceClass.name, path: cell.executionPath, powerMode: cell.powerMode })}`
+    : occupancyRequestHref(namespace, { node: cell.node.name, model: cell.model.name, deviceClass: cell.deviceClass.name, path: cell.executionPath, powerMode: cell.powerMode, measurementID: cell.currentMeasurement?.id })
+  const history = `/measurements/requests?${new URLSearchParams({ node: cell.node.name, model: cell.model.name, deviceClass: cell.deviceClass.name, path: cell.executionPath, powerMode: cell.powerMode })}`
   return (
     <DetailDrawer
       open onOpenChange={open => { if (!open) onClose() }}

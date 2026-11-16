@@ -136,7 +136,7 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 			state := campaign.Spec.State.Candidate
 			candidateIndex := len(candidates)
 			candidates = append(candidates, profilederivation.MeasurementSelection{
-				ID: id, Model: state.ModelSpec, DeviceClass: state.DeviceClass, ExecutionPath: state.ExecutionPath, PowerMode: state.PowerMode,
+				ID: id, Node: campaign.Spec.State.TargetNode, Model: state.ModelSpec, DeviceClass: state.DeviceClass, ExecutionPath: state.ExecutionPath, PowerMode: state.PowerMode,
 				MeasuredAt: profilederivation.MeasurementTime(time.Time{}, completedAt),
 			})
 			source := types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}

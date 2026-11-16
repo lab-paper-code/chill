@@ -10,8 +10,8 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
-func CoverageCellID(model, class, path, mode string) string {
-	return strings.Join([]string{model, class, path, mode}, "/")
+func CoverageCellID(model, class, node, path, mode string) string {
+	return strings.Join([]string{model, class, node, path, mode}, "/")
 }
 func CoverageRequestID(task api.BatchEnergyOptimization) string {
 	return task.Namespace + "/" + task.Name + "/" + string(task.UID)
@@ -23,12 +23,12 @@ func CoverageBatches(values []int) []int {
 }
 func CoverageContains(values []int, batch int) bool { return slices.Contains(values, batch) }
 func CoverageNewCell(
-	group MeasurementCoverageGroup, path, mode string,
+	group MeasurementCoverageGroup, node MeasurementIdentity, path, mode string,
 	support map[string]ModelCompatibilityView,
 ) MeasurementCoverageCell {
 	cell := MeasurementCoverageCell{
-		ID:    CoverageCellID(group.Model.Name, group.DeviceClass.Name, path, mode),
-		Model: group.Model, DeviceClass: group.DeviceClass, ExecutionPath: path, PowerMode: mode,
+		ID:   CoverageCellID(group.Model.Name, group.DeviceClass.Name, node.Name, path, mode),
+		Node: node, Model: group.Model, DeviceClass: group.DeviceClass, ExecutionPath: path, PowerMode: mode,
 		Variants: []MeasurementCoverageVariant{}, FailureSummary: []MeasurementFailure{},
 		History: []MeasurementHistory{},
 		Support: MeasurementSupport{
@@ -36,7 +36,7 @@ func CoverageNewCell(
 			Diagnostics: []string{},
 		},
 	}
-	row, found := support[strings.Join([]string{group.Model.Name, group.DeviceClass.Name, path}, "/")]
+	row, found := support[strings.Join([]string{group.Model.Name, group.DeviceClass.Name, node.Name, path}, "/")]
 	if !found {
 		cell.Support.Reasons = append(cell.Support.Reasons, ModelCompatibilityReason{
 			Kind: MeasurementSupportUnknown, Code: "SupportInputMissing", Message: "선택 Node의 지원 입력을 확인할 수 없습니다",

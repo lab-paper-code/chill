@@ -56,3 +56,12 @@ func TestReplacedMeasurementsIgnoresMissingAndSelfTargets(t *testing.T) {
 		t.Fatal("operator replacement did not resolve only distinct existing targets", got)
 	}
 }
+
+func TestCurrentMeasurementsKeepsEachMeasuredNode(t *testing.T) {
+	a := MeasurementSelection{ID: "a", Model: "model", DeviceClass: "class", Node: "genesis2", ExecutionPath: "cpu", PowerMode: "fixed", MeasuredAt: time.Unix(1, 0)}
+	b := a
+	b.ID, b.Node, b.MeasuredAt = "b", "genesis3", time.Unix(2, 0)
+	if got := CurrentMeasurements([]MeasurementSelection{a, b}, nil); !reflect.DeepEqual(got, []MeasurementSelection{a, b}) {
+		t.Fatalf("lost measured node: %+v", got)
+	}
+}

@@ -99,7 +99,7 @@ export function activeMeasurements(capture, epoch) {
   const runEvidence = uid => ({ store: STORE, key: `profiling-runs/${uid}/execution.json`, size: 9300 + parseInt(uid.slice(0, 3), 16) })
 
   function curvePlan(cell, node) {
-    const [model, cls, path, mode] = cell.id.split('/'), info = paths[model], spec = info?.paths.find(row => row.name === path) ?? {}
+    const {model:{name:model},deviceClass:{name:cls},executionPath:path,powerMode:mode} = cell, info = paths[model], spec = info?.paths.find(row => row.name === path) ?? {}
     return { name: `replay-${hash(cell.id).slice(0, 10)}`, logicalModel: model, deviceClass: cls, nodeUID: nodeUID[node] ?? '', runtimeFamily: spec.runtimeFamily ?? 'firstfloor', backend: spec.backend ?? 'ort-cpu',
       ...(spec.firstfloor ? { firstfloor: spec.firstfloor } : {}), runtimeImage: spec.image ? spec.image.replace(/\/[^/]+@.*/, '/chill-firstfloor-runtime:v0.19.2') : '',
       actor: { backend: spec.backend, artifact: spec.artifact, powerMode: mode }, powerMode: mode,
@@ -159,7 +159,7 @@ export function activeMeasurements(capture, epoch) {
       variants: [{ id: variantID, condition: p.condition, assessment: { ...base, execution, checklist: { ...base.checklist, checks: checks(p.rows) } }, batchProgress, resultRows: p.rows,
         requestIds: [p.profile], runIds, profileIds: [p.profile], measuredAt: p.at }],
       representative: { variantId: variantID, batch: best.batch, incrementalJoulesPerItem: best.incrementalJoulesPerItem },
-      currentMeasurement: { id: p.profile, model: p.cell.model.name, deviceClass: p.cell.deviceClass.name, executionPath: p.cell.executionPath, powerMode: p.cell.powerMode, measuredAt: p.at },
+      currentMeasurement: { node: p.node, id: p.profile, model: p.cell.model.name, deviceClass: p.cell.deviceClass.name, executionPath: p.cell.executionPath, powerMode: p.cell.powerMode, measuredAt: p.at },
       history: [{ requestId: p.profile, status: p.partial ? 'partial' : 'criteria_met' }, ...p.cell.history.filter(row => row.requestId !== p.profile)] }
   }
   function runningCell(cell, t) {

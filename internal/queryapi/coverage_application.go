@@ -52,12 +52,9 @@ func (p *coverageProjection) initialize() {
 		}
 		return strings.Compare(a.Name, b.Name)
 	})
-	basis, supportBasis := "requested", "representative-node-static"
+	basis, supportBasis := "requested", "selected-node-static"
 	if len(p.query.Batches) > 0 {
 		basis = "explicit"
-	}
-	if p.query.Node != "" {
-		supportBasis = "selected-node-static"
 	}
 	p.out = MeasurementCoverageResponse{
 		SchemaVersion: "measurement-coverage.v1", AssessmentVersion: "result-checklist.v1",
@@ -127,14 +124,11 @@ func (p *coverageProjection) addSources() {
 
 func (p *coverageProjection) supportIndex() map[string]ModelCompatibilityView {
 	support := map[string]ModelCompatibilityView{}
-	rows := p.base.Compatibility.Rows
-	if p.query.Node != "" {
-		rows = p.base.Compatibility.NodeRows
-	}
+	rows := p.base.Compatibility.NodeRows
 	for _, row := range rows {
 		if p.query.Node == "" || row.Selection.Node == p.query.Node {
 			key := strings.Join([]string{
-				row.Selection.ModelSpec, row.Selection.DeviceClass, row.Selection.ExecutionPath,
+				row.Selection.ModelSpec, row.Selection.DeviceClass, row.Selection.Node, row.Selection.ExecutionPath,
 			}, "/")
 			support[key] = row
 		}
@@ -162,12 +156,17 @@ func (p *coverageProjection) addCells() {
 				DeviceClass: MeasurementIdentity{Name: class.Name, UID: class.UID},
 				CellIDs:     []string{}, Supported: ptr.To(0),
 			}
-			for _, path := range model.Spec.ExecutionPaths {
-				for _, mode := range class.PowerModes {
-					cell := CoverageNewCell(group, path.Name, mode.Name, support)
-					p.indices[cell.ID] = len(p.out.Cells)
-					p.out.Cells = append(p.out.Cells, cell)
-					group.CellIDs = append(group.CellIDs, cell.ID)
+			for _, node := range class.Nodes {
+				if p.query.Node != "" && node.Name != p.query.Node {
+					continue
+				}
+				for _, path := range model.Spec.ExecutionPaths {
+					for _, mode := range class.PowerModes {
+						cell := CoverageNewCell(group, MeasurementIdentity{Name: node.Name, UID: node.UID}, path.Name, mode.Name, support)
+						p.indices[cell.ID] = len(p.out.Cells)
+						p.out.Cells = append(p.out.Cells, cell)
+						group.CellIDs = append(group.CellIDs, cell.ID)
+					}
 				}
 			}
 			p.out.Groups = append(p.out.Groups, group)
@@ -219,7 +218,7 @@ func (p *coverageProjection) addRequest(task api.BatchEnergyOptimization) {
 		return
 	}
 	candidate := task.Spec.State.Candidate
-	id := CoverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
+	id := CoverageCellID(candidate.ModelSpec, candidate.DeviceClass, task.Spec.State.TargetNode, candidate.ExecutionPath, candidate.PowerMode)
 	index, exists := p.indices[id]
 	requestID := CoverageRequestID(task)
 	assessment := AssessMeasurementRequest(task, p.base.Catalog, p.base.Catalog)
@@ -289,7 +288,7 @@ func (p *coverageProjection) addRuns() {
 		}
 		candidate := run.Spec.Candidate
 		id := CoverageCellID(
-			candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode,
+			candidate.ModelSpec, candidate.DeviceClass, run.Spec.TargetNode, candidate.ExecutionPath, candidate.PowerMode,
 		)
 		cellIDs := []string{}
 		if _, exists := p.indices[id]; exists {
@@ -311,7 +310,7 @@ func (p *coverageProjection) assessCell(cell *MeasurementCoverageCell) {
 			continue
 		}
 		candidates = append(candidates, profilederivation.MeasurementSelection{
-			ID: variant.RequestIDs[0], Model: cell.Model.Name, DeviceClass: cell.DeviceClass.Name,
+			Node: cell.Node.Name, ID: variant.RequestIDs[0], Model: cell.Model.Name, DeviceClass: cell.DeviceClass.Name,
 			ExecutionPath: cell.ExecutionPath, PowerMode: cell.PowerMode, MeasuredAt: variant.MeasuredAt,
 		})
 	}

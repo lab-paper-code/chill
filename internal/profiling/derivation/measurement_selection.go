@@ -8,8 +8,8 @@ import (
 
 const ReplacesMeasurementAnnotation = "chill.dacs.io/replaces-batch-energy-optimization"
 
-// MeasurementSelection identifies a measurement's logical cell, not its image,
-// CPU allocation, batch sweep, physical Node or historical profile population.
+// MeasurementSelection identifies a measurement's node-specific logical cell, not its image,
+// CPU allocation, batch sweep, historical profile population.
 // ID is namespace/name/UID, the direct catalog profile ID (before any /reuse-
 // suffix). Reuse profiles retain their confirmation measurement's currentness.
 // Populate MeasuredAt with MeasurementTime: (1) verified successful profile's
@@ -18,6 +18,7 @@ const ReplacesMeasurementAnnotation = "chill.dacs.io/replaces-batch-energy-optim
 type MeasurementSelection struct {
 	ID            string    `json:"id"`
 	Model         string    `json:"model"`
+	Node          string    `json:"node"`
 	DeviceClass   string    `json:"deviceClass"`
 	ExecutionPath string    `json:"executionPath"`
 	PowerMode     string    `json:"powerMode"`
@@ -28,12 +29,12 @@ type MeasurementSelection struct {
 // measurements. Callers must not prefilter successes or fall back to history.
 // Explicit operator replacements take precedence; equal times use smallest ID.
 func CurrentMeasurements(candidates []MeasurementSelection, replaced map[string]bool) []MeasurementSelection {
-	latest := make(map[[4]string]MeasurementSelection, len(candidates))
+	latest := make(map[[5]string]MeasurementSelection, len(candidates))
 	for _, candidate := range candidates {
 		if replaced[candidate.ID] {
 			continue
 		}
-		key := [4]string{candidate.Model, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode}
+		key := [5]string{candidate.Model, candidate.DeviceClass, candidate.Node, candidate.ExecutionPath, candidate.PowerMode}
 		old, found := latest[key]
 		if !found || candidate.MeasuredAt.After(old.MeasuredAt) || candidate.MeasuredAt.Equal(old.MeasuredAt) && candidate.ID < old.ID {
 			latest[key] = candidate

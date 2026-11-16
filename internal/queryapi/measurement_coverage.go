@@ -120,6 +120,7 @@ type MeasurementHistory struct {
 	Status    string `json:"status"`
 }
 type MeasurementCoverageCell struct {
+	Node               MeasurementIdentity                     `json:"node"`
 	ID                 string                                  `json:"id"`
 	Model              MeasurementIdentity                     `json:"model"`
 	DeviceClass        MeasurementIdentity                     `json:"deviceClass"`

@@ -184,7 +184,7 @@ func inspect(cellsPath, requestsPath, profilesPath, coveragePath, assessedReques
 			for _, id := range variant.RequestIDs {
 				represented[id] = true
 				candidates = append(candidates, profilederivation.MeasurementSelection{
-					ID: id, Model: cell.Model.Name, DeviceClass: cell.DeviceClass.Name,
+					Node: cell.Node.Name, ID: id, Model: cell.Model.Name, DeviceClass: cell.DeviceClass.Name,
 					ExecutionPath: cell.ExecutionPath, PowerMode: cell.PowerMode, MeasuredAt: times[id],
 				})
 			}

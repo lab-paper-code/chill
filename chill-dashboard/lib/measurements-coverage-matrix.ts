@@ -39,8 +39,9 @@ export function matrixRows(cells: Cell[], deviceClass: string | null, status: st
     if (deviceClass && cell.deviceClass.name !== deviceClass) continue
     const modes = groups.get(cell.deviceClass.name) ?? new Map<string, Map<string, Cell>>()
     groups.set(cell.deviceClass.name, modes)
-    const row = modes.get(cell.powerMode) ?? new Map<string, Cell>()
-    modes.set(cell.powerMode, row)
+    const mode = `${cell.node.name} / ${cell.powerMode}`
+    const row = modes.get(mode) ?? new Map<string, Cell>()
+    modes.set(mode, row)
     row.set(cell.executionPath, cell)
   }
   return [...groups].sort(([a], [b]) => natural(a, b)).flatMap(([name, modes]) => {

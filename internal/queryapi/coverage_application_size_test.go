@@ -70,7 +70,7 @@ func coverageSizeBase() *CoverageBase {
 			Name: model, UID: model + "-spec-uid",
 			Spec: api.ModelSpecSpec{ExecutionPaths: []api.ModelExecutionPath{{Name: coverageSizePath}}},
 		})
-		base.Compatibility.Rows = append(base.Compatibility.Rows, ModelCompatibilityView{
+		base.Compatibility.NodeRows = append(base.Compatibility.NodeRows, ModelCompatibilityView{
 			Selection: ModelCompatibilitySelection{
 				ModelSpec: model, DeviceClass: coverageSizeClass, ExecutionPath: coverageSizePath, Node: coverageSizeNode,
 			},
