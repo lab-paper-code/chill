@@ -13,10 +13,7 @@ import (
 func TestProfileBundleMillionRecords(t *testing.T) {
 	const count = 150000
 	p := Profile{ID: "namespace/measurement/00000000-0000-0000-0000-000000000000"}
-	var slope derivation.SessionParameter
-	if err := json.Unmarshal([]byte(`{"status":"Identified","value":0.2}`), &slope); err != nil {
-		t.Fatal(err)
-	}
+	energy := 0.2
 	result := derivation.SessionResult{SchemaVersion: derivation.SessionResultSchemaVersion}
 	for b := 1; b <= 128; b *= 2 {
 		services, gaps := make([]int64, count), make([]int64, count)
@@ -29,7 +26,7 @@ func TestProfileBundleMillionRecords(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p.Batches = append(p.Batches, BatchProfile{Batch: b, ServiceSamples: samples, ServiceDistribution: d, InputSlopeJoules: &slope})
+		p.Batches = append(p.Batches, BatchProfile{Batch: b, ServiceSamples: samples, ServiceDistribution: d, SaturationJoulesPerInput: &energy})
 		result.Batches = append(result.Batches, derivation.SessionBatch{Batch: b, ServiceNanos: services, PrecedingIdleNanos: gaps})
 	}
 	raw, err := json.Marshal(p.NativeBundle())

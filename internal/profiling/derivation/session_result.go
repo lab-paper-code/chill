@@ -82,9 +82,9 @@ type SessionSettings struct {
 	ConfidenceLevel float64 `json:"confidenceLevel"`
 }
 
-// ParameterStatus says whether a session identified a fitted value. An
-// Identified parameter carries its value at the best fit and its range over
-// the fits within the noise limit; a value of zero is a value like any other.
+// ParameterStatus says whether a value is identified. An Identified
+// parameter carries its value and, for the measured idle watts, its
+// confidence interval; a value of zero is a value like any other.
 type ParameterStatus string
 
 const (
@@ -97,8 +97,8 @@ const (
 type SessionParameter struct {
 	status ParameterStatus
 	value  float64
-	// bounds is the smallest and largest value the parameter takes over every
-	// fit whose residual lies within the noise threshold of the best fit.
+	// bounds is the idle watts' confidence interval; computed power
+	// coefficients have none.
 	bounds    [2]float64
 	hasBounds bool
 	reason    string
@@ -113,17 +113,16 @@ func identifiedParameter(value float64, bounds [2]float64) SessionParameter {
 	return SessionParameter{status: ParameterIdentified, value: value, bounds: bounds, hasBounds: true}
 }
 
-func notIdentified(reason string) SessionParameter {
-	return SessionParameter{status: ParameterNotIdentified, reason: reason}
+// valueParameter is a computed value without a range.
+func valueParameter(value float64) SessionParameter {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return notIdentified("power parameter is not finite")
+	}
+	return SessionParameter{status: ParameterIdentified, value: value}
 }
 
-func notIdentifiedWithin(reason string, bounds [2]float64) SessionParameter {
-	for _, number := range bounds {
-		if math.IsNaN(number) || math.IsInf(number, 0) {
-			return notIdentified(reason)
-		}
-	}
-	return SessionParameter{status: ParameterNotIdentified, reason: reason, bounds: bounds, hasBounds: true}
+func notIdentified(reason string) SessionParameter {
+	return SessionParameter{status: ParameterNotIdentified, reason: reason}
 }
 
 // Status reports whether the session identified the parameter.
@@ -184,13 +183,11 @@ func (p *SessionParameter) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
-// SessionPower predicts node watts as idle + step*awake + joulesPerInput*rate,
-// where awake is the fraction of time inside an execution or within the hold
-// after one.
+// SessionPower is the session's settled idle and post-load observation. The
+// node power model above idle is computed from the stored levels by
+// SessionResult.LoadPower.
 type SessionPower struct {
-	IdleWatts      SessionParameter `json:"idleWatts"`
-	AwakeStepWatts SessionParameter `json:"awakeStepWatts"`
-	HoldSeconds    SessionParameter `json:"holdSeconds"`
+	IdleWatts SessionParameter `json:"idleWatts"`
 	// MeterIntervalSeconds is the median spacing of the post-load samples.
 	MeterIntervalSeconds *float64 `json:"meterIntervalSeconds,omitempty"`
 	// SettledAtSeconds is where the settled idle mean starts, in seconds after
@@ -198,11 +195,6 @@ type SessionPower struct {
 	SettledAtSeconds *float64 `json:"settledAtSeconds,omitempty"`
 	// PostLoad holds (seconds after load stopped, watts) samples.
 	PostLoad [][2]float64 `json:"postLoad"`
-	// HoldSegmentsSearched is the number of hold segments the search solved
-	// and HoldResolutionWatts the predicted-power change below which
-	// breakpoints were merged; both are zero when the decay gives the hold.
-	HoldSegmentsSearched int     `json:"holdSegmentsSearched"`
-	HoldResolutionWatts  float64 `json:"holdResolutionWatts"`
 }
 
 // SessionBatch is one fixed-batch instance's measurement. ServiceNanos[i] and
@@ -215,13 +207,12 @@ type SessionBatch struct {
 	DispatchOccupancyNanos []float64 `json:"dispatchOccupancyNanos"`
 	// SaturationInputRate is the saturation level's completed inputs per
 	// second, absent when the batch has no saturation level.
-	SaturationInputRate *float64         `json:"saturationInputRate,omitempty"`
-	JoulesPerInput      SessionParameter `json:"joulesPerInput"`
-	PeakMemoryBytes     int64            `json:"peakMemoryBytes,omitempty"`
-	MemoryKind          string           `json:"memoryKind"`
-	PrepareCostKey      string           `json:"prepareCostKey"`
-	RemoveCostKey       string           `json:"removeCostKey"`
-	Levels              []SessionLevel   `json:"levels"`
+	SaturationInputRate *float64       `json:"saturationInputRate,omitempty"`
+	PeakMemoryBytes     int64          `json:"peakMemoryBytes,omitempty"`
+	MemoryKind          string         `json:"memoryKind"`
+	PrepareCostKey      string         `json:"prepareCostKey"`
+	RemoveCostKey       string         `json:"removeCostKey"`
+	Levels              []SessionLevel `json:"levels"`
 }
 
 // DriverLevelRow is the load driver's report of one level.
@@ -244,23 +235,13 @@ type DriverLevelRow struct {
 type SessionLevel struct {
 	DriverLevelRow
 	InputRate float64 `json:"inputRate,omitempty"`
-	// NativeStartOffsetNanos is the first native start minus the driver's
-	// level start; the two clocks are never compared.
-	NativeStartOffsetNanos *int64 `json:"nativeStartOffsetNanos,omitempty"`
 	// MeanWatts is absent when the level's power window after the meter lag
-	// is shorter than the minimum power window, or its executions after the
-	// meter lag span no time. Only levels with MeanWatts enter the power fit.
+	// is shorter than the minimum power window. Levels with MeanWatts enter
+	// the load power fit.
 	MeanWatts *float64 `json:"meanWatts,omitempty"`
 	// MeanWattsStandardError accounts for the autocorrelation of the samples.
 	MeanWattsStandardError *float64 `json:"meanWattsStandardError,omitempty"`
 	PowerSamples           int      `json:"powerSamples"`
-	// AwakeFraction is the awake fraction the level entered the best power
-	// fit with, present for fitted levels.
-	AwakeFraction *float64 `json:"awakeFraction,omitempty"`
-	// AwakeWindowNanos are the native window the awake fraction covers, the
-	// first native start plus the meter lag and the last native finish, as
-	// offsets from the driver's level start.
-	AwakeWindowNanos *[2]int64 `json:"awakeWindowNanos,omitempty"`
 }
 
 // StopClass is why the batch-size search ended before the path's largest batch.

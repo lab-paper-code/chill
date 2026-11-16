@@ -7,7 +7,7 @@ import (
 )
 
 func schedulerTestAwakeModel(id string, step, hold, slope, saturation, busy float64) *schedulerLoadModel {
-	return &schedulerLoadModel{identity: id, profile: id, step: step, hold: hold, stepOK: true, holdOK: true,
+	return &schedulerLoadModel{identity: id, profile: id, step: step, hold: hold, powerOK: true,
 		batches: []schedulerLoadBatch{{saturation: saturation, saturationOK: true, slope: slope, slopeOK: true, busy: busy, busyOK: true}}}
 }
 
@@ -33,24 +33,17 @@ func TestNodeLoadWattsAddsAwakeStepOncePerNode(t *testing.T) {
 }
 
 // A not-identified value the formula needs makes the node's load watts
-// unknown, never zero; a zero step needs no hold.
+// unknown, never zero, even when the profile's fitted step is zero.
 func TestNodeLoadWattsNotIdentifiedIsUnknown(t *testing.T) {
 	node := NodeReference{UID: "n1"}
-	step := schedulerTestAwakeModel("step", 0, 0, 1, 100, 0.001)
-	step.stepOK = false
-	hold := schedulerTestAwakeModel("hold", 5, 0, 1, 100, 0.001)
-	hold.holdOK = false
+	power := schedulerTestAwakeModel("power", 0, 0, 1, 100, 0.001)
+	power.powerOK = false
 	slope := schedulerTestAwakeModel("slope", 5, 1, 0, 100, 0.001)
 	slope.batches[0].slopeOK = false
-	for _, model := range []*schedulerLoadModel{step, hold, slope} {
+	for _, model := range []*schedulerLoadModel{power, slope} {
 		if load := nodeLoadWatts([]schedulerRate{{id: "i", node: node, model: model, rate: 10}}); len(load) != 1 || load[0].known {
 			t.Fatalf("%s: %+v", model.identity, load)
 		}
-	}
-	flat := schedulerTestAwakeModel("flat", 0, 0, 1, 100, 0.001)
-	flat.holdOK = false
-	if load := nodeLoadWatts([]schedulerRate{{id: "i", node: node, model: flat, rate: 10}}); !load[0].known || load[0].watts != 10 {
-		t.Fatalf("zero step needs no hold: %+v", load)
 	}
 }
 

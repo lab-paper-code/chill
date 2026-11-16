@@ -31,11 +31,12 @@ type ProfileSummary struct {
 }
 
 type ProfileBatchSummary struct {
-	Batch               int                          `json:"batch"`
-	InputSlopeJoules    *derivation.SessionParameter `json:"inputSlopeJoules,omitempty"`
-	SaturationInputRate *float64                     `json:"saturationInputRate,omitempty"`
-	MemoryBytes         uint64                       `json:"memoryBytes"`
-	MemoryBasis         derivation.MemoryBasis       `json:"memoryBasis"`
+	Batch                    int                          `json:"batch"`
+	InputSlopeJoules         *derivation.SessionParameter `json:"inputSlopeJoules,omitempty"`
+	SaturationJoulesPerInput *float64                     `json:"saturationJoulesPerInput,omitempty"`
+	SaturationInputRate      *float64                     `json:"saturationInputRate,omitempty"`
+	MemoryBytes              uint64                       `json:"memoryBytes"`
+	MemoryBasis              derivation.MemoryBasis       `json:"memoryBasis"`
 }
 
 func SummarizeProfile(p serving.Profile) ProfileSummary {
@@ -43,7 +44,7 @@ func SummarizeProfile(p serving.Profile) ProfileSummary {
 		Condition: p.Condition, Power: p.Power, MeasuredAt: p.MeasuredAt, RuntimeMetadata: p.RuntimeMetadata,
 		MetricSource: p.MetricSource, Reuse: p.Reuse, Batches: make([]ProfileBatchSummary, 0, len(p.Batches))}
 	for _, b := range p.Batches {
-		out.Batches = append(out.Batches, ProfileBatchSummary{Batch: b.Batch, InputSlopeJoules: b.InputSlopeJoules,
+		out.Batches = append(out.Batches, ProfileBatchSummary{Batch: b.Batch, InputSlopeJoules: b.InputSlopeJoules, SaturationJoulesPerInput: b.SaturationJoulesPerInput,
 			SaturationInputRate: b.SaturationInputRate, MemoryBytes: b.MemoryBytes, MemoryBasis: b.MemoryBasis})
 	}
 	return out
@@ -54,7 +55,7 @@ func (p ProfileSummary) Profile() serving.Profile {
 		Condition: p.Condition, Power: p.Power, MeasuredAt: p.MeasuredAt, RuntimeMetadata: p.RuntimeMetadata,
 		MetricSource: p.MetricSource, Reuse: p.Reuse, Batches: make([]serving.BatchProfile, 0, len(p.Batches))}
 	for _, b := range p.Batches {
-		out.Batches = append(out.Batches, serving.BatchProfile{Batch: b.Batch, InputSlopeJoules: b.InputSlopeJoules,
+		out.Batches = append(out.Batches, serving.BatchProfile{Batch: b.Batch, InputSlopeJoules: b.InputSlopeJoules, SaturationJoulesPerInput: b.SaturationJoulesPerInput,
 			SaturationInputRate: b.SaturationInputRate, MemoryBytes: b.MemoryBytes, MemoryBasis: b.MemoryBasis})
 	}
 	return out

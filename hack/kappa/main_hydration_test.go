@@ -99,7 +99,7 @@ func hydrationTickFixture() (serving.SchedulerSettings, serving.SchedulerSnapsho
 			Artifact: profilederivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}},
 		},
 		Batches: []serving.BatchProfile{{
-			Batch: 1, MemoryBytes: 1, InputSlopeJoules: kappaTestSlope(`{"status":"Identified","value":1}`),
+			Batch: 1, MemoryBytes: 1, InputSlopeJoules: kappaTestSlope(`{"status":"Identified","value":1}`), SaturationJoulesPerInput: &[]float64{1}[0],
 			// The service quantile needs at least the percentile's sample floor of records.
 			ServiceSamples: fixtures.ServiceSamples("captured-trial", int64(time.Millisecond)),
 		}},

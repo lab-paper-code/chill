@@ -98,20 +98,13 @@ Conductor GO와 producer 실제 시작을 구별하며 기존 skew 판정을 보
 
 ## 오프라인 진단
 
-전환 예측 정합, serving/profile 분포 대조와 profile holdout은 judge Job 밖의 진단이다.
+전환 예측 정합과 serving/profile 분포 대조는 judge Job 밖의 진단이다.
 보존 scheduler/raw/profile/동결 settings만 읽으며 제품에 평가 전용 export나 수집
 경로를 추가하지 않는다. Profile 값은 요청 지연/에너지 판정을 보정하지 않는다.
 
 예측 분석은 실제 action 구간과 같은 meter/coverage/window를 사용한다. 선행 판단이나
 실제 phase가 불명확하면 UNKNOWN이다. Gap은 겹치는 구간에만 영향을 주고 누락된
 coverage 정보는 완전하다고 추정하지 않는다.
-
-Holdout은 실제 batch/phase와 physical trial을 분리하고 독립 loaded-idle를 사용한다.
-Service/preceding-idle 쌍을 유지하며 다른 Node/runtime/artifact 조건을 합치지 않는다.
-Post-load는 같은 actor의 무추론/상주 진단이며 독립 유휴 기준선으로 섞지 않는다.
-Client scheduled arrival와 측정 Node power clock을 혼합하지 않는다.
-Bootstrap은 독립 trial 단위다. 단일 trial CI는 미제공이며 자동 배제/보정 임계값을
-만들지 않는다. 실제 계산은 기존 derivation와 scheduler 공개 API를 재사용한다.
 
 ## 확장과 결정 권한
 

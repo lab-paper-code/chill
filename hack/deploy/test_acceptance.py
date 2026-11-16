@@ -80,6 +80,14 @@ class AcceptanceChecks(unittest.TestCase):
         after['profiles']['profiles'][0]['power']['holdSeconds']['range'][1] += 1
         self.assertFalse(acceptance.compare(before, after)['passed'])
 
+    def test_computed_estimates_have_no_range(self):
+        before = snapshot()
+        profile = before['profiles']['profiles'][0]
+        profile['power']['holdSeconds'] = {'status': 'Identified', 'value': Decimal('0.2')}
+        profile['power']['awakeStepWatts'] = {'status': 'NotIdentified', 'reason': '3 levels with watts do not determine the awake step, 2 slopes and the hold'}
+        profile['batches'][0]['inputSlopeJoules'] = {'status': 'Identified', 'value': Decimal('0.1')}
+        self.assertTrue(acceptance.compare(before, before)['passed'])
+
     def test_duplicate_identities(self):
         for kind in ('profile', 'batch'):
             with self.subTest(kind=kind):

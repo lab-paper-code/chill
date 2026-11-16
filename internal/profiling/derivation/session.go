@@ -92,16 +92,12 @@ type NativeBatchRow struct {
 type sessionTests struct {
 	// oneSided bounds a drop, twoSided the idle interval, in standard errors.
 	oneSided, twoSided float64
-	// confidence is the configured level; the power fit reads its chi-square
-	// quantile.
-	confidence float64
 }
 
 func newSessionTests(confidence float64) sessionTests {
 	return sessionTests{
-		oneSided:   distuv.UnitNormal.Quantile(confidence),
-		twoSided:   distuv.UnitNormal.Quantile((1 + confidence) / 2),
-		confidence: confidence,
+		oneSided: distuv.UnitNormal.Quantile(confidence),
+		twoSided: distuv.UnitNormal.Quantile((1 + confidence) / 2),
 	}
 }
 
@@ -117,8 +113,7 @@ func DeriveSession(input SessionInput) (SessionResult, error) {
 		SchemaVersion: SessionResultSchemaVersion, Condition: input.Condition, Settings: settings, Stop: input.Stop,
 		RuntimeMetadata: input.RuntimeMetadata, RuntimeDelivery: input.RuntimeDelivery, MeterSource: input.MeterSource,
 	}
-	var levels []fitLevel
-	for index, batchInput := range input.Batches {
+	for _, batchInput := range input.Batches {
 		batch := SessionBatch{
 			Batch: batchInput.Batch, PeakMemoryBytes: batchInput.PeakMemoryBytes, MemoryKind: batchInput.MemoryKind,
 			PrepareCostKey: batchInput.PrepareCostKey, RemoveCostKey: batchInput.RemoveCostKey,
@@ -153,15 +148,11 @@ func DeriveSession(input SessionInput) (SessionResult, error) {
 					batch.PrecedingIdleNanos = append(batch.PrecedingIdleNanos, *row.PrecedingIdleNanos)
 				}
 			}
-			level, fitted := measureLevel(row, rows, power, lag, minimum)
+			level := measureLevel(row, rows, power, lag, minimum)
 			if row.Kind == LevelSaturation && len(rows) >= 2 {
 				batch.DispatchOccupancyNanos = append(batch.DispatchOccupancyNanos, saturationOccupancy(levelInput.Row.ID, rows, batchInput.Batch)...)
 				rate := level.InputRate
 				batch.SaturationInputRate = &rate
-			}
-			if fitted != nil {
-				fitted.at = [2]int{index, len(batch.Levels)}
-				levels = append(levels, *fitted)
 			}
 			batch.Levels = append(batch.Levels, level)
 		}
@@ -191,15 +182,6 @@ func DeriveSession(input SessionInput) (SessionResult, error) {
 	}
 	if _, identified := postLoad.idle.Value(); identified || postLoad.settledAt > 0 {
 		result.Power.SettledAtSeconds = &postLoad.settledAt
-	}
-	if idle, ok := postLoad.idle.Value(); ok {
-		fitPower(&result, levels, idle, postLoad.hold, tests, holdResolution(levels))
-	} else {
-		reason := "settled idle watts not identified"
-		result.Power.AwakeStepWatts, result.Power.HoldSeconds = notIdentified(reason), notIdentified(reason)
-		for index := range result.Batches {
-			result.Batches[index].JoulesPerInput = notIdentified(reason)
-		}
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
@@ -265,40 +247,20 @@ func saturationOccupancy(levelID string, rows []NativeBatchRow, batch int) []flo
 	return SaturationDispatchOccupancy(samples, batch)
 }
 
-// fitLevel is one level whose power window entered the fit.
-type fitLevel struct {
-	// at is the level's batch index and level index in the result.
-	at    [2]int
-	rate  float64
-	watts float64
-	// variance is the squared standard error of watts.
-	variance float64
-	awake    awakeWindow
-}
-
-// measureLevel measures power over the driver's window and the awake
-// fraction over the level's own native executions: the two clocks are never
-// compared, only their offset is recorded.
-func measureLevel(row DriverLevelRow, rows []NativeBatchRow, power []Sample, lag, minimum time.Duration) (SessionLevel, *fitLevel) {
+// measureLevel measures power over the driver's window after the meter lag.
+func measureLevel(row DriverLevelRow, rows []NativeBatchRow, power []Sample, lag, minimum time.Duration) SessionLevel {
 	level := SessionLevel{DriverLevelRow: row, InputRate: float64(row.CompletedInputs) / row.End.Sub(row.Start).Seconds()}
-	if len(rows) == 0 {
-		return level, nil
-	}
-	window, bounds, ok := levelAwakeWindow(rows, lag)
-	offset := bounds[0].Add(-lag).Sub(row.Start).Nanoseconds()
-	level.AwakeWindowNanos = &[2]int64{bounds[0].Sub(row.Start).Nanoseconds(), bounds[1].Sub(row.Start).Nanoseconds()}
-	level.NativeStartOffsetNanos = &offset
 	start := row.Start.Add(lag)
-	if !ok || row.End.Sub(start) < minimum {
-		return level, nil
+	if len(rows) == 0 || row.End.Sub(start) < minimum {
+		return level
 	}
 	watts, standardError, count, err := windowPower(power, start, row.End)
 	if err != nil {
 		slog.Warn("level power unavailable", "level", row.ID, "reason", err)
-		return level, nil
+		return level
 	}
 	level.MeanWatts, level.MeanWattsStandardError, level.PowerSamples = &watts, &standardError, count
-	return level, &fitLevel{rate: level.InputRate, watts: watts, variance: standardError * standardError, awake: window}
+	return level
 }
 
 // windowPower returns the integrated mean watts over [start, end], the
@@ -353,9 +315,7 @@ type postLoadObservation struct {
 	idle      SessionParameter
 	interval  float64
 	settledAt float64
-	// hold is set when the decay identifies the hold time.
-	hold   *SessionParameter
-	series [][2]float64
+	series    [][2]float64
 }
 
 // analysePostLoad finds where the post-load power settles and its level.
@@ -364,8 +324,7 @@ type postLoadObservation struct {
 // stopped, and the settled level; the series has settled one meter lag after
 // t50, and the settled level is the mean from there to the end. Settle point
 // and level are refined together until the settle point stops moving. The
-// hold is t50 less the meter lag, identified when that exceeds the meter's
-// sampling interval, the median sample spacing. Idle is not identified only
+// meter interval is the median sample spacing. Idle is not identified only
 // when the settle point leaves less than one minimum power window before the
 // end of the window.
 func analysePostLoad(power []Sample, start, end time.Time, lag, minimum time.Duration, tests sessionTests) (postLoadObservation, error) {
@@ -397,7 +356,6 @@ func analysePostLoad(power []Sample, start, end time.Time, lag, minimum time.Dur
 	}
 
 	settle := start
-	var crossing, beforeCrossing float64
 	for {
 		idle, _, _, err := windowPower(power, settle, end)
 		if err != nil {
@@ -411,10 +369,7 @@ func analysePostLoad(power []Sample, start, end time.Time, lag, minimum time.Dur
 		if !next.After(settle) {
 			break
 		}
-		settle, crossing, beforeCrossing = next, observation.series[index][0], 0
-		if index > 0 {
-			beforeCrossing = observation.series[index-1][0]
-		}
+		settle = next
 		if end.Sub(settle) < minimum {
 			observation.settledAt = settle.Sub(start).Seconds()
 			observation.idle = notIdentified(fmt.Sprintf("post-load power settles at %.1f s, less than the minimum power window of %v before the end of the window", observation.settledAt, minimum))
@@ -426,18 +381,14 @@ func analysePostLoad(power []Sample, start, end time.Time, lag, minimum time.Dur
 		return observation, fmt.Errorf("post-load power: %w", err)
 	}
 	if loaded-idle <= tests.oneSided*math.Hypot(loadedError, idleError) {
-		// No drop: there is no decay to wait for or to time.
-		settle, crossing = start, 0
+		// No drop: there is no decay to wait for.
+		settle = start
 		if idle, idleError, _, err = windowPower(power, settle, end); err != nil {
 			return observation, fmt.Errorf("post-load power: %w", err)
 		}
 	}
 	observation.settledAt = settle.Sub(start).Seconds()
 	observation.idle = identifiedParameter(idle, [2]float64{idle - tests.twoSided*idleError, idle + tests.twoSided*idleError})
-	if hold := crossing - lag.Seconds(); hold > observation.interval {
-		parameter := identifiedParameter(hold, [2]float64{math.Max(beforeCrossing-lag.Seconds(), 0), hold})
-		observation.hold = &parameter
-	}
 	return observation, nil
 }
 

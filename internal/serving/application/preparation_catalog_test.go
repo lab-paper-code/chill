@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -517,8 +516,9 @@ func preparationSessionEvidence(t *testing.T, suffix string, mutate func(*deriva
 
 // preparationSessionResult is a small valid session result for the condition's
 // actor batch sizes: 60 service records per batch, each after a known idle
-// gap; identified power and input slopes; the executor's runtime report; and
-// the meter the power came from.
+// gap; a saturation and a mid level whose watts follow idle 4 W, awake step
+// 1.5 W, hold 0.5 s and input slope 0.4/b J; the executor's runtime report;
+// and the meter the power came from.
 func preparationSessionResult(t *testing.T, condition derivation.SessionCondition, meter metricobserver.SourceIdentity) derivation.SessionResult {
 	t.Helper()
 	meterSource, err := json.Marshal(meter)
@@ -527,8 +527,7 @@ func preparationSessionResult(t *testing.T, condition derivation.SessionConditio
 	}
 	result := derivation.SessionResult{
 		SchemaVersion: derivation.SessionResultSchemaVersion, Condition: condition,
-		Power: derivation.SessionPower{IdleWatts: *applicationTestSlope(`{"status":"Identified","value":4}`),
-			AwakeStepWatts: *applicationTestSlope(`{"status":"Identified","value":1.5}`), HoldSeconds: *applicationTestSlope(`{"status":"Identified","value":0.5}`)},
+		Power: derivation.SessionPower{IdleWatts: *applicationTestSlope(`{"status":"Identified","value":4}`)},
 		RuntimeMetadata: &native.RuntimeMetadata{Runtime: condition.Backend, RuntimeVersion: "1.16.0", Device: "cpu",
 			ModelFiles: []string{"/model/" + filepath.Base(condition.Artifact.Files[0])}, Inputs: condition.Preprocessor.Inputs, Outputs: condition.Preprocessor.Outputs,
 			Providers: []string{"CPUExecutionProvider"}, AvailableProviders: []string{"CPUExecutionProvider"}, IntraOpThreads: 2, InterOpThreads: 1,
@@ -536,8 +535,7 @@ func preparationSessionResult(t *testing.T, condition derivation.SessionConditio
 		MeterSource: meterSource,
 	}
 	for _, b := range condition.Actor.BatchSizes {
-		batch := derivation.SessionBatch{Batch: b, PeakMemoryBytes: 4096, MemoryKind: "peak",
-			JoulesPerInput: *applicationTestSlope(fmt.Sprintf(`{"status":"Identified","value":%g}`, 0.4/float64(b)))}
+		batch := derivation.SessionBatch{Batch: b, PeakMemoryBytes: 4096, MemoryKind: "peak"}
 		for i := range 60 {
 			batch.ServiceNanos = append(batch.ServiceNanos, int64(b)*int64(400_000+i%5*50_000))
 			batch.PrecedingIdleNanos = append(batch.PrecedingIdleNanos, int64(1_000_000+i%2*99_000_000))
@@ -547,6 +545,11 @@ func preparationSessionResult(t *testing.T, condition derivation.SessionConditio
 		batch.DispatchOccupancyNanos = []float64{}
 		rate := float64(1000 * b)
 		batch.SaturationInputRate = &rate
+		for k, levelRate := range []float64{rate, rate / 4} {
+			watts := 4 + 1.5*derivation.AwakeFraction(levelRate, levelRate*0.0005, 0.5) + 0.4/float64(b)*levelRate
+			batch.Levels = append(batch.Levels, derivation.SessionLevel{DriverLevelRow: derivation.DriverLevelRow{Kind: []string{derivation.LevelSaturation, derivation.LevelMid}[k]},
+				InputRate: levelRate, MeanWatts: &watts})
+		}
 		result.Batches = append(result.Batches, batch)
 	}
 	return result

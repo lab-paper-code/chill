@@ -45,6 +45,6 @@ func schedulerTestAwakePower(idle, step, hold float64) *ProfilePower {
 // schedulerTestModel is the power model of a hand-built capacity item: no
 // awake step and one batch with input slope e, so its load watts are e*rate.
 func schedulerTestModel(e float64) *schedulerLoadModel {
-	return &schedulerLoadModel{identity: fmt.Sprint("test/", e), stepOK: true, holdOK: true,
+	return &schedulerLoadModel{identity: fmt.Sprint("test/", e), powerOK: true,
 		batches: []schedulerLoadBatch{{slope: e, slopeOK: true, busyOK: true}}}
 }

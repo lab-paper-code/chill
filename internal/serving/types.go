@@ -194,16 +194,22 @@ type BatchProfile struct {
 	// MemoryBasis is transient derivation lineage; retained observation profile
 	// bodies keep their existing stored contract. Catalog reads expose it.
 	MemoryBasis profilederivation.MemoryBasis `json:"-"`
-	// InputSlopeJoules is the energy one more input per second adds to node
-	// power at this batch size, with its identification status.
-	// SaturationInputRate and DispatchOccupancyNanos come from the same session.
-	InputSlopeJoules       *profilederivation.SessionParameter `json:"inputSlopeJoules,omitempty"`
-	SaturationInputRate    *float64                            `json:"saturationInputRate,omitempty"`
-	DispatchOccupancyNanos []float64                           `json:"dispatchOccupancyNanos,omitempty"`
+	// InputSlopeJoules is the scheduler's per-input term of node power at this
+	// batch size, fitted at the evidence boundary, with its identification
+	// status. SaturationJoulesPerInput is the saturation level's watts above
+	// idle per input, the energy native ranks batch sizes by; the catalog
+	// delivers only batches that have it. SaturationInputRate and
+	// DispatchOccupancyNanos come from the same session.
+	InputSlopeJoules         *profilederivation.SessionParameter `json:"inputSlopeJoules,omitempty"`
+	SaturationJoulesPerInput *float64                            `json:"saturationJoulesPerInput,omitempty"`
+	SaturationInputRate      *float64                            `json:"saturationInputRate,omitempty"`
+	DispatchOccupancyNanos   []float64                           `json:"dispatchOccupancyNanos,omitempty"`
 }
 
-// ProfilePower is a session's node power model: settled idle watts, the step
-// while awake, and how long the node stays awake after an execution.
+// ProfilePower is a profile's node power model, computed at the evidence
+// boundary from the session's stored levels: settled idle watts, and the awake
+// step and hold of the scheduler's awake fraction, fit coefficients that are
+// identified together.
 type ProfilePower struct {
 	IdleWatts      profilederivation.SessionParameter `json:"idleWatts"`
 	AwakeStepWatts profilederivation.SessionParameter `json:"awakeStepWatts"`
@@ -217,17 +223,14 @@ type Profile struct {
 	Reference evidencestore.ObjectIdentity `json:"reference"`
 	// SourceVersion is the BEO resourceVersion. Every status or spec update
 	// changes it; immutable result objects are named by Reference.
-	SourceVersion string                          `json:"-"`
-	Evidence      []evidencestore.ObjectIdentity  `json:"evidence"`
-	NodeName      string                          `json:"nodeName"`
-	Condition     profilederivation.CurvePlanSpec `json:"condition"`
-	Batches       []BatchProfile                  `json:"batches"`
-	// IdleBaselineWatts is no longer read by the scheduler (Power.IdleWatts is);
-	// it stays until the offline holdout tool moves to session results.
-	IdleBaselineWatts float64                       `json:"idleBaselineWatts"`
-	MeasuredAt        time.Time                     `json:"measuredAt"`
-	RuntimeMetadata   *firstfloor.RuntimeMetadata   `json:"runtimeMetadata,omitempty"`
-	MetricSource      metricobserver.SourceIdentity `json:"metricSource"`
+	SourceVersion   string                          `json:"-"`
+	Evidence        []evidencestore.ObjectIdentity  `json:"evidence"`
+	NodeName        string                          `json:"nodeName"`
+	Condition       profilederivation.CurvePlanSpec `json:"condition"`
+	Batches         []BatchProfile                  `json:"batches"`
+	MeasuredAt      time.Time                       `json:"measuredAt"`
+	RuntimeMetadata *firstfloor.RuntimeMetadata     `json:"runtimeMetadata,omitempty"`
+	MetricSource    metricobserver.SourceIdentity   `json:"metricSource"`
 	// RuntimeDelivery is the JSON delivery of the measured runtime, read from
 	// the session result. Preparation projects RKNNLite host access and the
 	// runner's delivery file from it; views and observation logs omit it.
@@ -283,18 +286,16 @@ func (p *Profile) MeanNanos(b int) (float64, bool) {
 }
 
 // NativeBundle projects this profile for immutable startup delivery. The
-// runner's per-item energy is the batch's input slope: native ranks batch sizes
-// by it, and the awake step it leaves out is shared by every batch size. A
-// slope that is not identified becomes NaN, which native refuses as an invalid
-// measured batch; preparation reports that before publishing a bundle.
+// runner's per-item energy is the batch's saturation energy per input: native
+// ranks batch sizes by it. A batch without one becomes NaN, which native
+// refuses as an invalid measured batch; preparation reports that before
+// publishing a bundle.
 func (p *Profile) NativeBundle() firstfloor.ProfileBundle {
 	bundle := firstfloor.ProfileBundle{ProfileID: p.ID, Batches: make([]firstfloor.BatchProfile, len(p.Batches))}
 	for i, batch := range p.Batches {
 		energy := math.NaN()
-		if batch.InputSlopeJoules != nil {
-			if slope, ok := batch.InputSlopeJoules.Value(); ok {
-				energy = slope
-			}
+		if batch.SaturationJoulesPerInput != nil {
+			energy = *batch.SaturationJoulesPerInput
 		}
 		bundle.Batches[i] = firstfloor.BatchProfile{
 			Size: batch.Batch, Distribution: batch.ServiceDistribution,

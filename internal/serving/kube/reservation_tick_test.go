@@ -338,7 +338,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 		if profiles[index].NodeName == "b" {
 			profiles[index].Power = catalogTestPower("20")
 		}
-		profiles[index].Batches[0].InputSlopeJoules = catalogTestSlope("0")
+		profiles[index].Batches[0].InputSlopeJoules, profiles[index].Batches[0].SaturationJoulesPerInput = catalogTestSlope("0"), catalogTestEnergy(0)
 	}
 	c.observer.SetProfiles(profiles)
 	initial, err := c.capture(ctx, time.Now(), c.config)

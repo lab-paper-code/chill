@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 // schedulerLoadModel is one instance's measured power terms under its batch
@@ -16,7 +18,9 @@ type schedulerLoadModel struct {
 	identity, profile string
 	batches           []schedulerLoadBatch
 	step, hold        float64
-	stepOK, holdOK    bool
+	// powerOK is true when the profile's awake step and hold are identified;
+	// the boundary fit identifies both or neither.
+	powerOK bool
 }
 
 type schedulerLoadBatch struct {
@@ -34,8 +38,10 @@ func newSchedulerLoadModel(p *Profile, maxBatch int) *schedulerLoadModel {
 	}
 	m := &schedulerLoadModel{identity: fmt.Sprintf("%s/b%d", p.ID, maxBatch), profile: p.ID}
 	if p.Power != nil {
-		m.step, m.stepOK = p.Power.AwakeStepWatts.Value()
-		m.hold, m.holdOK = p.Power.HoldSeconds.Value()
+		var holdOK bool
+		m.step, m.powerOK = p.Power.AwakeStepWatts.Value()
+		m.hold, holdOK = p.Power.HoldSeconds.Value()
+		m.powerOK = m.powerOK && holdOK
 	}
 	batches := slices.Clone(p.Batches)
 	slices.SortFunc(batches, func(a, b BatchProfile) int { return cmp.Compare(a.Batch, b.Batch) })
@@ -83,18 +89,17 @@ func (m *schedulerLoadModel) batchAt(rate float64) *schedulerLoadBatch {
 // lambda_i > 0:
 //   - lambda = sum_i lambda_i, and rho = min(1, sum_i lambda_i*s_i/b_i), the
 //     node's utilisation, where s_i is the mean service time of batch b_i;
-//   - a = 1 - (1-rho)*exp(-lambda*tau) is the awake fraction, the share of
-//     time the node is executing or within the hold tau after an execution:
-//     an instance grows batches only from a queue, so an idle period ends
-//     with the next input;
+//   - a = profilederivation.AwakeFraction(lambda, rho, tau), the share of time
+//     the node is executing or within tau after an execution, the formula the
+//     profile's S, tau and slopes were fitted with;
 //   - S and tau are taken together from the loaded configuration with the
 //     largest S, since the fit trades one against the other;
 //   - b_i is the smallest measured batch size, within the instance's batch
 //     limit, whose saturation input rate covers lambda_i (the largest
 //     measured one when none does), and e_i is that batch's input slope.
 //
-// ok is false when a value the sum needs is not identified: S of a loaded
-// configuration, tau when the chosen S is above zero, e_i or s_i. Callers then
+// ok is false when a value the sum needs is not identified: S and tau of a
+// loaded configuration, e_i or s_i. Callers then
 // treat the node's energy as not comparable, never as a number. Without load
 // the term is zero and needs no value.
 func schedulerLoadWatts(models []*schedulerLoadModel, rates []float64) (float64, bool) {
@@ -105,7 +110,7 @@ func schedulerLoadWatts(models []*schedulerLoadModel, rates []float64) (float64,
 		if rate <= 0 {
 			continue
 		}
-		if m == nil || !m.stepOK {
+		if m == nil || !m.powerOK {
 			return 0, false
 		}
 		b := m.batchAt(rate)
@@ -117,13 +122,10 @@ func schedulerLoadWatts(models []*schedulerLoadModel, rates []float64) (float64,
 			awake = m
 		}
 	}
-	if awake == nil || awake.step == 0 {
+	if awake == nil {
 		return watts, true
 	}
-	if !awake.holdOK {
-		return 0, false
-	}
-	return watts + awake.step*(1-(1-min(rho, 1))*math.Exp(-lambda*awake.hold)), true
+	return watts + awake.step*profilederivation.AwakeFraction(lambda, rho, awake.hold), true
 }
 
 // schedulerRate is one instance's input rate in one routing state.

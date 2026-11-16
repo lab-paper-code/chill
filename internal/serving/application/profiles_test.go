@@ -59,8 +59,8 @@ func measuredAdoptionProfile() serving.Profile {
 			WarmupIterations: 5, InitializedBatches: []int{1, 2, 4},
 		},
 		Batches: []serving.BatchProfile{
-			{Batch: 1, MemoryBytes: 2048, InputSlopeJoules: applicationTestSlope(`{"status":"Identified","value":0.3}`), ServiceSamples: fixtures.ServiceSamples("physical-trial", 1e6)},
-			{Batch: 2, MemoryBytes: 4096, InputSlopeJoules: applicationTestSlope(`{"status":"Identified","value":0.2}`), ServiceSamples: fixtures.ServiceSamples("physical-trial", 3e6)},
+			{Batch: 1, MemoryBytes: 2048, InputSlopeJoules: applicationTestSlope(`{"status":"Identified","value":0.3}`), SaturationJoulesPerInput: &[]float64{0.4}[0], ServiceSamples: fixtures.ServiceSamples("physical-trial", 1e6)},
+			{Batch: 2, MemoryBytes: 4096, InputSlopeJoules: applicationTestSlope(`{"status":"Identified","value":0.2}`), SaturationJoulesPerInput: &[]float64{0.25}[0], ServiceSamples: fixtures.ServiceSamples("physical-trial", 3e6)},
 		},
 	}
 	profile.Condition.Actor = native.Config{

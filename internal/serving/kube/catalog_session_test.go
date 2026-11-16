@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -57,10 +58,16 @@ func catalogTestPower(idle string) *serving.ProfilePower {
 	return &serving.ProfilePower{IdleWatts: *catalogTestSlope(idle), AwakeStepWatts: *catalogTestSlope("0"), HoldSeconds: *catalogTestSlope("0")}
 }
 
+// catalogTestEnergy is a hand-built batch's saturation energy per input, the
+// value native ranks batch sizes by.
+func catalogTestEnergy(joules float64) *float64 { return &joules }
+
 var catalogTestMeter = metricobserver.SourceIdentity{Kind: "edgemetrics", NodeName: "node-a", Endpoint: "http://node-a:9100/metrics", Metric: "node_watts"}
 
 // catalogSessionResult is a small hand-made session result for batches 1 and 2
-// of an ort-cpu firstfloor configuration on node-a.
+// of an ort-cpu firstfloor configuration on node-a: a saturation and a mid
+// level per batch whose watts follow idle 10 W, awake step 4 W, hold 0.5 s
+// and input slopes 0.3 J and 0.2 J.
 func catalogSessionResult(t testing.TB) profilederivation.SessionResult {
 	t.Helper()
 	meter, err := json.Marshal(catalogTestMeter)
@@ -81,7 +88,7 @@ func catalogSessionResult(t testing.TB) profilederivation.SessionResult {
 			Preprocessor: profilederivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}},
 			Dataset:      &profilederivation.CurveDatasetContract{Name: "data", UID: "data-uid"},
 			Firstfloor:   &modelcompat.FirstfloorSettings{MaxBatchSize: 2, MaxQueueSize: 8}, Actor: actor},
-		Power: profilederivation.SessionPower{IdleWatts: identified("10"), AwakeStepWatts: identified("4"), HoldSeconds: identified("0.5")},
+		Power: profilederivation.SessionPower{IdleWatts: identified("10")},
 		// A session keeps the metadata of its batch-1 instance, which
 		// initialized only its own batch size.
 		RuntimeMetadata: &firstfloor.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.19.0", Providers: []string{"CPUExecutionProvider"},
@@ -89,11 +96,16 @@ func catalogSessionResult(t testing.TB) profilederivation.SessionResult {
 		MeterSource: meter,
 	}
 	for _, b := range []int{1, 2} {
-		rate := float64(100 * b)
-		result.Batches = append(result.Batches, profilederivation.SessionBatch{Batch: b,
+		rate, slope := float64(100*b), []float64{0.3, 0.2}[b-1]
+		batch := profilederivation.SessionBatch{Batch: b,
 			ServiceNanos: []int64{int64(b) * 9e6, int64(b) * 10e6, int64(b) * 11e6}, PrecedingIdleNanos: []int64{0, 0, 1e9},
-			DispatchOccupancyNanos: []float64{300, 100, 200}, SaturationInputRate: &rate,
-			JoulesPerInput: identified([]string{"0.3", "0.2"}[b-1]), PeakMemoryBytes: 32 << 20, MemoryKind: "peak"})
+			DispatchOccupancyNanos: []float64{300, 100, 200}, SaturationInputRate: &rate, PeakMemoryBytes: 32 << 20, MemoryKind: "peak"}
+		for k, levelRate := range []float64{rate, rate / 4} {
+			watts := 10 + 4*profilederivation.AwakeFraction(levelRate, levelRate*0.01, 0.5) + slope*levelRate
+			batch.Levels = append(batch.Levels, profilederivation.SessionLevel{DriverLevelRow: profilederivation.DriverLevelRow{
+				Kind: []string{profilederivation.LevelSaturation, profilederivation.LevelMid}[k]}, InputRate: levelRate, MeanWatts: &watts})
+		}
+		result.Batches = append(result.Batches, batch)
 	}
 	return result
 }
@@ -136,9 +148,10 @@ func catalogStoredFixture(t *testing.T, payload []byte, schema string) (*Catalog
 	return catalog, types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}, objects, identity
 }
 
-// A stored session result becomes the profile the scheduler reads: power,
-// per-batch slopes, records, occupancy, memory, runtime facts and the meter
-// a ChillServer meter declaration binds.
+// A stored session result becomes the profile the scheduler reads: the power
+// model computed from the stored levels, per-batch slopes and saturation
+// energies, records, occupancy, memory, runtime facts and the meter a
+// ChillServer meter declaration binds.
 func TestCatalogBuildsProfileFromSessionResult(t *testing.T) {
 	catalog, source, _, identity := catalogEvidenceFixture(t)
 	view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
@@ -150,7 +163,8 @@ func TestCatalogBuildsProfileFromSessionResult(t *testing.T) {
 	step, _ := p.Power.AwakeStepWatts.Value()
 	slope, slopeOK := p.Batches[1].InputSlopeJoules.Value()
 	if p.ID != "chill-system/catalog-campaign/campaign-uid" || p.Reference != identity || p.NodeName != "node-a" ||
-		!idleOK || idle != 10 || step != 4 || !slopeOK || slope != 0.2 || *p.Batches[1].SaturationInputRate != 200 ||
+		!idleOK || idle != 10 || math.Abs(step-4) > 1e-6 || !slopeOK || math.Abs(slope-0.2) > 1e-8 || *p.Batches[1].SaturationInputRate != 200 ||
+		math.Abs(*p.Batches[0].SaturationJoulesPerInput-0.34) > 1e-12 || math.Abs(*p.Batches[1].SaturationJoulesPerInput-0.22) > 1e-12 ||
 		len(p.Batches) != 2 || len(p.Batches[0].ServiceSamples) != 3 || p.Batches[0].ServiceSamples[2].TrialID != "campaign-uid" ||
 		*p.Batches[0].ServiceSamples[2].PrecedingIdleNanos != 1e9 || p.Batches[0].ServiceDistribution == nil ||
 		p.Batches[0].MemoryBytes != 32<<20 || p.Batches[0].MemoryBasis.Observation != "peak" || len(p.Batches[0].DispatchOccupancyNanos) != 3 ||
@@ -177,9 +191,11 @@ func assertCatalogSessionCondition(t *testing.T, p serving.Profile) {
 	}
 }
 
-func TestCatalogKeepsIdentifiedBatchesAndQueryKeepsAllMeasurements(t *testing.T) {
+// A batch without saturation watts is not delivered; the query view keeps
+// every stored batch and says why its saturation energy is missing.
+func TestCatalogKeepsMeasuredBatchesAndQueryKeepsAllMeasurements(t *testing.T) {
 	result := catalogSessionResult(t)
-	result.Batches[1].JoulesPerInput = catalogTestParameter(t, `{"status":"NotIdentified","reason":"the slope is not determined"}`)
+	result.Batches[1].Levels[0].MeanWatts = nil
 	raw, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
@@ -193,16 +209,16 @@ func TestCatalogKeepsIdentifiedBatchesAndQueryKeepsAllMeasurements(t *testing.T)
 		t.Fatalf("catalog=%+v err=%v", view, err)
 	}
 	batch := view.Profiles[0].Batches[0]
-	if slope, ok := batch.InputSlopeJoules.Value(); !ok || slope != 0.3 || batch.Batch != 1 || batch.MemoryBytes != 32<<20 {
-		t.Fatalf("identified measurement changed: %+v", batch)
+	if math.Abs(*batch.SaturationJoulesPerInput-0.34) > 1e-12 || batch.Batch != 1 || batch.MemoryBytes != 32<<20 {
+		t.Fatalf("measured batch changed: %+v", batch)
 	}
 	decoded, err := profilederivation.DecodeSessionResult([]byte(payload))
 	if err != nil {
 		t.Fatal(err)
 	}
 	query := queryapi.BuildSessionResultView(decoded)
-	if len(query.Batches) != 2 || query.Batches[1].JoulesPerInput.Value != nil ||
-		query.Batches[1].JoulesPerInput.Status != profilederivation.ParameterNotIdentified {
+	if len(query.Batches) != 2 || query.Batches[1].SaturationJoulesPerInput.Value != nil ||
+		query.Batches[1].SaturationJoulesPerInput.Reason != "batch 2 has no saturation level with measured watts" {
 		t.Fatalf("query lost measured batch: %+v", query.Batches)
 	}
 }

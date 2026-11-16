@@ -249,10 +249,11 @@ func renderMeasurementResult(table io.Writer, result queryapi.BatchEnergyOptimiz
 	return nil
 }
 
-// renderSessionResult prints a session result's power parameters, its batch
-// sizes, each batch's levels and the stop.
+// renderSessionResult prints a session result's power model, its batch sizes
+// with the fitted input slope and the saturation energy per input, each
+// batch's levels and the stop. A not-identified value prints its reason.
 func renderSessionResult(table io.Writer, session queryapi.SessionResultView) error {
-	if _, err := fmt.Fprintln(table, "\nPOWER_PARAMETER\tSTATUS\tVALUE\tRANGE\tUNIT"); err != nil {
+	if _, err := fmt.Fprintln(table, "\nPOWER_PARAMETER\tSTATUS\tVALUE\tRANGE\tUNIT\tREASON"); err != nil {
 		return err
 	}
 	for _, parameter := range []struct {
@@ -263,20 +264,21 @@ func renderSessionResult(table io.Writer, session queryapi.SessionResultView) er
 		{"awakeStepWatts", session.Power.AwakeStepWatts},
 		{"holdSeconds", session.Power.HoldSeconds},
 	} {
-		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", parameter.name, parameter.value.Status,
-			sessionValue(parameter.value.Value), sessionRange(parameter.value.Range), parameter.value.Unit); err != nil {
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", parameter.name, parameter.value.Status,
+			sessionValue(parameter.value.Value), sessionRange(parameter.value.Range), parameter.value.Unit, display(parameter.value.Reason)); err != nil {
 			return err
 		}
 	}
-	const batchHeader = "\nBATCH\tSERVICE_RECORDS\tSATURATION_INPUTS_PER_S\tJOULES_PER_INPUT\tSTATUS\tRANGE" +
+	const batchHeader = "\nBATCH\tSERVICE_RECORDS\tSATURATION_INPUTS_PER_S\tINPUT_SLOPE_J\tSTATUS\tSATURATION_J_PER_INPUT\tSTATUS" +
 		"\tPEAK_MEMORY_BYTES\tMEMORY_KIND\tOCCUPANCY_SAMPLES\tOCCUPANCY_MEDIAN_NS"
 	if _, err := fmt.Fprintln(table, batchHeader); err != nil {
 		return err
 	}
 	for _, batch := range session.Batches {
-		if _, err := fmt.Fprintf(table, "%d\t%d\t%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\n",
+		if _, err := fmt.Fprintf(table, "%d\t%d\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\n",
 			batch.Batch, batch.ServiceRecordCount, sessionValue(batch.SaturationInputRate),
-			sessionValue(batch.JoulesPerInput.Value), batch.JoulesPerInput.Status, sessionRange(batch.JoulesPerInput.Range),
+			sessionValue(batch.JoulesPerInput.Value), batch.JoulesPerInput.Status,
+			sessionValue(batch.SaturationJoulesPerInput.Value), batch.SaturationJoulesPerInput.Status,
 			batch.PeakMemoryBytes, display(batch.MemoryKind), batch.DispatchOccupancy.Count,
 			sessionValue(batch.DispatchOccupancy.MedianNanos)); err != nil {
 			return err

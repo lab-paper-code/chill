@@ -34,6 +34,8 @@ type SessionParameterView struct {
 	Unit   string                            `json:"unit"`
 }
 
+// SessionPowerView carries the stored idle observation and the node power
+// model SessionResult.LoadPower computes from the stored levels.
 type SessionPowerView struct {
 	IdleWatts            SessionParameterView `json:"idleWatts"`
 	AwakeStepWatts       SessionParameterView `json:"awakeStepWatts"`
@@ -47,15 +49,18 @@ type SessionPowerView struct {
 }
 
 type SessionBatchView struct {
-	Batch               int                  `json:"batch"`
-	ServiceRecordCount  int                  `json:"serviceRecordCount"`
-	SaturationInputRate *float64             `json:"saturationInputRate,omitempty"`
-	JoulesPerInput      SessionParameterView `json:"joulesPerInput"`
-	PeakMemoryBytes     int64                `json:"peakMemoryBytes,omitempty"`
-	MemoryKind          string               `json:"memoryKind"`
-	DispatchOccupancy   SessionOccupancyView `json:"dispatchOccupancy"`
-	PrepareCostKey      string               `json:"prepareCostKey"`
-	RemoveCostKey       string               `json:"removeCostKey"`
+	Batch               int      `json:"batch"`
+	ServiceRecordCount  int      `json:"serviceRecordCount"`
+	SaturationInputRate *float64 `json:"saturationInputRate,omitempty"`
+	// JoulesPerInput is the batch's fitted input slope of node power and
+	// SaturationJoulesPerInput the executor's energy per input.
+	JoulesPerInput           SessionParameterView `json:"joulesPerInput"`
+	SaturationJoulesPerInput SessionParameterView `json:"saturationJoulesPerInput"`
+	PeakMemoryBytes          int64                `json:"peakMemoryBytes,omitempty"`
+	MemoryKind               string               `json:"memoryKind"`
+	DispatchOccupancy        SessionOccupancyView `json:"dispatchOccupancy"`
+	PrepareCostKey           string               `json:"prepareCostKey"`
+	RemoveCostKey            string               `json:"removeCostKey"`
 	// Levels are the stored levels as measured, in the order they ran.
 	Levels []profilederivation.SessionLevel `json:"levels"`
 }
@@ -67,13 +72,14 @@ type SessionOccupancyView struct {
 }
 
 func BuildSessionResultView(result profilederivation.SessionResult) SessionResultView {
+	power := result.LoadPower()
 	view := SessionResultView{
 		SchemaVersion: result.SchemaVersion, Condition: result.Condition, Settings: result.Settings,
 		Stop: result.Stop, MeterSource: result.MeterSource,
 		Power: SessionPowerView{
-			IdleWatts:            parameterView(result.Power.IdleWatts, "W"),
-			AwakeStepWatts:       parameterView(result.Power.AwakeStepWatts, "W"),
-			HoldSeconds:          parameterView(result.Power.HoldSeconds, "s"),
+			IdleWatts:            parameterView(power.IdleWatts, "W"),
+			AwakeStepWatts:       parameterView(power.AwakeStepWatts, "W"),
+			HoldSeconds:          parameterView(power.HoldSeconds, "s"),
 			MeterIntervalSeconds: result.Power.MeterIntervalSeconds,
 			SettledAtSeconds:     result.Power.SettledAtSeconds,
 			PostLoad:             result.Power.PostLoad,
@@ -87,9 +93,10 @@ func BuildSessionResultView(result profilederivation.SessionResult) SessionResul
 	for i, batch := range result.Batches {
 		view.Batches[i] = SessionBatchView{
 			Batch: batch.Batch, ServiceRecordCount: len(batch.ServiceNanos),
-			SaturationInputRate: batch.SaturationInputRate,
-			JoulesPerInput:      parameterView(batch.JoulesPerInput, "J"),
-			PeakMemoryBytes:     batch.PeakMemoryBytes, MemoryKind: batch.MemoryKind,
+			SaturationInputRate:      batch.SaturationInputRate,
+			JoulesPerInput:           parameterView(power.Batches[i].InputSlopeJoules, "J"),
+			SaturationJoulesPerInput: parameterView(power.Batches[i].SaturationJoulesPerInput, "J"),
+			PeakMemoryBytes:          batch.PeakMemoryBytes, MemoryKind: batch.MemoryKind,
 			DispatchOccupancy: SessionOccupancyView{
 				Count: len(batch.DispatchOccupancyNanos), MedianNanos: median(batch.DispatchOccupancyNanos),
 			},

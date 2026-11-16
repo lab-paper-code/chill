@@ -136,8 +136,9 @@ func queryCoverageIssues(issues []servingkube.CatalogIssue) []queryapi.CoverageC
 	return out
 }
 
-// powerIdentified reports whether a session profile identified all three
-// power parameters, nil for a profile without a power model.
+// powerIdentified reports whether a session profile's power model, computed
+// by the catalog from the stored levels, identified idle, step and hold; nil
+// for a profile without a power model.
 func powerIdentified(power *serving.ProfilePower) *bool {
 	if power == nil {
 		return nil

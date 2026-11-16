@@ -16,11 +16,13 @@ def _numeric(value):
 
 
 def _estimate(value):
+    """A profile estimate; only the measured idle watts carry a range, the
+    power coefficients the catalog computes from stored levels carry none."""
     if not isinstance(value['status'], str):
         raise ValueError('Missing estimate status')
     if value['status'] == 'Identified':
         _numeric(value['value'])
-    for bound in value['range']:
+    for bound in value.get('range', ()):
         _numeric(bound)
 
 

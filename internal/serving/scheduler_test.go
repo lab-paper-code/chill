@@ -80,10 +80,15 @@ func schedulerTestBatchProfile(batch BatchProfile, durations []float64) BatchPro
 }
 
 // A fixture batch that names no input slope has an identified zero slope, the
-// energy such fixtures had before the slope replaced the per-input energy.
+// energy such fixtures had before the slope replaced the per-input energy. One
+// that names no saturation energy per input ranks by its slope's value, the
+// order these fixtures were written against.
 func schedulerTestPairedBatch(batch BatchProfile, samples []firstfloor.ServiceSample) BatchProfile {
 	if batch.InputSlopeJoules == nil {
 		batch.InputSlopeJoules = schedulerTestSlope(0)
+	}
+	if slope, ok := batch.InputSlopeJoules.Value(); ok && batch.SaturationJoulesPerInput == nil {
+		batch.SaturationJoulesPerInput = &slope
 	}
 	batch.ServiceSamples = samples
 	var err error
@@ -167,24 +172,22 @@ func schedulerReplayForTest(s SchedulerSettings, snap SchedulerSnapshot, c Sched
 	return result
 }
 
-// Native batching needs an identified, nonnegative input slope per batch, and
-// the policy carries that slope; a not-identified slope is refused.
-func TestReplayPolicyCarriesIdentifiedInputSlope(t *testing.T) {
-	for _, slope := range []*derivation.SessionParameter{schedulerTestSlope(-1), schedulerTestSlope(0), schedulerTestSlope(1), nil} {
+// Native batching ranks batch sizes by the saturation energy per input, not
+// the input slope: the policy carries that energy, a batch without one is
+// refused, and a negative one is refused.
+func TestReplayPolicyCarriesSaturationEnergy(t *testing.T) {
+	minus, zero, one := -1.0, 0.0, 1.0
+	for _, energy := range []*float64{&minus, &zero, &one, nil} {
 		_, snapshot := schedulerFixture()
 		instance := snapshot.Instances[0]
-		if slope == nil {
-			missing := schedulerTestNotIdentified("inseparable from the awake step")
-			slope = &missing
-		}
-		instance.Profile.Batches[0].InputSlopeJoules = slope
-		value, identified := slope.Value()
+		instance.Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(7)
+		instance.Profile.Batches[0].SaturationJoulesPerInput = energy
 		reasons, _ := schedulerValidateService(instance, nil)
-		if rejected := slices.Contains(reasons, "MissingServiceEnergyEvidence:"+instance.ID); rejected != (!identified || value < 0) {
-			t.Fatalf("slope %+v: %v", slope, reasons)
+		if rejected := slices.Contains(reasons, "MissingServiceEnergyEvidence:"+instance.ID); rejected != (energy == nil || *energy < 0) {
+			t.Fatalf("energy %v: %v", energy, reasons)
 		}
-		if policy := schedulerPolicy(instance); identified && policy.Batches[0].EnergyPerItemJ != value || !identified && !math.IsNaN(policy.Batches[0].EnergyPerItemJ) {
-			t.Fatalf("policy energy %g for slope %+v", policy.Batches[0].EnergyPerItemJ, slope)
+		if policy := schedulerPolicy(instance); energy != nil && policy.Batches[0].EnergyPerItemJ != *energy || energy == nil && !math.IsNaN(policy.Batches[0].EnergyPerItemJ) {
+			t.Fatalf("policy energy %g for saturation energy %v", policy.Batches[0].EnergyPerItemJ, energy)
 		}
 	}
 }

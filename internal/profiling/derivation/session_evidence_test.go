@@ -151,11 +151,13 @@ func storedSession(trials []fixtureTrial, session string) SessionInput {
 
 func describe(p SessionParameter) string {
 	value, ok := p.Value()
-	bounds, _ := p.Range()
 	if !ok {
-		return fmt.Sprintf("%s %.4g..%.4g", p.Status(), bounds[0], bounds[1])
+		return fmt.Sprintf("%s (%s)", p.Status(), p.Reason())
 	}
-	return fmt.Sprintf("%.4g %s %.4g..%.4g", value, p.Status(), bounds[0], bounds[1])
+	if bounds, ranged := p.Range(); ranged {
+		return fmt.Sprintf("%.4g %s %.4g..%.4g", value, p.Status(), bounds[0], bounds[1])
+	}
+	return fmt.Sprintf("%.4g", value)
 }
 
 // genesis2's stored post-load series all settle: its twelve settled idles,
@@ -171,8 +173,8 @@ func TestSessionIdleSettlesOnStoredPostLoad(t *testing.T) {
 				t.Fatal(err)
 			}
 			idle, ok := observation.idle.Value()
-			t.Logf("%s %s: idle %s from %.0f s, meter interval %.3g s, decay hold %v", condition, trial.Run[strings.LastIndex(trial.Run, "-b")+1:],
-				describe(observation.idle), observation.settledAt, observation.interval, observation.hold != nil)
+			t.Logf("%s %s: idle %s from %.0f s, meter interval %.3g s", condition, trial.Run[strings.LastIndex(trial.Run, "-b")+1:],
+				describe(observation.idle), observation.settledAt, observation.interval)
 			if condition == "genesis2-ic-cuda" && (!ok || idle < 65.9 || idle > 67.1) {
 				t.Errorf("%s: idle %s %s", trial.Run, describe(observation.idle), observation.idle.Reason())
 			}
@@ -180,32 +182,33 @@ func TestSessionIdleSettlesOnStoredPostLoad(t *testing.T) {
 	}
 }
 
-// The design's acceptance check on stored evidence: power derived from one
+// The design's acceptance check on stored evidence: power computed from one
 // stored trial per batch size predicts every level of the other trials of the
 // same condition, including the utilisation levels a session never runs.
 func TestSessionPowerPredictsOtherStoredTrials(t *testing.T) {
-	// Bounds sit just above the recomputed maxima over sessions a1-a3:
-	// genesis2 2.73-3.13 W, jetsono 0.55-1.01 W and lattepanda 0.12-0.15 W.
-	// jetsono's batch 8 slope is a value near zero (0.021, 0.014, 0.020 J
-	// with ranges from 0 to about 0.10 J), so every session predicts all 40
-	// levels of the other trials.
-	bounds := map[string]float64{"genesis2-ic-cuda": 3.2, "jetsono-ic-cpu": 1.1, "lattepanda-ic-cpu": 0.2}
+	// Bounds sit just above the recomputed maxima over sessions a1-a3 with
+	// the scheduler's awake fraction: genesis2 2.70-3.07 W, jetsono
+	// 1.56-1.94 W and lattepanda 0.59-0.70 W.
+	bounds := map[string]float64{"genesis2-ic-cuda": 3.2, "jetsono-ic-cpu": 2.0, "lattepanda-ic-cpu": 0.75}
 	for condition, trials := range loadSessionFixture(t) {
 		for _, session := range []string{"a1", "a2", "a3"} {
 			result, err := DeriveSession(storedSession(trials, session))
 			if err != nil {
 				t.Fatalf("%s %s: %v", condition, session, err)
 			}
-			power := result.Power
+			power := result.LoadPower()
 			line := fmt.Sprintf("%s %s: idle %s, step %s, hold %s;", condition, session, describe(power.IdleWatts), describe(power.AwakeStepWatts), describe(power.HoldSeconds))
 			idle, idleOK := power.IdleWatts.Value()
 			step, stepOK := power.AwakeStepWatts.Value()
-			hold, holdOK := power.HoldSeconds.Value()
-			slope := map[int]float64{}
-			for _, batch := range result.Batches {
-				line += fmt.Sprintf(" b%d %s;", batch.Batch, describe(batch.JoulesPerInput))
-				if value, ok := batch.JoulesPerInput.Value(); ok {
+			hold, _ := power.HoldSeconds.Value()
+			slope, service := map[int]float64{}, map[int]float64{}
+			for i, batch := range result.Batches {
+				line += fmt.Sprintf(" b%d %s;", batch.Batch, describe(power.Batches[i].InputSlopeJoules))
+				if value, ok := power.Batches[i].InputSlopeJoules.Value(); ok {
 					slope[batch.Batch] = value
+				}
+				for _, nanos := range batch.ServiceNanos {
+					service[batch.Batch] += float64(nanos) / 1e9 / float64(len(batch.ServiceNanos))
 				}
 			}
 			worst, sum, count, skipped := 0.0, 0.0, 0, 0
@@ -213,10 +216,10 @@ func TestSessionPowerPredictsOtherStoredTrials(t *testing.T) {
 				if trialSession(trial.Run) == session {
 					continue
 				}
-				samples, rows := trial.power(), trial.rows()
-				for i, level := range trial.Levels {
+				samples := trial.power()
+				for _, level := range trial.Levels {
 					e, slopeOK := slope[trial.Batch]
-					if !idleOK || !slopeOK || !stepOK || (step > 0 && !holdOK) {
+					if !idleOK || !slopeOK || !stepOK {
 						skipped++
 						continue
 					}
@@ -225,11 +228,8 @@ func TestSessionPowerPredictsOtherStoredTrials(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					awake := 0.0
-					if window, _, ok := levelAwakeWindow(rows[i], 3*time.Second); ok {
-						awake = window.fraction(hold)
-					}
 					rate := float64(level.Completed) / trial.at(level.End).Sub(trial.at(level.Start)).Seconds()
+					awake := AwakeFraction(rate, rate*service[trial.Batch]/float64(trial.Batch), hold)
 					errorWatts := math.Abs(idle + step*awake + e*rate - joules/end.Sub(start).Seconds())
 					worst, sum, count = math.Max(worst, errorWatts), sum+errorWatts, count+1
 				}

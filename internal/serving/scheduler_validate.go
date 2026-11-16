@@ -235,13 +235,11 @@ func schedulerValidateService(i SchedulerInstance, reasons []string) ([]string, 
 		if b.MemoryBytes > maxMemory {
 			maxMemory = b.MemoryBytes
 		}
-		// Native batching ranks batch sizes by the input slope and refuses a
-		// batch without one; node energy itself is judged by schedulerLoadWatts.
-		slope, identified := 0.0, false
-		if b.InputSlopeJoules != nil {
-			slope, identified = b.InputSlopeJoules.Value()
-		}
-		if len(b.ServiceSamples) == 0 || b.ServiceDistribution == nil || !identified || slope < 0 || !schedulerFinite(slope) {
+		// Native batching ranks batch sizes by the saturation energy per input
+		// and refuses a batch without one; node energy itself is judged by
+		// schedulerLoadWatts.
+		energy := b.SaturationJoulesPerInput
+		if len(b.ServiceSamples) == 0 || b.ServiceDistribution == nil || energy == nil || *energy < 0 || !schedulerFinite(*energy) {
 			reasons = appendUnique(reasons, "MissingServiceEnergyEvidence:"+i.ID)
 		}
 		// Hydration validates every record once. The published distribution is

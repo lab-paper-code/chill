@@ -292,7 +292,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: err.Error()}}, nil
 	}
 	if len(profile.Batches) == 0 {
-		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "the session has no batch with service samples, measured memory, a valid saturation level and identified joules per input"}}, nil
+		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "the session has no batch with service samples, measured memory, a valid saturation level and a saturation energy per input (saturation watts and settled idle)"}}, nil
 	}
 	facts := serving.MeasurementFacts{
 		Request:         profilederivation.MeasurementRequestReference{Namespace: campaign.Namespace, Name: campaign.Name, UID: string(campaign.UID)},
@@ -305,10 +305,11 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	return profile, nil, nil
 }
 
-// sessionProfile maps a session result onto the serving profile. The condition
-// keeps the curve-plan shape its readers use: the planned batch sizes are the
-// measured ones, and the runtime version and provider come from the executor's
-// runtime report.
+// sessionProfile maps a session result onto the serving profile. The node
+// power model is computed here, once, from the stored measurements
+// (SessionResult.LoadPower). The condition keeps the curve-plan shape its
+// readers use: the planned batch sizes are the measured ones, and the runtime
+// version and provider come from the executor's runtime report.
 func sessionProfile(campaign *edgev1alpha1.BatchEnergyOptimization, reference evidencestore.ObjectIdentity, result profilederivation.SessionResult) (serving.Profile, error) {
 	if result.Condition.Firstfloor == nil || result.RuntimeMetadata == nil {
 		return serving.Profile{}, errors.New("native runtime/settings unavailable")
@@ -332,16 +333,18 @@ func sessionProfile(campaign *edgev1alpha1.BatchEnergyOptimization, reference ev
 			condition.RuntimeProvider = metadata.Providers[0]
 		}
 	}
+	power := result.LoadPower()
 	profile := serving.Profile{
 		ID: types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}.String() + "/" + string(campaign.UID), Reference: reference,
 		SourceVersion: campaign.ResourceVersion,
 		Evidence:      []evidencestore.ObjectIdentity{reference}, NodeName: session.NodeName,
 		MeasuredAt: measurementCompletedAt(campaign), RuntimeMetadata: result.RuntimeMetadata,
 		RuntimeDelivery: slices.Clone(result.RuntimeDelivery), MetricSource: meter,
-		Power: &serving.ProfilePower{IdleWatts: result.Power.IdleWatts, AwakeStepWatts: result.Power.AwakeStepWatts, HoldSeconds: result.Power.HoldSeconds},
+		Power: &serving.ProfilePower{IdleWatts: power.IdleWatts, AwakeStepWatts: power.AwakeStepWatts, HoldSeconds: power.HoldSeconds},
 	}
-	for _, batch := range result.Batches {
-		if _, identified := batch.JoulesPerInput.Value(); !identified {
+	for index, batch := range result.Batches {
+		energy, measured := power.Batches[index].SaturationJoulesPerInput.Value()
+		if !measured {
 			continue
 		}
 		if batch.PeakMemoryBytes <= 0 || batch.SaturationInputRate == nil || len(batch.ServiceNanos) < 2 {
@@ -356,13 +359,13 @@ func sessionProfile(campaign *edgev1alpha1.BatchEnergyOptimization, reference ev
 			slog.Warn("batch service records unavailable", "batch", batch.Batch, "reason", err)
 			continue
 		}
-		slope := batch.JoulesPerInput
+		slope := power.Batches[index].InputSlopeJoules
 		out := serving.BatchProfile{
 			Batch: batch.Batch, ServiceSamples: samples, ServiceDistribution: distribution,
 			MemoryBytes: uint64(batch.PeakMemoryBytes),
 			MemoryBasis: profilederivation.MemoryBasis{Observation: batch.MemoryKind,
 				Evidence: profilederivation.RawEvidenceIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size}},
-			InputSlopeJoules: &slope, DispatchOccupancyNanos: slices.Clone(batch.DispatchOccupancyNanos),
+			InputSlopeJoules: &slope, SaturationJoulesPerInput: &energy, DispatchOccupancyNanos: slices.Clone(batch.DispatchOccupancyNanos),
 		}
 		if batch.SaturationInputRate != nil {
 			rate := *batch.SaturationInputRate
@@ -389,6 +392,10 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 		if batch.SaturationInputRate != nil {
 			rate := *batch.SaturationInputRate
 			batch.SaturationInputRate = &rate
+		}
+		if batch.SaturationJoulesPerInput != nil {
+			energy := *batch.SaturationJoulesPerInput
+			batch.SaturationJoulesPerInput = &energy
 		}
 	}
 	if profile.Power != nil {

@@ -65,15 +65,19 @@ func TestSessionResultDecodesIntoTheView(t *testing.T) {
 		view.Campaign.StoredResult == nil || !view.Assessment.Evidence.Accepted {
 		t.Fatalf("view = %+v", view)
 	}
+	// The stored fit fields of an older result are not read: the view computes
+	// the power model from the one stored level, too few for the fit, and the
+	// saturation energy (12.5 - 7.5) / 80.
 	power := view.Session.Power
 	if power.IdleWatts.Value == nil || *power.IdleWatts.Value != 7.5 || power.IdleWatts.Unit != "W" ||
 		power.AwakeStepWatts.Status != profilederivation.ParameterNotIdentified || power.AwakeStepWatts.Value != nil ||
-		power.AwakeStepWatts.Range == nil || power.HoldSeconds.Unit != "s" || power.PostLoadSampleCount != 3 {
+		power.HoldSeconds.Value != nil || power.HoldSeconds.Unit != "s" || power.PostLoadSampleCount != 3 {
 		t.Fatalf("power = %+v", power)
 	}
 	batch := view.Session.Batches[0]
 	if batch.ServiceRecordCount != 3 || batch.DispatchOccupancy.Count != 4 || batch.DispatchOccupancy.MedianNanos == nil ||
-		*batch.DispatchOccupancy.MedianNanos != 25 || batch.JoulesPerInput.Unit != "J" || len(batch.Levels) != 1 ||
+		*batch.DispatchOccupancy.MedianNanos != 25 || batch.JoulesPerInput.Value != nil || batch.JoulesPerInput.Unit != "J" ||
+		batch.SaturationJoulesPerInput.Value == nil || *batch.SaturationJoulesPerInput.Value != 0.0625 || len(batch.Levels) != 1 ||
 		batch.PrepareCostKey != "prepare-1" || view.Session.Stop == nil || view.Session.Stop.Class != profilederivation.StopCapacityLimit {
 		t.Fatalf("batch = %+v", batch)
 	}
