@@ -240,7 +240,7 @@ func TestPathFeedbackObservedMeanUsesSameCausalSamples(t *testing.T) {
 
 func TestBuildPathFeedbackKeepsEachPathPost(t *testing.T) {
 	ms := float64(time.Millisecond)
-	var samples []PathTimingSample
+	samples := make([]PathTimingSample, 0, 40)
 	for k := range 20 {
 		samples = append(samples, PathTimingSample{Instance: "jetson-nano", PostNanos: float64(30+k) * ms}, PathTimingSample{Instance: "rasp5", PostNanos: float64(10+k%5) * ms})
 	}
