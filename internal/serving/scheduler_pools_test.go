@@ -11,6 +11,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
+const targetMode = "fixed"
+
 // poolsAddNode appends a Ready fixture Node with one unloaded baseline per mode.
 func poolsAddNode(snap *SchedulerSnapshot, uid string, watts map[string]float64) NodeReference {
 	n := snap.Nodes[0]
@@ -26,7 +28,6 @@ func poolsAddNode(snap *SchedulerSnapshot, uid string, watts map[string]float64)
 }
 
 func TestSchedulerLowestModePreservesMeasuredSelection(t *testing.T) {
-	const targetMode = "fixed"
 	_, snap := schedulerFixture()
 	base := snap.Baselines[0]
 	baseline := func(mode string, watts float64, age time.Duration) NodeBaseline {
@@ -186,7 +187,7 @@ func TestSchedulerNodeReasonsKeepNodeWithoutPlacement(t *testing.T) {
 	for _, reason := range []string{"", NodePlacementInventoryMissing, NodePowerModeUnavailable, NodeInstanceUnavailable} {
 		t.Run("reason="+reason, func(t *testing.T) {
 			s, snap := schedulerFixture()
-			node := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
+			node := poolsAddNode(&snap, "n2", map[string]float64{targetMode: 10, schedulerTestEcoMode: 6})
 			if reason != "" {
 				snap.Nodes[1].Reasons = []string{reason}
 			}
@@ -194,14 +195,14 @@ func TestSchedulerNodeReasonsKeepNodeWithoutPlacement(t *testing.T) {
 			snap.Options = append(snap.Options, poolsOption(option))
 			snap.Costs = []OperationCost{
 				poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(option), schedulerTestEcoMode),
-				poolsCost(schedulerActionPower, node, "fixed", schedulerTestEcoMode, ""),
+				poolsCost(schedulerActionPower, node, targetMode, schedulerTestEcoMode, ""),
 			}
 			d := capacityDecideForTest(t, s, snap)
 			if !slices.Equal(d.Keep.Nodes[1].Reasons, snap.Nodes[1].Reasons) {
 				t.Fatalf("Node reasons lost: %+v", d.Keep.Nodes[1])
 			}
 			lowered := slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == node && a.Fixed })
-			if lowered || d.Keep.Nodes[1].PowerMode != "fixed" {
+			if lowered || d.Keep.Nodes[1].PowerMode != targetMode {
 				t.Fatalf("new saving was preapplied to keep: %+v", d.Keep)
 			}
 			if placed := poolsEligibleChange(d, node); placed != (reason == "") {
@@ -224,17 +225,17 @@ func TestSchedulerComparedNodesLimitEnergyAndBaselineNeeds(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.MaxReplicas = 1
 	base := snap.Instances[0]
-	empty := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
+	empty := poolsAddNode(&snap, "n2", map[string]float64{targetMode: 10, schedulerTestEcoMode: 6})
 	poolsAddNode(&snap, "n3", nil)
-	move := poolsAddNode(&snap, "n4", map[string]float64{"fixed": 10})
-	eco := poolsAddNode(&snap, "n5", map[string]float64{"fixed": 10})
-	moved := poolsInstance(base, "opt-move", move, "fixed", "w1")
+	move := poolsAddNode(&snap, "n4", map[string]float64{targetMode: 10})
+	eco := poolsAddNode(&snap, "n5", map[string]float64{targetMode: 10})
+	moved := poolsInstance(base, "opt-move", move, targetMode, "w1")
 	raised := poolsInstance(base, "opt-eco", eco, schedulerTestEcoMode, "w1")
 	snap.Options = append(snap.Options, poolsOption(moved), poolsOption(raised))
 	snap.Costs = []OperationCost{
-		poolsCost(schedulerActionPrepare, move, "unloaded", schedulerState(moved), "fixed"),
-		poolsCost(schedulerActionRemove, base.Node, schedulerState(base), "unloaded", "fixed", schedulerState(base)),
-		poolsCost(schedulerActionPower, eco, "fixed", schedulerTestEcoMode, ""),
+		poolsCost(schedulerActionPrepare, move, "unloaded", schedulerState(moved), targetMode),
+		poolsCost(schedulerActionRemove, base.Node, schedulerState(base), "unloaded", targetMode, schedulerState(base)),
+		poolsCost(schedulerActionPower, eco, targetMode, schedulerTestEcoMode, ""),
 		poolsCost(schedulerActionPrepare, eco, "unloaded", schedulerState(raised), schedulerTestEcoMode),
 	}
 	d := capacityDecideForTest(t, s, snap)
@@ -261,10 +262,10 @@ func TestSchedulerDisabledWorkloadInstanceIsFixed(t *testing.T) {
 	disabled.ID, disabled.WorkloadUID = "i2", "w2"
 	snap.Instances = append(snap.Instances, disabled)
 	snap.Routing = map[string]map[string]int32{"w1": {"i1": 1}, "w2": {"i2": 1}}
-	node := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
-	option := poolsInstance(snap.Instances[0], "opt", node, "fixed", "w1")
+	node := poolsAddNode(&snap, "n2", map[string]float64{targetMode: 10})
+	option := poolsInstance(snap.Instances[0], "opt", node, targetMode, "w1")
 	snap.Options = append(snap.Options, poolsOption(option))
-	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(option), "fixed")}
+	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(option), targetMode)}
 	capacityLoad(s, &snap, snap.Workloads[0], 150)
 	d := capacityDecideForTest(t, s, snap)
 	if d.Target == nil || !poolsOn(*d.Target, node) {
@@ -289,7 +290,7 @@ func TestSchedulerMinimumDemandSelectsFirstConfiguration(t *testing.T) {
 	s, snap := schedulerFixture()
 	option := snap.Options[0].Instance
 	snap.Instances = nil
-	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, option.Node, "unloaded", schedulerState(option), "fixed")}
+	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, option.Node, "unloaded", schedulerState(option), targetMode)}
 	d := capacityDecideForTest(t, s, snap)
 	if d.Target == nil || !d.Target.Keep || len(d.Target.Instances) != 0 || len(d.Target.Feedback) != 1 ||
 		d.Target.Feedback[0].Population != 0 || !d.Target.Feedback[0].Satisfied {
@@ -313,11 +314,11 @@ func TestSchedulerNodeServesOneInstance(t *testing.T) {
 		if !c.same {
 			other.Model.UID = "m2"
 		}
-		node := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
-		current := poolsInstance(snap.Instances[0], "i2", node, "fixed", "w2")
+		node := poolsAddNode(&snap, "n2", map[string]float64{targetMode: 10})
+		current := poolsInstance(snap.Instances[0], "i2", node, targetMode, "w2")
 		snap.Instances = append(snap.Instances, current)
 		snap.Routing = map[string]map[string]int32{"w1": {"i1": 1}, "w2": {"i2": 1}}
-		added := poolsInstance(schedulerTestCPU(snap.Instances[0]), "opt", node, "fixed", "w1")
+		added := poolsInstance(schedulerTestCPU(snap.Instances[0]), "opt", node, targetMode, "w1")
 		snap.Options = append(snap.Options, poolsOption(current), poolsOption(added))
 		if c.live {
 			snap.Instances = append(snap.Instances, added)
@@ -335,18 +336,18 @@ func TestSchedulerDirectMoveBetweenActivePools(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.AutonomousWorkloads = []string{"w1", "w2"}
 	poolsAddWorkload(&snap, "w2").Model.UID = "m2"
-	shared := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
-	spare := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10})
-	current := poolsInstance(snap.Instances[0], "i2", shared, "fixed", "w2")
+	shared := poolsAddNode(&snap, "n2", map[string]float64{targetMode: 10})
+	spare := poolsAddNode(&snap, "n3", map[string]float64{targetMode: 10})
+	current := poolsInstance(snap.Instances[0], "i2", shared, targetMode, "w2")
 	snap.Instances = append(snap.Instances, current)
 	snap.Routing = map[string]map[string]int32{"w1": {"i1": 1}, "w2": {"i2": 1}}
 	// A different CPU, so w2's runner cannot be reused as w1's slot.
-	w1 := poolsInstance(schedulerTestCPU(snap.Instances[0]), "opt-w1", shared, "fixed", "w1")
-	w2 := poolsInstance(snap.Instances[0], "opt-w2", spare, "fixed", "w2")
+	w1 := poolsInstance(schedulerTestCPU(snap.Instances[0]), "opt-w1", shared, targetMode, "w1")
+	w2 := poolsInstance(snap.Instances[0], "opt-w2", spare, targetMode, "w2")
 	snap.Options = append(snap.Options, poolsOption(current), poolsOption(w1), poolsOption(w2))
 	snap.Costs = []OperationCost{
-		poolsCost(schedulerActionRemove, shared, schedulerState(current), "unloaded", "fixed"),
-		poolsCost(schedulerActionPrepare, shared, "unloaded", schedulerState(w1), "fixed"),
+		poolsCost(schedulerActionRemove, shared, schedulerState(current), "unloaded", targetMode),
+		poolsCost(schedulerActionPrepare, shared, "unloaded", schedulerState(w1), targetMode),
 	}
 	d := capacityDecideForTest(t, s, snap)
 	i := slices.IndexFunc(poolsPlans(d, shared), func(p SchedulerNodePlan) bool { return p.Key == "profile-other-cpu@n2-fixed/b1/w1" })
@@ -362,22 +363,22 @@ func TestSchedulerDirectMoveBetweenActivePools(t *testing.T) {
 func TestSchedulerAvailableNodeSavingAndReentry(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ComparisonPeriod = time.Minute
-	idle := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
+	idle := poolsAddNode(&snap, "n2", map[string]float64{targetMode: 10, schedulerTestEcoMode: 6})
 	// Re-entry must not introduce an unadmitted detour through eco.
-	reentry := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6, "boost": 12})
+	reentry := poolsAddNode(&snap, "n3", map[string]float64{targetMode: 10, schedulerTestEcoMode: 6, "boost": 12})
 	snap.Nodes[2].PowerMode = "boost"
-	option := poolsInstance(snap.Instances[0], "opt", reentry, "fixed", "w1")
+	option := poolsInstance(snap.Instances[0], "opt", reentry, targetMode, "w1")
 	snap.Options = append(snap.Options, poolsOption(option))
 	// Empty and loaded power trials have different conditions.
-	power := poolsCost(schedulerActionPower, reentry, "boost", "fixed", "")
+	power := poolsCost(schedulerActionPower, reentry, "boost", targetMode, "")
 	power.Trials = []OperationTrial{{Duration: 2 * time.Second, Joules: 20}}
-	loaded := poolsCost(schedulerActionPower, reentry, "boost", "fixed", "", schedulerState(option))
+	loaded := poolsCost(schedulerActionPower, reentry, "boost", targetMode, "", schedulerState(option))
 	loaded.ID += "-loaded"
 	loaded.Trials = []OperationTrial{{Duration: 9 * time.Second, Joules: 90}}
-	prepare := poolsCost(schedulerActionPrepare, reentry, "unloaded", schedulerState(option), "fixed")
-	snap.Costs = []OperationCost{loaded, power, prepare, poolsCost(schedulerActionPower, idle, "fixed", schedulerTestEcoMode, "")}
+	prepare := poolsCost(schedulerActionPrepare, reentry, "unloaded", schedulerState(option), targetMode)
+	snap.Costs = []OperationCost{loaded, power, prepare, poolsCost(schedulerActionPower, idle, targetMode, schedulerTestEcoMode, "")}
 	d := capacityDecideForTest(t, s, snap)
-	if schedulerNodeMode(d.Keep.Nodes, idle) != "fixed" || slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == idle && a.Fixed }) {
+	if schedulerNodeMode(d.Keep.Nodes, idle) != targetMode || slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == idle && a.Fixed }) {
 		t.Fatalf("new saving changed keep: %+v", d.Keep)
 	}
 	if !slices.Contains(d.Search.ComparedNodes, idle) || !slices.Contains(d.Search.ComparedNodes, reentry) {
@@ -398,11 +399,11 @@ func TestSchedulerAvailableNodeSavingAndReentry(t *testing.T) {
 // and the lowering alone is no transition that holds planning.
 func TestSchedulerKeepWithRunningFixedLoweringNeedsNoPowerCost(t *testing.T) {
 	s, snap := schedulerFixture()
-	idle := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
+	idle := poolsAddNode(&snap, "n2", map[string]float64{targetMode: 10, schedulerTestEcoMode: 6})
 	snap.Costs = nil
 	keep := SchedulerCandidate{Nodes: slices.Clone(snap.Nodes), Instances: snap.Instances}
 	keep.Nodes[1].PowerMode = schedulerTestEcoMode
-	lowering := Action{ID: "authorized-lowering", Kind: schedulerActionPower, Node: idle, From: "fixed", To: schedulerTestEcoMode, Fixed: true, Status: phaseRunning}
+	lowering := Action{ID: "authorized-lowering", Kind: schedulerActionPower, Node: idle, From: targetMode, To: schedulerTestEcoMode, Fixed: true, Status: phaseRunning}
 	snap.Actions = []Action{lowering}
 	snap.Reservations = []SchedulerReservation{{Owner: "lowering", Nodes: []NodeReference{idle}, Target: &keep}}
 	snap.Nodes[1].PowerMode = ""
@@ -417,18 +418,18 @@ func TestSchedulerKeepWithRunningFixedLoweringNeedsNoPowerCost(t *testing.T) {
 func TestSchedulerMeasurementNodeIsFixed(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ComparisonPeriod = time.Second
-	empty := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
-	busy := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10})
-	other := poolsAddNode(&snap, "n4", map[string]float64{"fixed": 10})
+	empty := poolsAddNode(&snap, "n2", map[string]float64{targetMode: 10, schedulerTestEcoMode: 6})
+	busy := poolsAddNode(&snap, "n3", map[string]float64{targetMode: 10})
+	other := poolsAddNode(&snap, "n4", map[string]float64{targetMode: 10})
 	snap.Nodes[1].Measurement, snap.Nodes[2].Measurement = true, true
-	measured := poolsInstance(snap.Instances[0], "measured", busy, "fixed", "")
+	measured := poolsInstance(snap.Instances[0], "measured", busy, targetMode, "")
 	snap.Instances = append(snap.Instances, measured)
-	elsewhere := poolsInstance(snap.Instances[0], "opt-other", other, "fixed", "w1")
+	elsewhere := poolsInstance(snap.Instances[0], "opt-other", other, targetMode, "w1")
 	snap.Options = append(snap.Options,
-		poolsOption(poolsInstance(snap.Instances[0], "opt-measurement", empty, "fixed", "w1")),
-		poolsOption(poolsInstance(snap.Instances[0], "opt-busy", busy, "fixed", "w1")),
+		poolsOption(poolsInstance(snap.Instances[0], "opt-measurement", empty, targetMode, "w1")),
+		poolsOption(poolsInstance(snap.Instances[0], "opt-busy", busy, targetMode, "w1")),
 		poolsOption(elsewhere))
-	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, other, "unloaded", schedulerState(elsewhere), "fixed")}
+	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, other, "unloaded", schedulerState(elsewhere), targetMode)}
 	capacityLoad(s, &snap, snap.Workloads[0], 150)
 	d := capacityDecideForTest(t, s, snap)
 	if d.Target == nil || !poolsOn(*d.Target, other) {
@@ -463,20 +464,20 @@ func TestSchedulerFixedBatchAutonomyRejectsRoutedBaseline(t *testing.T) {
 }
 
 func TestSchedulerLowestSwitchableModePlans(t *testing.T) {
-	for _, current := range []string{"GPU_1500", "fixed"} {
+	for _, current := range []string{"GPU_1500", targetMode} {
 		t.Run(current, func(t *testing.T) {
 			settings, snap := schedulerFixture()
 			node := &snap.Nodes[0]
 			node.PowerMode, node.SwitchableModes = current, []string{"GPU_900", "GPU_1200", "GPU_1500"}
 			base := snap.Baselines[0]
 			snap.Baselines = nil
-			for mode, watts := range map[string]float64{"fixed": 50, "GPU_900": 55, "GPU_1500": 56} {
+			for mode, watts := range map[string]float64{targetMode: 50, "GPU_900": 55, "GPU_1500": 56} {
 				b := base
 				b.PowerMode, b.Watts = mode, watts
 				snap.Baselines = append(snap.Baselines, b)
 			}
 			want := "GPU_900"
-			if current == "fixed" {
+			if current == targetMode {
 				want = current
 			}
 			if got := SchedulerLowestMode(snap.Baselines, *node); got != want {
@@ -484,14 +485,14 @@ func TestSchedulerLowestSwitchableModePlans(t *testing.T) {
 			}
 			snap.Instances, snap.Options = nil, nil
 			planner := capacityPlanner{snapshot: snap, settings: settings}
-			if current == "fixed" {
+			if current == targetMode {
 				plan := planner.plan(0, current, nil, nil)
 				if plan != nil {
 					t.Fatalf("fixed current caused empty-node change: %+v", plan)
 				}
 			}
 			_, original := schedulerFixture()
-			for _, mode := range []string{"GPU_900", "fixed"} {
+			for _, mode := range []string{"GPU_900", targetMode} {
 				option := original.Options[0]
 				profile := *option.Instance.Profile
 				profile.ID, profile.Condition.PowerMode = mode, mode
@@ -502,7 +503,7 @@ func TestSchedulerLowestSwitchableModePlans(t *testing.T) {
 				settings.Controls.Power = power
 				decision := capacityDecideForTest(t, settings, snap)
 				plans := poolsPlans(decision, node.Node)
-				for _, mode := range []string{"GPU_900", "fixed"} {
+				for _, mode := range []string{"GPU_900", targetMode} {
 					found := slices.ContainsFunc(plans, func(p SchedulerNodePlan) bool { return strings.Contains(p.Key, mode) })
 					want := mode == current || power && mode == "GPU_900"
 					if found != want {

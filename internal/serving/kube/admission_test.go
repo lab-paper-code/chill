@@ -567,17 +567,17 @@ func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
 			h := newAdmissionHarness(t)
 			actuator := edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 2}}
 			class := &edge.DeviceClass{ObjectMeta: meta.ObjectMeta{Name: "cpu"}, Spec: edge.DeviceClassSpec{NodeSelector: map[string]string{"hardware": "cpu"},
-				Architecture: "amd64", PowerModes: []edge.PowerMode{{Name: lowMode, Actuator: actuator}, {Name: "fixed", Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorFixed}}, {Name: "GPU_1500", Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 3}}}}}}
+				Architecture: "amd64", PowerModes: []edge.PowerMode{{Name: lowMode, Actuator: actuator}, {Name: resetFixedMode, Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorFixed}}, {Name: nvidiaReferenceMode, Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 3}}}}}}
 			h.create(class)
 			h.controller.mu.Lock()
 			h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: lowMode, DeviceClass: "cpu", PowerMode: lowMode, ActuatorKind: string(actuator.Kind), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60}}
 			h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, PowerMode: lowMode, Watts: 55,
 				Meter: "wall", Scope: servingstate.MeasurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
 			old := h.controller.config.Baselines[0]
-			old.ID, old.PowerMode, old.Watts = "old-fixed", "fixed", 50
+			old.ID, old.PowerMode, old.Watts = "old-fixed", resetFixedMode, 50
 			h.controller.config.Baselines = append(h.controller.config.Baselines, old)
 			high := old
-			high.ID, high.PowerMode, high.Watts = "high", "GPU_1500", 56
+			high.ID, high.PowerMode, high.Watts = "high", nvidiaReferenceMode, 56
 			h.controller.config.Baselines = append(h.controller.config.Baselines, high)
 			h.controller.mu.Unlock()
 			holder := "deleted-uid"
@@ -594,7 +594,7 @@ func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
 			}
 			h.setNode(func(n *core.Node) {
 				n.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: holder, Effect: core.TaintEffectNoSchedule}}
-				n.Labels[chillmeta.PowerMode] = "GPU_1500"
+				n.Labels[chillmeta.PowerMode] = nvidiaReferenceMode
 				settleAgent(class)(n)
 			})
 			settle := settleAgent(class)

@@ -68,13 +68,7 @@ func schedulerReplayInitialScope(snapshot SchedulerSnapshot) schedulerReplayScop
 	}
 	scope := schedulerReplayScope{actions: map[string]string{}, instances: map[string]string{}, nodes: map[NodeReference]bool{}}
 	targets := schedulerReplayTargets(snapshot)
-	for _, instance := range snapshot.Instances {
-		if reason := schedulerReplayInstanceReason(instance); reason != "" {
-			scope.instances[instance.ID] = reason
-			scope.nodes[instance.Node] = true
-			scope.evidence = append(scope.evidence, fmt.Sprintf("ReplayExcludedInstance:%s:%s:%s", instance.Node.UID, instance.ID, reason))
-		}
-	}
+	scope.excludeUnsupportedInstances(snapshot.Instances)
 	for _, action := range snapshot.Actions {
 		if action.Status == schedulerActionComplete || action.Status == schedulerActionCancel {
 			continue
@@ -132,6 +126,16 @@ func schedulerReplayInitialScope(snapshot SchedulerSnapshot) schedulerReplayScop
 	}
 	scope.propagate(snapshot)
 	return scope
+}
+
+func (scope *schedulerReplayScope) excludeUnsupportedInstances(instances []SchedulerInstance) {
+	for _, instance := range instances {
+		if reason := schedulerReplayInstanceReason(instance); reason != "" {
+			scope.instances[instance.ID] = reason
+			scope.nodes[instance.Node] = true
+			scope.evidence = append(scope.evidence, fmt.Sprintf("ReplayExcludedInstance:%s:%s:%s", instance.Node.UID, instance.ID, reason))
+		}
+	}
 }
 
 func schedulerReplayActionAffectsInstance(action Action, actual SchedulerInstance) bool {

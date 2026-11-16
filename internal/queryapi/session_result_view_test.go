@@ -81,6 +81,11 @@ func TestSessionResultDecodesIntoTheView(t *testing.T) {
 		batch.PrepareCostKey != "prepare-1" || view.Session.Stop == nil || view.Session.Stop.Class != profilederivation.StopCapacityLimit {
 		t.Fatalf("batch = %+v", batch)
 	}
+	assertSessionViewOmitsRawSamples(t, &view)
+}
+
+func assertSessionViewOmitsRawSamples(t *testing.T, view *BatchEnergyOptimizationResult) {
+	t.Helper()
 	encoded, err := json.Marshal(view)
 	if err != nil {
 		t.Fatal(err)

@@ -265,11 +265,13 @@ func renderSessionResult(table io.Writer, session queryapi.SessionResultView) er
 		{"holdSeconds", session.Power.HoldSeconds},
 	} {
 		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", parameter.name, parameter.value.Status,
-			sessionValue(parameter.value.Value), sessionRange(parameter.value.Range), parameter.value.Unit, display(parameter.value.Reason)); err != nil {
+			sessionValue(parameter.value.Value), sessionRange(parameter.value.Range),
+			parameter.value.Unit, display(parameter.value.Reason)); err != nil {
 			return err
 		}
 	}
-	const batchHeader = "\nBATCH\tSERVICE_RECORDS\tSATURATION_INPUTS_PER_S\tINPUT_SLOPE_J\tSTATUS\tSATURATION_J_PER_INPUT\tSTATUS" +
+	const batchHeader = "\nBATCH\tSERVICE_RECORDS\tSATURATION_INPUTS_PER_S\tINPUT_SLOPE_J\tSTATUS" +
+		"\tSATURATION_J_PER_INPUT\tSTATUS" +
 		"\tPEAK_MEMORY_BYTES\tMEMORY_KIND\tOCCUPANCY_SAMPLES\tOCCUPANCY_MEDIAN_NS"
 	if _, err := fmt.Fprintln(table, batchHeader); err != nil {
 		return err

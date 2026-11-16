@@ -28,14 +28,10 @@ type synthBatch struct {
 
 type powerModel func(batch int, rate, awake float64) float64
 
-// synthSession lays out executions per level and power samples every second:
-// each level's watts follow model at the level's awake fraction for hold, and
-// the post-load samples after load stopped follow postLoad. Without
-// random the executions are periodic and noise watts alternate in sign every
-// sample; with random each idle gap is exponential with the level's mean
-// (period less service) and every power sample gets Gaussian noise of
-// standard deviation noise.
-func synthSession(batches []synthBatch, hold float64, model powerModel, postLoad func(offset float64) float64, noise float64, random *rand.Rand) SessionInput {
+// synthSession lays out periodic executions per level and power samples every
+// second: each level's watts follow model at the level's awake fraction for
+// hold, and the post-load samples after load stopped follow postLoad.
+func synthSession(batches []synthBatch, hold float64, model powerModel, postLoad func(offset float64) float64) SessionInput {
 	settings := SessionSettings{MeterLagSeconds: 1, MinimumPowerWindowSeconds: 5, PostLoadWindowSeconds: 20, MinimumSamples: 59, ConfidenceLevel: 0.95}
 	origin := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
 	cursor := origin.Add(10 * time.Second)
@@ -63,11 +59,7 @@ func synthSession(batches []synthBatch, hold float64, model powerModel, postLoad
 				}
 				finish = row.FinishedAt
 				level.Native = append(level.Native, row)
-				gap := l.period - l.service
-				if random != nil {
-					gap = time.Duration(random.ExpFloat64() * float64(gap))
-				}
-				start = finish.Add(gap)
+				start = finish.Add(l.period - l.service)
 			}
 			level.Row.End = start
 			rate := float64(level.Row.CompletedInputs) / level.Row.End.Sub(level.Row.Start).Seconds()
@@ -79,17 +71,14 @@ func synthSession(batches []synthBatch, hold float64, model powerModel, postLoad
 		input.Batches = append(input.Batches, batchInput)
 	}
 	input.PostLoadStart, input.PostLoadEnd = cursor, cursor.Add(seconds(settings.PostLoadWindowSeconds))
-	for at, sign := origin, 1.0; !at.After(input.PostLoadEnd); at, sign = at.Add(time.Second), -sign {
+	for at := origin; !at.After(input.PostLoadEnd); at = at.Add(time.Second) {
 		watts := model(0, 0, 0)
 		if at.After(input.PostLoadStart) {
 			watts = postLoad(at.Sub(input.PostLoadStart).Seconds())
 		}
 		for _, s := range spans {
 			if !at.Before(s.start) && !at.After(s.end) {
-				watts = s.watts + sign*noise
-				if random != nil {
-					watts = s.watts + random.NormFloat64()*noise
-				}
+				watts = s.watts
 				break
 			}
 		}
@@ -106,8 +95,8 @@ func gpuLikeBatches() []synthBatch {
 	}
 }
 
-func gpuModel(slope map[int]float64) powerModel {
-	return func(batch int, rate, awake float64) float64 { return 60 + 50*awake + slope[batch]*rate }
+func gpuModel() powerModel {
+	return func(_ int, _, awake float64) float64 { return 60 + 50*awake }
 }
 
 func flat(float64) float64 { return 60 }
@@ -158,7 +147,7 @@ func TestDeriveSessionPreservesIndependentMeasurements(t *testing.T) {
 		{func(input *SessionInput) { input.Batches[1].PeakMemoryBytes = 0 }, true},
 		{func(input *SessionInput) { input.Power[0].Watts = math.NaN() }, true},
 	} {
-		input := synthSession(gpuLikeBatches(), 0, gpuModel(nil), flat, 0, nil)
+		input := synthSession(gpuLikeBatches(), 0, gpuModel(), flat)
 		scenario.corrupt(&input)
 		result := derive(t, input)
 		if len(result.Batches[0].ServiceNanos) != 1252 || *result.Batches[0].SaturationInputRate != 100 {
@@ -174,7 +163,7 @@ func TestDeriveSessionPreservesIndependentMeasurements(t *testing.T) {
 }
 
 func TestDeriveSessionCountsRepeatedNativeRowsOnce(t *testing.T) {
-	input := synthSession(gpuLikeBatches(), 0, gpuModel(nil), flat, 0, nil)
+	input := synthSession(gpuLikeBatches(), 0, gpuModel(), flat)
 	level := &input.Batches[0].Levels[1]
 	level.Native = append(level.Native, level.Native[:50]...)
 	result := derive(t, input)
@@ -185,7 +174,7 @@ func TestDeriveSessionCountsRepeatedNativeRowsOnce(t *testing.T) {
 }
 
 func TestDeriveSessionBoundsStoredResult(t *testing.T) {
-	input := synthSession(gpuLikeBatches(), 0, gpuModel(nil), flat, 0, nil)
+	input := synthSession(gpuLikeBatches(), 0, gpuModel(), flat)
 	input.MaxResultBytes = 1000
 	if _, err := DeriveSession(input); err == nil || !strings.Contains(err.Error(), "bytes, above the 1000 byte read limit") {
 		t.Errorf("size error = %v", err)
@@ -195,7 +184,7 @@ func TestDeriveSessionBoundsStoredResult(t *testing.T) {
 // The decay ends too late to leave a minimum power window of settled power.
 // A 30 s hold keeps every level awake, so the loaded level is 110 W.
 func TestDeriveSessionReportsLateSettleAsNotIdentified(t *testing.T) {
-	result := derive(t, synthSession(gpuLikeBatches(), 30, gpuModel(nil), decayAt(16), 0, nil))
+	result := derive(t, synthSession(gpuLikeBatches(), 30, gpuModel(), decayAt(16)))
 	power := result.LoadPower()
 	for name, p := range map[string]SessionParameter{"idle": power.IdleWatts, "step": power.AwakeStepWatts, "hold": power.HoldSeconds,
 		"slope": power.Batches[0].InputSlopeJoules, "saturation": power.Batches[0].SaturationJoulesPerInput} {
@@ -419,7 +408,7 @@ func TestSessionResultEncodesLargeBatchCompactly(t *testing.T) {
 func TestDeriveSessionExcludedLevelRetainsOnlyItsReport(t *testing.T) {
 	for index, kind := range []string{LevelSaturation, LevelMid, LevelSparse} {
 		t.Run(kind, func(t *testing.T) {
-			input := synthSession(gpuLikeBatches(), 0, gpuModel(nil), flat, 0, nil)
+			input := synthSession(gpuLikeBatches(), 0, gpuModel(), flat)
 			target := &input.Batches[0].Levels[index]
 			const detail = "native inference HTTP 408: request lifetime expired"
 			target.Row.EndReason, target.Row.Detail = "RequestLifetimeExpired", detail

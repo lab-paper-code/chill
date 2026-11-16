@@ -15,7 +15,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const failedPreparationSlot = "failed-slot"
+const (
+	failedPreparationSlot = "failed-slot"
+	policyAckEvidence     = "policy-ack"
+)
 
 // #218: prepare times out before policy ACK, but its exact executor later
 // becomes Ready. Compensation must retire it, not turn failure into success.
@@ -23,7 +26,7 @@ const failedPreparationSlot = "failed-slot"
 // after the deadline is still that failed action's result ("policy-ack").
 // 예약 충돌과 효과 반환 검증: compensation and idempotent cleanup alternative.
 func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
-	for _, evidence := range []string{"unclaimed", "canceled", "claimed", "identity-mismatch", "other-owner", pendingPowerEvidence, activeSiblingEvidence, "preexisting", "policy-ack"} {
+	for _, evidence := range []string{"unclaimed", "canceled", "claimed", "identity-mismatch", "other-owner", pendingPowerEvidence, activeSiblingEvidence, "preexisting", policyAckEvidence} {
 		t.Run(evidence, func(t *testing.T) {
 			c, api, child, parent := failedPrepareCompensationFixture(t, evidence)
 			actual := c.state.Snapshot.Instances[1]
@@ -35,7 +38,7 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 			c.wg.Wait()
 			cleanupID := child.action.ID + "/compensate/" + actual.ID
 			cleanup := c.runs[cleanupID]
-			if evidence != "unclaimed" && evidence != "canceled" && evidence != "policy-ack" {
+			if evidence != "unclaimed" && evidence != "canceled" && evidence != policyAckEvidence {
 				if cleanup != nil || api.podWrites.Load() != writes || api.deleteCalls.Load() != 0 || !parent.reserved || !child.reserved {
 					t.Fatalf("%s changed protected Pod/reservation", evidence)
 				}
@@ -129,7 +132,7 @@ func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) 
 func failedPrepareCompensationFixture(t *testing.T, evidence string) (*SchedulerController, *resetAPI, *actionRun, *actionRun) {
 	t.Helper()
 	c, prepared := tickReadySubsetController(t, func(index int, state *native.State) {
-		if evidence == "policy-ack" && index == 1 {
+		if evidence == policyAckEvidence && index == 1 {
 			state.Metadata.DecisionID = "failed-owner"
 			state.Metadata.Policy.DecisionID = "failed-owner"
 			state.Metadata.Policy.MaxBatchSize = 16
