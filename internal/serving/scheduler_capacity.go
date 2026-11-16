@@ -151,6 +151,7 @@ type SchedulerPlanSearchStep struct {
 type SchedulerCapacityWorkload struct {
 	UID                 string                  `json:"uid"`
 	Rate                float64                 `json:"rate"`
+	ObservedRate        float64                 `json:"observedRate"`
 	MinimumDemand       float64                 `json:"minimumDemand"`
 	Queued              int                     `json:"queued"`
 	RoutingRate         float64                 `json:"routingRate"`
@@ -425,8 +426,10 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		if covered > 0 {
 			w.rate += float64(w.queued) / covered.Seconds()
 		}
+		w.observedRate = w.rate
 		w.rate = max(w.rate, settings.MinimumDemand[w.d.UID])
-		w.minRate = max(capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID), settings.MinimumDemand[w.d.UID])
+		w.minObservedRate = capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID)
+		w.minRate = max(w.minObservedRate, settings.MinimumDemand[w.d.UID])
 		w.totalNanos = p.pathFeedback(w.d).TotalNanos
 		for _, i := range snapshot.Instances {
 			if i.WorkloadUID == w.d.UID || i.OwnerWorkloadUID == w.d.UID {

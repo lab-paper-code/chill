@@ -323,9 +323,10 @@ func (p *capacityPlanner) routeOf(choice []int) float64 {
 // leastLoadJoules is the plan set's energy over T with every Workload at its
 // least rate of the observation window.
 func (p *capacityPlanner) leastLoadJoules(choice []int, r float64) float64 {
-	rates := make([]float64, len(p.ws))
+	rates := make([][2]float64, len(p.ws))
 	for w := range p.ws {
-		rates[w], p.ws[w].rate = p.ws[w].rate, p.ws[w].minRate
+		rates[w] = [2]float64{p.ws[w].rate, p.ws[w].observedRate}
+		p.ws[w].rate, p.ws[w].observedRate = p.ws[w].minRate, p.ws[w].minObservedRate
 	}
 	oldKeepWatts := p.keepWatts
 	p.keepWatts = p.evaluateEnergyForRoutes(make([]int, len(p.plans)), 0, nil, 1, p.keep.Routing).joules
@@ -334,7 +335,7 @@ func (p *capacityPlanner) leastLoadJoules(choice []int, r float64) float64 {
 	joules := result.joules - p.keepWatts*p.periodSeconds
 	p.keepWatts = oldKeepWatts
 	for w := range p.ws {
-		p.ws[w].rate = rates[w]
+		p.ws[w].rate, p.ws[w].observedRate = rates[w][0], rates[w][1]
 	}
 	return joules
 }

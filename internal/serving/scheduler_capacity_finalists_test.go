@@ -99,7 +99,7 @@ func TestCapacityExactFeedbackWorkloadPriority(t *testing.T) {
 	p := capacityDeltaTiny([]float64{10}, 1)
 	d := *p.ws[0].d
 	d.UID = schedulerTestOther
-	p.ws = append(p.ws, capacityWorkload{d: &d, rate: 1})
+	p.ws = append(p.ws, capacityWorkload{d: &d, rate: 1, observedRate: 1})
 	for _, strategy := range []string{SLOPriorityExcess, SLOPriorityWorkload} {
 		p.settings.SLOPriorityStrategy, p.settings.WorkloadPriority = strategy, []string{"w"}
 		a := capacityResult{feedback: []FeedbackWorkloadScore{{UID: "w", Population: 10, OnTime: 9, FailureFraction: .1}, {UID: schedulerTestOther, Population: 10, OnTime: 1, FailureFraction: .9}}}

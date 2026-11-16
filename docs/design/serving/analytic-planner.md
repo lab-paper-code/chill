@@ -43,7 +43,7 @@ q는 service 시작이 아직 관측되지 않은 pending, queued, deferred 요�
 
 `λ = max(λ_observed, settings.minimumDemand[Workload UID])`
 
-`minimumDemand`는 유한한 비음수 req/s이며 생략한 UID는 0이다. 빈 UID와 음수, 비유한 값은 거절한다. 교체 회수의 최소 관측 부하에도 같은 하한을 적용한다. 이 하한은 사용자가 선택한 용량 예약이다.
+`minimumDemand`는 유한한 비음수 req/s이며 생략한 UID는 0이다. 빈 UID와 음수, 비유한 값은 거절한다. 교체 회수는 관측 창의 최소 관측 수요로 에너지를 계산하며, 용량과 SLO에 쓰는 최소 계획 수요에는 minimumDemand 하한을 유지한다. 이 하한은 사용자가 선택한 용량 예약이다. 최소 수요 하한을 적용한 계획 수요는 용량과 SLO를 결정하며, 에너지 비교는 하한 적용 전 관측 수요와 같은 분배 비율을 사용한다. 판단 기록의 rate와 observedRate로 두 수요를 구분한다.
 
 장기 관측 길이가 `min(observationWindow, controlInterval)`보다 짧으면 `PartialObservationWindow`로 대기한다. 전체 관측 창이 차기 전에는 기존 인스턴스 제거, 배치 정책 변경과 기존 양수 분배 철회를 제한하고 확장만 허용한다.
 

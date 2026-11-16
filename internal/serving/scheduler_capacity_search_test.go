@@ -154,7 +154,7 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 			d := *base.Workloads[0]
 			d.UID, d.Name = uid, uid
 			d.SLO = SLO{Percentile: 100, TargetLatency: e5Workloads[w].target}
-			p.ws = append(p.ws, capacityWorkload{d: &d, rate: rate, minRate: rate, totalNanos: 29e6})
+			p.ws = append(p.ws, capacityWorkload{d: &d, rate: rate, observedRate: rate, minRate: rate, minObservedRate: rate, totalNanos: 29e6})
 			p.snapshot.Workloads = append(p.snapshot.Workloads, &d)
 			p.snapshot.PathFeedback = append(p.snapshot.PathFeedback, PathFeedback{WorkloadUID: uid, TotalNanos: 29e6})
 			p.settings.AutonomousWorkloads = append(p.settings.AutonomousWorkloads, uid)

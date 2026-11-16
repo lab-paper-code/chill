@@ -11,12 +11,14 @@ import (
 )
 
 type capacityWorkload struct {
-	d          *Definition
-	rate       float64 // λ, req/s
-	minRate    float64 // the least arrival rate of one control interval in the observation window
-	queued     int     // q
-	current    int     // instances serving it now
-	totalNanos float64 // frozen current-window TOTAL, heuristic only
+	d               *Definition
+	rate            float64 // planning demand: observed demand with the minimumDemand floor, req/s
+	observedRate    float64 // observed demand without the floor; energy uses it, req/s
+	minRate         float64 // minObservedRate with the minimumDemand floor
+	minObservedRate float64 // the least arrival rate of one control interval in the observation window
+	queued          int     // q
+	current         int     // instances serving it now
+	totalNanos      float64 // frozen current-window TOTAL, heuristic only
 }
 
 // profileRoutingWeight is optimistic observed support, not an SLO certificate.

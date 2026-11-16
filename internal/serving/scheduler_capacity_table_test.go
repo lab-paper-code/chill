@@ -17,7 +17,7 @@ func TestCapacityTableZeroRoutingDoesNotPruneProfile(t *testing.T) {
 		items[w] = []capacityItem{{id: "zero", prepare: true}}
 		return &capacityPlan{keep: keep, option: string(rune('a' + w)), items: items, record: SchedulerNodePlan{Eligible: eligible}}
 	}
-	p := &capacityPlanner{ctx: context.Background(), ws: []capacityWorkload{{d: &Definition{UID: "a", SLO: SLO{TargetLatency: time.Second}}, rate: 2}, {d: &Definition{UID: "b", SLO: SLO{TargetLatency: time.Second}}}}, plans: [][]*capacityPlan{{
+	p := &capacityPlanner{ctx: context.Background(), ws: []capacityWorkload{{d: &Definition{UID: "a", SLO: SLO{TargetLatency: time.Second}}, rate: 2, observedRate: 2}, {d: &Definition{UID: "b", SLO: SLO{TargetLatency: time.Second}}}}, plans: [][]*capacityPlan{{
 		makePlan(true, true, 0), makePlan(false, true, 0), makePlan(false, true, 1), makePlan(false, false, 0),
 	}}}
 	p.snapshot.Nodes = []SchedulerNode{{}}
@@ -42,7 +42,7 @@ func TestCapacityTableScalars(t *testing.T) {
 		others: 2, preMean: 19, preMax: 23, postMean: 29, postMax: 31, preJ: 37, postJ: 41,
 		before: 43, mid: 47, after: 53, replaces: true, reduces: true,
 		record: SchedulerNodePlan{Eligible: true, RequiresBridge: []string{"bridge"}}}
-	p := &capacityPlanner{ws: []capacityWorkload{{rate: 1}}, plans: [][]*capacityPlan{{{keep: true}, plan}}}
+	p := &capacityPlanner{ws: []capacityWorkload{{rate: 1, observedRate: 1}}, plans: [][]*capacityPlan{{{keep: true}, plan}}}
 	tab := p.planTable()
 	q := tab.byPlan[0][1]
 	got := []float64{tab.routingRate[q][0], tab.routingRateServiceNanos[q][0], tab.retainedRoutingRate[q][0], tab.weightRet[q][0],

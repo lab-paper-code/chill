@@ -1027,7 +1027,7 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int, percentile floa
 		if rng.IntN(4) > 0 {
 			rate = 10 + 90*rng.Float64()
 		}
-		ws := capacityWorkload{d: &Definition{UID: fmt.Sprint("w", w), SLO: SLO{Percentile: percentile, TargetLatency: time.Duration((0.2 + 2*rng.Float64()) * float64(time.Second))}}, rate: rate, queued: rng.IntN(6)}
+		ws := capacityWorkload{d: &Definition{UID: fmt.Sprint("w", w), SLO: SLO{Percentile: percentile, TargetLatency: time.Duration((0.2 + 2*rng.Float64()) * float64(time.Second))}}, rate: rate, observedRate: rate, queued: rng.IntN(6)}
 		p.ws = append(p.ws, ws)
 	}
 	for n := range nodes {
@@ -1106,7 +1106,7 @@ func TestCapacitySearchMatchesBruteForce(t *testing.T) {
 // two Nodes loses κ or costs more; changing all three saves 5 W.
 func capacityThreeNodeSwap() *capacityPlanner {
 	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 60, settings: capacityTestSettings}
-	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 29}}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 29, observedRate: 29}}
 	for n := range 3 {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
 		item := capacityItem{id: fmt.Sprint("i", n), routingWeight: 10, throughput: 10, order: 1, model: schedulerTestModel(1)}
@@ -1160,7 +1160,7 @@ func TestCapacitySearchThreeNodesFindsWhatTwoMiss(t *testing.T) {
 // operation bound. Profiles supply nominal energy only.
 func capacityTwinSwap(gain, bound float64) *capacityPlanner {
 	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 60, settings: capacityTestSettings}
-	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 10}}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 10, observedRate: 10}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
 	a, b := SchedulerInstance{ID: "a"}, SchedulerInstance{ID: "b"}
 	keep := &capacityPlan{keep: true, instances: []SchedulerInstance{a}, items: [][]capacityItem{{{id: "a", routingWeight: 50, throughput: 50, order: 1, model: schedulerTestModel(1)}}}, retained: [][]capacityItem{{{id: "a", routingWeight: 50, throughput: 50, order: 1, model: schedulerTestModel(1)}}}, before: 10}
@@ -1387,7 +1387,7 @@ func TestCapacityEmptiedStartObeysReplicasOff(t *testing.T) {
 // Node emptied, reaches it in one step.
 func TestCapacitySearchEmptyStartFindsFourNodeChange(t *testing.T) {
 	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 60, settings: capacityTestSettings}
-	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 39.5}}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 39.5, observedRate: 39.5}}
 	for n := range 4 {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
 		i := SchedulerInstance{ID: fmt.Sprint("i", n), WorkloadUID: "w"}
@@ -1650,7 +1650,7 @@ func TestCapacityQueuedBacklogFailsKeep(t *testing.T) {
 func TestCapacityBacklogDoesNotChangeWeightsOrRequestEnergy(t *testing.T) {
 	support := []float64{42.01676682274319, 48.2933028258133, 114.5538148895834, 144.47154833104395}
 	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 147, settings: capacityTestSettings}
-	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: 861 * time.Millisecond}}, rate: 12.8, queued: 160}}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: 861 * time.Millisecond}}, rate: 12.8, observedRate: 12.8, queued: 160}}
 	choice := []int{}
 	for n, k := range support {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
@@ -2044,7 +2044,7 @@ func TestCapacityPlannerDecisionIgnoresInputOrder(t *testing.T) {
 // §9 6 기간과 기록: an exact tie keeps the current configuration.
 func TestCapacityExactTieKeepsCurrent(t *testing.T) {
 	p := &capacityPlanner{ctx: context.Background(), periodSeconds: 60, settings: capacityTestSettings}
-	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 50}}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{TargetLatency: time.Second}}, rate: 50, observedRate: 50}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "n0"}}}
 	item := capacityItem{id: "i", routingWeight: 100, throughput: 100, order: 1, model: schedulerTestModel(1), weight: 1}
 	keep := &capacityPlan{keep: true, items: [][]capacityItem{{item}}, retained: [][]capacityItem{{item}}, before: 10}
@@ -2103,7 +2103,7 @@ func TestCapacityProportionalWeightsIgnoreDemandAndBacklog(t *testing.T) {
 		rate   float64
 		queued int
 	}{{39.32, 0}, {40.1, 52}, {39.32, 0}, {39.43, 3}, {40.73, 0}, {39.83, 1}, {40.23, 2}} {
-		p.ws[0].rate, p.ws[0].queued = tick.rate, tick.queued
+		p.ws[0].rate, p.ws[0].observedRate, p.ws[0].queued = tick.rate, tick.rate, tick.queued
 		res := p.evaluateEnergyAtWindow(make([]int, len(ids)), 0, nil, p.periodSeconds)
 		if want := map[string]int32{"q1": 195, "lut": 198, "g3": 549, "opi": 58}; !maps.Equal(res.weights[0], want) {
 			t.Fatalf("λ %g q %d: weights %v, want %v", tick.rate, tick.queued, res.weights[0], want)
@@ -2289,6 +2289,14 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	load(35, 35, 35, 35, 35, 5)
 	if d := capacityDecideForTest(t, s, snap); replaced(d) || !slices.Contains(d.Reasons, schedulerReplacementUnpaid+":n2") {
 		t.Fatalf("replacement unpaid at 5 req/s was chosen: %+v %v", d.Target, d.Reasons)
+	}
+	s.MinimumDemand = map[string]float64{"w1": 30}
+	floored := capacityPlannerForTest(t, s, snap)
+	if floored.ws[0].minRate != 30 || floored.ws[0].minObservedRate != 5 {
+		t.Fatalf("least load floor: %+v", floored.ws[0])
+	}
+	if d := capacityDecideForTest(t, s, snap); replaced(d) {
+		t.Fatal("capacity reservation paid for replacement at only 5 observed req/s")
 	}
 	// Recovery changes shared profile pointers; test normal payback before that mutation.
 	for _, plans := range p.plans {

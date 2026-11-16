@@ -27,7 +27,9 @@ func TestIdleSingleInstanceUsesItsProfileBase(t *testing.T) {
 	snap.Instances[0].Profile.Condition.PowerMode = energyTestGPUMode
 	snap.Instances[0].Profile.Power = schedulerTestPower(118.44)
 	snap.Instances[0].Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(8.77)
+	s.ObservationWindow = time.Second
 	s.MinimumDemand = map[string]float64{"w1": 1}
+	capacityLoad(s, &snap, snap.Workloads[0], 1)
 	p := capacityPlannerForTest(t, s, snap)
 	got := p.evaluateEnergyForRoutes([]int{0}, 0, nil, 1, p.keep.Routing)
 	if math.Abs(got.joules-(118.44+8.77)) > 1e-8 {
@@ -150,7 +152,9 @@ func TestCapacityIdenticalUnknownIdleCancelsForRouteChange(t *testing.T) {
 
 func TestIdleExactCellRequiresMatchingMeter(t *testing.T) {
 	s, snap := schedulerFixture()
+	s.ObservationWindow = time.Second
 	s.MinimumDemand = map[string]float64{"w1": 1}
+	capacityLoad(s, &snap, snap.Workloads[0], 1)
 	snap.Baselines[0].State = []string{schedulerState(snap.Instances[0])}
 	snap.Baselines[0].Meter = "another-node-wall-meter"
 	snap.Baselines[0].Watts = 53.14
@@ -169,7 +173,7 @@ func TestCapacityBridgeRecordsPhaseRequestPower(t *testing.T) {
 	rate := 0.0
 	for _, workload := range decision.Capacity.Workloads {
 		if workload.UID == "w2" {
-			rate = workload.Rate
+			rate = workload.ObservedRate
 		}
 	}
 	for _, plan := range decision.Capacity.Plans {
@@ -318,4 +322,29 @@ func withoutDerivedDistributions(d SchedulerDecision) SchedulerDecision {
 		d.Target = &target
 	}
 	return d
+}
+
+func TestEnergyMinimumDemandUsesObservedRates(t *testing.T) {
+	for _, observed := range []float64{0, 1, 2} {
+		s, snap := schedulerFixture()
+		s.ObservationWindow = time.Second
+		s.MinimumDemand = map[string]float64{"w1": 40}
+		capacityLoad(s, &snap, snap.Workloads[0], observed)
+		snap.Instances[0].Profile.Power = schedulerTestPower(100)
+		snap.Instances[0].Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(3)
+		p := capacityPlannerForTest(t, s, snap)
+		if p.ws[0].rate != 40 || p.ws[0].observedRate != observed || p.ws[0].minRate != 40 || p.ws[0].minObservedRate != observed {
+			t.Fatalf("rates: %+v", p.ws[0])
+		}
+		table := p.planTable()
+		state := newSearchState(p, table, []int{table.byPlan[0][0]})
+		before, after, beforeOK, afterOK := state.loadWatts(table.byPlan[0][0], state.sums)
+		if !beforeOK || !afterOK || math.Abs(before-3*observed) > 1e-8 || math.Abs(after-3*observed) > 1e-8 {
+			t.Fatalf("observed %g: search load watts before=%g after=%g", observed, before, after)
+		}
+		got := p.evaluateEnergyForRoutes([]int{0}, 0, nil, 1, p.keep.Routing)
+		if math.Abs(got.joules-(100+3*observed)) > 1e-8 {
+			t.Fatalf("observed %g: joules=%g", observed, got.joules)
+		}
+	}
 }

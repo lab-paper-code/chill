@@ -52,7 +52,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 			keepTests = p.keepRates[w]
 		}
 		record.Workloads = append(record.Workloads, SchedulerCapacityWorkload{
-			UID: ws.d.UID, Rate: ws.rate, MinimumDemand: p.settings.MinimumDemand[ws.d.UID], Queued: ws.queued,
+			UID: ws.d.UID, Rate: ws.rate, ObservedRate: ws.observedRate, MinimumDemand: p.settings.MinimumDemand[ws.d.UID], Queued: ws.queued,
 			RoutingRate: best.sums[w][0], RetainedRoutingRate: best.sums[w][1], Weights: best.weights[w], Tests: tests, KeepTests: keepTests,
 		})
 	}

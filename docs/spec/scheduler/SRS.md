@@ -100,7 +100,7 @@
 #### 근거 확보 상태 공개
 평가에 필요한 관측과 근거의 확보 상태와 이유를 제공한다. 확보된 관측값, 계산값과 예측값에는 의미와 출처를 연결하고, 관측 공백과 평가 대기는 별도 상태로 드러낸다. 후보의 SLO와 비용 평가는 필요한 정보의 확보 범위에서 수행한다. 한 후보의 근거 확보 대기는 그 후보의 상태로 두고, 다른 후보와 현재 구성의 평가는 계속한다.
 #### 명시적 최소 수요
-계획 수요는 워크로드별 관측 수요와 운영자가 scheduler 설정 맵에 지정한 최소 수요(inputs/s, 기본 0) 중 큰 값으로 삼는다. 무부하에서도 그 하한을 감당하는 구성을 평가와 선택하고, 적용한 최소 수요와 계획 수요를 판단 및 Run 기록에 남긴다.
+계획 수요는 워크로드별 관측 수요와 운영자가 scheduler 설정 맵에 지정한 최소 수요(inputs/s, 기본 0) 중 큰 값으로 삼는다. 무부하에서도 그 하한을 감당하는 구성을 평가와 선택하고, 적용한 최소 수요와 계획 수요를 판단 및 Run 기록에 남긴다. 최소 수요 하한을 적용한 계획 수요는 용량과 SLO를 결정하며, 에너지 비교는 하한 적용 전 관측 수요와 같은 분배 비율을 사용한다. 판단 기록의 rate와 observedRate로 두 수요를 구분한다.
 
 ### 3.2 근거와 실행 가능한 후보
 
@@ -179,7 +179,7 @@ SLO 수용 한계에 도달하면 가용 자원으로 SLO 충족을 우선하는
 분배, 증설, 축소와 교체 후보를 매 제어 주기에 같은 현재 유효 수요와 물리 규칙으로 비교한다. 기존 예약, 자원, SLO와 실제 Ready/ACK 제약을 유지한다.
   최종 하강 route와 idle 후처리의 현재 유효 수요×(1+h) 보호와 configured h를 유지하며 현재 routing와 수요 평가에 연결한다. old row/κ̂-only 보장을 사용하지 않는다. bridge/reserve 수요와 실제 요청 J는 할증하지 않는다.
 #### 현재 유효 수요와 정책 시간
-현재 유효 수요는 max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이에 minimumDemand 하한을 적용한다. reductionDemand는 같은 현재 수요이며 별도 이력 최대값과 증가 추세와 지속 시간 허가를 두지 않는다. 빈 Node 절전도 동일 수요와 gain/minimumGain/payback을 적용한다.
+현재 유효 수요는 max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이에 minimumDemand 하한을 적용한다. reductionDemand는 같은 현재 수요이며 별도 이력 최대값과 증가 추세와 지속 시간 허가를 두지 않는다. 빈 Node 절전도 동일 수요와 gain/minimumGain/payback을 적용한다. 최소 수요 하한을 적용한 계획 수요는 용량과 SLO를 결정하며, 에너지 비교는 하한 적용 전 관측 수요와 같은 분배 비율을 사용한다. 판단 기록의 rate와 observedRate로 두 수요를 구분한다.
   정책 시간은 ControlInterval, ObservationWindow, ComparisonPeriod 세 개다. API, ConfigMap, Dashboard, sample, 결정과 Run binding은 동일 계약을 사용한다.
 #### 전환 예비 용량 비율
 전환 중 수요 대비 예비 비율을 scheduler 설정으로 제공한다(기본 0, 0=별도 예비 없음, 유한한 0~1). 양수이면 실제 Ready, ACK, ownership와 예약상 사용 가능한 공급의 profile-rate estimate로 수요와 설정 예비를 비교한다. SLO는 별도 직접 replay로 평가한다. 예비 준비, 유지와 해제 에너지도 evaluation 전체 POOL 에너지에 포함하고 비율, 판정과 미확보 이유를 결정과 `binding.schedulerSettings`에 기록한다.
