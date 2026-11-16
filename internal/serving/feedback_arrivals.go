@@ -57,8 +57,20 @@ func (s *schedulerReplayState) feedbackArrivalRequest(source SchedulerRequest, i
 	return &schedulerReplayRequest{
 		source: source, identity: identity, arrival: at,
 		native: math.Inf(1), expires: math.Inf(1),
-		preNanos: pre, accountedAgeNanos: pre, marginNanos: feedback.PostNanos,
+		preNanos: pre, accountedAgeNanos: pre,
 	}
+}
+
+// marginNanos is r's POST reserve on instance i, as the runtime gateway uses
+// it: frozen once routed, otherwise the path's own POST or the configured margin.
+func (s *schedulerReplayState) marginNanos(r *schedulerReplayRequest, i *schedulerReplayInstance) float64 {
+	if r.dispatched {
+		return r.marginNanos
+	}
+	if path, ok := s.feedbackFor(r.source.Definition).pathPost(i.config.ID); ok {
+		return path.PostNanos
+	}
+	return s.settings.CompletionMarginMS * 1e6
 }
 
 // addMinimumDemand preserves the repeated measured pattern and supplements only

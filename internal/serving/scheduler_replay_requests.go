@@ -263,6 +263,7 @@ func (s *schedulerReplayState) routeRequests(ctx context.Context) bool {
 				}
 				i := s.instances[selected]
 				s.finishNormalAdmission(r)
+				r.marginNanos = s.marginNanos(r, i) // the routing path is known: freeze its POST once
 				candidate := s.gatewayRequestState(i, r)
 				i.admissionAssignments = append(i.admissionAssignments, candidate)
 				i.admissionArrivals[uid] = i.admissionArrivals[uid].accepted(s.snap.At.Add(time.Duration(s.now)))
@@ -452,7 +453,7 @@ func (s *schedulerReplayState) gatewayRequestState(i *schedulerReplayInstance, r
 		arrival = replayAdmissionArrival(s.snap.At, i.arrivalTimes[d.UID])
 	}
 	rate := arrival.accepted(s.snap.At.Add(time.Duration(s.now))).rate()
-	state := firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, AdmissionPolicy: string(d.Admission.Policy), ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: math.Max(0, r.accountedAgeNanos+s.now-r.arrival) / 1e6, CompletionMarginMS: r.marginNanos / 1e6, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ArrivalRate: rate}
+	state := firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, AdmissionPolicy: string(d.Admission.Policy), ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: math.Max(0, r.accountedAgeNanos+s.now-r.arrival) / 1e6, CompletionMarginMS: s.marginNanos(r, i) / 1e6, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ArrivalRate: rate}
 	return s.requestLifetimeState(r, state)
 }
 

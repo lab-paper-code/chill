@@ -39,8 +39,11 @@ func TestRuntimeConfiguredTickUsesCurrentMarginForNewAccept(t *testing.T) {
 	second, secondCall := accept() // No second Tick publishes the new fallback.
 	want := map[string]float64{first.ID: 7, second.ID: 19}
 	for _, request := range r.SchedulerInputs(time.Now).Outstanding {
+		if request.Phase == phasePending {
+			continue // not routed yet: its reserve freezes at assignment
+		}
 		if request.CompletionMarginMS == nil || *request.CompletionMarginMS != want[request.ID] {
-			t.Fatalf("configured Tick overrode current or accepted margin: %+v", request)
+			t.Fatalf("configured Tick overrode current or assigned margin: %+v", request)
 		}
 	}
 	for range 2 {

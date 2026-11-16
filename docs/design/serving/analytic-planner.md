@@ -27,9 +27,9 @@
 
 POST는 외부 왕복도 포함하는 회계상 reserve다. 음수 POST나 TOTAL<POST, 잘못된 단계 순서, 결합할 수 없는 identity는 유한 시간 표본에서 제외하고 원본 실패와 결손은 보존한다.
 
-Workload별 TOTAL과 POST는 SLO percentile로 각각 가공한다. 유효 표본이 없으면 `completionMarginMS`를 초기값으로 쓰고 첫 유효 표본부터 갱신한다. 추가 표본 gate나 configured margin의 중복 가산은 없다. `PathFeedback.observedMean`은 같은 결합 cohort의 산술평균이다.
+Workload별 TOTAL과 POST는 SLO percentile로 각각 가공한다. POST는 경로(인스턴스)별로도 같은 percentile로 가공해 `PathFeedback.paths`에 둔다. 한 경로의 POST 꼬리가 다른 경로의 판단에 옮겨 가지 않는다. 유효 표본이 없으면 `completionMarginMS`를 초기값으로 쓰고 첫 유효 표본부터 갱신하며, 표본이 없는 경로도 `completionMarginMS`를 쓴다. 추가 표본 gate나 configured margin의 중복 가산은 없다. `PathFeedback.observedMean`은 같은 결합 cohort의 산술평균이다.
 
-실제 요청은 accept 때 POST를 동결한다. native에는 실제 server sender elapsed를 전달하며 Tick의 PRE나 TOTAL을 더하지 않는다. 진행 요청은 frozen sender와 POST, captured native elapsed와 남은 수명을 유지한다. returning 요청은 terminal native 경과와 남은 반환 점유로 복원한다. 새 피드백은 합성 요청의 배치 선택도 다시 평가한다.
+실제 요청은 경로에 배정될 때 그 경로의 POST를 동결한다. native에는 실제 server sender elapsed를 전달하며 Tick의 PRE나 TOTAL을 더하지 않는다. 진행 요청은 frozen sender와 POST, captured native elapsed와 남은 수명을 유지한다. 아직 배정되지 않은 요청과 합성 요청은 재생에서 배정될 경로의 POST를 쓴다. returning 요청은 terminal native 경과와 남은 반환 점유로 복원한다. 새 피드백은 합성 요청의 배치 선택도 다시 평가한다.
 
 합성 요청은 `S_model=Q_model+PRE`, `E_model=Q_model+N_model+TOTAL`을 사용한다. client는 응답 뒤 별도 연결로 보고하며 정확한 요청 ID로 결합한다. 결합 cohort와 시간 분해 불가능한 전체 client 실패를 따로 보존한다.
 

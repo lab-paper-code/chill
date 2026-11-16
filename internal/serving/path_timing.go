@@ -28,9 +28,11 @@ type ClientObservation struct {
 }
 
 // PathTimingSample contains only an attributable finite reserve sample.
+// Instance is the routing path that executed it.
 // Full client/server/native evidence remains in their original records.
 type PathTimingSample struct {
 	WorkloadUID       string    `json:"workloadUID"`
+	Instance          string    `json:"instance"`
 	RequestID         string    `json:"requestID"`
 	ReceivedAt        time.Time `json:"receivedAt"`
 	TotalNanos        float64   `json:"totalNanos"`
@@ -47,7 +49,7 @@ func PathTimingSampleFromRequest(row RequestRow, client ClientObservation) (Path
 	if !pathTimingJoinedReply(row, client) {
 		return PathTimingSample{}, false
 	}
-	if row.AcceptedNanos == nil || row.NativeElapsedMS == nil || !row.NativeExecutionComplete ||
+	if row.Instance == "" || row.AcceptedNanos == nil || row.NativeElapsedMS == nil || !row.NativeExecutionComplete ||
 		!row.ExecutionComplete || row.ExchangeNanos == nil || row.ElapsedNanos == nil ||
 		*row.ExchangeNanos > *row.ElapsedNanos {
 		return PathTimingSample{}, false
@@ -71,7 +73,7 @@ func PathTimingSampleFromRequest(row RequestRow, client ClientObservation) (Path
 		return PathTimingSample{}, false
 	}
 	return PathTimingSample{
-		WorkloadUID: row.WorkloadUID, RequestID: row.RequestID, ReceivedAt: row.ReceivedAt,
+		WorkloadUID: row.WorkloadUID, Instance: row.Instance, RequestID: row.RequestID, ReceivedAt: row.ReceivedAt,
 		TotalNanos: total, PostNanos: post,
 		ClientNanos: elapsed, ServingQueueNanos: float64(wait), NativeNanos: nativeNanos,
 	}, true

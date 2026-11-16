@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,7 +14,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-func TestTickFeedbackUpdatesNewCallsWithoutRewritingAcceptedNativeContext(t *testing.T) {
+// The POST reserve is frozen when a call is routed to its path, not before.
+func TestTickFeedbackUpdatesRoutedCallsWithoutRewritingAssignedNativeContext(t *testing.T) {
 	c, _ := tickReadySubsetController(t, nil)
 	c.config.Settings.AutonomousWorkloads = nil
 	c.config.Settings.CompletionMarginMS = 7
@@ -54,19 +56,20 @@ func TestTickFeedbackUpdatesNewCallsWithoutRewritingAcceptedNativeContext(t *tes
 			t.Fatal(ctx.Err())
 		}
 	}
-	accept(7)
+	// Still waiting for capacity: routed after the next Tick, it takes that path's POST.
+	accept(30)
 	old := receipts[len(receipts)-1].ID
 	for _, request := range c.runtime.SchedulerInputs(time.Now).Outstanding {
 		if request.ID == old && request.Phase != "pending" {
 			t.Fatal("old accepted request did not remain in the ingress queue")
 		}
 	}
-	recordSchedulerPathSample(t, c, workload)
+	recordSchedulerPathSample(t, c, workload, ready.ID)
 	config := c.config
 	config.Settings.CompletionMarginMS = 19
 	config.OnDecision = func(decision serving.SchedulerDecision, snapshot serving.SchedulerSnapshot) error {
 		if len(decision.PathFeedback) != 1 || decision.PathFeedback[0].Source != "empirical" ||
-			decision.PathFeedback[0] != snapshot.PathFeedback[0] || decision.PathFeedback[0].PostNanos != float64(30*time.Millisecond) {
+			!reflect.DeepEqual(decision.PathFeedback[0], snapshot.PathFeedback[0]) || decision.PathFeedback[0].PostNanos != float64(30*time.Millisecond) {
 			t.Fatalf("callback did not receive actual captured model: %+v", decision.PathFeedback)
 		}
 		// The normal settings writer remains independent of Tick's derived model.

@@ -12,7 +12,7 @@ func pathTimingEvidence(accepted, assigned, sender, nativeMS, elapsed, finalMS i
 	acceptedNanos, finalNanos := accepted*int64(time.Millisecond), finalMS*int64(time.Millisecond)
 	exchangeNanos, native := (sender+nativeMS)*int64(time.Millisecond), float64(nativeMS)
 	row := RequestRow{
-		Kind: RequestRowFinal, RequestID: "opaque request", WorkloadUID: "workload", ReceivedAt: at,
+		Kind: RequestRowFinal, RequestID: "opaque request", WorkloadUID: "workload", Instance: "path", ReceivedAt: at,
 		Outcome: outcomeCompleted, ExecutionComplete: true, NativeExecutionComplete: true, NativeOutcome: outcomeCompleted,
 		AcceptedNanos: &acceptedNanos, ExchangeNanos: &exchangeNanos, ElapsedNanos: &finalNanos, NativeElapsedMS: &native,
 	}
@@ -45,7 +45,7 @@ func TestPathTimingSampleAccounting(t *testing.T) {
 			row.NativeFinishedAt = &remoteFinished
 			sample, ok := PathTimingSampleFromRequest(row, client)
 			if !ok || sample.TotalNanos != tc.total*float64(time.Millisecond) || sample.PostNanos != tc.post*float64(time.Millisecond) ||
-				sample.RequestID != row.RequestID || sample.WorkloadUID != row.WorkloadUID || sample.ReceivedAt != row.ReceivedAt ||
+				sample.RequestID != row.RequestID || sample.WorkloadUID != row.WorkloadUID || sample.Instance != row.Instance || sample.ReceivedAt != row.ReceivedAt ||
 				sample.ClientNanos != float64(client.ElapsedNanos) ||
 				sample.ServingQueueNanos != float64(tc.assigned-tc.accepted)*float64(time.Millisecond) ||
 				sample.NativeNanos != float64(tc.native)*float64(time.Millisecond) {
@@ -68,6 +68,7 @@ func TestPathTimingSampleRequiresClosedEvidence(t *testing.T) {
 		{"different request", func(_ *RequestRow, c *ClientObservation) { c.RequestID = "another request" }},
 		{"different workload", func(_ *RequestRow, c *ClientObservation) { c.WorkloadUID = "another workload" }},
 		{"missing accepted", func(r *RequestRow, _ *ClientObservation) { r.AcceptedNanos = nil }},
+		{"missing routing path", func(r *RequestRow, _ *ClientObservation) { r.Instance = "" }},
 		{"missing assigned even with legacy UTC offset", func(r *RequestRow, _ *ClientObservation) {
 			r.DispatchedNanos = new(int64)
 			r.ServerTiming = RequestTimings{}
@@ -234,5 +235,20 @@ func TestPathFeedbackObservedMeanUsesSameCausalSamples(t *testing.T) {
 	zero := BuildPathFeedback("workload", []PathTimingSample{{WorkloadUID: "workload"}}, SLO{Percentile: 95}, 7*time.Millisecond)
 	if zero.ObservedMean == nil || *zero.ObservedMean != (PathObservedMean{}) || zero.TotalNanos != 0 || zero.Source != pathFeedbackEmpirical {
 		t.Fatalf("real zero sample became unknown/configured: %+v", zero)
+	}
+}
+
+func TestBuildPathFeedbackKeepsEachPathPost(t *testing.T) {
+	ms := float64(time.Millisecond)
+	var samples []PathTimingSample
+	for k := range 20 {
+		samples = append(samples, PathTimingSample{Instance: "jetson-nano", PostNanos: float64(30+k) * ms}, PathTimingSample{Instance: "rasp5", PostNanos: float64(10+k%5) * ms})
+	}
+	feedback := BuildPathFeedback("plc", samples, SLO{Percentile: 95}, 7*time.Millisecond)
+	nano, okNano := feedback.pathPost("jetson-nano")
+	rasp, okRasp := feedback.pathPost("rasp5")
+	if _, ok := feedback.pathPost("unmeasured"); ok || !okNano || !okRasp || nano.SampleCount != 20 || rasp.SampleCount != 20 ||
+		nano.PostNanos != 48*ms || rasp.PostNanos != 14*ms || feedback.PostNanos != 47*ms {
+		t.Fatalf("one path's tail leaked into another path's POST: %+v", feedback)
 	}
 }

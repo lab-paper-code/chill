@@ -322,7 +322,7 @@ func (s *schedulerReplayState) potentialLatency(instance *schedulerReplayInstanc
 		}
 		return math.Inf(1)
 	}
-	base := request.accountedAgeNanos + s.now - request.arrival + wait + request.marginNanos
+	base := request.accountedAgeNanos + s.now - request.arrival + wait + s.marginNanos(request, instance)
 	residual := 0.0
 	if len(instance.batch) > 0 {
 		residual = max(0, instance.finish-s.now)

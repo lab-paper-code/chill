@@ -160,7 +160,7 @@ type Runtime struct {
 	measurement        []NodeReference
 	routingControlled  bool
 	completionMarginMS float64
-	pathFeedbackMS     map[string]float64
+	pathFeedback       map[string]PathFeedback
 	routeTargets       map[string]map[string]int32
 	calls              map[string]*Call
 	definitions        map[string]*Definition
@@ -469,10 +469,6 @@ func (r *Runtime) Accept(receipt *Receipt, input *InferenceInput) (*Call, error)
 		return nil, failure(reasonGatewayOverloaded, "gateway live heap is near its memory limit")
 	}
 	c := &Call{runtime: r, receipt: *receipt, definition: w.definition, identity: w.identity, input: input, reply: make(chan callResult, 1)}
-	c.completionMarginMS, c.completionMarginSet = r.completionMarginMS, true
-	if margin, ok := r.pathFeedbackMS[receipt.UID]; ok {
-		c.completionMarginMS = margin
-	}
 	c.enqueuedAt = time.Now()
 	if err := r.eventAt(c, phaseAccepted, "", "", c.enqueuedAt); err != nil {
 		return nil, failure(ObservationUnavailableCode, "cannot persist request acceptance")
@@ -798,6 +794,7 @@ func (r *Runtime) estimateLocked(i *runtimeInstance, c *Call, now time.Time) Adm
 	policy := native.Metadata.Policy
 	policy.Batches = i.admissionBatches
 	candidate := admissionCallState(c, now)
+	candidate.Context.CompletionMarginMS = r.pathMarginLocked(c.receipt.UID, i.State.ID)
 	candidate.ArrivalRate = i.admissionArrivals[c.receipt.UID].accepted(now).rate()
 	for j, call := range i.admissionCalls {
 		q := admissionCallState(call, now)
@@ -1044,6 +1041,8 @@ func (r *Runtime) dispatchLocked() {
 
 func (r *Runtime) assignLocked(c *Call, entry *routeEntry, assignedAt time.Time) {
 	i := entry.instance
+	// The routing path is now known: freeze its POST reserve once.
+	c.completionMarginMS, c.completionMarginSet = r.pathMarginLocked(c.receipt.UID, i.State.ID), true
 	r.recordAdmissionPredictionLocked(c, entry, assignedAt)
 	c.receipt.ServerTiming.Record(ServerAssigned, assignedAt.Sub(c.receipt.ReceivedAt))
 	c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: assignedAt.UTC(), ProfileBody: i.Profile}
@@ -1607,7 +1606,7 @@ func (r *Runtime) SetMeasurementNodes(nodes []NodeReference) {
 	r.signal()
 }
 
-// SetCompletionMargin changes the configured fallback for later accepted calls.
+// SetCompletionMargin changes the configured fallback for later assigned calls.
 func (r *Runtime) SetCompletionMargin(ms float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1615,16 +1614,28 @@ func (r *Runtime) SetCompletionMargin(ms float64) {
 }
 
 // SetPathFeedback publishes the committed Tick's empirical POST reserves.
-// Configured rows use the current fallback at acceptance; accepted calls stay frozen.
+// Configured rows use the current fallback at assignment; assigned calls stay frozen.
 func (r *Runtime) SetPathFeedback(feedback []PathFeedback) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.pathFeedbackMS = make(map[string]float64, len(feedback))
+	r.pathFeedback = make(map[string]PathFeedback, len(feedback))
 	for _, value := range feedback {
 		if value.Source == pathFeedbackEmpirical {
-			r.pathFeedbackMS[value.WorkloadUID] = value.PostNanos / float64(time.Millisecond)
+			value.Paths = slices.Clone(value.Paths)
+			r.pathFeedback[value.WorkloadUID] = value
 		}
 	}
+}
+
+// pathMarginLocked is the POST reserve of a call routed to instance: the
+// path's own empirical POST, else the configured margin.
+func (r *Runtime) pathMarginLocked(uid, instance string) float64 {
+	if feedback, ok := r.pathFeedback[uid]; ok {
+		if path, ok := feedback.pathPost(instance); ok {
+			return path.PostNanos / float64(time.Millisecond)
+		}
+	}
+	return r.completionMarginMS
 }
 
 func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {

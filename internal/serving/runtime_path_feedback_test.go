@@ -9,7 +9,7 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
-func TestRuntimeFreezesAcceptedPostThroughQueueSettingsAndFailure(t *testing.T) {
+func TestRuntimeFreezesRoutedPostThroughQueueSettingsAndFailure(t *testing.T) {
 	for _, post := range []float64{0, 30} {
 		t.Run(fmt.Sprint(post), func(t *testing.T) {
 			r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1, "w2": 1})
@@ -49,19 +49,26 @@ func TestRuntimeFreezesAcceptedPostThroughQueueSettingsAndFailure(t *testing.T) 
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			accept("w1") // Accepted before the update, still waiting for capacity.
+			accept("w1") // Accepted before the update, still waiting for capacity: not yet routed.
 			feedback := []PathFeedback{{WorkloadUID: "w1", PostNanos: post * float64(time.Millisecond), Source: "empirical"}}
 			r.SetPathFeedback(feedback)
 			feedback[0].PostNanos = float64(time.Hour)
 			r.SetCompletionMargin(19)
 			accept("w1")
 			accept("w2") // No published feedback: use the new configured fallback.
-			want := map[string]float64{receipts[0].ID: 7, receipts[1].ID: 7, receipts[2].ID: post, receipts[3].ID: 19}
+			// The reserve freezes at routing, so both waiting w1 calls take the published POST.
+			want := map[string]float64{receipts[0].ID: 7, receipts[1].ID: post, receipts[2].ID: post, receipts[3].ID: 19}
 			for _, request := range r.SchedulerInputs(time.Now).Outstanding {
-				if request.CompletionMarginMS == nil || *request.CompletionMarginMS != want[request.ID] {
-					t.Fatalf("outstanding lost accepted reserve: %+v", request)
+				if request.Phase == phasePending {
+					if request.CompletionMarginMS != nil {
+						t.Fatalf("unrouted request froze a path reserve: %+v", request)
+					}
+					continue
 				}
-				*request.CompletionMarginMS = 999 // Returned pointers must not mutate accepted calls.
+				if request.CompletionMarginMS == nil || *request.CompletionMarginMS != want[request.ID] {
+					t.Fatalf("outstanding lost assigned reserve: %+v", request)
+				}
+				*request.CompletionMarginMS = 999 // Returned pointers must not mutate assigned calls.
 			}
 			for range calls {
 				release <- struct{}{}

@@ -12,9 +12,9 @@ Pod당 persistent runner 하나와 순차 batch 하나다. 같은 UID와 정의�
 
 ## 시간과 수명
 
-원래 receipt와 sender monotonic elapsed를 유지한다. 실제 요청은 accept 때 POST를 동결하고 native sender에서 이미 흐른 시간을 한 번 전달한다.
+원래 receipt와 sender monotonic elapsed를 유지한다. 실제 요청은 경로(인스턴스)에 배정될 때 그 경로의 POST를 동결하고 native sender에서 이미 흐른 시간을 한 번 전달한다. 배정 전 gateway 판단은 후보 경로마다 그 경로의 POST를 쓴다.
 
-`completionMarginMS`는 유한 비음수 필수 초기값이다. 유효한 client 결합 표본이 생기면 Workload SLO percentile의 TOTAL과 POST를 사용한다. 실제 요청에는 frozen POST 한 번만 적용한다. 새 Tick의 PRE나 TOTAL, 현재 configured margin을 중복 가산하지 않는다.
+`completionMarginMS`는 유한 비음수 필수 초기값이다. 유효한 client 결합 표본이 생기면 Workload SLO percentile의 TOTAL과 경로별 POST를 사용한다. 표본이 없는 경로는 `completionMarginMS`를 쓴다. 실제 요청에는 frozen POST 한 번만 적용한다. 새 Tick의 PRE나 TOTAL, 현재 configured margin을 중복 가산하지 않는다.
 
 native slack은 남은 SLO에서 frozen completion reserve와 조건부 service 비용을 뺀다. 최종 수명도 원래 lifetime에서 sender와 local elapsed, reserve를 한 번 뺀다. returning은 native service로 다시 실행하지 않고 남은 반환과 HTTP 점유로 복원한다.
 

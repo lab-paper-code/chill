@@ -55,7 +55,7 @@ runtime image와 관측 version, 모델과 전처리, Dataset, Node와 전력모
 
 Controlled는 무부하에도 최소 인스턴스 하나의 배치 조건을 유지한다. 이동은 remove와 prepare DAG로 실행한다. accepted 요청과 retained 공급, bridge, reserve와 정상 반환을 유지한다.
 
-TOTAL과 POST는 Workload의 관측 SLO percentile에서 구한다. 유효 표본이 없으면 completionMarginMS로 초기화한다. 실제 요청의 POST는 접수 때 동결하며 이후 변경은 소급하지 않는다.
+TOTAL과 POST는 Workload의 관측 SLO percentile에서 구하고, POST는 경로(인스턴스)별로도 구한다. 유효 표본이 없으면 completionMarginMS로 초기화한다. 실제 요청의 POST는 경로에 배정될 때 그 경로 값으로 동결하며 이후 변경은 소급하지 않는다.
 
 ## 조회와 수동 운영
 

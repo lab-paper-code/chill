@@ -11,7 +11,7 @@ import (
 
 // Seed exact local timing evidence; Tick must join the client report through the
 // real observation window instead of taking a test-supplied feedback value.
-func recordSchedulerPathSample(t *testing.T, c *SchedulerController, workload *serving.Definition) {
+func recordSchedulerPathSample(t *testing.T, c *SchedulerController, workload *serving.Definition, instance string) {
 	t.Helper()
 	received := time.Now().Add(-200 * time.Millisecond)
 	var timing serving.RequestTimings
@@ -24,6 +24,9 @@ func recordSchedulerPathSample(t *testing.T, c *SchedulerController, workload *s
 		event := serving.RequestEvent{RequestID: "path-sample", WorkloadName: workload.Name, WorkloadUID: workload.UID,
 			Definition: workload.Identity(), Kind: stage.kind, At: received.Add(stage.elapsed), ReceivedAt: received,
 			ElapsedNanos: int64(stage.elapsed), ServerTiming: timing, Outcome: "completed", ExecutionComplete: true}
+		if stage.kind == "assigned" {
+			event.Assignment = &serving.Assignment{Instance: instance, DispatchedAt: event.At}
+		}
 		if stage.kind == "backend_exchange_finished" {
 			event.NativeProgress = &serving.BackendProgress{RequestID: event.RequestID, WorkloadUID: workload.UID,
 				Definition: workload.Identity(), Phase: "finished", At: received.Add(100 * time.Millisecond),
@@ -67,7 +70,7 @@ func TestTickCapturesAndPublishesSameWindowPathFeedback(t *testing.T) {
 		t.Fatalf("missing configured initial model: %+v", first.PathFeedback)
 	}
 	workload := c.runtime.SchedulerInputs(time.Now).Workloads[0]
-	recordSchedulerPathSample(t, c, workload)
+	recordSchedulerPathSample(t, c, workload, "path-instance")
 	second, err := c.Tick(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +82,7 @@ func TestTickCapturesAndPublishesSameWindowPathFeedback(t *testing.T) {
 	if feedback.WorkloadUID != workload.UID || feedback.Percentile != workload.SLO.Percentile ||
 		feedback.TotalNanos != float64(50*time.Millisecond) || feedback.PostNanos != float64(30*time.Millisecond) ||
 		feedback.SampleCount != 1 || feedback.Source != "empirical" ||
+		!reflect.DeepEqual(feedback.Paths, []serving.PathPost{{Instance: "path-instance", PostNanos: float64(30 * time.Millisecond), SampleCount: 1}}) ||
 		!reflect.DeepEqual(published.PathFeedback, second.PathFeedback) {
 		t.Fatalf("Tick omitted joined reserve sample: %+v", second.PathFeedback)
 	}

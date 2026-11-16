@@ -633,11 +633,12 @@ func (s *schedulerReplayState) initializeOutstanding() {
 
 func (s *schedulerReplayState) outstandingRequest(r SchedulerRequest) *schedulerReplayRequest {
 	x := &schedulerReplayRequest{source: r, identity: r.Definition.Identity(), observed: true, admitted: true, native: math.Inf(1), expires: math.Inf(1), queueAt: -float64(r.QueueAge), running: r.Phase == phaseRunning, deferred: r.Phase == phaseDeferred && r.Instance != "", gatewayDeferred: r.Phase == phaseDeferred && r.Instance == ""}
-	x.marginNanos = s.settings.CompletionMarginMS * 1e6
 	x.accountedAgeNanos = float64(r.Elapsed)
+	// An unrouted request takes its path's POST when routed (marginNanos).
 	if r.CompletionMarginMS != nil {
 		x.marginNanos = *r.CompletionMarginMS * 1e6
-	} else {
+	} else if r.Instance != "" {
+		x.marginNanos = s.settings.CompletionMarginMS * 1e6
 		s.out.sources = appendUnique(s.out.sources, "configured-initial-post")
 		s.out.assumptions = appendUnique(s.out.assumptions, "accepted/historical request has no captured POST; configured CompletionMarginMS is an initial model assumption, not frozen evidence")
 	}

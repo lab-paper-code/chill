@@ -26,7 +26,7 @@ composition root는 하나의 ClusterState를 Observer, Manager, Operations와 S
 
 ## 요청과 공통 선택
 
-원시 표본은 UID와 Definition, 개별 SLO와 수명을 유지한다. accepted 시 POST를 동결하며 native에 실제 sender elapsed를 전달한다. Tick의 TOTAL이나 PRE를 실제 요청에 중복 가산하지 않는다. 요청 시간, residual과 물리 완료는 [실행기 계약](scheduler-runtime-measurement.md#시간과-수명)에 둔다.
+원시 표본은 UID와 Definition, 개별 SLO와 수명을 유지한다. 경로에 배정될 때 그 경로의 POST를 동결하며 native에 실제 sender elapsed를 전달한다. Tick의 TOTAL이나 PRE를 실제 요청에 중복 가산하지 않는다. 요청 시간, residual과 물리 완료는 [실행기 계약](scheduler-runtime-measurement.md#시간과-수명)에 둔다.
 
 실제 actor와 직접 재생은 같은 순수 선택 함수를 사용한다. stable EDF에서 같은 UID와 불변 정의의 호환 요청만 묶고, 가능한 batch의 조건부 service 분위수와 요청당 증분 J를 비교한다. 더 큰 측정 batch의 엄격한 energy gain과 fill time이 있을 때만 bounded wait한다.
 

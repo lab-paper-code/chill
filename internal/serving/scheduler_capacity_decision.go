@@ -188,16 +188,16 @@ func capacityWorst(worst float64) float64 {
 // A failed test is evidence, never a second candidate admission gate.
 func (p *capacityPlanner) testDecisionRates(best capacityResult) error {
 	type queryKey struct {
-		profile    *Profile
-		node       NodeReference
-		allocation SchedulerAllocation
-		maxBatch   int
-		maxWait    time.Duration
-		fixedBatch int
-		uid        string
-		occupancy  time.Duration
-		feedback   PathFeedback
-		rate       float64
+		profile     *Profile
+		node        NodeReference
+		allocation  SchedulerAllocation
+		maxBatch    int
+		maxWait     time.Duration
+		fixedBatch  int
+		uid         string
+		occupancy   time.Duration
+		total, post float64
+		rate        float64
 	}
 	cache := map[queryKey]FeedbackCapacity{}
 	test := func(candidate SchedulerCandidate) ([][]SchedulerFeedbackRate, error) {
@@ -218,8 +218,8 @@ func (p *capacityPlanner) testDecisionRates(best capacityResult) error {
 				}
 				rate := ws.rate * float64(weight) / units
 				occupancy := ResolveDispatchOccupancy(p.settings, p.snapshot.DispatchOccupancy, instance)
-				feedback := p.pathFeedback(ws.d)
-				key := queryKey{instance.Profile, instance.Node, instance.Allocation, instance.MaxBatch, instance.MaxWait, instance.FixedBatchSize, ws.d.UID, occupancy.PerRequest, feedback, rate}
+				feedback := p.pathFeedback(ws.d).forPath(instance.ID, p.settings.CompletionMarginMS*1e6)
+				key := queryKey{instance.Profile, instance.Node, instance.Allocation, instance.MaxBatch, instance.MaxWait, instance.FixedBatchSize, ws.d.UID, occupancy.PerRequest, feedback.TotalNanos, feedback.PostNanos, rate}
 				value, found := cache[key]
 				option := SchedulerOption{Instance: instance, CompatibleUIDs: []string{ws.d.UID}}
 				if !found {
