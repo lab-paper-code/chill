@@ -379,3 +379,20 @@ func TestReplayDoesNotRecoverUnscopedRouteFromReservation(t *testing.T) {
 		t.Fatalf("route authority was inferred from the unscoped reservation target: %+v", result)
 	}
 }
+
+// control402: a failed attempt's late-Ready Pod excluded its whole Node, and
+// the planner's retirement skips excluded Nodes, so the Pod was never removed.
+func TestReplayFailedAttemptPodExcludesOnlyItsInstance(t *testing.T) {
+	_, snapshot, _ := feedbackFixture()
+	node := poolsAddNode(&snapshot, "failed-node", map[string]float64{"fixed": 1})
+	late := poolsInstance(snapshot.Instances[0], "failed-pod/containerd://late", node, "fixed", "")
+	late.PodUID, late.Ready = "failed-pod", true
+	snapshot.Instances = append(snapshot.Instances, late)
+	snapshot.Actions = []Action{{ID: "failed-prepare", Kind: schedulerActionPrepare, Node: node, Instance: "slot",
+		Status: schedulerActionFailed, Reason: ActionDeadlineExceeded,
+		PreparationFailure: NewPreparationFailure(late, late.PodUID, PreparationFailureObservation{Classification: PreparationUnknownTransient})}}
+	scope := schedulerReplayInitialScope(snapshot)
+	if scope.instances[late.ID] == "" || scope.nodes[node] || schedulerPhysicalChangeReason(snapshot, node) != "" {
+		t.Fatalf("failed attempt must exclude its Pod only: instances=%v nodes=%v", scope.instances, scope.nodes)
+	}
+}

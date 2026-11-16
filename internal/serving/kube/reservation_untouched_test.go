@@ -110,6 +110,9 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 	}
 }
 
+// control402: a partial attempt's executor that acknowledged the policy late
+// has no consumer once its owner failed, so compensation removes it and the
+// multi-node owner then returns on Pod absence.
 func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 	c, api, child, parent := failedPrepareCompensationFixture(t, "policy-ack")
 	child.action.Status, child.result.Status = servingstate.NativeOperationPartial, servingstate.NativeOperationPartial
@@ -166,8 +169,8 @@ func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 	}
 	c.launch(c.ctx, serving.SchedulerCandidate{}, c.config)
 	c.wg.Wait()
-	if api.deleteCalls.Load() != 0 {
-		t.Fatal("late ACK was compensated")
+	if api.deleteCalls.Load() != 1 {
+		t.Fatal("late-ACK executor of the failed owner was not compensated")
 	}
 	fresh, err := c.capture(c.ctx, time.Now(), c.config)
 	if err != nil {
@@ -184,18 +187,22 @@ func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 	pods = append(pods, livePods.Items...)
 	nodes = append(nodes, liveNodes.Items...)
 	physical = append(physical[len(physical)-3:], c.runtime.Instances()...)
+	// The return proof must postdate the compensation's own receipt.
+	for i := range physical[:3] {
+		physical[i].ObservedAt = time.Now()
+	}
 	parent.reserved = true
 	child.reserved = true
 	parent.returnObserved = false
 	c.releaseObservedScopes(nodes, pods, physical, time.Now())
 	fresh, _ = c.reconcileSnapshot(fresh, time.Now(), c.config.Settings.ObservationWindow, c.runtime)
-	if parent.reserved || child.reserved || len(fresh.Reservations) != 0 || api.deleteCalls.Load() != 0 {
-		t.Fatal("eligible fresh tick did not return the owner without compensation")
+	if parent.reserved || child.reserved || len(fresh.Reservations) != 0 || api.deleteCalls.Load() != 1 {
+		t.Fatal("eligible fresh tick did not return the owner after compensation")
 	}
 	if c.runs["never-started-route"] != nil || child.result.Status != servingstate.NativeOperationPartial || parent.result.Status != servingstate.NativeOperationFailed {
 		t.Fatal("return rewrote the failure or started the frozen route")
 	}
-	if _, err := c.kube.CoreV1().Pods("chill-system").Get(c.ctx, "b", meta.GetOptions{}); err != nil {
-		t.Fatal("late-ACK executor did not survive", err)
+	if _, err := c.kube.CoreV1().Pods("chill-system").Get(c.ctx, "b", meta.GetOptions{}); err == nil {
+		t.Fatal("late-ACK executor of the failed owner survived")
 	}
 }

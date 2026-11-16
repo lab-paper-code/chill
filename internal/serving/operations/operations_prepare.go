@@ -27,6 +27,7 @@ import (
 
 func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.PrepareSpec) (evidence *servingstate.PreparationEvidence, err error) {
 	node := spec.Instance.Node
+	budget := actionBudget(ctx)
 	pod, delivery, err := o.PreparationPod(spec)
 	if err != nil {
 		return nil, err
@@ -68,8 +69,11 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.Prep
 		if errors.As(err, &failed) {
 			observed = failed.Pod
 		}
-		currentNode, _ := o.Kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
-		events, _ := o.Kube.CoreV1().Events(pod.Namespace).List(ctx, meta.ListOptions{FieldSelector: "involvedObject.uid=" + string(pod.UID)})
+		// The deadline that ended the attempt must not also hide its cause.
+		readCtx, cancel := detachedWithin(ctx, budget)
+		defer cancel()
+		currentNode, _ := o.Kube.CoreV1().Nodes().Get(readCtx, node.Name, meta.GetOptions{})
+		events, _ := o.Kube.CoreV1().Events(pod.Namespace).List(readCtx, meta.ListOptions{FieldSelector: "involvedObject.uid=" + string(pod.UID)})
 		var related []core.Event
 		if events != nil {
 			related = events.Items
@@ -144,6 +148,10 @@ func (o *Operations) PreparationPod(spec servingstate.PrepareSpec) (*core.Pod, [
 		Containers: []core.Container{runtime},
 		Volumes:    []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "preprocessor", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}},
 	}}
+	// A failed init step's log is its only cause record.
+	for i := range pod.Spec.InitContainers {
+		pod.Spec.InitContainers[i].TerminationMessagePolicy = core.TerminationMessageFallbackToLogsOnError
+	}
 	if spec.Measurement() {
 		bundle := func(name string) bool { return name == "profile" }
 		pod.Spec.InitContainers = slices.DeleteFunc(pod.Spec.InitContainers, func(c core.Container) bool { return bundle(c.Name) })

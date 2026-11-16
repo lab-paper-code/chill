@@ -19,6 +19,8 @@ const failedPreparationSlot = "failed-slot"
 
 // #218: prepare times out before policy ACK, but its exact executor later
 // becomes Ready. Compensation must retire it, not turn failure into success.
+// control402: an executor that acknowledged the failed attempt's own decision
+// after the deadline is still that failed action's result ("policy-ack").
 // 예약 충돌과 효과 반환 검증: compensation and idempotent cleanup alternative.
 func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 	for _, evidence := range []string{"unclaimed", "canceled", "claimed", "identity-mismatch", "other-owner", pendingPowerEvidence, activeSiblingEvidence, "preexisting", "policy-ack"} {
@@ -33,7 +35,7 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 			c.wg.Wait()
 			cleanupID := child.action.ID + "/compensate/" + actual.ID
 			cleanup := c.runs[cleanupID]
-			if evidence != "unclaimed" && evidence != "canceled" {
+			if evidence != "unclaimed" && evidence != "canceled" && evidence != "policy-ack" {
 				if cleanup != nil || api.podWrites.Load() != writes || api.deleteCalls.Load() != 0 || !parent.reserved || !child.reserved {
 					t.Fatalf("%s changed protected Pod/reservation", evidence)
 				}

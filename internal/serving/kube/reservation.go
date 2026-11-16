@@ -749,9 +749,11 @@ func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.Inst
 	return reflect.DeepEqual(previous, current)
 }
 
-// 예약 충돌과 효과 반환 검증 compensation: compensate only a failed owner's own, unclaimed
-// preparation. remove already performs stop/drain/source retirement; its
-// completion is not a return proof until releaseObservedScopes sees Pod absence.
+// 예약 충돌과 효과 반환 검증 compensation: a failed or partial attempt's own,
+// unclaimed Pod is a known result of that action; remove it by the creation
+// receipt's Pod UID whatever its readiness. remove already performs
+// stop/drain/source retirement; its completion is not a return proof until
+// releaseObservedScopes sees Pod absence.
 func (c *reservationState) compensatePreparationsLocked(
 	runtime *serving.Runtime, dispatch func(serving.SchedulerCandidate),
 ) {
@@ -777,7 +779,10 @@ func (c *reservationState) compensatePreparationsLocked(
 				continue
 			}
 			for _, actual := range physical {
-				if !c.failedPreparationUnclaimed(parent, child, actual) {
+				if actual.ID == "" {
+					actual.ID = actual.PodUID // The snapshot's Pod-only identity.
+				}
+				if !c.failedPreparationRemovable(child, actual) {
 					continue
 				}
 				dispatch(serving.SchedulerCandidate{ID: parent.owner, Actions: []serving.Action{{
@@ -788,17 +793,11 @@ func (c *reservationState) compensatePreparationsLocked(
 	}
 }
 
-func (c *reservationState) failedPreparationUnclaimed(parent, child *actionRun, actual serving.InstanceState) bool {
-	if !actual.Ready || actual.Stopped || actual.Native == nil || !actual.Native.Ready ||
-		!child.result.EndedAt.Before(actual.ObservedAt) || !parent.result.EndedAt.Before(actual.ObservedAt) ||
+// A Pod without an executor is removable once terminated (the Pod-only remove
+// contract); an executor once its native drain is readable or it terminated.
+func (c *reservationState) failedPreparationRemovable(child *actionRun, actual serving.InstanceState) bool {
+	if !actual.Terminated && (actual.ID == actual.PodUID || actual.Native == nil) ||
 		!failedPreparationIdentityMatches(child, actual) || !preparationCreatedSource(child, actual) {
-		return false
-	}
-	wanted := child.result.Operation.Prepare.Instance
-	metadata := actual.Native.Metadata
-	decision := child.result.Operation.Prepare.Config.Policy.DecisionID
-	if decision != "" && metadata.ProfileID == wanted.Profile.ID && metadata.DecisionID == decision &&
-		metadata.Policy.DecisionID == decision && schedulerPolicyAcknowledged(wanted, metadata) {
 		return false
 	}
 	return c.preparationSourceUnclaimed(actual) && slices.ContainsFunc(c.state.Snapshot.Nodes, func(node serving.SchedulerNode) bool {
@@ -806,13 +805,15 @@ func (c *reservationState) failedPreparationUnclaimed(parent, child *actionRun, 
 	})
 }
 
+// An executor must be the attempt's bound one; a Pod that never acquired an
+// executor is identified by its creation receipt alone.
 func failedPreparationIdentityMatches(child *actionRun, actual serving.InstanceState) bool {
 	wanted := child.result.Operation.Prepare.Instance
-	podUID, containerID, exact := strings.Cut(actual.ID, "/")
+	podUID, containerID, executor := strings.Cut(actual.ID, "/")
 	return wanted.Profile != nil && child.result.Operation.Prepare.Owner != nil && child.result.Operation.Prepare.Owner.UID == wanted.WorkloadUID &&
 		actual.OwnerWorkloadUID == wanted.WorkloadUID && actual.Node == wanted.Node && actual.TargetID == wanted.ID && actual.Profile == wanted.Profile.ID &&
-		child.result.Operation.ControlsWorkload(wanted.WorkloadUID) && exact && containerID != "" && podUID == actual.PodUID &&
-		actual.PodUID != "" && slices.Contains(child.scope.Pods, actual.PodUID) && slices.Contains(child.scope.Instances, actual.ID)
+		child.result.Operation.ControlsWorkload(wanted.WorkloadUID) && actual.PodUID != "" && slices.Contains(child.scope.Pods, actual.PodUID) &&
+		(executor && containerID != "" && podUID == actual.PodUID && slices.Contains(child.scope.Instances, actual.ID) || !executor && actual.ID == actual.PodUID)
 }
 
 func preparationCreatedSource(child *actionRun, actual serving.InstanceState) bool {
@@ -822,7 +823,7 @@ func preparationCreatedSource(child *actionRun, actual serving.InstanceState) bo
 	}
 	// Never infer creation from a slot/owner alone, or retire a pre-existing
 	// source. A timeout may have no final capture: the live frozen UID suffices.
-	identityKnown := child.prepareIdentity == actual.ID || slices.ContainsFunc(child.result.Actual.Instances, func(state serving.InstanceState) bool {
+	identityKnown := actual.ID == actual.PodUID || child.prepareIdentity == actual.ID || slices.ContainsFunc(child.result.Actual.Instances, func(state serving.InstanceState) bool {
 		return state.ID == actual.ID && state.PodUID == actual.PodUID && state.Node == actual.Node
 	})
 	if !identityKnown || slices.ContainsFunc(child.result.Before.Instances, func(state serving.InstanceState) bool {

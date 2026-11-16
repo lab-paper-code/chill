@@ -147,14 +147,8 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (s
 func (o *Operations) Execute(ctx context.Context, operation servingstate.Operation) (servingstate.OperationResult, error) {
 	result := servingstate.OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: servingstate.NativeOperationRunning}
 	measurementSnapshots := o.Config.Measurement && (operation.Kind == servingstate.OperationPrepare || o.measurementPodRemoval(operation))
-	var physicalBudget time.Duration
-	if measurementSnapshots {
-		if deadline, ok := ctx.Deadline(); ok {
-			if remaining := time.Until(deadline); remaining > 0 {
-				physicalBudget = remaining
-			}
-		}
-	}
+	// Reads of the outcome outlive the action deadline, bounded by its budget.
+	budget := actionBudget(ctx)
 	before := servingstate.OperationState{At: result.StartedAt, Node: operation.Node}
 	err := o.ValidateOperationBinding(ctx, operation)
 	if err == nil && !servingstate.IsRoutingOperation(operation.Kind) {
@@ -170,9 +164,9 @@ func (o *Operations) Execute(ctx context.Context, operation servingstate.Operati
 	result.Before = before
 	if err == nil {
 		operationCtx := ctx
-		if measurementSnapshots && physicalBudget > 0 {
+		if measurementSnapshots {
 			var cancel context.CancelFunc
-			operationCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), physicalBudget)
+			operationCtx, cancel = detachedWithin(ctx, budget)
 			defer cancel()
 		}
 		err = o.executeOperation(operationCtx, operation, &result)
@@ -181,7 +175,9 @@ func (o *Operations) Execute(ctx context.Context, operation servingstate.Operati
 	actual.At = time.Now().UTC()
 	var captureErr error
 	if !servingstate.IsRoutingOperation(operation.Kind) {
-		actual, captureErr = o.Capture(ctx, operation.Node)
+		afterCtx, cancel := detachedWithin(ctx, budget)
+		actual, captureErr = o.Capture(afterCtx, operation.Node)
+		cancel()
 		for id, state := range result.Actual.Native {
 			if _, observed := actual.Native[id]; !observed {
 				if actual.Native == nil {
@@ -378,4 +374,23 @@ func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operat
 		return nil
 	}
 	return errors.New("operation physical instance unavailable")
+}
+
+// actionBudget is the time ctx's deadline leaves an action when it starts;
+// zero without a deadline.
+func actionBudget(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 0
+	}
+	return max(time.Until(deadline), 0)
+}
+
+// detachedWithin detaches ctx from its deadline and cancellation, bounded by
+// the action's own budget. Without a budget it keeps ctx.
+func detachedWithin(ctx context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	if budget <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), budget)
 }

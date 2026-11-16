@@ -32,7 +32,7 @@ composition root는 하나의 ClusterState를 Observer, Manager, Operations와 S
 
 Serving의 Reject와 Delay는 요청 정책이다. Reject는 불가능한 head를 실행 없이 거절하고 Delay는 후순위 FIFO로 옮겨 normal 뒤 처리한다. actor의 측정 deadlinePolicy와 혼동하지 않는다. batch 확정 직전 monotonic 시각으로 cancel, 최종 수명과 SLO를 다시 확인한다.
 
-모든 후보는 같은 outstanding과 arrival cohort, physical inventory와 replay exclusion scope를 사용한다. 모델링할 수 없는 action과 executor는 공급에서 공통 제외하되 allocation, owner와 예약, 요청과 cleanup 의무는 남긴다. 실패 시도의 identity를 이후 같은 logical target의 성공 실물에 적용하지 않는다.
+모든 후보는 같은 outstanding과 arrival cohort, physical inventory와 replay exclusion scope를 사용한다. 모델링할 수 없는 action과 executor는 공급에서 공통 제외하되 allocation, owner와 예약, 요청과 cleanup 의무는 남긴다. 실패 시도의 identity를 이후 같은 logical target의 성공 실물에 적용하지 않는다. 실패한 prepare 시도의 Pod는 그 인스턴스만 제외하고 노드는 제외하지 않는다. 노드를 제외하면 그 Pod를 은퇴시킬 계획도 그 노드를 건너뛴다.
 
 ## 판단 평가와 전환 진행
 
@@ -101,7 +101,11 @@ prepare는 error와 함께 Create 또는 existing GET의 exact Pod/Node/Decision
 
 may-touch는 reserveRun과 같은 mutex에서 Execute 전에 단조 기록한다. 실패와 child GC로 지우지 않으며 owner 책임 전체 반환까지 baseline과 receipt를 유지한다. untouched 반환 뒤에도 제거 성공과 allocation 반환은 각각 확인한다.
 
-failed prepare가 직접 만든 unclaimed Ready 실물만 모든 관련 run 종료와 exact 확인 뒤 기존 stop/drain/remove로 보상 정리할 수 있다. reused, serving, 다른 owner, identity unknown과 pending power는 보상 정리에서 제외한다. 원래 failed receipt를 성공으로 바꾸지 않는다.
+failed 또는 partial prepare가 만든 Pod는 그 동작의 알려진 결과다. 모든 관련 run이 끝나면 owner의 보상 단계가 생성 receipt의 Pod UID로 기존 remove를 보내 준비 여부와 관계없이 지운다. executor가 있으면 stop/drain/remove, 초기 컨테이너 실패처럼 executor가 없으면 종료 확인 뒤 Pod-only remove다. reused, serving, 다른 owner, 생성 receipt 없는 실물과 pending power는 보상 정리에서 제외한다. Pod 부재를 관측하면 owner 예약 전체를 반환한다. 원래 failed receipt를 성공으로 바꾸지 않는다.
+
+transition의 action(예: prepare)이 failed 또는 partial로 끝나 transition이 실패하면 그 action에 직간접으로 의존하는 미시작 action(bridge, route, stop, drain)은 원래 실패 문장을 사유로 cancel로 끝난다. 실패한 owner는 그 action을 보내지 않으므로 Ready handoff 증거를 기다리지 않는다.
+
+사후 상태 capture와 준비 실패 분류는 동작 기한과 분리된 context로 읽고, 그 상한은 동작이 시작할 때 남은 기한과 같다. 측정 경로의 물리 동작 context와 같은 방법이다. 서빙 Pod의 모든 초기 컨테이너는 실패 때 로그를 종료 메시지로 쓴다.
 
 자기 생성 UID나 API receipt 없는 possibly-effectful Create는 이전 occupant가 전부 사라져도 unknown이다. reset도 이 책임을 인계하며 다른 노드의 cleanup으로 해소하지 않는다.
 

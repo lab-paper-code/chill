@@ -110,10 +110,14 @@ func schedulerReplayInitialScope(snapshot SchedulerSnapshot) schedulerReplayScop
 			if !failedAttempt {
 				scope.instances[action.Instance] = reason
 			}
+			// A failed attempt's Pod excludes only that instance; its Node
+			// stays plannable so the Pod can be retired.
 			for _, actual := range snapshot.Instances {
 				if schedulerReplayActionAffectsInstance(action, actual) {
 					scope.instances[actual.ID] = reason
-					scope.nodes[actual.Node] = true
+					if !failedAttempt {
+						scope.nodes[actual.Node] = true
+					}
 				}
 			}
 		}

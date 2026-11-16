@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"slices"
 	"strings"
 	"time"
 
@@ -157,6 +158,7 @@ func (c *reservationState) reconcileOwnersLocked(snapshot serving.SchedulerSnaps
 		if failed {
 			parent.action.Status = servingstate.NativeOperationFailed
 			parent.result.Status, parent.result.EndedAt = servingstate.NativeOperationFailed, now
+			c.cancelFailedDependentsLocked(parent)
 			continue
 		}
 		if c.ownerDAGCompleteLocked(parent) {
@@ -166,6 +168,37 @@ func (c *reservationState) reconcileOwnersLocked(snapshot serving.SchedulerSnaps
 		}
 	}
 	return lost
+}
+
+// cancelFailedDependentsLocked ends every unstarted action that transitively
+// depends on a failed or partial member with that member's failure sentence:
+// a failed owner never dispatches it, so it no longer awaits proof.
+func (c *reservationState) cancelFailedDependentsLocked(parent *actionRun) {
+	target := *parent.result.Operation.Target
+	target.Actions = slices.Clone(target.Actions) // The published decision shares the original.
+	reasons := map[string]string{}
+	for _, action := range target.Actions {
+		if run := c.runs[action.ID]; run != nil && run.owner == parent.owner &&
+			(run.action.Status == servingstate.NativeOperationFailed || run.action.Status == servingstate.NativeOperationPartial) {
+			reasons[action.ID] = run.action.Reason
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for i := range target.Actions {
+			action := &target.Actions[i]
+			if _, done := reasons[action.ID]; done || c.runs[action.ID] != nil {
+				continue
+			}
+			for _, dependency := range action.DependsOn {
+				if reason, failed := reasons[dependency]; failed {
+					action.Status, action.Reason, reasons[action.ID], changed = servingstate.NativeOperationCancel, reason, reason, true
+					break
+				}
+			}
+		}
+	}
+	parent.result.Operation.Target = &target
 }
 
 // failTargetLocked checks only this owner's DAG; terminal receipts beat stale plans.
