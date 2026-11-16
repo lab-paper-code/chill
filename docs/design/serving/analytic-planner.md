@@ -119,7 +119,7 @@ keep의 노드 에너지는 `P_before × H`다. 전환은 전체 pre/post operat
 
 노드의 부하 전력은 정착한 유휴 전력에 `깨어 있는 전력 증가 × a + Σ 입력당 줄 × 입력률`을 더한 값이다. 노드의 입력률 합을 λ, 이용률 합을 ρ(1 이하), 유지 시간을 τ라 할 때 `a = 1 − (1−ρ) × exp(−λτ)`다. 한 노드에 구성이 여럿이면 깨어 있는 전력 증가가 가장 큰 구성의 증가와 유지 시간을 함께 쓴다. 입력당 줄과 이용률은 입력률을 감당하는 가장 작은 측정 배치 크기(없으면 가장 큰 측정 배치 크기)의 값을 쓴다. 식이 요구하는 값이 식별되지 않았으면 그 노드의 에너지는 비교하지 않고 누락 셀로 남긴다. 부하가 없으면 부하 항은 0이고 값을 요구하지 않는다.
 
-동작 시간 추정은 exact, 같은 Node, 같은 DeviceClass, 명시 default 순으로 고른다. SLO 회복은 이 추정을 사용할 수 있다. 에너지 이동은 공통 미지 항을 signed 상쇄한 뒤 남은 필수 셀이 모두 결정 가능해야 한다. keep가 SLO 충족이고 새 비-exact operation 셀이 필요한 후보는 replay 전에 `EnergyUndecidable`로 제외할 수 있다. 누락 측정은 결정의 `missingCells`로 연결한다.
+동작 시간 추정은 exact, 같은 Node, 같은 DeviceClass, 명시 default 순으로 고른다. SLO 회복은 이 추정을 사용할 수 있다. 에너지 이동은 공통 미지 항을 signed 상쇄한 뒤 남은 필수 셀이 모두 결정 가능해야 한다. keep가 SLO 충족이고 새 비-exact operation 셀이 필요한 후보는 replay 전에 `EnergyUndecidable`로 제외할 수 있다. 누락 측정은 결정의 `missingCells`로 연결한다. Overload에서 SLO 초과량이 같으면 `missingCells`가 없는 후보가 앞서고, 줄 값은 `missingCells`가 없는 후보끼리만 비교한다. keep은 `missingCells`가 없으므로 미지 에너지 후보는 같은 초과량에서 이기지 못한다. 이 순서는 후보를 보는 순서와 관계없다. 누락 feedback은 이미 기록된 제외 사유를 덮어쓰지 않는다.
 
 현재 구성이 충족할 때의 에너지 축소는 개별 교체 payback과 minimumGain을 통과해야 한다. 교체를 해당 노드 keep으로 되돌려도 충족하면 최소 관측 부하와 같은 H에서 비교한다. 지불되지 않은 교체는 `ReplacementUnpaid`다. 빈 노드의 새 절전도 같은 개별 검사를 거치며 다른 노드 이득으로 손해를 덮지 않는다.
 

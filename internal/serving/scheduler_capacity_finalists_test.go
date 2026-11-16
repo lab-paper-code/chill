@@ -167,3 +167,44 @@ func TestCapacityFinalistsKeepAndCapsSharePhysicalPlacement(t *testing.T) {
 		seen[key] = true
 	}
 }
+
+func TestCapacityBetterUnknownEnergyTie(t *testing.T) {
+	for _, keep := range []bool{false, true} {
+		a := capacityResult{key: "z", joules: 1, excesses: []float64{1}, missingCells: []SchedulerMissingEnergyCell{{}}}
+		b := capacityResult{key: "a", joules: 100, excesses: []float64{1}, keep: keep}
+		if a.better(&b) || !b.better(&a) {
+			t.Fatalf("unknown energy overrode known energy: keep=%v", keep)
+		}
+	}
+}
+
+// Known-energy candidates compare joules; one with unknown energy never wins
+// at equal excess, whatever order the search visits the candidates in.
+func TestCapacityBetterOrderIndependentWithUnknownEnergy(t *testing.T) {
+	keep := capacityResult{key: "keep", keep: true, joules: 100, excesses: []float64{1}}
+	known := capacityResult{key: "y", joules: 50, excesses: []float64{1}}
+	unknown := capacityResult{key: "a", joules: 1, excesses: []float64{1}, missingCells: []SchedulerMissingEnergyCell{{}}}
+	for _, order := range [][]capacityResult{
+		{keep, known, unknown}, {keep, unknown, known}, {known, keep, unknown},
+		{known, unknown, keep}, {unknown, keep, known}, {unknown, known, keep},
+	} {
+		var best *capacityResult
+		for i := range order {
+			if order[i].better(best) {
+				best = &order[i]
+			}
+		}
+		if best.key != known.key {
+			t.Fatalf("order %v chose %s", []string{order[0].key, order[1].key, order[2].key}, best.key)
+		}
+	}
+}
+
+func TestCapacityFeedbackPreservesInvalidExclusion(t *testing.T) {
+	p := capacityDeltaTiny([]float64{10}, 1)
+	res := capacityResult{exclusion: "InvalidPhysicalPrerequisite", feasible: true}
+	p.rankFeedback(&res)
+	if res.exclusion != "InvalidPhysicalPrerequisite" || res.feasible {
+		t.Fatalf("missing feedback changed original exclusion: %+v", res)
+	}
+}

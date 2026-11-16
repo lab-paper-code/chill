@@ -454,7 +454,7 @@ func (p *capacityPlanner) rankFeedback(res *capacityResult) {
 	for _, ws := range p.ws {
 		at := slices.IndexFunc(res.feedback, func(score FeedbackWorkloadScore) bool { return score.UID == ws.d.UID })
 		if at < 0 {
-			res.exclusion = "MissingFeedback:" + ws.d.UID
+			res.exclusion = cmp.Or(res.exclusion, "MissingFeedback:"+ws.d.UID)
 			res.feasible = false
 			continue
 		}
@@ -508,7 +508,12 @@ func (a capacityResult) better(b *capacityResult) bool {
 			return order < 0
 		}
 	}
-	if a.joules-a.keepJoules != b.joules-b.keepJoules {
+	// At equal SLO excess, a candidate whose energy relative to keep is known
+	// ranks first; joules are compared only between such candidates.
+	if (len(a.missingCells) == 0) != (len(b.missingCells) == 0) {
+		return len(a.missingCells) == 0
+	}
+	if len(a.missingCells) == 0 && a.joules-a.keepJoules != b.joules-b.keepJoules {
 		return a.joules-a.keepJoules < b.joules-b.keepJoules
 	}
 	if a.keep != b.keep {
