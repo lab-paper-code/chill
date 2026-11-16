@@ -222,7 +222,7 @@ func TestLiveDecisionReservationsAndNodeAvailability(t *testing.T) {
 	_ = nextProjection(t, sub)
 	node := serving.NodeReference{UID: "node", Name: "edge"}
 	snapshot := serving.SchedulerSnapshot{
-		Nodes: []serving.SchedulerNode{{Node: node, PowerMode: "low", Ready: false, Measurement: true,
+		Nodes: []serving.SchedulerNode{{Node: node, PowerMode: "low", SwitchableModes: []string{"low", "high"}, Ready: false, Measurement: true,
 			Reasons: []string{"ExcludedNode", "PowerModeUnavailable"}, ObservedAt: at}},
 		Reservations: []serving.SchedulerReservation{{
 			Owner: "operation", Nodes: []serving.NodeReference{node}, WorkloadUIDs: []string{"a", "b"},

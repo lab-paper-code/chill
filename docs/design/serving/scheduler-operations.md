@@ -93,7 +93,7 @@ reset은 하나의 예약과 `steps[]` 기록으로 실행한다.
 3. 해당 outstanding0과 실제 native drain 대기.
 4. 대상 UID 소유 실물 전체 stop/remove, exact 종료와 Pod/Service/config 부재 확인.
 5. UID 선언과 override release, 삭제 readback.
-6. 빈 노드의 요청 가능한 최신 unloaded baseline 중 최소 W mode로 변경하고 Ready/readback 확인.
+6. 빈 노드의 현재 모드와 요청 가능한 모드의 최신 unloaded baseline 중 최소 W mode로 변경하고 Ready/readback 확인.
 
 mode 동률은 이름순이다. policy가 없으면 현재가 측정 최저이며 Ready일 때만 무변경 완료한다. fixed-only는 skip 사유를 남긴다. 측정, 다른 serving과 Node UID 보호를 유지한다.
 

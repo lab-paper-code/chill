@@ -244,7 +244,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 		if i.Node != node.Node || i.Profile == nil || i.Profile.Condition.NodeUID != node.Node.UID {
 			continue
 		}
-		if node.PowerMode != i.Profile.Condition.PowerMode && (!p.settings.Controls.Power || slices.Contains(node.Reasons, NodePowerModeUnavailable)) {
+		if node.PowerMode != i.Profile.Condition.PowerMode && (!p.settings.Controls.Power || slices.Contains(node.Reasons, NodePowerModeUnavailable) || !slices.Contains(node.SwitchableModes, i.Profile.Condition.PowerMode)) {
 			continue
 		}
 		for w := range p.ws {
@@ -340,7 +340,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	if len(chosen) > 0 {
 		mode = chosen[0].option.Instance.Profile.Condition.PowerMode
 	} else if len(current) == 0 {
-		mode = SchedulerLowestMode(p.snapshot.Baselines, node.Node)
+		mode = SchedulerLowestMode(p.snapshot.Baselines, node)
 		if !p.settings.Controls.Power || !schedulerAvailable(p.snapshot, node) || mode == "" || mode == m0 {
 			return nil
 		}

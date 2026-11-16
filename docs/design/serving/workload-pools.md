@@ -24,18 +24,18 @@ serving Pod는 nodeName을 쓰므로 capture와 실행 직전 검사에서 격�
 
 전체 풀은 control-plane label이 없는 모든 Node다. 후보 제외 노드나 측정 노드도 전체 전력 범위에 남는다. 제품 제어 호스트 비용은 [실클러스터 수용 기준](scheduler-operations.md#실클러스터-수용-기준)에 별도로 포함한다.
 
-가용 Node는 측정 밖 Ready이며 serving 실물이 없다. unloaded NodeBaseline 중 최소 W, 동률 이름순으로 최저 모드를 고른다. 빈 노드 새 절전도 같은 H에서 gain과 minimumGain, 개별 payback과 actual proof를 통과해야 한다.
+가용 Node는 측정 밖 Ready이며 serving 실물이 없다. 현재 모드와 전환 가능한 모드의 최신 unloaded NodeBaseline 중 최소 W, 동률 이름순으로 최저 모드를 고른다. snapshot의 `switchableModes`는 Fixed actuator를 제외한 요청 가능 모드 이름을 정렬해 보존한다. 현재가 아닌 모드의 profile은 전력 제어가 켜져 있고, 노드에 `PowerModeUnavailable`이 없고, 해당 모드가 `switchableModes`에 있을 때만 후보가 된다. 빈 노드 새 절전도 같은 H에서 gain과 minimumGain, 개별 payback과 actual proof를 통과해야 한다.
 
 | 사유 | 영향 |
 |---|---|
 | `PlacementInventoryMissing` | GPU inventory나 예약이 불완전해 배치 제외 |
 | `PlacementBudgetUnavailable` | 외부 GPU 소유 불명이나 memory 예산 확인 불가 |
 | `PowerModeObservationUnavailable` | 실제 전력모드 readback 불가 |
-| `PowerTransitionUnavailable` | 모드는 확인했지만 요청 가능한 전환 근거 없음 |
+| `PowerTransitionUnavailable` | 현재 모드는 확인했지만 전환 가능한 모드가 하나도 없음 |
 | `InstanceUnavailable` | 해당 native나 profile 관측 불가 |
 | `ExcludedNode` | 운영 제외. keep과 실물 점유 유지 |
 
-전력 세부 사유는 기존 `PowerModeUnavailable`과 함께 노출한다. fixed 전환 비적용과 관측 실패를 구분한다. 한 노드 실패는 독립 노드 판단을 막지 않으며 memory와 physical GPU 제약은 유지한다.
+`PowerModeUnavailable`은 현재 모드 미관측 또는 전환 가능 모드 부재일 때만 붙인다. 과거 Fixed 모드의 더 낮은 baseline은 이 사유를 만들지 않는다. 전력 세부 사유는 기존 `PowerModeUnavailable`과 함께 노출한다. fixed 전환 비적용과 관측 실패를 구분한다. 한 노드 실패는 독립 노드 판단을 막지 않으며 memory와 physical GPU 제약은 유지한다.
 
 ## 프로파일과 비용
 

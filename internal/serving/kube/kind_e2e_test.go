@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -393,7 +394,7 @@ func kindScheduler(t *testing.T, kube kubernetes.Interface, autonomous []string,
 			Scope: "node-exclusive-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "prepare-" + profile.ID, Size: 1}})
 	}
 	for _, n := range nodes {
-		config.Meters = append(config.Meters, MeterDeclaration{ID: "wall-" + n.Name, Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Scope: servingstate.MeasurementWallScope,
+		config.Meters = append(config.Meters, servingops.MeterDeclaration{ID: "wall-" + n.Name, Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Scope: servingstate.MeasurementWallScope,
 			Source: kindMeterSource(n.Name)})
 		config.Baselines = append(config.Baselines, serving.NodeBaseline{ID: "idle-" + n.Name, Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)},
 			PowerMode: "fixed", Watts: 10, Meter: "wall-" + n.Name, Scope: "node-exclusive-wall", MeasuredAt: time.Now(),
@@ -510,7 +511,7 @@ func TestE2EKindSCHAC24FirstConfiguration(t *testing.T) {
 		t.Fatalf("first configuration is not one instance on the measured Node: %+v", first.Target)
 	}
 	for _, n := range first.Target.Nodes {
-		if n.Node.UID == string(other.UID) && n.PowerMode != serving.SchedulerLowestMode(c.config.Baselines, n.Node) {
+		if n.Node.UID == string(other.UID) && n.PowerMode != serving.SchedulerLowestMode(c.config.Baselines, n) {
 			t.Fatalf("other available Node mode %q", n.PowerMode)
 		}
 	}
@@ -519,7 +520,7 @@ func TestE2EKindSCHAC24FirstConfiguration(t *testing.T) {
 		t.Fatalf("selected nominal rate lacks current feedback evidence: %+v", rates)
 	}
 	feedback := serving.BuildPathFeedback(definition.UID, nil, definition.SLO, 139*time.Millisecond)
-	expected, err := serving.JudgeFeedbackRates(context.Background(), first.Settings, rates[0].Option, definition,
+	expected, err := serving.JudgeFeedbackRates(context.Background(), first.Settings, serving.SchedulerOption{Instance: config.Preparations[profile.ID].Instance}, definition,
 		config.DispatchOccupancy[0], feedback, []float64{rates[0].Tests[0].Rate})
 	if err != nil {
 		t.Fatal(err)
@@ -543,9 +544,9 @@ func kindInstance(t *testing.T, kube kubernetes.Interface, c *SchedulerControlle
 	fixture, _, _, _ := observerSourceFixture()
 	pod := fixture.DeepCopy()
 	pod.Name, pod.UID, pod.Spec.NodeName = "chill-e2e-fixed-"+rand.String(5), "", node.Name
-	pod.Annotations[ServingProfileAnnotation] = profile.ID
+	pod.Annotations[servingstate.ServingProfileAnnotation] = profile.ID
 	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: owner.Name, UID: types.UID(owner.UID)}}
-	delete(pod.Labels, instancePodUIDLabel)
+	delete(pod.Labels, servingstate.InstancePodUIDLabel)
 	created, err := kube.CoreV1().Pods(pod.Namespace).Create(ctx, pod, meta.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -559,7 +560,7 @@ func kindInstance(t *testing.T, kube kubernetes.Interface, c *SchedulerControlle
 		if created, err = pods.Get(ctx, pod.Name, meta.GetOptions{}); err != nil {
 			return err
 		}
-		created.Labels[instancePodUIDLabel] = string(created.UID)
+		created.Labels[servingstate.InstancePodUIDLabel] = string(created.UID)
 		if created, err = pods.Update(ctx, created, meta.UpdateOptions{}); err != nil {
 			return err
 		}
@@ -570,7 +571,7 @@ func kindInstance(t *testing.T, kube kubernetes.Interface, c *SchedulerControlle
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := instanceService(created)
+	service := servingstate.InstanceService(created)
 	if _, err = kube.CoreV1().Services(service.Namespace).Create(ctx, service, meta.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}

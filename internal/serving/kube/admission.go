@@ -492,8 +492,9 @@ func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.
 	if err := c.store.client.List(ctx, &classes); err != nil {
 		return err
 	}
-	lowest := serving.SchedulerLowestMode(config.Baselines, ref)
-	maxDuration, ok := nodePowerTargets(node, classes.Items, config.PowerPolicies)[lowest]
+	targets := nodePowerTargets(node, classes.Items, config.PowerPolicies)
+	lowest := serving.SchedulerLowestMode(config.Baselines, serving.SchedulerNode{Node: ref, PowerMode: servingstate.ReadBackMode(node, servingstate.NodeClass(node, classes.Items)), SwitchableModes: switchablePowerModes(targets)})
+	maxDuration, ok := targets[lowest]
 	if lowest == "" || !ok {
 		result.Progress = append(result.Progress, "no requestable lowest mode")
 		return nil

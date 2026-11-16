@@ -39,6 +39,15 @@ func nodePowerTargets(n *core.Node, classes []edge.DeviceClass, policies []nodea
 	return targets
 }
 
+func switchablePowerModes(targets map[string]time.Duration) []string {
+	modes := make([]string, 0, len(targets))
+	for mode := range targets {
+		modes = append(modes, mode)
+	}
+	slices.Sort(modes)
+	return modes
+}
+
 // captureNodeInventory retains GPU identity and quantity checks. CPU online
 // observations belong to the node agent, not placement admission.
 func captureNodeInventory(sn *serving.SchedulerNode, n *core.Node, profiles []serving.Profile) {

@@ -30,23 +30,16 @@ func schedulerWorkloadStates(settings SchedulerSettings, snapshot SchedulerSnaps
 	return states
 }
 
-// SchedulerLowestMode is the power mode of the Node's lowest unloaded baseline,
-// ties broken by name; "" when the Node has no unloaded baseline.
-func SchedulerLowestMode(baselines []NodeBaseline, node NodeReference) string {
-	return SchedulerLowestModeMatching(baselines, node, nil)
-}
-
-// SchedulerLowestModeMatching selects the lowest measured unloaded mode accepted
-// by eligible. A nil predicate accepts every mode; evidence and tie rules match
-// SchedulerLowestMode.
-func SchedulerLowestModeMatching(baselines []NodeBaseline, node NodeReference, eligible func(string) bool) string {
+// SchedulerLowestMode selects the lowest measured unloaded baseline among the
+// current and switchable modes, breaking ties by name; empty means no evidence.
+func SchedulerLowestMode(baselines []NodeBaseline, node SchedulerNode) string {
 	latest := map[string]*NodeBaseline{}
 	for j := range baselines {
 		b := &baselines[j]
-		if b.Node != node || len(b.State) != 0 || b.Scope != schedulerNodeWallScope || b.Meter == "" || !schedulerFinite(b.Watts) || b.Watts < 0 || b.ID == "" || b.Reference.Validate() != nil {
+		if b.Node != node.Node || len(b.State) != 0 || b.Scope != schedulerNodeWallScope || b.Meter == "" || !schedulerFinite(b.Watts) || b.Watts < 0 || b.ID == "" || b.Reference.Validate() != nil {
 			continue
 		}
-		if eligible != nil && !eligible(b.PowerMode) {
+		if b.PowerMode != node.PowerMode && !slices.Contains(node.SwitchableModes, b.PowerMode) {
 			continue
 		}
 		if previous := latest[b.PowerMode]; previous == nil || b.MeasuredAt.After(previous.MeasuredAt) {
@@ -600,7 +593,7 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 			}
 			emptySaving := schedulerAvailable(p.snap, oldNode) &&
 				!slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node }) &&
-				n.PowerMode == SchedulerLowestMode(p.snap.Baselines, n.Node)
+				n.PowerMode == SchedulerLowestMode(p.snap.Baselines, n)
 			reboot := slices.ContainsFunc(oldNode.Reboots, func(fact PowerReboot) bool {
 				return fact.From == from && fact.To == n.PowerMode
 			})

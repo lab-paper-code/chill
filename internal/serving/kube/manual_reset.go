@@ -408,16 +408,20 @@ func (c *SchedulerController) resetRoutingPresent(ctx context.Context, uid strin
 // A reset can retain a measured current mode or request a configured target.
 // Without targets, only the original measured minimum can establish completion.
 func resetLowestPowerMode(baselines []serving.NodeBaseline, node serving.NodeReference, current string, targets map[string]time.Duration) string {
+	sn := serving.SchedulerNode{Node: node, PowerMode: current, SwitchableModes: switchablePowerModes(targets)}
 	if len(targets) == 0 {
-		if lowest := serving.SchedulerLowestMode(baselines, node); lowest == current {
+		// Preserve reset completion only at the measured minimum without actuation.
+		for _, b := range baselines {
+			if b.Node == node {
+				sn.SwitchableModes = append(sn.SwitchableModes, b.PowerMode)
+			}
+		}
+		if lowest := serving.SchedulerLowestMode(baselines, sn); lowest == current {
 			return lowest
 		}
 		return ""
 	}
-	return serving.SchedulerLowestModeMatching(baselines, node, func(mode string) bool {
-		_, supported := targets[mode]
-		return supported || mode == current
-	})
+	return serving.SchedulerLowestMode(baselines, sn)
 }
 
 func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []serving.NodeReference, config SchedulerControllerConfig, result *servingstate.OperationResult) error {

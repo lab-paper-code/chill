@@ -271,7 +271,7 @@ const (
 	NodePlacementInventoryMissing  = "PlacementInventoryMissing"
 	NodePlacementBudgetUnavailable = "PlacementBudgetUnavailable"
 	NodePowerModeUnavailable       = "PowerModeUnavailable"
-	// Refinements accompany PowerModeUnavailable; its planning gate is unchanged.
+	// Refinements distinguish missing observation from unavailable actuation.
 	NodePowerModeObservationUnavailable = "PowerModeObservationUnavailable"
 	NodePowerTransitionUnavailable      = "PowerTransitionUnavailable"
 	// NodeInstanceUnavailable: a CHILL serving instance on the Node has no
@@ -292,16 +292,17 @@ type PowerReboot struct {
 // SchedulerNode is one Node of the entire POOL. Measurement marks the
 // measurement POOL; Reasons name configuration the Node lacks.
 type SchedulerNode struct {
-	Node        NodeReference         `json:"node"`
-	PowerMode   string                `json:"powerMode"`
-	Ready       bool                  `json:"ready"`
-	Measurement bool                  `json:"measurement,omitempty"`
-	GPUUUIDs    []string              `json:"gpuUUIDs"`
-	MemoryBytes uint64                `json:"memoryBytes"`
-	Reserved    SchedulerAllocation   `json:"reserved"`
-	NonServing  []SchedulerAllocation `json:"nonServing"`
-	ObservedAt  time.Time             `json:"observedAt"`
-	Reasons     []string              `json:"reasons,omitempty"`
+	Node            NodeReference         `json:"node"`
+	PowerMode       string                `json:"powerMode"`
+	SwitchableModes []string              `json:"switchableModes"`
+	Ready           bool                  `json:"ready"`
+	Measurement     bool                  `json:"measurement,omitempty"`
+	GPUUUIDs        []string              `json:"gpuUUIDs"`
+	MemoryBytes     uint64                `json:"memoryBytes"`
+	Reserved        SchedulerAllocation   `json:"reserved"`
+	NonServing      []SchedulerAllocation `json:"nonServing"`
+	ObservedAt      time.Time             `json:"observedAt"`
+	Reasons         []string              `json:"reasons,omitempty"`
 	// Reboots selects lifecycle ordering only; it is not a stored cost contract.
 	Reboots []PowerReboot `json:"-"`
 }

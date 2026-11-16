@@ -25,7 +25,7 @@ func poolsAddNode(snap *SchedulerSnapshot, uid string, watts map[string]float64)
 	return n.Node
 }
 
-func TestSchedulerLowestModeMatchingPreservesMeasuredSelection(t *testing.T) {
+func TestSchedulerLowestModePreservesMeasuredSelection(t *testing.T) {
 	const targetMode = "fixed"
 	_, snap := schedulerFixture()
 	base := snap.Baselines[0]
@@ -61,24 +61,22 @@ func TestSchedulerLowestModeMatchingPreservesMeasuredSelection(t *testing.T) {
 		baselines = append(baselines, b)
 	}
 	for _, test := range []struct {
-		name     string
-		eligible func(string) bool
-		want     string
+		name, current string
+		modes         []string
+		want          string
 	}{
-		{"unfiltered", nil, targetMode},
-		{"actuatable", func(mode string) bool { return mode != targetMode }, "eco-a"},
-		{"latest-per-mode", func(mode string) bool { return mode == "eco" }, "eco"},
-		{"current-only", func(mode string) bool { return mode == "performance" }, "performance"},
-		{"no-eligible-measurement", func(mode string) bool { return mode == "unknown" }, ""},
+		{"current-fixed", targetMode, []string{"eco", "eco-a", "eco-b"}, targetMode},
+		{"switchable", "performance", []string{"eco", "eco-a", "eco-b"}, "eco-a"},
+		{"latest-per-mode", "eco", nil, "eco"},
+		{"current-only", "performance", nil, "performance"},
+		{"no-eligible-measurement", "unknown", nil, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := SchedulerLowestModeMatching(baselines, base.Node, test.eligible); got != test.want {
+			node := SchedulerNode{Node: base.Node, PowerMode: test.current, SwitchableModes: test.modes}
+			if got := SchedulerLowestMode(baselines, node); got != test.want {
 				t.Fatalf("lowest mode = %q, want %q", got, test.want)
 			}
 		})
-	}
-	if got := SchedulerLowestMode(baselines, base.Node); got != targetMode {
-		t.Fatalf("unfiltered measured-energy selection changed: %q", got)
 	}
 }
 
@@ -461,5 +459,57 @@ func TestSchedulerFixedBatchAutonomyRejectsRoutedBaseline(t *testing.T) {
 	snap.Routing = map[string]map[string]int32{uid: {snap.Instances[0].ID: 0}}
 	if err := SchedulerFixedBatchAutonomy(snap, []string{uid}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSchedulerLowestSwitchableModePlans(t *testing.T) {
+	for _, current := range []string{"GPU_1500", "fixed"} {
+		t.Run(current, func(t *testing.T) {
+			settings, snap := schedulerFixture()
+			node := &snap.Nodes[0]
+			node.PowerMode, node.SwitchableModes = current, []string{"GPU_900", "GPU_1200", "GPU_1500"}
+			base := snap.Baselines[0]
+			snap.Baselines = nil
+			for mode, watts := range map[string]float64{"fixed": 50, "GPU_900": 55, "GPU_1500": 56} {
+				b := base
+				b.PowerMode, b.Watts = mode, watts
+				snap.Baselines = append(snap.Baselines, b)
+			}
+			want := "GPU_900"
+			if current == "fixed" {
+				want = current
+			}
+			if got := SchedulerLowestMode(snap.Baselines, *node); got != want {
+				t.Fatalf("lowest=%s want=%s", got, want)
+			}
+			snap.Instances, snap.Options = nil, nil
+			planner := capacityPlanner{snapshot: snap, settings: settings}
+			if current == "fixed" {
+				plan := planner.plan(0, current, nil, nil)
+				if plan != nil {
+					t.Fatalf("fixed current caused empty-node change: %+v", plan)
+				}
+			}
+			_, original := schedulerFixture()
+			for _, mode := range []string{"GPU_900", "fixed"} {
+				option := original.Options[0]
+				profile := *option.Instance.Profile
+				profile.ID, profile.Condition.PowerMode = mode, mode
+				option.Instance.Profile = &profile
+				snap.Options = append(snap.Options, option)
+			}
+			for _, power := range []bool{true, false} {
+				settings.Controls.Power = power
+				decision := capacityDecideForTest(t, settings, snap)
+				plans := poolsPlans(decision, node.Node)
+				for _, mode := range []string{"GPU_900", "fixed"} {
+					found := slices.ContainsFunc(plans, func(p SchedulerNodePlan) bool { return strings.Contains(p.Key, mode) })
+					want := mode == current || power && mode == "GPU_900"
+					if found != want {
+						t.Fatalf("current=%s power=%v mode=%s candidate=%v want=%v plans=%+v", current, power, mode, found, want, plans)
+					}
+				}
+			}
+		})
 	}
 }

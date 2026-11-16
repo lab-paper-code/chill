@@ -13,8 +13,8 @@ import (
 )
 
 func TestDecodeSnapshotUsesCurrentWorkloadUID(t *testing.T) {
-	snapshot, err := decodeSnapshot([]byte(`{"instances":[{"id":"current","workloadUID":"w"},{"id":"unbound"}]}`))
-	if err != nil || len(snapshot.Instances) != 2 || snapshot.Instances[0].WorkloadUID != "w" || snapshot.Instances[1].WorkloadUID != "" {
+	snapshot, err := decodeSnapshot([]byte(`{"nodes":[{"powerMode":"GPU_1500","switchableModes":["GPU_900","GPU_1500"]}],"instances":[{"id":"current","workloadUID":"w"},{"id":"unbound"}]}`))
+	if err != nil || len(snapshot.Nodes) != 1 || len(snapshot.Nodes[0].SwitchableModes) != 2 || snapshot.Nodes[0].SwitchableModes[0] != "GPU_900" || len(snapshot.Instances) != 2 || snapshot.Instances[0].WorkloadUID != "w" || snapshot.Instances[1].WorkloadUID != "" {
 		t.Fatalf("current snapshot decode: %+v %v", snapshot, err)
 	}
 	if _, err := decodeSnapshot([]byte(`{"instances":[]} {}`)); err == nil {

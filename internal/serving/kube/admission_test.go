@@ -559,6 +559,7 @@ const (
 // The hand-back requests the lowest mode on the Node it still holds and removes
 // the taint once the agent settled it.
 func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
+	const lowMode = "GPU_900"
 	// Every Failed session is terminal: ChillServer refuses an unresolved
 	// session at admission instead of retrying it under a held Node.
 	for _, reason := range []string{"", "InvalidRunSpec", "FatalFailure", "RetryLimitExhausted"} {
@@ -566,12 +567,18 @@ func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
 			h := newAdmissionHarness(t)
 			actuator := edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 2}}
 			class := &edge.DeviceClass{ObjectMeta: meta.ObjectMeta{Name: "cpu"}, Spec: edge.DeviceClassSpec{NodeSelector: map[string]string{"hardware": "cpu"},
-				Architecture: "amd64", PowerModes: []edge.PowerMode{{Name: lowMode, Actuator: actuator}}}}
+				Architecture: "amd64", PowerModes: []edge.PowerMode{{Name: lowMode, Actuator: actuator}, {Name: "fixed", Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorFixed}}, {Name: "GPU_1500", Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 3}}}}}}
 			h.create(class)
 			h.controller.mu.Lock()
 			h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: lowMode, DeviceClass: "cpu", PowerMode: lowMode, ActuatorKind: string(actuator.Kind), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60}}
-			h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, PowerMode: lowMode, Watts: 5,
+			h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, PowerMode: lowMode, Watts: 55,
 				Meter: "wall", Scope: servingstate.MeasurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
+			old := h.controller.config.Baselines[0]
+			old.ID, old.PowerMode, old.Watts = "old-fixed", "fixed", 50
+			h.controller.config.Baselines = append(h.controller.config.Baselines, old)
+			high := old
+			high.ID, high.PowerMode, high.Watts = "high", "GPU_1500", 56
+			h.controller.config.Baselines = append(h.controller.config.Baselines, high)
 			h.controller.mu.Unlock()
 			holder := "deleted-uid"
 			if reason != "" {
@@ -587,6 +594,8 @@ func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
 			}
 			h.setNode(func(n *core.Node) {
 				n.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: holder, Effect: core.TaintEffectNoSchedule}}
+				n.Labels[chillmeta.PowerMode] = "GPU_1500"
+				settleAgent(class)(n)
 			})
 			settle := settleAgent(class)
 			holderAtRequest := ""

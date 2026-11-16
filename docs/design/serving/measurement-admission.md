@@ -63,7 +63,7 @@ terminal이나 삭제 root, 살아 있는 root/run이 없는 taint와 종료 ope
 2. 해당 load Job과 잔류 CHILL serving Pod를 정상 ClearNode로 제거한다.
 3. Node UID label의 runner Service를 정리한다.
 4. Node UID와 taint holder를 재확인한다.
-5. 요청 가능한 최신 unloaded baseline의 최저 모드로 변경하고 독립 readback을 확인한다. Fixed나 근거 부재는 전력 단계를 건너뛴다.
+5. 현재 모드와 요청 가능한 모드의 최신 unloaded baseline의 최저 모드로 변경하고 독립 readback을 확인한다. 선택된 최저 모드가 요청 불가능한 현재 Fixed 모드이거나 측정 근거가 없으면 전력 단계를 건너뛴다.
 6. 현재 RV로 taint를 제거하고 예약을 반환한다.
 
 실패하면 taint와 미확인 책임을 유지하고 다음 round에서 반환을 재시도한다. 세션의 반환 실패는 BEO의 `NodeReturned=False` 조건에 원문을 남기고 측정의 terminal 결과는 유지한다. goroutine 종료나 root 삭제만으로 반환을 주장하지 않는다. root 삭제는 Interrupted holder다.

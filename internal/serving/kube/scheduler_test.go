@@ -913,3 +913,37 @@ func TestSchedulerCapturePreservesTerminalLedgerWithoutReadFailureAC45(t *testin
 		t.Fatalf("terminal occupancy became an unknown read or disappeared: %+v", snapshot)
 	}
 }
+
+func TestSchedulerCaptureLowestSwitchableMode(t *testing.T) {
+	c := schedulerEmptyPoolController(t)
+	ctx := context.Background()
+	_, node, _, class := observerSourceFixture()
+	if err := c.store.client.Get(ctx, client.ObjectKey{Name: class.Name}, &class); err != nil {
+		t.Fatal(err)
+	}
+	for index, mode := range []string{"GPU_1500", "GPU_900", "GPU_1200"} {
+		actuator := edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: int32(index + 1)}}
+		class.Spec.PowerModes = append(class.Spec.PowerModes, edge.PowerMode{Name: mode, Actuator: actuator})
+		c.config.PowerPolicies = append(c.config.PowerPolicies, nodeactuator.ActuationPolicySpec{Name: mode, DeviceClass: class.Name, PowerMode: mode, ActuatorKind: string(actuator.Kind), MaxActuationDurationSeconds: 30})
+	}
+	if err := c.store.client.Update(ctx, &class); err != nil {
+		t.Fatal(err)
+	}
+	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
+	for mode, watts := range map[string]float64{"fixed": 50, "GPU_900": 55, "GPU_1500": 56} {
+		c.config.Baselines = append(c.config.Baselines, serving.NodeBaseline{ID: mode, Node: ref, PowerMode: mode, Watts: watts, Meter: "wall", Scope: servingstate.MeasurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: mode, Size: 1}})
+	}
+	node.Labels[chillmeta.PowerMode] = "GPU_1500"
+	settleAgent(&class)(node)
+	if _, err := c.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := c.capture(ctx, time.Now(), c.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := snapshot.Nodes[0]
+	if slices.Contains(got.Reasons, serving.NodePowerModeUnavailable) || !slices.Equal(got.SwitchableModes, []string{"GPU_1200", "GPU_1500", "GPU_900"}) || serving.SchedulerLowestMode(snapshot.Baselines, got) != "GPU_900" {
+		t.Fatalf("capture=%+v baselines=%+v", got, snapshot.Baselines)
+	}
+}
