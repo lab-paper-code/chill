@@ -25,8 +25,10 @@ const batchColumns: Column<SessionBatchView>[] = [
   { key: "batch", header: "배치", unit: "건", numeric: true, cell: b => b.batch, sortValue: b => b.batch },
   { key: "records", header: "처리 시간 기록 수", unit: "개", numeric: true, cell: b => formatNumber(b.serviceRecordCount), sortValue: b => b.serviceRecordCount },
   { key: "rate", header: "포화 처리율", unit: "req/s", numeric: true, cell: b => (b.saturationInputRate === undefined ? null : rateNumber(b.saturationInputRate)), missingReason: "포화 수준 없음" },
-  { key: "energy", header: "요청당 에너지", unit: "J", numeric: true, cell: b => valueText(b.joulesPerInput, 3), missing: b => b.joulesPerInput.range ? `구분 안 됨, 범위 ${rangeText(b.joulesPerInput, 3)} J` : "구분 안 됨" },
+  { key: "energy", header: "입력당 에너지", unit: "J", numeric: true, cell: b => valueText(b.joulesPerInput, 3), missingReason: "구분 안 됨" },
   { key: "energyStatus", header: "에너지 구분", cell: b => parameterCell(b.joulesPerInput) },
+  { key: "saturationEnergy", header: "포화 요청당 에너지", unit: "J", numeric: true, cell: b => valueText(b.saturationJoulesPerInput, 3), missingReason: "구분 안 됨" },
+  { key: "saturationEnergyStatus", header: "포화 에너지 구분", cell: b => parameterCell(b.saturationJoulesPerInput) },
   { key: "memory", header: "메모리 최댓값", numeric: true, cell: b => formatBytes(b.peakMemoryBytes), sortValue: b => b.peakMemoryBytes },
 ]
 
@@ -49,8 +51,8 @@ export function SessionResultSection({ session, phase, outcome, reason }: { sess
   const power = session.power
   const parameters: Parameter[] = [
     { key: "idle", label: "유휴 전력", info: "모델을 올린 채 요청이 없고 전력이 가라앉은 노드 전력", value: power.idleWatts },
-    { key: "awake", label: "깨어 있는 전력 증가", info: "실행 중이거나 실행 뒤 유지 시간 안에 더해지는 전력", value: power.awakeStepWatts },
-    { key: "hold", label: "유지 시간", info: "실행이 끝난 뒤 장치가 깨어 있는 시간", value: power.holdSeconds },
+    { key: "awake", label: "깨어 있는 전력 증가", info: "깨어 있는 비율 식의 맞춤 계수(와트)", value: power.awakeStepWatts },
+    { key: "hold", label: "유지 시간", info: "깨어 있는 비율 식의 맞춤 계수(초)", value: power.holdSeconds },
   ]
   const idle = power.idleWatts.value
   const condition = session.condition

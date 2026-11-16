@@ -273,7 +273,8 @@ export function activeMeasurements(capture, epoch) {
         sentInputs: 59 * batch, completedInputs: 59 * batch, completedBatches: 59, endReason: end, inputRate, ...(watts === undefined ? {} : { meanWatts: watts, meanWattsStandardError: round(watts * 0.004, 3) }), powerSamples: samples })
       const levels = [level('saturation', rate, round(idle + 2.1 + slope * rate, 2), 160), level('mid', round(rate * 0.25, 1), round(idle + 1.8 + slope * rate * 0.25, 2), 240)]
       if (batch === 1) levels.push(level('sparse', 0.9, round(idle + 0.7, 2), 62))
-      return { batch, serviceRecordCount: 59 * 3 + (batch === 1 ? 59 : 0), saturationInputRate: rate, joulesPerInput: batch === 4 ? { status: 'NotIdentified', range: [0, round(slope * 2, 4)], reason: 'the slope lies within the noise of the fit', unit: 'J' } : parameter(slope, round(slope * 0.8, 4), round(slope * 1.2, 4), 'J'),
+      return { batch, serviceRecordCount: 59 * 3 + (batch === 1 ? 59 : 0), saturationInputRate: rate, joulesPerInput: batch === 4 ? { status: 'NotIdentified', reason: 'the slope lies within the noise of the fit', unit: 'J' } : { status: 'Identified', value: slope, unit: 'J' },
+        saturationJoulesPerInput: { status: 'Identified', value: (levels[0].meanWatts - idle) / levels[0].inputRate, unit: 'J' },
         peakMemoryBytes: Math.round((MEMORY[c.modelSpec] ?? MEMORY['mobilenet-v2-050'])[0] + batch * 4e6), memoryKind: 'peak', dispatchOccupancy: { count: 59, medianNanos: Math.round(per * 1e6 * batch * 0.8) },
         prepareCostKey: `operation-measurements/${item.metadata.uid}/prepare-${batch}.json`, removeCostKey: `operation-measurements/${item.metadata.uid}/remove-${batch}.json`, levels }
     })
@@ -281,8 +282,8 @@ export function activeMeasurements(capture, epoch) {
       condition: { nodeName: item.spec.state.targetNode, nodeUID: nodeUID[item.spec.state.targetNode] ?? '', deviceClass: c.deviceClass, powerMode: c.powerMode, logicalModel: c.modelSpec, runtimeFamily: 'onnxruntime', backend: 'cpu',
         runtimeImage: 'registry.local/chill/firstfloor-runtime:replay', artifact: { executionPath: c.executionPath }, preprocessor: { name: c.preprocessor }, actor: {} },
       settings: { meterLagSeconds: 3, minimumPowerWindowSeconds: 15, midLevelRatio: 0.25, sparseMeanGapSeconds: 1, levelDurationLimitSeconds: 300, postLoadWindowSeconds: 60, minimumSamples: 59, confidenceLevel: 0.95 },
-      power: { idleWatts: parameter(idle, 9.5, 9.7, 'W'), awakeStepWatts: parameter(1.6, 1.3, 1.9, 'W'), holdSeconds: { status: 'NotIdentified', range: [0, 2.5], reason: 'the hold is shorter than the meter lag', unit: 's' },
-        meterIntervalSeconds: 1, settledAtSeconds: 6, postLoadTailSlopeWattsPerSecond: -0.002, fitResidualSquareWatts: 0.04, fitLimitSquareWatts: 0.09,
+      power: { idleWatts: parameter(idle, 9.5, 9.7, 'W'), awakeStepWatts: { status: 'Identified', value: 1.6, unit: 'W' }, holdSeconds: { status: 'Identified', value: 1.2, unit: 's' },
+        meterIntervalSeconds: 1, settledAtSeconds: 6,
         postLoad: Array.from({ length: 60 }, (_, s) => [s, round(idle + 2.4 * Math.exp(-s / 2) + 0.05 * Math.sin(s), 2)]), postLoadSampleCount: 60 },
       batches, stop: { batch: 8, class: 'CapacityLimit', reason: 'prepare of batch 8 exceeded the memory envelope' }, meterSource: { kind: 'edge-metrics', nodeName: item.spec.state.targetNode } }
   }
@@ -300,8 +301,8 @@ export function activeMeasurements(capture, epoch) {
       const filters = { models: 'model', deviceClasses: 'deviceClass', nodes: 'node', powerModes: 'powerMode', paths: 'path' }
       const all = profiles.map(p => ({ id: p.profile, reference: { store: STORE, key: `batch-energy-optimizations/${p.profile.split('/')[2]}/result.json`, size: 11284 },
         evidence: p.batchFacts.flatMap(f => f.sources), nodeName: p.node, condition: p.condition,
-        batches: p.batchFacts.map(f => ({ batch: f.batch, energyPerInputJoules: f.incrementalJoulesPerItem, memoryBytes: Math.round(perf(p.id, f.batch).memory), memoryBasis: { observation: 'peak-working-set', evidence: f.sources[0] }, meanWallWatts: f.activeWatts })),
-        confidenceLevel: 0.95, trialsPerBatch: TRIALS, idleBaselineWatts: p.batchFacts[0].idleWatts, measuredAt: p.at,
+        batches: p.batchFacts.map(f => ({ batch: f.batch, energyPerInputJoules: f.incrementalJoulesPerItem, saturationJoulesPerInput: f.incrementalJoulesPerItem, memoryBytes: Math.round(perf(p.id, f.batch).memory), memoryBasis: { observation: 'peak-working-set', evidence: f.sources[0] }, meanWallWatts: f.activeWatts })),
+        confidenceLevel: 0.95, trialsPerBatch: TRIALS, measuredAt: p.at,
         metricSource: { kind: 'edge-metrics', nodeName: p.node, endpoint: `http://${p.node}:9101/metrics`, metric: 'node_wall_power_watts' },
         assessment: { ...healthyCell(p).variants[0].assessment }, resultRows: p.rows,
         facets: { model: p.cell.model.name, deviceClass: p.cell.deviceClass.name, node: p.node, powerMode: p.cell.powerMode, path: p.cell.executionPath } }))

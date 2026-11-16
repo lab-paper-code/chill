@@ -128,6 +128,13 @@ that lifetime. Other 503s do not receive warming retries.
 Shared changes and deletion require confirmation. Conflict preserves drafts.
 Response loss requires original-state lookup before explicit resubmission.
 
+## Session power values
+
+Session results and scheduler profiles show the fitted awake power, hold coefficient
+and per-batch input energy. Only idle power retains a confidence interval.
+Saturation energy per request is `(saturation mean watts - settled idle watts) /
+saturation input rate`, in joules; the executor uses it to rank batch sizes.
+
 ## Local development
 
 Node 24. The replay server serves the dashboard against a captured ChillServer and
