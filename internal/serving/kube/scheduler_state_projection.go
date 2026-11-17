@@ -39,13 +39,20 @@ func nodePowerTargets(n *core.Node, classes []edge.DeviceClass, policies []nodea
 	return targets
 }
 
-func switchablePowerModes(targets map[string]time.Duration) []string {
+// nodePowerView is the Node as the lowest-mode rule reads it: its read-back
+// mode and the modes it can be switched into, with those targets.
+func nodePowerView(n *core.Node, classes []edge.DeviceClass, policies []nodeactuator.ActuationPolicySpec) (serving.SchedulerNode, map[string]time.Duration) {
+	targets := nodePowerTargets(n, classes, policies)
 	modes := make([]string, 0, len(targets))
 	for mode := range targets {
 		modes = append(modes, mode)
 	}
 	slices.Sort(modes)
-	return modes
+	return serving.SchedulerNode{
+		Node:            serving.NodeReference{Name: n.Name, UID: string(n.UID)},
+		PowerMode:       servingstate.ReadBackMode(n, servingstate.NodeClass(n, classes)),
+		SwitchableModes: modes,
+	}, targets
 }
 
 // captureNodeInventory retains GPU identity and quantity checks. CPU online

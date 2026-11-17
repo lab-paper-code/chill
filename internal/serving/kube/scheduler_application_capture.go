@@ -99,9 +99,8 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 			sn.Reasons = append(sn.Reasons, serving.NodeExcluded)
 		}
 		captureNodeInventory(&sn, n, profiles)
-		sn.PowerMode = servingstate.ReadBackMode(n, servingstate.NodeClass(n, classes.Items))
-		targets := nodePowerTargets(n, classes.Items, config.PowerPolicies)
-		sn.SwitchableModes = switchablePowerModes(targets)
+		view, targets := nodePowerView(n, classes.Items, config.PowerPolicies)
+		sn.PowerMode, sn.SwitchableModes = view.PowerMode, view.SwitchableModes
 		if sn.PowerMode == "" || len(targets) == 0 {
 			sn.Reasons = append(sn.Reasons, serving.NodePowerModeUnavailable)
 			if sn.PowerMode == "" {

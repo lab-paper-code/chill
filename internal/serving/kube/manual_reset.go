@@ -158,9 +158,8 @@ func (c *SchedulerController) resetPendingPowerNodes(ctx context.Context, uids [
 		if string(actual.UID) != node.Node.UID || profilingrun.InMeasurement(actual) {
 			return nil, errors.New("reset Node identity or measurement ownership changed")
 		}
-		current := servingstate.ReadBackMode(actual, servingstate.NodeClass(actual, classes.Items))
-		lowest := resetLowestPowerMode(config.Baselines, node.Node, current, nodePowerTargets(actual, classes.Items, config.PowerPolicies))
-		if lowest != "" && current == lowest && slices.ContainsFunc(actual.Status.Conditions, func(condition core.NodeCondition) bool {
+		view, _ := nodePowerView(actual, classes.Items, config.PowerPolicies)
+		if lowest := resetLowestPowerMode(config.Baselines, view); lowest != "" && view.PowerMode == lowest && slices.ContainsFunc(actual.Status.Conditions, func(condition core.NodeCondition) bool {
 			return condition.Type == core.NodeReady && condition.Status == core.ConditionTrue
 		}) {
 			continue
@@ -405,23 +404,22 @@ func (c *SchedulerController) resetRoutingPresent(ctx context.Context, uid strin
 	return declared, false, nil
 }
 
-// A reset can retain a measured current mode or request a configured target.
-// Without targets, only the original measured minimum can establish completion.
-func resetLowestPowerMode(baselines []serving.NodeBaseline, node serving.NodeReference, current string, targets map[string]time.Duration) string {
-	sn := serving.SchedulerNode{Node: node, PowerMode: current, SwitchableModes: switchablePowerModes(targets)}
-	if len(targets) == 0 {
-		// Preserve reset completion only at the measured minimum without actuation.
-		for _, b := range baselines {
-			if b.Node == node {
-				sn.SwitchableModes = append(sn.SwitchableModes, b.PowerMode)
-			}
+// resetLowestPowerMode is the mode a reset leaves the Node in. A Node that
+// cannot be switched completes only at its lowest measured mode of all: a
+// measured lower mode it cannot request is missing power evidence, not a no-op.
+func resetLowestPowerMode(baselines []serving.NodeBaseline, node serving.SchedulerNode) string {
+	if len(node.SwitchableModes) > 0 {
+		return serving.SchedulerLowestMode(baselines, node)
+	}
+	for _, baseline := range baselines {
+		if baseline.Node == node.Node {
+			node.SwitchableModes = append(node.SwitchableModes, baseline.PowerMode)
 		}
-		if lowest := serving.SchedulerLowestMode(baselines, sn); lowest == current {
-			return lowest
-		}
+	}
+	if serving.SchedulerLowestMode(baselines, node) != node.PowerMode {
 		return ""
 	}
-	return serving.SchedulerLowestMode(baselines, sn)
+	return node.PowerMode
 }
 
 func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []serving.NodeReference, config SchedulerControllerConfig, result *servingstate.OperationResult) error {
@@ -459,8 +457,8 @@ func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []servi
 		}) {
 			return errors.New("reset requires actual Node mode and Ready readback")
 		}
-		targets := nodePowerTargets(node, classes.Items, config.PowerPolicies)
-		lowest := resetLowestPowerMode(config.Baselines, ref, mode, targets)
+		view, targets := nodePowerView(node, classes.Items, config.PowerPolicies)
+		lowest := resetLowestPowerMode(config.Baselines, view)
 		if lowest == "" {
 			return fmt.Errorf("Node %s lacks the measured lowest power mode", node.Name)
 		}
@@ -468,10 +466,7 @@ func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []servi
 			result.Progress = append(result.Progress, node.Name+": lowest mode already Ready")
 			continue
 		}
-		duration, supported := targets[lowest]
-		if !supported {
-			return fmt.Errorf("Node %s has no actuation policy for lowest mode %s", node.Name, lowest)
-		}
+		duration := targets[lowest]
 		outcome, err := c.operations.Execute(ctx, servingstate.Operation{ID: result.Operation.ID + "/power/" + ref.UID, Kind: servingstate.OperationPower, Node: ref, PowerMode: lowest, MaxActuationDuration: duration})
 		result.Progress = append(result.Progress, outcome.Progress...)
 		if err != nil {
