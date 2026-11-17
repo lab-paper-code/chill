@@ -109,11 +109,14 @@ func TestNativeHTTPServicePairsReachPersistedRequestConsumers(t *testing.T) {
 		if sample != nil {
 			serviceMS = float64(sample.ServiceDurationNanos) / float64(time.Millisecond)
 		}
+		// A reply never reports more executor time than its exchange took.
+		time.Sleep(time.Duration(serviceMS * float64(time.Millisecond)))
+		enqueue, wait := int64(0), int64(0)
 		progress := native.Progress{
 			RequestID: request.ID, WorkloadUID: request.Context.WorkloadUID, Definition: request.Context.Definition,
 			Phase: "finished", At: time.Now().UTC(), BatchID: uint64(next), BatchSize: 1, ProfileID: "profile",
 			ServiceMS: serviceMS, NativeElapsedMS: serviceMS, ExecutionComplete: true, Outcome: "completed",
-			ServiceSample: sample,
+			ExecutorWaitNanos: &wait, NativeHTTP: &native.HTTPRequestTiming{EnqueueNanos: &enqueue}, ServiceSample: sample,
 		}
 		if err := json.NewEncoder(w).Encode(native.Response{
 			ModelName: "model", ID: request.ID, ExecutionComplete: true, Progress: progress,

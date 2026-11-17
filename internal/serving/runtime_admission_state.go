@@ -50,6 +50,15 @@ func (r *Runtime) completeAdmissionLocked(c *Call) {
 	i.applyAdmissionCompletions(now)
 }
 
+// Only an executed request whose reply places its service end yields an
+// executed fact. The end lies after the anchor (the gateway's HTTP start, or
+// the dispatch while no HTTP start is recorded) plus the executor's own time
+// from handler entry to the earliest service end, and before the gateway
+// processes the completion. Between the bounds remain: with a dispatch anchor,
+// the gateway's work before the HTTP start (assigned-event persistence and
+// request encode); the request's upload to the native handler; the hand-off
+// from queue exit to the exchange; and the completion's return, including its
+// transport, decode and the gateway's persistence of the completion events.
 func admissionCompletionForCall(c *Call, now time.Time, previous admissionCompletion, found bool) admissionCompletion {
 	received := now
 	if found {
@@ -63,21 +72,31 @@ func admissionCompletionForCall(c *Call, now time.Time, previous admissionComple
 			start = httpStart
 		}
 	}
-	executed := c.progress != nil && c.progress.BatchID > 0 && c.progress.BatchSize > 0 &&
-		(c.progress.BackendMS > 0 || c.progress.ServiceSample != nil && c.progress.ServiceSample.ServiceDurationNanos > 0)
+	serviceEnd, executed := executorServiceEnd(c.progress)
 	// The native client records HTTPStart on every attempted exchange; its
 	// Finished-without-progress pre-exchange returns prove no submission.
 	noExecution := c.admissionNoExecution || c.progress == nil && !httpAttempted || c.receipt.Rejection != nil ||
 		c.progress != nil && c.progress.Phase == phaseFinished && c.progress.BatchID == 0 && c.progress.BatchSize == 0 && c.progress.ServiceMS == 0 && c.progress.BackendMS == 0
-	validStart := !start.IsZero() && !start.After(received)
-	fact := admissionCompletion{receivedAt: received, notBefore: start, executed: executed && validStart, unknown: !executed && !noExecution || executed && !validStart}
-	if found && previous.executed {
-		fact.executed, fact.unknown = true, false
+	fact := admissionCompletion{receivedAt: received, unknown: executed || !noExecution}
+	if end := start.Add(serviceEnd); executed && !start.IsZero() && !end.After(received) {
+		fact.notBefore, fact.executed, fact.unknown = end, true, false
 	}
-	if found && (!validStart || previous.notBefore.After(start)) {
-		fact.notBefore = previous.notBefore
+	if found && previous.executed && (!fact.executed || previous.notBefore.After(fact.notBefore)) {
+		fact.notBefore, fact.executed, fact.unknown = previous.notBefore, true, false
 	}
 	return fact
+}
+
+// executorServiceEnd is the executor-clock time from native handler entry to
+// the earliest end of an executed request's service: enqueue offset, queue
+// wait and service duration. The batch leaves the queue before its exchange
+// starts. A reply without these timings does not place the end.
+func executorServiceEnd(p *BackendProgress) (time.Duration, bool) {
+	if p == nil || p.BatchID == 0 || p.BatchSize <= 0 || p.NativeHTTP == nil || p.NativeHTTP.EnqueueNanos == nil || p.ExecutorWaitNanos == nil ||
+		p.ServiceSample == nil || p.ServiceSample.ServiceDurationNanos <= 0 {
+		return 0, false
+	}
+	return time.Duration(*p.NativeHTTP.EnqueueNanos + *p.ExecutorWaitNanos + p.ServiceSample.ServiceDurationNanos), true
 }
 
 // A probe can have started before completion and arrive afterwards. Keep exact
@@ -108,14 +127,8 @@ func (i *runtimeInstance) applyAdmissionCompletions(now time.Time) {
 	removed, running := 0, false
 	for j := range native.Requests {
 		q := &native.Requests[j]
-		key := admissionRequestKey{q.Context.RequestID, q.Context.WorkloadUID, q.Context.Definition}
-		fact, done := i.admissionCompleted[key]
-		if done {
+		if _, done := i.admissionCompleted[admissionRequestKey{q.Context.RequestID, q.Context.WorkloadUID, q.Context.Definition}]; done {
 			removed++
-			if admissionObservationProvesExecution(q, &fact) {
-				fact.executed, fact.unknown = true, false
-				i.admissionCompleted[key] = fact
-			}
 		} else {
 			running = running || q.Phase == phaseRunning
 		}
@@ -173,11 +186,6 @@ func (i *runtimeInstance) applyAdmissionCompletions(now time.Time) {
 		}
 	}
 	i.State.Native, i.State.NativeSpanAt, i.State.AdmissionIdleUnknown = &updated, now, unknown
-}
-
-func admissionObservationProvesExecution(q *firstfloor.RequestState, fact *admissionCompletion) bool {
-	return !fact.executed && q.Phase == phaseRunning && q.BatchID > 0 && q.BatchSize > 0 && q.ExchangeElapsedNanos != nil &&
-		!fact.notBefore.IsZero() && !fact.notBefore.After(fact.receivedAt)
 }
 
 func advanceAdmissionRequest(q firstfloor.RequestState, age time.Duration) firstfloor.RequestState {

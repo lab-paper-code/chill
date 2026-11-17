@@ -104,7 +104,7 @@ running residual은 같은 N개 창을 `S > elapsed`로 조건화한다. 창은 
 
 모든 표본이 이미 elapsed 이하이면 원래 같은-gap service를 남은 시간으로 새로 뽑는 `same-gap-service-restart` 대체를 사용한다. 실제 잔여는 더 짧거나 길 수 있고 순위 bias도 양방향이다. RunningResidualBeyondSupport와 조건부 근거를 기록한다. 원래 gap support 부재는 이 대체로 숨기지 않는다.
 
-gateway가 관측한 service 종료는 HTTP 시작/dispatch와 최초 완료 수신 사이에 있다. native lastServiceEndAge의 하한/상한을 유지하고 admission은 범위 전체의 조건부 분위수 최댓값을 쓴다. gap 단조성은 가정하지 않는다. fill wait는 양 끝을 전진시키고 가상 service 완료 뒤 gap을 재설정한다.
+gateway는 실행된 요청의 완료로 service 종료의 범위를 정한다. 하한은 기준 시점에 실행기가 자기 시계로 잰 handler 진입부터 가장 이른 service 종료까지의 시간(enqueue offset, queue 대기, service 시간의 합)을 더한 시점이다. 기준은 gateway의 HTTP 시작이고, HTTP 시작이 아직 기록되지 않았으면 dispatch 시각이다. batch는 queue를 떠난 뒤 exchange를 시작하므로 실제 종료는 이보다 늦다. 상한은 gateway가 완료를 처리한 시점이다. 두 끝 사이에는 다음이 남는다. dispatch 기준이면 HTTP 시작 전 gateway의 작업(assigned 사건 저장, 요청 encode), 요청이 native handler에 닿기까지의 upload, queue를 떠난 뒤 exchange로 넘어가는 hand-off, 그리고 완료의 귀환(응답이나 log 전송, decode, gateway의 완료 사건 저장)이다. 노드 사이 시계는 비교하지 않는다. 이 시간이 없거나 하한이 상한보다 늦은 완료는 실행된 사실이 되지 않고 service 종료를 unknown으로 둔다. probe가 그 요청의 exchange를 보여도 같다. native lastServiceEndAge의 하한/상한을 유지하고 admission은 범위 전체의 조건부 분위수 최댓값을 쓴다. gap 단조성은 가정하지 않는다. fill wait는 양 끝을 전진시키고 가상 service 완료 뒤 gap을 재설정한다.
 
 표본 수의 marginal quantile coverage를 정밀 conditional tail이나 κ 안전 보장으로 해석하지 않는다. sparse와 밖 support, 선택 거리와 trial 수를 남긴다. 원시 sample과 SLO를 수정해 공백을 숨기지 않는다.
 

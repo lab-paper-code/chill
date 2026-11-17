@@ -38,7 +38,7 @@ func testRuntimeAdmissionPreIPCCompletion(t *testing.T, node string, maxBatch in
 	i.State.Native.Metadata.Policy.MaxBatchSize = maxBatch
 	i.Execute = func(context.Context, Dispatch) (BackendResult, error) {
 		<-finish
-		return BackendResult{Finished: true, Progress: &BackendProgress{Phase: phaseFinished, BatchID: batchID, BatchSize: 1, BackendMS: 0.000001, ExecutionComplete: true}}, nil
+		return BackendResult{Finished: true, Progress: executedTestProgress(batchID, 1, 0, time.Microsecond)}, nil
 	}
 	r.mu.Unlock()
 	first, receipt := admissionRuntimeCall(t, r, "w1", time.Now(), time.Now().Add(time.Second))
@@ -108,7 +108,7 @@ func TestRuntimeAdmissionCompletionRequiresPhysicalIdentityAndProof(t *testing.T
 				assignment: &Assignment{Instance: i.State.ID, Node: i.State.Node, DispatchedAt: time.Now().Add(-10 * time.Millisecond)}, backendDone: true,
 				progress: &BackendProgress{Phase: phaseFinished, BatchID: q.BatchID, BatchSize: q.BatchSize, ExecutionComplete: true}}
 			if q.BatchID != 0 {
-				c.progress.BackendMS = 0.000001
+				c.progress = executedTestProgress(q.BatchID, q.BatchSize, 0, time.Microsecond)
 			}
 			switch name {
 			case "timeout", "transport failure":
@@ -154,7 +154,7 @@ func TestRuntimeAdmissionCompletionPreservesRunningMembersAndRejectsStaleProbe(t
 	for j, q := range []firstfloor.RequestState{a, b} {
 		c := &Call{receipt: Receipt{ID: q.Context.RequestID, UID: q.Context.WorkloadUID}, identity: q.Context.Definition, instance: i,
 			assignment: &Assignment{Instance: i.State.ID, Node: i.State.Node, DispatchedAt: time.Now().Add(-10 * time.Millisecond)}, backendDone: true,
-			progress: &BackendProgress{Phase: phaseFinished, BatchID: q.BatchID, BatchSize: q.BatchSize, BackendMS: 0.000001, ExecutionComplete: true}}
+			progress: executedTestProgress(q.BatchID, q.BatchSize, 0, time.Microsecond)}
 		r.releaseLocked(c)
 		if len(i.State.Native.Requests) != 1-j {
 			t.Fatal("completed batch member remained in admission state")
