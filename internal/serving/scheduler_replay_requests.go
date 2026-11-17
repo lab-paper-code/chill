@@ -403,7 +403,8 @@ func (s *schedulerReplayState) chooseAdmission(ctx context.Context, r *scheduler
 		}
 		known = true
 		remaining := float64(r.source.Definition.SLO.TargetLatency) - r.accountedAgeNanos - s.now + r.arrival
-		s.available[j] = !estimate.Infeasible && (r.gatewayDeferred || float64(estimate.Completion) <= remaining)
+		// Completion is whole nanoseconds, so flooring the remainder keeps the comparison exact.
+		s.available[j] = admissionCandidateAvailable(estimate, r.gatewayDeferred, time.Duration(math.Floor(remaining)))
 		if r.gatewayDeferred && s.available[j] && (selected < 0 || estimate.Completion < earliest) {
 			selected, earliest = j, estimate.Completion
 		}

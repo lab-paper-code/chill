@@ -29,6 +29,16 @@ func replayAdmissionPending(s *schedulerReplayState, id string, definition *Defi
 	return request
 }
 
+// busyReplayInstance queues one admitted request whose 1 s deadline the
+// executor keeps, so a rejection there protects that request.
+func busyReplayInstance(s *schedulerReplayState, i *schedulerReplayInstance) {
+	d := *s.snap.Workloads[0]
+	d.SLO.TargetLatency = time.Second
+	busy := &schedulerReplayRequest{source: SchedulerRequest{ID: "busy", Definition: &d, ReceivedAt: s.snap.At, Phase: phaseQueued, Instance: i.config.ID}, identity: d.Identity(), dispatched: true, admitted: true, expires: float64(2 * time.Second)}
+	i.queue = append(i.queue, busy)
+	i.outstanding++
+}
+
 func TestReplayAdmissionChoosesFeasibleExecutor(t *testing.T) {
 	s := replayAdmissionState(t)
 	slow := s.instances[0]
@@ -41,6 +51,7 @@ func TestReplayAdmissionChoosesFeasibleExecutor(t *testing.T) {
 	s.instances = append(s.instances, &fast)
 	s.byID["fast"] = &fast
 	s.weights, s.available = make([]int32, 2), make([]bool, 2)
+	busyReplayInstance(s, slow)
 	r := replayAdmissionPending(s, "candidate", s.snap.Workloads[0])
 	s.routeRequests(context.Background())
 	if !r.dispatched || r.source.Instance != "fast" || r.dropped {
@@ -97,7 +108,9 @@ func TestReplayAdmissionRejectDelayAndSharedNormalPriority(t *testing.T) {
 			normal := *s.snap.Workloads[0]
 			normal.UID = "z-normal"
 			s.snap.Routing = map[string]map[string]int32{delayed.UID: {"i1": 1}, normal.UID: {"i1": 1}}
-			s.instances[0].config.Capacity = 1
+			// The queued request makes the executor busy; capacity remains for one more.
+			s.instances[0].config.Capacity = 2
+			busyReplayInstance(s, s.instances[0])
 			r := replayAdmissionPending(s, "delayed", &delayed)
 			n := replayAdmissionPending(s, "normal", &normal)
 			s.routeRequests(context.Background())

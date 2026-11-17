@@ -2,7 +2,6 @@ package serving
 
 import (
 	"context"
-	"math"
 	"math/rand/v2"
 	"reflect"
 	"testing"
@@ -53,17 +52,22 @@ func TestSchedulerReplayUsesRequestAdmissionPolicy(t *testing.T) {
 				d.SLO.TargetLatency = time.Millisecond
 				snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = mode
 				zero := 0.0
-				snap.Outstanding = []SchedulerRequest{{ID: "infeasible", Definition: d, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero}}
+				// Dropping or deferring the first late request protects the second,
+				// which is then the idle executor's only request and runs late.
+				snap.Outstanding = []SchedulerRequest{
+					{ID: "infeasible", Definition: d, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero},
+					{ID: "sole", Definition: d, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero, QueueOrder: 1},
+				}
 				keep := schedulerKeepForTest(t, s, snap)
 				e := schedulerRequireEstimate(t, keep, d.UID)
 				if keep.ExpectedJoules == nil || keep.Status != SchedulerStatusOverload {
 					t.Fatalf("request policy must remain evaluable: %+v", keep)
 				}
 				if policy == AdmissionPolicyReject {
-					if e.Samples != 0 || e.ExpectedNanos != nil || e.PredictedOutcomes["rejected"] != 1 || e.PredictedOutcomes["onTime"] != 0 || math.Abs(*keep.ExpectedJoules-1.2) > 1e-9 {
-						t.Fatalf("Reject must not execute or contribute successful latency: %+v", keep)
+					if e.Samples != 1 || e.PredictedOutcomes["rejected"] != 1 || e.PredictedOutcomes["late"] != 1 || e.PredictedOutcomes["onTime"] != 0 {
+						t.Fatalf("Reject must drop only while another request waits: %+v", e)
 					}
-				} else if e.Samples != 1 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(10*time.Millisecond) || e.PredictedOutcomes["timeout"] != 0 {
+				} else if e.Samples != 2 || e.ExpectedNanos == nil || e.PredictedOutcomes["timeout"] != 0 || e.PredictedOutcomes["rejected"] != 0 {
 					t.Fatalf("Delay must execute despite SLO without expiring caller: %+v", e)
 				}
 			})

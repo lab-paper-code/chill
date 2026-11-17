@@ -898,8 +898,10 @@ func (r *Runtime) admissionMaskLocked(route inputRoute, c *Call, now time.Time) 
 	return choice
 }
 
+// admissionCandidateAvailable is the gateway rule the replay shares: an idle
+// executor takes the candidate unless its final lifetime is missed.
 func admissionCandidateAvailable(estimate AdmissionEstimate, deferred bool, remaining time.Duration) bool {
-	return !estimate.Infeasible && (deferred || estimate.Completion <= remaining)
+	return !estimate.Infeasible && (estimate.Idle || deferred || estimate.Completion <= remaining)
 }
 
 func admissionRejection(c *Call, choice admissionChoice, now time.Time) *Error {

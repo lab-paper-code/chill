@@ -37,6 +37,9 @@ type AdmissionEstimate struct {
 	// Infeasible proves a final-lifetime miss with otherwise known inputs.
 	// Completion is zero when lifetime expires before any batch can be selected.
 	Infeasible bool
+	// Idle means the executor takes the candidate whatever Completion is:
+	// firstfloor.IdleTakes held when the projection chose its batch.
+	Idle       bool
 	FixedBatch bool
 }
 
@@ -286,6 +289,8 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 			clock += step
 			continue
 		}
+		// Judged on the states ChooseBatch just saw; the candidate is the head of its own batch when sole.
+		taken := choice.RequestID == candidateID && firstfloor.IdleTakes(states, slices.IndexFunc(states, func(q firstfloor.RequestState) bool { return q.Context.RequestID == candidateID }))
 		service, candidate, outside, valid, reason := admissionProjectBatch(in, states, choice, idle, upper, &scratch.quantiles)
 		if !valid {
 			return AdmissionEstimate{UnknownReason: reason}
@@ -296,7 +301,7 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 			remaining, limited := admissionRemainingLifetime(in.Candidate)
 			// Native expires a request at its deadline (requestError uses >=), so
 			// completing exactly at the remaining lifetime is already a timeout.
-			return AdmissionEstimate{Completion: time.Duration(completion), Known: true, OutsideSupport: outsideSupport, Infeasible: limited && float64(completion)/float64(time.Millisecond) >= remaining}
+			return AdmissionEstimate{Completion: time.Duration(completion), Known: true, OutsideSupport: outsideSupport, Infeasible: limited && float64(completion)/float64(time.Millisecond) >= remaining, Idle: taken}
 		}
 		activeRemaining = service
 	}

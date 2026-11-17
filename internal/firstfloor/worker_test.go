@@ -118,7 +118,8 @@ func TestMeasuredSelector(t *testing.T) {
 	if c := ChooseBatch(p, q, warmGap); c.Size != 1 {
 		t.Fatalf("UIDs must never form combined batch: %+v", c)
 	}
-	q = []RequestState{testState("a", 1, 100)}
+	// A second waiting request: the drop protects it.
+	q = []RequestState{testState("a", 1, 100), testState("a", 1, 100)}
 	if c := ChooseBatch(p, q, warmGap); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
 		t.Fatalf("late Reject request must not execute: %+v", c)
 	}
@@ -133,7 +134,7 @@ func TestMeasuredSelector(t *testing.T) {
 		t.Fatalf("empirical p50 should leave slack: %+v", c)
 	}
 	q[0].Context.SLO.Percentile = 99
-	if c := ChooseBatch(samples, q, warmGap); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
+	if c := ChooseBatch(samples, []RequestState{q[0], q[0]}, warmGap); c.Reason != OutcomeDeadlineDrop || c.WaitMS != 0 {
 		t.Fatalf("empirical p99 must not borrow p50 slack: %+v", c)
 	}
 	q = []RequestState{testState("a", 50, 100)}

@@ -70,6 +70,23 @@ func RemainingSLOMS(r RequestState) float64 {
 	return r.Context.SLO.TargetMS - r.Context.SenderElapsedMS - r.ElapsedMS
 }
 func SLOExpired(r RequestState) bool { return RemainingSLOMS(r) <= 0 }
+
+// IdleTakes reports whether the executor runs requests[i] whatever its
+// predicted completion: requests[i] waits in the normal queue with SLO left,
+// and the executor holds no other unfinished request. A deadline rejection
+// protects other waiting requests; here there is none, and an expired SLO
+// cannot be met by running.
+func IdleTakes(requests []RequestState, i int) bool {
+	if !normalRequest(requests[i]) || SLOExpired(requests[i]) {
+		return false
+	}
+	for j := range requests {
+		if j != i && requests[j].Phase != phaseFinished {
+			return false
+		}
+	}
+	return true
+}
 func requestDeadlinePolicy(r RequestState) string {
 	switch r.Context.AdmissionPolicy {
 	case AdmissionReject:
@@ -187,6 +204,7 @@ func batchFeasible(requests []RequestState, head int, b BatchProfile, gap *int64
 // deferred work uses FIFO only after normal work is empty. A lifecycle choice
 // has Size=0 and identifies the single rejected/demoted RequestID. Running work
 // is never preempted; only expired queued drops can be selected while active.
+// A request the idle executor takes (IdleTakes) is never dropped or deferred.
 // ponytail: bounded O(requests*b + profiles*b) scan; index only if measured CPU warrants it.
 func ChooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchChoice {
 	return ChooseBatchWithQuantiles(p, requests, gapDecision, nil, nil)
@@ -240,7 +258,7 @@ func chooseBatch(p Policy, requests []RequestState, gapDecision, gapUpper *int64
 	count := compatibleCount(requests, head)
 	available, throughput := chooseBatchProfiles(&p, requests, head, count, gapDecision, &costs)
 	if available.Size == 0 {
-		if r.Phase != phaseDeferred {
+		if r.Phase != phaseDeferred && (throughput.Size == 0 || !IdleTakes(requests, head)) {
 			choice.Reason = OutcomeDeadlineDrop
 			if mode == DeadlineDefer {
 				choice.Reason = ReasonDeadlineDefer

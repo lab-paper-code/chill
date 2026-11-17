@@ -414,8 +414,10 @@ func capacityCheckZeroWitnessDecision(t *testing.T, decision SchedulerDecision, 
 		t.Fatal("common feedback missing")
 	}
 	targetScore, keepScore := decision.Target.Feedback[selected], decision.Keep.Feedback[baseline]
-	if targetScore.Satisfied || targetScore.FailureFraction != 1 || targetScore.SuccessQuantileNanos != nil || targetScore.PotentialExcess == nil || keepScore.PotentialExcess == nil || *targetScore.PotentialExcess >= *keepScore.PotentialExcess {
-		t.Fatalf("infeasible recovery did not improve conditional potential: target=%+v keep=%+v", targetScore, keepScore)
+	// Idle executors run the 1 ms requests late instead of rejecting them, so
+	// the recovery's gain is a smaller late excess.
+	if targetScore.Satisfied || targetScore.SuccessQuantileNanos == nil || keepScore.SuccessQuantileNanos == nil || targetScore.SuccessExcess >= keepScore.SuccessExcess {
+		t.Fatalf("infeasible recovery did not improve late excess: target=%+v keep=%+v", targetScore, keepScore)
 	}
 }
 

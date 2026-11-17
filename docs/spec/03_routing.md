@@ -101,7 +101,10 @@ evidence 기반 정책으로 판단한다. 시간 여유가 있다는 이유만�
 요청별 정책 전달에는 executor 재시작이 필요 없다.
 
 gateway는 완료 가능한 후보를 고르고 executor는 실행 직전에 실제 남은 SLO를
-재확인한다. 판단 입력이 없으면 `AdmissionUnknown`으로 최종 기한까지 기다린다.
+재확인한다. 거절과 지연은 대기 중인 다른 요청을 지키려는 것이다. 대기도 실행도
+없는 executor는 SLO가 남은 요청을 예측 완료와 무관하게 받고(최종 lifetime 초과
+예측만 거절한다), executor는 홀로 남은 요청을 거절하거나 미루지 않고 실행한다.
+판단 입력이 없으면 `AdmissionUnknown`으로 최종 기한까지 기다린다.
 fixed-batch는 기존 SLO 판단 예외를 유지한다. 큐 포화는 `QueueFull`(429),
 완료 불가능 거절은 `DeadlineInfeasible`(503)이며 gateway/executor 단계를 기록한다.
 최종 기한은 수신 때 확정한 요청 lifetime이며 명시 timeout/cancel은 정상과 지연 큐에

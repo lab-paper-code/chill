@@ -82,7 +82,8 @@ func TestFeedbackConsumerZeroWitnessRetainsDropAndPotential(t *testing.T) {
 		}
 		result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 		score := result.Workloads[0]
-		if score.Population != 2 || score.Rejected != 2 || score.FailureFraction != 1 || score.OnTime+score.Late != 0 || score.SuccessQuantileNanos != nil || score.PotentialExcess == nil || result.SLO[0].ExpectedNanos != nil || result.SLO[0].PredictedOutcomes[schedulerOutcomeRejected] != 2 {
+		// The idle executor runs its only request late; the request behind it is dropped.
+		if score.Population != 2 || score.Rejected != 1 || score.Late != 1 || score.OnTime != 0 || score.FailureFraction != .5 || score.PotentialExcess == nil || result.SLO[0].PredictedOutcomes[schedulerOutcomeRejected] != 1 {
 			t.Fatalf("drop became successful latency or disappeared: %+v", result)
 		}
 		potentials = append(potentials, *score.PotentialExcess)
@@ -210,7 +211,8 @@ func TestFeedbackConsumerPotentialCannotInventFutureBatchFill(t *testing.T) {
 		schedulerTestBatchProfile(BatchProfile{Batch: 2}, []float64{1e6}),
 	}
 	result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
-	if result.Workloads[0].Rejected != 1 || result.Workloads[0].PotentialExcess == nil || *result.Workloads[0].PotentialExcess != 5 {
+	// The idle executor runs its only request with batch 1; an invented batch-2 fill would finish it in 1 ms.
+	if result.Workloads[0].Late != 1 || result.Workloads[0].Rejected != 0 || result.Workloads[0].SuccessExcess != 5 {
 		t.Fatalf("unfilled batch2 must not erase batch1 conditional excess: %+v", result)
 	}
 }

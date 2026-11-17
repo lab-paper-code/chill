@@ -30,7 +30,7 @@ composition root는 하나의 ClusterState를 Observer, Manager, Operations와 S
 
 실제 actor와 직접 재생은 같은 순수 선택 함수를 사용한다. stable EDF에서 같은 UID와 불변 정의의 호환 요청만 묶고, 가능한 batch의 조건부 service 분위수와 요청당 증분 J를 비교한다. 더 큰 측정 batch의 엄격한 energy gain과 fill time이 있을 때만 bounded wait한다.
 
-Serving의 Reject와 Delay는 요청 정책이다. Reject는 불가능한 head를 실행 없이 거절하고 Delay는 후순위 FIFO로 옮겨 normal 뒤 처리한다. actor의 측정 deadlinePolicy와 혼동하지 않는다. batch 확정 직전 monotonic 시각으로 cancel, 최종 수명과 SLO를 다시 확인한다.
+Serving의 Reject와 Delay는 요청 정책이다. Reject는 불가능한 head를 실행 없이 거절하고 Delay는 후순위 FIFO로 옮겨 normal 뒤 처리한다. 대기도 실행도 없는 실행기는 SLO가 남은 요청을 예측과 무관하게 받아 실행한다([실행기 계약](scheduler-runtime-measurement.md#과부하-정책과-physical-완료)). actor의 측정 deadlinePolicy와 혼동하지 않는다. batch 확정 직전 monotonic 시각으로 cancel, 최종 수명과 SLO를 다시 확인한다.
 
 모든 후보는 같은 outstanding과 arrival cohort, physical inventory와 replay exclusion scope를 사용한다. 모델링할 수 없는 action과 executor는 공급에서 공통 제외하되 allocation, owner와 예약, 요청과 cleanup 의무는 남긴다. 실패 시도의 identity를 이후 같은 logical target의 성공 실물에 적용하지 않는다. 실패한 prepare 시도의 Pod는 그 인스턴스만 제외하고 노드는 제외하지 않는다. 노드를 제외하면 그 Pod를 은퇴시킬 계획도 그 노드를 건너뛴다.
 

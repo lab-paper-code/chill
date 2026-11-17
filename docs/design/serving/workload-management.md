@@ -78,7 +78,7 @@ W는 SLO 이상이어야 한다. 더 짧은 H는 허용한다. Receipt에 W를 �
 
 gateway는 원시 필드 집합, BYTES, 길이, JPEG header와 UTF8을 한 번 검사한다. tensor 변환은 runner 전처리 책임이다. [이기종 입력 계약](heterogeneous-workloads.md)을 따른다.
 
-gate 확인과 정의 수락, 카운터와 큐 삽입은 같은 Workload 동기화 경계다. Reject는 SLO 안에 완료 가능한 executor를 고르고 Delay는 대기를 허용한다. 미지 입력은 AdmissionUnknown이다. Workload 큐와 native count/byte cap, HTTP 동시 처리 상한은 별도 물리 한도다.
+gate 확인과 정의 수락, 카운터와 큐 삽입은 같은 Workload 동기화 경계다. Reject는 SLO 안에 완료 가능한 executor나 대기도 실행도 없는 executor를 고르고 Delay는 대기를 허용한다. 미지 입력은 AdmissionUnknown이다. Workload 큐와 native count/byte cap, HTTP 동시 처리 상한은 별도 물리 한도다.
 
 분배는 정확한 physical instance와 유효 weight를 사용한다. 실제 Ready, owner, 입력과 가용 capacity를 확인한다. backend 전달 뒤 연결 오류로 자동 재실행하지 않는다.
 

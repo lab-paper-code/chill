@@ -20,7 +20,8 @@ func TestFeedbackConsumerAssignedQueueMembershipCountsOnce(t *testing.T) {
 	snapshot.Outstanding = []SchedulerRequest{{ID: "assigned", Definition: snapshot.Workloads[0], Phase: phaseAssigned, Instance: "i1", CompletionMarginMS: &zero, NativeSenderElapsedMS: &zero}}
 	result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 	score := result.Workloads[0]
-	if score.Rejected != 1 || score.OnTime+score.Late != 0 || score.PotentialExcess == nil || *score.PotentialExcess != 5 {
+	// The idle executor runs its only request with batch 1 (60 ms), never a batch-2 fill.
+	if score.Rejected != 0 || score.Late != 1 || score.SuccessExcess != 5 {
 		t.Fatalf("one assigned request cannot assemble batch2 after native receipt: %+v", result)
 	}
 }

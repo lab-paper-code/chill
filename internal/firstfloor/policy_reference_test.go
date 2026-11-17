@@ -38,7 +38,8 @@ func TestConditionalNativeQuantilePoolsTrialsAndUsesTheSampleFloor(t *testing.T)
 		{new(int64), ReasonAvailableEnergy},
 		{func() *int64 { g := int64(10 * time.Millisecond); return &g }(), OutcomeDeadlineDrop},
 	} {
-		choice := ChooseBatch(p, []RequestState{q}, tc.gap)
+		// A second waiting request: a drop protects it.
+		choice := ChooseBatch(p, []RequestState{q, q}, tc.gap)
 		if choice.Reason != tc.want {
 			t.Fatalf("conditional deadline decision: got %+v, want %s", choice, tc.want)
 		}
