@@ -63,7 +63,6 @@ class CLITest(unittest.TestCase):
                         "--gateway-timeout", "2",
                     ]), 0)
                 context.assert_called_once_with(cafile=None)
-                self.assertEqual(connection.call_count, 5)  # Prepared, inference and separate feedback connections.
                 self.assertTrue(all(call.kwargs["context"] is context.return_value
                                     for call in connection.call_args_list))
             self.assertEqual(len(output.getvalue().splitlines()), 3)

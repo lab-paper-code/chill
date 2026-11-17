@@ -7,6 +7,19 @@ from chill_loadgen.http_client import InferenceRequestError, InferenceResponse, 
 
 
 class WorkloadHTTPClientTest(unittest.TestCase):
+    @patch("chill_loadgen.http_client.HTTPSConnection")
+    def test_connect_failure_is_the_requests_transport_error_and_precedes_the_clock(self, connection_type: Mock) -> None:
+        connection = connection_type.return_value
+        connection.sock = None
+        connection.connect.side_effect = ConnectionRefusedError()
+        client = WorkloadHTTPClient("https://chill.example", bearer_token="token", timeout_seconds=5.0)
+        with self.assertRaises(InferenceRequestError) as raised:
+            client.infer("image-service", encode_inputs({"image": b"x"}))
+        self.assertEqual("ConnectionRefusedError", raised.exception.error_type)
+        self.assertEqual("transport_error", raised.exception.outcome)
+        self.assertFalse(raised.exception.connection_reused)
+        connection.request.assert_not_called()
+
     @patch("chill_loadgen.http_client.ssl.create_default_context")
     @patch("chill_loadgen.http_client.HTTPSConnection")
     def test_authenticated_sample_and_correlated_http_results(

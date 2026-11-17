@@ -226,7 +226,7 @@ CHILL은 자신이 배치한 파드만 관리한다. 다른 파드가 있는 노
 **조건**
 
 - genesis2는 하드웨어 결함(Xid 79)으로 제외했으며 서빙 Node는 7개다.
-- 생성기는 요청마다 새 TLS 연결을 열며(keep-alive 없음), 입구 지연과 게이트웨이 CPU에는 핸드셰이크 비용이 포함된다.
+- 생성기는 연결을 열어 둔 채 재사용하며(keep-alive), 입구 지연은 TLS 핸드셰이크를 포함하지 않는다. 유휴 연결이 없을 때 새로 연 연결은 요청 송신 전에 연결을 마치며, 각 행의 `connectionReused`가 재사용 여부를 기록한다.
 - 수신 p95는 성공과 executionComplete HTTP final의 완료-only 분포다. MNV/PLC/Smol SLO는 각각 p95≤1,000/36/7,034 ms다. 전체 예정 요청의 기한 내 성공 판정은 BackendUnavailable, 오류, 거절, 취소, 무발행과 미완료를 포함한 전체 planned 분모를 유지하며 deadline 성공/필요 rank와 기존 판정을 표시한다.
 - 결과 수는 완료/실패/거절/취소/미완료와 불명을 모두 보존한다. 상위 오류 코드는 실패 괄호 안에 표시한다. 수신 p95 표본에 실패를 섞지 않는다.
 - 표의 전체 POOL 에너지는 7개 관측 Node 합으로 전체 구성 meter 합(`power-configured-whole-meter.json`)과 구분한다. 에너지는 전환 포함 동일 단계 공유 전체/활성 POOL 값이며 워크로드별로 귀속하지 않는다. 반복 행을 합산하지 않는다. ±는 기존 종단 서빙 평가 공백 보간 오차 상한, coverage는 gapΣNode(노드 공백초 합), max(최대 공백), maxNode(최대 노드 공백 비율)이다. Δ=고정−CHILL이며 양수는 CHILL 절감이다.

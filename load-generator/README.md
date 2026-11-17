@@ -28,6 +28,14 @@ Paired `--workload-slo` and `--gateway-timeout` enable independent scheduled
 arrivals. Each frozen arrival starts on its original timeline, including late
 arrivals. `--workers` bounds pending feedback per process; inference concurrency
 follows the offered trace. `hack/evaluation/producer.py` uses the same dispatcher.
+Each request takes an idle keep-alive connection or opens a new one; a connection
+that completed an exchange returns to the idle pool, and one that failed or timed
+out is closed and never reused. The pool has no size cap, so a slow server never
+delays the schedule. Latency runs from sending the request to reading the full
+response on an established connection; a new connection is opened before the
+clock starts, so the TLS handshake is outside `latencyMs` and `elapsedNanos`.
+Every row carries `connectionReused` (`false` when the request opened its own
+connection).
 Endpoint/token validation and TLS preparation occur once before replay.
 
 EvaluationRun and EvaluationStage freeze load Job memory requests and limits in

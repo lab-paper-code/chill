@@ -11,7 +11,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from chill_loadgen.cli import replay
+from chill_loadgen.cli import prepare_records, replay, replay_open_loop
 from chill_loadgen.http_client import WorkloadHTTPClient
 
 
@@ -115,6 +115,73 @@ class LocalHTTPSmoke(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join()
+
+    def _open_loop_rows(self, offsets_ms, drop_request=None):
+        """Replay sequential arrivals; return rows and the client ports the server saw per inference."""
+        ports = []
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                status = 204 if self.path.endswith("/feedback") else 200
+                if status == 200:
+                    ports.append(self.client_address[1])
+                    if len(ports) - 1 == drop_request:
+                        self.close_connection = True  # Hang up without a response.
+                        return
+                self.send_response(status)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        with tempfile.TemporaryDirectory() as directory:
+            cert, key = Path(directory) / "cert.pem", Path(directory) / "key.pem"
+            subprocess.run([
+                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                "-keyout", str(key), "-out", str(cert), "-days", "1",
+                "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1",
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(cert, key)
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            try:
+                output = io.StringIO()
+                replay_open_loop(
+                    prepare_records([("one", {"image": b"sample"})]), workload="smol",
+                    offsets=[ms * 1_000_000 for ms in offsets_ms], workers=1, out=output,
+                    start_ns=time.monotonic_ns(),
+                    new_client=lambda: WorkloadHTTPClient(
+                        f"https://127.0.0.1:{server.server_port}", bearer_token="local",
+                        timeout_seconds=5, ca_file=str(cert)),
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+        rows = [json.loads(line) for line in output.getvalue().splitlines()]
+        return sorted((row for row in rows if "requestIndex" in row), key=lambda row: row["requestIndex"]), ports
+
+    def test_open_loop_reuses_idle_connections(self) -> None:
+        rows, ports = self._open_loop_rows([0, 100, 200, 300, 400])
+        self.assertEqual(5, len(rows))
+        self.assertTrue(all(row.get("status") == 200 for row in rows), rows)
+        self.assertLess(len(set(ports)), len(rows))
+        self.assertEqual([False] + [True] * 4, [row["connectionReused"] for row in rows])
+
+    def test_open_loop_never_reuses_a_failed_connection(self) -> None:
+        rows, ports = self._open_loop_rows([0, 100, 200], drop_request=1)
+        self.assertIn("error", rows[1])
+        self.assertTrue(rows[1]["connectionReused"])
+        self.assertEqual(200, rows[2]["status"])
+        self.assertFalse(rows[2]["connectionReused"])
+        self.assertNotEqual(ports[1], ports[2])
 
 
 if __name__ == "__main__":

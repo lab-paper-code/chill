@@ -34,13 +34,16 @@ class InferenceResponse:
     request_id: Optional[str] = None
     workload_uid: Optional[str] = None
     elapsed_nanos: int = 0
+    connection_reused: bool = False
 
 
 class InferenceRequestError(OSError):
     """An interrupted exchange, retaining headers and its observed duration."""
 
-    def __init__(self, error: Exception, elapsed_nanos: int, response=None) -> None:
+    def __init__(self, error: Exception, elapsed_nanos: int, response=None,
+                 connection_reused: bool = False) -> None:
         super().__init__(str(error))
+        self.connection_reused = connection_reused
         self.error_type = type(error).__name__
         self.elapsed_nanos = elapsed_nanos
         self.outcome = "timeout" if isinstance(error, TimeoutError) else "transport_error"
@@ -168,6 +171,14 @@ class WorkloadHTTPClient:
             headers["X-Chill-Request-Timeout"] = self._request_lifetime
         path = f"/api/v1/workloads/{workload_id}/infer"
         response = None
+        # The handshake of a fresh connection stays outside the latency clock.
+        reused = self._connection.sock is not None
+        if not reused:
+            connecting = time.monotonic_ns()
+            try:
+                self._connection.connect()
+            except (OSError, HTTPException) as error:
+                raise InferenceRequestError(error, time.monotonic_ns() - connecting) from error
         started = time.monotonic_ns()
         try:
             self._connection.request("POST", path, body=body, headers=headers)
@@ -176,12 +187,12 @@ class WorkloadHTTPClient:
             elapsed = time.monotonic_ns() - started
         except (OSError, HTTPException) as error:
             elapsed = time.monotonic_ns() - started
-            raise InferenceRequestError(error, elapsed, response) from error
+            raise InferenceRequestError(error, elapsed, response, reused) from error
         return InferenceResponse(
             response.status, result,
             request_id=response.getheader("X-Chill-Request-ID"),
             workload_uid=response.getheader("X-Chill-Workload-UID"),
-            elapsed_nanos=elapsed,
+            elapsed_nanos=elapsed, connection_reused=reused,
         )
 
     def report_observation(self, workload_id: str, observation: Mapping[str, object]) -> None:

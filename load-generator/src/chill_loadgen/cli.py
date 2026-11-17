@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, TextIO, Tuple
@@ -94,7 +95,7 @@ def _infer(client: WorkloadHTTPClient, workload: str, body: bytes, row: dict,
         outcome = "completed" if 200 <= response.status_code < 300 else "http_error"
         row.update(status=response.status_code, requestID=response.request_id,
                    workloadUID=response.workload_uid, elapsedNanos=response.elapsed_nanos,
-                   outcome=outcome)
+                   outcome=outcome, connectionReused=response.connection_reused)
         # Error metadata is optional and untrusted; never parse large response bodies.
         if outcome == "http_error" and len(response.body) <= 64 * 1024:
             try:
@@ -107,7 +108,8 @@ def _infer(client: WorkloadHTTPClient, workload: str, body: bytes, row: dict,
                     if isinstance(rejection.get(field), str):
                         row[key] = rejection[field]
     except InferenceRequestError as error:
-        row.update(error=error.error_type, elapsedNanos=error.elapsed_nanos, outcome=error.outcome)
+        row.update(error=error.error_type, elapsedNanos=error.elapsed_nanos, outcome=error.outcome,
+                   connectionReused=error.connection_reused)
         if error.status_code is not None:
             row["status"] = error.status_code
         if error.request_id:
@@ -141,6 +143,8 @@ def replay_open_loop(
     """Dispatch every planned arrival independently, without an in-flight cap."""
     lock = threading.Lock()
     drained = threading.Condition()
+    pool = threading.Lock()  # Not `lock`: output backpressure holds that one and must not delay a send.
+    idle: deque = deque()  # Connections between exchanges; a thread owns a client only while it holds it.
     active = 0
     failure: Optional[BaseException] = None
 
@@ -167,7 +171,10 @@ def replay_open_loop(
             index = int(request.request_id)
             record_id, body = records[index % len(records)]
             scheduled = start_ns + request.scheduled_offset_ns
-            client = new_client()
+            with pool:
+                client = idle.pop() if idle else None
+            if client is None:
+                client = new_client()
             sent = clock_ns()
             row = base_row(request)
             row.update(sentMonotonicNS=sent, sentAtUnixNS=time.time_ns(),
@@ -180,6 +187,11 @@ def replay_open_loop(
                        scheduledLatencyMs=(finished - scheduled) / 1_000_000,
                        serviceLatencyMs=(finished - sent) / 1_000_000)
             emit(row)
+            # A failed exchange was closed by _infer; only completed exchanges return to the pool.
+            if "error" not in row:
+                with pool:
+                    idle.append(client)
+                client = None
         except BaseException as error:
             with drained:
                 if failure is None:
@@ -224,6 +236,8 @@ def replay_open_loop(
         finally:
             with drained:
                 drained.wait_for(lambda: active == 0)
+            for client in idle:
+                client.close()
         if failure is not None:
             raise RuntimeError("Open-loop request failed") from failure
 
