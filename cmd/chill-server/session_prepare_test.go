@@ -17,9 +17,14 @@ import (
 
 type prepareCandidates struct{}
 
-func (prepareCandidates) ResolveCandidate(context.Context, profilerapp.CandidateSelection) (profilerapp.ResolvedCandidate, error) {
+func (prepareCandidates) ResolveCandidate(
+	context.Context, profilerapp.CandidateSelection,
+) (profilerapp.ResolvedCandidate, error) {
 	return profilerapp.ResolvedCandidate{
-		State:   profilingrun.ExecutionState{Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 1}, Preprocessor: profilingrun.PreprocessorState{Architecture: "amd64"}},
+		State: profilingrun.ExecutionState{
+			Firstfloor:   &modelcompat.FirstfloorSettings{MaxBatchSize: 1},
+			Preprocessor: profilingrun.PreprocessorState{Architecture: "amd64"},
+		},
 		Dataset: &profilingrun.DatasetContract{Name: "data"},
 	}, nil
 }
@@ -55,7 +60,8 @@ func TestSessionPrepareRequestLifetimeIsTheServingDeadline(t *testing.T) {
 			DatasetRef: &edge.CatalogReference{Name: "data"}, RequestLifetime: test.lifetime,
 			SLO: edge.WorkloadSLO{Percentile: 95, TargetLatency: meta.Duration{Duration: time.Second}},
 		}}
-		workloads, err := profilerkube.NewKubernetesSessionWorkloadResolver(fake.NewClientBuilder().WithScheme(scheme).WithObjects(workload).Build())
+		workloads, err := profilerkube.NewKubernetesSessionWorkloadResolver(
+			fake.NewClientBuilder().WithScheme(scheme).WithObjects(workload).Build())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -64,12 +70,16 @@ func TestSessionPrepareRequestLifetimeIsTheServingDeadline(t *testing.T) {
 			t.Fatal(err)
 		}
 		beo := &edge.BatchEnergyOptimization{Spec: edge.BatchEnergyOptimizationSpec{
-			State:          edge.MeasurementStateSpec{Candidate: edge.ProfilingRunCandidateSpec{ModelSpec: "model", Preprocessor: "pre"}, TargetNode: "node"},
+			State: edge.MeasurementStateSpec{
+				Candidate:  edge.ProfilingRunCandidateSpec{ModelSpec: "model", Preprocessor: "pre"},
+				TargetNode: "node",
+			},
 			ActiveProtocol: edge.ActiveProtocolSpec{Workload: "service", Dataset: "data"},
 		}}
 		preparation, err := sessionPrepare(preparer, 30*time.Second)(context.Background(), beo)
 		if err != nil || preparation.RequestLifetime != test.want {
-			t.Fatalf("Workload lifetime %v: request lifetime %s, want %s (%v)", test.lifetime, preparation.RequestLifetime, test.want, err)
+			t.Fatalf("Workload lifetime %v: request lifetime %s, want %s (%v)",
+				test.lifetime, preparation.RequestLifetime, test.want, err)
 		}
 	}
 }

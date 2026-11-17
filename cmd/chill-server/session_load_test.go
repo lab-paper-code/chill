@@ -332,7 +332,8 @@ func TestSessionLoadSlowMidLevelEndsOnSamples(t *testing.T) {
 }
 
 func TestSessionLoadSaturationOverTargetEndsNotServable(t *testing.T) {
-	fake := newSessionFake(t, 1, func(uint64) (time.Duration, time.Duration) { return 2 * time.Second, time.Millisecond }, nil)
+	slow := func(uint64) (time.Duration, time.Duration) { return 2 * time.Second, time.Millisecond }
+	fake := newSessionFake(t, 1, slow, nil)
 	c := sessionTestConfig(t, fake.server.URL, 1)
 	c.sparse = true
 	levels, err := runSessionLoad(context.Background(), c, io.Discard)
@@ -612,7 +613,8 @@ func TestSessionLoadExpiryIdleWaitEndsOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	levels, err := runSessionLoad(ctx, config, io.Discard)
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "native inference HTTP 408") || len(levels) != 2 {
+	if !errors.Is(err, context.DeadlineExceeded) || len(levels) != 2 ||
+		!strings.Contains(err.Error(), "native inference HTTP 408") {
 		t.Fatalf("levels %+v error %v", levels, err)
 	}
 }

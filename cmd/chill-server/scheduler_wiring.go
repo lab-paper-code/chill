@@ -163,9 +163,10 @@ func sessionPrepare(
 		return servingkube.SessionPreparation{
 			RunConfig: config, MemoryBytes: uint64(config.Actor.MemoryLimitBytes), RuntimeDelivery: delivery,
 			BatchSizes: session.PlannedBatchSizes, SLOPercentile: config.Measurement.SLOPercentile,
-			SLOTarget:       time.Duration(config.Measurement.SLOTargetLatencyNanos),
-			RequestLifetime: httpapi.WorkloadRequestTimeout(time.Duration(config.Measurement.RequestLifetimeNanos), requestTimeout),
-			Dataset:         *config.Measurement.Dataset,
+			SLOTarget: time.Duration(config.Measurement.SLOTargetLatencyNanos),
+			RequestLifetime: httpapi.WorkloadRequestTimeout(
+				time.Duration(config.Measurement.RequestLifetimeNanos), requestTimeout),
+			Dataset: *config.Measurement.Dataset,
 		}, nil
 	}
 }
