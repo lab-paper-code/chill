@@ -224,6 +224,36 @@ type capacityResult struct {
 	replaySkipped                     bool
 }
 
+// capacityShortfall is the throughput a replay measured for a Workload it
+// served short: the replay missed w's SLO and completed only part of w's
+// population. completed is the rate of successful completions, on time or
+// late: λ_w times their share of the population. A Workload the replay
+// completed entirely, late or not, shows only that its supply reached λ_w and
+// is no shortfall.
+type capacityShortfall struct {
+	w         int
+	completed float64
+}
+
+// shortfalls are the throughput measurements of an exact result. Only a
+// result the planner admits, the same admission the exact search applies,
+// ran the candidate as planned: an excluded or invalid replay, an unrouted
+// prepare or an unbounded or ineligible plan measures nothing.
+func (p *capacityPlanner) shortfalls(res capacityResult) []capacityShortfall {
+	if !p.admits(&res) {
+		return nil
+	}
+	var out []capacityShortfall
+	for _, score := range res.feedback {
+		w, controlled := p.index[score.UID]
+		completed := score.OnTime + score.Late
+		if controlled && !score.Satisfied && completed < score.Population {
+			out = append(out, capacityShortfall{w: w, completed: float64(completed) / float64(score.Population) * p.ws[w].rate})
+		}
+	}
+	return out
+}
+
 type capacityFeedbackMemo struct {
 	once   sync.Once
 	result FeedbackCandidateResult

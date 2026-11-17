@@ -102,6 +102,14 @@ type SchedulerPlanSearch struct {
 	Fallback            string         `json:"fallback,omitempty"`
 	DualBound           float64        `json:"dualBound,omitempty"`
 	Start               string         `json:"start,omitempty"`
+	// Rounds counts v2 candidate generations in this decision. SupplyCorrection
+	// is each corrected Workload's replay supply factor c_w (< 1), by UID.
+	// Evaluation counts, times and Steps add up over rounds, and a plan judged
+	// in an earlier round is not counted or observed again. BudgetCut and
+	// TerminationReason describe the last round; Key, Joules, Start, Fallback,
+	// DualBound, Finalists and the funnel fields belong to the selected round.
+	Rounds           int                `json:"rounds,omitempty"`
+	SupplyCorrection map[string]float64 `json:"supplyCorrection,omitempty"`
 }
 
 // SchedulerPlanSearchStep records each start's origin (k = 0) and accepted moves
@@ -122,7 +130,8 @@ type SchedulerPlanSearch struct {
 // feasible, not the last step or the chosen end. Errors return no decision.
 //
 // V2 records keep, empty and optional priced origins, followed by each start's
-// cover, polish and combine moves. K is the number of changed Nodes (1 through
+// cover, polish and combine moves, once per round (Round); BudgetCut marks the
+// last point of each cut round. K is the number of changed Nodes (1 through
 // the Node count), not a neighborhood bound. Evaluated counts incremental
 // evaluations in the accepting cover iteration, polish sweep or combine search;
 // origins remain 0. Sum(Evaluated) + TrailingEvaluated = search.SurrogateEvaluated,
@@ -145,6 +154,7 @@ type SchedulerPlanSearchStep struct {
 	Evaluated        int             `json:"evaluated"`
 	Duration         time.Duration   `json:"durationNanos"`
 	BudgetCut        bool            `json:"budgetCut,omitempty"`
+	Round            int             `json:"round,omitempty"` // v2 candidate generation, from 1
 }
 
 // SchedulerCapacityWorkload separates routing heuristics and current tested-rate evidence.
@@ -379,6 +389,10 @@ type capacityPlanner struct {
 	undecidable              []SchedulerUndecidableCandidate
 	examined                 int
 	searched                 SchedulerPlanSearch
+	// supplyCorrection is c_w by Workload index: the least ratio of a replay
+	// shortfall's completed rate to the plan's uncorrected profile throughput,
+	// kept only below 1. It scales w's surrogate supply (planTable).
+	supplyCorrection map[int]float64
 	// Resolved once during construction; every plan and sweep worker only reads.
 	optionCapacity  map[int][]capacityChoice
 	currentCapacity map[capacityInstanceKey]capacityItem

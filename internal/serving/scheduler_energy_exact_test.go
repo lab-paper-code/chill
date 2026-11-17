@@ -150,6 +150,52 @@ func TestCapacityIdenticalUnknownIdleCancelsForRouteChange(t *testing.T) {
 	}
 }
 
+// A retained instance serving its keep share before the route, directly or as
+// a bridge flow, carries the same load as keep, so its not-identified load
+// watts cancel in every phase.
+func TestCapacityEqualUnknownLoadCancelsAcrossPhases(t *testing.T) {
+	for _, test := range []struct {
+		name                   string
+		window                 time.Duration
+		arrivals               float64
+		retained, unidentified int32
+	}{
+		{"route", time.Second, 20, 93, 7},
+		{"bridge", 3 * time.Second, 20, 87, 13},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, snap := schedulerFixture()
+			s.ObservationWindow, s.ComparisonPeriod = test.window, 600*time.Second
+			n := poolsAddNode(&snap, "unidentified", map[string]float64{energyTestFixedMode: 10})
+			unknown := poolsInstance(snap.Instances[0], "unidentified", n, energyTestFixedMode, "w1")
+			unknown.Profile.Power = &ProfilePower{IdleWatts: schedulerTestIdentified(12)}
+			snap.Instances = append(snap.Instances, unknown)
+			snap.Options = append(snap.Options, poolsOption(unknown))
+			snap.Routing = map[string]map[string]int32{"w1": {snap.Instances[0].ID: test.retained, unknown.ID: test.unidentified}}
+			capacityLoad(s, &snap, snap.Workloads[0], test.arrivals/test.window.Seconds())
+			p := capacityPlannerForTest(t, s, snap)
+			keep := p.evaluateCurrentKeep(p.periodSeconds)
+			if len(keep.loadUnknowns) != 1 {
+				t.Fatalf("keep unknown loads: %+v", keep.loadUnknowns)
+			}
+			if test.name == "route" {
+				routed := p.evaluateEnergyForRoutes(make([]int, len(p.plans)), 10, nil, p.periodSeconds, p.keep.Routing)
+				if cells := p.missingEnergyCells(keep, routed); len(routed.loadUnknowns) != 2 || len(cells) != 0 {
+					t.Fatalf("one load left cells %+v: keep %+v routed %+v", cells, keep.loadUnknowns, routed.loadUnknowns)
+				}
+				return
+			}
+			moved := keep
+			moved.weights = []map[string]int32{{unknown.ID: schedulerRouteUnits}}
+			moved.bridge = &schedulerBridgeSchedule{instances: map[string]SchedulerInstance{snap.Instances[0].ID: snap.Instances[0], unknown.ID: unknown}}
+			loads := nodeLoadWatts(p.bridgeStateRates(moved, []map[string]int32{p.keep.Routing["w1"]}, p.finalShares(moved)))
+			if !slices.ContainsFunc(loads, func(load schedulerNodeLoad) bool { return load.key == keep.loadUnknowns[0].key }) {
+				t.Fatalf("bridge flow at keep's routing %+v lacks keep's load %s", loads, keep.loadUnknowns[0].key)
+			}
+		})
+	}
+}
+
 func TestIdleExactCellRequiresMatchingMeter(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow = time.Second

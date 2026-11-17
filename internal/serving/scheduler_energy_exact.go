@@ -193,29 +193,35 @@ func (p *capacityPlanner) bridgeEvents(res capacityResult) []schedulerBridgeEven
 	return events
 }
 
-// bridgeStateRates gives each routed bridge instance its flow, up to its
-// routing rate; the rest of a Workload goes to its final routing.
-func (p *capacityPlanner) bridgeStateRates(res capacityResult, state []map[string]int32, shares [][]schedulerRate) []schedulerRate {
+// bridgeStateRates gives each routed bridge instance its flow, its share up to
+// its routing rate; what the shares do not serve goes to the final routing,
+// exactly none when no flow is capped.
+func (p *capacityPlanner) bridgeStateRates(res capacityResult, state []map[string]int32, shares []schedulerShares) []schedulerRate {
 	var rates []schedulerRate
 	for w, ws := range p.ws {
-		units, served := 0.0, 0.0
+		units := 0.0
 		ids := make([]string, 0, len(state[w]))
 		for id, weight := range state[w] {
 			units += float64(max(0, weight))
 			ids = append(ids, id)
 		}
 		slices.Sort(ids)
+		rest := ws.observedRate
+		if units > 0 {
+			rest = 0
+		}
 		for _, id := range ids {
 			weight := state[w][id]
-			if weight <= 0 || units == 0 {
+			if weight <= 0 {
 				continue
 			}
 			instance := res.bridge.instances[id]
-			flow := min(p.currentRoutingRate(instance), ws.observedRate*float64(weight)/units)
-			served += flow
+			share := schedulerShareRate(ws.observedRate, float64(weight), units)
+			flow := min(p.currentRoutingRate(instance), share)
+			rest += share - flow
 			rates = append(rates, schedulerRate{id: id, node: instance.Node, model: p.loadModels.of(instance), rate: flow})
 		}
-		rates = appendScaledRates(rates, shares[w], max(0, ws.observedRate-served))
+		rates = shares[w].scaled(rates, rest)
 	}
 	return rates
 }
@@ -483,34 +489,47 @@ type schedulerNodeRequestPower struct {
 // schedulerLoadPowerCell marks a missing cell of a node's load watts.
 const schedulerLoadPowerCell = "load-power"
 
-// finalShares is each Workload's final routing as instance shares of one
-// input per second.
-func (p *capacityPlanner) finalShares(res capacityResult) [][]schedulerRate {
-	shares := make([][]schedulerRate, len(p.ws))
+// schedulerShares is a Workload's final routing: each routed instance with
+// its routing weight as rate, and the weights' sum.
+type schedulerShares struct {
+	weights []schedulerRate
+	units   float64
+}
+
+// schedulerShareRate is the input rate of a routing weight's share of a
+// Workload's rate. Every routing state computes it here, so one load has one
+// rate and one load-power cell key.
+func schedulerShareRate(rate, weight, units float64) float64 {
+	return rate * weight / units
+}
+
+// finalShares is each Workload's final routing.
+func (p *capacityPlanner) finalShares(res capacityResult) []schedulerShares {
+	shares := make([]schedulerShares, len(p.ws))
 	for w := range p.ws {
 		var items []capacityItem
 		for n, j := range res.choice {
 			items = append(items, p.plans[n][j].items[w]...)
 		}
-		for k := range items {
-			items[k].weight = res.weights[w][items[k].id]
+		for _, item := range items {
+			shares[w].units += float64(res.weights[w][item.id])
 		}
-		_, loads, _ := capacityFixedWeights(1, items)
-		for k, item := range items {
-			if loads[k] > 0 {
-				shares[w] = append(shares[w], schedulerRate{id: item.id, node: item.node, model: item.model, rate: loads[k]})
+		for _, item := range items {
+			if weight := res.weights[w][item.id]; weight > 0 && shares[w].units > 0 {
+				shares[w].weights = append(shares[w].weights, schedulerRate{id: item.id, node: item.node, model: item.model, rate: float64(weight)})
 			}
 		}
 	}
 	return shares
 }
 
-func appendScaledRates(rates, shares []schedulerRate, rate float64) []schedulerRate {
+// scaled appends each routed instance's share of rate.
+func (s schedulerShares) scaled(rates []schedulerRate, rate float64) []schedulerRate {
 	if rate <= 0 {
 		return rates
 	}
-	for _, share := range shares {
-		share.rate *= rate
+	for _, share := range s.weights {
+		share.rate = schedulerShareRate(rate, share.rate, s.units)
 		rates = append(rates, share)
 	}
 	return rates
@@ -535,11 +554,11 @@ func (p *capacityPlanner) requestRates(res capacityResult) (initial, final []sch
 		for _, item := range retained {
 			if weightSum > 0 {
 				initial = append(initial, schedulerRate{id: item.id, node: item.node, model: item.model,
-					rate: min(ws.observedRate, retainedRate) * float64(item.weight) / weightSum})
+					rate: schedulerShareRate(min(ws.observedRate, retainedRate), float64(item.weight), weightSum)})
 			}
 		}
-		initial = appendScaledRates(initial, shares[w], max(0, ws.observedRate-retainedRate))
-		final = appendScaledRates(final, shares[w], ws.observedRate)
+		initial = shares[w].scaled(initial, max(0, ws.observedRate-retainedRate))
+		final = shares[w].scaled(final, ws.observedRate)
 	}
 	return initial, final
 }

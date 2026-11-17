@@ -871,16 +871,21 @@ func assertCapacitySearchSteps(t testing.TB, search SchedulerPlanSearch, nodes i
 	for i, step := range search.Steps {
 		evaluated += step.Evaluated
 		duration += step.Duration
-		if !v2 && step.K < k || step.Duration < 0 || step.BudgetCut != (search.BudgetCut && i == len(search.Steps)-1) {
+		// Only a round's last point may be cut; the search's last point carries search.BudgetCut.
+		final := i == len(search.Steps)-1
+		roundEnd := final || search.Steps[i+1].Round != step.Round
+		if !v2 && step.K < k || step.Duration < 0 || step.BudgetCut && !roundEnd || final && step.BudgetCut != search.BudgetCut {
 			t.Fatalf("step order, time or cut flag: %+v", search)
 		}
 		k = step.K
-		if previous, ok := last[step.Start]; ok {
+		// Each v2 round regenerates every start from its origin.
+		chain := fmt.Sprint(step.Round, "/", step.Start)
+		if previous, ok := last[chain]; ok {
 			assertCapacitySearchMove(t, step, previous, v2, nodes)
 		} else if step.K != 0 || step.Evaluated != 0 || len(step.ChangedNodes) != 0 || step.Phase != "" {
 			t.Fatalf("missing origin (excluded from aggregate evaluation count): %+v", step)
 		}
-		last[step.Start] = step
+		last[chain] = step
 	}
 	if len(last) == 0 || evaluated != wantEvaluated || search.TrailingEvaluated < 0 || duration > search.Duration {
 		t.Fatalf("step accounting: evaluated=%d duration=%s search=%+v", evaluated, duration, search)

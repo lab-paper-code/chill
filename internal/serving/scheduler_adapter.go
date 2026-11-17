@@ -135,20 +135,19 @@ func (p *capacityPlanner) searchProblem(deadline time.Time) protocol.Problem {
 func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 	started := time.Now()
 	e := newCapacityExact(p)
-	var problem protocol.Problem
 	if p.settings.PlanSearchStrategy == protocol.V2 {
-		problem = p.scalarProblem(p.planTable(), deadline)
-	} else {
-		problem = p.searchProblem(deadline)
+		return p.searchRounds(e, started, deadline)
 	}
+	problem := p.searchProblem(deadline)
 	engineStarted := time.Now()
 	result, err := scheduler.Select[capacityResult](p.settings.PlanSearchStrategy).Search(problem, e)
-	if p.settings.PlanSearchStrategy == protocol.V1 {
-		result.Diagnostics.ExactElapsed = time.Since(engineStarted)
-	}
-	finished := time.Now()
-	result.Diagnostics.StartedAt, result.Diagnostics.FinishedAt = started.UTC(), finished.UTC()
-	result.Diagnostics.Duration = finished.Sub(started)
-	e.record(result.Diagnostics)
+	result.Diagnostics.ExactElapsed = time.Since(engineStarted)
+	p.recordSearch(e, result.Diagnostics, started)
 	return result.Value, err
+}
+
+func (p *capacityPlanner) recordSearch(e interface{ record(protocol.Diagnostics) }, d protocol.Diagnostics, started time.Time) {
+	finished := time.Now()
+	d.StartedAt, d.FinishedAt, d.Duration = started.UTC(), finished.UTC(), finished.Sub(started)
+	e.record(d)
 }

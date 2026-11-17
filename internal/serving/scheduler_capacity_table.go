@@ -2,7 +2,8 @@ package serving
 
 // planTable owns the Tick's scalar columns. Search needs no capacityPlan reads.
 // Workload columns and item lists are indexed [table plan][Workload].
-// Rate columns sum surrogate profile throughput, independent of routing weights.
+// Rate columns sum surrogate profile throughput, independent of routing weights,
+// times the decision's replay supply correction (capacityPlanner.supplyCorrection).
 type planTable struct {
 	byPlan                                                    [][]int
 	node, index                                               []int
@@ -34,10 +35,17 @@ type planTable struct {
 
 func (p *capacityPlanner) planTable() *planTable {
 	t := &planTable{byPlan: make([][]int, len(p.plans)), pruned: map[string]int{}}
+	scale := make([]float64, len(p.ws))
+	for w := range scale {
+		scale[w] = 1
+	}
+	for w, c := range p.supplyCorrection {
+		scale[w] = c
+	}
 	for n, plans := range p.plans {
 		t.byPlan[n] = make([]int, len(plans))
 		for j, plan := range plans {
-			t.byPlan[n][j] = t.appendPlan(n, j, plan, p.ws)
+			t.byPlan[n][j] = t.appendPlan(n, j, plan, p.ws, scale)
 		}
 	}
 	return t
@@ -50,7 +58,8 @@ type tableLoad struct {
 	throughput, weight float64
 }
 
-func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorkload) int {
+// scale multiplies every profile throughput of a Workload; see supplyCorrection.
+func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorkload, scale []float64) int {
 	q, k := len(t.index), len(ws)
 	routingRate, service, retainedRate := make([]float64, k), make([]float64, k), make([]float64, k)
 	retainedService := make([]float64, k)
@@ -82,17 +91,19 @@ func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorklo
 			items = plan.items[w]
 		}
 		for _, item := range items {
-			routingRate[w] += item.throughput
-			service[w] += item.throughput * item.serviceNanos
+			throughput := item.throughput * scale[w]
+			routingRate[w] += throughput
+			service[w] += throughput * item.serviceNanos
 			weight[w] += float64(item.weight)
-			final[w] = append(final[w], tableLoad{slot: slot(item), throughput: item.throughput, weight: float64(item.weight)})
+			final[w] = append(final[w], tableLoad{slot: slot(item), throughput: throughput, weight: float64(item.weight)})
 		}
 		if w < len(plan.retained) {
 			for _, item := range plan.retained[w] {
-				retainedRate[w] += item.throughput
-				retainedService[w] += item.throughput * item.serviceNanos
+				throughput := item.throughput * scale[w]
+				retainedRate[w] += throughput
+				retainedService[w] += throughput * item.serviceNanos
 				weightRet[w] += float64(item.weight)
-				retained[w] = append(retained[w], tableLoad{slot: slot(item), throughput: item.throughput, weight: float64(item.weight)})
+				retained[w] = append(retained[w], tableLoad{slot: slot(item), throughput: throughput, weight: float64(item.weight)})
 			}
 		}
 		if len(final[w]) > 0 || len(retained[w]) > 0 {

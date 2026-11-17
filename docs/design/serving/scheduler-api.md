@@ -116,6 +116,8 @@ round는 호출 시간과 오류, Tick은 판단 처분을 소유한다. `contro
 
 증분 surrogateElapsedNanos와 exactElapsedNanos는 search 안의 부분집합이다. 후자는 keep seed, 정밀 funnel과 fallback, backend 후처리를 포함한다. nominal-rate 진단 취소 뒤에도 이미 수행한 시간은 남는다. 탐색하지 않은 기록이나 과거 raw에 시간을 합성하지 않는다.
 
+증분 전략의 `search.rounds`는 같은 판단 안에서 후보를 생성한 순회 수이고 `search.supplyCorrection`은 Workload UID별 재생 공급 보정 `c_w`(1 미만만)다. 보정 규칙은 [계획기 설계](analytic-planner.md#탐색과-예산)를 따른다. 평가 수, 시간과 steps는 모든 순회의 합이며 각 step의 `round`가 순회를 구분한다. 앞 순회에서 판정한 계획은 다시 세거나 제외 수에 넣지 않는다. budgetCut과 terminationReason은 마지막 순회의 값이고 각 step의 budgetCut은 잘린 순회의 마지막 점에 붙는다. key, joules, start, fallback, finalists와 funnel 진단은 선택된 정밀 결과를 낸 순회의 값이다.
+
 ## 이력과 compact 조회
 
 scheduler history는 `[from,to)` 사건시각을 필터한다. 기본과 asc는 append 순, desc는 사건시각 내림차순과 append offset 내림차순이다. `filter`는 all, decision-action, decision, decision-change, action, snapshot, settings, power, other다. decision-change는 target이 있고 그 target이 keep 계획이 아닌 decision, 곧 구성을 바꾸는 판단만 선택한다. Keep, Pending과 keep target의 Overload는 제외된다. uid는 명시 Workload 관계만 선택한다.
