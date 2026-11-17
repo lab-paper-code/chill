@@ -577,11 +577,18 @@ func (s *schedulerReplayState) initializeActions() {
 		if a.action.Kind == schedulerActionPrepare || a.action.Kind == schedulerActionRemove || a.action.Kind == schedulerActionPower {
 			a.blocked = a.blocked || scope.nodes[a.action.Node]
 		}
-		if instance := s.byID[a.action.Instance]; instance != nil && instance.excluded {
-			a.blocked = true
-		}
 	}
 	s.blockedReplayPrerequisite()
+	// A candidate is judged by the replay of its own change. An action the
+	// replay cannot execute leaves that change unjudged; the first one names it.
+	if !s.c.Keep {
+		for _, a := range s.c.Actions {
+			if x := s.actionByID[a.ID]; x != nil && x.blocked {
+				s.out.reasons = append(s.out.reasons, "PlannedActionNotReplayed:"+a.ID)
+				break
+			}
+		}
+	}
 }
 
 func (s *schedulerReplayState) initializeOutstanding() {

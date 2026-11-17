@@ -396,3 +396,48 @@ func TestReplayFailedAttemptPodExcludesOnlyItsInstance(t *testing.T) {
 		t.Fatalf("failed attempt must exclude its Pod only: instances=%v nodes=%v", scope.instances, scope.nodes)
 	}
 }
+
+// control403: the planner retired a failed attempt's Pod and replaced the
+// serving instance behind it, replay refused the retirement, and the candidate
+// was ranked with the current configuration's outcome.
+func TestReplayRetiresFailedAttemptPod(t *testing.T) {
+	settings, snapshot, candidate := feedbackFixture()
+	node := poolsAddNode(&snapshot, "failed-node", map[string]float64{"fixed": 1})
+	late := poolsInstance(snapshot.Instances[0], "failed-pod/containerd://late", node, "fixed", "")
+	late.PodUID, late.Ready = "failed-pod", true
+	healthy := snapshot.Instances[0]
+	snapshot.Instances = append(snapshot.Instances, late)
+	snapshot.Actions = []Action{{ID: "failed-prepare", Kind: schedulerActionPrepare, Node: node, Instance: "slot",
+		Status: schedulerActionFailed, Reason: ActionDeadlineExceeded,
+		PreparationFailure: NewPreparationFailure(late, late.PodUID, PreparationFailureObservation{Classification: PreparationUnknownTransient})}}
+	settings.DefaultOperationCost[schedulerActionRemove] = OperationCostValue{Seconds: .0001, Joules: .01}
+	candidate.Keep = false
+	candidate.Nodes, candidate.Instances = snapshot.Nodes, []SchedulerInstance{healthy}
+	candidate.Actions = schedulerPlan(settings, snapshot, candidate)
+	remove := slices.IndexFunc(candidate.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Instance == late.ID })
+	if remove < 0 {
+		t.Fatalf("fixture must retire the failed Pod: %+v", candidate.Actions)
+	}
+	state := schedulerReplayState{settings: settings, snap: snapshot, c: candidate, rng: rand.New(rand.NewPCG(1, 0))}
+	state.initializeInstances()
+	state.initializeActions()
+	if !state.startActions() || len(state.out.reasons) != 0 || !state.actionByID[candidate.Actions[remove].ID].started {
+		t.Fatalf("replay did not execute the planned retirement: reasons=%v actions=%+v", state.out.reasons, candidate.Actions)
+	}
+	if result := feedbackEvaluateForTest(t, settings, snapshot, candidate); result.Workloads[0].OnTime != 2 {
+		t.Fatalf("retiring the failed Pod interrupted healthy supply: %+v", result.Workloads)
+	}
+}
+
+func TestReplayRejectsCandidateItCannotExecute(t *testing.T) {
+	settings, snapshot, candidate := feedbackFixture()
+	snapshot.Actions = []Action{{ID: "failed-prepare", Kind: schedulerActionPrepare, Node: snapshot.Nodes[0].Node, Instance: "slot", Status: schedulerActionFailed}}
+	candidate.Actions = []Action{{ID: "own-route", Kind: schedulerActionRoute, DependsOn: []string{"failed-prepare"}}}
+	for _, keep := range []bool{true, false} {
+		candidate.Keep = keep
+		result, err := EvaluateFeedbackCandidate(context.Background(), settings, snapshot, candidate, 1)
+		if err != nil || slices.Contains(result.InvalidReasons, "PlannedActionNotReplayed:own-route") == keep {
+			t.Fatalf("keep=%v: a change replay cannot execute must be unjudged, the current configuration judged: %v %+v", keep, err, result.InvalidReasons)
+		}
+	}
+}
