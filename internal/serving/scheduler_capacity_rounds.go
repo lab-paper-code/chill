@@ -125,17 +125,19 @@ func (e *capacityRoundsExact) lowerSupply() bool {
 	return lowered
 }
 
-// capacityRounds generates candidates and regenerates them while the best exact
-// result misses an SLO and lower reports that some c_w fell. A regenerated
-// round replaces the best only when its exact result is strictly better under
-// the exact order, and a round that is not better ends the loop. Termination:
-// every round after the first starts only once c_w has fallen (c_w only falls)
-// and continues the loop only by strictly improving the best exact result, and
-// a decision has finitely many plans to improve through.
+// capacityRounds generates candidates and regenerates them whenever lower
+// reports that the round's replays lowered some c_w: a shortfall of any
+// replayed plan shows a surrogate supply error. A
+// regenerated round replaces the best only when its exact result is strictly
+// better under capacityResult.better, and a round that is not better ends the
+// loop. Termination: every round after the first starts only once c_w has
+// fallen (c_w only falls) and continues the loop only by strictly improving
+// the best exact result, and a decision has finitely many plans to improve
+// through.
 func capacityRounds(run func() (protocol.Outcome[capacityResult], error), lower func() bool) (protocol.Outcome[capacityResult], int, error) {
 	best, err := run()
 	selected := 0
-	for round := 1; err == nil && !best.Value.feasible && lower(); round++ {
+	for round := 1; err == nil && lower(); round++ {
 		next, nextErr := run()
 		if nextErr != nil {
 			return best, selected, nextErr
