@@ -87,7 +87,7 @@ func (s *schedulerReplayState) feedbackFor(definition *Definition) PathFeedback 
 			return feedback
 		}
 	}
-	return PathFeedback{WorkloadUID: definition.UID, TotalNanos: s.settings.CompletionMarginMS * 1e6, PostNanos: s.settings.CompletionMarginMS * 1e6, Source: "configured"}
+	return PathFeedback{WorkloadUID: definition.UID, TotalNanos: s.settings.CompletionMarginMS * 1e6, PostNanos: s.settings.CompletionMarginMS * 1e6, Source: pathFeedbackConfigured}
 }
 
 // empiricalSLORank is the whole-population empirical percentile's 1-based rank.

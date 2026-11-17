@@ -38,10 +38,9 @@ func newSchedulerLoadModel(p *Profile, maxBatch int) *schedulerLoadModel {
 	}
 	m := &schedulerLoadModel{identity: fmt.Sprintf("%s/b%d", p.ID, maxBatch), profile: p.ID}
 	if p.Power != nil {
-		var holdOK bool
-		m.step, m.powerOK = p.Power.AwakeStepWatts.Value()
-		m.hold, holdOK = p.Power.HoldSeconds.Value()
-		m.powerOK = m.powerOK && holdOK
+		step, stepOK := p.Power.AwakeStepWatts.Value()
+		hold, holdOK := p.Power.HoldSeconds.Value()
+		m.step, m.hold, m.powerOK = step, hold, stepOK && holdOK
 	}
 	batches := slices.Clone(p.Batches)
 	slices.SortFunc(batches, func(a, b BatchProfile) int { return cmp.Compare(a.Batch, b.Batch) })

@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// Each routing path keeps its own POST reserve (design 1.5.4): in control402
-// jetson-nano's 49 ms POST tail was applied to the other PLC paths.
+// Each routing path keeps its own POST reserve: in control402 jetson-nano's
+// 49 ms POST tail was applied to the other PLC paths.
 func TestRuntimePathMarginIgnoresOtherPathTail(t *testing.T) {
 	r, wanted, _ := routingRuntime(t, map[string]int32{"w1": 1})
 	estimate := func(slowPost time.Duration) AdmissionEstimate {

@@ -8,7 +8,11 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const pathFeedbackEmpirical = "empirical"
+// PathFeedback sources: measured samples, or the configured margin without any.
+const (
+	pathFeedbackEmpirical  = "empirical"
+	pathFeedbackConfigured = "configured"
+)
 
 // PathFeedback is one Workload's immutable additive-budget estimate. TOTAL and
 // POST pool every path; Paths keeps each instance's own POST, the completion
@@ -51,7 +55,7 @@ func (f PathFeedback) pathPost(instance string) (PathPost, bool) {
 func (f PathFeedback) forPath(instance string, configuredNanos float64) PathFeedback {
 	path, ok := f.pathPost(instance)
 	if !ok {
-		path.PostNanos, f.Source = configuredNanos, "configured"
+		path.PostNanos, f.Source = configuredNanos, pathFeedbackConfigured
 	}
 	f.PostNanos, f.SampleCount, f.Paths = path.PostNanos, path.SampleCount, nil
 	return f
@@ -71,21 +75,21 @@ type PathObservedMean struct {
 func BuildPathFeedback(workloadUID string, samples []PathTimingSample, slo SLO, configuredMargin time.Duration) PathFeedback {
 	feedback := PathFeedback{
 		WorkloadUID: workloadUID, Percentile: slo.Percentile, SampleCount: len(samples),
-		TotalNanos: float64(configuredMargin), PostNanos: float64(configuredMargin), Source: "configured",
+		TotalNanos: float64(configuredMargin), PostNanos: float64(configuredMargin), Source: pathFeedbackConfigured,
 	}
 	if len(samples) == 0 {
 		return feedback
 	}
 	feedback.Source = pathFeedbackEmpirical
-	mean := &PathObservedMean{
-		ClientNanos: samples[0].ClientNanos, ServingQueueNanos: samples[0].ServingQueueNanos,
-		NativeNanos: samples[0].NativeNanos, NonComputeNanos: samples[0].TotalNanos,
-	}
+	mean := &PathObservedMean{}
 	feedback.ObservedMean = mean
-	// Reuse one scalar buffer for every quantile; never copy or reorder records.
+	// One scalar buffer serves every quantile; records are never copied or reordered.
 	values := make([]float64, len(samples))
-	values[0] = samples[0].TotalNanos
-	for i := 1; i < len(samples); i++ {
+	tail := func(values []float64) float64 {
+		sort.Float64s(values)
+		return stat.Quantile(slo.Percentile/100, stat.Empirical, values, nil)
+	}
+	for i := range samples {
 		values[i] = samples[i].TotalNanos
 		mean.ClientNanos += samples[i].ClientNanos
 		mean.ServingQueueNanos += samples[i].ServingQueueNanos
@@ -97,13 +101,11 @@ func BuildPathFeedback(workloadUID string, samples []PathTimingSample, slo SLO, 
 	mean.ServingQueueNanos /= count
 	mean.NativeNanos /= count
 	mean.NonComputeNanos /= count
-	sort.Float64s(values)
-	feedback.TotalNanos = stat.Quantile(slo.Percentile/100, stat.Empirical, values, nil)
+	feedback.TotalNanos = tail(values)
 	for i := range samples {
 		values[i] = samples[i].PostNanos
 	}
-	sort.Float64s(values)
-	feedback.PostNanos = stat.Quantile(slo.Percentile/100, stat.Empirical, values, nil)
+	feedback.PostNanos = tail(values)
 	// Each path's own POST, in first-sample order.
 	// ponytail: O(paths*samples) scan; a Workload has few routed instances.
 	for i := range samples {
@@ -117,8 +119,7 @@ func BuildPathFeedback(workloadUID string, samples []PathTimingSample, slo SLO, 
 				values = append(values, sample.PostNanos)
 			}
 		}
-		sort.Float64s(values)
-		feedback.Paths = append(feedback.Paths, PathPost{Instance: instance, PostNanos: stat.Quantile(slo.Percentile/100, stat.Empirical, values, nil), SampleCount: len(values)})
+		feedback.Paths = append(feedback.Paths, PathPost{Instance: instance, PostNanos: tail(values), SampleCount: len(values)})
 	}
 	return feedback
 }
