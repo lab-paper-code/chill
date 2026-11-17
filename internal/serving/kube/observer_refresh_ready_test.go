@@ -174,7 +174,9 @@ func TestObserverRefreshRetainsReadyUntilProbeOutcome(t *testing.T) {
 	}
 }
 
-func TestObserverRetriesTimedOutSourceOnNextRefresh(t *testing.T) {
+// A source whose read ran into its deadline is read again without a refresh
+// waiting for it, and serves again once that read answers.
+func TestObserverDoesNotWaitForUnansweredSource(t *testing.T) {
 	api := newObserverAPI(t, 1)
 	issues := make(chan observation.ClusterObservation, 16)
 	api.observer.config.OnCluster = func(row observation.ClusterObservation) error {
@@ -193,14 +195,22 @@ func TestObserverRetriesTimedOutSourceOnNextRefresh(t *testing.T) {
 	if failed.Ready || !failed.AttemptedAt.After(before.AttemptedAt) {
 		t.Fatalf("timeout did not exclude physical executor: %+v", failed)
 	}
+	started := time.Now()
+	api.refresh(t)
+	if took := time.Since(started); took > nativeProbeTimeout/2 || api.ready() != 0 {
+		t.Fatalf("refresh waited %v for a source it already knew was unanswered, ready %d", took, api.ready())
+	}
 	api.mu.Lock()
 	close(api.hang)
 	api.hang = nil
 	api.mu.Unlock()
-	api.refresh(t)
 	recovered := api.observer.runtime.Instances()[0]
+	for deadline := time.Now().Add(2 * nativeProbeTimeout); !recovered.Ready && time.Now().Before(deadline); recovered = api.observer.runtime.Instances()[0] {
+		api.refresh(t)
+		time.Sleep(10 * time.Millisecond)
+	}
 	if !recovered.Ready || recovered.ID != before.ID || !recovered.ObservedAt.After(before.ObservedAt) {
-		t.Fatalf("unchanged Pod did not recover on the next refresh: %+v", recovered)
+		t.Fatalf("unchanged Pod did not recover once its read answered: %+v", recovered)
 	}
 	var raised, resolved bool
 	for len(issues) > 0 {

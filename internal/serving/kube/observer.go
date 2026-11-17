@@ -69,6 +69,10 @@ type nativeSource struct {
 	podState    *corev1.Pod
 	terminated  map[string]bool
 	deleted     bool
+	// unanswered: the last native read ran into its deadline. The next read
+	// then runs without a refresh waiting for it; reading marks one in flight.
+	unanswered bool
+	reading    bool
 	// follow identifies the current progress log follow.
 	follow context.Context
 	cancel context.CancelFunc
@@ -356,9 +360,7 @@ func (o *Observer) refreshLocked(ctx context.Context) (result observerRefresh, e
 				source.instance.State.Node = serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 			}
 		}
-		probes.Add(1)
-		go func() {
-			defer probes.Done()
+		probe := func(ctx context.Context) {
 			instance, publish, probe := o.probeSource(ctx, pod, byName[pod.Spec.NodeName], profiles[pod.Annotations[servingstate.ServingProfileAnnotation]], result.classes.Items, resources, servicesByName, servicesErr)
 			var latest *corev1.PodList
 			var latestErr error
@@ -375,6 +377,27 @@ func (o *Observer) refreshLocked(ctx context.Context) (result observerRefresh, e
 				ready = append(ready, instance)
 			}
 			o.issue("publish", o.publishLedger(ready))
+		}
+		if source := o.sources[string(pod.UID)]; source != nil && source.unanswered {
+			// The instance stays closed to dispatch until this read answers and
+			// publishes it; the refresh uses the state it already has.
+			if !source.reading {
+				source.reading = true
+				o.wg.Add(1)
+				go func() {
+					defer o.wg.Done()
+					probe(o.ctx)
+					o.mu.Lock()
+					source.reading = false
+					o.mu.Unlock()
+				}()
+			}
+			continue
+		}
+		probes.Add(1)
+		go func() {
+			defer probes.Done()
+			probe(ctx)
 		}()
 	}
 	o.mu.Unlock()
@@ -673,6 +696,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		if source == nil || source.stopped || source.deleted || servingstate.PhysicalID(source.uid, source.containerID) != spec.InstanceID {
 			return serving.ReadyInstance{}, false, nil
 		}
+		source.unanswered = !readSucceeded && ctx.Err() == nil
 		if probeErr == nil || instance.State.Native != nil {
 			instance.State.NativeVerified = readSucceeded && matchesNativeSource(pod, spec.ModelName, &instance.State)
 			if probeErr != nil {
