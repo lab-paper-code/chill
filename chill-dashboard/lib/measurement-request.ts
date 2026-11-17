@@ -76,18 +76,16 @@ export const steps = ["workload", "device", "run", "advanced", "name", "review"]
 export type Step = typeof steps[number]
 const dns1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/
 
-export type Advanced = { warmup: number; requestLifetime:number; deliveryMargin:number; framedDecodedRequestUpperBytes:number
-  meterLag:number; minimumPowerWindow:number; midLevelRatio:number; sparseGap:number; levelLimit:number; postLoadWindow:number; confidence:number; observationInterval:number; observationTimeout:number; maximumOperation:number; maximumGap:number }
+export type Advanced = { warmup: number; deliveryMargin:number; framedDecodedRequestUpperBytes:number
+  meterLag:number; minimumPowerWindow:number; midLevelRatio:number; sparseGap:number; postLoadWindow:number; confidence:number; observationInterval:number; observationTimeout:number; maximumOperation:number; maximumGap:number }
 export const advancedFields: [key: keyof Advanced, label: string, min: number, max?:number, step?:number|"any"][] = [
   ["warmup", "측정 전 예열 횟수", 0],
-  ["requestLifetime", "요청 수명 (초)", 1],
   ["deliveryMargin", "응답 전달 여유 (밀리초)", 1],
   ["framedDecodedRequestUpperBytes", "디코딩된 요청 프레임 상한 (바이트)", 1, Number.MAX_SAFE_INTEGER],
   ["meterLag", "전력계 지연 (초)", 0, 3600, "any"],
   ["minimumPowerWindow", "최소 전력 관측 (초)", 0, 3600, "any"],
   ["midLevelRatio", "중간 수준 비율", 0, 1, "any"],
   ["sparseGap", "저부하 평균 간격 (초)", 0, 3600, "any"],
-  ["levelLimit", "수준 시간 한도 (초)", 0, 86400, "any"],
   ["postLoadWindow", "부하 뒤 관측 (초)", 0, 3600, "any"],
   ["confidence", "신뢰 수준", 0.5, 1, "any"],
   ["observationInterval", "동작 전력 기록 간격 (밀리초)", 1],
@@ -103,8 +101,8 @@ export type Context = { models: ModelResource[]; workloads: WorkloadSummary[]; c
 export const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", protocol: null, name: null }
 // config/samples/profiling/edge_v1alpha1_batchenergyoptimization.yaml: an operator can submit without typing any value.
 export const defaultAdvanced: Advanced = {
-  warmup: 20, requestLifetime: 30, deliveryMargin: 100, framedDecodedRequestUpperBytes: 2097152,
-  meterLag: 3, minimumPowerWindow: 15, midLevelRatio: 0.25, sparseGap: 1, levelLimit: 300, postLoadWindow: 60, confidence: 0.95,
+  warmup: 20, deliveryMargin: 100, framedDecodedRequestUpperBytes: 2097152,
+  meterLag: 3, minimumPowerWindow: 15, midLevelRatio: 0.25, sparseGap: 1, postLoadWindow: 60, confidence: 0.95,
   observationInterval: 100, observationTimeout: 80, maximumOperation: 600, maximumGap: 500,
 }
 export const defaultTiming: MeasurementTiming = { changeIntervalP95Seconds: "1", maximumRequestSeconds: "0.08", maximumReceiptGapSeconds: "1", source: "sample values, not measured: replace with the Node meter's observed timing" }
@@ -115,10 +113,10 @@ function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
   const session = spec.session, d = defaultAdvanced
   return {
     warmup: finite(spec.activeProtocol.warmupIterations, d.warmup),
-    requestLifetime: positive(session?.requestLifetimeSeconds, d.requestLifetime), deliveryMargin: positive(session?.deliveryMarginMilliseconds, d.deliveryMargin),
+    deliveryMargin: positive(session?.deliveryMarginMilliseconds, d.deliveryMargin),
     framedDecodedRequestUpperBytes: positive(session?.framedDecodedRequestUpperBytes, d.framedDecodedRequestUpperBytes),
     meterLag: finite(session?.meterLagSeconds, d.meterLag), minimumPowerWindow: positive(session?.minimumPowerWindowSeconds, d.minimumPowerWindow), midLevelRatio: positive(session?.midLevelRatio, d.midLevelRatio),
-    sparseGap: positive(session?.sparseMeanGapSeconds, d.sparseGap), levelLimit: positive(session?.levelDurationLimitSeconds, d.levelLimit), postLoadWindow: positive(session?.postLoadWindowSeconds, d.postLoadWindow),
+    sparseGap: positive(session?.sparseMeanGapSeconds, d.sparseGap), postLoadWindow: positive(session?.postLoadWindowSeconds, d.postLoadWindow),
     confidence: positive(Number(session?.confidenceLevel), d.confidence), observationInterval: positive(session?.observation.intervalMilliseconds, d.observationInterval),
     observationTimeout: positive(session?.observation.requestTimeoutMilliseconds, d.observationTimeout), maximumOperation: positive(session?.observation.maximumOperationSeconds, d.maximumOperation),
     maximumGap: positive(session?.observation.maximumGapMilliseconds, d.maximumGap),
@@ -141,7 +139,7 @@ export function updateDraft(current:Draft,patch:Partial<Draft>,context:Context,i
   if(next.model===current.model&&next.preprocessor===current.preprocessor&&next.dataset===current.dataset)return next
   return {...next,workload:patch.workload||"",protocol:next.protocol?.spec?{...next.protocol,spec:{...next.protocol.spec,activeProtocol:{...next.protocol.spec.activeProtocol,workload:undefined}}}:next.protocol}
 }
-const exclusiveZero: Partial<Record<keyof Advanced, true>> = { minimumPowerWindow: true, midLevelRatio: true, sparseGap: true, levelLimit: true, postLoadWindow: true }
+const exclusiveZero: Partial<Record<keyof Advanced, true>> = { minimumPowerWindow: true, midLevelRatio: true, sparseGap: true, postLoadWindow: true }
 /** Short inline error of one protocol value. */
 export function advancedIssue(values: Advanced, key: keyof Advanced): string {
   const field = advancedFields.find(([name]) => name === key)
@@ -153,8 +151,6 @@ export function advancedIssue(values: Advanced, key: keyof Advanced): string {
   if (!Number.isFinite(value) || (step !== "any" && !Number.isInteger(value)) || value < min || (exclusiveZero[key] && value === 0) || value > max)
     return exclusiveZero[key] ? "0보다 큰 값" : step === "any" ? `${min} 이상` : `${min} 이상 정수`
   if (key === "observationTimeout" && value >= values.observationInterval) return "기록 간격보다 짧게"
-  if (key === "levelLimit" && value <= values.meterLag + values.minimumPowerWindow) return "지연과 최소 관측의 합보다 길게"
-  if (key === "deliveryMargin" && value >= values.requestLifetime * 1000) return "요청 수명보다 짧게"
   return ""
 }
 function advancedProblem(values: Advanced) {
@@ -210,8 +206,8 @@ export function manifest(d: Draft, context: Context, namespace: string) {
     activeProtocol: { workload: d.workload, warmupIterations: p.warmup, dataset: d.dataset },
     session: {
       meterLagSeconds: p.meterLag, minimumPowerWindowSeconds: p.minimumPowerWindow, midLevelRatio: p.midLevelRatio, sparseMeanGapSeconds: p.sparseGap,
-      levelDurationLimitSeconds: p.levelLimit, postLoadWindowSeconds: p.postLoadWindow, confidenceLevel: String(p.confidence),
-      requestLifetimeSeconds: p.requestLifetime, deliveryMarginMilliseconds: p.deliveryMargin, framedDecodedRequestUpperBytes: p.framedDecodedRequestUpperBytes,
+      postLoadWindowSeconds: p.postLoadWindow, confidenceLevel: String(p.confidence),
+      deliveryMarginMilliseconds: p.deliveryMargin, framedDecodedRequestUpperBytes: p.framedDecodedRequestUpperBytes,
       observation: { intervalMilliseconds: p.observationInterval, requestTimeoutMilliseconds: p.observationTimeout, maximumOperationSeconds: p.maximumOperation, maximumGapMilliseconds: p.maximumGap,
         timing: v.protocol.spec?.session?.observation.timing ?? defaultTiming },
     },

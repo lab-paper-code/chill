@@ -72,8 +72,12 @@ type SessionSettings struct {
 	MinimumPowerWindowSeconds float64 `json:"minimumPowerWindowSeconds"`
 	MidLevelRatio             float64 `json:"midLevelRatio"`
 	SparseMeanGapSeconds      float64 `json:"sparseMeanGapSeconds"`
-	LevelDurationLimitSeconds float64 `json:"levelDurationLimitSeconds"`
 	PostLoadWindowSeconds     float64 `json:"postLoadWindowSeconds"`
+	// RequestLifetimeSeconds is the request deadline the load sent, the one
+	// serving applies to the measured Workload's requests; lifetime expiry
+	// and the not-servable verdict depend on it. Absent when the result does
+	// not record it.
+	RequestLifetimeSeconds float64 `json:"requestLifetimeSeconds,omitempty"`
 	// MinimumSamples is the service record count the load generator ended
 	// levels on.
 	MinimumSamples int `json:"minimumSamples"`

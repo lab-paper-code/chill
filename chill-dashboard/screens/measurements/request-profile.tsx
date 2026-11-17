@@ -223,10 +223,8 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
             {field("minimumPowerWindow", "최소 전력 관측", "초", "수준마다 채울 전력 관측 시간")}
             {field("midLevelRatio", "중간 수준 비율", undefined, "포화 처리율 대비 중간 수준 요청률")}
             {field("sparseGap", "저부하 평균 간격", "초", "배치 1 저부하 수준의 평균 유휴 간격")}
-            {field("levelLimit", "수준 시간 한도", "초", "예측 시간이 넘으면 측정하지 않음")}
             {field("postLoadWindow", "부하 뒤 관측", "초", "마지막 배치 뒤 유지 시간과 유휴 전력 관측")}
             {field("confidence", "신뢰 수준", undefined, "모든 통계 판단의 수준, 0.5 이상 1 미만")}
-            {field("requestLifetime", "요청 수명", "초", "배치 둘의 처리 시간이 넘으면 서빙 불가")}
             {field("deliveryMargin", "전달 여유", "ms", "응답 전달에 남기는 시간")}
             {field("framedDecodedRequestUpperBytes", "요청 프레임 상한", "B", "디코딩된 요청 하나의 최대 크기")}
           </div>
@@ -255,7 +253,6 @@ function Funnel({ namespace, bar, onDirty, context, inventory, coverage, refetch
             { label: "전처리기", value: d.preprocessor },
             { label: "데이터셋", value: d.dataset },
             { label: "예열", value: Number.isFinite(values.warmup) ? `${values.warmup}회` : null },
-            { label: "수준 시간 한도", value: Number.isFinite(values.levelLimit) ? formatSeconds(values.levelLimit) : null },
             { label: "최소 전력 관측", value: Number.isFinite(values.minimumPowerWindow) ? formatSeconds(values.minimumPowerWindow) : null },
             { label: "신뢰 수준", value: Number.isFinite(values.confidence) ? String(values.confidence) : null },
           ]} />

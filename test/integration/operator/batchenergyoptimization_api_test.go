@@ -87,8 +87,8 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 func validSession() *edgev1alpha1.BatchEnergyOptimizationSessionSpec {
 	return &edgev1alpha1.BatchEnergyOptimizationSessionSpec{
 		MeterLagSeconds: 3, MinimumPowerWindowSeconds: 30, MidLevelRatio: .5, SparseMeanGapSeconds: 1,
-		LevelDurationLimitSeconds: 600, PostLoadWindowSeconds: 120, ConfidenceLevel: "0.95",
-		RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024,
+		PostLoadWindowSeconds: 120, ConfidenceLevel: "0.95",
+		DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024,
 		Observation: edgev1alpha1.MeasurementObservationSpec{
 			IntervalMilliseconds: 750, RequestTimeoutMilliseconds: 500, MaximumOperationSeconds: 600, MaximumGapMilliseconds: 3000,
 			Timing: &edgev1alpha1.MeasurementTimingSpec{ChangeIntervalP95Seconds: "3", MaximumRequestSeconds: "0.5", MaximumReceiptGapSeconds: "0.1", Source: "pilot"},

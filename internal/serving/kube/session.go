@@ -48,9 +48,9 @@ const (
 	// Level end reasons of chill-server session-load.
 	sessionSamplesReached         = "SamplesReached"
 	sessionServiceOverLifetime    = "BatchServiceExceedsLifetime"
+	sessionServiceOverTarget      = "BatchServiceExceedsTarget"
 	sessionAllocationBeforeBatch  = "AllocationFailedBeforeAnyBatch"
 	sessionRequestLifetimeExpired = "RequestLifetimeExpired"
-	sessionLevelLimitReached      = "LevelLimitReached"
 )
 
 // SessionOperationCostPrefix holds a session's operation-cost records, whose
@@ -128,6 +128,9 @@ func (c *SchedulerController) sessionRefusal(ctx context.Context, beo *edge.Batc
 	}
 	if len(plan.preparation.BatchSizes) == 0 {
 		return plan, refusedSessionUnresolved, "measurement session resolved no batch size", false
+	}
+	if lifetime := plan.preparation.RequestLifetime; time.Duration(settings.DeliveryMarginMilliseconds)*time.Millisecond >= lifetime {
+		return plan, refusedSessionUnresolved, fmt.Sprintf("deliveryMarginMilliseconds must be shorter than the %s request lifetime serving applies to the Workload", lifetime), false
 	}
 	if plan.minimumSamples, err = native.MinimumServiceSamples(plan.preparation.SLOPercentile); err != nil {
 		return plan, refusedSessionUnresolved, err.Error(), false
@@ -540,9 +543,8 @@ func (r *sessionRun) postLoadInstance(ctx context.Context, batch int) (start, en
 }
 
 // sessionLevels maps the level table onto derivation rows and the batch
-// size's stop. A level the driver did not measure for its predicted
-// duration stays in the batch unless it is saturation, which every other
-// level and the batch's service records need.
+// size's stop. A mid or sparse level whose requests expired stays in the
+// batch as an excluded row.
 func sessionLevels(table sessionLevelTable, batch int) ([]profilederivation.DriverLevelRow, *profilederivation.SessionStop, error) {
 	if table.Error != "" {
 		return nil, nil, errors.New(table.Error)
@@ -557,11 +559,8 @@ func sessionLevels(table sessionLevelTable, batch int) ([]profilederivation.Driv
 	for _, level := range table.Levels {
 		switch level.EndReason {
 		case sessionSamplesReached:
-		case sessionRequestLifetimeExpired, sessionLevelLimitReached:
-			if level.Kind == profilederivation.LevelSaturation {
-				return rows, stop(profilederivation.StopNotMeasured, level), nil
-			}
-		case sessionServiceOverLifetime:
+		case sessionRequestLifetimeExpired:
+		case sessionServiceOverLifetime, sessionServiceOverTarget:
 			return rows, stop(profilederivation.StopNotServable, level), nil
 		case sessionAllocationBeforeBatch:
 			return rows, stop(profilederivation.StopCapacityLimit, level), nil
@@ -611,8 +610,9 @@ func sessionInstance(beo *edge.BatchEnergyOptimization, preparation SessionPrepa
 
 func sessionSettings(s *edge.BatchEnergyOptimizationSessionSpec, plan sessionPlan) profilederivation.SessionSettings {
 	return profilederivation.SessionSettings{MeterLagSeconds: s.MeterLagSeconds, MinimumPowerWindowSeconds: s.MinimumPowerWindowSeconds,
-		MidLevelRatio: s.MidLevelRatio, SparseMeanGapSeconds: s.SparseMeanGapSeconds, LevelDurationLimitSeconds: s.LevelDurationLimitSeconds,
-		PostLoadWindowSeconds: s.PostLoadWindowSeconds, MinimumSamples: plan.minimumSamples, ConfidenceLevel: plan.confidence}
+		MidLevelRatio: s.MidLevelRatio, SparseMeanGapSeconds: s.SparseMeanGapSeconds,
+		PostLoadWindowSeconds: s.PostLoadWindowSeconds, RequestLifetimeSeconds: plan.preparation.RequestLifetime.Seconds(),
+		MinimumSamples: plan.minimumSamples, ConfidenceLevel: plan.confidence}
 }
 
 // measuredCondition is the configuration the session measured, from its

@@ -245,8 +245,8 @@ export function activeMeasurements(capture, epoch) {
 
   // Session requests on the first complete profile request's condition, created before the process started.
   const sessionBase = beoByName[COMPLETE[0]] ?? beos[0]
-  const sessionSpec = { ...sessionBase.spec, session: { meterLagSeconds: 3, minimumPowerWindowSeconds: 15, midLevelRatio: 0.25, sparseMeanGapSeconds: 1, levelDurationLimitSeconds: 300, postLoadWindowSeconds: 60,
-    confidenceLevel: '0.95', requestLifetimeSeconds: 30, deliveryMarginMilliseconds: 100, framedDecodedRequestUpperBytes: 2097152,
+  const sessionSpec = { ...sessionBase.spec, session: { meterLagSeconds: 3, minimumPowerWindowSeconds: 15, midLevelRatio: 0.25, sparseMeanGapSeconds: 1, postLoadWindowSeconds: 60,
+    confidenceLevel: '0.95', deliveryMarginMilliseconds: 100, framedDecodedRequestUpperBytes: 2097152,
     observation: { intervalMilliseconds: 100, requestTimeoutMilliseconds: 80, maximumOperationSeconds: 600, maximumGapMilliseconds: 500,
       timing: { changeIntervalP95Seconds: '1', maximumRequestSeconds: '0.08', maximumReceiptGapSeconds: '1', source: 'replay sample values' } } } }
   const sessionNode = sessionSpec.state.targetNode
@@ -281,7 +281,7 @@ export function activeMeasurements(capture, epoch) {
     return { schemaVersion: 'chill.dacs.io/batch-energy-optimization-result.v1alpha6',
       condition: { nodeName: item.spec.state.targetNode, nodeUID: nodeUID[item.spec.state.targetNode] ?? '', deviceClass: c.deviceClass, powerMode: c.powerMode, logicalModel: c.modelSpec, runtimeFamily: 'onnxruntime', backend: 'cpu',
         runtimeImage: 'registry.local/chill/firstfloor-runtime:replay', artifact: { executionPath: c.executionPath }, preprocessor: { name: c.preprocessor }, actor: {} },
-      settings: { meterLagSeconds: 3, minimumPowerWindowSeconds: 15, midLevelRatio: 0.25, sparseMeanGapSeconds: 1, levelDurationLimitSeconds: 300, postLoadWindowSeconds: 60, minimumSamples: 59, confidenceLevel: 0.95 },
+      settings: { meterLagSeconds: 3, minimumPowerWindowSeconds: 15, midLevelRatio: 0.25, sparseMeanGapSeconds: 1, postLoadWindowSeconds: 60, minimumSamples: 59, confidenceLevel: 0.95 },
       power: { idleWatts: parameter(idle, 9.5, 9.7, 'W'), awakeStepWatts: { status: 'Identified', value: 1.6, unit: 'W' }, holdSeconds: { status: 'Identified', value: 1.2, unit: 's' },
         meterIntervalSeconds: 1, settledAtSeconds: 6,
         postLoad: Array.from({ length: 60 }, (_, s) => [s, round(idle + 2.4 * Math.exp(-s / 2) + 0.05 * Math.sin(s), 2)]), postLoadSampleCount: 60 },

@@ -20,6 +20,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/application"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -131,6 +132,15 @@ func newSessionPrepare(
 	if err != nil {
 		return nil, fmt.Errorf("construct session preparer: %w", err)
 	}
+	return sessionPrepare(preparer, opts.requestTimeout), nil
+}
+
+// sessionPrepare resolves one measurement request. Session requests carry
+// no X-Chill-Request-Timeout, so they get the deadline serving gives the
+// Workload's requests under requestTimeout.
+func sessionPrepare(
+	preparer *profilerapp.Preparer, requestTimeout time.Duration,
+) func(context.Context, *edge.BatchEnergyOptimization) (servingkube.SessionPreparation, error) {
 	return func(ctx context.Context, beo *edge.BatchEnergyOptimization) (servingkube.SessionPreparation, error) {
 		state, protocol := beo.Spec.State, beo.Spec.ActiveProtocol
 		session, err := preparer.PrepareSession(ctx, profilerapp.SessionRequest{
@@ -153,9 +163,11 @@ func newSessionPrepare(
 		return servingkube.SessionPreparation{
 			RunConfig: config, MemoryBytes: uint64(config.Actor.MemoryLimitBytes), RuntimeDelivery: delivery,
 			BatchSizes: session.PlannedBatchSizes, SLOPercentile: config.Measurement.SLOPercentile,
-			SLOTarget: time.Duration(config.Measurement.SLOTargetLatencyNanos), Dataset: *config.Measurement.Dataset,
+			SLOTarget:       time.Duration(config.Measurement.SLOTargetLatencyNanos),
+			RequestLifetime: httpapi.WorkloadRequestTimeout(time.Duration(config.Measurement.RequestLifetimeNanos), requestTimeout),
+			Dataset:         *config.Measurement.Dataset,
 		}, nil
-	}, nil
+	}
 }
 
 func sessionResolutionError(err error) error {

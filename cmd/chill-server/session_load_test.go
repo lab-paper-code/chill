@@ -240,11 +240,12 @@ func sessionTestConfig(t testing.TB, endpoint string, batch int) sessionLoadConf
 	}
 	return sessionLoadConfig{
 		endpoint: endpoint, model: "classifier", dataset: dataset, session: "sess", definition: "definition",
+		// The 75th percentile's sample floor is five records.
 		fields: []string{"image"}, batch: batch, minSamples: 5, maxQueueRequests: 64,
-		maxQueueBytes: 64 << 20, requestUpperBytes: 2 << 20, sloPercentile: 95, midRatio: .5,
+		maxQueueBytes: 64 << 20, requestUpperBytes: 2 << 20, sloPercentile: 75, midRatio: .5,
 		sloTarget: time.Second, lifetime: 30 * time.Second, margin: 100 * time.Millisecond,
 		meterLag: 20 * time.Millisecond, powerWindow: 100 * time.Millisecond,
-		sparseMeanGap: 2 * time.Millisecond, levelLimit: 5 * time.Second,
+		sparseMeanGap: 2 * time.Millisecond,
 	}
 }
 
@@ -252,9 +253,9 @@ func sessionTestArgs(c sessionLoadConfig) []string {
 	return []string{
 		"--native-endpoint", c.endpoint, "--model", c.model, "--fields", "image", "--dataset-dir", c.dataset,
 		"--batch", strconv.Itoa(c.batch), "--session", c.session, "--definition", c.definition,
-		"--slo-percentile", "95", "--slo-target", "1s", "--request-lifetime", "30s", "--delivery-margin", "100ms",
+		"--slo-percentile", "75", "--slo-target", "1s", "--request-lifetime", "30s", "--delivery-margin", "100ms",
 		"--min-samples", "5", "--meter-lag", "0s", "--min-power-window", "50ms", "--mid-ratio", ".5",
-		"--sparse", "--sparse-mean-gap", "2ms", "--level-limit", "5s",
+		"--sparse", "--sparse-mean-gap", "2ms",
 		"--max-queue-requests", strconv.Itoa(c.maxQueueRequests), "--max-queue-bytes", strconv.FormatInt(c.maxQueueBytes, 10),
 		"--request-upper-bytes", strconv.FormatInt(c.requestUpperBytes, 10),
 	}
@@ -298,8 +299,7 @@ func TestSessionLoadLevelsWaitForPowerWindowAfterSamples(t *testing.T) {
 				level := levels[index]
 				if level.Kind != kind || level.WorkloadUID != "sess/2/"+kind || level.EndReason != sessionSamplesReached ||
 					level.CompletedBatches < c.minSamples || level.EndedAt.Sub(level.StartedAt) < c.meterLag+c.powerWindow ||
-					level.SentInputs != level.CompletedInputs || level.CompletedInputs != level.CompletedBatches*c.batch ||
-					level.PredictedSeconds <= 0 || level.PredictedSeconds > level.LimitSeconds {
+					level.SentInputs != level.CompletedInputs || level.CompletedInputs != level.CompletedBatches*c.batch {
 					t.Fatalf("level %d = %+v", index, level)
 				}
 				if index > 0 && level.StartedAt.Before(levels[index-1].EndedAt) {
@@ -314,21 +314,35 @@ func TestSessionLoadLevelsWaitForPowerWindowAfterSamples(t *testing.T) {
 	}
 }
 
-func TestSessionLevelDeadlineRetainsCompletedCounts(t *testing.T) {
-	fake := newSessionFake(t, 2, func(uint64) (time.Duration, time.Duration) {
-		return 10 * time.Second, time.Millisecond
-	}, nil)
-	config := sessionTestConfig(t, fake.server.URL, 2)
-	config.minSamples, config.levelLimit = 1000, 150*time.Millisecond
-	levels, _ := runSessionLoad(context.Background(), config, io.Discard)
-	if len(levels) != 1 {
-		t.Fatalf("level limit lost its actual outcome: %+v", levels)
+// A slow executor's mid level runs for as long as its samples take, and every
+// completed batch reaches stdout.
+func TestSessionLoadSlowMidLevelEndsOnSamples(t *testing.T) {
+	fake := newSessionFake(t, 2, fixedService(20*time.Millisecond), nil)
+	c := sessionTestConfig(t, fake.server.URL, 2)
+	c.minSamples, c.meterLag, c.powerWindow = 10, 0, 50*time.Millisecond
+	var stdout bytes.Buffer
+	levels, err := runSessionLoad(context.Background(), c, &stdout)
+	if err != nil || len(levels) != 2 {
+		t.Fatalf("levels %+v error %v", levels, err)
 	}
-	row := levels[0]
-	if row.CompletedBatches < 2 || row.CompletedInputs < 2*row.CompletedBatches ||
-		row.PredictedSeconds <= row.LimitSeconds || row.EndReason != sessionLevelLimitReached ||
-		!strings.Contains(row.Detail, "reached the 150ms level limit") {
-		t.Fatalf("level limit lost completed measurements: %+v", row)
+	if mid := levels[1]; mid.EndReason != sessionSamplesReached || mid.CompletedBatches < c.minSamples {
+		t.Fatalf("mid = %+v", mid)
+	}
+	assertSessionBatchOutput(t, stdout.String(), levels, fake)
+}
+
+func TestSessionLoadSaturationOverTargetEndsNotServable(t *testing.T) {
+	fake := newSessionFake(t, 1, func(uint64) (time.Duration, time.Duration) { return 2 * time.Second, time.Millisecond }, nil)
+	c := sessionTestConfig(t, fake.server.URL, 1)
+	c.sparse = true
+	levels, err := runSessionLoad(context.Background(), c, io.Discard)
+	if err != nil || len(levels) != 1 || levels[0].EndReason != sessionServiceOverTarget || levels[0].Detail == "" {
+		t.Fatalf("levels %+v error %v", levels, err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.finished[sessionMid]+fake.finished[sessionSparse] != 0 {
+		t.Fatalf("levels after a not servable saturation ran: %v", fake.finished)
 	}
 }
 
@@ -342,7 +356,7 @@ func TestSessionLoadSaturationKeepsTwoBatchesOutstanding(t *testing.T) {
 		return 130 * time.Millisecond, 5 * time.Millisecond
 	}, nil)
 	c := sessionTestConfig(t, fake.server.URL, 4)
-	c.minSamples, c.meterLag, c.levelLimit = 20, 0, time.Minute
+	c.minSamples, c.meterLag = 20, 0
 	row := sessionTestLevel(t, c, sessionSaturation, 0)
 	if row.Outstanding != 8 || row.EndReason != sessionSamplesReached {
 		t.Fatalf("saturation = %+v", row)
@@ -583,7 +597,7 @@ func TestSessionLoadMidExpiryWaitsForPhysicalCompletion(t *testing.T) {
 	}
 }
 
-func TestSessionLoadExpiryIdleWaitIsBounded(t *testing.T) {
+func TestSessionLoadExpiryIdleWaitEndsOnCancellation(t *testing.T) {
 	fake := newSessionFake(t, 1, fixedService(time.Millisecond), func(kind string, _ int) (int, string) {
 		if kind == sessionMid {
 			return http.StatusRequestTimeout, `{"error":"request lifetime expired"}`
@@ -594,10 +608,11 @@ func TestSessionLoadExpiryIdleWaitIsBounded(t *testing.T) {
 	fake.neverIdle = true
 	fake.mu.Unlock()
 	config := sessionTestConfig(t, fake.server.URL, 1)
-	config.sparse, config.levelLimit = true, 200*time.Millisecond
-	levels, err := runSessionLoad(context.Background(), config, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "did not become idle within 200ms") ||
-		!strings.Contains(err.Error(), "native inference HTTP 408") || len(levels) != 2 {
+	config.sparse = true
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	levels, err := runSessionLoad(ctx, config, io.Discard)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "native inference HTTP 408") || len(levels) != 2 {
 		t.Fatalf("levels %+v error %v", levels, err)
 	}
 }

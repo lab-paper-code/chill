@@ -641,22 +641,32 @@ func inferenceErrorOutcome(err error) string {
 	}
 }
 
-func inferenceTimeout(requested string, lifetime, fallback time.Duration) (time.Duration, error) {
-	timeout := fallback
+// WorkloadRequestTimeout is the deadline serving applies to a Workload's
+// requests without X-Chill-Request-Timeout: the Workload's lifetime when set,
+// otherwise the server's request timeout, capped by
+// MaximumInferenceRequestTimeout.
+func WorkloadRequestTimeout(lifetime, serverTimeout time.Duration) time.Duration {
+	timeout := serverTimeout
 	if lifetime > 0 {
 		timeout = lifetime
 	}
-	if requested != "" {
-		duration, err := time.ParseDuration(requested)
-		if err != nil || duration <= 0 || duration > MaximumInferenceRequestTimeout {
-			return 0, &serving.Error{Code: "InvalidRequestTimeout", Message: "explicit timeout must be positive and at most " + MaximumInferenceRequestTimeout.String(), Field: "X-Chill-Request-Timeout"}
-		}
-		timeout = duration
-		if lifetime > 0 {
-			timeout = min(timeout, lifetime)
-		}
+	return min(timeout, MaximumInferenceRequestTimeout)
+}
+
+// inferenceTimeout applies an explicit X-Chill-Request-Timeout up to the
+// Workload's lifetime, or WorkloadRequestTimeout without one.
+func inferenceTimeout(requested string, lifetime, serverTimeout time.Duration) (time.Duration, error) {
+	if requested == "" {
+		return WorkloadRequestTimeout(lifetime, serverTimeout), nil
 	}
-	return min(timeout, MaximumInferenceRequestTimeout), nil
+	timeout, err := time.ParseDuration(requested)
+	if err != nil || timeout <= 0 || timeout > MaximumInferenceRequestTimeout {
+		return 0, &serving.Error{Code: "InvalidRequestTimeout", Message: "explicit timeout must be positive and at most " + MaximumInferenceRequestTimeout.String(), Field: "X-Chill-Request-Timeout"}
+	}
+	if lifetime > 0 {
+		timeout = min(timeout, lifetime)
+	}
+	return timeout, nil
 }
 
 // Only requests received during an active capture acquire this adapter.

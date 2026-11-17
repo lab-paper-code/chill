@@ -42,22 +42,22 @@ const (
 
 	sessionSamplesReached         = "SamplesReached"
 	sessionServiceOverLifetime    = "BatchServiceExceedsLifetime"
+	sessionServiceOverTarget      = "BatchServiceExceedsTarget"
 	sessionAllocationBeforeBatch  = "AllocationFailedBeforeAnyBatch"
 	sessionAllocationAfterBatch   = "AllocationFailedAfterCompletedBatch"
 	sessionFailed                 = "Failed"
 	sessionRequestLifetimeExpired = "RequestLifetimeExpired"
-	sessionLevelLimitReached      = "LevelLimitReached"
 )
 
 type sessionLoadConfig struct {
-	endpoint, model, dataset, session, definition    string
-	fields                                           []string
-	batch, minSamples, maxQueueRequests              int
-	maxQueueBytes, requestUpperBytes                 int64
-	sloPercentile, midRatio                          float64
-	sloTarget, lifetime, margin                      time.Duration
-	meterLag, powerWindow, sparseMeanGap, levelLimit time.Duration
-	sparse                                           bool
+	endpoint, model, dataset, session, definition string
+	fields                                        []string
+	batch, minSamples, maxQueueRequests           int
+	maxQueueBytes, requestUpperBytes              int64
+	sloPercentile, midRatio                       float64
+	sloTarget, lifetime, margin                   time.Duration
+	meterLag, powerWindow, sparseMeanGap          time.Duration
+	sparse                                        bool
 }
 
 // workloadUID names a level's requests. Native batches only requests of one
@@ -79,8 +79,6 @@ type sessionLevel struct {
 	Outstanding             int       `json:"outstanding,omitempty"`
 	TargetInputsPerSecond   float64   `json:"targetInputsPerSecond,omitempty"`
 	AchievedInputsPerSecond float64   `json:"achievedInputsPerSecond"`
-	PredictedSeconds        float64   `json:"predictedSeconds,omitempty"`
-	LimitSeconds            float64   `json:"limitSeconds,omitempty"`
 	EndReason               string    `json:"endReason"`
 	Detail                  string    `json:"detail,omitempty"`
 }
@@ -118,7 +116,6 @@ func parseSessionLoad(args []string) (sessionLoadConfig, error) {
 	flags.Float64Var(&c.midRatio, "mid-ratio", 0, "mid level arrival rate as a ratio of saturation throughput")
 	flags.BoolVar(&c.sparse, "sparse", false, "run the sparse level after mid")
 	flags.DurationVar(&c.sparseMeanGap, "sparse-mean-gap", 0, "sparse level mean idle gap")
-	flags.DurationVar(&c.levelLimit, "level-limit", 0, "longest predicted duration of one level")
 	flags.IntVar(&c.maxQueueRequests, "max-queue-requests", 0, "native admission request limit")
 	flags.Int64Var(&c.maxQueueBytes, "max-queue-bytes", 0, "native admission byte limit")
 	flags.Int64Var(&c.requestUpperBytes, "request-upper-bytes", 0, "framed decoded bytes upper bound of one request")
@@ -134,8 +131,6 @@ func parseSessionLoad(args []string) (sessionLoadConfig, error) {
 			"and --definition")
 	case c.batch < 1 || c.minSamples < 1 || c.requestUpperBytes < 1 || c.maxQueueRequests < 1 || c.maxQueueBytes < 1:
 		return c, errors.New("session-load requires positive batch, sample, request and queue counts")
-	case c.levelLimit <= 0:
-		return c, errors.New("session-load requires a positive --level-limit")
 	}
 	return c, nil
 }
@@ -210,8 +205,8 @@ func runSessionLoad(ctx context.Context, c sessionLoadConfig, stdout io.Writer) 
 			level.EndReason, level.Detail = sessionFailed, flushErr.Error()
 			err = errors.Join(err, flushErr)
 		}
-		// Cancelled or expired requests may still execute natively.
-		endedEarly := level.EndReason == sessionRequestLifetimeExpired || level.EndReason == sessionLevelLimitReached
+		// Expired requests may still execute natively.
+		endedEarly := level.EndReason == sessionRequestLifetimeExpired
 		if err == nil && endedEarly {
 			err = s.waitIdle(ctx, level.Detail)
 			level.EndedAt = time.Now().UTC()
@@ -225,10 +220,9 @@ func runSessionLoad(ctx context.Context, c sessionLoadConfig, stdout io.Writer) 
 }
 
 // waitIdle observes physical completion: an expired HTTP request may still
-// belong to an executing, non-preemptible native batch.
-func (s *sessionLoad) waitIdle(parent context.Context, detail string) error {
-	ctx, cancel := context.WithTimeout(parent, s.config.levelLimit)
-	defer cancel()
+// belong to an executing, non-preemptible native batch. The runner timeout
+// bounds that batch, and the client timeout bounds every state read.
+func (s *sessionLoad) waitIdle(ctx context.Context, detail string) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	spec := gateway.Spec{Endpoint: s.config.endpoint, ModelName: s.config.model}
@@ -242,27 +236,24 @@ func (s *sessionLoad) waitIdle(parent context.Context, detail string) error {
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("%s: native executor did not become idle within %s (%d requests remain): %w",
-				detail, s.config.levelLimit, len(state.Requests), ctx.Err())
+			return fmt.Errorf("%s: stopped waiting for native idle with %d requests remaining: %w",
+				detail, len(state.Requests), ctx.Err())
 		case <-ticker.C:
 		}
 	}
 }
 
-// level collects the minimum service samples and power window within the
-// configured actual time limit. It records a duration prediction from the
-// first completed batch, or from the measured saturation rate for mid.
+// level runs until it collects the minimum service samples and power window,
+// or until a request fails or expires. A saturation level that collected them
+// ends not servable when its batch service exceeds the latency target.
 func (s *sessionLoad) level(parent context.Context, kind string, rate float64) (sessionLevel, error) {
-	ctx, cancel := context.WithTimeout(parent, s.config.levelLimit)
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	c := s.config
 	start := time.Now()
 	l := &sessionLevelRun{
 		s: s, ctx: ctx, cancel: cancel, rate: rate, counter: newSessionCounter(),
-		row: sessionLevel{
-			Kind: kind, WorkloadUID: c.workloadUID(kind), StartedAt: start.UTC(), TargetInputsPerSecond: rate,
-			LimitSeconds: c.levelLimit.Seconds(),
-		},
+		row: sessionLevel{Kind: kind, WorkloadUID: c.workloadUID(kind), StartedAt: start.UTC(), TargetInputsPerSecond: rate},
 		request: loadRequestContext{
 			workloadUID: c.workloadUID(kind), definition: c.definition,
 			slo:      native.SLO{Percentile: c.sloPercentile, TargetMS: float64(c.sloTarget) / 1e6},
@@ -279,7 +270,6 @@ func (s *sessionLoad) level(parent context.Context, kind string, rate float64) (
 	case sessionMid:
 		l.limit = int(min(int64(c.maxQueueRequests), c.maxQueueBytes/c.requestUpperBytes))
 		l.next = start.Add(l.arrivalGap())
-		l.predict(time.Duration(float64(c.batch) / rate * 1e9))
 	case sessionSparse:
 		l.limit = c.batch
 	}
@@ -312,17 +302,41 @@ func (s *sessionLoad) level(parent context.Context, kind string, rate float64) (
 		select {
 		case <-fire:
 		case <-done:
-			if parent.Err() != nil {
-				l.end(sessionFailed, "", ctx.Err())
-				break
-			}
-			l.end(sessionLevelLimitReached, fmt.Sprintf("%s level of batch %d reached the %s level limit with %d of %d samples",
-				kind, c.batch, c.levelLimit, l.counter.samples, c.minSamples), nil)
+			l.end(sessionFailed, "", ctx.Err())
 		case result := <-l.results:
 			l.receive(result)
 		}
 	}
+	if kind == sessionSaturation && l.row.EndReason == sessionSamplesReached {
+		l.judgeService()
+	}
 	return l.finish(), l.failure
+}
+
+// judgeService compares the SLO percentile of the saturation service samples
+// with the latency target, using the estimator the scheduler serves the
+// profile with. A saturated executor runs batches back to back, so the
+// percentile is read at a zero idle gap.
+func (l *sessionLevelRun) judgeService() {
+	c := l.s.config
+	distribution, err := native.NewServiceDistribution(l.services)
+	if err != nil {
+		l.end(sessionFailed, err.Error(), err)
+		return
+	}
+	var gap int64
+	quantile, _, ok := distribution.QuantileNanos(&gap, c.sloPercentile)
+	if !ok {
+		err := fmt.Errorf("saturation level of batch %d has %d service samples, too few to identify the p%g service time",
+			c.batch, len(l.services), c.sloPercentile)
+		l.end(sessionFailed, err.Error(), err)
+		return
+	}
+	if service := time.Duration(quantile); service > c.sloTarget {
+		l.row.EndReason = sessionServiceOverTarget
+		l.row.Detail = fmt.Sprintf("the p%g batch service of batch %d at saturation is %s, above the %s latency target",
+			c.sloPercentile, c.batch, service, c.sloTarget)
+	}
 }
 
 // sessionLevelRun is the loop state of one level.
@@ -340,19 +354,14 @@ type sessionLevelRun struct {
 	limit, outstanding int
 	next               time.Time
 	results            chan sessionResult
-	terminal           bool
-	failure            error
+	// services are the saturation level's service samples with an idle gap.
+	services []native.ServiceSample
+	terminal bool
+	failure  error
 }
 
 func (l *sessionLevelRun) arrivalGap() time.Duration {
 	return time.Duration(max(1, math.Round(l.rng.ExpFloat64()/l.rate*1e9)))
-}
-
-// predict records the expected exposure without refusing actual measurement.
-func (l *sessionLevelRun) predict(interval time.Duration) {
-	c := l.s.config
-	predicted := max(c.meterLag+c.powerWindow, time.Duration(c.minSamples)*interval)
-	l.row.PredictedSeconds, l.row.LimitSeconds = predicted.Seconds(), c.levelLimit.Seconds()
 }
 
 // issuing stops new requests only on a fixed batch boundary: native holds a
@@ -452,22 +461,12 @@ func (l *sessionLevelRun) count(result sessionResult) {
 		l.end(sessionFailed, err.Error(), err)
 		return
 	}
-	if l.terminal {
-		return
+	if l.row.Kind == sessionSaturation && row.PrecedingIdleNanos != nil {
+		l.services = append(l.services, native.ServiceSample{ServiceDurationNanos: row.ServiceDurationNanos,
+			PrecedingIdleNanos: row.PrecedingIdleNanos, TrialID: l.row.WorkloadUID})
 	}
-	service := time.Duration(row.ServiceDurationNanos)
-	c := l.s.config
-	switch l.row.Kind {
-	case sessionSparse:
-		l.next = result.at.Add(time.Duration(l.rng.ExpFloat64() * float64(c.sparseMeanGap)))
-		if l.counter.batches == 1 {
-			l.predict(service + c.sparseMeanGap)
-		}
-	case sessionSaturation:
-		if l.counter.batches != 1 {
-			return
-		}
-		l.predict(service)
+	if !l.terminal && l.row.Kind == sessionSparse {
+		l.next = result.at.Add(time.Duration(l.rng.ExpFloat64() * float64(l.s.config.sparseMeanGap)))
 	}
 }
 

@@ -108,6 +108,9 @@ type SessionPreparation struct {
 	// SLOPercentile and SLOTarget are the measured Workload's latency objective.
 	SLOPercentile float64
 	SLOTarget     time.Duration
+	// RequestLifetime is the deadline serving applies to the measured
+	// Workload's requests; the load Job sends it with every request.
+	RequestLifetime time.Duration
 	// Dataset is the dataset the load Job samples.
 	Dataset profilingrun.DatasetContract
 }

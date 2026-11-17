@@ -31,7 +31,7 @@
 | 소유자 | 입력과 현재 경계 |
 |---|---|
 | `ProfilingRun.spec.measurement.durationToleranceSeconds` | finite ≥0이며 측정 duration 미만. 생략 기본값 0.5초, 명시한 0은 유지. RunConfig와 측정 조건에 동결 |
-| `BatchEnergyOptimization.spec.session` | 필수. 전력계 지연, 최소 전력 관측 시간, 중간 수준의 비율, 저부하 유휴 간격의 평균, 수준 시간 한도, 부하 뒤 관측 시간(선택), 요청 수명, 전달 여유, 요청 크기 상한과 동작 측정의 관찰 설정을 소유한다. 모두 결과에 함께 남는다. 수준이 끝나는 최소 표본 수는 `activeProtocol.workload`의 분위수에서 정한다 |
+| `BatchEnergyOptimization.spec.session` | 필수. 전력계 지연, 최소 전력 관측 시간, 중간 수준의 비율, 저부하 유휴 간격의 평균, 부하 뒤 관측 시간(선택), 전달 여유, 요청 크기 상한과 동작 측정의 관찰 설정을 소유한다. 모두 결과에 함께 남는다. 수준이 끝나는 최소 표본 수는 `activeProtocol.workload`의 분위수에서 정한다. 요청 수명은 소유하지 않고 서빙이 그 워크로드에 적용하는 기한을 쓰며, 그 값을 결과에 남긴다 |
 | `BatchEnergyOptimization.spec.session.confidenceLevel` | [0.5, 1) 십진 문자열. 세션 계산의 모든 통계 판단에 사용 |
 | `ModelLoadedIdleBaseline.spec.pointPolicy` | 해당 측정이 최소 반복 수와 신뢰수준을 소유. 최소 반복 수 ≥2, attempt limit은 최소 반복 수 이상 |
 | 전환 측정의 `acceptedCountTarget` | 방향별 정수 ≥2이며 attempt limit 이하 |

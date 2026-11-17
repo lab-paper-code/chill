@@ -90,12 +90,6 @@ spec:
                     format: int64
                     minimum: 1
                     type: integer
-                  levelDurationLimitSeconds:
-                    description: LevelDurationLimitSeconds is the longest predicted
-                      duration of one level.
-                    exclusiveMinimum: true
-                    minimum: 0
-                    type: number
                   meterLagSeconds:
                     description: MeterLagSeconds is the power meter lag discarded
                       at each level start.
@@ -179,9 +173,6 @@ spec:
                     description: PostLoadWindowSeconds observes the loaded actor without
                       inference after the last level.
                     type: number
-                  requestLifetimeSeconds:
-                    format: int32
-                    type: integer
                   sparseMeanGapSeconds:
                     description: SparseMeanGapSeconds is the sparse level's mean idle
                       gap.
@@ -192,17 +183,12 @@ spec:
                 - confidenceLevel
                 - deliveryMarginMilliseconds
                 - framedDecodedRequestUpperBytes
-                - levelDurationLimitSeconds
                 - meterLagSeconds
                 - midLevelRatio
                 - minimumPowerWindowSeconds
                 - observation
-                - requestLifetimeSeconds
                 - sparseMeanGapSeconds
                 type: object
-                x-kubernetes-validations:
-                - message: requestLifetimeSeconds must exceed deliveryMarginMilliseconds
-                  rule: self.requestLifetimeSeconds * 1000 > self.deliveryMarginMilliseconds
               state:
                 description: |-
                   MeasurementStateSpec fixes the execution state every trial of one

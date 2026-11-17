@@ -19,7 +19,6 @@ type BatchEnergyOptimizationSpec struct {
 
 // BatchEnergyOptimizationSessionSpec holds the measurement request's session
 // settings. Durations are seconds unless the name says otherwise.
-// +kubebuilder:validation:XValidation:rule="self.requestLifetimeSeconds * 1000 > self.deliveryMarginMilliseconds",message="requestLifetimeSeconds must exceed deliveryMarginMilliseconds"
 type BatchEnergyOptimizationSessionSpec struct {
 	// MeterLagSeconds is the power meter lag discarded at each level start.
 	// +kubebuilder:validation:Minimum=0
@@ -38,17 +37,12 @@ type BatchEnergyOptimizationSessionSpec struct {
 	// +kubebuilder:validation:ExclusiveMinimum=true
 	// +kubebuilder:validation:Minimum=0
 	SparseMeanGapSeconds float64 `json:"sparseMeanGapSeconds"`
-	// LevelDurationLimitSeconds is the longest predicted duration of one level.
-	// +kubebuilder:validation:ExclusiveMinimum=true
-	// +kubebuilder:validation:Minimum=0
-	LevelDurationLimitSeconds float64 `json:"levelDurationLimitSeconds"`
 	// PostLoadWindowSeconds observes the loaded actor without inference after the last level.
 	// +optional
 	PostLoadWindowSeconds float64 `json:"postLoadWindowSeconds,omitempty"`
 	// ConfidenceLevel, a decimal in [0.5, 1), is the level of every statistical
 	// decision the derivation makes.
-	ConfidenceLevel        string `json:"confidenceLevel"`
-	RequestLifetimeSeconds int32  `json:"requestLifetimeSeconds"`
+	ConfidenceLevel string `json:"confidenceLevel"`
 	// +kubebuilder:validation:Minimum=1
 	DeliveryMarginMilliseconds int32 `json:"deliveryMarginMilliseconds"`
 	// +kubebuilder:validation:Minimum=1

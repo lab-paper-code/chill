@@ -66,8 +66,8 @@ type sessionHarness struct {
 func sessionSettingsFixture() *edge.BatchEnergyOptimizationSessionSpec {
 	return &edge.BatchEnergyOptimizationSessionSpec{
 		MeterLagSeconds: 0.5, MinimumPowerWindowSeconds: 1, MidLevelRatio: .25, SparseMeanGapSeconds: 1,
-		LevelDurationLimitSeconds: 600, PostLoadWindowSeconds: 2, ConfidenceLevel: "0.95",
-		RequestLifetimeSeconds: 30, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024,
+		PostLoadWindowSeconds: 2, ConfidenceLevel: "0.95",
+		DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024,
 		Observation: edge.MeasurementObservationSpec{IntervalMilliseconds: 1000, RequestTimeoutMilliseconds: 800, MaximumOperationSeconds: 900, MaximumGapMilliseconds: 3000,
 			Timing: &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0.2", MaximumReceiptGapSeconds: "0.3", Source: "fixture"}},
 	}
@@ -85,7 +85,7 @@ func sessionPreparationFixture() SessionPreparation {
 		Actor:       native.Config{MemoryRequestBytes: 256 << 20, MemoryLimitBytes: 1 << 30, MaxQueueBytes: 1 << 20},
 	}
 	return SessionPreparation{RunConfig: config, MemoryBytes: 1 << 30, BatchSizes: []int{1, 2, 4}, SLOPercentile: 95, SLOTarget: 200 * time.Millisecond,
-		Dataset: profilingrun.DatasetContract{Name: "imagenet-val", UID: "dataset-uid", Image: "dataset:1", Path: "/datasets/imagenet"}}
+		RequestLifetime: 30 * time.Second, Dataset: profilingrun.DatasetContract{Name: "imagenet-val", UID: "dataset-uid", Image: "dataset:1", Path: "/datasets/imagenet"}}
 }
 
 func sessionRoot(session *edge.BatchEnergyOptimizationSessionSpec) *edge.BatchEnergyOptimization {
@@ -332,6 +332,10 @@ func TestSessionMeasuresEveryBatchSizeAndStoresOneResult(t *testing.T) {
 		result.Batches[0].PrepareCostKey == "" || result.Batches[0].PeakMemoryBytes != 700<<20 || len(result.Batches[0].Levels) != 3 || len(result.Batches[1].Levels) != 2 {
 		t.Fatalf("result %+v", result)
 	}
+	// The stored settings carry the request lifetime the load Jobs sent.
+	if result.Settings.RequestLifetimeSeconds != 30 {
+		t.Fatalf("stored settings %+v", result.Settings)
+	}
 	want := []string{"power", "prepare-b1", "remove-b1", "prepare-b2", "remove-b2", "prepare-b4", "remove-b4"}
 	if !slices.Equal(s.measured, want) || len(s.jobs) != 3 || s.holder() != "" {
 		t.Fatalf("measured %v jobs %d holder %q", s.measured, len(s.jobs), s.holder())
@@ -377,23 +381,54 @@ func TestSessionCapacityLimitKeepsTheBatchesBefore(t *testing.T) {
 }
 
 func TestSessionNotServableAtFirstBatchFailsWithoutResult(t *testing.T) {
+	for reason, sentence := range map[string]string{
+		sessionServiceOverLifetime: "two batches of 1 took 31.2 s, above the 30 s request lifetime",
+		sessionServiceOverTarget:   "the p95 batch service of batch 1 at saturation is 1.2s, above the 200ms latency target",
+	} {
+		t.Run(reason, func(t *testing.T) {
+			s := newSessionHarness(t)
+			s.tables[1] = sessionLevelTable{Levels: []sessionLevelWire{{Kind: profilederivation.LevelSaturation, WorkloadUID: "session-uid/1/saturation",
+				StartedAt: s.origin, EndedAt: s.origin.Add(32 * time.Second), SentInputs: 2, CompletedInputs: 2, CompletedBatches: 2, EndReason: reason, Detail: sentence}}}
+			beo := sessionRoot(sessionSettingsFixture())
+			s.create(beo)
+			s.admit()
+			status := s.status(beo)
+			if _, stored := s.result(beo); stored {
+				t.Fatal("a session without a usable batch stored a result")
+			}
+			if status.Phase != string(edge.MeasurementPhaseFailed) || status.Outcome != string(profilederivation.StopNotServable) || status.Result != nil ||
+				sessionCondition(status).Message != sentence || sessionCondition(status).Status != meta.ConditionFalse {
+				t.Fatalf("status %+v", status)
+			}
+			if !slices.Equal(s.measured, []string{"power", "prepare-b1", "remove-b1"}) || len(s.jobs) != 1 || s.holder() != "" {
+				t.Fatalf("measured %v jobs %d holder %q", s.measured, len(s.jobs), s.holder())
+			}
+		})
+	}
+}
+
+func TestSessionServiceOverTargetAtLaterBatchKeepsTheBatchesBefore(t *testing.T) {
 	s := newSessionHarness(t)
-	sentence := "two batches of 1 took 31.2 s, above the 30 s request lifetime"
-	s.tables[1] = sessionLevelTable{Levels: []sessionLevelWire{{Kind: profilederivation.LevelSaturation, WorkloadUID: "session-uid/1/saturation",
-		StartedAt: s.origin, EndedAt: s.origin.Add(32 * time.Second), SentInputs: 2, CompletedInputs: 2, CompletedBatches: 2, EndReason: sessionServiceOverLifetime, Detail: sentence}}}
+	saturation := s.tables[2].Levels[0]
+	saturation.EndReason, saturation.Detail = sessionServiceOverTarget, "batch 2 service above the latency target"
+	s.tables[2] = sessionLevelTable{Levels: []sessionLevelWire{saturation}}
 	beo := sessionRoot(sessionSettingsFixture())
 	s.create(beo)
 	s.admit()
 	status := s.status(beo)
-	if _, stored := s.result(beo); stored {
-		t.Fatal("a session without a usable batch stored a result")
+	result, stored := s.result(beo)
+	if !stored || status.Phase != string(edge.MeasurementPhaseComplete) || status.Outcome != string(profilederivation.StopNotServable) ||
+		status.CompletedBatches != 1 {
+		t.Fatalf("status %+v stored %v", status, stored)
 	}
-	if status.Phase != string(edge.MeasurementPhaseFailed) || status.Outcome != string(profilederivation.StopNotServable) || status.Result != nil ||
-		sessionCondition(status).Message != sentence || sessionCondition(status).Status != meta.ConditionFalse {
-		t.Fatalf("status %+v", status)
+	if len(result.Batches) != 1 || result.Batches[0].Batch != 1 || result.Stop == nil || result.Stop.Batch != 2 ||
+		result.Stop.Class != profilederivation.StopNotServable {
+		t.Fatalf("result batches %+v stop %+v", result.Batches, result.Stop)
 	}
-	if !slices.Equal(s.measured, []string{"power", "prepare-b1", "remove-b1"}) || s.holder() != "" {
-		t.Fatalf("measured %v holder %q", s.measured, s.holder())
+	// Batch 4 never runs; the stopped batch's instance is removed.
+	want := []string{"power", "prepare-b1", "remove-b1", "prepare-b2", "remove-b2", "prepare-post-b1", "remove-post-b1"}
+	if !slices.Equal(s.measured, want) || len(s.jobs) != 2 || s.holder() != "" {
+		t.Fatalf("measured %v jobs %d holder %q", s.measured, len(s.jobs), s.holder())
 	}
 }
 
@@ -482,6 +517,15 @@ func TestSessionAdmissionRefusesWithTheReason(t *testing.T) {
 					return SessionPreparation{}, errors.New("resolve static candidate: model not found\ncandidate report: absent")
 				}
 			}},
+		"margin covers the request lifetime": {session: sessionSettingsFixture(), outcome: refusedSessionUnresolved,
+			message: "deliveryMarginMilliseconds must be shorter than the 100ms request lifetime serving applies to the Workload",
+			change: func(s *sessionHarness) {
+				s.controller.config.Session.Prepare = func(context.Context, *edge.BatchEnergyOptimization) (SessionPreparation, error) {
+					preparation := sessionPreparationFixture()
+					preparation.RequestLifetime = 100 * time.Millisecond
+					return preparation, nil
+				}
+			}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := newSessionHarness(t)
@@ -527,7 +571,7 @@ func TestSessionLoadJobSpec(t *testing.T) {
 		}
 		if args[0] != "session-load" || value("--session") != "session-uid" || value("--batch") != strconv.Itoa(batch) ||
 			value("--native-endpoint") != "http://chill-executor-pod-uid.serving:8080" || value("--min-samples") != "59" || value("--model") != "mobilenet" ||
-			value("--fields") != "input" || value("--dataset-dir") != "/data" || value("--level-limit") != "600s" || value("--meter-lag") != "0.5s" ||
+			value("--fields") != "input" || value("--dataset-dir") != "/data" || value("--mid-ratio") != "0.25" || value("--meter-lag") != "0.5s" ||
 			value("--request-lifetime") != "30s" || value("--delivery-margin") != "100ms" || value("--request-upper-bytes") != "1024" {
 			t.Fatalf("batch %d args %v", batch, args)
 		}

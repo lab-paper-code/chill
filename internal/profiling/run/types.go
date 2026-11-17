@@ -184,6 +184,7 @@ type MeasurementContract struct {
 	MinServiceSamples        int           `json:"minServiceSamples,omitempty"`
 	SLOPercentile            float64       `json:"sloPercentile,omitempty"`
 	SLOTargetLatencyNanos    int64         `json:"sloTargetLatencyNanos,omitempty"`
+	RequestLifetimeNanos     int64         `json:"requestLifetimeNanos,omitempty"`
 	WorkloadName             string        `json:"workloadName,omitempty"`
 	WorkloadUID              string        `json:"workloadUID,omitempty"`
 	WorkloadResourceVersion  string        `json:"workloadResourceVersion,omitempty"`

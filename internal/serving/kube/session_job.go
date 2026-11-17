@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"path"
 	"strconv"
 	"strings"
@@ -63,28 +62,21 @@ func sessionLoadJob(beo *edge.BatchEnergyOptimization, ref serving.NodeReference
 		"--definition", prep.RunConfig.Measurement.WorkloadResourceVersion,
 		"--slo-percentile", strconv.FormatFloat(prep.SLOPercentile, 'f', -1, 64),
 		"--slo-target", prep.SLOTarget.String(),
-		"--request-lifetime", (time.Duration(s.RequestLifetimeSeconds) * time.Second).String(),
+		"--request-lifetime", prep.RequestLifetime.String(),
 		"--delivery-margin", (time.Duration(s.DeliveryMarginMilliseconds) * time.Millisecond).String(),
 		"--min-samples", strconv.Itoa(load.minimumSamples),
 		"--meter-lag", seconds(s.MeterLagSeconds),
 		"--min-power-window", seconds(s.MinimumPowerWindowSeconds),
 		"--mid-ratio", strconv.FormatFloat(s.MidLevelRatio, 'f', -1, 64),
 		"--sparse-mean-gap", seconds(s.SparseMeanGapSeconds),
-		"--level-limit", seconds(s.LevelDurationLimitSeconds),
 		"--max-queue-requests", strconv.Itoa(load.actor.maxQueueRequests),
 		"--max-queue-bytes", strconv.Itoa(load.actor.maxQueueBytes),
 		"--request-upper-bytes", strconv.FormatInt(s.FramedDecodedRequestUpperBytes, 10),
 	}
 	// Serving runs a long idle gap's batch at size 1 only.
-	levels := 2
 	if load.batch == 1 {
-		levels++
 		args = append(args, "--sparse")
 	}
-	// Each non-saturation level can also spend one level limit waiting for
-	// physical idle after an expired request.
-	levelBudget := float64(2*levels-1) * s.LevelDurationLimitSeconds
-	deadlineSeconds := int64(math.Ceil(levelBudget + float64(s.RequestLifetimeSeconds) + load.config.RunnerTimeout.Seconds()))
 	resources := core.ResourceRequirements{
 		Requests: core.ResourceList{core.ResourceMemory: resource.MustParse("512Mi")},
 		Limits:   core.ResourceList{core.ResourceMemory: resource.MustParse("512Mi")},
@@ -94,7 +86,7 @@ func sessionLoadJob(beo *edge.BatchEnergyOptimization, ref serving.NodeReference
 	return &batch.Job{
 		ObjectMeta: meta.ObjectMeta{Name: "session-" + hex.EncodeToString(sum[:10]) + "-b" + strconv.Itoa(load.batch), Namespace: load.config.Namespace, Labels: labels},
 		Spec: batch.JobSpec{
-			BackoffLimit: ptr.To[int32](0), ActiveDeadlineSeconds: ptr.To(deadlineSeconds),
+			BackoffLimit: ptr.To[int32](0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: meta.ObjectMeta{Labels: labels},
 				Spec: core.PodSpec{
@@ -145,8 +137,8 @@ func (l sessionLevelWire) row() profilederivation.DriverLevelRow {
 	if l.EndReason != sessionSamplesReached {
 		row.Detail = l.Detail
 	}
-	// Requests cut at expiry or at the level limit leave unverifiable counts.
-	row.Excluded = l.EndReason == sessionRequestLifetimeExpired || l.EndReason == sessionLevelLimitReached
+	// Requests cut at expiry leave unverifiable counts.
+	row.Excluded = l.EndReason == sessionRequestLifetimeExpired
 	return row
 }
 

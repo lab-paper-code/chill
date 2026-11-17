@@ -111,6 +111,7 @@ const sessionLevelEnd: Table = {
   SamplesReached: { label: "표본 충족", tone: "ok" },
   PredictedDurationExceedsLimit: { label: "시간 한도 초과 예상", tone: "warn" },
   BatchServiceExceedsLifetime: { label: "요청 수명 초과", tone: "warn" },
+  BatchServiceExceedsTarget: { label: "지연 목표 초과", tone: "warn" },
   AllocationFailedBeforeAnyBatch: { label: "첫 배치 전 메모리 할당 실패", tone: "warn" },
   AllocationFailedAfterCompletedBatch: { label: "메모리 할당 실패", tone: "warn" },
   Failed: { label: "실패", tone: "fail" },

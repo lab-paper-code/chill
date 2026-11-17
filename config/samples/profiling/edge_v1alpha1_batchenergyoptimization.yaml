@@ -22,15 +22,9 @@ spec:
     minimumPowerWindowSeconds: 15
     midLevelRatio: 0.25
     sparseMeanGapSeconds: 1
-    # A level ends on N service records (N=59 for a p95 Workload). The sparse
-    # level takes about N x 1 s = 60 s; the mid level at 0.25 of saturation
-    # takes 59 / (0.25 x saturation) s, 236 s for a model saturating at 1
-    # input/s. 300 s keeps both; a p99 Workload (N=459) ends its sparse level
-    # NotMeasured and needs a larger limit.
-    levelDurationLimitSeconds: 300
     postLoadWindowSeconds: 60
     confidenceLevel: "0.95"
-    requestLifetimeSeconds: 30
+    # Requests carry the deadline serving applies to the Workload's requests.
     deliveryMarginMilliseconds: 100
     framedDecodedRequestUpperBytes: 2097152
     # Sampling, request timeout and gap are what the 65 field operation-cost

@@ -19,19 +19,11 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
-func TestSessionLoadJobBoundsAndResources(t *testing.T) {
+func TestSessionLoadJobResources(t *testing.T) {
 	beo := sessionRoot(sessionSettingsFixture())
-	beo.Spec.Session.LevelDurationLimitSeconds = 10.25
-	beo.Spec.Session.RequestLifetimeSeconds = 7
 	config := SessionConfig{Namespace: "chill-system", RunnerTimeout: 1500 * time.Millisecond}
-	for _, scenario := range []struct {
-		batch    int
-		deadline int64
-	}{{1, 60}, {2, 40}, {4, 40}} {
-		job := sessionLoadJob(beo, testNode, sessionLoad{batch: scenario.batch, config: config, preparation: sessionPreparationFixture()})
-		if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != scenario.deadline {
-			t.Fatalf("batch %d deadline %v, want %d seconds", scenario.batch, job.Spec.ActiveDeadlineSeconds, scenario.deadline)
-		}
+	for _, batch := range []int{1, 2, 4} {
+		job := sessionLoadJob(beo, testNode, sessionLoad{batch: batch, config: config, preparation: sessionPreparationFixture()})
 		containers := append(job.Spec.Template.Spec.InitContainers, job.Spec.Template.Spec.Containers...)
 		for _, container := range containers {
 			memory := resource.MustParse("512Mi")

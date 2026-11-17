@@ -40,7 +40,7 @@ const levelColumns: Column<SessionLevel>[] = [
   { key: "inputs", header: "완료 요청", unit: "건", numeric: true, cell: l => formatNumber(l.completedInputs) },
   {
     key: "end", header: "종료 사유",
-    cell: l => <StatusBadge status={sessionLevelEndStatus(l.endReason)} reason={l.predictedSeconds !== undefined ? `예상 ${formatSeconds(l.predictedSeconds)}, 한도 ${formatSeconds(l.limitSeconds)}` : undefined} />,
+    cell: l => <StatusBadge status={sessionLevelEndStatus(l.endReason)} reason={l.detail} />,
   },
 ]
 
@@ -85,7 +85,6 @@ export function SessionResultSection({ session, phase, outcome, reason }: { sess
           { label: "최소 전력 관측", value: formatSeconds(settings.minimumPowerWindowSeconds) },
           { label: "중간 수준 비율", value: formatNumber(settings.midLevelRatio, 2) },
           { label: "저부하 평균 간격", value: formatSeconds(settings.sparseMeanGapSeconds) },
-          { label: "수준 시간 한도", value: formatSeconds(settings.levelDurationLimitSeconds) },
           { label: "부하 뒤 관측", value: formatSeconds(settings.postLoadWindowSeconds) },
           { label: "최소 표본 수", value: `${settings.minimumSamples}개`, info: "수준마다 모은 처리 시간 기록 수" },
           { label: "신뢰 수준", value: String(settings.confidenceLevel) },
@@ -132,9 +131,7 @@ export function sessionSettingFields(session: MeasurementSessionSpec) {
     { label: "최소 전력 관측", value: formatSeconds(session.minimumPowerWindowSeconds) },
     { label: "중간 수준 비율", value: formatNumber(session.midLevelRatio, 2) },
     { label: "저부하 평균 간격", value: formatSeconds(session.sparseMeanGapSeconds) },
-    { label: "수준 시간 한도", value: formatSeconds(session.levelDurationLimitSeconds) },
     { label: "부하 뒤 관측", value: formatSeconds(session.postLoadWindowSeconds) },
     { label: "신뢰 수준", value: session.confidenceLevel },
-    { label: "요청 수명", value: formatSeconds(session.requestLifetimeSeconds) },
   ]
 }

@@ -110,7 +110,7 @@ var sessionLevels = map[string]string{"saturation": LevelSaturation, "utilizatio
 
 var storedSettings = SessionSettings{
 	MeterLagSeconds: 3, MinimumPowerWindowSeconds: 15, MidLevelRatio: 0.25, SparseMeanGapSeconds: 1.5,
-	LevelDurationLimitSeconds: 600, PostLoadWindowSeconds: 300, MinimumSamples: 59, ConfidenceLevel: 0.95,
+	PostLoadWindowSeconds: 300, MinimumSamples: 59, ConfidenceLevel: 0.95,
 }
 
 func storedSession(trials []fixtureTrial, session string) SessionInput {

@@ -27,13 +27,11 @@ test("path support: static mismatch blocks, server verdict decides the rest", ()
 })
 
 test("advanced issues follow the request validator", () => {
-  const values: Advanced = { ...defaultAdvanced, warmup: 1, requestLifetime: 2, deliveryMargin: 1, framedDecodedRequestUpperBytes: 10 }
+  const values: Advanced = { ...defaultAdvanced, warmup: 1, deliveryMargin: 1, framedDecodedRequestUpperBytes: 10 }
   for (const key of Object.keys(values) as (keyof Advanced)[]) assert.equal(advancedIssue(values, key), "", key)
   assert.equal(advancedIssue({ ...values, warmup: NaN }, "warmup"), "0 이상 정수")
   assert.equal(advancedIssue({ ...values, confidence: 1 }, "confidence"), "0.5 이상 1 미만")
   assert.equal(advancedIssue({ ...values, midLevelRatio: 1 }, "midLevelRatio"), "0과 1 사이 값")
-  assert.equal(advancedIssue({ ...values, levelLimit: 18 }, "levelLimit"), "지연과 최소 관측의 합보다 길게")
-  assert.equal(advancedIssue({ ...values, deliveryMargin: 2000 }, "deliveryMargin"), "요청 수명보다 짧게")
   assert.equal(advancedIssue({ ...values, observationTimeout: 100 }, "observationTimeout"), "기록 간격보다 짧게")
   assert.equal(advancedIssue({ ...values, meterLag: 0 }, "meterLag"), "")
 })
@@ -45,13 +43,11 @@ test("a new request carries a valid session block without typing any value", () 
   const { spec } = manifest(draft, context, "chill-system")
   const session = spec.session!
   assert.deepEqual({ ...session, observation: undefined }, {
-    meterLagSeconds: 3, minimumPowerWindowSeconds: 15, midLevelRatio: 0.25, sparseMeanGapSeconds: 1, levelDurationLimitSeconds: 300, postLoadWindowSeconds: 60,
-    confidenceLevel: "0.95", requestLifetimeSeconds: 30, deliveryMarginMilliseconds: 100, framedDecodedRequestUpperBytes: 2097152, observation: undefined,
+    meterLagSeconds: 3, minimumPowerWindowSeconds: 15, midLevelRatio: 0.25, sparseMeanGapSeconds: 1, postLoadWindowSeconds: 60,
+    confidenceLevel: "0.95", deliveryMarginMilliseconds: 100, framedDecodedRequestUpperBytes: 2097152, observation: undefined,
   })
   // The schema's rules on the session block.
   assert.match(session.confidenceLevel, /^0\.[5-9][0-9]*$/)
-  assert.ok(session.levelDurationLimitSeconds > session.meterLagSeconds + session.minimumPowerWindowSeconds)
-  assert.ok(session.requestLifetimeSeconds * 1000 > session.deliveryMarginMilliseconds)
   assert.deepEqual(session.observation, { intervalMilliseconds: 100, requestTimeoutMilliseconds: 80, maximumOperationSeconds: 600, maximumGapMilliseconds: 500,
     timing: { changeIntervalP95Seconds: "1", maximumRequestSeconds: "0.08", maximumReceiptGapSeconds: "1", source: "sample values, not measured: replace with the Node meter's observed timing" } })
   assert.deepEqual(Object.keys(spec).sort(), ["activeProtocol", "session", "state"])

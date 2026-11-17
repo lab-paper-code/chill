@@ -118,9 +118,13 @@ func (r *KubernetesWorkloadObservationResolver) ResolveMeasurementWorkload(
 	if err != nil {
 		return profilingrun.MeasurementContract{}, err
 	}
-	return profilingrun.MeasurementContract{
+	contract := profilingrun.MeasurementContract{
 		WorkloadName: workload.Name, WorkloadUID: string(workload.UID), WorkloadResourceVersion: workload.ResourceVersion,
 		SLOPercentile: workload.Spec.SLO.Percentile, SLOTargetLatencyNanos: workload.Spec.SLO.TargetLatency.Duration.Nanoseconds(),
 		MinServiceSamples: minimum,
-	}, nil
+	}
+	if lifetime := workload.Spec.RequestLifetime; lifetime != nil {
+		contract.RequestLifetimeNanos = lifetime.Duration.Nanoseconds()
+	}
+	return contract, nil
 }

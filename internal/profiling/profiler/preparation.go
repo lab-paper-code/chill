@@ -358,6 +358,7 @@ func (p *Preparer) PrepareSession(ctx context.Context, request SessionRequest) (
 			SLOPercentile:           stop.SLOPercentile, SLOTargetLatencyNanos: stop.SLOTargetLatencyNanos,
 			MinServiceSamples: stop.MinServiceSamples, WorkloadName: stop.WorkloadName,
 			WorkloadUID: stop.WorkloadUID, WorkloadResourceVersion: stop.WorkloadResourceVersion,
+			RequestLifetimeNanos: stop.RequestLifetimeNanos,
 		},
 	}, candidate, candidate.Delivery, node, ResolvedMetricSource{}, ResolvedWorkloadObservation{}, nil)
 	executionPolicy, err := p.execution.Resolve(ctx, runConfig)
