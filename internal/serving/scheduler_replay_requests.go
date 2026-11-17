@@ -377,7 +377,7 @@ func (s *schedulerReplayState) chooseAdmission(ctx context.Context, r *scheduler
 		if ctx.Err() != nil {
 			return -1, AdmissionUnknown
 		}
-		s.weights[j], s.available[j] = s.routeWeight(r, i), false
+		s.weights[j], s.available[j], s.idle[j] = s.routeWeight(r, i), false, false
 		if s.weights[j] <= 0 || !replayHasCapacity(i) {
 			continue
 		}
@@ -404,11 +404,12 @@ func (s *schedulerReplayState) chooseAdmission(ctx context.Context, r *scheduler
 		known = true
 		remaining := float64(r.source.Definition.SLO.TargetLatency) - r.accountedAgeNanos - s.now + r.arrival
 		// Completion is whole nanoseconds, so flooring the remainder keeps the comparison exact.
-		s.available[j] = admissionCandidateAvailable(estimate, r.gatewayDeferred, time.Duration(math.Floor(remaining)))
+		s.available[j], s.idle[j] = admissionCandidateAvailable(estimate, r.gatewayDeferred, time.Duration(math.Floor(remaining)))
 		if r.gatewayDeferred && s.available[j] && (selected < 0 || estimate.Completion < earliest) {
 			selected, earliest = j, estimate.Completion
 		}
 	}
+	admissionPreferOnTime(s.available, s.idle)
 	if !r.gatewayDeferred {
 		selected = SmoothWeightedRoute(s.weights, credits, s.available)
 	}
@@ -501,7 +502,7 @@ func (s *schedulerReplayState) beginAdmission(ctx context.Context) bool {
 		s.routeCredits = make(map[string][]int64)
 	}
 	if len(s.weights) != len(s.instances) {
-		s.weights, s.available = make([]int32, len(s.instances)), make([]bool, len(s.instances))
+		s.weights, s.available, s.idle = make([]int32, len(s.instances)), make([]bool, len(s.instances)), make([]bool, len(s.instances))
 	}
 	for _, i := range s.instances {
 		if ctx.Err() != nil {

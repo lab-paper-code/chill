@@ -37,8 +37,9 @@ type AdmissionEstimate struct {
 	// Infeasible proves a final-lifetime miss with otherwise known inputs.
 	// Completion is zero when lifetime expires before any batch can be selected.
 	Infeasible bool
-	// Idle means the executor takes the candidate whatever Completion is:
-	// firstfloor.IdleTakes held when the projection chose its batch.
+	// Idle means the executor holds no other unfinished request when the
+	// candidate arrives (firstfloor.IdleTakes on the projected state at its
+	// insertion), so it takes the candidate whatever Completion is.
 	Idle       bool
 	FixedBatch bool
 }
@@ -196,12 +197,6 @@ func EstimateAdmission(in AdmissionInput) AdmissionEstimate {
 	return projectAdmission(in, &scratch)
 }
 
-// admissionIdleTakes reports whether the executor runs the candidate as the
-// sole request of an otherwise idle instance.
-func admissionIdleTakes(states []firstfloor.RequestState, choice firstfloor.BatchChoice, candidateID string) bool {
-	return choice.RequestID == candidateID && firstfloor.IdleTakes(states, slices.IndexFunc(states, func(q firstfloor.RequestState) bool { return q.Context.RequestID == candidateID }))
-}
-
 // projectAdmission owns reusable projection storage; immutable native snapshots
 // and their lifetime pointers are never modified. Runtime validates the common
 // executor inputs once, before projecting any candidates.
@@ -236,7 +231,7 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 		return AdmissionEstimate{UnknownReason: AdmissionResidualUnsupported}
 	}
 	age, clock := int64(in.SnapshotAge), int64(0)
-	inserted := false
+	inserted, sole := false, false
 	candidateID := in.Candidate.Context.RequestID
 	// Each request can leave normal once and leave the set once. Each fill wake
 	// consumes its queue's fill budget; expiry wakes also remove queued members.
@@ -244,6 +239,7 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 	for range limit {
 		if !inserted && clock >= age {
 			states = scratch.insertCandidate(states, in)
+			sole = firstfloor.IdleTakes(states, len(states)-1)
 			inserted = true
 		}
 		var expired bool
@@ -295,8 +291,6 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 			clock += step
 			continue
 		}
-		// Judged on the states ChooseBatch just saw; the candidate is the head of its own batch when sole.
-		taken := admissionIdleTakes(states, choice, candidateID)
 		service, candidate, outside, valid, reason := admissionProjectBatch(in, states, choice, idle, upper, &scratch.quantiles)
 		if !valid {
 			return AdmissionEstimate{UnknownReason: reason}
@@ -307,7 +301,7 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 			remaining, limited := admissionRemainingLifetime(in.Candidate)
 			// Native expires a request at its deadline (requestError uses >=), so
 			// completing exactly at the remaining lifetime is already a timeout.
-			return AdmissionEstimate{Completion: time.Duration(completion), Known: true, OutsideSupport: outsideSupport, Infeasible: limited && float64(completion)/float64(time.Millisecond) >= remaining, Idle: taken}
+			return AdmissionEstimate{Completion: time.Duration(completion), Known: true, OutsideSupport: outsideSupport, Infeasible: limited && float64(completion)/float64(time.Millisecond) >= remaining, Idle: sole}
 		}
 		activeRemaining = service
 	}

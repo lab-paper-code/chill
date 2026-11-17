@@ -31,7 +31,7 @@ native slack은 남은 SLO에서 frozen completion reserve와 조건부 service 
 
 `Workload.spec.admission`의 Reject와 Delay, maxQueuedRequests를 Definition과 요청에 동결한다. Reject는 SLO 불가능 head를 `DeadlineInfeasible`로 실행 없이 거절한다. Delay는 후순위 FIFO로 옮겨 normal 뒤 늦은 완료를 허용한다.
 
-거절과 지연은 대기 중인 다른 요청을 지키려는 것이다. 실행기에 요청이 하나뿐이고 실행 중인 batch도 없으면 그 요청은 SLO가 남아 있는 한 예측 완료가 SLO를 넘어도 거절하거나 미루지 않고 실행한다. gateway 예측은 실행기를 같은 선택으로 진행하고, 그 진행에서 후보가 이렇게 홀로 남은 요청으로 실행되면 예측 완료와 무관하게 그 실행기를 받을 수 있는 후보로 둔다. 이때도 최종 lifetime 초과 예측은 거절한다. SLO가 이미 지난 요청은 실행해도 SLO를 지킬 수 없으므로 drop한다. 실행기의 선택(`ChooseBatch`)과 gateway 예측, 직접 재생이 같은 함수 `firstfloor.IdleTakes`로 이 규칙을 판단한다.
+거절과 지연은 대기 중인 다른 요청을 지키려는 것이다. 실행기에 요청이 하나뿐이고 실행 중인 batch도 없으면 그 요청은 SLO가 남아 있는 한 예측 완료가 SLO를 넘어도 거절하거나 미루지 않고 실행한다. gateway는 후보가 도착한 시점의 실행기 상태로 이 규칙을 판단한다. 실행 중, 대기 중, 지연 중인 요청과 아직 관측에 나타나지 않은 배정이 하나도 없는 실행기는 예측 완료와 무관하게 후보를 받을 수 있는 실행기다(`AdmissionEstimate.Idle`). 이때도 최종 lifetime 초과 예측은 거절한다. 다른 일이 남은 실행기가 늦은 후보를 받으면 실행기는 그 앞에 받은 요청을 drop하게 된다. route 안에서는 SLO 안에 완료할 실행기를 고르고, 그런 실행기가 없을 때만 비어 있는 실행기를 고른다(`admissionPreferOnTime`). SLO가 이미 지난 요청은 실행해도 SLO를 지킬 수 없으므로 drop한다. 실행기의 선택(`ChooseBatch`)은 결정 시점의 상태로, gateway 예측과 직접 재생의 gateway는 후보 도착 시점의 상태로 같은 함수 `firstfloor.IdleTakes`를 판단한다.
 
 입력과 support를 판단할 수 없으면 AdmissionUnknown이다. batch 확정 직전 최신 monotonic 시각으로 cancel, 최종 기한과 SLO를 다시 검사하고 제거와 지연 전이 뒤 다시 선택한다. fixed-batch는 별도 예외다.
 

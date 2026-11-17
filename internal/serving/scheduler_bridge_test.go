@@ -107,6 +107,7 @@ func TestCapacityBridgeQueuedIngressReplayAC45(t *testing.T) {
 	state.admitArrivals(context.Background())
 	state.weights = make([]int32, len(state.instances))
 	state.available = make([]bool, len(state.instances))
+	state.idle = make([]bool, len(state.instances))
 	for range len(actions) * 2 {
 		if !state.completeActions() {
 			t.Fatalf("staged replay rejected its executable DAG: %v", state.out.reasons)

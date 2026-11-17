@@ -18,7 +18,7 @@ func replayAdmissionState(t testing.TB) *schedulerReplayState {
 	settings.AutonomousWorkloads = nil
 	state := &schedulerReplayState{settings: settings, snap: snapshot, c: SchedulerCandidate{Keep: true, Instances: snapshot.Instances, Nodes: snapshot.Nodes}, rng: rand.New(rand.NewPCG(23, 47)), horizon: float64(settings.ComparisonPeriod), routeCredits: map[string][]int64{}, out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	state.initializeInstances()
-	state.weights, state.available = make([]int32, len(state.instances)), make([]bool, len(state.instances))
+	state.weights, state.available, state.idle = make([]int32, len(state.instances)), make([]bool, len(state.instances)), make([]bool, len(state.instances))
 	return state
 }
 
@@ -50,8 +50,7 @@ func TestReplayAdmissionChoosesFeasibleExecutor(t *testing.T) {
 	fast.policy = schedulerPolicy(fast.config)
 	s.instances = append(s.instances, &fast)
 	s.byID["fast"] = &fast
-	s.weights, s.available = make([]int32, 2), make([]bool, 2)
-	busyReplayInstance(s, slow)
+	s.weights, s.available, s.idle = make([]int32, 2), make([]bool, 2), make([]bool, 2)
 	r := replayAdmissionPending(s, "candidate", s.snap.Workloads[0])
 	s.routeRequests(context.Background())
 	if !r.dispatched || r.source.Instance != "fast" || r.dropped {

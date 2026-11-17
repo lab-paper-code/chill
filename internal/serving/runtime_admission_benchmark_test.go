@@ -55,6 +55,7 @@ func BenchmarkDispatchAdmission(b *testing.B) {
 				w.route.weights = append(w.route.weights, 1)
 				w.route.current = append(w.route.current, 0)
 				w.route.available = append(w.route.available, false)
+				w.route.idle = append(w.route.idle, false)
 			}
 			if test.reused {
 				r.mu.Lock()

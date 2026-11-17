@@ -285,6 +285,7 @@ type schedulerReplayState struct {
 	routingApplied    bool
 	weights           []int32
 	available         []bool
+	idle              []bool
 	queuedCounts      map[string]int
 	dispatchUIDs      []string
 	admissionPrepared bool
@@ -345,6 +346,7 @@ func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings
 	s.routingApplied = c.Keep
 	s.weights = make([]int32, len(s.instances))
 	s.available = make([]bool, len(s.instances))
+	s.idle = make([]bool, len(s.instances))
 	err = s.run(ctx)
 	return s.out, err
 }

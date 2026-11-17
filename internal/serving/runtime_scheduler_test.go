@@ -298,7 +298,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 	state := schedulerReplayState{
 		snap: snapshot, c: SchedulerCandidate{Keep: true, Instances: snapshot.Instances},
 		routeCredits: map[string][]int64{},
-		weights:      make([]int32, len(instances)), available: make([]bool, len(instances)),
+		weights:      make([]int32, len(instances)), available: make([]bool, len(instances)), idle: make([]bool, len(instances)),
 		out: schedulerReplayResult{definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}},
 	}
 	state.initializeInstances()
@@ -844,6 +844,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	replay.initializeInstances()
 	replay.weights = make([]int32, len(replay.instances))
 	replay.available = make([]bool, len(replay.instances))
+	replay.idle = make([]bool, len(replay.instances))
 	for _, wanted := range candidate.Instances {
 		// Prepared slots are ready now, as the physical actors below: their
 		// warm-up ended at replay time 0.

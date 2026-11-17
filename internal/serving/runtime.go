@@ -131,6 +131,7 @@ type inputRoute struct {
 	weights   []int32
 	current   []int64
 	available []bool
+	idle      []bool
 }
 type runtimeWorkload struct {
 	definition       *Definition
@@ -850,7 +851,7 @@ func (r *Runtime) admissionMaskLocked(route inputRoute, c *Call, now time.Time) 
 	unknown, known := false, false
 	for index, entry := range route.entries {
 		i := entry.instance
-		route.available[index] = false
+		route.available[index], route.idle[index] = false, false
 		route.entries[index].admissionEstimate = AdmissionEstimate{}
 		route.entries[index].admissionReason = admissionUnavailableReason(i)
 		if !admissionInstanceAvailable(i) {
@@ -884,12 +885,13 @@ func (r *Runtime) admissionMaskLocked(route inputRoute, c *Call, now time.Time) 
 		}
 		known = true
 		remaining := c.definition.SLO.TargetLatency - now.Sub(c.receipt.ReceivedAt)
-		route.available[index] = admissionCandidateAvailable(estimate, c.deferred, remaining)
+		route.available[index], route.idle[index] = admissionCandidateAvailable(estimate, c.deferred, remaining)
 		if c.deferred && route.available[index] && (choice.entry == nil || estimate.Completion < choice.completion) {
 			choice.entry, choice.completion = &route.entries[index], estimate.Completion
 			choice.infeasible, choice.outsideSupport = estimate.Infeasible, estimate.OutsideSupport
 		}
 	}
+	admissionPreferOnTime(route.available, route.idle)
 	if unknown {
 		choice.state = AdmissionUnknown
 	} else if known {
@@ -898,10 +900,22 @@ func (r *Runtime) admissionMaskLocked(route inputRoute, c *Call, now time.Time) 
 	return choice
 }
 
-// admissionCandidateAvailable is the gateway rule the replay shares: an idle
-// executor takes the candidate unless its final lifetime is missed.
-func admissionCandidateAvailable(estimate AdmissionEstimate, deferred bool, remaining time.Duration) bool {
-	return !estimate.Infeasible && (estimate.Idle || deferred || estimate.Completion <= remaining)
+// admissionCandidateAvailable is the per-executor gateway rule the replay
+// shares. onTime: the executor completes the candidate within its SLO, or the
+// candidate is deferred. idle: the executor holds no other unfinished request
+// and takes the candidate late. Neither holds when the final lifetime is missed.
+func admissionCandidateAvailable(estimate AdmissionEstimate, deferred bool, remaining time.Duration) (onTime, idle bool) {
+	feasible := !estimate.Infeasible
+	return feasible && (deferred || estimate.Completion <= remaining), feasible && estimate.Idle
+}
+
+// admissionPreferOnTime is the route rule the replay shares: the idle
+// executors of a route are available only when no executor of the route is
+// available on time.
+func admissionPreferOnTime(available, idle []bool) {
+	if !slices.Contains(available, true) {
+		copy(available, idle)
+	}
 }
 
 func admissionRejection(c *Call, choice admissionChoice, now time.Time) *Error {
@@ -1954,6 +1968,7 @@ func (r *Runtime) rebuildWorkloadRoutesLocked() {
 		route.weights = make([]int32, len(route.entries))
 		route.current = make([]int64, len(route.entries))
 		route.available = make([]bool, len(route.entries))
+		route.idle = make([]bool, len(route.entries))
 		for index, entry := range route.entries {
 			route.weights[index] = r.routeWeightLocked(uid, entry.instance)
 			for oldIndex, old := range previous.entries {

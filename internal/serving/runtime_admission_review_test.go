@@ -99,6 +99,11 @@ func TestAdmissionCompletionUsesMaximumQuantileOverPossibleGap(t *testing.T) {
 	if !estimate.Known || estimate.Completion != 50*time.Millisecond {
 		t.Fatalf("completion gap uncertainty admitted with an optimistic conditional quantile: %+v", estimate)
 	}
+	// The executor is idle, so it still takes the candidate late; the gap
+	// uncertainty must not count it on time.
+	if onTime, _ := admissionCandidateAvailable(estimate, false, 35*time.Millisecond); onTime {
+		t.Fatal("uncertain completion counted a 35ms candidate on time")
+	}
 }
 
 func TestAdmissionCompletionUsesIPCSampleWithZeroBackendSpan(t *testing.T) {

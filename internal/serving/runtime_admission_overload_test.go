@@ -103,7 +103,7 @@ func newAdmissionOverloadRun(t *testing.T, fixture admissionOverloadFixture, mod
 	s.policy = firstfloor.Policy{ProfileID: p.ID, MaxBatchSize: fixture.MaxBatchSize, MaxBatchWaitMS: 1000, Batches: p.NativeBundle().Batches}
 	s.instance = &runtimeInstance{ReadyInstance: ReadyInstance{State: InstanceState{ID: "jetsono", Ready: true, ObservedAt: s.base, Native: &firstfloor.State{Ready: true, Metadata: firstfloor.Metadata{Policy: s.policy}}}, Profile: p, Capacity: 256}, admissionBatches: s.policy.Batches}
 	s.workload = &runtimeWorkload{definition: d, identity: d.Identity(), calls: map[string]*Call{}}
-	s.workload.route = inputRoute{entries: []routeEntry{{instance: s.instance}}, weights: []int32{1}, current: []int64{0}, available: []bool{false}}
+	s.workload.route = inputRoute{entries: []routeEntry{{instance: s.instance}}, weights: []int32{1}, current: []int64{0}, available: []bool{false}, idle: []bool{false}}
 	s.runtime = &Runtime{workloads: map[string]*runtimeWorkload{d.UID: s.workload}, instances: map[string]*runtimeInstance{s.instance.State.ID: s.instance}, calls: map[string]*Call{}}
 	s.native = s.instance.State.Native
 	for _, b := range fixture.Batches {
