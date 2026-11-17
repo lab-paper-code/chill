@@ -52,7 +52,7 @@ func (p *coverageProjection) initialize() {
 		}
 		return strings.Compare(a.Name, b.Name)
 	})
-	basis, supportBasis := "requested", "selected-node-static"
+	basis := "requested"
 	if len(p.query.Batches) > 0 {
 		basis = "explicit"
 	}
@@ -63,7 +63,7 @@ func (p *coverageProjection) initialize() {
 		DataAsOf:  p.base.Oldest().UTC().Format(time.RFC3339Nano),
 		Freshness: "fresh", Completeness: MeasurementComplete,
 		Scope: MeasurementCoverageScope{
-			Namespace: p.namespace, SupportBasis: supportBasis, GoalBasis: basis,
+			Namespace: p.namespace, GoalBasis: basis,
 			TargetBatches: append([]int{}, p.query.Batches...),
 		},
 		Sources: []MeasurementCoverageSource{}, Groups: []MeasurementCoverageGroup{},

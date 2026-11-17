@@ -150,7 +150,6 @@ type MeasurementCoverageSource struct {
 }
 type MeasurementCoverageScope struct {
 	Namespace     string `json:"namespace"`
-	SupportBasis  string `json:"supportBasis"`
 	GoalBasis     string `json:"goalBasis"`
 	TargetBatches []int  `json:"targetBatches"`
 }

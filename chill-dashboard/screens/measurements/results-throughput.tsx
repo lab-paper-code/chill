@@ -24,7 +24,7 @@ const smallestBatch = (profile: Profile) => [...(profile.batches ?? [])].sort((a
 const profileBatchColumns: Column<ProfileBatch>[] = [
   { key: "batch", header: "배치", unit: "건", numeric: true, cell: b => b.batch },
   { key: "slope", header: "입력당 에너지", unit: "J", numeric: true, cell: b => parameterValue(b.inputSlopeJoules, 3), missing: b => parameterMissing(b.inputSlopeJoules) },
-  { key: "saturationEnergy", header: "포화 요청당 에너지", unit: "J", numeric: true, cell: b => b.saturationJoulesPerInput === undefined ? null : formatNumber(b.saturationJoulesPerInput, 3), missing: b => parameterMissing(b.inputSlopeJoules) },
+  { key: "saturationEnergy", header: "포화 요청당 에너지", unit: "J", numeric: true, cell: b => b.saturationJoulesPerInput === undefined ? null : formatNumber(b.saturationJoulesPerInput, 3), missingReason: "이전 방식 측정" },
   { key: "status", header: "구분", cell: b => (b.inputSlopeJoules ? <StatusBadge status={sessionParameterStatus(b.inputSlopeJoules.status)} reason={b.inputSlopeJoules.reason || undefined} /> : null), missingReason: "이전 방식 측정" },
   { key: "rate", header: "포화 처리율", unit: "req/s", numeric: true, cell: b => (b.saturationInputRate === undefined ? null : rateNumber(b.saturationInputRate)), missingReason: "포화 수준 없음" },
   { key: "memory", header: "메모리", numeric: true, cell: b => formatBytes(b.memoryBytes) },
@@ -46,7 +46,7 @@ const columns: Column<Profile>[] = [
   { width: "11%", key: "idle", header: "유휴 전력", unit: "W", numeric: true, cell: p => parameterValue(p.power?.idleWatts, 1), missing: p => parameterMissing(p.power?.idleWatts) },
   { width: "11%", key: "awake", header: "깨어 있는 전력 증가", unit: "W", numeric: true, cell: p => parameterValue(p.power?.awakeStepWatts, 1), missing: p => parameterMissing(p.power?.awakeStepWatts) },
   { width: "11%", key: "slope", header: "최소 배치 기울기", unit: "J", numeric: true, cell: p => parameterValue(smallestBatch(p)?.inputSlopeJoules, 3), missing: p => parameterMissing(smallestBatch(p)?.inputSlopeJoules) },
-  { width: "10%", key: "saturationEnergy", header: "포화 요청당 에너지", unit: "J", numeric: true, cell: p => smallestBatch(p)?.saturationJoulesPerInput === undefined ? null : formatNumber(smallestBatch(p)?.saturationJoulesPerInput, 3), missing: p => parameterMissing(smallestBatch(p)?.inputSlopeJoules) },
+  { width: "10%", key: "saturationEnergy", header: "포화 요청당 에너지", unit: "J", numeric: true, cell: p => smallestBatch(p)?.saturationJoulesPerInput === undefined ? null : formatNumber(smallestBatch(p)?.saturationJoulesPerInput, 3), missingReason: "이전 방식 측정" },
   { width: "10%", key: "use", header: "사용 여부", cell: p => <Usage profile={p} />, missingReason: "사용 여부 미확인" },
   { key: "quality", header: "품질", cell: p => <Quality profile={p} /> },
 ]

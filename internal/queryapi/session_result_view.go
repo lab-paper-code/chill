@@ -25,7 +25,7 @@ type SessionResultView struct {
 }
 
 // SessionParameterView is a derived value with its unit. Value is present only
-// when Status is Identified; Range may be present either way.
+// when Status is Identified; Range is the idle watts' confidence interval.
 type SessionParameterView struct {
 	Status profilederivation.ParameterStatus `json:"status"`
 	Value  *float64                          `json:"value,omitempty"`
