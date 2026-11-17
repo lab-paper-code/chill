@@ -3,17 +3,15 @@ package kube
 import (
 	"context"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-	core "k8s.io/api/core/v1"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Block the real evaluator at its context boundary, without a controller hook.
@@ -58,7 +56,7 @@ func holdSchedulerEvaluation(t *testing.T, c *SchedulerController) (<-chan error
 	return done, resume
 }
 
-func TestSchedulerEvaluationDoesNotBlockContinuationOrOverwriteSnapshot(t *testing.T) {
+func TestSchedulerEvaluationDoesNotBlockContinuationAndPublishesLatestCapture(t *testing.T) {
 	c := schedulerEmptyPoolController(t)
 	done, resume := holdSchedulerEvaluation(t, c)
 	continued := make(chan error, 1)
@@ -75,76 +73,39 @@ func TestSchedulerEvaluationDoesNotBlockContinuationOrOverwriteSnapshot(t *testi
 		t.Fatal("Continue waited for the running evaluation")
 	}
 	before := c.State().Snapshot
-	// A writer observed only after capture must survive stale publication.
-	c.mu.Lock()
-	c.routeWriters = map[string]servingstate.RouteWriters{"new-workload": {"new-instance": before.At}}
-	c.mu.Unlock()
 	resume()
-	if err := <-done; err == nil || !strings.Contains(err.Error(), "evaluation invalidated") {
-		t.Fatalf("stale evaluation was not rejected: %v", err)
+	if err := <-done; err != nil {
+		t.Fatalf("progress during evaluation discarded the Keep decision: %v", err)
 	}
-	after := c.State().Snapshot
-	if !after.At.Equal(before.At) || after.At.Before(before.At) {
-		t.Fatalf("stale evaluation replaced progress snapshot: %s -> %s", before.At, after.At)
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.routeWriters["new-workload"]["new-instance"].Equal(before.At) {
-		t.Fatal("stale evaluation deleted the route writer fence")
+	if state := c.State(); !state.Snapshot.At.After(before.At) || state.Decision.At.IsZero() {
+		t.Fatalf("Keep decision was not published on a capture after progress: %s -> %s", before.At, state.Snapshot.At)
 	}
 }
 
-func TestSchedulerEvaluationRechecksApprovalInputs(t *testing.T) {
-	for _, change := range []string{"settings", "reservation", "physical"} {
-		t.Run(change, func(t *testing.T) {
-			c := schedulerEmptyPoolController(t)
-			if change == "physical" {
-				// A live owner requires physical approval even in a Keep round.
-				c.runs["measurement-owner"] = &actionRun{action: serving.Action{ID: "measurement-owner", Kind: measurementLeaseKind}}
-			}
-			done, resume := holdSchedulerEvaluation(t, c)
-			switch change {
-			case "settings":
-				settings := c.Settings()
-				settings.Controls.Routing = false
-				accepted := make(chan error, 1)
-				go func() { accepted <- c.AcceptSettings(context.Background(), settings, nil) }()
-				select {
-				case err := <-accepted:
-					if err != nil {
-						t.Fatal(err)
-					}
-				case <-time.After(time.Second):
-					resume()
-					<-done
-					<-accepted
-					t.Fatal("settings acceptance waited for evaluation")
-				}
-			case "reservation":
-				c.mu.Lock()
-				c.runs["new-owner"] = &actionRun{owner: "new-owner", reserved: true,
-					action: serving.Action{ID: "new-owner", Kind: measurementLeaseKind},
-					scope:  resourceScope{Nodes: []serving.NodeReference{{Name: "node", UID: "node"}}}}
-				c.mu.Unlock()
-			case "physical":
-				nodes, err := c.kube.CoreV1().Nodes().List(context.Background(), meta.ListOptions{})
-				if err != nil {
-					t.Fatal(err)
-				}
-				node := nodes.Items[0].DeepCopy()
-				node.Status.Conditions[0].Status = core.ConditionFalse
-				if _, err := c.kube.CoreV1().Nodes().Update(context.Background(), node, meta.UpdateOptions{}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			resume()
-			if err := <-done; err == nil || !strings.Contains(err.Error(), "evaluation invalidated") {
-				t.Fatalf("changed %s admitted the old evaluation: %v", change, err)
-			}
-			if !c.State().Decision.At.IsZero() {
-				t.Fatal("invalidated evaluation published a decision")
-			}
-		})
+func TestSchedulerEvaluationRejectsChangedConfiguration(t *testing.T) {
+	c := schedulerEmptyPoolController(t)
+	done, resume := holdSchedulerEvaluation(t, c)
+	settings := c.Settings()
+	settings.Controls.Routing = false
+	accepted := make(chan error, 1)
+	go func() { accepted <- c.AcceptSettings(context.Background(), settings, nil) }()
+	select {
+	case err := <-accepted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		resume()
+		<-done
+		<-accepted
+		t.Fatal("settings acceptance waited for evaluation")
+	}
+	resume()
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "evaluation invalidated: configuration changed") {
+		t.Fatalf("changed settings admitted the old evaluation: %v", err)
+	}
+	if !c.State().Decision.At.IsZero() {
+		t.Fatal("invalidated evaluation published a decision")
 	}
 }
 
@@ -212,13 +173,13 @@ func TestSchedulerEvaluationAllowsPrepareToRouteProgress(t *testing.T) {
 	fence := c.routeWriters[uid][destination.ID]
 	c.mu.Unlock()
 	resume()
-	if err := <-done; err == nil {
-		t.Fatal("evaluation captured before prepare completion was approved")
+	if err := <-done; err != nil {
+		t.Fatalf("progress during evaluation discarded it: %v", err)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.state.Snapshot.At.Equal(at) || !c.routeWriters[uid][destination.ID].Equal(fence) || fence.IsZero() {
-		t.Fatal("stale evaluation replaced progress or erased its writer fence")
+	if c.state.Snapshot.At.Before(at) || !c.routeWriters[uid][destination.ID].Equal(fence) || fence.IsZero() {
+		t.Fatal("evaluation published a snapshot older than progress or erased its writer fence")
 	}
 }
 
@@ -236,11 +197,14 @@ func TestSchedulerTargetAdmissionDoesNotBlockProgress(t *testing.T) {
 	var release sync.Once
 	resume := func() { release.Do(func() { close(ctx.release) }) }
 	defer resume()
+	config := c.config
+	target := serving.SchedulerCandidate{ID: "admitted-during-progress", Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing,
+		Actions: []serving.Action{{ID: "admitted-route", Kind: servingstate.OperationRoute}}}
 	done := make(chan error, 1)
 	go func() {
 		c.tickMu.Lock()
-		target := serving.SchedulerCandidate{Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
-		_, _, err := c.recheckEvaluationTarget(ctx, c.config, snapshot, target, &observation.SchedulerControlObservation{}, func(string, *time.Duration) {})
+		_, err := c.approveEvaluation(ctx, time.Now(), config, snapshot.At, snapshot, serving.SchedulerDecision{Target: &target},
+			&observation.SchedulerControlObservation{}, func(string, *time.Duration) {})
 		c.tickMu.Unlock()
 		done <- err
 	}()
@@ -260,84 +224,104 @@ func TestSchedulerTargetAdmissionDoesNotBlockProgress(t *testing.T) {
 		resume()
 		<-done
 		<-continued
-		t.Fatal("Continue waited for frozen-target admission replay")
+		t.Fatal("Continue waited for target admission replay")
 	}
 	at := c.State().Snapshot.At
 	resume()
-	if err := <-done; err == nil || !strings.Contains(err.Error(), "evaluation invalidated") {
-		t.Fatalf("target admission overwrote concurrent progress: %v", err)
+	if err := <-done; err != nil {
+		t.Fatalf("progress during admission discarded an admitted target: %v", err)
 	}
-	if !c.State().Snapshot.At.Equal(at) {
-		t.Fatal("target admission replaced the progress snapshot")
+	if c.State().Snapshot.At.Before(at) {
+		t.Fatal("target approval published a snapshot older than progress")
 	}
 }
 
-func TestSchedulerApprovalUsesAppliedOccupancyCells(t *testing.T) {
-	for _, change := range []string{"provenance-refresh", "unselected-cell-change", "source-change", "applied-value-change", "configuration-provenance-refresh", "configuration-applied-value-change"} {
+// The evaluation input predates an unrelated owner's completion and a newer
+// published capture. Approval asks admission on the latest capture only.
+func TestSchedulerApprovalAdmitsTargetOnLatestCapture(t *testing.T) {
+	for _, change := range []string{"unrelated-completion", "instance-changed", "reserved-during-admission"} {
 		t.Run(change, func(t *testing.T) {
-			c := schedulerCaptureClockController(t, nil)
-			snapshot, err := c.capture(context.Background(), time.Now(), c.config)
+			c, _ := tickReadySubsetController(t, nil)
+			c.config.Settings.AutonomousWorkloads = nil
+			c.config.Settings.Controls.Routing = true
+			c.runtime.EnableSchedulerRouting()
+			parent, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			snapshot, err := c.captureReconciled(parent, time.Now(), c.config, false, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			instance := snapshot.Instances[0]
-			condition := instance.Profile.Condition
-			at := time.Now()
-			initial := []serving.DispatchOccupancy{{
-				Node: instance.Node, PowerMode: condition.PowerMode, Model: condition.LogicalModel,
-				ProfileID: instance.Profile.ID, ExecutionPath: condition.Artifact.ExecutionPath, Batch: instance.MaxBatch,
-				RuntimeImage: condition.RuntimeImage,
-				PerRequest:   time.Millisecond, Source: "original-record",
-				Provenance: &serving.DispatchOccupancyProvenance{Source: "measured", UpdatedAt: at, Pairs: 10, Value: int64(time.Millisecond)},
-			}, {
-				Node: serving.NodeReference{Name: "unused", UID: "unused"}, PerRequest: time.Second,
-			}}
-			var occupancy atomic.Value
-			occupancy.Store(initial)
-			c.config.DispatchOccupancySnapshot = func() []serving.DispatchOccupancy {
-				return occupancy.Load().([]serving.DispatchOccupancy)
+			uid := snapshot.Workloads[0].UID
+			ready := snapshot.Instances[0]
+			ready.WorkloadUID = uid
+			seed := serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{ready},
+				Routing: map[string]map[string]int32{uid: {ready.ID: 1000}}}
+			if err := c.runtime.ApplySchedulerWorkloadsTarget(seed, []string{uid}); err != nil {
+				t.Fatal(err)
 			}
-			configurationChange := strings.HasPrefix(change, "configuration-")
-			if configurationChange {
-				c.config.DispatchOccupancySnapshot = nil
-				c.config.DispatchOccupancy = initial
+			slow := serving.NodeReference{Name: slowNodeName, UID: slowNodeName}
+			c.mu.Lock()
+			c.runs["unrelated"] = &actionRun{owner: "unrelated", reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{slow}},
+				action: serving.Action{ID: "unrelated", Kind: measurementLeaseKind}, result: &servingstate.OperationResult{}}
+			c.mu.Unlock()
+			snapshot, err = c.captureReconciled(parent, time.Now(), c.config, false, nil)
+			if err != nil {
+				t.Fatal(err)
 			}
-			c.runs["measurement-owner"] = &actionRun{action: serving.Action{ID: "measurement-owner", Kind: measurementLeaseKind}}
-			done, resume := holdSchedulerEvaluation(t, c)
-			updated := append([]serving.DispatchOccupancy(nil), initial...)
-			provenance := *initial[0].Provenance
-			updated[0].Provenance = &provenance
-			switch strings.TrimPrefix(change, "configuration-") {
-			case "provenance-refresh":
-				provenance.UpdatedAt = at.Add(time.Second)
-				provenance.Pairs++
-				provenance.Window = &serving.OccupancyWindow{}
-				updated[0].Source = "refreshed-record"
-			case "unselected-cell-change":
-				updated[1].PerRequest++
-			case "source-change":
-				provenance.Source = "dom"
-			case "applied-value-change":
-				updated[0].PerRequest++
-				provenance.Value++
+			c.state.Snapshot = snapshot
+			target := serving.SchedulerCandidate{ID: "latest-capture-target", Nodes: snapshot.Nodes,
+				Instances: slices.Clone(snapshot.Instances), Actions: []serving.Action{{ID: "latest-capture-route", Kind: servingstate.OperationRoute}},
+				Routing: map[string]map[string]int32{uid: {snapshot.Instances[0].ID: 1000, snapshot.Instances[1].ID: 0}}}
+			if change == "instance-changed" {
+				target.Instances[0].Allocation.MemoryBytes++
 			}
-			if configurationChange {
-				config := c.config
-				config.DispatchOccupancy = updated
-				if err := c.SetConfiguration(config); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				occupancy.Store(updated)
+			// During evaluation the unrelated owner completes and progress publishes.
+			c.mu.Lock()
+			c.releaseOwnerLocked("unrelated")
+			c.mu.Unlock()
+			if err := c.Continue(parent, time.Now()); err != nil {
+				t.Fatal(err)
 			}
-			resume()
+			ctx := &heldEvaluationContext{Context: parent, entered: make(chan struct{}), release: make(chan struct{}),
+				function: ".SchedulerTargetAdmission"}
+			if change != "reserved-during-admission" {
+				close(ctx.release)
+			}
+			config := c.config
+			done := make(chan error, 1)
+			go func() {
+				c.tickMu.Lock()
+				_, err := c.approveEvaluation(ctx, time.Now(), config, snapshot.At, snapshot,
+					serving.SchedulerDecision{At: snapshot.At, Target: &target}, &observation.SchedulerControlObservation{}, func(string, *time.Duration) {})
+				c.tickMu.Unlock()
+				done <- err
+			}()
+			if change == "reserved-during-admission" {
+				<-ctx.entered
+				c.mu.Lock()
+				c.runs["taker"] = &actionRun{owner: "taker", reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{ready.Node}},
+					action: serving.Action{ID: "taker", Kind: measurementLeaseKind}, result: &servingstate.OperationResult{}}
+				c.mu.Unlock()
+				close(ctx.release)
+			}
 			err = <-done
-			if strings.HasSuffix(change, "applied-value-change") {
-				if err == nil || !strings.Contains(err.Error(), "evaluation invalidated") {
-					t.Fatalf("changed applied occupancy was approved: %v", err)
+			c.wg.Wait()
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			route := c.runs["latest-capture-route"]
+			switch change {
+			case "unrelated-completion":
+				if err != nil || route == nil || route.action.Status != servingstate.NativeOperationComplete {
+					t.Fatalf("admissible target was not approved and launched: %v %+v", err, route)
 				}
-			} else if err != nil {
-				t.Fatalf("unchanged applied occupancy was discarded after %s: %v", change, err)
+			case "instance-changed":
+				if err == nil || !strings.Contains(err.Error(), "latest target admission: TargetWorkloadOutsideControl") || route != nil {
+					t.Fatalf("target for a changed instance was not rejected by admission: %v", err)
+				}
+			case "reserved-during-admission":
+				if err == nil || !strings.Contains(err.Error(), "live reservations changed") || route != nil {
+					t.Fatalf("target admitted before a reservation was launched: %v", err)
+				}
 			}
 		})
 	}

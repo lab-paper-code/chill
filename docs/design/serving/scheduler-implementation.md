@@ -42,9 +42,11 @@ Serving의 Reject와 Delay는 요청 정책이다. Reject는 불가능한 head�
 
 주기 판단과 완료 후 진행은 별도다. capture, 승인, 기록과 launch는 제어 mutex로 직렬화하며 수치 평가는 불변 capture 위에서 lock 밖으로 실행한다. 진행된 상태 위에 옛 snapshot을 다시 게시하지 않는다.
 
-승인은 현재 설정과 preparation 입력, 물리 상태와 예약을 재확인한다. 평가 중 진행이나 구성이 바뀌면 결과를 무효화한다. 새 target은 최신 capture로 lock 밖 admission replay를 수행하고 relock 뒤 상태와 입력을 다시 확인한다.
+새 target의 승인은 최신 capture에서 묻는 질문 하나다. 그 capture에서 계획을 실행할 수 있고 여전히 나은지를 lock 밖 admission replay(`SchedulerTargetAdmission`)로 판정한다. 평가 중 다른 제어 호출의 게시나 물리 상태 변화는 평가를 버리는 사유가 되지 않는다. relock 뒤 제어 mutex 아래에서 읽은 action과 예약 장부가 admission에 쓴 capture의 장부와 다르면 버린다. 장부 비교는 실행 중 action의 경과 시간과 예약 범위의 순서를 제외한다.
 
-시계와 모집단에서 파생한 값은 승인 equality에서 제외하되 admission 권한, Ready와 allocation, routable 상태는 비교한다. current state는 승인 snapshot, decision은 원래 평가 입력을 기록한다. decision 기록이 수락된 뒤에만 physical action을 시작한다. 기록 뒤 취소는 기록을 지우지 않고 새 launch를 막는다.
+Keep 판단은 새 target을 시작하지 않으므로 장부 변화로 버리지 않는다. 평가 중 게시가 있었거나 owner나 Keep action이 있으면 다시 capture해 게시하고, 이미 승인된 Fixed 작업만 이어 간다. 승인 구성이 평가 중 바뀌면 두 판단 모두 버린다.
+
+current state는 승인 capture, decision은 원래 평가 입력을 기록한다. decision 기록이 수락된 뒤에만 physical action을 시작한다. 기록 뒤 취소는 기록을 지우지 않고 새 launch를 막는다.
 
 `observationEnd`는 historical cutoff, `at`은 blocking I/O 뒤 Runtime lock에서 outstanding과 정의, routing과 credits를 함께 동결한 원점이다. source 시각을 at으로 다시 쓰지 않는다. 미상과 미래 시각, 실제 capture 실패는 사유로 남기며 고정 age TTL은 없다.
 

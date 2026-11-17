@@ -372,7 +372,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 	}
 	next("evaluate", &event.Evaluate)
 	// Only capture and approval serialize with progress. Evaluation owns its
-	// immutable input and cannot publish it after another control call advances.
+	// immutable input; approval publishes the latest capture.
 	c.tickMu.Unlock()
 	locked = false
 	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot)
@@ -393,6 +393,18 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 	next("lock", &event.LockWait)
 	c.tickMu.Lock()
 	locked = true
+	return c.approveEvaluation(ctx, now, config, publishedAt, snapshot, decision, &event, next)
+}
+
+// approveEvaluation is called with tickMu held and returns holding it. Progress
+// during evaluation only selects a fresh capture for publication. A new target
+// is approved by admission on that capture; afterwards only a changed action and
+// reservation ledger or approval configuration discards the evaluation.
+func (c *SchedulerController) approveEvaluation(
+	ctx context.Context, now time.Time, config SchedulerControllerConfig, publishedAt time.Time,
+	snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision,
+	event *observation.SchedulerControlObservation, next func(string, *time.Duration),
+) (serving.SchedulerDecision, error) {
 	next("publish", &event.Publish)
 	c.mu.Lock()
 	latest := c.config
@@ -401,40 +413,46 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 	newTarget := decision.Target != nil && len(decision.Target.Actions) != 0 &&
 		c.runs[transitionRunKind+"/"+decision.Target.ID] == nil
 	c.mu.Unlock()
-	if advanced || !reflect.DeepEqual(schedulerApprovalConfiguration(config), schedulerApprovalConfiguration(latest)) {
-		return decision, errors.New("scheduler evaluation invalidated: progress or configuration changed")
-	}
 	current := snapshot
-	if hasRuns || newTarget || len(decision.Keep.Actions) != 0 {
-		// Only physical approval/progress requires another inventory read.
-		// A pure observation/Keep round does not repeat the refresh Lists.
+	if advanced || hasRuns || newTarget || len(decision.Keep.Actions) != 0 {
+		// A pure observation/Keep round on the published capture does not
+		// repeat the refresh Lists.
 		next("capture", &event.Capture)
-		current, err = c.captureReconciled(ctx, now, latest, false, &event)
+		var err error
+		current, err = c.captureReconciled(ctx, now, latest, false, event)
 		if err != nil {
 			return decision, err
-		}
-		if !reflect.DeepEqual(schedulerApprovalInputs(latest.Settings, snapshot), schedulerApprovalInputs(latest.Settings, current)) {
-			return decision, errors.New("scheduler evaluation invalidated: physical state or reservations changed")
 		}
 	}
 	if newTarget {
-		current, latest, err = c.recheckEvaluationTarget(ctx, latest, current, *decision.Target, &event, next)
+		// Exact replay uses fresh worker-clock history without blocking control progress.
+		next("evaluate", &event.Evaluate)
+		c.tickMu.Unlock()
+		reason, err := serving.SchedulerTargetAdmission(ctx, latest.Settings, current, *decision.Target)
+		next("lock", &event.LockWait)
+		c.tickMu.Lock()
 		if err != nil {
 			return decision, err
 		}
+		if reason != "" {
+			return decision, fmt.Errorf("scheduler evaluation invalidated: latest target admission: %s", reason)
+		}
 	}
-	config = latest
 	next("publish", &event.Publish)
 	c.mu.Lock()
 	if err := ctx.Err(); err != nil {
 		c.mu.Unlock()
 		return serving.SchedulerDecision{}, err
 	}
-	// Executors may finish while capture returns. Approve against the ledger
-	// under its mutex, not the earlier projection from physical observation.
-	observed := serving.SchedulerSnapshot{Actions: snapshot.Actions, Reservations: snapshot.Reservations}
-	live := serving.SchedulerSnapshot{Actions: c.actionsLocked(snapshot.At), Reservations: c.reservationsLocked()}
-	if !reflect.DeepEqual(schedulerApprovalInputs(latest.Settings, observed), schedulerApprovalInputs(latest.Settings, live)) {
+	if !reflect.DeepEqual(schedulerApprovalConfiguration(config), schedulerApprovalConfiguration(c.config)) {
+		c.mu.Unlock()
+		return decision, errors.New("scheduler evaluation invalidated: configuration changed")
+	}
+	config = c.config
+	// Executors may finish while admission runs. A new target launches only on
+	// the ledger it was admitted on, read under the ledger mutex.
+	if newTarget && !reflect.DeepEqual(schedulerApprovalLedger(current.Actions, current.Reservations),
+		schedulerApprovalLedger(c.actionsLocked(current.At), c.reservationsLocked())) {
 		c.mu.Unlock()
 		return decision, errors.New("scheduler evaluation invalidated: live reservations changed")
 	}
@@ -465,45 +483,6 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 		c.launch(ctx, keep, config)
 	}
 	return decision, ctx.Err()
-}
-
-// recheckEvaluationTarget is called with tickMu held and returns holding it.
-// Exact replay uses fresh worker-clock history without blocking control progress.
-func (c *SchedulerController) recheckEvaluationTarget(
-	ctx context.Context, config SchedulerControllerConfig, current serving.SchedulerSnapshot,
-	target serving.SchedulerCandidate, event *observation.SchedulerControlObservation, next func(string, *time.Duration),
-) (serving.SchedulerSnapshot, SchedulerControllerConfig, error) {
-	c.mu.Lock()
-	publishedAt := c.state.Snapshot.At
-	c.mu.Unlock()
-	next("evaluate", &event.Evaluate)
-	c.tickMu.Unlock()
-	reason, err := serving.SchedulerTargetAdmission(ctx, config.Settings, current, target)
-	next("lock", &event.LockWait)
-	c.tickMu.Lock()
-	if err != nil {
-		return current, config, err
-	}
-	if reason != "" {
-		return current, config, fmt.Errorf("scheduler evaluation invalidated: latest target admission: %s", reason)
-	}
-	c.mu.Lock()
-	latest := c.config
-	changed := !c.state.Snapshot.At.Equal(publishedAt) ||
-		!reflect.DeepEqual(schedulerApprovalConfiguration(config), schedulerApprovalConfiguration(latest))
-	c.mu.Unlock()
-	if changed {
-		return current, latest, errors.New("scheduler evaluation invalidated: progress or configuration changed during admission")
-	}
-	next("capture", &event.Capture)
-	approved, err := c.captureReconciled(ctx, current.ObservationEnd, latest, false, event)
-	if err != nil {
-		return current, latest, err
-	}
-	if !reflect.DeepEqual(schedulerApprovalInputs(latest.Settings, current), schedulerApprovalInputs(latest.Settings, approved)) {
-		return current, latest, errors.New("scheduler evaluation invalidated: physical state or reservations changed during admission")
-	}
-	return approved, latest, nil
 }
 
 // captureReconciled keeps Tick and completion observation effects in one order.

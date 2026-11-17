@@ -196,40 +196,16 @@ func (c *SchedulerController) releaseCapturedScopes(
 func schedulerApprovalConfiguration(config SchedulerControllerConfig) SchedulerControllerConfig {
 	config.OnDecision, config.OnAction = nil, nil
 	config.DispatchOccupancySnapshot, config.MeterSource, config.Session.Prepare = nil, nil, nil
-	// Occupancy policy is the selected cell/value projection below, not raw
-	// cache evidence or unused legacy rows.
+	// Occupancy reaches approval through the capture a new target is admitted
+	// on, not through raw cache evidence or unused legacy rows.
 	config.DispatchOccupancy = nil
 	return config
 }
 
-// schedulerApprovalInputs retains admission authority, not advancing observation
-// clocks or historical replay demand. A changed input discards the evaluation;
-// approval never silently rebases a target onto a different physical plan.
-func schedulerApprovalInputs(settings serving.SchedulerSettings, s serving.SchedulerSnapshot) serving.SchedulerSnapshot {
-	var occupancy []serving.DispatchOccupancy
-	if len(s.Instances) != 0 || len(s.Options) != 0 {
-		occupancy = serving.SchedulerSelectedOccupancy(settings, s)
-		for i := range occupancy {
-			occupancy[i].RuntimeImage, occupancy[i].Source, occupancy[i].Provenance = "", "", nil
-		}
-	}
-	s = serving.SchedulerSnapshot{
-		Nodes: slices.Clone(s.Nodes), Instances: slices.Clone(s.Instances),
-		Options: slices.Clone(s.Options), Workloads: s.Workloads, Routing: s.Routing,
-		Costs: s.Costs, Baselines: s.Baselines,
-		DispatchOccupancy: occupancy,
-		Actions:           slices.Clone(s.Actions), Reservations: slices.Clone(s.Reservations),
-	}
-	slices.SortFunc(s.Nodes, func(a, b serving.SchedulerNode) int { return strings.Compare(a.Node.UID, b.Node.UID) })
-	for i := range s.Nodes {
-		s.Nodes[i].ObservedAt = time.Time{}
-	}
-	for i := range s.Instances {
-		s.Instances[i] = s.Instances[i].ApprovalInputs()
-	}
-	for i := range s.Options {
-		s.Options[i].Instance = s.Options[i].Instance.ApprovalInputs()
-	}
+// schedulerApprovalLedger is the action and reservation ledger a new target is
+// admitted on, without running action clocks or scope order.
+func schedulerApprovalLedger(actions []serving.Action, reservations []serving.SchedulerReservation) serving.SchedulerSnapshot {
+	s := serving.SchedulerSnapshot{Actions: slices.Clone(actions), Reservations: slices.Clone(reservations)}
 	for i := range s.Actions {
 		s.Actions[i].Elapsed = 0
 	}
