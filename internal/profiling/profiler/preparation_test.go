@@ -129,24 +129,6 @@ func TestPreparerFreezesRKNNArtifactInputs(t *testing.T) {
 	if !reflect.DeepEqual(prepared.RunConfig.Delivery.ArtifactCapability.Tensors, expected.Delivery.ArtifactCapability.Tensors) {
 		t.Fatal("preparation changed the artifact's named inputs")
 	}
-	for _, mutate := range []func([]modelcompat.InputTensor){
-		func(inputs []modelcompat.InputTensor) { inputs[0].Name = "other" },
-		func(inputs []modelcompat.InputTensor) { inputs[0].Datatype = "INT32" },
-		func(inputs []modelcompat.InputTensor) { inputs[0].SampleShape[0]++ },
-	} {
-		report, err := profilingrun.DecodeCandidateReport(candidateBytes)
-		if err != nil {
-			t.Fatal(err)
-		}
-		mutate(report.ArtifactCapability.Tensors)
-		payload, err := json.Marshal(report)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := profilingrun.ValidateCandidateReport(payload, prepared.RunConfig); err == nil {
-			t.Fatal("candidate input contract drift did not invalidate the frozen Run")
-		}
-	}
 }
 
 func TestPreparerFreezesPreprocessorAndActiveDataset(t *testing.T) {

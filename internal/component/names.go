@@ -47,10 +47,6 @@ func ProfilerConfigMapName(systemName string) string {
 	return defaultSystemName(systemName) + "-profiler-config"
 }
 
-func ProfilerFactSourceConfigMapName(systemName string) string {
-	return defaultSystemName(systemName) + "-profiler-facts"
-}
-
 func EvidenceStoreDeploymentName(systemName string) string {
 	return defaultSystemName(systemName) + "-evidence-store"
 }

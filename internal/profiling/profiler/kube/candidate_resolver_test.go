@@ -359,20 +359,11 @@ func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, se
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := profilingrun.RunConfig{
-		Candidate: profilingrun.CandidateIdentity{
-			Inputs: resolved.Inputs, ExecutionPath: selection.ExecutionPath, Verdict: resolved.Verdict,
-		},
-		State: resolved.State,
-		Images: profilingrun.Images{
-			Runtime: resolved.RuntimeImage, Artifact: resolved.ArtifactImage,
-			MetricObserver: resolved.MetricObserverImage,
-		},
-		TargetNode: profilingrun.NodeSnapshot{Architecture: resolved.DeviceArchitecture},
-		Delivery:   report.RuntimeDelivery(),
-	}
-	if err := profilingrun.ValidateCandidateReport(resolved.ReportBytes, config); err != nil {
-		t.Fatalf("generated report is not consumable by RunConfig: %v", err)
+	if !reflect.DeepEqual(report.Inputs, resolved.Inputs) || report.Verdict != resolved.Verdict ||
+		report.Selection.ExecutionPath != selection.ExecutionPath ||
+		report.Selection.Artifact != resolved.State.Artifact ||
+		report.MetricObserverImage != resolved.MetricObserverImage {
+		t.Fatalf("candidate report does not match the resolved candidate: %#v", report)
 	}
 
 	if report.SchemaVersion != profilingrun.CandidateReportSchemaVersion || report.Inputs.ModelSpec.UID != "model-uid" ||

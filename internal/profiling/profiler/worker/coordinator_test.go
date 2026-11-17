@@ -35,8 +35,8 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	var calls []string
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, payload []byte) (evidencestore.Receipt, error) {
 		calls = append(calls, "store")
-		if err := evidencestore.ValidateSize(strings.NewReader(string(payload)), identity.Size); err != nil {
-			t.Fatal(err)
+		if int64(len(payload)) != identity.Size {
+			t.Fatalf("payload size = %d, identity size = %d", len(payload), identity.Size)
 		}
 		var raw evidence.RawMeasurement
 		if err := json.Unmarshal(payload, &raw); err != nil {

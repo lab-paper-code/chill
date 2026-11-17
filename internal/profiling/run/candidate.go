@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"reflect"
-	"slices"
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/modelcompat"
@@ -145,46 +143,11 @@ type CandidateReportRuntimeAccess struct {
 	GPUUUID            string            `json:"gpuUUID,omitempty"`
 }
 
-// VerifiedCandidateReport is constructed only after one decoded report has
-// been matched semantically to a RunConfig. Downstream delivery code
-// consumes its copied projection instead of decoding or validating it again.
-type VerifiedCandidateReport struct {
-	report CandidateReport
-}
-
-func (r VerifiedCandidateReport) Record() CandidateReport {
-	result := r.report
-	result.ArtifactSupply.Files = slices.Clone(r.report.ArtifactSupply.Files)
-	result.DeviceClassFacts.NodeSelector = maps.Clone(r.report.DeviceClassFacts.NodeSelector)
-	result.DeviceClassFacts.PowerModes = append([]string(nil), r.report.DeviceClassFacts.PowerModes...)
-	result.Reasons = append([]CandidateReportReason(nil), r.report.Reasons...)
-	result.RuntimePackages = append([]CandidateReportRuntimePackage(nil), r.report.RuntimePackages...)
-	result.HostContract = cloneCandidateHostContract(r.report.HostContract)
-	result.Firstfloor = modelcompat.CloneFirstfloorRuntimeSettings(r.report.Firstfloor)
-	if r.report.ArtifactCapability != nil {
-		capability := *r.report.ArtifactCapability
-		capability.DeclaredBatchSizes = append([]int32(nil), r.report.ArtifactCapability.DeclaredBatchSizes...)
-		capability.Tensors = modelcompat.CloneInputTensors(r.report.ArtifactCapability.Tensors)
-		result.ArtifactCapability = &capability
-	}
-	if r.report.RuntimeAccess != nil {
-		access := *r.report.RuntimeAccess
-		access.SupplementalGroups = append([]int64(nil), r.report.RuntimeAccess.SupplementalGroups...)
-		access.Resources = maps.Clone(r.report.RuntimeAccess.Resources)
-		result.RuntimeAccess = &access
-	}
-	return result
-}
-
 type CandidateRuntimeDelivery struct {
 	ArtifactCapability *CandidateArtifactCapability    `json:"artifactCapability,omitempty"`
 	RuntimePackages    []CandidateReportRuntimePackage `json:"runtimePackages,omitempty"`
 	HostContract       *CandidateReportHostContract    `json:"hostContract,omitempty"`
 	RuntimeAccess      *CandidateReportRuntimeAccess   `json:"runtimeAccess,omitempty"`
-}
-
-func (r VerifiedCandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
-	return r.report.RuntimeDelivery()
 }
 
 // RuntimeDelivery returns only the concrete material required to execute the
@@ -475,118 +438,4 @@ func validateCandidateRuntimeAccess(contract CandidateReportRuntimeAccess) error
 		seen[group] = struct{}{}
 	}
 	return nil
-}
-
-func VerifyCandidateReport(payload []byte, config RunConfig) (VerifiedCandidateReport, error) {
-	report, err := DecodeCandidateReport(payload)
-	if err != nil {
-		return VerifiedCandidateReport{}, err
-	}
-	return VerifyCandidateReportRecord(report, config)
-}
-
-func VerifyCandidateReportRecord(report CandidateReport, config RunConfig) (VerifiedCandidateReport, error) {
-	if report.SchemaVersion != CandidateReportSchemaVersion {
-		return VerifiedCandidateReport{}, fmt.Errorf("unsupported candidate report schemaVersion %q", report.SchemaVersion)
-	}
-	if err := validateInternalCandidateReport(report); err != nil {
-		return VerifiedCandidateReport{}, err
-	}
-	if isRKNNExecution(config) {
-		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil {
-			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact capability is required")
-		}
-		if len(report.ArtifactCapability.Tensors) == 0 {
-			return VerifiedCandidateReport{}, errors.New("candidate report artifact input tensors are required")
-		}
-		if !slices.Contains(report.ArtifactCapability.DeclaredBatchSizes, int32(config.Measurement.Batch)) {
-			return VerifiedCandidateReport{}, errors.New(
-				"candidate RKNN artifact does not declare the measurement batch as a supported batch size",
-			)
-		}
-		if report.HostContract == nil || report.RuntimeAccess == nil {
-			return VerifiedCandidateReport{}, errors.New("candidate RKNN host and runtime access contracts are required")
-		}
-		if report.HostContract.Platform == nil {
-			return VerifiedCandidateReport{}, errors.New("candidate RKNN host platform contract is required")
-		}
-	}
-	checks := []struct{ name, want, got string }{
-		{"verdict", config.Candidate.Verdict, report.Verdict},
-		{"ModelSpec name", config.State.Model, report.Inputs.ModelSpec.Name},
-		{"DeviceClass name", config.State.DeviceClass, report.Inputs.DeviceClass.Name},
-		{"runtime image", config.Images.Runtime, report.Inputs.RuntimeDeclaration.Image},
-		{"execution path", config.Candidate.ExecutionPath, report.Selection.ExecutionPath},
-		{"artifact", config.State.Artifact, report.Selection.Artifact},
-	}
-	checks = append(checks,
-		struct{ name, want, got string }{"power mode", config.State.PowerMode, report.Selection.PowerMode},
-		struct{ name, want, got string }{"artifact image", config.Images.Artifact, report.ArtifactSupply.Image},
-		struct{ name, want, got string }{"DeviceClass architecture", config.TargetNode.Architecture, report.DeviceClassFacts.Architecture},
-		struct{ name, want, got string }{"artifact architecture", config.TargetNode.Architecture, report.ArtifactSupply.Architecture},
-		struct{ name, want, got string }{"metric-observer image", config.Images.MetricObserver, report.MetricObserverImage},
-	)
-	for _, check := range checks {
-		if check.want != check.got {
-			return VerifiedCandidateReport{}, fmt.Errorf("candidate %s mismatch", check.name)
-		}
-	}
-	if !reflect.DeepEqual(config.Candidate.Inputs, report.Inputs) {
-		return VerifiedCandidateReport{}, errors.New("candidate source objects do not match RunConfig")
-	}
-	if !slices.Equal(config.State.ArtifactFiles, report.ArtifactSupply.Files) {
-		return VerifiedCandidateReport{}, errors.New("candidate artifact supply files mismatch")
-	}
-	if !reflect.DeepEqual(modelcompat.CloneFirstfloorRuntimeSettings(config.State.Firstfloor),
-		modelcompat.CloneFirstfloorRuntimeSettings(report.Firstfloor)) {
-		return VerifiedCandidateReport{}, errors.New("candidate firstfloor settings do not match frozen RunConfig")
-	}
-	if !reflect.DeepEqual(config.Delivery.ArtifactCapability, report.ArtifactCapability) {
-		return VerifiedCandidateReport{}, errors.New("candidate input contract does not match frozen RunConfig")
-	}
-	if !reflect.DeepEqual(config.Delivery.RuntimeAccess, report.RuntimeAccess) ||
-		!reflect.DeepEqual(config.Delivery.HostContract, report.HostContract) ||
-		!reflect.DeepEqual(config.Delivery.RuntimePackages, report.RuntimePackages) {
-		return VerifiedCandidateReport{}, errors.New("candidate runtime delivery does not match frozen RunConfig")
-	}
-	if config.Actuation == nil {
-		if report.Selection.Actuator != nil {
-			return VerifiedCandidateReport{}, errors.New("candidate actuator target does not match fixed RunConfig")
-		}
-	} else if report.Selection.Actuator == nil ||
-		!actuatorTargetsEqual(*report.Selection.Actuator, config.Actuation.Actuator) {
-		return VerifiedCandidateReport{}, errors.New("candidate actuator target does not match RunConfig")
-	}
-	return VerifiedCandidateReport{report: report}, nil
-}
-
-func actuatorTargetsEqual(left, right ActuatorTarget) bool {
-	if left.Kind != right.Kind {
-		return false
-	}
-	switch left.Kind {
-	case ActuatorKindJetsonNVPModel:
-		return left.JetsonNVPModel != nil && right.JetsonNVPModel != nil &&
-			left.JetsonNVPModel.ID == right.JetsonNVPModel.ID &&
-			left.NvidiaLockedGPUClock == nil && right.NvidiaLockedGPUClock == nil
-	case ActuatorKindNvidiaLockedGPUClock:
-		if left.NvidiaLockedGPUClock == nil || right.NvidiaLockedGPUClock == nil ||
-			left.JetsonNVPModel != nil || right.JetsonNVPModel != nil {
-			return false
-		}
-		leftClock := left.NvidiaLockedGPUClock
-		rightClock := right.NvidiaLockedGPUClock
-		if leftClock.MinMHz != rightClock.MinMHz || leftClock.MaxMHz != rightClock.MaxMHz ||
-			(leftClock.Mode == nil) != (rightClock.Mode == nil) {
-			return false
-		}
-		return leftClock.Mode == nil || *leftClock.Mode == *rightClock.Mode
-	default:
-		return false
-	}
-}
-
-func ValidateCandidateReport(payload []byte, config RunConfig) error {
-	_, err := VerifyCandidateReport(payload, config)
-	return err
 }
