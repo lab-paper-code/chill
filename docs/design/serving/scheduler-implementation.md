@@ -36,7 +36,7 @@ Serving의 Reject와 Delay는 요청 정책이다. Reject는 불가능한 head�
 
 제외 범위가 재생에서 막는 action은 셋이다. 제외된 노드의 prepare, remove와 power, 제외된 인스턴스의 prepare, 제외된 인스턴스에 남은 요청을 기다리는 drain. 실패한 action과 막힌 action에 의존하는 action도 실행하지 못한다. 인스턴스의 제외는 그 인스턴스의 서비스 예측을 거두며, 그 인스턴스의 stop과 remove는 재생이 실행한다. owner ledger의 진행 중 action과 후보가 새로 내는 action에 같은 규칙을 쓴다.
 
-후보의 SLO 판정은 재생이 그 후보의 action을 실행한 결과다. 재생이 실행하지 못하는 action을 가진 후보는 판정이 없으며 `PlannedActionNotReplayed:<action>`으로 제외한다. keep은 이미 승인된 의무만 이어 가는 비교의 기준이므로 이 검사를 받지 않는다.
+후보의 SLO 판정은 재생이 그 후보의 action을 실행한 결과다. 재생이 실행하지 못하는 action을 가진 후보는 판정이 없으며 `PlannedActionNotReplayed:<kind>:<node>`로 제외한다. keep은 이미 승인된 의무만 이어 가는 비교의 기준이므로 이 검사를 받지 않는다.
 
 ## 판단 평가와 전환 진행
 

@@ -421,7 +421,7 @@ func TestReplayRejectsCandidateItCannotExecute(t *testing.T) {
 	for _, keep := range []bool{true, false} {
 		candidate.Keep = keep
 		result, err := EvaluateFeedbackCandidate(context.Background(), settings, snapshot, candidate, 1)
-		if err != nil || slices.Contains(result.InvalidReasons, "PlannedActionNotReplayed:own-route") == keep {
+		if err != nil || slices.Contains(result.InvalidReasons, "PlannedActionNotReplayed:route:") == keep {
 			t.Fatalf("keep=%v: a change replay cannot execute must be unjudged, the current configuration judged: %v %+v", keep, err, result.InvalidReasons)
 		}
 	}

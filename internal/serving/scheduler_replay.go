@@ -577,11 +577,12 @@ func (s *schedulerReplayState) initializeActions() {
 	}
 	s.blockedReplayPrerequisite()
 	// A candidate is judged by the replay of its own change. An action the
-	// replay cannot execute leaves that change unjudged; the first one names it.
+	// replay cannot execute leaves that change unjudged. The reason names the
+	// first one by kind and Node, so a decision counts it under few keys.
 	if !s.c.Keep {
 		for _, a := range s.c.Actions {
 			if x := s.actionByID[a.ID]; x != nil && x.blocked {
-				s.out.reasons = append(s.out.reasons, "PlannedActionNotReplayed:"+a.ID)
+				s.out.reasons = append(s.out.reasons, "PlannedActionNotReplayed:"+a.Kind+":"+a.Node.Name)
 				break
 			}
 		}
