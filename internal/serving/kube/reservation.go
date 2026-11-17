@@ -780,7 +780,7 @@ func (c *reservationState) compensatePreparationsLocked(
 			}
 			for _, actual := range physical {
 				if actual.ID == "" {
-					actual.ID = actual.PodUID // The snapshot's Pod-only identity.
+					actual.ID = actual.PodUID // A Pod without an executor is named by its Pod UID.
 				}
 				if !c.failedPreparationRemovable(child, actual) {
 					continue
@@ -793,14 +793,19 @@ func (c *reservationState) compensatePreparationsLocked(
 	}
 }
 
+// podOnly reports an instance that never acquired an executor.
+func podOnly(actual serving.InstanceState) bool { return actual.ID == actual.PodUID }
+
 // A Pod without an executor is removable once terminated (the Pod-only remove
 // contract); an executor once its native drain is readable or it terminated.
 func (c *reservationState) failedPreparationRemovable(child *actionRun, actual serving.InstanceState) bool {
-	if !actual.Terminated && (actual.ID == actual.PodUID || actual.Native == nil) ||
-		!failedPreparationIdentityMatches(child, actual) || !preparationCreatedSource(child, actual) {
+	if !actual.Terminated && (podOnly(actual) || actual.Native == nil) {
 		return false
 	}
-	return c.preparationSourceUnclaimed(actual) && slices.ContainsFunc(c.state.Snapshot.Nodes, func(node serving.SchedulerNode) bool {
+	if !failedPreparationIdentityMatches(child, actual) || !preparationCreatedSource(child, actual) || !c.preparationSourceUnclaimed(actual) {
+		return false
+	}
+	return slices.ContainsFunc(c.state.Snapshot.Nodes, func(node serving.SchedulerNode) bool {
 		return node.Node == actual.Node && node.Ready && node.PowerMode != ""
 	})
 }
@@ -808,12 +813,22 @@ func (c *reservationState) failedPreparationRemovable(child *actionRun, actual s
 // An executor must be the attempt's bound one; a Pod that never acquired an
 // executor is identified by its creation receipt alone.
 func failedPreparationIdentityMatches(child *actionRun, actual serving.InstanceState) bool {
-	wanted := child.result.Operation.Prepare.Instance
+	operation := &child.result.Operation
+	wanted := operation.Prepare.Instance
+	if wanted.Profile == nil || operation.Prepare.Owner == nil || operation.Prepare.Owner.UID != wanted.WorkloadUID || !operation.ControlsWorkload(wanted.WorkloadUID) {
+		return false
+	}
+	if actual.OwnerWorkloadUID != wanted.WorkloadUID || actual.Node != wanted.Node || actual.TargetID != wanted.ID || actual.Profile != wanted.Profile.ID {
+		return false
+	}
+	if actual.PodUID == "" || !slices.Contains(child.scope.Pods, actual.PodUID) {
+		return false
+	}
 	podUID, containerID, executor := strings.Cut(actual.ID, "/")
-	return wanted.Profile != nil && child.result.Operation.Prepare.Owner != nil && child.result.Operation.Prepare.Owner.UID == wanted.WorkloadUID &&
-		actual.OwnerWorkloadUID == wanted.WorkloadUID && actual.Node == wanted.Node && actual.TargetID == wanted.ID && actual.Profile == wanted.Profile.ID &&
-		child.result.Operation.ControlsWorkload(wanted.WorkloadUID) && actual.PodUID != "" && slices.Contains(child.scope.Pods, actual.PodUID) &&
-		(executor && containerID != "" && podUID == actual.PodUID && slices.Contains(child.scope.Instances, actual.ID) || !executor && actual.ID == actual.PodUID)
+	if !executor {
+		return podOnly(actual)
+	}
+	return containerID != "" && podUID == actual.PodUID && slices.Contains(child.scope.Instances, actual.ID)
 }
 
 func preparationCreatedSource(child *actionRun, actual serving.InstanceState) bool {
@@ -823,7 +838,7 @@ func preparationCreatedSource(child *actionRun, actual serving.InstanceState) bo
 	}
 	// Never infer creation from a slot/owner alone, or retire a pre-existing
 	// source. A timeout may have no final capture: the live frozen UID suffices.
-	identityKnown := actual.ID == actual.PodUID || child.prepareIdentity == actual.ID || slices.ContainsFunc(child.result.Actual.Instances, func(state serving.InstanceState) bool {
+	identityKnown := podOnly(actual) || child.prepareIdentity == actual.ID || slices.ContainsFunc(child.result.Actual.Instances, func(state serving.InstanceState) bool {
 		return state.ID == actual.ID && state.PodUID == actual.PodUID && state.Node == actual.Node
 	})
 	if !identityKnown || slices.ContainsFunc(child.result.Before.Instances, func(state serving.InstanceState) bool {
