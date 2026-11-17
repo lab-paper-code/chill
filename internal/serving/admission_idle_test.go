@@ -164,7 +164,7 @@ func TestReplayRoutePrefersOnTimeExecutor(t *testing.T) {
 			d := snap.Workloads[0]
 			d.SLO.TargetLatency = 50 * time.Millisecond
 			fast := snap.Instances[0]
-			slow := poolsInstance(fast, "slow", poolsAddNode(&snap, "slow", map[string]float64{"fixed": 10}), "fixed", fast.WorkloadUID)
+			slow := poolsInstance(fast, slowExecutor, poolsAddNode(&snap, slowExecutor, map[string]float64{"fixed": 10}), "fixed", fast.WorkloadUID)
 			snap.Instances = append(snap.Instances, slow)
 			capacityServiceRatesForTest(&snap, map[string]float64{fast.Profile.ID: 1 / .03, slow.Profile.ID: 1 / .07})
 			snap.Routing = map[string]map[string]int32{d.UID: {fast.ID: schedulerRouteUnits / 2, slow.ID: schedulerRouteUnits / 2}}
@@ -189,7 +189,7 @@ func TestGatewayRoutePrefersOnTimeExecutor(t *testing.T) {
 	fast := r.instances[wanted.ID].ReadyInstance
 	slow := fast
 	p := *fast.Profile
-	p.ID = "slow"
+	p.ID = slowExecutor
 	p.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{float64(500 * time.Millisecond)})}
 	slow.State.ID, slow.State.Profile, slow.Profile = "a-slow", p.ID, &p
 	slow.State.Native = runtimeTestNative(&p)
@@ -228,3 +228,6 @@ func TestGatewayRoutePrefersOnTimeExecutor(t *testing.T) {
 		t.Fatalf("busy fast executor: candidate went to %s, want the idle slow executor", got)
 	}
 }
+
+// slowExecutor names the executor that cannot meet the SLO.
+const slowExecutor = "slow"
