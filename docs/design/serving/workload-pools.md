@@ -41,7 +41,7 @@ serving Pod는 nodeName을 쓰므로 capture와 실행 직전 검사에서 격�
 
 catalog는 허용 namespace의 불변 BEO와 검증 raw에서 profile을 도출한다. public profile은 실행 조건별 성공 근거를 보존한다. 현재 측정 선택은 명시 replacement와 셀별 최신 측정을 사용하며 최신 실패를 과거 성공으로 대체하지 않는다.
 
-runtime image와 관측 version, 모델과 전처리, Dataset, Node와 전력모드, actor와 batch 조건을 유지한다. 준비는 frozen image와 memory envelope를 쓴다. CPU quota나 affinity 관측을 자원 보장으로 matching하지 않는다.
+runtime image와 관측 version, 모델과 전처리, Dataset, Node와 전력모드, actor와 batch 조건을 유지한다. 준비는 현재 선언된 runtime image와 frozen memory envelope를 쓴다. CPU quota나 affinity 관측을 자원 보장으로 matching하지 않는다.
 
 동작 비용은 record 자신의 meter와 Node, scope, actual 상태와 방향, native와 격리 근거를 검증한다. 현재 meter 선언으로 과거 provenance를 덮지 않는다. 같은 조건의 최신 유효 측정을 우선한다. timing 추정과 에너지 결정 가능성은 별도다.
 

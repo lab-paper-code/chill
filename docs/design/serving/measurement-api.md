@@ -115,7 +115,7 @@ burst는 minimumPairs 미만이면 Insufficient/TooFewPairs로 통계를 보존�
 
 ## Scheduler의 d 선택
 
-정확한 Node UID, 모델, mode, path, batch와 profile ID별 선택 순서는 qualified rolling median, profile의 세션 포화 수준 점유 표본 중앙값, legacy Accepted DOM, configured `defaultDispatchOccupancyNanos`다. legacy는 기록된 runtime image 문자열도 맞춘다. tag와 digest reference를 문자열 그대로 비교한다.
+정확한 Node UID, 모델, mode, path, batch와 profile ID별 선택 순서는 qualified rolling median, profile의 세션 포화 수준 점유 표본 중앙값, legacy Accepted DOM, configured `defaultDispatchOccupancyNanos`다.
 
 rolling은 UID 사이 실제 pair 표본을 같은 exact cell에 pool하며 median의 median을 쓰지 않는다. 운영값만 `round(max(median,0))`로 만든다. signed raw와 진단은 그대로다. scalar default는 모든 batch 공통이며 dispatchOccupancy 블록이 이를 shadow하지 않는다.
 

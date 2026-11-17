@@ -144,9 +144,8 @@ func validateOccupancyProfile(s edge.DispatchOccupancyMeasurementSpec, profile *
 			FramedDecodedRequestUpperBytes int64 `json:"framedDecodedRequestUpperBytes"`
 		} `json:"computed"`
 		Profile struct {
-			ProfileID    string `json:"profileID"`
-			RuntimeImage string `json:"runtimeImage"`
-			Workload     struct {
+			ProfileID string `json:"profileID"`
+			Workload  struct {
 				Name       string `json:"name"`
 				UID        string `json:"uid"`
 				Generation int64  `json:"generation"`
@@ -161,11 +160,11 @@ func validateOccupancyProfile(s edge.DispatchOccupancyMeasurementSpec, profile *
 		return err
 	}
 	p := inputs.Profile
-	if p.ProfileID != profile.ID || p.RuntimeImage != profile.Condition.RuntimeImage ||
+	if p.ProfileID != profile.ID ||
 		p.Workload.Name != w.Name || p.Workload.UID != string(w.UID) ||
 		p.Workload.Generation != w.Generation || p.Workload.SLO.Percentile != w.Spec.SLO.Percentile ||
 		p.Workload.SLO.TargetLatencyNanos != w.Spec.SLO.TargetLatency.Duration.Nanoseconds() {
-		return errors.New("frozen profile/runtime or Workload identity changed")
+		return errors.New("frozen profile or Workload identity changed")
 	}
 	waiting := int64(s.Batch) * int64(s.Conditions.WaitingBatches)
 	requestBytes := inputs.Computed.FramedDecodedRequestUpperBytes

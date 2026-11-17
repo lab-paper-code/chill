@@ -251,7 +251,7 @@ func (e *CostEvidence) refreshOccupancy(ctx context.Context, view *CostView) err
 	maps.DeleteFunc(e.occupancy, func(identity evidencestore.ObjectIdentity, _ *DispatchOccupancyRecord) bool { return !listed[identity] })
 	latest := latestBy(accepted, func(m measured) string {
 		r := m.record
-		return strings.Join([]string{r.Node.UID, r.PowerMode, r.Model, r.RuntimeImage, r.ProfileID, r.ExecutionPath, strconv.Itoa(r.Batch)}, "\x00")
+		return strings.Join([]string{r.Node.UID, r.PowerMode, r.Model, r.ProfileID, r.ExecutionPath, strconv.Itoa(r.Batch)}, "\x00")
 	}, func(m measured) (string, int64) { return m.key, m.record.MeasuredAt.UnixNano() })
 	for _, m := range latest {
 		view.DispatchOccupancy = append(view.DispatchOccupancy, serving.DispatchOccupancy{Node: m.record.Node, PowerMode: m.record.PowerMode,

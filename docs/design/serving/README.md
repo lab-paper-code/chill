@@ -2,7 +2,7 @@
 
 단일 HTTPS `cmd/chill-server`가 인증과 권한 확인, 카탈로그와 Workload 관리, 추론 접수와 분배, 물리 실행기 수명, 관측을 소유한다. CHILL이 목적 인스턴스를 선택하고 EdgeMesh가 해당 Pod로 전달한다. 계획기는 노드당 서빙 인스턴스 하나를 구성하며 인스턴스는 Workload 하나를 맡는다.
 
-원시 JPEG와 UTF8 입력은 firstfloor의 전처리 module이 모델 입력으로 바꾼다. Serving과 Profiling은 같은 actor, persistent runner, 측정 이미지와 실행 조건을 사용한다. 수치 예측, 실행 준비 확인, 실물 반환, 실클러스터 수용은 각각의 근거로 판정한다.
+원시 JPEG와 UTF8 입력은 firstfloor의 전처리 module이 모델 입력으로 바꾼다. Serving과 Profiling은 같은 actor, persistent runner와 실행 조건을 사용한다. Serving은 현재 선언된 실행 이미지를 쓰고 프로파일의 측정 이미지는 출처로 남긴다. 수치 예측, 실행 준비 확인, 실물 반환, 실클러스터 수용은 각각의 근거로 판정한다.
 
 ## 설계 문서
 

@@ -197,12 +197,12 @@ func TestCostEvidenceReadsLatestAcceptedOccupancy(t *testing.T) {
 	}
 }
 
-func TestCostEvidenceOccupancyKeepsExactProfileImageAndBatch(t *testing.T) {
+func TestCostEvidenceOccupancyKeepsExactProfileAndBatch(t *testing.T) {
 	at := time.Unix(2000, 0).UTC()
 	objects := &costTestObjects{objects: map[string][]byte{}, opens: map[string]int{}}
-	put := func(name, profileID, image string, batch int, d int64, measuredAt time.Time) string {
+	put := func(name, profileID string, batch int, d int64, measuredAt time.Time) string {
 		t.Helper()
-		record := DispatchOccupancyRecord{SchemaVersion: DispatchOccupancySchema, Node: testNode, PowerMode: "max", RuntimeImage: image, Model: "m",
+		record := DispatchOccupancyRecord{SchemaVersion: DispatchOccupancySchema, Node: testNode, PowerMode: "max", RuntimeImage: "measured-image", Model: "m",
 			ExecutionPath: "native", ProfileID: profileID, Batch: batch, PerRequestNanos: d, Verdict: servingstate.MeasurementAccepted, MeasuredAt: measuredAt}
 		raw, err := json.Marshal(record)
 		if err != nil {
@@ -217,10 +217,9 @@ func TestCostEvidenceOccupancyKeepsExactProfileImageAndBatch(t *testing.T) {
 	profile.Condition.Artifact.ExecutionPath = "native"
 	option := serving.SchedulerOption{Instance: serving.SchedulerInstance{Node: testNode, Profile: &profile, MaxBatch: 1}}
 	workload := &serving.Definition{UID: "workload"}
-	put("different-profile", "other-profile", "measured-image", 1, 9_410_000, at.Add(time.Hour))
-	put("different-image", profile.ID, "other-image", 1, 9_410_000, at.Add(time.Hour))
-	put("different-batch", profile.ID, "measured-image", 2, 9_410_000, at.Add(time.Hour))
-	expected := put("exact", profile.ID, "measured-image", 1, 2_000_000, at)
+	put("different-profile", "other-profile", 1, 9_410_000, at.Add(time.Hour))
+	put("different-batch", profile.ID, 2, 9_410_000, at.Add(time.Hour))
+	expected := put("exact", profile.ID, 1, 2_000_000, at)
 	evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().Build()}, objects, 1<<20)
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +229,7 @@ func TestCostEvidenceOccupancyKeepsExactProfileImageAndBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := serving.NewCapacityInput(serving.SchedulerSettings{}, view.DispatchOccupancy, option, workload)
-	if len(view.DispatchOccupancy) != 4 || input.DispatchOccupancy == nil ||
+	if len(view.DispatchOccupancy) != 3 || input.DispatchOccupancy == nil ||
 		input.DispatchOccupancy.Source != expected || input.DispatchOccupancy.PerRequest != 2_000_000*time.Nanosecond {
 		t.Fatalf("different condition hid exact measured occupancy: %+v rows=%+v", input.DispatchOccupancy, view.DispatchOccupancy)
 	}

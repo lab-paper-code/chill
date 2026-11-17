@@ -38,7 +38,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-func TestRefreshPreparesRecordedRuntimeTag(t *testing.T) {
+// A profile measured with image A is prepared with the declared image B, keeps
+// A as provenance and still selects its measured dispatch occupancy.
+func TestRefreshPreparesDeclaredRuntimeImage(t *testing.T) {
 	fixture := newPreparationCatalogFixture(t)
 	if err := fixture.service.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
@@ -50,11 +52,12 @@ func TestRefreshPreparesRecordedRuntimeTag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const measured = "registry/runtime:measured"
+	const measured, declared = "registry/runtime:measured", "registry/runtime:current"
 	if fixture.profile.Condition.RuntimeImage != measured ||
-		pod.Spec.Containers[0].Image != measured || pod.Spec.InitContainers[2].Image != measured {
-		t.Fatalf("retained tag did not reach serving containers: profile=%s pod=%+v", fixture.profile.Condition.RuntimeImage, pod.Spec)
+		pod.Spec.Containers[0].Image != declared || pod.Spec.InitContainers[2].Image != declared {
+		t.Fatalf("declared image did not reach serving containers: profile=%s pod=%+v", fixture.profile.Condition.RuntimeImage, pod.Spec)
 	}
+	assertUnchangedPreparationKeepsOccupancy(t, fixture)
 }
 
 // A refresh builds each registered service's quantile tables for the profiles
@@ -194,15 +197,6 @@ func TestRefreshRecoversPreparationsAfterCompatibilityRestored(t *testing.T) {
 	}
 }
 
-func TestRefreshPreparationDoesNotReadCurrentDeclaration(t *testing.T) {
-	fixture := newPreparationCatalogFixture(t)
-	fixture.fail("declaration", true)
-	if err := fixture.service.Refresh(context.Background()); err != nil {
-		t.Fatalf("current declaration failure blocked measured preparation: %v", err)
-	}
-	fixture.prepared(t)
-}
-
 func assertUnchangedPreparationKeepsOccupancy(t *testing.T, fixture *preparationCatalogFixture) {
 	t.Helper()
 	ctx := context.Background()
@@ -278,9 +272,9 @@ func (f *preparationCatalogFixture) prepared(t *testing.T) servingkube.CatalogRe
 	}
 	spec, ok := read.Accepted.Preparations[f.profile.ID]
 	if !ok || spec.Instance.Node != (serving.NodeReference{Name: f.profile.NodeName, UID: f.profile.Condition.NodeUID}) ||
-		spec.Config.RuntimeImage != f.profile.Condition.RuntimeImage || spec.Instance.RuntimeImage != spec.Config.RuntimeImage ||
+		spec.Config.RuntimeImage != "registry/runtime:current" || spec.Instance.RuntimeImage != spec.Config.RuntimeImage ||
 		spec.MemoryBytes != uint64(f.profile.Condition.Actor.MemoryLimitBytes) || spec.Bundle.Size == 0 {
-		t.Fatalf("accepted preparation lost measured image/identity/envelope: %+v", spec)
+		t.Fatalf("accepted preparation lost declared image or measured identity/envelope: %+v", spec)
 	}
 	if read.Accepted.Profiles[0].Condition.Actor.RuntimeImage != f.profile.Condition.Actor.RuntimeImage {
 		t.Fatal("serving declaration rewrote measured runtime provenance")
@@ -351,7 +345,7 @@ func newSessionCatalogFixture(t *testing.T, mutate func(*derivation.SessionResul
 	})
 	payload, err := json.Marshal(map[string]any{
 		"schemaVersion": "chill.dacs.io/runtime-declaration.v1alpha2", "image": "registry/runtime:current",
-		"architecture": "amd64", "runtime": map[string]any{"family": "firstfloor", "backends": []string{"ort-cpu"}},
+		"architecture": "amd64", "runtime": map[string]any{"family": "firstfloor", "backends": []string{fixture.profile.Condition.Backend}},
 		"verification": "exact-image-runtime-inspection-v1",
 	})
 	if err != nil {

@@ -806,7 +806,8 @@ func (o *Observer) refreshFailure(err error) error {
 	return err
 }
 
-// Declared images are diagnostics; measured images govern preparations and execution.
+// recordRuntimeDeclaration marks an executor started from an earlier runtime
+// declaration. It keeps serving; the next preparation uses the declared image.
 func (o *Observer) recordRuntimeDeclaration(ctx context.Context, pod *corev1.Pod, profile *serving.Profile) {
 	var desiredImage string
 	var err error
@@ -949,8 +950,8 @@ func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.Curv
 	if runtime.Name != servingstate.FirstfloorContainerName || artifact.Name != "artifact" || preprocessor.Name != "preprocessor" || bundle.Name != profileInitContainerName || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" {
 		return errors.New("actual running native container unavailable")
 	}
-	// Serving launches the measured image reference. Behavioral comparison
-	// reports runtime drift without making image IDs an admission gate.
+	// Serving launches the declared runtime image. The native probe compares the
+	// executor's reported runtime with the profile; image IDs are not a gate.
 	if !initCompleted(pod, artifact, condition.Artifact.Image) {
 		return errors.New("immutable artifact preparation unconfirmed")
 	}

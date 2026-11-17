@@ -59,6 +59,12 @@ func (o *SchedulerService) preparation(
 	if err != nil {
 		return spec, err
 	}
+	// The current declaration selects the executor image; the profile keeps the
+	// image it was measured with as provenance. The observer compares the
+	// executor's reported runtime with the profile's measured runtime.
+	if spec.Config.RuntimeImage, err = o.observer.CurrentRuntimeImage(ctx, &profile); err != nil {
+		return spec, err
+	}
 	spec.Instance.RuntimeImage = spec.Config.RuntimeImage
 	spec.Instance.RunnerCommand = spec.Config.RunnerCommand
 	spec.Instance.Profile = &profile

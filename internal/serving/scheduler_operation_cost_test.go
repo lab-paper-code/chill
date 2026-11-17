@@ -123,9 +123,15 @@ func TestOperationCostPowerAndIdleHistoricalLoadedState(t *testing.T) {
 	}
 }
 
-func TestOperationAndIdleExactMatchKeepMeasuredRuntimeIdentity(t *testing.T) {
-	for _, field := range []string{"image", "version"} {
-		t.Run(field, func(t *testing.T) {
+// A profile measured with another image of the same runtime version, prepared
+// with the declared image, keeps the exact operation cost and loaded idle
+// measured under an earlier profile; a different runtime version does not.
+func TestOperationAndIdleExactMatchKeepMeasuredRuntimeVersion(t *testing.T) {
+	for _, tc := range []struct {
+		field string
+		exact bool
+	}{{"image", true}, {"version", false}} {
+		t.Run(tc.field, func(t *testing.T) {
 			settings, snapshot := schedulerFixture()
 			instance := snapshot.Instances[0]
 			identities := map[string]string{"historical": MeasurementProfileIdentity(instance.Profile)}
@@ -133,24 +139,24 @@ func TestOperationAndIdleExactMatchKeepMeasuredRuntimeIdentity(t *testing.T) {
 			cost.StateIdentities = identities
 			snapshot.Costs = []OperationCost{cost}
 			profile := *instance.Profile
-			if field == "image" {
+			if tc.field == "image" {
 				profile.Condition.RuntimeImage += "-different"
 			} else {
 				profile.Condition.RuntimeVersion += "-different"
 			}
-			instance.Profile = &profile
+			instance.Profile, instance.RuntimeImage = &profile, "registry/runtime:declared"
 			snapshot.Instances[0] = instance
 			snapshot.Options[0].Instance = instance
 			got := EstimateAction(settings, snapshot, Action{Kind: schedulerActionPrepare, Node: instance.Node,
 				From: "unloaded", To: schedulerState(instance), Status: schedulerActionPlanned})
-			if got.CostProvenance.Source == operationSourceExact {
-				t.Fatalf("different runtime reused exact operation cost: %+v", got)
+			if (got.CostProvenance.Source == operationSourceExact) != tc.exact {
+				t.Fatalf("different %s: exact operation cost reuse %v, want %v: %+v", tc.field, !tc.exact, tc.exact, got)
 			}
 			baseline := snapshot.Baselines[0]
 			baseline.ID, baseline.State, baseline.StateIdentities = "historical-idle", []string{"historical"}, identities
 			_, _, provenance, _ := schedulerBaseline(settings, []NodeBaseline{baseline}, snapshot.Nodes[0], []SchedulerInstance{instance}, snapshot.Options)
-			if provenance.Source == operationSourceExact && slices.Contains(provenance.References, baseline.ID) {
-				t.Fatalf("different runtime reused exact loaded idle: %+v", provenance)
+			if (provenance.Source == operationSourceExact && slices.Contains(provenance.References, baseline.ID)) != tc.exact {
+				t.Fatalf("different %s: exact loaded idle reuse %v, want %v: %+v", tc.field, !tc.exact, tc.exact, provenance)
 			}
 		})
 	}
@@ -171,11 +177,11 @@ func TestOperationCostIdleAtModeUsesLatestStableCell(t *testing.T) {
 	if !ok || got.Profile.ID != operationCostTestProfile {
 		t.Fatalf("same-runtime idle evidence stranded by profile/memory: %+v %v", got, ok)
 	}
-	profile.Condition.RuntimeImage = "different-runtime-image"
+	profile.Condition.RuntimeVersion = "different-runtime-version"
 	if _, ok := schedulerIdleAtMode(old, "eco", []SchedulerOption{{Instance: target}}); ok {
-		t.Fatal("idle evidence borrowed a different runtime image")
+		t.Fatal("idle evidence borrowed a different runtime version")
 	}
-	profile.Condition.RuntimeImage = old.Profile.Condition.RuntimeImage
+	profile.Condition.RuntimeVersion = old.Profile.Condition.RuntimeVersion
 	profile.Condition.LogicalModel = "different-model"
 	if _, ok := schedulerIdleAtMode(old, "eco", []SchedulerOption{{Instance: target}}); ok {
 		t.Fatal("idle evidence matched a different model")
@@ -397,21 +403,5 @@ func operationCostReplayReport(t *testing.T, report map[string]any) {
 		if err := os.WriteFile(path, raw, 0600); err != nil {
 			t.Fatal(err)
 		}
-	}
-}
-
-func TestMeasurementProfileIdentityComparesPlainRuntimeImageTags(t *testing.T) {
-	_, snapshot := schedulerFixture()
-	profile := *snapshot.Instances[0].Profile
-	profile.Condition.RuntimeImage = "registry.example/runtime:measured"
-	identity := MeasurementProfileIdentity(&profile)
-	same := profile
-	same.ID = "another-measurement"
-	if MeasurementProfileIdentity(&same) != identity {
-		t.Fatal("same runtime image tag split operation and idle identity")
-	}
-	same.Condition.RuntimeImage = "registry.example/runtime:different"
-	if MeasurementProfileIdentity(&same) == identity {
-		t.Fatal("different runtime image tags joined operation and idle identity")
 	}
 }

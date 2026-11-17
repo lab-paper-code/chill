@@ -11,7 +11,7 @@ SLO 회복에는 명시 추정을 사용할 수 있다. 비용은 첫 유효 tie
 3. 같은 DeviceClass와 operation.
 4. `settings.defaultOperationCost.{prepare,remove,power}`.
 
-exact prepare/remove는 같은 Node와 profile 조건, exact power는 같은 Node의 from/to와 loaded state, 인스턴스 수를 맞춘다. 측정 runtime image 문자열과 관측 version을 조건에 사용하며 tag도 허용한다. imageID와 digest pinning gate는 없다.
+exact prepare/remove는 같은 Node와 profile 조건, exact power는 같은 Node의 from/to와 loaded state, 인스턴스 수를 맞춘다. 관측 runtime version을 조건에 사용한다. runtime image는 측정 출처이며 조건에 넣지 않는다. imageID와 digest pinning gate는 없다.
 
 `costProvenance.source`는 exact, node, deviceClass 또는 default이며 costRef나 configured value를 남긴다. 전이 추정과 default로 에너지 이동을 허가하지 않는다.
 

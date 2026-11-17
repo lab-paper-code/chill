@@ -177,8 +177,7 @@ func ResolveDispatchOccupancy(settings SchedulerSettings, occupancy []DispatchOc
 				break
 			}
 		} else if (o.Provenance == nil || o.Provenance.Source == occupancySourceDOM) &&
-			o.RuntimeImage == c.RuntimeImage && o.ProfileID == i.Profile.ID &&
-			o.ExecutionPath == c.Artifact.ExecutionPath && o.Batch == i.MaxBatch && dom == nil {
+			o.ProfileID == i.Profile.ID && o.ExecutionPath == c.Artifact.ExecutionPath && o.Batch == i.MaxBatch && dom == nil {
 			dom = o
 		} else if o.Provenance != nil && o.Provenance.Source == occupancySourceDefault &&
 			o.ProfileID == i.Profile.ID && o.ExecutionPath == c.Artifact.ExecutionPath && o.Batch == i.MaxBatch && fallback == nil {

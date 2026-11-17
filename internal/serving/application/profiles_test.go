@@ -171,7 +171,7 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 	}
 }
 
-func TestPreparationKeepsMeasuredTagAcrossDeclarationChanges(t *testing.T) {
+func TestPreparationFreezesDeclaredImageInCommonConfig(t *testing.T) {
 	ctx := context.Background()
 	service := schedulerTestService(t, schedulerTestConfiguration())
 	profile := measuredAdoptionProfile()
@@ -256,8 +256,8 @@ func TestPreparationKeepsMeasuredTagAcrossDeclarationChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Config.RuntimeImage != profile.Condition.RuntimeImage || spec.Instance.RuntimeImage != spec.Config.RuntimeImage || resolves != 0 || puts.Load() != 1 {
-		t.Fatalf("preparation did not retain measured image: %+v resolves=%d puts=%d", spec, resolves, puts.Load())
+	if spec.Config.RuntimeImage != declaredImage || spec.Instance.RuntimeImage != spec.Config.RuntimeImage || resolves != 1 || puts.Load() != 1 {
+		t.Fatalf("preparation did not select the declared image once into common Config: %+v resolves=%d puts=%d", spec, resolves, puts.Load())
 	}
 	current := &core.ConfigMap{}
 	if err := reader.Get(ctx, types.NamespacedName{Namespace: "serving", Name: "execution-facts"}, current); err != nil {
@@ -271,8 +271,8 @@ func TestPreparationKeepsMeasuredTagAcrossDeclarationChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pod.Spec.Containers[0].Image != profile.Condition.RuntimeImage || pod.Spec.InitContainers[2].Image != profile.Condition.RuntimeImage || resolves != 0 {
-		t.Fatal("launch used declared image instead of measured reference")
+	if pod.Spec.Containers[0].Image != declaredImage || pod.Spec.InitContainers[2].Image != declaredImage || resolves != 1 {
+		t.Fatal("launch re-resolved the declaration or used the measured image")
 	}
 	if spec.Instance.Profile.Condition.Actor.RuntimeImage != profile.Condition.Actor.RuntimeImage || profile.Condition.Actor.RuntimeImage == declaredImage {
 		t.Fatal("current launch image rewrote historical measurement provenance")

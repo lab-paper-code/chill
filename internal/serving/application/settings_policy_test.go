@@ -309,8 +309,8 @@ func TestPreparationReusesAcceptedBundleButChecksCurrentBoundaries(t *testing.T)
 		t.Fatal(err)
 	}
 	fixture.fail("declaration", true)
-	if spec, err := service.preparation(context.Background(), config, fixture.profile); err != nil || spec.Config.RuntimeImage != fixture.profile.Condition.RuntimeImage {
-		t.Fatal("bundle reuse depended on current runtime declaration", err)
+	if _, err := service.preparation(context.Background(), config, fixture.profile); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("bundle reuse bypassed fresh runtime declaration read", err)
 	}
 	fixture.fail("declaration", false)
 	current := &core.ConfigMap{}
@@ -322,8 +322,8 @@ func TestPreparationReusesAcceptedBundleButChecksCurrentBoundaries(t *testing.T)
 		t.Fatal(err)
 	}
 	spec, err := service.preparation(context.Background(), config, fixture.profile)
-	if err != nil || spec.Config.RuntimeImage != fixture.profile.Condition.RuntimeImage || spec.Bundle != accepted.Preparations[fixture.profile.ID].Bundle {
-		t.Fatal("bundle reuse lost measured runtime image", err)
+	if err != nil || spec.Config.RuntimeImage != "registry/runtime:replacement" || spec.Bundle != accepted.Preparations[fixture.profile.ID].Bundle {
+		t.Fatal("bundle reuse kept an earlier declared runtime image", err)
 	}
 	qualified := fixture.profile
 	qualified.ID += "/reuse-changed-policy"

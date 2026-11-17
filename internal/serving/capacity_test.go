@@ -308,7 +308,7 @@ func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
 			}
 		})
 	}
-	// DOM never borrows a profile, runtime image, path or batch.
+	// DOM never borrows a profile, path or batch.
 	other := i
 	profile := *i.Profile
 	profile.ID, profile.Condition.Artifact.ExecutionPath = "another-profile", "another-path"
@@ -317,8 +317,13 @@ func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
 	if got.PerRequest != 2*time.Millisecond || got.Provenance.Source != occupancySourceDefault {
 		t.Fatalf("legacy DOM borrowed a different profile/batch: %+v", got)
 	}
+	// The runtime image is profile provenance and does not select DOM.
+	recorded := dom
+	recorded.RuntimeImage = "image-the-profile-was-measured-with"
+	if got := ResolveDispatchOccupancy(s, []DispatchOccupancy{recorded}, i); got.Provenance.Source != "dom" || got.PerRequest != dom.PerRequest {
+		t.Fatalf("DOM of the same profile missed by image string: %+v", got)
+	}
 	for _, change := range []func(*DispatchOccupancy){
-		func(d *DispatchOccupancy) { d.RuntimeImage = "different-image" },
 		func(d *DispatchOccupancy) { d.ProfileID = "" },
 		func(d *DispatchOccupancy) { d.Batch = 0 },
 	} {

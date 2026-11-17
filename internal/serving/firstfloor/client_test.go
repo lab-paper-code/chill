@@ -377,7 +377,7 @@ func TestNativeProbeUsesSelectedExecutionNotInitializationHistory(t *testing.T) 
 		valid  bool
 	}{
 		{"history drift", func(m *native.Metadata) {
-			m.Runtime.RuntimeVersion, m.Runtime.NumpyVersion = "new", "new"
+			m.Runtime.NumpyVersion = "new"
 			m.Runtime.WarmupIterations = 9
 			m.Runtime.InitializedBatches = []int{1, 3}
 			m.MaxBatchSize = 3
@@ -397,6 +397,7 @@ func TestNativeProbeUsesSelectedExecutionNotInitializationHistory(t *testing.T) 
 		{"wrong input", func(m *native.Metadata) { m.Runtime.Inputs = []string{"other"} }, false},
 		{"wrong model", func(m *native.Metadata) { m.Model = "other" }, false},
 		{"wrong backend", func(m *native.Metadata) { m.Runtime.Runtime = "ort-cuda" }, false},
+		{"wrong runtime version", func(m *native.Metadata) { m.Runtime.RuntimeVersion = "new" }, false},
 		{"wrong GPU", func(m *native.Metadata) { m.Runtime.GPUUUID = "other" }, false},
 		{"wrong mode", func(m *native.Metadata) { m.Mode = "profiling" }, false},
 	} {

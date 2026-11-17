@@ -257,8 +257,8 @@ func validateMeasuredRuntime(spec Spec, actual native.RuntimeMetadata) error {
 	if actual.IntraOpThreads < 0 || actual.InterOpThreads < 0 {
 		return errors.New("invalid observed runtime thread settings")
 	}
-	if !slices.Equal(actual.ModelFiles, measured.ModelFiles) || actual.Runtime != measured.Runtime || actual.Device != measured.Device || actual.GPUUUID != measured.GPUUUID || !slices.Equal(actual.Providers, measured.Providers) {
-		return errors.New("actual runtime/provider/device differs from verified profile")
+	if !slices.Equal(actual.ModelFiles, measured.ModelFiles) || actual.Runtime != measured.Runtime || actual.RuntimeVersion != measured.RuntimeVersion || actual.Device != measured.Device || actual.GPUUUID != measured.GPUUUID || !slices.Equal(actual.Providers, measured.Providers) {
+		return errors.New("actual runtime/version/provider/device differs from verified profile")
 	}
 	return nil
 }

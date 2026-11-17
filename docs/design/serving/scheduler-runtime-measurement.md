@@ -64,7 +64,7 @@ workerHTTP의 connection acquire, connect, request write와 first byte는 기존
 
 Serving과 Profiling은 같은 serving-worker, persistent IPC runner와 firstfloor RuntimeContainer를 사용한다. init은 모델 files, 전처리와 immutable profile bundle을 materialize한다.
 
-Actor의 measured runtime image reference와 실제 관측 version이 실행 조건이다. 태그와 digest reference 모두 plain string으로 허용하며 pinning과 imageID gate는 없다. 현재 declaration image로 frozen image를 대입하지 않는다.
+실제 관측 runtime version이 실행 조건이다. Preparation은 현재 runtime declaration을 한 번 읽어 `Config.RuntimeImage`에 고정하고, Actor의 measured runtime image reference는 측정 출처로 남는다. native probe는 실행기가 보고한 runtime, version, provider, device, GPU UUID와 모델 파일을 profile의 기록과 비교하며 다르면 Ready로 두지 않는다. 태그와 digest reference 모두 plain string으로 허용하며 pinning과 imageID gate는 없다. declaration이 바뀐 뒤 앞선 이미지로 실행 중인 인스턴스는 `RunningOlderRuntimeImage` 진단을 받고 계속 서빙한다.
 
 memory request/limit은 측정 요청을 해석할 때 동결한 Actor envelope를 유지한다. peak는 실제 측정값을 사용한다. queue는 같은 limit의 measured peak 뒤 양의 headroom 안에 둔다. worker와 init에는 CPU resource를 주입하지 않는다.
 
