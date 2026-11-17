@@ -382,25 +382,9 @@ func TestReplayDoesNotRecoverUnscopedRouteFromReservation(t *testing.T) {
 
 // control402: a failed attempt's late-Ready Pod excluded its whole Node, and
 // the planner's retirement skips excluded Nodes, so the Pod was never removed.
+// control403: a candidate that retires the Pod is replayed with that retirement,
+// planned or already in flight.
 func TestReplayFailedAttemptPodExcludesOnlyItsInstance(t *testing.T) {
-	_, snapshot, _ := feedbackFixture()
-	node := poolsAddNode(&snapshot, "failed-node", map[string]float64{"fixed": 1})
-	late := poolsInstance(snapshot.Instances[0], "failed-pod/containerd://late", node, "fixed", "")
-	late.PodUID, late.Ready = "failed-pod", true
-	snapshot.Instances = append(snapshot.Instances, late)
-	snapshot.Actions = []Action{{ID: "failed-prepare", Kind: schedulerActionPrepare, Node: node, Instance: "slot",
-		Status: schedulerActionFailed, Reason: ActionDeadlineExceeded,
-		PreparationFailure: NewPreparationFailure(late, late.PodUID, PreparationFailureObservation{Classification: PreparationUnknownTransient})}}
-	scope := schedulerReplayInitialScope(snapshot)
-	if scope.instances[late.ID] == "" || scope.nodes[node] || schedulerPhysicalChangeReason(snapshot, node) != "" {
-		t.Fatalf("failed attempt must exclude its Pod only: instances=%v nodes=%v", scope.instances, scope.nodes)
-	}
-}
-
-// control403: the planner retired a failed attempt's Pod and replaced the
-// serving instance behind it, replay refused the retirement, and the candidate
-// was ranked with the current configuration's outcome.
-func TestReplayRetiresFailedAttemptPod(t *testing.T) {
 	settings, snapshot, candidate := feedbackFixture()
 	node := poolsAddNode(&snapshot, "failed-node", map[string]float64{"fixed": 1})
 	late := poolsInstance(snapshot.Instances[0], "failed-pod/containerd://late", node, "fixed", "")
@@ -410,22 +394,23 @@ func TestReplayRetiresFailedAttemptPod(t *testing.T) {
 	snapshot.Actions = []Action{{ID: "failed-prepare", Kind: schedulerActionPrepare, Node: node, Instance: "slot",
 		Status: schedulerActionFailed, Reason: ActionDeadlineExceeded,
 		PreparationFailure: NewPreparationFailure(late, late.PodUID, PreparationFailureObservation{Classification: PreparationUnknownTransient})}}
+	scope := schedulerReplayInitialScope(snapshot)
+	if scope.instances[late.ID] == "" || scope.nodes[node] || schedulerPhysicalChangeReason(snapshot, node) != "" {
+		t.Fatalf("failed attempt must exclude its Pod only: instances=%v nodes=%v", scope.instances, scope.nodes)
+	}
 	settings.DefaultOperationCost[schedulerActionRemove] = OperationCostValue{Seconds: .0001, Joules: .01}
 	candidate.Keep = false
 	candidate.Nodes, candidate.Instances = snapshot.Nodes, []SchedulerInstance{healthy}
 	candidate.Actions = schedulerPlan(settings, snapshot, candidate)
-	remove := slices.IndexFunc(candidate.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Instance == late.ID })
-	if remove < 0 {
+	if !slices.ContainsFunc(candidate.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Instance == late.ID }) {
 		t.Fatalf("fixture must retire the failed Pod: %+v", candidate.Actions)
-	}
-	state := schedulerReplayState{settings: settings, snap: snapshot, c: candidate, rng: rand.New(rand.NewPCG(1, 0))}
-	state.initializeInstances()
-	state.initializeActions()
-	if !state.startActions() || len(state.out.reasons) != 0 || !state.actionByID[candidate.Actions[remove].ID].started {
-		t.Fatalf("replay did not execute the planned retirement: reasons=%v actions=%+v", state.out.reasons, candidate.Actions)
 	}
 	if result := feedbackEvaluateForTest(t, settings, snapshot, candidate); result.Workloads[0].OnTime != 2 {
 		t.Fatalf("retiring the failed Pod interrupted healthy supply: %+v", result.Workloads)
+	}
+	snapshot.Actions = append(snapshot.Actions, candidate.Actions...)
+	if scope := schedulerReplayInitialScope(snapshot); scope.nodes[node] || schedulerPhysicalChangeReason(snapshot, node) != "" {
+		t.Fatalf("an in-flight retirement must leave the Node plannable: actions=%v nodes=%v", scope.actions, scope.nodes)
 	}
 }
 

@@ -573,10 +573,7 @@ func (s *schedulerReplayState) initializeActions() {
 	}
 	scope := schedulerReplayInitialScope(s.snap)
 	for _, a := range s.actions {
-		a.blocked = scope.actions[a.action.ID] != ""
-		if a.action.Kind == schedulerActionPrepare || a.action.Kind == schedulerActionRemove || a.action.Kind == schedulerActionPower {
-			a.blocked = a.blocked || scope.nodes[a.action.Node]
-		}
+		a.blocked = scope.actions[a.action.ID] != "" || scope.blocks(s.snap, a.action) != ""
 	}
 	s.blockedReplayPrerequisite()
 	// A candidate is judged by the replay of its own change. An action the

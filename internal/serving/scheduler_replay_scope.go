@@ -148,6 +148,27 @@ func schedulerReplayActionAffectsInstance(action Action, actual SchedulerInstanc
 	return actual.ID == action.Instance || actual.TargetID == action.Instance
 }
 
+// blocks reports why replay cannot execute an unfinished action: physical work
+// on an excluded Node, the preparation of an excluded instance, or a drain
+// waiting on an excluded instance's outstanding work. Exclusion withdraws the
+// prediction of an instance's service; its stop and remove stay executable.
+func (scope *schedulerReplayScope) blocks(snapshot SchedulerSnapshot, action Action) string {
+	if scope.instances[action.Instance] != "" {
+		switch action.Kind {
+		case schedulerActionPrepare:
+			return "InstanceDependencyExcluded"
+		case schedulerActionDrain:
+			if slices.ContainsFunc(snapshot.Outstanding, func(r SchedulerRequest) bool { return r.Instance == action.Instance }) {
+				return "InstanceDependencyExcluded"
+			}
+		}
+	}
+	if (action.Kind == schedulerActionPrepare || action.Kind == schedulerActionRemove || action.Kind == schedulerActionPower) && scope.nodes[action.Node] {
+		return "NodeDependencyExcluded"
+	}
+	return ""
+}
+
 func (scope *schedulerReplayScope) propagate(snapshot SchedulerSnapshot) {
 	// A blocked owner dependency also freezes physical work on the dependent
 	// Node. Routing only blocks its own descendants, not unrelated destinations.
@@ -157,14 +178,7 @@ func (scope *schedulerReplayScope) propagate(snapshot SchedulerSnapshot) {
 			if action.Status == schedulerActionComplete || action.Status == schedulerActionCancel || scope.actions[action.ID] != "" {
 				continue
 			}
-			physical := action.Kind == schedulerActionPrepare || action.Kind == schedulerActionRemove || action.Kind == schedulerActionPower
-			reason := ""
-			if physical && scope.nodes[action.Node] {
-				reason = "NodeDependencyExcluded"
-			}
-			if scope.instances[action.Instance] != "" {
-				reason = "InstanceDependencyExcluded"
-			}
+			reason := scope.blocks(snapshot, action)
 			if action.Status != phaseRunning {
 				for _, dep := range action.DependsOn {
 					if scope.actions[dep] != "" {
@@ -175,7 +189,7 @@ func (scope *schedulerReplayScope) propagate(snapshot SchedulerSnapshot) {
 			}
 			if reason != "" {
 				scope.actions[action.ID] = reason
-				if physical {
+				if action.Kind == schedulerActionPrepare || action.Kind == schedulerActionRemove || action.Kind == schedulerActionPower {
 					scope.nodes[action.Node] = true
 				}
 				if action.Kind == schedulerActionPrepare {

@@ -32,9 +32,11 @@ composition root는 하나의 ClusterState를 Observer, Manager, Operations와 S
 
 Serving의 Reject와 Delay는 요청 정책이다. Reject는 불가능한 head를 실행 없이 거절하고 Delay는 후순위 FIFO로 옮겨 normal 뒤 처리한다. actor의 측정 deadlinePolicy와 혼동하지 않는다. batch 확정 직전 monotonic 시각으로 cancel, 최종 수명과 SLO를 다시 확인한다.
 
-모든 후보는 같은 outstanding과 arrival cohort, physical inventory와 replay exclusion scope를 사용한다. 모델링할 수 없는 action과 executor는 공급에서 공통 제외하되 allocation, owner와 예약, 요청과 cleanup 의무는 남긴다. 실패 시도의 identity를 이후 같은 logical target의 성공 실물에 적용하지 않는다. 실패한 prepare 시도의 Pod는 그 인스턴스만 제외하고 노드는 제외하지 않는다. 노드를 제외하면 그 Pod를 은퇴시킬 계획도 그 노드를 건너뛴다. 재생은 후보가 낸 그 Pod의 stop/drain/remove를 실행한다. 제외는 인스턴스의 서비스 예측만 거두고 후보가 새로 내는 은퇴를 막지 않는다.
+모든 후보는 같은 outstanding과 arrival cohort, physical inventory와 replay exclusion scope를 사용한다. 모델링할 수 없는 action과 executor는 공급에서 공통 제외하되 allocation, owner와 예약, 요청과 cleanup 의무는 남긴다. 실패 시도의 identity를 이후 같은 logical target의 성공 실물에 적용하지 않는다. 실패한 prepare 시도의 Pod는 그 인스턴스만 제외하고 노드는 제외하지 않는다. 노드를 제외하면 그 Pod를 은퇴시킬 계획도 그 노드를 건너뛴다.
 
-후보의 SLO 판정은 재생이 그 후보의 action을 실행한 결과다. 재생이 실행할 수 없는 action을 가진 후보는 판정되지 않은 후보이며 `PlannedActionNotReplayed:<action>`으로 제외한다. 판정되지 않은 후보가 현재 구성의 결과를 물려받아 에너지로 비교되는 일은 없다. keep은 변경을 내지 않으므로 이 검사를 받지 않는다.
+제외 범위가 재생에서 막는 action은 셋이다. 제외된 노드의 prepare, remove와 power, 제외된 인스턴스의 prepare, 제외된 인스턴스에 남은 요청을 기다리는 drain. 실패한 action과 막힌 action에 의존하는 action도 실행하지 못한다. 인스턴스의 제외는 그 인스턴스의 서비스 예측을 거두며, 그 인스턴스의 stop과 remove는 재생이 실행한다. owner ledger의 진행 중 action과 후보가 새로 내는 action에 같은 규칙을 쓴다.
+
+후보의 SLO 판정은 재생이 그 후보의 action을 실행한 결과다. 재생이 실행하지 못하는 action을 가진 후보는 판정이 없으며 `PlannedActionNotReplayed:<action>`으로 제외한다. keep은 이미 승인된 의무만 이어 가는 비교의 기준이므로 이 검사를 받지 않는다.
 
 ## 판단 평가와 전환 진행
 
