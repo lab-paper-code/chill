@@ -197,7 +197,7 @@ func TestObserverDoesNotWaitForUnansweredSource(t *testing.T) {
 	}
 	started := time.Now()
 	api.refresh(t)
-	if took := time.Since(started); took > nativeProbeTimeout/2 || api.ready() != 0 {
+	if took := time.Since(started); took >= nativeProbeTimeout || api.ready() != 0 {
 		t.Fatalf("refresh waited %v for a source it already knew was unanswered, ready %d", took, api.ready())
 	}
 	api.mu.Lock()

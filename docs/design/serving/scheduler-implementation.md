@@ -65,7 +65,7 @@ Pod UID가 유일한 실물 장부 key다. Runtime은 실행과 binding/routing 
 
 Create 응답, watch와 초기/복구 전체 List로 UID를 발견한다. container 이전 Pod도 보존한다. terminal, terminating과 label drift, profile/Service/read 오류에도 실물 장부를 유지한다.
 
-실제 native 오류와 Pod unready는 dispatch를 닫는다. probe 진행 중에는 판정을 기다린다. 복구는 native 성공과 동일 UID/container, 단일 Service 검증을 요구한다. 제한된 Service나 후속 Pod List의 첫 실패 때만 검증된 이전 Ready를 한 refresh 유지하고 issue를 남긴다.
+실제 native 오류와 Pod unready는 dispatch를 닫는다. probe 진행 중에는 판정을 기다린다. 직전 읽기가 기한을 넘긴 인스턴스의 다음 읽기는 refresh가 기다리지 않는다. 그 인스턴스는 읽기가 답할 때까지 dispatch가 닫힌 채 장부에 남고, 답하면 그 읽기가 바로 게시한다. 복구는 native 성공과 동일 UID/container, 단일 Service 검증을 요구한다. 제한된 Service나 후속 Pod List의 첫 실패 때만 검증된 이전 Ready를 한 refresh 유지하고 issue를 남긴다.
 
 desired/native DecisionID만 다르면 PolicyAckPending이다. 실제 identity와 Ready, allocation과 owner, 요청과 정책을 보존한다. desired로 actual을 덮거나 pending을 완료 ACK로 바꾸지 않는다.
 

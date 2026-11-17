@@ -386,7 +386,9 @@ func (o *Observer) refreshLocked(ctx context.Context) (result observerRefresh, e
 				o.wg.Add(1)
 				go func() {
 					defer o.wg.Done()
-					probe(o.ctx)
+					ctx, cancel := context.WithTimeout(o.ctx, detachedReadTimeout)
+					defer cancel()
+					probe(ctx)
 					o.mu.Lock()
 					source.reading = false
 					o.mu.Unlock()
@@ -421,7 +423,7 @@ func (o *Observer) sourceNamespacePods(pods *corev1.PodList) *corev1.PodList {
 	return selected
 }
 
-// finishRefreshLocked finalizes the source ledger after every probe has published.
+// finishRefreshLocked finalizes the source ledger after every awaited probe has published.
 func (o *Observer) finishRefreshLocked(ctx context.Context, observed map[types.UID]bool) error {
 	if err := ctx.Err(); err != nil {
 		o.refreshed = time.Time{}
@@ -521,7 +523,7 @@ func (o *Observer) restoreSources(pods []corev1.Pod) {
 				}
 				source.previous[source.containerID] = source.instance
 				source.instance = serving.ReadyInstance{State: serving.InstanceState{Node: source.instance.State.Node}}
-				source.stopped = false
+				source.stopped, source.unanswered = false, false
 			}
 			if _, known := source.terminated[status.ContainerID]; !known {
 				source.terminated[status.ContainerID] = false
@@ -564,7 +566,8 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 		instance.State.OwnerWorkloadUID = string(source.ownerUID)
 		instance.State.Terminated = source.terminated[source.containerID] || source.containerID == "" && source.stopped
 		instance.State.Stopped = source.stopped || instance.State.Terminated
-		instance.State.Ready = instance.State.Ready && !instance.State.Terminated
+		// A Node changing power mode stays closed whichever read publishes.
+		instance.State.Ready = instance.State.Ready && !instance.State.Terminated && !o.movingNodes[instance.State.Node.UID]
 		failure, failed := servingstate.ClassifyPreparationFailure(pod, nil, nil, nil, false)
 		instance.State.StartupFailure = nil
 		if failed {
@@ -626,6 +629,10 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 // nativeProbeTimeout bounds one native state read, so one slow executor does
 // not hold the source lock for the whole refresh.
 const nativeProbeTimeout = 2 * time.Second
+
+// detachedReadTimeout bounds a read no refresh waits for, including its
+// Kubernetes calls, so a stalled API call cannot hold the source lock.
+const detachedReadTimeout = 10 * time.Second
 
 func (o *Observer) physicalSourceSpec(ctx context.Context, pod *corev1.Pod, node *corev1.Node) (firstfloor.Spec, error) {
 	if err := validatePhysicalSource(pod, node); err != nil {
