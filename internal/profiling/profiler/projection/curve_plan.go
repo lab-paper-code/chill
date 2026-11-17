@@ -9,42 +9,11 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
-	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-// ApplyFrozenActiveProtocol projects only the plan's authoritative measurement
-// body. Public child specs carry no frozen Workload facts.
-func ApplyFrozenActiveProtocol(
-	measurement *profilingrun.MeasurementContract, protocol profilederivation.CurveProtocolContract,
-) {
-	measurement.WorkloadName = protocol.WorkloadName
-	measurement.WorkloadUID = protocol.WorkloadUID
-	measurement.WorkloadResourceVersion = protocol.WorkloadResourceVersion
-	measurement.SLOPercentile = protocol.SLOPercentile
-	measurement.SLOTargetLatencyNanos = protocol.SLOTargetLatencyNanos
-	measurement.MinServiceSamples = protocol.MinServiceSamples
-	measurement.OperatingPoints = (*profilingrun.OperatingPointsContract)(protocol.OperatingPoints)
-	if measurement.OperatingPoints != nil {
-		points := *measurement.OperatingPoints
-		points.Utilizations = slices.Clone(points.Utilizations)
-		measurement.OperatingPoints = &points
-	}
-}
-
-// ValidateRecordedIdleEvidence applies the existing curve-plan RunConfig
-// boundary to a retained idle witness without requiring an active execution.
-func ValidateRecordedIdleEvidence(plan profilederivation.CurvePlan, evidence profilerevidence.VerifiedIdleEvidence) error {
-	execution, _, err := evidence.Records()
-	if err != nil {
-		return err
-	}
-	shared := plan.Shared()
-	return validateCurvePlanRunConfig(execution.RunConfig, execution.Terminal.Node.UID, shared, shared.IdleProtocol)
-}
-
-// ProjectCurvePlanSpec builds the plan the checker in this package later
-// validates RunConfigs against.
+// ProjectCurvePlanSpec builds the curve plan spec for one active and idle
+// RunConfig pair and checks both RunConfigs against it.
 func ProjectCurvePlanSpec(
 	name string,
 	active, idle profilingrun.RunConfig,
@@ -89,110 +58,6 @@ func ProjectCurvePlanSpec(
 		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve RunConfigs disagree: %w", err)
 	}
 	return spec, nil
-}
-
-// ProjectMeasuredCurveCondition attaches observed semantic runtime facts without
-// treating an exact image reference as a version or introducing a validity gate.
-func ProjectMeasuredCurveCondition(
-	condition profilederivation.CurvePlanSpec,
-	active profilerevidence.VerifiedEvidence,
-) (profilederivation.CurvePlanSpec, error) {
-	_, raw, err := active.Records()
-	if err != nil {
-		return profilederivation.CurvePlanSpec{}, err
-	}
-	condition.RuntimeVersion = raw.Runtime.RuntimeVersion
-	condition.RuntimeProvider = raw.Runtime.Provider
-	return condition, nil
-}
-
-// ProjectVerifiedCurveState binds Loader-verified execution conditions to the
-// frozen curve plan. Digest labels and external environments are provenance,
-// not validation gates; runtime validity belongs to the Loader.
-func ProjectVerifiedCurveState(
-	plan profilederivation.CurvePlan,
-	active profilerevidence.VerifiedEvidence,
-	idle profilerevidence.VerifiedIdleEvidence,
-) (profilederivation.VerifiedCurveState, error) {
-	activeExecution, activeRaw, err := active.Records()
-	if err != nil {
-		return profilederivation.VerifiedCurveState{}, fmt.Errorf("read verified active evidence: %w", err)
-	}
-	idleExecution, _, err := idle.Records()
-	if err != nil {
-		return profilederivation.VerifiedCurveState{}, fmt.Errorf("read verified idle evidence: %w", err)
-	}
-	activeIdentities, err := ProjectRunIdentities(activeExecution.RunConfig, activeExecution.Terminal.Node.UID)
-	if err != nil {
-		return profilederivation.VerifiedCurveState{}, err
-	}
-	idleIdentities, err := ProjectRunIdentities(idleExecution.RunConfig, idleExecution.Terminal.Node.UID)
-	if err != nil {
-		return profilederivation.VerifiedCurveState{}, err
-	}
-	start, end, err := activeRaw.Runtime.MeasurementWindow()
-	if err != nil {
-		return profilederivation.VerifiedCurveState{}, err
-	}
-	workload, err := projectWorkloadWindow(activeRaw.Workload, start, end)
-	if err != nil {
-		return profilederivation.VerifiedCurveState{}, err
-	}
-	spec := plan.Shared()
-	if err := ValidateCurvePlanRunConfigs(
-		activeExecution.RunConfig, idleExecution.RunConfig,
-		activeExecution.Terminal.Node.UID, idleExecution.Terminal.Node.UID,
-		spec,
-	); err != nil {
-		return profilederivation.VerifiedCurveState{}, err
-	}
-	return profilederivation.VerifiedCurveState{
-		Shared:                 spec,
-		StateIdentity:          activeIdentities.StateIdentity,
-		EnvironmentIdentity:    workload.EnvironmentIdentity,
-		ActiveProtocolIdentity: activeIdentities.MeasurementProtocolIdentity,
-		IdleProtocolIdentity:   idleIdentities.MeasurementProtocolIdentity,
-	}, nil
-}
-
-// ValidateCurvePlanRunConfigs binds verified active/idle executable conditions
-// to one selected plan without re-projecting evidence identities or workload.
-func ValidateCurvePlanRunConfigs(
-	active, idle profilingrun.RunConfig,
-	activeNodeUID, idleNodeUID string,
-	spec profilederivation.CurvePlanSpec,
-) error {
-	if err := validateCurvePlanSharedRunFacts(active, idle); err != nil {
-		return err
-	}
-	if len(spec.PlannedBatchSizes) == 0 {
-		return errors.New("curve plan has no planned batch sizes")
-	}
-	activeUsesPlannedBatchSize := false
-	for _, plannedBatchSize := range spec.PlannedBatchSizes {
-		if active.Measurement.Batch == plannedBatchSize {
-			activeUsesPlannedBatchSize = true
-			break
-		}
-	}
-	if !activeUsesPlannedBatchSize {
-		return fmt.Errorf("batch %d is not listed in the curve plan", active.Measurement.Batch)
-	}
-	if err := validateCurvePlanRunConfig(
-		active, activeNodeUID, spec, spec.ActiveProtocol,
-	); err != nil {
-		return fmt.Errorf("active curve state: %w", err)
-	}
-	idleBatch := profilingrun.IdleExecutionBatch(idle.State.Backend, spec.PlannedBatchSizes[0])
-	if idle.Measurement.Batch != idleBatch {
-		return fmt.Errorf("idle curve state batch %d does not match required batch %d", idle.Measurement.Batch, idleBatch)
-	}
-	if err := validateCurvePlanRunConfig(
-		idle, idleNodeUID, spec, spec.IdleProtocol,
-	); err != nil {
-		return fmt.Errorf("idle curve state: %w", err)
-	}
-	return nil
 }
 
 func validateCurvePlanSharedRunFacts(active, idle profilingrun.RunConfig) error {

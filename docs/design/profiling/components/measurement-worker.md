@@ -40,9 +40,9 @@ remain Job provenance; only runtime delivery enters RunConfig.
 Authenticated recorded-Job recovery consumes its immutable executable record.
 It does not re-admit mutable copies. ResourceVersion remains provenance.
 
-Loaded-idle uses `profiling/run.IdleExecutionBatch`: ORT uses batch one;
-RKNN retains its fixed artifact batch. The idle Run has no dataset, workload,
-control listener or load Job.
+Loaded-idle runs the batch declared by its `ModelLoadedIdleBaseline`
+(`spec.batch`). The idle Run has no dataset, workload, control listener or
+load Job.
 
 The artifact declaration fixes source paths. Adapters own runtime destinations
 (`model.onnx` or `model.rknn`). Verified RKNN delivery projects exact host

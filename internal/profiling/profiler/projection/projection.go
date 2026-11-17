@@ -1,8 +1,6 @@
 package projection
 
 import (
-	"time"
-
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 )
@@ -42,73 +40,5 @@ func projectIdleObservation(
 		SourceTimestampAbsent:    raw.Metrics.Summary.SourceTimestampAbsent,
 		ConcurrentCHILLWorkloads: workload.ConcurrentCHILLWorkloads,
 		ExternalWorkloadChanges:  workload.ExternalWorkloadChanges,
-	}, nil
-}
-
-func projectTrial(
-	execution profilerevidence.ExecutionEvidence,
-	raw profilerevidence.RawMeasurement,
-) (profilederivation.Trial, error) {
-	windowStart, windowEnd, err := raw.Runtime.MeasurementWindow()
-	if err != nil {
-		return profilederivation.Trial{}, err
-	}
-	latencies := make([]float64, 0, raw.Runtime.InferenceCount)
-	nativeSamples := make([]profilederivation.NativeServiceSample, 0, raw.Runtime.InferenceCount)
-	for _, repetition := range raw.Runtime.Phases {
-		latencies = append(latencies, repetition.LatencyMilliseconds...)
-		for _, sample := range repetition.NativeSamples {
-			copied := profilederivation.NativeServiceSample(sample).Clone()
-			nativeSamples = append(nativeSamples, copied)
-		}
-	}
-	samples := make([]profilederivation.Sample, len(raw.Metrics.Samples))
-	for index, sample := range raw.Metrics.Samples {
-		samples[index] = profilederivation.Sample{ObservedAt: sample.ObservedAt, Watts: sample.Watts}
-	}
-	phases := make([]profilederivation.OperatingPointPhase, len(raw.Runtime.Phases))
-	for index, phase := range raw.Runtime.Phases {
-		start, err := time.Parse(time.RFC3339Nano, phase.MeasurementStartedAt)
-		if err != nil {
-			return profilederivation.Trial{}, err
-		}
-		end, err := time.Parse(time.RFC3339Nano, phase.MeasurementEndedAt)
-		if err != nil {
-			return profilederivation.Trial{}, err
-		}
-		native := make([]profilederivation.NativeServiceSample, len(phase.NativeSamples))
-		for i, sample := range phase.NativeSamples {
-			native[i] = profilederivation.NativeServiceSample(sample).Clone()
-		}
-		phases[index] = profilederivation.OperatingPointPhase{ID: phase.ID, Kind: phase.Kind, WindowStart: start, WindowEnd: end,
-			CompletedItems: phase.CompletedInputs, Samples: samples, NativeSamples: native}
-	}
-	workload, err := projectWorkloadWindow(raw.Workload, windowStart, windowEnd)
-	if err != nil {
-		return profilederivation.Trial{}, err
-	}
-	identities, err := ProjectRunIdentities(execution.RunConfig, execution.Terminal.Node.UID)
-	if err != nil {
-		return profilederivation.Trial{}, err
-	}
-	return profilederivation.Trial{
-		StateIdentity:               identities.StateIdentity,
-		EnvironmentIdentity:         workload.EnvironmentIdentity,
-		MeasurementProtocolIdentity: identities.MeasurementProtocolIdentity,
-		TrialID:                     execution.Terminal.Pod.UID,
-		Batch:                       execution.RunConfig.Measurement.Batch,
-		WindowStart:                 windowStart,
-		WindowEnd:                   windowEnd,
-		CompletedCalls:              raw.Runtime.InferenceCount,
-		CompletedItems:              raw.Runtime.InferenceCount * execution.RunConfig.Measurement.Batch,
-		LatencyMilliseconds:         latencies,
-		NativeSamples:               nativeSamples,
-		Phases:                      phases,
-		Samples:                     samples,
-		Failures:                    len(raw.Metrics.Failures),
-		SourceTimestampAbsent:       raw.Metrics.Summary.SourceTimestampAbsent,
-		ConcurrentCHILLWorkloads:    workload.ConcurrentCHILLWorkloads,
-		ExternalWorkloadChanges:     workload.ExternalWorkloadChanges,
-		WorkloadWindowKnown:         workload.Known,
 	}, nil
 }

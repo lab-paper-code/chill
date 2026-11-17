@@ -8,12 +8,8 @@ import (
 
 func TestEnergyWireNamesMatchGoFieldNames(t *testing.T) {
 	types := []any{
-		EnergyTrial{},
 		IdleTrial{},
 		IdleBaseline{},
-		Point{},
-		BatchEnergyMean{},
-		EnergyOptimizationResult{},
 	}
 	for _, value := range types {
 		typ := reflect.TypeOf(value)

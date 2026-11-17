@@ -10,14 +10,6 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 )
 
-func Trial(evidence profilerevidence.VerifiedEvidence) (profilederivation.Trial, error) {
-	execution, raw, err := evidence.Records()
-	if err != nil {
-		return profilederivation.Trial{}, err
-	}
-	return projectTrial(execution, raw)
-}
-
 // IdleTrial compares the selected physical execution before combining idle
 // measurements. Loader validation owns each record's runtime and numeric inputs.
 func IdleTrial(evidence, reference profilerevidence.VerifiedIdleEvidence) (profilederivation.IdleTrial, error) {

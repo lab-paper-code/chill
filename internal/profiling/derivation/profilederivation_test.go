@@ -2,7 +2,6 @@ package profilederivation
 
 import (
 	"math"
-	"strings"
 	"testing"
 	"time"
 )
@@ -11,29 +10,12 @@ const otherPolicy = "other"
 
 func TestMeasurementIntegratesWindowWithoutScientificVerdicts(t *testing.T) {
 	start := time.Unix(0, 0).UTC()
-	latencies := make([]float64, 100)
-	for index := range latencies {
-		latencies[index] = 1
+	samples := []Sample{
+		{start.Add(time.Second), 10},
+		{start.Add(5 * time.Second), 10},
+		{start.Add(9 * time.Second), 10},
 	}
-	trial := Trial{
-		StateIdentity:               "state",
-		EnvironmentIdentity:         "environment",
-		MeasurementProtocolIdentity: "active-protocol",
-		TrialID:                     "active-1",
-		Batch:                       1,
-		WindowStart:                 start,
-		WindowEnd:                   start.Add(10 * time.Second),
-		CompletedCalls:              100,
-		CompletedItems:              100,
-		LatencyMilliseconds:         latencies,
-		WorkloadWindowKnown:         true,
-		Samples: []Sample{
-			{start.Add(time.Second), 10},
-			{start.Add(5 * time.Second), 10},
-			{start.Add(9 * time.Second), 10},
-		},
-	}
-	joules, err := measurePower(trial.WindowStart, trial.WindowEnd, trial.Samples)
+	joules, err := measurePower(start, start.Add(10*time.Second), samples)
 	if err != nil || math.Abs(joules-100) > 1e-9 {
 		t.Fatalf("energy = %v, error = %v", joules, err)
 	}
@@ -63,43 +45,6 @@ func TestMeasurementIntegratesWindowWithoutScientificVerdicts(t *testing.T) {
 	if _, err := DeriveIdleBaseline(duplicateEvidence, pointPolicy("idle-v1")); err == nil {
 		t.Fatal("expected duplicate idle raw evidence rejection")
 	}
-	completed, err := IncrementalWorkTrial(trial, baseline)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if math.Abs(completed.IncrementalWorkJoulesPerItem-.5) > 1e-9 ||
-		math.Abs(completed.ActiveWindowWallJoulesPerItem-1) > 1e-9 ||
-		math.Abs(completed.IdleBaselineSecondsPerItem-.1) > 1e-9 ||
-		math.Abs(completed.BaselineMeanWallWattsVariance-baseline.MeanWallWattsVariance) > 1e-12 ||
-		completed.BaselineDegreesOfFreedom != baseline.DegreesOfFreedom {
-		t.Fatalf("active sufficient statistics are incomplete: %#v", completed)
-	}
-	if completed.MeasurementProtocolIdentity != "active-protocol" ||
-		!strings.Contains(completed.EstimatorIdentity, "idleProtocol=idle-protocol") {
-		t.Fatalf("estimator identity lost active/idle protocols: %#v", completed)
-	}
-	mismatchedEnvironment := baseline
-	mismatchedEnvironment.EnvironmentIdentity = "other-environment"
-	if _, err := IncrementalWorkTrial(trial, mismatchedEnvironment); err != nil {
-		t.Fatalf("environment observations blocked incremental calculation: %v", err)
-	}
-	trial.WorkloadWindowKnown = false
-	trial.Failures = 2
-	trial.ConcurrentCHILLWorkloads = []string{"other-run"}
-	trial.ExternalWorkloadChanges = []string{"Entered:external"}
-	if got, err := IncrementalWorkTrial(trial, baseline); err != nil || got.IncrementalWorkJoulesPerItem != completed.IncrementalWorkJoulesPerItem {
-		t.Fatalf("observations changed calculation: %+v, %v", got, err)
-	}
-	trial.CompletedItems--
-	if _, err := IncrementalWorkTrial(trial, baseline); err == nil {
-		t.Fatal("invalid denominator accepted")
-	}
-	trial.CompletedItems++
-	trial.Samples = trial.Samples[:1]
-	if _, err := IncrementalWorkTrial(trial, baseline); err == nil {
-		t.Fatal("missing power interval accepted")
-	}
-
 }
 
 func TestRestoreIdleBaselineValidatesStoredAggregateAndOwnsTrials(t *testing.T) {
@@ -125,178 +70,6 @@ func TestRestoreIdleBaselineValidatesStoredAggregateAndOwnsTrials(t *testing.T) 
 	}
 }
 
-func TestAggregateRequiresIndependentTrials(t *testing.T) {
-	trials := []EnergyTrial{
-		{
-			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
-			TrialID: "1", EstimatorIdentity: "e", Batch: 1,
-			ActiveWindowWallJoulesPerItem: 2, IdleBaselineSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
-			BaselineConfidenceLevel:      0.95,
-			IncrementalWorkJoulesPerItem: 1, LatencyP99Milliseconds: 2,
-		},
-		{
-			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
-			TrialID: "2", EstimatorIdentity: "e", Batch: 1,
-			ActiveWindowWallJoulesPerItem: 2.1, IdleBaselineSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
-			BaselineConfidenceLevel:      0.95,
-			IncrementalWorkJoulesPerItem: 1.1, LatencyP99Milliseconds: 3,
-		},
-		{
-			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
-			TrialID: "3", EstimatorIdentity: "e", Batch: 1,
-			ActiveWindowWallJoulesPerItem: 1.9, IdleBaselineSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
-			BaselineConfidenceLevel:      0.95,
-			IncrementalWorkJoulesPerItem: .9, LatencyP99Milliseconds: 2.5,
-		},
-	}
-	point, err := Aggregate(trials, pointPolicy("v1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if point.MeanIncrementalWorkJoulesPerItem != 1 || point.Confidence.HalfWidth <= 0 ||
-		point.LatencyP99Milliseconds != 3 {
-		t.Fatalf("unexpected point: %+v", point)
-	}
-	lowerConfidenceTrials := append([]EnergyTrial(nil), trials...)
-	for index := range lowerConfidenceTrials {
-		lowerConfidenceTrials[index].BaselineConfidenceLevel = 0.8
-	}
-	lowerConfidencePolicy := pointPolicy("v2")
-	lowerConfidencePolicy.ConfidenceLevel = 0.8
-	lowerConfidencePoint, err := Aggregate(lowerConfidenceTrials, lowerConfidencePolicy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lowerConfidencePoint.Confidence.Level != 0.8 ||
-		lowerConfidencePoint.Confidence.HalfWidth >= point.Confidence.HalfWidth {
-		t.Fatalf("configured point confidence was not applied: %+v", lowerConfidencePoint)
-	}
-	if _, err := Aggregate(trials[:1], pointPolicy("v1")); err == nil {
-		t.Fatal("expected repetition rejection")
-	}
-	duplicate := append([]EnergyTrial(nil), trials...)
-	duplicate[2].TrialID = "2"
-	if _, err := Aggregate(duplicate, pointPolicy("v1")); err == nil {
-		t.Fatal("expected duplicate trial rejection")
-	}
-	mixed := append([]EnergyTrial(nil), trials...)
-	mixed[2].BaselineDegreesOfFreedom++
-	if _, err := Aggregate(mixed, pointPolicy("v1")); err == nil {
-		t.Fatal("expected mixed baseline sufficient-statistics rejection")
-	}
-	uncertain := append([]EnergyTrial(nil), trials...)
-	baselineVariance := math.Pow(.5/studentTCritical(0.95, 2), 2)
-	for index := range uncertain {
-		uncertain[index].BaselineMeanWallWattsVariance = baselineVariance
-	}
-	uncertainPoint, err := Aggregate(uncertain, pointPolicy("v1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if uncertainPoint.Confidence.VarianceOfMean == nil ||
-		*uncertainPoint.Confidence.VarianceOfMean < baselineVariance {
-		t.Fatal("baseline uncertainty was discarded")
-	}
-	uncertain[0].BaselineMeanWallWattsVariance = math.NaN()
-	if _, err := Aggregate(uncertain, pointPolicy("v1")); err == nil {
-		t.Fatal("expected invalid uncertainty contribution rejection")
-	}
-}
-
-func TestAggregateRebuildsAndVersionsPointConfidence(t *testing.T) {
-	idleValues := []float64{4.929898, 4.893351, 4.897335}
-	idleTrials := make([]IdleTrial, len(idleValues))
-	for index, value := range idleValues {
-		id := []string{"idle-a", "idle-b", "idle-c"}[index]
-		idleTrials[index] = IdleTrial{
-			StateIdentity: "state", EnvironmentIdentity: "environment",
-			MeasurementProtocolIdentity: "idle-protocol", TrialID: id,
-			RawEvidence: rawEvidence(id), ModelLoadedIdleMeanWallWatts: value,
-		}
-	}
-	baseline, err := DeriveIdleBaseline(idleTrials, pointPolicy("idle-point"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	incrementalWorkValues := []float64{0.068805, 0.065637, 0.065410}
-	completedItems := []int{5417, 5255, 5178}
-	activeTrials := make([]EnergyTrial, len(incrementalWorkValues))
-	for index, incrementalWork := range incrementalWorkValues {
-		trialID := []string{"active-a", "active-b", "active-c"}[index]
-		total := incrementalWork*float64(completedItems[index]) +
-			baseline.ModelLoadedIdleMeanWallWatts*30
-		trial := Trial{
-			StateIdentity: "state", EnvironmentIdentity: "environment",
-			MeasurementProtocolIdentity: "active-protocol", TrialID: trialID,
-			Batch: 1, CompletedItems: completedItems[index], CompletedCalls: completedItems[index], LatencyMilliseconds: repeatLatency(completedItems[index]),
-			WindowStart: time.Unix(0, 0), WindowEnd: time.Unix(30, 0),
-			Samples: []Sample{{time.Unix(1, 0), total / 30}, {time.Unix(29, 0), total / 30}},
-		}
-		activeTrials[index], err = IncrementalWorkTrial(trial, baseline)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	point, err := Aggregate(activeTrials, pointPolicy("active-point"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if math.Abs(point.MeanIncrementalWorkJoulesPerItem-0.06661733333333333) > 1e-12 {
-		t.Fatalf("live point estimate moved: %.15f", point.MeanIncrementalWorkJoulesPerItem)
-	}
-	if point.Confidence.EstimatorVersion != PointEstimatorVersion ||
-		point.Confidence.Method != PointConfidenceMethod ||
-		point.Confidence.VarianceOfMean == nil ||
-		point.Confidence.EffectiveDegreesOfFreedom == nil ||
-		point.Confidence.HalfWidth <= 0 {
-		t.Fatalf("rebuilt confidence is incomplete: %+v", point.Confidence)
-	}
-	activeVariance := point.IncrementalWorkSampleVariance / float64(len(activeTrials))
-	baselineVariance := math.Pow(point.MeanIdleBaselineSecondsPerItem, 2) *
-		baseline.MeanWallWattsVariance
-	wantVariance := activeVariance + baselineVariance
-	wantDegreesOfFreedom := wantVariance * wantVariance /
-		(math.Pow(activeVariance, 2)/2 + math.Pow(baselineVariance, 2)/2)
-	wantHalfWidth := studentTQuantile(0.975, wantDegreesOfFreedom) * math.Sqrt(wantVariance)
-	if math.Abs(*point.Confidence.VarianceOfMean-wantVariance) > 1e-15 ||
-		math.Abs(*point.Confidence.EffectiveDegreesOfFreedom-wantDegreesOfFreedom) > 1e-12 ||
-		math.Abs(point.Confidence.HalfWidth-wantHalfWidth) > 1e-12 {
-		t.Fatalf("Welch components were not preserved: %+v", point.Confidence)
-	}
-}
-
-func TestIncrementalWorkTrialPreservesWallEnergyIdentity(t *testing.T) {
-	baseline, err := DeriveIdleBaseline([]IdleTrial{
-		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-1", RawEvidence: rawEvidence("identity-idle-1"), ModelLoadedIdleMeanWallWatts: 4},
-		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-2", RawEvidence: rawEvidence("identity-idle-2"), ModelLoadedIdleMeanWallWatts: 5},
-		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-3", RawEvidence: rawEvidence("identity-idle-3"), ModelLoadedIdleMeanWallWatts: 6},
-	}, pointPolicy("idle-point"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	totalWallJoules := 100.0
-	trial, err := IncrementalWorkTrial(Trial{
-		StateIdentity: "state", EnvironmentIdentity: "environment",
-		MeasurementProtocolIdentity: "active-protocol", TrialID: "active-identity",
-		Batch: 2, CompletedItems: 100, CompletedCalls: 50, LatencyMilliseconds: repeatLatency(50),
-		WindowStart: time.Unix(0, 0), WindowEnd: time.Unix(10, 0),
-		Samples: []Sample{{time.Unix(1, 0), totalWallJoules / 10}, {time.Unix(9, 0), totalWallJoules / 10}},
-	}, baseline)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	restoredWallJoulesPerItem := trial.IncrementalWorkJoulesPerItem +
-		baseline.ModelLoadedIdleMeanWallWatts*trial.IdleBaselineSecondsPerItem
-	if math.Abs(trial.ActiveWindowWallJoulesPerItem-restoredWallJoulesPerItem) > 1e-12 {
-		t.Fatalf("e_wall = %.12f, epsilon + P_idle*c = %.12f",
-			trial.ActiveWindowWallJoulesPerItem, restoredWallJoulesPerItem)
-	}
-}
-
 func pointPolicy(version string) PointPolicy {
 	return PointPolicy{Version: version, MinimumTrials: 3, ConfidenceLevel: 0.95}
 }
@@ -306,12 +79,4 @@ func rawEvidence(key string) RawEvidenceIdentity {
 		Store: "chill-evidence", Key: "runs/" + key + "/raw.json",
 		Size: 1,
 	}
-}
-
-func repeatLatency(n int) []float64 {
-	values := make([]float64, n)
-	for i := range values {
-		values[i] = 1
-	}
-	return values
 }

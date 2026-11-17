@@ -82,7 +82,7 @@ utilization 에너지와 독립 idle로 증분 에너지를 도출한다. satura
 
 ## 저장과 지원 범위
 
-RunConfig, CurvePlan과 raw는 모델 files, 전처리, Dataset과 Actor, 실제 runtime metadata와 trial을 동결한다. 현행 reader는 owner source의 단일 schema를 사용한다. [Durable Stored-Contract Compatibility](../../adr/0019-durable-stored-contract-compatibility.md)를 따른다.
+RunConfig, CurvePlanSpec과 raw는 모델 files, 전처리, Dataset과 Actor, 실제 runtime metadata와 trial을 동결한다. 현행 reader는 owner source의 단일 schema를 사용한다. [Durable Stored-Contract Compatibility](../../adr/0019-durable-stored-contract-compatibility.md)를 따른다.
 
 모델과 전처리, Dataset 예제는 [catalog sample](../../../config/samples/catalog/README.md)에 있다. 실제 image와 architecture, CUDA와 RKNN 지원은 runtime declaration과 [image recipe](../../../build/docker/firstfloor.Dockerfile)로 확인한다. 과거 장비 smoke를 현재 전체 지원이나 SLO 보증으로 사용하지 않는다.
 

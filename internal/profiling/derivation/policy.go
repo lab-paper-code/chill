@@ -5,11 +5,6 @@ import (
 	"math"
 )
 
-const (
-	PointEstimatorVersion = "incremental-point-welch-satterthwaite-v2"
-	PointConfidenceMethod = "student-t-welch-satterthwaite"
-)
-
 func validatePointPolicy(policy PointPolicy) error {
 	if policy.Version == "" || policy.MinimumTrials < 2 || !validProbability(policy.ConfidenceLevel) {
 		return errors.New("point policy must use a valid confidence level with at least two trials")

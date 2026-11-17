@@ -45,8 +45,8 @@ type SessionResult struct {
 }
 
 // SessionCondition is the configuration a session measured. It reuses the
-// curve plan's contracts but not CurvePlanSpec itself: that spec is validated
-// with the active and idle protocol contracts (fixed phase lengths, observer
+// curve plan's contracts but not CurvePlanSpec itself: that spec carries
+// the active and idle protocol contracts (fixed phase lengths, observer
 // images) and the metric-source contract of the apparatus the session
 // replaces, none of which a session has.
 type SessionCondition struct {

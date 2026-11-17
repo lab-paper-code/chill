@@ -2,7 +2,6 @@ package profilederivation
 
 import (
 	"errors"
-	"math"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
@@ -24,40 +23,6 @@ func measurePower(start, end time.Time, samples []Sample) (float64, error) {
 	return powerwindow.Integrate(powerwindow.Window{Start: start, End: end, Samples: points}, powerwindow.Policy{
 		MaximumBoundaryDistance: duration, MaximumGap: duration,
 	})
-}
-
-func validateTrial(trial Trial) error {
-	if trial.Batch < 1 || trial.CompletedCalls < 1 || trial.CompletedItems != trial.CompletedCalls*trial.Batch || len(trial.LatencyMilliseconds) != trial.CompletedCalls {
-		return errors.New("trial counts or latency samples are invalid")
-	}
-	for _, value := range trial.LatencyMilliseconds {
-		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-			return errors.New("latency must be positive and finite")
-		}
-	}
-	if len(trial.NativeSamples) > 0 {
-		if len(trial.NativeSamples) != trial.CompletedCalls {
-			return errors.New("native samples are not correlated with client calls")
-		}
-		seen := make(map[uint64]bool, len(trial.NativeSamples))
-		for index, sample := range trial.NativeSamples {
-			if sample.BatchID == 0 || seen[sample.BatchID] || sample.BatchSize != trial.Batch {
-				return errors.New("native batch identity is invalid")
-			}
-			seen[sample.BatchID] = true
-			for _, value := range []float64{sample.RunnerServiceMilliseconds, sample.BackendCallMilliseconds, sample.NativeRequestMilliseconds} {
-				if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-					return errors.New("native span must be positive and finite")
-				}
-			}
-			if sample.BackendCallMilliseconds > sample.RunnerServiceMilliseconds ||
-				sample.RunnerServiceMilliseconds > sample.NativeRequestMilliseconds ||
-				sample.NativeRequestMilliseconds > trial.LatencyMilliseconds[index] {
-				return errors.New("native overlapping span order is invalid")
-			}
-		}
-	}
-	return nil
 }
 
 func MeasureIdle(observation IdleObservation) (IdleTrial, error) {

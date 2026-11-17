@@ -8,54 +8,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
-	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
-
-func TestProjectVerifiedCurveStateRequiresLoaderEvidence(t *testing.T) {
-	if _, err := ProjectVerifiedCurveState(
-		profilederivation.CurvePlan{},
-		profilerevidence.VerifiedEvidence{}, profilerevidence.VerifiedIdleEvidence{},
-	); err == nil {
-		t.Fatal("empty Loader evidence was accepted")
-	}
-}
-
-func TestCurvePlanIdleBatchPolicy(t *testing.T) {
-	for _, backend := range []string{profilingrun.FirstfloorORTCPUBackend, profilingrun.FirstfloorORTCUDABackend, profilingrun.FirstfloorRKNNLiteBackend} {
-		t.Run(backend, func(t *testing.T) {
-			active := curvePlanRunConfig()
-			active.State.RuntimeFamily, active.State.Backend = profilingrun.FirstfloorRuntimeFamily, backend
-			active.Candidate.ExecutionPath = backend
-			if backend == profilingrun.FirstfloorRKNNLiteBackend {
-				active.Candidate.ExecutionPath = "rknn-bs4"
-			}
-			active.Measurement.Batch = 4
-			idle := active
-			wantBatch := 1
-			if backend == profilingrun.FirstfloorRKNNLiteBackend {
-				wantBatch = 4
-			}
-			idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
-			idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
-			idle.Measurement = profilingrun.MeasurementContract{
-				Batch: wantBatch, SettlingDurationSeconds: 60, DurationSeconds: 30,
-				WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
-			}
-			spec, err := ProjectCurvePlanSpec("test-curve", active, idle, profilederivation.CurveConversionContract{}, []int{4})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := ValidateCurvePlanRunConfigs(active, idle, active.TargetNode.UID, idle.TargetNode.UID, spec); err != nil {
-				t.Fatal(err)
-			}
-			idle.Measurement.Batch = 5 - wantBatch
-			if err := ValidateCurvePlanRunConfigs(active, idle, active.TargetNode.UID, idle.TargetNode.UID, spec); err == nil {
-				t.Fatal("wrong idle measurement batch was accepted")
-			}
-		})
-	}
-}
 
 func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) {
 	active := curvePlanRunConfig()
@@ -102,11 +56,7 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 		spec.ActiveProtocol.WorkloadResourceVersion != active.Measurement.WorkloadResourceVersion {
 		t.Fatalf("actor or sample-stop provenance lost: %+v", spec)
 	}
-	plan, err := profilederivation.NewCurvePlan(spec)
-	if err != nil {
-		t.Fatalf("construct curve plan: %v", err)
-	}
-	recorded := plan.Shared()
+	recorded := spec
 	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, recorded, recorded.ActiveProtocol); err != nil {
 		t.Fatalf("validate active RunConfig against projected plan: %v", err)
 	}
@@ -268,129 +218,6 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 				t.Fatal("active/idle disagreement was accepted")
 			}
 		})
-	}
-}
-
-func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) {
-	active := curvePlanRunConfig()
-	idle := active
-	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
-	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
-	idle.Measurement = profilingrun.MeasurementContract{
-		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
-	}
-	activeProtocol := projectCurveProtocol(active)
-	idleProtocol := projectCurveProtocol(idle)
-	shared := profilederivation.CurvePlanSpec{
-		Name: "test-curve", LogicalModel: active.State.Model,
-		DeviceClass: active.State.DeviceClass, NodeUID: active.TargetNode.UID,
-		RuntimeFamily: active.State.RuntimeFamily, Backend: active.State.Backend,
-		Firstfloor:   modelcompat.CloneFirstfloorRuntimeSettings(active.State.Firstfloor),
-		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
-		MetricSource:   projectCurveMetricSource(active.Metrics),
-		ActiveProtocol: activeProtocol, IdleProtocol: idleProtocol,
-		Artifact: profilederivation.CurveArtifactContract{
-			ExecutionPath: active.Candidate.ExecutionPath, Name: active.State.Artifact,
-			Files: active.State.ArtifactFiles, Image: active.Images.Artifact,
-		},
-		Preprocessor:      projectCurvePreprocessor(active.State.Preprocessor),
-		PlannedBatchSizes: []int{1},
-	}
-	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
-		t.Fatal(err)
-	}
-	drifted := active
-	drifted.Images.Artifact = "different"
-	if err := ValidateCurvePlanRunConfigs(drifted, idle, "node-uid", "node-uid", shared); err == nil {
-		t.Fatal("artifact-supply drift was accepted")
-	}
-	drifted = idle
-	drifted.TargetNode.UID = "other-node"
-	if err := ValidateCurvePlanRunConfigs(active, drifted, "node-uid", "other-node", shared); err == nil {
-		t.Fatal("Node drift was accepted")
-	}
-	drifted = idle
-	drifted.Candidate.ExecutionPath = "different-path"
-	if err := ValidateCurvePlanRunConfigs(active, drifted, "node-uid", "node-uid", shared); err == nil {
-		t.Fatal("active/idle execution-path disagreement was accepted")
-	}
-	for name, mutate := range map[string]func(*profilingrun.RunConfig){
-		"model":          func(c *profilingrun.RunConfig) { c.State.Model = "other-model" },
-		"backend":        func(c *profilingrun.RunConfig) { c.State.Backend = "other-backend" },
-		"power":          func(c *profilingrun.RunConfig) { c.State.PowerMode = "other-power-mode" },
-		"native inputs":  func(c *profilingrun.RunConfig) { c.Actor.Inputs = []string{"other-input"} },
-		"native command": func(c *profilingrun.RunConfig) { c.Actor.RunnerCommand = []string{"/other-runner"} },
-	} {
-		t.Run(name, func(t *testing.T) {
-			drifted := active
-			mutate(&drifted)
-			if err := ValidateCurvePlanRunConfigs(drifted, idle, "node-uid", "node-uid", shared); err == nil {
-				t.Fatalf("different actual %s entered the frozen curve", name)
-			}
-		})
-	}
-}
-
-func TestVerifiedCurvePlanUsesBatchOneORTIdleWitness(t *testing.T) {
-	active := curvePlanRunConfig()
-	active.Candidate.ExecutionPath = "ort-cpu"
-	active.State.Artifact = "canonical-onnx"
-	active.State.ArtifactFiles = []string{"/artifact/model.onnx"}
-	active.State.RuntimeFamily = profilingrun.FirstfloorRuntimeFamily
-	active.State.Backend = profilingrun.FirstfloorORTCPUBackend
-	active.State.HostContract = nil
-	active.Measurement.Batch = 2
-	idle := active
-	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
-	idle.LoadOriginNode, idle.LoadOriginGatewayPod = "", nil
-	idle.Measurement = profilingrun.MeasurementContract{
-		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
-	}
-	activeProtocol := projectCurveProtocol(active)
-	idleProtocol := projectCurveProtocol(idle)
-	shared := profilederivation.CurvePlanSpec{
-		Name: "test-curve", LogicalModel: active.State.Model,
-		DeviceClass: active.State.DeviceClass, NodeUID: active.TargetNode.UID,
-		RuntimeFamily: active.State.RuntimeFamily, Backend: active.State.Backend,
-		Firstfloor:   modelcompat.CloneFirstfloorRuntimeSettings(active.State.Firstfloor),
-		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
-		MetricSource:   projectCurveMetricSource(active.Metrics),
-		ActiveProtocol: activeProtocol, IdleProtocol: idleProtocol,
-		Artifact: profilederivation.CurveArtifactContract{
-			ExecutionPath: active.Candidate.ExecutionPath, Name: active.State.Artifact,
-			Files: active.State.ArtifactFiles, Image: active.Images.Artifact,
-		},
-		Preprocessor:      projectCurvePreprocessor(active.State.Preprocessor),
-		PlannedBatchSizes: []int{1, 2},
-	}
-	if _, err := profilederivation.NewCurvePlan(shared); err != nil {
-		t.Fatalf("construct converter-free ORT plan: %v", err)
-	}
-	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
-		t.Fatal(err)
-	}
-
-	idle.Measurement.Batch = 2
-	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
-		t.Fatal("curve plan accepted a non-canonical idle batch")
-	}
-	idle.Measurement.Batch = 1
-	active.Measurement.Batch = 3
-	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
-		t.Fatal("curve plan accepted an unplanned active batch")
-	}
-
-	shared.PlannedBatchSizes = []int{2, 4}
-	active.Measurement.Batch = 4
-	idle.Measurement.Batch = 1
-	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
-		t.Fatalf("batch one was not accepted as the ORT idle witness: %v", err)
-	}
-	idle.Measurement.Batch = 2
-	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
-		t.Fatal("curve plan accepted a non-canonical ORT idle batch")
 	}
 }
 

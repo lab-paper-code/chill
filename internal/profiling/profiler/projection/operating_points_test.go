@@ -13,13 +13,11 @@ func TestFrozenOperatingPointsRoundTripWithoutAliasing(t *testing.T) {
 		RequestLifetimeSeconds: 10, DeliveryMarginMilliseconds: 100, FramedDecodedRequestUpperBytes: 1024, QueueBytesCap: 64 << 20,
 	}}}
 	protocol := projectCurveProtocol(config)
-	var measurement profilingrun.MeasurementContract
-	ApplyFrozenActiveProtocol(&measurement, protocol)
-	if !reflect.DeepEqual(config.Measurement.OperatingPoints, measurement.OperatingPoints) {
-		t.Fatalf("frozen operating points changed: %+v", measurement.OperatingPoints)
+	if !reflect.DeepEqual(config.Measurement.OperatingPoints, (*profilingrun.OperatingPointsContract)(protocol.OperatingPoints)) {
+		t.Fatalf("frozen operating points changed: %+v", protocol.OperatingPoints)
 	}
-	measurement.OperatingPoints.Utilizations[0] = .9
+	config.Measurement.OperatingPoints.Utilizations[0] = .9
 	if protocol.OperatingPoints.Utilizations[0] != .2 {
-		t.Fatal("child mutated frozen arrival rates")
+		t.Fatal("RunConfig mutated frozen arrival rates")
 	}
 }
