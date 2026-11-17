@@ -45,16 +45,13 @@ type SchedulerSettings struct {
 	// ExcludedNodes names Nodes the planner keeps as they are, like
 	// measurement Nodes: no placement, removal, power change or lowering.
 	ExcludedNodes []string `json:"excludedNodes"`
-	// Capacity rows judge CapacityWindows Poisson windows of at least
-	// CapacityWindow and CapacityMinimumRequests arrivals; a rate is met when
-	// CapacityPassingWindows of them meet the SLO.
-	CapacityWindow          time.Duration `json:"capacityWindowNanos"`
-	CapacityWindows         int           `json:"capacityWindows"`
-	CapacityPassingWindows  int           `json:"capacityPassingWindows"`
-	CapacityMinimumRequests int           `json:"capacityMinimumRequests"`
-	CapacityGridSteps       int           `json:"capacityGridSteps"`
-	CapacityBisectionWidth  float64       `json:"capacityBisectionWidth"`
-	CapacityTailSamples     int           `json:"capacityTailSamples"`
+	// Offline capacity rows (BuildCapacityRow) take at least
+	// CapacityMinimumRequests arrivals per window and judge by the grid and
+	// bisection settings below.
+	CapacityMinimumRequests int     `json:"capacityMinimumRequests"`
+	CapacityGridSteps       int     `json:"capacityGridSteps"`
+	CapacityBisectionWidth  float64 `json:"capacityBisectionWidth"`
+	CapacityTailSamples     int     `json:"capacityTailSamples"`
 	// Dispatch occupancy defaults to configured ns/request when no measured/DOM d exists.
 	DefaultDispatchOccupancyNanos int64 `json:"defaultDispatchOccupancyNanos"`
 	// DefaultOperationCost supplies whole-wall costs for unmeasured operations.
@@ -62,7 +59,7 @@ type SchedulerSettings struct {
 	DefaultOperationCost map[string]OperationCostValue `json:"defaultOperationCost,omitempty"`
 	DefaultIdlePower     *IdlePowerDefault             `json:"defaultIdlePower,omitempty"`
 	// PlanSearchWorkers bounds the goroutines that evaluate plan sets at once;
-	// the search itself ends within half of ControlInterval.
+	// each search round ends within half of ControlInterval.
 	PlanSearchWorkers       int               `json:"planSearchWorkers"`
 	PlanSearchStrategy      string            `json:"planSearchStrategy"`
 	PlanSearchEvaluations   int               `json:"planSearchEvaluations"`
@@ -610,7 +607,6 @@ type SchedulerEvaluationTiming struct {
 	Preparation time.Duration `json:"preparationNanos"`
 	Search      time.Duration `json:"searchNanos"`
 	Payback     time.Duration `json:"paybackNanos"`
-	Rates       time.Duration `json:"ratesNanos"`
 	Projection  time.Duration `json:"projectionNanos"`
 	Surrogate   time.Duration `json:"surrogateElapsedNanos"`
 	Exact       time.Duration `json:"exactElapsedNanos"`
@@ -646,8 +642,8 @@ func (s SchedulerSettings) Validate() error {
 			return fmt.Errorf("minimumDemand entries need nonempty Workload UIDs and finite nonnegative rates")
 		}
 	}
-	if s.CapacityWindow <= 0 || s.CapacityWindows < 1 || s.CapacityPassingWindows < 1 || s.CapacityPassingWindows > s.CapacityWindows || s.CapacityMinimumRequests < 1 {
-		return fmt.Errorf("capacity settings need capacityWindowNanos > 0, capacityWindows >= 1, 1 <= capacityPassingWindows <= capacityWindows and capacityMinimumRequests >= 1")
+	if s.CapacityMinimumRequests < 1 {
+		return fmt.Errorf("capacityMinimumRequests must be at least 1")
 	}
 	if err := s.validateCapacityNumerics(); err != nil {
 		return err

@@ -146,7 +146,6 @@ func NewHandler(manager *management.Manager, runtime *serving.Runtime, authorize
 	h.mux.HandleFunc("PUT /api/v1/scheduler/settings", h.scheduler)
 	h.mux.HandleFunc("PUT /api/v1/scheduler", h.scheduler)
 	h.mux.HandleFunc("GET /api/v1/scheduler/catalog-read", h.catalogRead)
-	h.mux.HandleFunc("GET /api/v1/scheduler/capacity", h.schedulerCapacity)
 	h.mux.HandleFunc("POST "+manualOperationsPath, h.operations)
 
 	h.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)

@@ -53,8 +53,8 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 	settings := withSchedulerEstimateFixture(serving.SchedulerSettings{
 		ObservationWindow: time.Second,
 		ControlInterval:   time.Second, ComparisonPeriod: time.Second,
-		MaxReplicas:  1,
-		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
+		MaxReplicas:       1,
+		MaxInstances:      1,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 		PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4,
 		CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
@@ -112,8 +112,7 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 		t.Fatalf("omitted completionMarginMS accepted: %v", err)
 	}
 	// Each capacity and plan-search setting is required; an omitted one decodes as zero and fails validation.
-	fields := []string{"capacityWindowNanos", "capacityWindows", "capacityPassingWindows", "capacityMinimumRequests",
-		"planSearchWorkers"}
+	fields := []string{"capacityMinimumRequests", "planSearchWorkers"}
 	for _, field := range fields {
 		var without map[string]json.RawMessage
 		if err = json.Unmarshal(rawSettings, &without); err != nil {

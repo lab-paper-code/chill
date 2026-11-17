@@ -51,13 +51,9 @@ q는 service 시작이 아직 관측되지 않은 pending, queued, deferred 요�
 
 모든 후보는 같은 실행 제외 범위를 사용한다. 실패한 action의 미래 효과와 실행 입력이 없는 executor를 모델 공급에서 제외하되 실물 점유, 예약, owner 의무, 요청 모집단은 보존한다. retained worker가 실제 처리한 만큼만 큐를 줄이고 running batch는 같은 조건부 residual 법칙을 쓴다.
 
-## 분배와 현재 요청률 검사
+## 분배
 
 profile의 양의 `RoutingWeight`는 빠른 관측 support에서 도출한 상대 분배값이다. 분배가 켜져 있으면 에너지와 physical ID의 안정적인 순서로 합 1000인 정수 weight를 구성한다. 꺼져 있으면 현재 weight와 새 option의 configured weight를 사용한다. 요청 에너지도 이 정수 weight를 소비한다.
-
-현재 구성과 선택 구성의 인스턴스별 양수 nominal rate를 중복 제거해 Poisson 창으로 검사한다. κ̂는 그 검사에서 통과한 최대 rate다. 0이나 빈 tests는 통과 근거 부재를 나타낸다. 이 값이나 검사 실패만으로 후보를 제거하지 않는다.
-
-`BuildCapacityRow`와 `hack/kappa`의 전체 격자, 이분 탐색과 `NonMonotone`은 명시적 offline 계산이다. online 판단은 행 준비를 기다리지 않는다. TOTAL이나 POST가 바뀌면 이전 pass, CDF와 κ̂를 현재값으로 재사용하지 않는다. 같은 수치 입력의 완료 결과와 불변 raw, random tape는 재사용할 수 있다.
 
 ### 디스패치 점유
 
@@ -65,7 +61,7 @@ profile의 양의 `RoutingWeight`는 빠른 관측 support에서 도출한 상�
 
 운영 선택은 minimumPairs를 충족한 rolling median, 프로파일의 세션 포화 수준 점유 표본 중앙값, 정확한 legacy Accepted DOM, configured `defaultDispatchOccupancyNanos` 순이다. Node UID, 모델, 전력모드, 실행 경로, batch, profile ID를 맞춘다. 운영 median은 0 이상으로 clamp하고 반올림한다.
 
-rate 계산의 처리율 추정은 측정 batch별 `b/(profileMean(b)+b×d)`의 최댓값이며 replay는 시작한 실제 batch마다 `batch size×d`를 한 번 더한다. 저비용 service 항은 gap의 조건부 SLO 분위수에 batch 점유를 더한다. 실행 중인 인스턴스의 gap은 현재 idle 나이다. 아직 실행하지 않은 option은 Workload 요청률 λ가 뜻하는 평균 idle 구간 1/λ(Poisson 도착에서 빈 실행기가 기다리는 평균)에서 같은 방식으로 질의한다. λ=0은 그 극한인 가장 긴 gap이다. 분위수가 식별되지 않으면(기록이 표본 하한보다 적음) profile 부재와 같은 `MissingConditionalService`다. 분배값, 처리율 추정, 현재 κ̂와 실제 지연은 각각의 의미를 유지한다.
+rate 계산의 처리율 추정은 측정 batch별 `b/(profileMean(b)+b×d)`의 최댓값이며 replay는 시작한 실제 batch마다 `batch size×d`를 한 번 더한다. 저비용 service 항은 gap의 조건부 SLO 분위수에 batch 점유를 더한다. 실행 중인 인스턴스의 gap은 현재 idle 나이다. 아직 실행하지 않은 option은 Workload 요청률 λ가 뜻하는 평균 idle 구간 1/λ(Poisson 도착에서 빈 실행기가 기다리는 평균)에서 같은 방식으로 질의한다. λ=0은 그 극한인 가장 긴 gap이다. 분위수가 식별되지 않으면(기록이 표본 하한보다 적음) profile 부재와 같은 `MissingConditionalService`다. 분배값, 처리율 추정과 실제 지연은 각각의 의미를 유지한다.
 
 snapshot과 검사 입력은 선택 tuple, source와 `provenance{source,pairs,window,updatedAt,value}`를 보존한다. metadata만 달라지고 선택 d와 전체 수치 입력이 같으면 계산을 재사용할 수 있다. legacy scalar와 신규 burst evidence의 저장 계약은 [측정 API](measurement-api.md)에 둔다.
 
@@ -135,7 +131,7 @@ minimumGain은 선택 operation의 `energyUncertaintyJoules`와 baseline의 `wat
 
 재생 공급 보정. 직접 재생(keep seed, finalists와 한 노드 정밀 탐색)은 Workload w를 SLO 미충족으로 판정하고 w의 모집단 일부를 완료하지 못했을 때만 w의 처리량을 측정한다. 이 부족(shortfall)의 측정 처리량은 성공 완료율 `((OnTime+Late)/Population) × λ_w`다. w를 모두 완료한 재생은 늦은 완료가 있어도 공급이 λ_w에 이르렀다는 것만 보이므로 처리량을 측정하지 않는다. 무효 재생(InvalidReasons)은 후보를 계획대로 실행하지 않았으므로 아무것도 측정하지 않는다. 계획 P의 부족마다 `r_w(P) = 측정 처리량 / S_w(P)`이고 `S_w(P)`는 P의 보정 전 최종 instance profile throughput 합이다. w의 profile throughput이 없는 P에는 보정할 처리량이 없다. `c_w`는 판단 안의 `r_w` 최솟값이며 1 미만일 때만 적용한다. scalar 표의 w profile throughput(최종, retained, service 합과 부하 분배 몫)은 모두 `c_w`를 곱한 값이다.
 
-keep의 재생은 탐색 전에 읽으므로 keep의 부족이 첫 순회의 표를 보정한다. 이 평가는 엔진이 첫 순회에서 SeedKeep 전에 처음 수행하는 keep 평가와 같은 호출, 같은 계획기 상태이며 재생은 memo로 공유한다. funnel의 최선이 SLO 미충족이고 어떤 `c_w`가 낮아졌으면 표를 다시 만들고 후보를 다시 생성한다. 다시 생성한 순회의 정밀 결과가 지금 최선보다 정밀 순서에서 엄밀히 낫지 않으면 반복을 끝낸다. 첫 순회 뒤의 순회는 `c_w`가 낮아진 뒤에만 시작하고(`c_w`는 낮아지기만 한다) 최선을 엄밀히 개선할 때만 이어지므로, 판단의 유한한 계획 집합에서 반복은 끝난다. 각 순회는 첫 순회의 순회 예산, 곧 같은 평가 수와 search 시작부터 마감까지의 시간을 그 순회의 시작부터 받는다. 정밀 funnel은 마감 밖이므로 판단 시간은 순회 수만큼 늘어난다. keep이 충족하면 keep에는 부족이 없고 최선도 충족하므로 판단은 보정 없는 한 번의 순회다. v1 전략은 보정하지 않는다.
+keep의 재생은 탐색 전에 읽으므로 keep의 부족이 첫 순회의 표를 보정한다. 이 평가는 엔진이 첫 순회에서 SeedKeep 전에 처음 수행하는 keep 평가와 같은 호출, 같은 계획기 상태이며 재생은 memo로 공유한다. 순회의 재생이 어떤 `c_w`를 낮췄으면 표를 다시 만들고 후보를 다시 생성한다. 어느 후보의 재생에서 나온 부족이든 대리 공급의 오차를 보이기 때문이다. 다시 생성한 순회의 정밀 결과가 지금 최선보다 정밀 순서(`capacityResult.better`)에서 엄밀히 낫지 않으면 반복을 끝낸다. 첫 순회 뒤의 순회는 `c_w`가 낮아진 뒤에만 시작하고(`c_w`는 낮아지기만 한다) 최선을 엄밀히 개선할 때만 이어지므로, 판단의 유한한 계획 집합에서 반복은 끝난다. 각 순회는 첫 순회의 순회 예산, 곧 같은 평가 수와 search 시작부터 마감까지의 시간을 그 순회의 시작부터 받는다. 정밀 funnel은 마감 밖이므로 판단 시간은 순회 수만큼 늘어난다. keep이 충족하고 어느 재생에도 부족이 없으면 판단은 보정 없는 한 번의 순회다. v1 전략은 보정하지 않는다.
 
 알려진 한계. `c_w`는 Workload마다 하나이며 가장 나쁜 계획의 비율이 모든 계획에 적용된다. admission이 처리량 부족과 지연이나 전환 때문의 미충족을 모두 거절로 바꾸므로 Workload 단위 집계로는 둘을 구분하지 못하고, 공급이 수요보다 훨씬 큰 계획의 거절도 `c_w`를 크게 낮춘다. control403~405 상태와 부하 배합 32개 경우의 검증에서 이 한계는 4개 상태에서 더 싼 충족 계획 대신 0.4~5.0 W 큰 계획을 고르게 했고 잘못된 Overload는 만들지 않았다. 구분에는 재생의 instance별 완료나 busy 시간이 필요하다.
 
@@ -154,11 +150,15 @@ keep의 재생은 탐색 전에 읽으므로 keep의 부족이 첫 순회의 표
 
 모든 정밀 후보가 거절되면 전체 적격 변형의 한 노드 정밀 탐색을 시도하고, 이어 공통 selector가 이웃 탐색 fallback을 연결한다. 후처리를 이미 적용한 결과에 호출부가 다시 적용하지 않는다.
 
-탐색 벽시계 마감은 판단 시작부터 제어 주기 절반이다. 증분 평가 수와 마감은 순회 중단에 적용한다. Tick은 전처리, 가격 반복과 정밀 funnel까지 수행한다. 취소된 계산은 이전 값이나 실패 검사로 대체하지 않는다.
+탐색 벽시계 마감은 순회마다 따로 있다. 첫 순회의 마감은 판단 시작부터 제어 주기 절반이고, 다음 순회는 각자의 시작부터 같은 길이(제어 주기 절반에서 전처리 시간을 뺀 값)를 받는다. 증분 평가 수와 마감은 각 순회의 중단에만 적용하며 정밀 funnel, payback과 투영은 마감 밖이다. 순회 수에는 상한 상수가 없다. 첫 순회 뒤의 각 순회는 직전 순회에서 처음 판정된 계획의 부족이 `c_w`를 낮췄을 때만 시작하므로, 순회 수는 처음 판정되는 계획 수로만 제한된다. 그래서 판단 시간은 제어 주기 절반을 넘을 수 있고 제어 주기도 넘을 수 있다. Tick은 전처리, 가격 반복과 정밀 funnel까지 수행한다. 취소된 계산은 이전 값이나 실패 검사로 대체하지 않는다.
+
+## offline 용량표
+
+`BuildCapacityRow`와 `hack/kappa`의 전체 격자, 이분 탐색과 `NonMonotone`은 명시적 offline 계산이다. online 판단은 행을 쓰지 않고 행 준비를 기다리지 않는다. 창 길이, 창 수와 충족창 수는 offline 도구의 입력이고 최소 요청 수, 격자, 이분 폭과 꼬리 표본은 settings의 capacity 설정이다. 같은 수치 입력의 완료 결과와 불변 raw, random tape는 재사용할 수 있다.
 
 ## 기록과 증거 경계
 
-판단에는 settings, 관측 구간, 최소 수요와 유효 rate, waiting q, timing, 정수 분배, 현재 tested rates, 선택 사슬, 에너지와 제외 이유를 연결한다. heuristic 결과와 직접 재생 결과를 구분한다. `exactEvaluated`는 keep seed와 replay 생략 판정도 포함한다.
+판단에는 settings, 관측 구간, 최소 수요와 유효 rate, waiting q, timing, 정수 분배, 선택 사슬, 에너지와 제외 이유를 연결한다. heuristic 결과와 직접 재생 결과를 구분한다. `exactEvaluated`는 keep seed와 replay 생략 판정도 포함한다.
 
 `search`의 출발점, 평가 수, 후보 수, 가지치기, fallback, budget 종료와 시간은 [스케줄러 API](scheduler-api.md)에 둔다. `dualBound`는 가격 반복 진단이다. 전체 평가 구성 목록을 기록하지 않는다.
 

@@ -262,7 +262,7 @@ Avara UI 레지스트리의 부품을 먼저 쓴다. Avara에 없는 기본 부�
 - 왼쪽 목록. 열: 시각, 결과(유지, 변경), 사유, 소요(판단 주기에 대한 막대. 주기를 넘으면 `--fail`). 선택: 변경만(기본) 또는 전체, 서비스, 구간. 내려받기.
 - 오른쪽 상세(목록에서 고른 판단). 구획: 요약(결과, 사유), 후보 비교(유지안과 변경안의 예상 에너지, 서비스별 예상 지연과 목표), 서비스별 자동 제어 상태, 입력 수요, 용량 근거, 소요 시간 내역. 더보기: 원본 보기.
 - 두 판단 비교: 목록에서 둘을 고르면 비교 대화상자가 항목별 차이를 보인다.
-- 자료: `v1/observations/scheduler`(요약 보기, `filter=decision` 또는 `filter=decision-change`, `uid`, 단건), `v1/scheduler/settings`, `v1/scheduler/capacity`(가장 최근 판단), `v1/workloads?view=summary`.
+- 자료: `v1/observations/scheduler`(요약 보기, `filter=decision` 또는 `filter=decision-change`, `uid`, 단건), `v1/scheduler/settings`, `v1/workloads?view=summary`.
 
 작업 `/scheduler/actions`
 

@@ -16,7 +16,7 @@
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/systems", "/chill/api/v1/inventory", "/chill/api/v1/model-compatibility", "/chill/api/v1/model-compatibility-matrix"]
     verbs: [get]
-  - nonResourceURLs: ["/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state", "/chill/api/v1/scheduler/profiles", "/chill/api/v1/scheduler/capacity"]
+  - nonResourceURLs: ["/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state", "/chill/api/v1/scheduler/profiles"]
     verbs: [get]
   {{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
   - nonResourceURLs:

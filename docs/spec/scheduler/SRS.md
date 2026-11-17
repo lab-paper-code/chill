@@ -116,7 +116,7 @@
 ### 3.3 SLO와 전환과 Serving 비용 비교
 
 #### 유한 수요 직접 재생 평가
-실행시간 분포와 firstfloor의 배칭과 큐 선택과 실제 진행 요청과 전환을 사용해 후보의 유한 수요를 직접 재생하고 SLO를 평가한다. 시간 피드백과 요청별 POST 동결과 profile routing과 현재 tested-rate κ̂의 의미는 [경로 기반 시간 계약](../../design/serving/analytic-planner.md)을 따른다. κ̂는 검사한 rate의 최대 통과값이다. 전체 격자 κ는 명시적 offline 계산에 한정하고 online row 준비 여부나 κ̂=0을 후보 제거 gate로 사용하지 않는다. 디스패치 점유의 측정과 설정 선택과 provenance는 [구성 선택 설계](../../design/serving/analytic-planner.md)를 따른다. 유효 시간 표본이 없으면 기존 완료 여유 설정으로 초기화하며 새 관측 대기 gate를 두지 않는다.
+실행시간 분포와 firstfloor의 배칭과 큐 선택과 실제 진행 요청과 전환을 사용해 후보의 유한 수요를 직접 재생하고 SLO를 평가한다. 시간 피드백과 요청별 POST 동결과 profile routing의 의미는 [경로 기반 시간 계약](../../design/serving/analytic-planner.md)을 따른다. 전체 격자 κ는 명시적 offline 계산에 한정하고 online row 준비 여부를 후보 제거 gate로 사용하지 않는다. 디스패치 점유의 측정과 설정 선택과 provenance는 [구성 선택 설계](../../design/serving/analytic-planner.md)를 따른다. 유효 시간 표본이 없으면 기존 완료 여유 설정으로 초기화하며 새 관측 대기 gate를 두지 않는다.
 #### 워크로드별 SLO 판정
 SLO는 워크로드별 지정 백분위와 목표 시간으로 판단한다. 각 워크로드의 직접 replay 결과에서 실패와 성공 지연을 구분해 평가한다([유한 수요 직접 재생 평가](#유한-수요-직접-재생-평가)).
 #### 전환과 최종 상태의 SLO
@@ -134,7 +134,7 @@ SLO는 워크로드별 지정 백분위와 목표 시간으로 판단한다. 각
 선택 결과는 유지 또는 목표 구성, 영향받는 워크로드, 노드와 인스턴스, 분배와 배칭 정책과 전환 동작을 실행 계층에 전달한다. 실제 현재 구성과 비교 후보와 선택 목표와 적용 조건을 구분해 제공한다. 판단 대기와 판단 결과는 각각의 상태로 표현한다.
 #### 준비된 인스턴스 분배
 요청은 해당 모델을 실제로 처리할 준비가 되고 해당 워크로드에 `routable`인 인스턴스 하나로 분배한다. 확인된 준비 상태와 가용 용량을 사용하고 수용 가능한 대상이 준비되면 요청을 전달한다. 분배 비율은 0 이상이며 대상이 있을 때 합이 1이다. 실현된 부하, 배칭, SLO와 에너지 영향을 다음 판단에 반영한다. 최종 handoff 뒤 정리 중인 범위도 원래 DAG와 예약을 유지하며, 새 target의 재분배는 예약 반환 뒤 다시 허가받는다.
-  목표 양수 목적지 일부가 준비 중이어도 old serving 공급을 보존하면서 현재 serving이 없는 독립 Node의 새 Ready 공급을 추가할 수 있다. exact identity와 native policy ACK와 양수 weight와 현재 수요와 timing의 직접 평가를 사용한다. 같은 Node 공급을 중복 합산하지 않고 old 공급과 accepted work를 보존한다. 물리 상태, support와 평가가 미확인이면 current를 유지하며 old capacity row나 κ̂ 미검사만으로 차단하지 않는다.
+  목표 양수 목적지 일부가 준비 중이어도 old serving 공급을 보존하면서 현재 serving이 없는 독립 Node의 새 Ready 공급을 추가할 수 있다. exact identity와 native policy ACK와 양수 weight와 현재 수요와 timing의 직접 평가를 사용한다. 같은 Node 공급을 중복 합산하지 않고 old 공급과 accepted work를 보존한다. 물리 상태, support와 평가가 미확인이면 current를 유지하며 old capacity row만으로 차단하지 않는다.
 #### 요청 경과시간 기반 배칭 정보
 배칭 정책은 evidence와 워크로드 SLO와 최초 CHILL 수신 이후 요청별 경과 시간을 적용할 정보를 제공한다. firstfloor 큐 진입 이전 소비 시간, 현재 큐 대기와 진행 중 실행, 후보 실행시간과 [유한 수요 직접 재생 평가](#유한-수요-직접-재생-평가)의 요청별 경로 POST를 포함해 추가 대기 여유를 판단한다.
 #### 실행기 내부 배칭 책임
@@ -177,7 +177,7 @@ SLO 수용 한계에 도달하면 가용 자원으로 SLO 충족을 우선하는
 빈 출발도 profile와 현재 timing와 수요로 직접 평가한다. no-profile와 raw support 부재와 물리 관측 실패는 원인을 기록하되 전체 grid나 capacity row의 Built/pending을 기다리지 않는다. 경과 시간 fallback이나 새 bootstrap 대기 상태는 두지 않는다.
 #### 현재 수요의 공통 후보 비교
 분배, 증설, 축소와 교체 후보를 매 제어 주기에 같은 현재 유효 수요와 물리 규칙으로 비교한다. 기존 예약, 자원, SLO와 실제 Ready/ACK 제약을 유지한다.
-  최종 하강 route와 idle 후처리의 현재 유효 수요×(1+h) 보호와 configured h를 유지하며 현재 routing와 수요 평가에 연결한다. old row/κ̂-only 보장을 사용하지 않는다. bridge/reserve 수요와 실제 요청 J는 할증하지 않는다.
+  최종 하강 route와 idle 후처리의 현재 유효 수요×(1+h) 보호와 configured h를 유지하며 현재 routing와 수요 평가에 연결한다. old capacity row만의 보장을 사용하지 않는다. bridge/reserve 수요와 실제 요청 J는 할증하지 않는다.
 #### 현재 유효 수요와 정책 시간
 현재 유효 수요는 max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이에 minimumDemand 하한을 적용한다. reductionDemand는 같은 현재 수요이며 별도 이력 최대값과 증가 추세와 지속 시간 허가를 두지 않는다. 빈 Node 절전도 동일 수요와 gain/minimumGain/payback을 적용한다. 최소 수요 하한을 적용한 계획 수요는 용량과 SLO를 결정하며, 에너지 비교는 하한 적용 전 관측 수요와 같은 분배 비율을 사용한다. 판단 기록의 rate와 observedRate로 두 수요를 구분한다.
   정책 시간은 ControlInterval, ObservationWindow, ComparisonPeriod 세 개다. API, ConfigMap, Dashboard, sample, 결정과 Run binding은 동일 계약을 사용한다.
@@ -396,7 +396,7 @@ B개가 모일 때만 정확히 B개 실행, 남은 요청은 대기하고 종�
 #### 빈 출발의 직접 평가 검증
 - Given: 실물과 예약이 없고 Smol/PLC/MNV의 수요가 .3/40/20이며 유효 profile은 있고 전체 격자 행은 없다.
 - When: 현재 timing과 같은 수요 집단으로 공동 후보를 직접 평가한다.
-- Then: 전체 grid와 Built/pending을 기다리지 않고 평가하며 κ̂=0이나 빈 tests를 물리 처리량 0으로 해석하지 않는다. no-profile와 support 부재와 실제 물리 실패는 별도 원인으로 남기고 scoped 소유와 예약을 유지한다.
+- Then: 전체 grid와 Built/pending을 기다리지 않고 평가한다. no-profile와 support 부재와 실제 물리 실패는 별도 원인으로 남기고 scoped 소유와 예약을 유지한다.
 - 요구사항: [예약 범위 밖 판단 지속](#예약-범위-밖-판단-지속), [빈 출발의 직접 후보 평가](#빈-출발의-직접-후보-평가).
 
 #### 현재 수요의 공통 비교 검증
@@ -591,7 +591,7 @@ Counter와 Gauge, Prometheus 구간 집계, Knative 부하 관측과 안정화, 
 ## 9. 설정 소유권과 기록 (활성 요구사항)
 
 이 설정 요구사항은 보류된 게이트웨이 분리와 독립이다.
-이 절의 전체 grid와 이분 설정과 관련 수용 수치는 명시적 offline κ 계산에 적용한다. online tested-rate κ̂와 직접 후보 평가의 범위는 [유한 수요 직접 재생 평가](#유한-수요-직접-재생-평가)과 승인 경로 기반 수요 재생 계약을 따른다. 기존 설정 범위와 기록 계약은 유지한다.
+이 절의 전체 grid와 이분 설정과 관련 수용 수치는 명시적 offline κ 계산에 적용한다. online 직접 후보 평가의 범위는 [유한 수요 직접 재생 평가](#유한-수요-직접-재생-평가)과 승인 경로 기반 수요 재생 계약을 따른다. 기존 설정 범위와 기록 계약은 유지한다.
 아래 기본값과 유효 범위는 설정 선택 계약이다. 실제 실행 수용은 별도 근거로 확인한다.
 
 #### 운영 정책 설정 선택

@@ -351,7 +351,6 @@ rules:
       - "/chill/api/v1/scheduler/settings"
       - "/chill/api/v1/scheduler/state"
       - "/chill/api/v1/scheduler/profiles"
-      - "/chill/api/v1/scheduler/capacity"
       - "/chill/api/v1/observations/*"
       - "/chill/api/v1/pools"
       - "/chill/api/v1/workloads"

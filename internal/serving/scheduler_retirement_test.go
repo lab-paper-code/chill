@@ -106,7 +106,7 @@ func TestPlannerCrossNodeRecoveryAllowsHigherEnergy(t *testing.T) {
 	if !slices.Equal(kinds, []string{schedulerActionPrepare, schedulerActionRoute, schedulerActionStop, schedulerActionDrain, schedulerActionRemove}) {
 		t.Fatalf("recovery lost prepare/route/retire ordering: %v", kinds)
 	}
-	// No passing rate witness is needed to admit an improved infeasible target.
+	// An improved target is admitted while keep and target both miss the SLO.
 	capacityServiceRatesForTest(&snap, map[string]float64{old.Profile.ID: 40, replacement.Profile.ID: 60})
 	d = capacityDecideForTest(t, s, snap)
 	if d.Status != SchedulerStatusOverload || d.Target == nil || d.Target.Keep || len(d.Target.Instances) != 1 || d.Target.Instances[0].Node != destination {

@@ -279,32 +279,6 @@ func (c *SchedulerController) State() SchedulerControllerState {
 
 func (c *SchedulerController) Close() { c.cancel(); c.wg.Wait() }
 
-// Capacity returns the rate tests used by the current committed decision.
-func (c *SchedulerController) Capacity() []serving.SchedulerFeedbackRate {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	capacity := c.state.Decision.Capacity
-	if capacity == nil {
-		return nil
-	}
-	count := 0
-	for _, workload := range capacity.Workloads {
-		count += len(workload.Tests)
-	}
-	result := make([]serving.SchedulerFeedbackRate, 0, count)
-	for _, workload := range capacity.Workloads {
-		for _, test := range workload.Tests {
-			test.Tests = slices.Clone(test.Tests)
-			if test.Input.DispatchOccupancy != nil {
-				occupancy := *test.Input.DispatchOccupancy
-				test.Input.DispatchOccupancy = &occupancy
-			}
-			result = append(result, test)
-		}
-	}
-	return result
-}
-
 func (c *reservationState) actionsLocked(now time.Time) []serving.Action {
 	result := make([]serving.Action, 0, len(c.runs))
 	for _, r := range c.runs {

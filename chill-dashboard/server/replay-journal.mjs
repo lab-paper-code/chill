@@ -100,7 +100,7 @@ export function tickControl(atN, evaluate, status, targetID) {
     lockWaitNanos: 650, admitNanos: 0, tickNanos: 0, captureNanos: Number(capture), windowNanos: Number(window), refreshListNanos: Number(capture) - 1_700_000,
     sourceProbeNanos: 336_897, restNanos: 916_780, evaluateNanos: Number(evaluate), publishNanos: Number(publish), recordNanos: Number(record), launchNanos: 2434,
     evaluation: { preparationNanos: Math.round(Number(evaluate) * 0.08), searchNanos: Math.round(Number(evaluate) * 0.7), paybackNanos: Math.round(Number(evaluate) * 0.05),
-      ratesNanos: Math.round(Number(evaluate) * 0.1), projectionNanos: Math.round(Number(evaluate) * 0.05), surrogateElapsedNanos: Math.round(Number(evaluate) * 0.4), exactElapsedNanos: Math.round(Number(evaluate) * 0.25) },
+      projectionNanos: Math.round(Number(evaluate) * 0.05), surrogateElapsedNanos: Math.round(Number(evaluate) * 0.4), exactElapsedNanos: Math.round(Number(evaluate) * 0.25) },
     refreshNodesNanos: 1_200_000, refreshPodsNanos: 3_400_000, refreshResourcesNanos: 900_000, refreshDeviceClassesNanos: 400_000, refreshServicesNanos: 600_000,
     windowBarrierNanos: 20_000, windowScanNanos: Number(window) / 2, windowDecodeNanos: 60_000, windowJoinNanos: 30_000, windowSortNanos: 10_000, windowCacheNanos: 5_000, windowBudgetFallbacks: 0 }
 }

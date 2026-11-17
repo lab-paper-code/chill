@@ -17,7 +17,7 @@ func TestSchedulerEvaluationTimingStages(t *testing.T) {
 			decision := capacityDecideForTest(t, settings, snapshot)
 			elapsed := time.Since(started)
 			timing := decision.EvaluationTiming
-			if timing.Preparation <= 0 || timing.Search <= 0 || timing.Payback <= 0 || timing.Rates <= 0 || timing.Projection <= 0 || timing.Preparation+timing.Search+timing.Payback+timing.Rates+timing.Projection > elapsed {
+			if timing.Preparation <= 0 || timing.Search <= 0 || timing.Payback <= 0 || timing.Projection <= 0 || timing.Preparation+timing.Search+timing.Payback+timing.Projection > elapsed {
 				t.Fatalf("evaluation stages missing or overlapping: %+v; elapsed=%v", timing, elapsed)
 			}
 			if decision.Capacity == nil || decision.Capacity.Search == nil {

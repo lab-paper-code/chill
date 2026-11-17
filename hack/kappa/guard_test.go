@@ -24,10 +24,10 @@ func TestReplayKeysIncludeFinalRouteAndWait(t *testing.T) {
 }
 
 func TestReplayPreservesRecordedControlPolicy(t *testing.T) {
-	base := serving.SchedulerSettings{CapacityWindows: 20, PlanSearchWorkers: 2}
+	base := serving.SchedulerSettings{CapacityGridSteps: 20, PlanSearchWorkers: 2}
 	recorded := serving.SchedulerSettings{ScaleDownHeadroomFraction: .25, MinimumDemand: map[string]float64{"w": 20}, ExcludedNodes: []string{"excluded"}, CompletionMarginMS: 29}
 	got := replaySettings(base, recorded, -1)
-	if got.ScaleDownHeadroomFraction != .25 || got.MinimumDemand["w"] != 20 || len(got.ExcludedNodes) != 1 || got.CompletionMarginMS != 29 || got.CapacityWindows != 20 {
+	if got.ScaleDownHeadroomFraction != .25 || got.MinimumDemand["w"] != 20 || len(got.ExcludedNodes) != 1 || got.CompletionMarginMS != 29 || got.CapacityGridSteps != 20 {
 		t.Fatalf("policy lost: %+v", got)
 	}
 }
@@ -97,8 +97,7 @@ func TestReplayGuardPreservesExclusiveOwnerReservation(t *testing.T) {
 	settings := serving.SchedulerSettings{
 		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		MaxReplicas: 1, MaxInstances: 1, AutonomousWorkloads: []string{"w"},
-		CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1,
-		CapacityGridSteps: 1, CapacityBisectionWidth: .1, CapacityTailSamples: 1,
+		CapacityMinimumRequests: 1, CapacityGridSteps: 1, CapacityBisectionWidth: .1, CapacityTailSamples: 1,
 		PlanSearchWorkers: 1, PlanSearchStrategy: "v2", PlanSearchEvaluations: 1, PlanExactFinalists: 1,
 		DefaultOperationCost: map[string]serving.OperationCostValue{"prepare": {Seconds: 1}, "remove": {Seconds: 1}, "power": {Seconds: 1}},
 		DefaultIdlePower:     &serving.IdlePowerDefault{NodeWatts: 1, PerInstanceWatts: 1},

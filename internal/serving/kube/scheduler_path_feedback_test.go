@@ -93,36 +93,3 @@ func TestTickCapturesAndPublishesSameWindowPathFeedback(t *testing.T) {
 		t.Fatal("observed feedback mutated configured settings")
 	}
 }
-
-func TestSchedulerCapacityProjectsOnlyCurrentCommittedRateTests(t *testing.T) {
-	c := &SchedulerController{reservationState: &reservationState{}}
-	if got := c.Capacity(); len(got) != 0 {
-		t.Fatalf("uncommitted rate evidence: %+v", got)
-	}
-	test := serving.SchedulerFeedbackRate{InstanceID: "selected-instance",
-		Input:            serving.CapacityInput{WorkloadUID: "workload", DispatchOccupancy: &serving.DispatchOccupancy{PerRequest: time.Millisecond}},
-		FeedbackCapacity: serving.FeedbackCapacity{KappaHat: 2, Tests: []serving.FeedbackRateTest{{Requests: 3}}},
-	}
-	c.state.Decision.Capacity = &serving.SchedulerCapacity{Workloads: []serving.SchedulerCapacityWorkload{{
-		UID: "workload", Tests: []serving.SchedulerFeedbackRate{test},
-		KeepTests: []serving.SchedulerFeedbackRate{{InstanceID: "keep-only"}},
-	}}}
-	got := c.Capacity()
-	if !reflect.DeepEqual(got, []serving.SchedulerFeedbackRate{test}) {
-		t.Fatalf("query mixed keep-only or stale grid evidence into current tests: %+v", got)
-	}
-	got[0].InstanceID = "changed"
-	got[0].Tests[0].Requests = 99
-	got[0].Input.DispatchOccupancy.PerRequest = time.Second
-	retained := c.state.Decision.Capacity.Workloads[0].Tests[0]
-	if retained.Tests[0].Requests != 3 || retained.Input.DispatchOccupancy.PerRequest != time.Millisecond {
-		t.Fatalf("query caller mutated nested committed evidence: %+v", retained)
-	}
-	if next := c.Capacity(); !reflect.DeepEqual(next, []serving.SchedulerFeedbackRate{test}) {
-		t.Fatalf("query caller mutated committed rate evidence: %+v", next)
-	}
-	c.state.Decision.Capacity = nil
-	if got := c.Capacity(); len(got) != 0 {
-		t.Fatalf("query retained evidence absent from the latest decision: %+v", got)
-	}
-}

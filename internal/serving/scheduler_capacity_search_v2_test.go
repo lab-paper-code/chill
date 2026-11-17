@@ -318,8 +318,8 @@ func TestCapacitySearchV2Deadline(t *testing.T) {
 	}
 }
 
-func TestSchedulerV2ZeroWitnessUsesPriorityThroughFinalAdmission(t *testing.T) {
-	settings, snapshot, recoveryNode := capacityZeroWitnessFixture()
+func TestSchedulerV2InfeasibleSLOUsesPriorityThroughFinalAdmission(t *testing.T) {
+	settings, snapshot, recoveryNode := capacityInfeasibleSLOFixture()
 	first, second := snapshot.Workloads[0], snapshot.Workloads[1]
 	// Offline Pending rows are deliberately unrelated: EvaluateScheduler has no row input.
 	offline := []CapacityRow{{Status: CapacityPending}}
@@ -330,8 +330,8 @@ func TestSchedulerV2ZeroWitnessUsesPriorityThroughFinalAdmission(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		capacityCheckZeroWitnessDecision(t, decision, uid, recoveryNode)
-		capacityCheckZeroWitnessAdmission(t, settings, snapshot, decision, uid, recoveryNode)
+		capacityCheckInfeasibleSLODecision(t, decision, uid, recoveryNode)
+		capacityCheckInfeasibleSLOAdmission(t, settings, snapshot, decision, uid, recoveryNode)
 		chosen[uid] = decision.Target.ID
 		offline[0].Status = CapacityRejected
 		again, err := EvaluateScheduler(context.Background(), settings, snapshot)
@@ -347,7 +347,7 @@ func TestSchedulerV2ZeroWitnessUsesPriorityThroughFinalAdmission(t *testing.T) {
 	}
 }
 
-func capacityZeroWitnessFixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
+func capacityInfeasibleSLOFixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 	settings, snapshot := schedulerFixture()
 	settings.PlanSearchStrategy = protocol.V2
 	settings.SLOPriorityStrategy = SLOPriorityWorkload
@@ -384,7 +384,7 @@ func capacityZeroWitnessFixture() (SchedulerSettings, SchedulerSnapshot, NodeRef
 	return settings, snapshot, recoveryNode
 }
 
-func capacityCheckZeroWitnessDecision(t *testing.T, decision SchedulerDecision, uid string, recoveryNode NodeReference) {
+func capacityCheckInfeasibleSLODecision(t *testing.T, decision SchedulerDecision, uid string, recoveryNode NodeReference) {
 	t.Helper()
 	if decision.Status != SchedulerStatusOverload || decision.Target == nil || decision.Target.Keep || decision.Capacity == nil || decision.Capacity.Search.Strategy != protocol.V2 {
 		t.Fatalf("priority %s lost improved infeasible target: %+v", uid, decision)
@@ -393,20 +393,6 @@ func capacityCheckZeroWitnessDecision(t *testing.T, decision SchedulerDecision, 
 		return instance.Node == recoveryNode && instance.WorkloadUID == uid
 	}) {
 		t.Fatalf("priority %s did not receive recovery: %+v", uid, decision.Target)
-	}
-	for _, workload := range decision.Capacity.Workloads {
-		if len(workload.KeepTests) == 0 || len(workload.Tests) == 0 {
-			t.Fatalf("missing current nominal tests: %+v", workload)
-		}
-		for _, evidence := range append(slices.Clone(workload.KeepTests), workload.Tests...) {
-			if evidence.KappaHat != 0 || len(evidence.Tests) == 0 {
-				t.Fatalf("fixture requires zero passing witness with completed tests: %+v", evidence)
-			}
-			if !slices.ContainsFunc(decision.Keep.Instances, func(instance SchedulerInstance) bool { return instance.ID == evidence.InstanceID }) &&
-				!slices.ContainsFunc(decision.Target.Instances, func(instance SchedulerInstance) bool { return instance.ID == evidence.InstanceID }) {
-				t.Fatalf("rate query escaped keep/selected instances: %+v", evidence)
-			}
-		}
 	}
 	selected := slices.IndexFunc(decision.Target.Feedback, func(score FeedbackWorkloadScore) bool { return score.UID == uid })
 	baseline := slices.IndexFunc(decision.Keep.Feedback, func(score FeedbackWorkloadScore) bool { return score.UID == uid })
@@ -421,7 +407,7 @@ func capacityCheckZeroWitnessDecision(t *testing.T, decision SchedulerDecision, 
 	}
 }
 
-func capacityCheckZeroWitnessAdmission(t *testing.T, settings SchedulerSettings, snapshot SchedulerSnapshot, decision SchedulerDecision, uid string, recoveryNode NodeReference) {
+func capacityCheckInfeasibleSLOAdmission(t *testing.T, settings SchedulerSettings, snapshot SchedulerSnapshot, decision SchedulerDecision, uid string, recoveryNode NodeReference) {
 	t.Helper()
 	reason, err := SchedulerTargetAdmission(context.Background(), settings, snapshot, *decision.Target)
 	if err != nil || reason != "" {
@@ -594,15 +580,6 @@ func TestCapacityExactKeepPreservesActualRoutesAndEnergyOffset(t *testing.T) {
 	evaluator.SeedKeep(selected)
 	if planner.keepWatts != actual.joules/planner.periodSeconds {
 		t.Fatal("reroute replaced actual keep energy offset")
-	}
-	if err := planner.testDecisionRates(selected); err != nil {
-		t.Fatal(err)
-	}
-	currentRate := planner.keepRates[0][0].Tests[0].Rate
-	selectedRate := planner.selectedRates[0][0].Tests[0].Rate
-	selectedWeight := selected.weights[0][snapshot.Instances[0].ID]
-	if currentRate != .05 || selectedWeight == 0 || selectedRate != 50*float64(selectedWeight)/schedulerRouteUnits {
-		t.Fatalf("nominal queries did not use actual integer routes: keep=%g selected=%g", currentRate, selectedRate)
 	}
 	decision := planner.decide(SchedulerDecision{Keep: planner.keep}, selected)
 	if decision.Target == nil || decision.Target.Keep || !slices.ContainsFunc(decision.Target.Actions, func(action Action) bool { return action.Kind == schedulerActionRoute }) {

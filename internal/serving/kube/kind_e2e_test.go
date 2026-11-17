@@ -515,20 +515,10 @@ func TestE2EKindSCHAC24FirstConfiguration(t *testing.T) {
 			t.Fatalf("other available Node mode %q", n.PowerMode)
 		}
 	}
-	rates := c.Capacity()
-	if first.Settings.CompletionMarginMS != 139 || len(rates) != 1 || len(rates[0].Tests) != 1 {
-		t.Fatalf("selected nominal rate lacks current feedback evidence: %+v", rates)
+	at := slices.IndexFunc(first.PathFeedback, func(f serving.PathFeedback) bool { return f.WorkloadUID == definition.UID })
+	if first.Settings.CompletionMarginMS != 139 || at < 0 || first.PathFeedback[at].PostNanos != float64(139*time.Millisecond) {
+		t.Fatalf("decision did not use the configured completion margin: %+v", first.PathFeedback)
 	}
-	feedback := serving.BuildPathFeedback(definition.UID, nil, definition.SLO, 139*time.Millisecond)
-	expected, err := serving.JudgeFeedbackRates(context.Background(), first.Settings, serving.SchedulerOption{Instance: config.Preparations[profile.ID].Instance}, definition,
-		config.DispatchOccupancy[0], feedback, []float64{rates[0].Tests[0].Rate})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(expected.Tests) != 1 || rates[0].Tests[0] != expected.Tests[0] || rates[0].KappaHat != expected.KappaHat {
-		t.Fatalf("selected rate did not use the configured completion margin: got=%+v expected=%+v", rates[0], expected)
-	}
-	t.Logf("selected instance %s κHat=%g tested rate=%g margin=139ms", rates[0].InstanceID, rates[0].KappaHat, rates[0].Tests[0].Rate)
 	next := kindDecide(t, c)
 	if !next.At.After(first.At) || kindWorkloadState(next, "w-on").State != serving.WorkloadControlled {
 		t.Fatalf("next control interval did not decide again: %+v", next.Workloads)

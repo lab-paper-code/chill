@@ -61,12 +61,10 @@ func TestFeedbackConsumerPOSTChangesChosenBatch(t *testing.T) {
 	}
 }
 
-// Both rates fail. Actual drops stay failures; conditional compute distinguishes
-// options without assigning fake completion latencies to those drops.
-func TestFeedbackConsumerZeroWitnessRetainsDropAndPotential(t *testing.T) {
+// Both services miss the SLO. Actual drops stay failures; conditional compute
+// distinguishes options without assigning fake completion latencies to those drops.
+func TestFeedbackConsumerInfeasibleSLORetainsDropAndPotential(t *testing.T) {
 	settings, snapshot, candidate := feedbackFixture()
-	settings.CapacityWindows, settings.CapacityPassingWindows, settings.CapacityMinimumRequests = 1, 1, 2
-	settings.CapacityTailSamples = 1
 	snapshot.Workloads[0].SLO.TargetLatency = 10 * time.Millisecond
 	snapshot.Workloads[0].Admission.Policy = AdmissionPolicyReject
 	snapshot.Instances[0].MaxBatch = 1
@@ -76,10 +74,6 @@ func TestFeedbackConsumerZeroWitnessRetainsDropAndPotential(t *testing.T) {
 		snapshot.Instances[0].Profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{service})}
 		snapshot.Options[0].Instance = snapshot.Instances[0]
 		candidate.Instances = snapshot.Instances
-		rate, err := JudgeFeedbackRates(context.Background(), settings, snapshot.Options[0], snapshot.Workloads[0], DispatchOccupancy{}, snapshot.PathFeedback[0], []float64{1})
-		if err != nil || rate.KappaHat != 0 || len(rate.Tests) != 1 || rate.Tests[0].Met {
-			t.Fatalf("failed tested witness: %+v %v", rate, err)
-		}
 		result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 		score := result.Workloads[0]
 		// The idle executor runs its only request late; the request behind it is dropped.
@@ -175,29 +169,6 @@ func TestFeedbackConsumerSeedAndConditionalSupportRemainDeterministic(t *testing
 	cancel()
 	if _, err := EvaluateFeedbackCandidate(ctx, settings, snapshot, candidate, 1); err != context.Canceled {
 		t.Fatalf("cancellation became failed prediction: %v", err)
-	}
-}
-
-func TestFeedbackRatesCurrentTimingChangesKeyAndVerdict(t *testing.T) {
-	settings, snapshot := capacityFixture()
-	settings.CapacityWindows, settings.CapacityPassingWindows, settings.CapacityMinimumRequests = 1, 1, 2
-	settings.CapacityTailSamples = 1
-	settings.CapacityWindow = time.Millisecond
-	definition := snapshot.Workloads[0]
-	feedback := PathFeedback{WorkloadUID: definition.UID}
-	low, err := JudgeFeedbackRates(context.Background(), settings, snapshot.Options[0], definition, snapshot.DispatchOccupancy[0], feedback, []float64{1})
-	if err != nil || low.KappaHat != 1 || len(low.Tests) != 1 {
-		t.Fatalf("low path reserve: %+v %v", low, err)
-	}
-	settings.MinimumDemand = map[string]float64{definition.UID: 1e6}
-	floored, err := JudgeFeedbackRates(context.Background(), settings, snapshot.Options[0], definition, snapshot.DispatchOccupancy[0], feedback, []float64{1})
-	if err != nil || !reflect.DeepEqual(low, floored) {
-		t.Fatalf("explicit rate experiment acquired planning demand floor: low=%+v floor=%+v %v", low, floored, err)
-	}
-	feedback.TotalNanos, feedback.PostNanos = 40e6, 30e6
-	high, err := JudgeFeedbackRates(context.Background(), settings, snapshot.Options[0], definition, snapshot.DispatchOccupancy[0], feedback, []float64{1})
-	if err != nil || high.KappaHat != 0 || len(high.Tests) != 1 || low.Tests[0].InputKey == high.Tests[0].InputKey {
-		t.Fatalf("current feedback reused old rate verdict: low=%+v high=%+v %v", low, high, err)
 	}
 }
 

@@ -44,16 +44,9 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	p.recordEnergyComparison(best, record)
 	p.recordNodePlans(best, keepResult, record)
 	for w, ws := range p.ws {
-		tests, keepTests := []SchedulerFeedbackRate{}, []SchedulerFeedbackRate{}
-		if w < len(p.selectedRates) {
-			tests = p.selectedRates[w]
-		}
-		if w < len(p.keepRates) {
-			keepTests = p.keepRates[w]
-		}
 		record.Workloads = append(record.Workloads, SchedulerCapacityWorkload{
 			UID: ws.d.UID, Rate: ws.rate, ObservedRate: ws.observedRate, MinimumDemand: p.settings.MinimumDemand[ws.d.UID], Queued: ws.queued,
-			RoutingRate: best.sums[w][0], RetainedRoutingRate: best.sums[w][1], Weights: best.weights[w], Tests: tests, KeepTests: keepTests,
+			RoutingRate: best.sums[w][0], RetainedRoutingRate: best.sums[w][1], Weights: best.weights[w],
 		})
 	}
 	decision.Capacity = record
@@ -182,68 +175,6 @@ func (p *capacityPlanner) sameRouting(routing map[string]map[string]int32) bool 
 // largest float for an unbounded one (no capacity), which JSON can carry.
 func capacityWorst(worst float64) float64 {
 	return min(max(0, worst), math.MaxFloat64)
-}
-
-// testDecisionRates queries only keep/selected nominal positive routed shares.
-// A failed test is evidence, never a second candidate admission gate.
-func (p *capacityPlanner) testDecisionRates(best capacityResult) error {
-	type queryKey struct {
-		profile     *Profile
-		node        NodeReference
-		allocation  SchedulerAllocation
-		maxBatch    int
-		maxWait     time.Duration
-		fixedBatch  int
-		uid         string
-		occupancy   time.Duration
-		total, post float64
-		rate        float64
-	}
-	cache := map[queryKey]FeedbackCapacity{}
-	test := func(candidate SchedulerCandidate) ([][]SchedulerFeedbackRate, error) {
-		results := make([][]SchedulerFeedbackRate, len(p.ws))
-		for w, ws := range p.ws {
-			results[w] = []SchedulerFeedbackRate{}
-			units := 0.0
-			for _, weight := range candidate.Routing[ws.d.UID] {
-				units += float64(max(0, weight))
-			}
-			if units == 0 || ws.rate == 0 {
-				continue
-			}
-			for _, instance := range candidate.Instances {
-				weight := candidate.Routing[ws.d.UID][instance.ID]
-				if weight <= 0 || instance.Profile == nil {
-					continue
-				}
-				rate := ws.rate * float64(weight) / units
-				occupancy := ResolveDispatchOccupancy(p.settings, p.snapshot.DispatchOccupancy, instance)
-				feedback := p.pathFeedback(ws.d).forPath(instance.ID, p.settings.CompletionMarginMS*1e6)
-				key := queryKey{instance.Profile, instance.Node, instance.Allocation, instance.MaxBatch, instance.MaxWait, instance.FixedBatchSize, ws.d.UID, occupancy.PerRequest, feedback.TotalNanos, feedback.PostNanos, rate}
-				value, found := cache[key]
-				option := SchedulerOption{Instance: instance, CompatibleUIDs: []string{ws.d.UID}}
-				if !found {
-					var err error
-					value, err = JudgeFeedbackRates(p.ctx, p.settings, option, ws.d, *occupancy, feedback, []float64{rate})
-					if err != nil {
-						return nil, err
-					}
-					cache[key] = value
-				}
-				input := NewCapacityInput(p.settings, p.snapshot.DispatchOccupancy, option, ws.d)
-				input.CompletionMarginMS = feedback.PostNanos / 1e6
-				results[w] = append(results[w], SchedulerFeedbackRate{InstanceID: instance.ID, Input: input, PathFeedback: feedback, FeedbackCapacity: value})
-			}
-		}
-		return results, nil
-	}
-	var err error
-	p.keepRates, err = test(p.keep)
-	if err != nil {
-		return err
-	}
-	p.selectedRates, err = test(p.candidate(best))
-	return err
 }
 
 func (p *capacityPlanner) recordNodePlans(best, keepResult capacityResult, record *SchedulerCapacity) {

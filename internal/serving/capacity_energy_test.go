@@ -18,7 +18,7 @@ func TestCapacityRowRecordsBatchEnergy(t *testing.T) {
 	}
 	snap.Options[0].Instance.MaxBatch = 2
 	snap.Workloads[0].SLO.TargetLatency = 100 * time.Millisecond
-	row := capacityBuildForTest(t, s, snap)
+	row := capacityBuildForTest(t, s, capacityTestWindows, snap)
 	if len(row.Grid) != s.CapacityGridSteps {
 		t.Fatalf("missing energy grid: %+v", row)
 	}
@@ -35,8 +35,7 @@ func TestCapacityRowRecordsBatchEnergy(t *testing.T) {
 
 func TestCapacityJudgmentEnergyUsesCompleteWindows(t *testing.T) {
 	s, _ := capacityFixture()
-	s.CapacityWindows, s.CapacityPassingWindows = 3, 2
-	b := capacityBuilder{settings: s, percentile: 95, replay: func(_ context.Context, _ float64, n, seed int) (capacityWindowResult, error) {
+	b := capacityBuilder{settings: s, windows: CapacityWindows{Windows: 3, PassingWindows: 2}, percentile: 95, replay: func(_ context.Context, _ float64, n, seed int) (capacityWindowResult, error) {
 		if seed == 1 {
 			return capacityWindowResult{latencyMS: -1}, nil
 		}

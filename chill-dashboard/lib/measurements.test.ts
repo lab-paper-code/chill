@@ -152,8 +152,6 @@ test("measurement routes accept only the two projection kinds and keep UI querie
       }
     }
   }
-  assert.equal(relayPlan("GET",["v1","scheduler","capacity"],"",config).path,"/api/v1/scheduler/capacity")
-  for (const search of ["?row=key","?workload=uid"]) assert.throws(() => relayPlan("GET",["v1","scheduler","capacity"],search,config),/DashboardQueryInvalid/)
 })
 
 test("occupancy preserves missing and zero d, string throughput and logical location identity", () => {

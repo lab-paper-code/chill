@@ -83,8 +83,7 @@ func hydrationTickFixture() (serving.SchedulerSettings, serving.SchedulerSnapsho
 	settings := serving.SchedulerSettings{
 		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		MaxReplicas: 1, MaxInstances: 1, AutonomousWorkloads: []string{"w"}, MinimumDemand: map[string]float64{"w": 1},
-		CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1,
-		CapacityGridSteps: 1, CapacityBisectionWidth: .1, CapacityTailSamples: 1,
+		CapacityMinimumRequests: 1, CapacityGridSteps: 1, CapacityBisectionWidth: .1, CapacityTailSamples: 1,
 		PlanSearchWorkers: 1, PlanSearchStrategy: "v2", PlanSearchEvaluations: 1, PlanExactFinalists: 1,
 		DefaultOperationCost: map[string]serving.OperationCostValue{"prepare": {Seconds: 1}, "remove": {Seconds: 1}, "power": {Seconds: 1}},
 		DefaultIdlePower:     &serving.IdlePowerDefault{NodeWatts: 1, PerInstanceWatts: 1},

@@ -6,7 +6,7 @@ import { changeRows, fieldInput, fieldText, fieldUnit, formOf, parseField, rebas
 const controls = { placement: true, resources: true, replicas: true, routing: true, batching: true, power: true, membership: true }
 const base = {
   observationWindowNanos: 60000000000, controlIntervalNanos: 10000000000, comparisonPeriodNanos: 600000000000, transitionReserveFraction: 0, scaleDownHeadroomFraction: 0.25,
-  maxReplicas: 8, maxInstances: 16, servingMemoryBytes: 18446744073709551615n, completionMarginMS: 29, capacityWindowNanos: 60000000000, capacityWindows: 20, capacityPassingWindows: 19,
+  maxReplicas: 8, maxInstances: 16, servingMemoryBytes: 18446744073709551615n, completionMarginMS: 29,
   capacityMinimumRequests: 1000, capacityGridSteps: 20, capacityBisectionWidth: 0.005, capacityTailSamples: 100, planSearchWorkers: 3,
   defaultOperationCost: { prepare: { seconds: 1, joules: 1 }, remove: { seconds: 1, joules: 1 }, power: { seconds: 1, joules: 1 } }, defaultIdlePower: { nodeWatts: 1, perInstanceWatts: 1 }, defaultDispatchOccupancyNanos: 1,
   autonomousWorkloads: ["a", "b"], minimumDemand: { a: 0.3 }, excludedNodes: ["n1"], controls,
@@ -33,9 +33,9 @@ test("inputs convert units exactly and reject invalid values", () => {
   for (const [key, text] of [["maxReplicas", "0"], ["controlIntervalNanos", "0"], ["capacityBisectionWidth", "0"], ["transitionReserveFraction", "1.5"], ["servingMemoryBytes", "0.0000001"], ["planSearchStrategy", "v9"]] as const)
     assert.throws(() => parseField(key, text))
   const form = formOf(base)
-  form.fields.capacityPassingWindows = "21"
+  form.fields.capacityGridSteps = "0"
   form.demand.b = "x"
-  assert.deepEqual(Object.keys(settingsOf(base, form).errors).sort(), ["capacityPassingWindows", "demand:b"])
+  assert.deepEqual(Object.keys(settingsOf(base, form).errors).sort(), ["capacityGridSteps", "demand:b"])
 })
 
 test("rebase applies only my changes onto the latest settings", () => {

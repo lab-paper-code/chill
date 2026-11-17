@@ -16,9 +16,7 @@
 | `settings.maxReplicas`, `maxInstances` | UID별 복제와 전체 실물 및 미생성 예약 상한 |
 | `settings.servingMemoryBytes` | frozen memory envelope 안 queue headroom의 상한 |
 | `settings.completionMarginMS` | 필수 유한 비음수. 유효 TOTAL/POST 표본이 없을 때 초기값 |
-| `settings.capacityWindowNanos`, `capacityWindows` | 양수 검사창과 rate당 창 수 |
-| `settings.capacityPassingWindows`, `capacityMinimumRequests` | 필요한 충족창 수와 최소 요청 수. 충족창은 전체 이하 |
-| `settings.capacityGridSteps`, `capacityBisectionWidth`, `capacityTailSamples` | 명시 offline 전체 rate 탐색 설정. grid와 tail은 양수, width는 유한 `(0,1]` |
+| `settings.capacityMinimumRequests`, `capacityGridSteps`, `capacityBisectionWidth`, `capacityTailSamples` | 명시 offline 전체 rate 탐색 설정. 최소 요청 수, grid와 tail은 양수, width는 유한 `(0,1]`. 창 길이, 창 수와 충족창 수는 offline 도구의 입력이다 |
 | `settings.controls` | placement, resources, replicas, routing, batching, power, membership |
 | `settings.autonomousWorkloads` | 현재 UID 중 자동제어 대상. PUT에서 미등록 UID 제거 |
 | `settings.excludedNodes` | 중복과 빈 이름 없는 Node 이름. keep과 실물 점유 유지 |
@@ -69,7 +67,6 @@ PUT은 `SchedulerSettings`만 받는다. `staticRouting`과 `staticRoutingValida
 | `PUT /api/v1/scheduler` 또는 `/api/v1/scheduler/settings` | 설정 검증, 저장과 정책 수락 |
 | `POST /api/v1/scheduler/operations` | prepare/remove/route/unroute/release/reset |
 | `GET /api/v1/scheduler/profiles` | Query 소유 profile, preparation과 insufficiency |
-| `GET /api/v1/scheduler/capacity` | 현재 선택안의 tested-rate 근거, 없으면 `{"tests":[]}` |
 | `GET /api/v1/scheduler/catalog-read` | Query owner 전용 private reporting와 accepted snapshot |
 | `GET /api/v1/namespaces/{namespace}/measurement-coverage` | Query 소유 현재 측정 커버리지 |
 | `GET /api/v1/pools[/{uid}]` | 실제 소속. 없는 활성 풀은 PoolNotFound |
@@ -80,11 +77,9 @@ PUT은 `SchedulerSettings`만 받는다. `staticRouting`과 `staticRoutingValida
 
 측정 생성과 삭제, profile 재사용, 공개 Query 응답은 [측정 API](measurement-api.md)에 둔다. ChillServer는 공개 Query route의 인증과 proxy를 소유하며 Query는 Serving 패키지를 import하지 않는다.
 
-capacity의 항목은 instanceID, scalar input, 별도 pathFeedback, kappaHat와 tests다. test는 inputKey, rate, met, passed와 requests를 제공한다. κ̂는 검사한 rate 중 최대 통과 근거다. 빈 tests나0은 통과 근거 부재를 나타낸다. 미검사 rate를 보간하지 않는다. 과거 decision 상세는 해당 decision에서 조회한다.
-
 ## 현재 상태와 catalog
 
-decision은 keep, target, Workload 제어 상태, capacity, search와 제외 이유를 연결한다. capacity는 period, route 시각, UID별 rate와 queued, profile routingRate와 retainedRoutingRate, 정수 weights, 선택 tests와 keepTests를 제공한다.
+decision은 keep, target, Workload 제어 상태, capacity, search와 제외 이유를 연결한다. capacity는 period, route 시각, UID별 rate와 queued, profile routingRate와 retainedRoutingRate, 정수 weights를 제공한다.
 
 `ComparedNodes`는 keep 외 적격 계획이 있는 Node다. expectedJoules도 이 집합을 합한다. 전체 풀 실측과 구분한다. `missingCells`는 decision 전체에서 중복 제거하며 energyComparison과 undecidableCandidates는 정수 `missingCellRefs`로 참조한다. keep 충족 상태의 비-exact 새 operation 후보는 `replaySkipped:true`일 수 있다.
 
@@ -108,7 +103,7 @@ round는 호출 시간과 오류, Tick은 판단 처분을 소유한다. `contro
 | capture | window, refreshList, sourceProbe, rest |
 | window | barrier, scan, cache, decode, join, sort의 배타 하위 시간 |
 | refreshList | Node, Pod, source resource, DeviceClass와 Service List |
-| decision evaluationTiming | preparation, search, payback, rates와 projection의 배타 단계 |
+| decision evaluationTiming | preparation, search, payback와 projection의 배타 단계 |
 
 완료 행 자신의 제출, 비동기 영속 완료와 물리 전환 완료는 그 행 elapsed 밖이다. round의 Tick 시간에는 Tick 완료 행 제출이 포함된다. 하위 시간과 backend 부분집합을 전체에 중복 가산하지 않으며 병렬 worker CPU 시간의 합으로 해석하지 않는다.
 

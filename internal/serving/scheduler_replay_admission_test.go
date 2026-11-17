@@ -162,11 +162,11 @@ func TestReplayAdmissionQueueLimitAndRejectedDemand(t *testing.T) {
 	}
 }
 
-func TestCapacityAdmissionChangesInvalidateRowAndFeedbackKeys(t *testing.T) {
+func TestCapacityAdmissionChangesInvalidateRowKey(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	definition := snapshot.Workloads[0]
 	option := snapshot.Options[0]
-	baseline := NewCapacityInput(settings, nil, option, definition).Key()
+	baseline := NewCapacityInput(settings, capacityTestWindows, nil, option, definition).Key()
 	for _, change := range []string{"policy", "queue limit"} {
 		frozen := *definition
 		if change == "policy" {
@@ -174,16 +174,8 @@ func TestCapacityAdmissionChangesInvalidateRowAndFeedbackKeys(t *testing.T) {
 		} else {
 			frozen.Admission.MaxQueuedRequests++
 		}
-		if NewCapacityInput(settings, nil, option, &frozen).Key() == baseline {
+		if NewCapacityInput(settings, capacityTestWindows, nil, option, &frozen).Key() == baseline {
 			t.Fatalf("%s reused old capacity input", change)
-		}
-		before, err := JudgeFeedbackRates(context.Background(), settings, option, definition, DispatchOccupancy{}, PathFeedback{}, []float64{1})
-		if err != nil {
-			t.Fatal(err)
-		}
-		after, err := JudgeFeedbackRates(context.Background(), settings, option, &frozen, DispatchOccupancy{}, PathFeedback{}, []float64{1})
-		if err != nil || len(before.Tests) != 1 || len(after.Tests) != 1 || before.Tests[0].InputKey == after.Tests[0].InputKey {
-			t.Fatalf("%s reused old feedback experiment: before=%+v after=%+v err=%v", change, before, after, err)
 		}
 	}
 }

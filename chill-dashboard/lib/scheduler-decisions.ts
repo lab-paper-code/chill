@@ -10,7 +10,7 @@ export type ControlObservation = {
   status?: string; targetID?: string; fallback?: string; error?: string
   lockWaitNanos: WireInteger; captureNanos: WireInteger; windowNanos: WireInteger; refreshListNanos: WireInteger; sourceProbeNanos: WireInteger; restNanos: WireInteger
   evaluateNanos: WireInteger; publishNanos: WireInteger; recordNanos: WireInteger; launchNanos: WireInteger
-  evaluation?: { preparationNanos: WireInteger; searchNanos: WireInteger; paybackNanos: WireInteger; ratesNanos: WireInteger; projectionNanos: WireInteger }
+  evaluation?: { preparationNanos: WireInteger; searchNanos: WireInteger; paybackNanos: WireInteger; projectionNanos: WireInteger }
 }
 /**
  * A view=summary row. `reasons`, `targetKeep`, `evaluationElapsedNanos`, `keepExpectedJoules` and `targetExpectedJoules`
@@ -72,7 +72,6 @@ export function tickPhases(control: ControlObservation): Phase[] {
     ["evaluate.preparation", "준비", e?.preparationNanos],
     ["evaluate.search", "구성 탐색", e?.searchNanos],
     ["evaluate.payback", "전환 비용", e?.paybackNanos],
-    ["evaluate.rates", "요청률 검사", e?.ratesNanos],
     ["evaluate.projection", "지연 예측", e?.projectionNanos],
     ["publish", "게시", control.publishNanos],
     ["record", "기록", control.recordNanos],

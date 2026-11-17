@@ -206,13 +206,13 @@ export function activeScene(capture, epoch, options = {}) {
       capacity: { periodNanos: 600e9, routeNanos: 60e9, search: { strategy: settings.planSearchStrategy ?? 'v2', neighborhood: 2, evaluated: 40 + mod(k, 30), durationNanos: Math.round(evaluate * 0.7), budgetCut: false,
         surrogateElapsedNanos: Math.round(evaluate * 0.4), exactElapsedNanos: Math.round(evaluate * 0.25) },
         workloads: services.map(svc => ({ uid: svc.uid, rate: round(svc.rate * (1 + svc.swing * wave(t, svc.period)), 3), minimumDemand: settings.minimumDemand?.[svc.uid] ?? 0, queued: svc.pending,
-          routingRate: round(svc.rate * 1.2, 3), retainedRoutingRate: round(svc.rate * 0.6, 3), tests: [], keepTests: [], weights: Object.fromEntries(svc.instances.map(inst => [inst.id, inst.weight])) })),
+          routingRate: round(svc.rate * 1.2, 3), retainedRoutingRate: round(svc.rate * 0.6, 3), weights: Object.fromEntries(svc.instances.map(inst => [inst.id, inst.weight])) })),
         plans: snapshot.nodes.map(node => { const eligible = servingNodes.has(node.name) || node.name === PREPARE_NODE
           return { node: ref(node.name), key: `${node.name}/${node.powerMode}`, eligible, ...(eligible ? {} : { reason: node.name === MEASUREMENT_NODE ? 'ReservedScope' : 'NotSelected' }),
             preNanos: 0, postNanos: 0, joules: round(watts(node.name, node.uid, s) * 600, 1) } }),
         energyComparison: { status: 'decidable' } },
       evaluationElapsedNanos: evaluate,
-      evaluationTiming: { preparationNanos: Math.round(evaluate * 0.08), searchNanos: Math.round(evaluate * 0.7), paybackNanos: Math.round(evaluate * 0.05), ratesNanos: Math.round(evaluate * 0.1),
+      evaluationTiming: { preparationNanos: Math.round(evaluate * 0.08), searchNanos: Math.round(evaluate * 0.7), paybackNanos: Math.round(evaluate * 0.05),
         projectionNanos: Math.round(evaluate * 0.05), surrogateElapsedNanos: Math.round(evaluate * 0.4), exactElapsedNanos: Math.round(evaluate * 0.25) } }
   }
   function sumWatts(from, to, include) {

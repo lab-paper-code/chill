@@ -38,7 +38,7 @@ func capacityDecideForTest(t testing.TB, s SchedulerSettings, snap SchedulerSnap
 }
 
 // capacityServiceRatesForTest supplies deterministic paired raw service laws.
-// Rates are optimistic profile support, never tested-rate capacity certificates.
+// Rates are optimistic profile support, never capacity certificates.
 func capacityServiceRatesForTest(snapshot *SchedulerSnapshot, rates map[string]float64) {
 	profiles := map[string]*Profile{}
 	update := func(instance *SchedulerInstance) {
@@ -936,9 +936,6 @@ func capacityRawPlannerForTest(p *capacityPlanner) {
 	if p.settings.ControlInterval <= 0 {
 		p.settings.ControlInterval = time.Second
 	}
-	p.settings.CapacityWindow = settings.CapacityWindow
-	p.settings.CapacityWindows = settings.CapacityWindows
-	p.settings.CapacityPassingWindows = settings.CapacityPassingWindows
 	p.settings.CapacityMinimumRequests = settings.CapacityMinimumRequests
 	p.settings.DefaultOperationCost = settings.DefaultOperationCost
 	p.settings.DefaultIdlePower = settings.DefaultIdlePower

@@ -327,7 +327,6 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	settings.ComparisonPeriod = 10 * time.Second
 	settings.TransitionReserveFraction = .5
 	settings.Controls = serving.SchedulerControls{Replicas: true, Routing: true}
-	settings.CapacityWindow = 10 * time.Millisecond
 	uid := settings.AutonomousWorkloads[0]
 	settings.MinimumDemand = map[string]float64{uid: 2}
 	profiles := c.observer.Profiles()

@@ -22,7 +22,8 @@ import (
 
 func TestCapacityArchiveCutoverDoesNotLoadControlledExecutionRows(t *testing.T) {
 	settings, snapshot := capacityFixture()
-	input := serving.NewCapacityInput(settings, snapshot.DispatchOccupancy, snapshot.Options[0], snapshot.Workloads[0])
+	windows := serving.CapacityWindows{Window: time.Second, Windows: 3, PassingWindows: 2}
+	input := serving.NewCapacityInput(settings, windows, snapshot.DispatchOccupancy, snapshot.Options[0], snapshot.Workloads[0])
 	// Before the shared-execution cutover the input hash had no namespace.
 	payload, _ := json.Marshal(input)
 	sum := sha256.Sum256(payload)
@@ -36,7 +37,7 @@ func TestCapacityArchiveCutoverDoesNotLoadControlledExecutionRows(t *testing.T) 
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("controlled execution row crossed archive cutover: %+v %v", rows, err)
 	}
-	table := serving.NewCapacityTable(1, nil, observationLog.CapacityRecords)
+	table := serving.NewCapacityTable(1, windows, nil, observationLog.CapacityRecords)
 	table.Ensure(context.Background(), settings, snapshot)
 	table.Wait()
 	if row := table.Rows()[0]; row.Status != serving.CapacityBuilt || row.Previous {
@@ -86,7 +87,7 @@ func TestDecisionRecordIncludesSelectedDOMAndDefaultOccupancy(t *testing.T) {
 			recorded := page[0].Snapshot
 			option := recorded.Options[0]
 			option.Instance.Profile = snapshot.Options[0].Instance.Profile
-			roundtrip := serving.NewCapacityInput(page[0].Decision.Settings, recorded.DispatchOccupancy, option, snapshot.Workloads[0])
+			roundtrip := serving.NewCapacityInput(page[0].Decision.Settings, serving.CapacityWindows{}, recorded.DispatchOccupancy, option, snapshot.Workloads[0])
 			if !reflect.DeepEqual(*roundtrip.DispatchOccupancy, d) || roundtrip.DispatchOccupancy.Provenance == d.Provenance {
 				t.Fatalf("record/read/capacity roundtrip lost source/value or aliased provenance: %+v want %+v", roundtrip.DispatchOccupancy, d)
 			}
@@ -141,7 +142,7 @@ func TestSelectedDispatchOccupancyProvenanceSurvivesDecisionRecord(t *testing.T)
 
 func capacityFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	s, snap := schedulerFixture()
-	s.CapacityWindow, s.CapacityWindows, s.CapacityPassingWindows, s.CapacityMinimumRequests = time.Second, 3, 2, 200
+	s.CapacityMinimumRequests = 200
 	s.CompletionMarginMS = 0
 	c := snap.Instances[0].Profile.Condition
 	snap.DispatchOccupancy = []serving.DispatchOccupancy{{
@@ -164,7 +165,7 @@ func capacityFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 
 func schedulerFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	at := time.Unix(100, 0)
-	s := serving.SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, ComparisonPeriod: 100 * time.Millisecond, MaxReplicas: 2, MaxInstances: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, PlanSearchWorkers: 2, Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
+	s := serving.SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, ComparisonPeriod: 100 * time.Millisecond, MaxReplicas: 2, MaxInstances: 4, AutonomousWorkloads: []string{"w1"}, CapacityMinimumRequests: 50, PlanSearchWorkers: 2, Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
 	estimates := schedulerEstimateSettingsForTest()
 	s.DefaultOperationCost, s.DefaultIdlePower = estimates.DefaultOperationCost, estimates.DefaultIdlePower
 	s.CapacityGridSteps, s.CapacityBisectionWidth, s.CapacityTailSamples = 20, .005, 100

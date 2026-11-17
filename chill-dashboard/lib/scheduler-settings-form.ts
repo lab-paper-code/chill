@@ -119,7 +119,6 @@ export function settingsOf(base: SchedulerSettings, form: SettingsForm): { setti
     if (typeof input === "boolean") { record[field.key] = input; continue }
     try { record[field.key] = parseField(field.key, input) } catch (error) { errors[field.key] = (error as Error).message }
   }
-  if (!errors.capacityPassingWindows && !errors.capacityWindows && BigInt(next.capacityPassingWindows) > BigInt(next.capacityWindows)) errors.capacityPassingWindows = "창 수 이하"
   next.controls = { ...form.controls }
   if (!sameSet(form.autonomous, base.autonomousWorkloads ?? [])) next.autonomousWorkloads = form.autonomous
   if (!sameSet(form.excluded, base.excludedNodes ?? [])) next.excludedNodes = form.excluded

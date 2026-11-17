@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -86,5 +87,27 @@ func TestCapacityRoundsStopWithoutImprovement(t *testing.T) {
 	best, selected, err := capacityRounds(run, func() bool { return true })
 	if err != nil || runs != 3 || selected != 1 || best.Value.excesses[0] != .3 {
 		t.Fatalf("want stop after the non-improving third round: runs=%d selected=%d best=%v err=%v", runs, selected, best.Value.excesses, err)
+	}
+}
+
+// With a feasible best, lowered supply regenerates and a feasible result with
+// lower energy against keep replaces the best; without lowered supply the
+// first round stands.
+func TestCapacityRoundsRegenerateAfterFeasibleBest(t *testing.T) {
+	joules := []float64{100, 90, 95}
+	runs := 0
+	run := func() (protocol.Outcome[capacityResult], error) {
+		res := capacityResult{feasible: true, joules: joules[runs], key: fmt.Sprint(runs)}
+		runs++
+		return protocol.Outcome[capacityResult]{Value: res, Found: true}, nil
+	}
+	best, selected, err := capacityRounds(run, func() bool { return true })
+	if err != nil || runs != 3 || selected != 1 || best.Value.joules != 90 {
+		t.Fatalf("want the cheaper feasible second round, stopped by the third: runs=%d selected=%d best=%v err=%v", runs, selected, best.Value.joules, err)
+	}
+	runs = 0
+	best, selected, err = capacityRounds(run, func() bool { return false })
+	if err != nil || runs != 1 || selected != 0 || best.Value.joules != 100 {
+		t.Fatalf("want the first round alone when no correction fell: runs=%d selected=%d best=%v err=%v", runs, selected, best.Value.joules, err)
 	}
 }

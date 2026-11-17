@@ -63,6 +63,6 @@ test("latency and comparison use the selected plan's server values", () => {
 })
 
 test("tick phases keep order and drop zero parts", () => {
-  const control = { lockWaitNanos: 653, captureNanos: 200, refreshListNanos: 150, windowNanos: 0, sourceProbeNanos: 0, restNanos: 50, evaluateNanos: 10, publishNanos: 0, recordNanos: 5, launchNanos: 0, evaluation: { preparationNanos: 10, searchNanos: 0, paybackNanos: 0, ratesNanos: 0, projectionNanos: 0 } } as unknown as ControlObservation
+  const control = { lockWaitNanos: 653, captureNanos: 200, refreshListNanos: 150, windowNanos: 0, sourceProbeNanos: 0, restNanos: 50, evaluateNanos: 10, publishNanos: 0, recordNanos: 5, launchNanos: 0, evaluation: { preparationNanos: 10, searchNanos: 0, paybackNanos: 0, projectionNanos: 0 } } as unknown as ControlObservation
   assert.deepEqual(tickPhases(control).map(row => row.key), ["lock", "capture", "capture.refresh", "capture.rest", "evaluate", "evaluate.preparation", "record"])
 })

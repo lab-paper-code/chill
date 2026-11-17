@@ -228,7 +228,7 @@ func TestCostEvidenceOccupancyKeepsExactProfileAndBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := serving.NewCapacityInput(serving.SchedulerSettings{}, view.DispatchOccupancy, option, workload)
+	input := serving.NewCapacityInput(serving.SchedulerSettings{}, serving.CapacityWindows{}, view.DispatchOccupancy, option, workload)
 	if len(view.DispatchOccupancy) != 3 || input.DispatchOccupancy == nil ||
 		input.DispatchOccupancy.Source != expected || input.DispatchOccupancy.PerRequest != 2_000_000*time.Nanosecond {
 		t.Fatalf("different condition hid exact measured occupancy: %+v rows=%+v", input.DispatchOccupancy, view.DispatchOccupancy)

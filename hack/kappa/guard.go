@@ -70,7 +70,6 @@ func replayKey(t *serving.SchedulerCandidate) string {
 func replaySettings(base, recorded serving.SchedulerSettings, margin float64) serving.SchedulerSettings {
 	// Preserve all recorded control policy, including minimum demand, exclusions,
 	// and headroom; only offline numerical settings come from base.
-	recorded.CapacityWindow, recorded.CapacityWindows, recorded.CapacityPassingWindows = base.CapacityWindow, base.CapacityWindows, base.CapacityPassingWindows
 	recorded.CapacityMinimumRequests, recorded.CapacityGridSteps = base.CapacityMinimumRequests, base.CapacityGridSteps
 	recorded.CapacityBisectionWidth, recorded.CapacityTailSamples = base.CapacityBisectionWidth, base.CapacityTailSamples
 	recorded.PlanSearchWorkers = base.PlanSearchWorkers
@@ -80,8 +79,7 @@ func replaySettings(base, recorded serving.SchedulerSettings, margin float64) se
 	return recorded
 }
 
-// replayDemands reports recorded direct outcomes. Missing evidence stays absent;
-// a missing or zero tested-rate witness never becomes a shortage diagnosis.
+// replayDemands reports recorded direct outcomes. Missing evidence stays absent.
 func replayDemands(decision *serving.SchedulerDecision) []replayDemand {
 	out := []replayDemand{}
 	if decision.Capacity == nil {

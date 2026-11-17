@@ -157,26 +157,16 @@ type SchedulerPlanSearchStep struct {
 	Round            int             `json:"round,omitempty"` // v2 candidate generation, from 1
 }
 
-// SchedulerCapacityWorkload separates routing heuristics and current tested-rate evidence.
+// SchedulerCapacityWorkload records the routing heuristics of one Workload.
 type SchedulerCapacityWorkload struct {
-	UID                 string                  `json:"uid"`
-	Rate                float64                 `json:"rate"`
-	ObservedRate        float64                 `json:"observedRate"`
-	MinimumDemand       float64                 `json:"minimumDemand"`
-	Queued              int                     `json:"queued"`
-	RoutingRate         float64                 `json:"routingRate"`
-	RetainedRoutingRate float64                 `json:"retainedRoutingRate"`
-	Tests               []SchedulerFeedbackRate `json:"tests"`
-	KeepTests           []SchedulerFeedbackRate `json:"keepTests"`
-	Weights             map[string]int32        `json:"weights"`
-}
-
-// SchedulerFeedbackRate records tested queries, not a complete grid certificate.
-type SchedulerFeedbackRate struct {
-	InstanceID   string        `json:"instanceID"`
-	Input        CapacityInput `json:"input"`
-	PathFeedback PathFeedback  `json:"pathFeedback"`
-	FeedbackCapacity
+	UID                 string           `json:"uid"`
+	Rate                float64          `json:"rate"`
+	ObservedRate        float64          `json:"observedRate"`
+	MinimumDemand       float64          `json:"minimumDemand"`
+	Queued              int              `json:"queued"`
+	RoutingRate         float64          `json:"routingRate"`
+	RetainedRoutingRate float64          `json:"retainedRoutingRate"`
+	Weights             map[string]int32 `json:"weights"`
 }
 
 // SchedulerNodePlan records profile routing sums, transition timing and original energy.
@@ -319,11 +309,6 @@ func evaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		best = planner.minimumGain(planner.payback(best))
 	}
 	timing.Payback = time.Since(stageStarted)
-	stage, stageStarted = &timing.Rates, time.Now()
-	if err := planner.testDecisionRates(best); err != nil {
-		return SchedulerDecision{}, err
-	}
-	timing.Rates = time.Since(stageStarted)
 	stage, stageStarted = &timing.Projection, time.Now()
 	decision = planner.decide(decision, best)
 	markFixedEstimates(&decision)
@@ -369,26 +354,25 @@ func schedulerCanonical(s SchedulerSnapshot) SchedulerSnapshot {
 }
 
 type capacityPlanner struct {
-	ctx                      context.Context
-	settings                 SchedulerSettings
-	snapshot                 SchedulerSnapshot
-	keep                     SchedulerCandidate
-	feedbackCache            sync.Map            // Tick-local exact replay results; v1 workers share immutable values
-	feedbackCohort           capacityArrivalMemo // Tick-local immutable arrivals; mutable requests belong to each replay
-	options                  []SchedulerOption
-	pending                  []SchedulerInstance // uncreated commitments, counted once without capacity
-	ws                       []capacityWorkload
-	keepRates, selectedRates [][]SchedulerFeedbackRate
-	index                    map[string]int
-	plans                    [][]*capacityPlan // per Node; plans[n][0] is keep
-	compared                 []bool
-	periodSeconds            float64
-	keepWatts                float64 // keep energy is linear in the common comparison window
-	keepEnergyOnce           sync.Once
-	keepEnergy               capacityResult
-	undecidable              []SchedulerUndecidableCandidate
-	examined                 int
-	searched                 SchedulerPlanSearch
+	ctx            context.Context
+	settings       SchedulerSettings
+	snapshot       SchedulerSnapshot
+	keep           SchedulerCandidate
+	feedbackCache  sync.Map            // Tick-local exact replay results; v1 workers share immutable values
+	feedbackCohort capacityArrivalMemo // Tick-local immutable arrivals; mutable requests belong to each replay
+	options        []SchedulerOption
+	pending        []SchedulerInstance // uncreated commitments, counted once without capacity
+	ws             []capacityWorkload
+	index          map[string]int
+	plans          [][]*capacityPlan // per Node; plans[n][0] is keep
+	compared       []bool
+	periodSeconds  float64
+	keepWatts      float64 // keep energy is linear in the common comparison window
+	keepEnergyOnce sync.Once
+	keepEnergy     capacityResult
+	undecidable    []SchedulerUndecidableCandidate
+	examined       int
+	searched       SchedulerPlanSearch
 	// supplyCorrection is c_w by Workload index: the least ratio of a replay
 	// shortfall's completed rate to the plan's uncorrected profile throughput,
 	// kept only below 1. It scales w's surrogate supply (planTable).

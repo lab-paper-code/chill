@@ -46,7 +46,6 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (route === "v1/observations/occupancy") { methods = ["GET"]; query = "load" }
   else if (route === "v1/observations/scheduler") { methods = ["GET"]; query = "schedulerHistory" }
   else if (route === "v1/observations/events") { methods = ["GET"]; query = "event" }
-  else if (route === "v1/scheduler/capacity") methods = ["GET"]
   else if (route === "v1/model-compatibility") { methods = ["GET"]; query = "compatibility" }
   else if (route === "v1/model-compatibility-matrix") methods = ["GET"]
   else if (route === "v1/experiments") { methods = ["GET"]; query = "experimentPage" }

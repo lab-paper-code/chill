@@ -38,7 +38,7 @@ const (
 	slowNodeName           = "slow"
 	raisedPowerMode        = "max"
 	policyAckPendingReason = "PolicyAckPending"
-	noRateWitness          = "no-rate-witness"
+	infeasibleSLO          = "infeasible-slo"
 )
 
 func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.SchedulerCandidate, serving.ReadyInstance) {
@@ -643,7 +643,7 @@ func TestReadySubsetPreservesE53ServingSnapshotSCH20AC38(t *testing.T) {
 
 // E5-1: old rasp5 stays serving while genesis3 is Ready and nano is late.
 func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
-	for _, scenario := range []string{"admitted", noRateWitness, "same-node", "missing-raw", "unready", "other-uid", "policy-ack", "identity"} {
+	for _, scenario := range []string{"admitted", infeasibleSLO, "same-node", "missing-raw", "unready", "other-uid", "policy-ack", "identity"} {
 		t.Run(scenario, func(t *testing.T) {
 			c, target, physical := acknowledgedHandoffFixture(t)
 			old := target.Instances[0]
@@ -719,7 +719,7 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 				})
 			}
 			definition := *c.runtime.SchedulerInputs(time.Now).Workloads[0]
-			if scenario == noRateWitness {
+			if scenario == infeasibleSLO {
 				definition.SLO.TargetLatency = time.Nanosecond
 			}
 			snapshot.Workloads = []*serving.Definition{&definition}
@@ -739,18 +739,7 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			c.config.Settings = withSchedulerEstimateFixture(serving.SchedulerSettings{
 				ObservationWindow: time.Minute, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 				MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true},
-				CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, CapacityTailSamples: 1,
 			})
-			if scenario == noRateWitness {
-				evidence, err := serving.JudgeFeedbackRates(context.Background(), c.config.Settings, serving.SchedulerOption{Instance: added}, &definition,
-					serving.DispatchOccupancy{}, serving.PathFeedback{}, []float64{23.383333})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if evidence.KappaHat != 0 || len(evidence.Tests) != 1 || evidence.Tests[0].Met {
-					t.Fatalf("strict SLO unexpectedly produced a pass witness: %+v", evidence)
-				}
-			}
 			verifyIndependentReadySubset(t, c, target, old, added, nano, scenario)
 		})
 	}
@@ -764,7 +753,7 @@ func verifyIndependentReadySubset(t *testing.T, c *SchedulerController, target s
 		t.Fatal("late nano unexpectedly allowed final handoff")
 	}
 	partial := c.readySubset(context.Background(), target, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-	if scenario != "admitted" && scenario != noRateWitness {
+	if scenario != "admitted" && scenario != infeasibleSLO {
 		if partial != nil {
 			t.Fatalf("unsafe expansion: %+v", partial)
 		}
@@ -1039,7 +1028,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State), e
 	}
 	controller := &SchedulerController{ctx: ctx, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
 		operations: operations, observationLog: manager.observationLog, reservationState: &manager.reservations.reservation, config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxReplicas: 3, MaxInstances: 3, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-			CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
+			CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 			PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4,
 			AutonomousWorkloads: []string{d.UID}})}}
 	return controller, prepared

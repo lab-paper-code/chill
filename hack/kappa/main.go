@@ -45,9 +45,9 @@ func main() {
 	recordsFile := flag.String("records", "", "scheduler record JSONL with decisions (compare/guard)")
 	rowsFile := flag.String("rows", "", "table: output full offline capacity rows JSON")
 	margin := flag.Float64("margin", -1, "completion margin ms; negative uses the settings of the input")
-	window := flag.Float64("window", 60, "capacityWindow seconds")
-	windows := flag.Int("windows", 20, "capacityWindows")
-	passing := flag.Int("passing", 19, "capacityPassingWindows")
+	window := flag.Float64("window", 60, "table/slo: least seconds of arrivals per row window")
+	windows := flag.Int("windows", 20, "table/slo: windows judged per rate")
+	passing := flag.Int("passing", 19, "table/slo: windows that must meet the SLO for a rate to pass")
 	workloads := flag.String("workloads", "", "comma-separated Workload names under autonomous control (default all)")
 	rate := flag.Float64("rate", 0, "tick: Poisson arrivals (req/s) in the observation window; 0 keeps the dump's")
 	repeat := flag.Int("repeat", 200, "tick: planner runs")
@@ -66,8 +66,7 @@ func main() {
 		if *margin >= 0 {
 			settings.CompletionMarginMS = *margin
 		}
-		settings.CapacityWindow = time.Duration(*window * 1e9)
-		settings.CapacityWindows, settings.CapacityPassingWindows = *windows, *passing
+		rows := serving.CapacityWindows{Window: time.Duration(*window * 1e9), Windows: *windows, PassingWindows: *passing}
 		settings.PlanSearchWorkers = *workers
 		settings.AutonomousWorkloads = nil
 		for _, w := range snapshot.Workloads {
@@ -77,7 +76,7 @@ func main() {
 		}
 		switch *mode {
 		case "table":
-			err = table(settings, snapshot, *rowsFile)
+			err = table(settings, rows, snapshot, *rowsFile)
 		case "tick":
 			err = tick(settings, snapshot, *rate, *repeat)
 		case "compare":
@@ -93,7 +92,7 @@ func main() {
 				err = replay(settings, *profilesFile, *recordsFile, *catalogFile, *arrivalsFile, *margin, *next, *format)
 			}
 		case "slo":
-			err = slo(settings, snapshot)
+			err = slo(settings, rows, snapshot)
 		default:
 			err = fmt.Errorf("unknown mode %q", *mode)
 		}
@@ -166,9 +165,9 @@ func decodeSnapshot(raw json.RawMessage) (serving.SchedulerSnapshot, error) {
 
 // table explicitly builds every full-grid row for the autonomous Workloads,
 // prints its build time and writes CapacityRows.
-func table(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot, rowsFile string) error {
+func table(settings serving.SchedulerSettings, windows serving.CapacityWindows, snapshot serving.SchedulerSnapshot, rowsFile string) error {
 	began := time.Now()
-	t := serving.NewCapacityTable(runtime.GOMAXPROCS(0), nil, nil)
+	t := serving.NewCapacityTable(runtime.GOMAXPROCS(0), windows, nil, nil)
 	t.Ensure(context.Background(), settings, snapshot)
 	t.Wait()
 	elapsed := time.Since(began)
@@ -256,7 +255,7 @@ func quantile(xs []float64, p float64) float64 {
 // each Node (proposeSLO), then builds the Workload's rows at L with p95 and
 // with p99 and prints the largest kappa per Node, the kappa sum, whether the
 // rule holds on kappa, and each table's build time.
-func slo(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot) error {
+func slo(settings serving.SchedulerSettings, windows serving.CapacityWindows, snapshot serving.SchedulerSnapshot) error {
 	for _, w := range snapshot.Workloads {
 		if !slices.Contains(settings.AutonomousWorkloads, w.UID) {
 			continue
@@ -275,7 +274,7 @@ func slo(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot)
 			s, snap := settings, snapshot
 			s.AutonomousWorkloads, snap.Workloads = []string{c.UID}, []*serving.Definition{&c}
 			began := time.Now()
-			t := serving.NewCapacityTable(runtime.GOMAXPROCS(0), nil, nil)
+			t := serving.NewCapacityTable(runtime.GOMAXPROCS(0), windows, nil, nil)
 			t.Ensure(context.Background(), s, snap)
 			t.Wait()
 			elapsed := time.Since(began)
@@ -322,7 +321,7 @@ func nodeLatencies(settings serving.SchedulerSettings, snapshot serving.Schedule
 		if !slices.Contains(o.CompatibleUIDs, w.UID) || o.Instance.Profile == nil {
 			continue
 		}
-		d := serving.NewCapacityInput(settings, snapshot.DispatchOccupancy, o, w).DispatchOccupancy
+		d := serving.NewCapacityInput(settings, serving.CapacityWindows{}, snapshot.DispatchOccupancy, o, w).DispatchOccupancy
 		for _, b := range o.Instance.Profile.Batches {
 			if b.Batch != 1 || len(b.ServiceSamples) == 0 || d == nil {
 				continue

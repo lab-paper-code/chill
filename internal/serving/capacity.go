@@ -24,6 +24,14 @@ const (
 	CapacityServiceExceedsSLO = "BatchServiceExceedsSLO"
 )
 
+// CapacityWindows is how an offline row judges one rate: Windows Poisson
+// windows of at least Window, met when PassingWindows of them meet the SLO.
+type CapacityWindows struct {
+	Window         time.Duration `json:"capacityWindowNanos"`
+	Windows        int           `json:"capacityWindows"`
+	PassingWindows int           `json:"capacityPassingWindows"`
+}
+
 // CapacityInput names everything a row's kappa depends on; its hash is the row key.
 type CapacityInput struct {
 	WorkloadUID        string              `json:"workloadUID"`
@@ -35,13 +43,11 @@ type CapacityInput struct {
 	Allocation         SchedulerAllocation `json:"allocation"`
 	MaxBatch           int                 `json:"maxBatch"`
 	CompletionMarginMS float64             `json:"completionMarginMS"`
-	Window             time.Duration       `json:"capacityWindowNanos"`
-	Windows            int                 `json:"capacityWindows"`
-	PassingWindows     int                 `json:"capacityPassingWindows"`
-	MinimumRequests    int                 `json:"capacityMinimumRequests"`
-	GridSteps          int                 `json:"capacityGridSteps"`
-	BisectionWidth     float64             `json:"capacityBisectionWidth"`
-	TailSamples        int                 `json:"capacityTailSamples"`
+	CapacityWindows
+	MinimumRequests int     `json:"capacityMinimumRequests"`
+	GridSteps       int     `json:"capacityGridSteps"`
+	BisectionWidth  float64 `json:"capacityBisectionWidth"`
+	TailSamples     int     `json:"capacityTailSamples"`
 	// DispatchOccupancy carries selected operational d and provenance; evidence
 	// refresh facts are retained here but do not change the numerical row key.
 	DispatchOccupancy *DispatchOccupancy `json:"dispatchOccupancy,omitempty"`
@@ -95,14 +101,14 @@ func CapacityVariants(o SchedulerOption) []SchedulerOption {
 	return out
 }
 
-// NewCapacityInput keys option variant o for Workload w under settings and the
-// selected measured, DOM or configured default dispatch occupancy.
-func NewCapacityInput(settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition) CapacityInput {
+// NewCapacityInput keys option variant o for Workload w under settings, the
+// row's windows and the selected measured, DOM or configured default dispatch
+// occupancy.
+func NewCapacityInput(settings SchedulerSettings, windows CapacityWindows, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition) CapacityInput {
 	i := o.Instance
 	return CapacityInput{
 		WorkloadUID: w.UID, SLO: w.SLO, Admission: w.Admission, Node: i.Node, PowerMode: i.Profile.Condition.PowerMode, ProfileID: i.Profile.ID,
-		Allocation: i.Allocation, MaxBatch: i.MaxBatch, CompletionMarginMS: settings.CompletionMarginMS,
-		Window: settings.CapacityWindow, Windows: settings.CapacityWindows, PassingWindows: settings.CapacityPassingWindows,
+		Allocation: i.Allocation, MaxBatch: i.MaxBatch, CompletionMarginMS: settings.CompletionMarginMS, CapacityWindows: windows,
 		MinimumRequests: settings.CapacityMinimumRequests, DispatchOccupancy: ResolveDispatchOccupancy(settings, occupancy, o.Instance),
 		GridSteps: settings.CapacityGridSteps, BisectionWidth: settings.CapacityBisectionWidth, TailSamples: settings.CapacityTailSamples,
 	}
@@ -140,6 +146,7 @@ func capacityThroughput(p *Profile, b int) float64 {
 // capacityBuilder judges rates for one row with replay.
 type capacityBuilder struct {
 	settings   SchedulerSettings
+	windows    CapacityWindows
 	percentile float64
 	replay     func(ctx context.Context, lambda float64, n, seed int) (capacityWindowResult, error)
 }
@@ -154,12 +161,12 @@ type capacityWindowResult struct {
 
 // BuildCapacityRow computes the measured option's capacity, independent of
 // current placement inventory. at anchors the simulated arrival windows.
-func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition, at time.Time) (CapacityRow, error) {
+func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, windows CapacityWindows, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition, at time.Time) (CapacityRow, error) {
 	if err := ctx.Err(); err != nil {
 		return CapacityRow{}, err
 	}
 	began := time.Now()
-	in := NewCapacityInput(settings, occupancy, o, w)
+	in := NewCapacityInput(settings, windows, occupancy, o, w)
 	row := CapacityRow{Key: in.Key(), Input: in}
 	row.Mu = capacityThroughput(o.Instance.Profile, o.Instance.MaxBatch)
 	// A mean is not a lower bound: replay may choose any observed sample of
@@ -180,7 +187,7 @@ func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy
 		return row, nil
 	}
 	r := &capacityReplay{settings: settings, at: at, occupancy: *in.DispatchOccupancy, option: o, w: w, gaps: map[[2]int][]float64{}}
-	b := capacityBuilder{settings: settings, percentile: w.SLO.Percentile, replay: r.window}
+	b := capacityBuilder{settings: settings, windows: windows, percentile: w.SLO.Percentile, replay: r.window}
 	err := b.build(ctx, &row)
 	// Copy the evidence out: a pointer into r would keep r, and with it the
 	// per-row gaps cache (one []float64 per distinct window population), alive
@@ -242,9 +249,9 @@ func (b *capacityBuilder) gridStep(k int, mu float64) float64 {
 }
 
 // requests is the window population: MinimumRequests, CapacityTailSamples
-// above the SLO percentile, and at least CapacityWindow of arrivals.
+// above the SLO percentile, and at least Window of arrivals.
 func (b *capacityBuilder) requests(lambda float64) int {
-	n := max(b.settings.CapacityMinimumRequests, int(math.Ceil(lambda*b.settings.CapacityWindow.Seconds())))
+	n := max(b.settings.CapacityMinimumRequests, int(math.Ceil(lambda*b.windows.Window.Seconds())))
 	if b.percentile < 100 {
 		n = max(n, int(math.Ceil(float64(b.settings.CapacityTailSamples)/(1-b.percentile/100))))
 	}
@@ -254,11 +261,11 @@ func (b *capacityBuilder) requests(lambda float64) int {
 // judge replays windows seeded 1..Windows at rate lambda and stops once the
 // outcome is decided; lambda is met when PassingWindows windows meet the SLO.
 func (b *capacityBuilder) judge(ctx context.Context, lambda float64) (CapacityJudgment, error) {
-	s := b.settings
+	s := b.windows
 	j := CapacityJudgment{Rate: lambda, Requests: b.requests(lambda)}
 	var requestJoules float64
 	var requests int
-	for seed := 1; seed <= s.CapacityWindows && j.Passed < s.CapacityPassingWindows && j.Passed+s.CapacityWindows-seed+1 >= s.CapacityPassingWindows; seed++ {
+	for seed := 1; seed <= s.Windows && j.Passed < s.PassingWindows && j.Passed+s.Windows-seed+1 >= s.PassingWindows; seed++ {
 		window, err := b.replay(ctx, lambda, j.Requests, seed)
 		if err != nil {
 			return j, err
@@ -273,7 +280,7 @@ func (b *capacityBuilder) judge(ctx context.Context, lambda float64) (CapacityJu
 	if requests > 0 {
 		j.EnergyPerInputJoules = requestJoules / float64(requests)
 	}
-	j.Met = j.Passed >= s.CapacityPassingWindows
+	j.Met = j.Passed >= s.PassingWindows
 	return j, nil
 }
 
@@ -287,7 +294,6 @@ type capacityReplay struct {
 	w           *Definition
 	gaps        map[[2]int][]float64
 	conditional ConditionalServiceEvidence
-	feedback    *PathFeedback // nil preserves explicit offline row inputs
 }
 
 // capacityWindowLimit can only disprove a window; a passing window still
@@ -372,9 +378,6 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 		Instances: []SchedulerInstance{instance}, Routing: map[string]map[string]int32{w.UID: {instance.ID: 1}},
 		Arrivals: arrivals, Options: []SchedulerOption{o}, DispatchOccupancy: []DispatchOccupancy{b.occupancy},
 	}
-	if b.feedback != nil {
-		snapshot.PathFeedback = []PathFeedback{*b.feedback}
-	}
 	settings := b.settings
 	settings.AutonomousWorkloads = nil
 	settings.ObservationWindow, settings.ComparisonPeriod = span, span
@@ -419,17 +422,19 @@ type CapacityTable struct {
 	asked    map[string]bool // keys already passed to load
 	wanted   []CapacityInput
 	parallel chan struct{}
+	windows  CapacityWindows
 	record   func(CapacityRow) error
 	load     func(context.Context, []string) (map[string]CapacityRow, error)
 	wg       sync.WaitGroup
 }
 
-// NewCapacityTable runs up to parallel rows at once; record receives each
-// built row (the capacity-row-built event) and its error is not retried. load
-// returns the latest recorded rows of keys; record and load may be nil.
-func NewCapacityTable(parallel int, record func(CapacityRow) error, load func(context.Context, []string) (map[string]CapacityRow, error)) *CapacityTable {
+// NewCapacityTable judges every row with windows and runs up to parallel rows
+// at once; record receives each built row (the capacity-row-built event) and
+// its error is not retried. load returns the latest recorded rows of keys;
+// record and load may be nil.
+func NewCapacityTable(parallel int, windows CapacityWindows, record func(CapacityRow) error, load func(context.Context, []string) (map[string]CapacityRow, error)) *CapacityTable {
 	return &CapacityTable{rows: map[string]CapacityRow{}, running: map[string]*capacityTask{}, previous: map[string]CapacityRow{}, asked: map[string]bool{},
-		parallel: make(chan struct{}, max(1, parallel)), record: record, load: load}
+		parallel: make(chan struct{}, max(1, parallel)), windows: windows, record: record, load: load}
 }
 
 type capacityTask struct {
@@ -458,7 +463,7 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 				if !slices.Contains(o.CompatibleUIDs, w.UID) {
 					continue
 				}
-				in := NewCapacityInput(settings, snapshot.DispatchOccupancy, o, w)
+				in := NewCapacityInput(settings, t.windows, snapshot.DispatchOccupancy, o, w)
 				wanted = append(wanted, in)
 				key := in.Key()
 				keys[key] = true
@@ -536,7 +541,7 @@ func (t *CapacityTable) build(settings SchedulerSettings, occupancy []DispatchOc
 	defer t.wg.Done()
 	defer task.cancel()
 	defer func() { <-t.parallel }()
-	row, err := BuildCapacityRow(task.ctx, settings, occupancy, task.option, task.workload, at)
+	row, err := BuildCapacityRow(task.ctx, settings, t.windows, occupancy, task.option, task.workload, at)
 	t.mu.Lock()
 	if t.running[task.key] != task {
 		t.mu.Unlock()

@@ -51,16 +51,6 @@ func (f PathFeedback) pathPost(instance string) (PathPost, bool) {
 	return PathPost{}, false
 }
 
-// forPath is the single-path feedback of a request routed to instance.
-func (f PathFeedback) forPath(instance string, configuredNanos float64) PathFeedback {
-	path, ok := f.pathPost(instance)
-	if !ok {
-		path.PostNanos, f.Source = configuredNanos, pathFeedbackConfigured
-	}
-	f.PostNanos, f.SampleCount, f.Paths = path.PostNanos, path.SampleCount, nil
-	return f
-}
-
 // PathObservedMean describes only the joined finite timing sample population.
 // It is not a percentile decomposition or a full client success/failure metric.
 type PathObservedMean struct {

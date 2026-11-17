@@ -290,9 +290,6 @@ func TestCapacityEnergyUndecidableSkipsReplayWithoutChangingSelection(t *testing
 					if !postfilter {
 						best = p.minimumGain(p.payback(best))
 					}
-					if err := p.testDecisionRates(best); err != nil {
-						t.Fatal(err)
-					}
 					decision := SchedulerDecision{
 						At: p.snapshot.At, Settings: s, Keep: p.keep,
 						Search:     schedulerSearchPopulation(p.ctx, s, p.snapshot),
