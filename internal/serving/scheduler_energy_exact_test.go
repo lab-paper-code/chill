@@ -333,7 +333,7 @@ func TestEnergyMinimumDemandUsesObservedRates(t *testing.T) {
 		snap.Instances[0].Profile.Power = schedulerTestPower(100)
 		snap.Instances[0].Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(3)
 		p := capacityPlannerForTest(t, s, snap)
-		if p.ws[0].rate != 40 || p.ws[0].observedRate != observed || p.ws[0].minRate != 40 || p.ws[0].minObservedRate != observed {
+		if want := (capacityDemand{rate: 40, observedRate: observed}); p.ws[0].capacityDemand != want || p.ws[0].least != want {
 			t.Fatalf("rates: %+v", p.ws[0])
 		}
 		table := p.planTable()

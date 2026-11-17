@@ -112,7 +112,7 @@ func TestCapacityDeltaFrozenWorkloadPriority(t *testing.T) {
 		p.ws[0].d.SLO.TargetLatency = 100 * time.Millisecond
 		a := *p.ws[0].d
 		a.UID = "a"
-		p.ws = append(p.ws, capacityWorkload{d: &a, rate: 1, observedRate: 1})
+		p.ws = append(p.ws, capacityWorkload{d: &a, capacityDemand: capacityDemand{rate: 1, observedRate: 1}})
 		p.index = map[string]int{"b": 0, "a": 1}
 		p.settings.ObservationWindow = time.Second
 		p.snapshot.Workloads = []*Definition{p.ws[0].d, p.ws[1].d}
