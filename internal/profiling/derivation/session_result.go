@@ -136,7 +136,7 @@ func (p SessionParameter) Value() (float64, bool) {
 	return p.value, true
 }
 
-// Range returns the parameter's range over the fits within the noise threshold.
+// Range returns the idle watts' confidence interval; other parameters have none.
 func (p SessionParameter) Range() ([2]float64, bool) { return p.bounds, p.hasBounds }
 
 // Reason says why a parameter is not identified.

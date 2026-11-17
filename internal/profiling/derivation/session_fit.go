@@ -61,34 +61,39 @@ func (r SessionResult) LoadPower() LoadPower {
 	power := LoadPower{IdleWatts: r.Power.IdleWatts, Batches: make([]BatchLoadPower, len(r.Batches))}
 	idle, ok := r.Power.IdleWatts.Value()
 	if !ok {
-		unknown := notIdentified("settled idle watts not identified")
-		power.AwakeStepWatts, power.HoldSeconds = unknown, unknown
+		const reason = "settled idle watts not identified"
+		power.withoutFit(reason)
 		for i := range power.Batches {
-			power.Batches[i] = BatchLoadPower{InputSlopeJoules: unknown, SaturationJoulesPerInput: unknown}
+			power.Batches[i].SaturationJoulesPerInput = notIdentified(reason)
 		}
 		return power
 	}
 	for i, batch := range r.Batches {
 		power.Batches[i].SaturationJoulesPerInput = saturationJoules(batch, idle)
-		power.Batches[i].InputSlopeJoules = notIdentified(fmt.Sprintf("no level of batch %d has measured watts", batch.Batch))
 	}
-	fit, err := newLoadFit(r.Batches, idle)
-	if err == nil {
-		err = fit.solve()
-	}
+	fit, err := fitLoad(r.Batches, idle)
 	if err != nil {
-		unknown := notIdentified(err.Error())
-		power.AwakeStepWatts, power.HoldSeconds = unknown, unknown
-		for i := range power.Batches {
-			power.Batches[i].InputSlopeJoules = unknown
-		}
+		power.withoutFit(err.Error())
 		return power
 	}
 	power.AwakeStepWatts, power.HoldSeconds = valueParameter(fit.x[0]), valueParameter(fit.hold)
-	for index, column := range fit.column {
-		power.Batches[index].InputSlopeJoules = valueParameter(fit.x[column])
+	for i, batch := range r.Batches {
+		if column, fitted := fit.column[i]; fitted {
+			power.Batches[i].InputSlopeJoules = valueParameter(fit.x[column])
+		} else {
+			power.Batches[i].InputSlopeJoules = notIdentified(fmt.Sprintf("no level of batch %d has measured watts", batch.Batch))
+		}
 	}
 	return power
+}
+
+// withoutFit marks the step, the hold and every slope not identified.
+func (p *LoadPower) withoutFit(reason string) {
+	unknown := notIdentified(reason)
+	p.AwakeStepWatts, p.HoldSeconds = unknown, unknown
+	for i := range p.Batches {
+		p.Batches[i].InputSlopeJoules = unknown
+	}
 }
 
 func saturationJoules(batch SessionBatch, idle float64) SessionParameter {
@@ -112,7 +117,9 @@ type loadFit struct {
 	x        []float64
 }
 
-func newLoadFit(batches []SessionBatch, idle float64) (*loadFit, error) {
+// fitLoad lays out the levels with watts and solves for the hold, the step
+// and the slopes.
+func fitLoad(batches []SessionBatch, idle float64) (*loadFit, error) {
 	fit := &loadFit{column: map[int]int{}}
 	var observed []float64
 	for index, batch := range batches {
@@ -140,7 +147,7 @@ func newLoadFit(batches []SessionBatch, idle float64) (*loadFit, error) {
 		return nil, fmt.Errorf("%d levels with watts do not determine the awake step, %d slopes and the hold", len(observed), len(fit.column))
 	}
 	fit.observed = mat.NewVecDense(len(observed), observed)
-	return fit, nil
+	return fit, fit.solve()
 }
 
 // design lays out the awake column followed by one rate column per batch.
