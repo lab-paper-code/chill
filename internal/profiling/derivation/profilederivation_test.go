@@ -25,7 +25,7 @@ func TestMeasurementIntegratesWindowWithoutScientificVerdicts(t *testing.T) {
 			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-2", RawEvidence: rawEvidence("2"), ModelLoadedIdleMeanWallWatts: 5.1},
 			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-3", RawEvidence: rawEvidence("3"), ModelLoadedIdleMeanWallWatts: 4.9},
 		},
-		pointPolicy("idle-v1"),
+		idlePointPolicy(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -37,12 +37,12 @@ func TestMeasurementIntegratesWindowWithoutScientificVerdicts(t *testing.T) {
 	}
 	mixedIdle := append([]IdleTrial(nil), baseline.Trials...)
 	mixedIdle[2].EnvironmentIdentity = otherPolicy
-	if _, err := DeriveIdleBaseline(mixedIdle, pointPolicy("idle-v1")); err != nil {
+	if _, err := DeriveIdleBaseline(mixedIdle, idlePointPolicy()); err != nil {
 		t.Fatalf("environment observations blocked idle calculation: %v", err)
 	}
 	duplicateEvidence := append([]IdleTrial(nil), baseline.Trials...)
 	duplicateEvidence[2].RawEvidence = duplicateEvidence[1].RawEvidence
-	if _, err := DeriveIdleBaseline(duplicateEvidence, pointPolicy("idle-v1")); err == nil {
+	if _, err := DeriveIdleBaseline(duplicateEvidence, idlePointPolicy()); err == nil {
 		t.Fatal("expected duplicate idle raw evidence rejection")
 	}
 }
@@ -52,7 +52,7 @@ func TestRestoreIdleBaselineValidatesStoredAggregateAndOwnsTrials(t *testing.T) 
 		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle", TrialID: "idle-1", RawEvidence: rawEvidence("1"), ModelLoadedIdleMeanWallWatts: 5},
 		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle", TrialID: "idle-2", RawEvidence: rawEvidence("2"), ModelLoadedIdleMeanWallWatts: 5.1},
 		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle", TrialID: "idle-3", RawEvidence: rawEvidence("3"), ModelLoadedIdleMeanWallWatts: 4.9},
-	}, pointPolicy("idle-v1"))
+	}, idlePointPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +70,8 @@ func TestRestoreIdleBaselineValidatesStoredAggregateAndOwnsTrials(t *testing.T) 
 	}
 }
 
-func pointPolicy(version string) PointPolicy {
-	return PointPolicy{Version: version, MinimumTrials: 3, ConfidenceLevel: 0.95}
+func idlePointPolicy() PointPolicy {
+	return PointPolicy{Version: "idle-v1", MinimumTrials: 3, ConfidenceLevel: 0.95}
 }
 
 func rawEvidence(key string) RawEvidenceIdentity {
