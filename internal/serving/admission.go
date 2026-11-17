@@ -196,6 +196,12 @@ func EstimateAdmission(in AdmissionInput) AdmissionEstimate {
 	return projectAdmission(in, &scratch)
 }
 
+// admissionIdleTakes reports whether the executor runs the candidate as the
+// sole request of an otherwise idle instance.
+func admissionIdleTakes(states []firstfloor.RequestState, choice firstfloor.BatchChoice, candidateID string) bool {
+	return choice.RequestID == candidateID && firstfloor.IdleTakes(states, slices.IndexFunc(states, func(q firstfloor.RequestState) bool { return q.Context.RequestID == candidateID }))
+}
+
 // projectAdmission owns reusable projection storage; immutable native snapshots
 // and their lifetime pointers are never modified. Runtime validates the common
 // executor inputs once, before projecting any candidates.
@@ -290,7 +296,7 @@ func projectAdmission(in AdmissionInput, scratch *admissionScratch) AdmissionEst
 			continue
 		}
 		// Judged on the states ChooseBatch just saw; the candidate is the head of its own batch when sole.
-		taken := choice.RequestID == candidateID && firstfloor.IdleTakes(states, slices.IndexFunc(states, func(q firstfloor.RequestState) bool { return q.Context.RequestID == candidateID }))
+		taken := admissionIdleTakes(states, choice, candidateID)
 		service, candidate, outside, valid, reason := admissionProjectBatch(in, states, choice, idle, upper, &scratch.quantiles)
 		if !valid {
 			return AdmissionEstimate{UnknownReason: reason}

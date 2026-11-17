@@ -239,7 +239,8 @@ func TestSchedulerTargetAdmissionDoesNotBlockProgress(t *testing.T) {
 // The evaluation input predates an unrelated owner's completion and a newer
 // published capture. Approval asks admission on the latest capture only.
 func TestSchedulerApprovalAdmitsTargetOnLatestCapture(t *testing.T) {
-	for _, change := range []string{"unrelated-completion", "instance-changed", "reserved-during-admission"} {
+	const reservedDuringAdmission = "reserved-during-admission"
+	for _, change := range []string{"unrelated-completion", "instance-changed", reservedDuringAdmission} {
 		t.Run(change, func(t *testing.T) {
 			c, _ := tickReadySubsetController(t, nil)
 			c.config.Settings.AutonomousWorkloads = nil
@@ -284,7 +285,7 @@ func TestSchedulerApprovalAdmitsTargetOnLatestCapture(t *testing.T) {
 			}
 			ctx := &heldEvaluationContext{Context: parent, entered: make(chan struct{}), release: make(chan struct{}),
 				function: ".SchedulerTargetAdmission"}
-			if change != "reserved-during-admission" {
+			if change != reservedDuringAdmission {
 				close(ctx.release)
 			}
 			config := c.config
@@ -296,7 +297,7 @@ func TestSchedulerApprovalAdmitsTargetOnLatestCapture(t *testing.T) {
 				c.tickMu.Unlock()
 				done <- err
 			}()
-			if change == "reserved-during-admission" {
+			if change == reservedDuringAdmission {
 				<-ctx.entered
 				c.mu.Lock()
 				c.runs["taker"] = &actionRun{owner: "taker", reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{ready.Node}},
@@ -318,7 +319,7 @@ func TestSchedulerApprovalAdmitsTargetOnLatestCapture(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "latest target admission: TargetWorkloadOutsideControl") || route != nil {
 					t.Fatalf("target for a changed instance was not rejected by admission: %v", err)
 				}
-			case "reserved-during-admission":
+			case reservedDuringAdmission:
 				if err == nil || !strings.Contains(err.Error(), "live reservations changed") || route != nil {
 					t.Fatalf("target admitted before a reservation was launched: %v", err)
 				}

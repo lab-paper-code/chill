@@ -169,7 +169,7 @@ class OverloadAdmissionTest(unittest.TestCase):
     def test_loadgen_rejection_row_joins_without_final_and_quarantines_conflicts(self):
         metadata = {'code': 'DeadlineInfeasible', 'stage': 'gateway', 'policy': 'Delay'}
         response = SimpleNamespace(status_code=503, request_id='r0', workload_uid='uid',
-                                   elapsed_nanos=7, body=json.dumps(metadata).encode())
+                                   elapsed_nanos=7, connection_reused=False, body=json.dumps(metadata).encode())
         row = self.client(0)
         cli._infer(SimpleNamespace(infer=lambda *_: response), 'model', b'inputs', row,
                    SimpleNamespace(enqueue=lambda _: None))

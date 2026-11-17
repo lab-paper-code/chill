@@ -379,21 +379,7 @@ func (o *Observer) refreshLocked(ctx context.Context) (result observerRefresh, e
 			o.issue("publish", o.publishLedger(ready))
 		}
 		if source := o.sources[string(pod.UID)]; source != nil && source.unanswered {
-			// The instance stays closed to dispatch until this read answers and
-			// publishes it; the refresh uses the state it already has.
-			if !source.reading {
-				source.reading = true
-				o.wg.Add(1)
-				go func() {
-					defer o.wg.Done()
-					ctx, cancel := context.WithTimeout(o.ctx, detachedReadTimeout)
-					defer cancel()
-					probe(ctx)
-					o.mu.Lock()
-					source.reading = false
-					o.mu.Unlock()
-				}()
-			}
+			o.readDetached(source, probe)
 			continue
 		}
 		probes.Add(1)
@@ -421,6 +407,25 @@ func (o *Observer) sourceNamespacePods(pods *corev1.PodList) *corev1.PodList {
 		}
 	}
 	return selected
+}
+
+// readDetached reads a source no refresh waits for, one read at a time. The
+// instance stays closed to dispatch until a read answers and publishes it.
+func (o *Observer) readDetached(source *nativeSource, probe func(context.Context)) {
+	if source.reading {
+		return
+	}
+	source.reading = true
+	o.wg.Add(1)
+	go func() {
+		defer o.wg.Done()
+		ctx, cancel := context.WithTimeout(o.ctx, detachedReadTimeout)
+		defer cancel()
+		probe(ctx)
+		o.mu.Lock()
+		source.reading = false
+		o.mu.Unlock()
+	}()
 }
 
 // finishRefreshLocked finalizes the source ledger after every awaited probe has published.
@@ -703,7 +708,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		if source == nil || source.stopped || source.deleted || servingstate.PhysicalID(source.uid, source.containerID) != spec.InstanceID {
 			return serving.ReadyInstance{}, false, nil
 		}
-		source.unanswered = !readSucceeded && ctx.Err() == nil
+		source.unanswered = !readSucceeded
 		if probeErr == nil || instance.State.Native != nil {
 			instance.State.NativeVerified = readSucceeded && matchesNativeSource(pod, spec.ModelName, &instance.State)
 			if probeErr != nil {

@@ -241,10 +241,9 @@ func (c *reservationState) publishSnapshotLocked(snapshot *serving.SchedulerSnap
 	}
 }
 
+// publishDecisionLocked records an approved decision. Its capture is published
+// unless a later one already is.
 func (c *reservationState) publishDecisionLocked(snapshot *serving.SchedulerSnapshot, decision *serving.SchedulerDecision) {
-	if snapshot.At.Before(c.state.Snapshot.At) {
-		return
-	}
 	c.publishSnapshotLocked(snapshot)
 	c.state.Decision = *decision
 	c.markOverloadPrepares(*decision)

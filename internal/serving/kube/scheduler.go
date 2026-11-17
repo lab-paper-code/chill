@@ -396,10 +396,39 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 	return c.approveEvaluation(ctx, now, config, publishedAt, snapshot, decision, &event, next)
 }
 
+// plannedNodeState is what an action plan assumes of one Node it acts on.
+type plannedNodeState struct {
+	PowerMode string
+	Ready     bool
+	Instances []string
+}
+
+// plannedNodeStates is the state of every Node the actions touch: its power
+// mode and readiness and the executors on it that are not yet terminated.
+func plannedNodeStates(actions []serving.Action, s serving.SchedulerSnapshot) map[string]plannedNodeState {
+	states := map[string]plannedNodeState{}
+	for _, action := range actions {
+		states[action.Node.UID] = plannedNodeState{}
+	}
+	for _, node := range s.Nodes {
+		if _, planned := states[node.Node.UID]; planned {
+			states[node.Node.UID] = plannedNodeState{PowerMode: node.PowerMode, Ready: node.Ready}
+		}
+	}
+	for _, instance := range s.Instances {
+		if state, planned := states[instance.Node.UID]; planned && !instance.Terminated {
+			state.Instances = append(state.Instances, instance.ID+"\x00"+instance.PodUID+"\x00"+instance.ProfileID)
+			states[instance.Node.UID] = state
+		}
+	}
+	return states
+}
+
 // approveEvaluation is called with tickMu held and returns holding it. Progress
 // during evaluation only selects a fresh capture for publication. A new target
-// is approved by admission on that capture; afterwards only a changed action and
-// reservation ledger or approval configuration discards the evaluation.
+// needs the Nodes its actions touch unchanged since evaluation and admission
+// on that capture; afterwards only a changed action and reservation ledger or
+// approval configuration discards the evaluation.
 func (c *SchedulerController) approveEvaluation(
 	ctx context.Context, now time.Time, config SchedulerControllerConfig, publishedAt time.Time,
 	snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision,
@@ -410,11 +439,10 @@ func (c *SchedulerController) approveEvaluation(
 	latest := c.config
 	advanced := !c.state.Snapshot.At.Equal(publishedAt)
 	hasRuns := len(c.runs) != 0
-	newTarget := decision.Target != nil && len(decision.Target.Actions) != 0 &&
-		c.runs[transitionRunKind+"/"+decision.Target.ID] == nil
+	planned := decision.Target != nil && len(decision.Target.Actions) != 0
 	c.mu.Unlock()
 	current := snapshot
-	if advanced || hasRuns || newTarget || len(decision.Keep.Actions) != 0 {
+	if advanced || hasRuns || planned || len(decision.Keep.Actions) != 0 {
 		// A pure observation/Keep round on the published capture does not
 		// repeat the refresh Lists.
 		next("capture", &event.Capture)
@@ -424,7 +452,16 @@ func (c *SchedulerController) approveEvaluation(
 			return decision, err
 		}
 	}
+	// The capture retires ended owners, so only now is it known whether the
+	// target already runs.
+	c.mu.Lock()
+	newTarget := planned && c.runs[transitionRunKind+"/"+decision.Target.ID] == nil
+	c.mu.Unlock()
 	if newTarget {
+		// The action plan was built for the evaluated state of its Nodes.
+		if !reflect.DeepEqual(plannedNodeStates(decision.Target.Actions, snapshot), plannedNodeStates(decision.Target.Actions, current)) {
+			return decision, errors.New("scheduler evaluation invalidated: planned Node changed")
+		}
 		// Exact replay uses fresh worker-clock history without blocking control progress.
 		next("evaluate", &event.Evaluate)
 		c.tickMu.Unlock()

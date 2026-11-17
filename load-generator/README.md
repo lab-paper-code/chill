@@ -33,7 +33,7 @@ that completed an exchange returns to the idle pool, and one that failed or time
 out is closed and never reused. The pool has no size cap, so a slow server never
 delays the schedule. Latency runs from sending the request to reading the full
 response on an established connection; a new connection is opened before the
-clock starts, so the TLS handshake is outside `latencyMs` and `elapsedNanos`.
+clock starts, so the TLS handshake is outside `elapsedNanos`. `latencyMs` brackets the caller and includes the handshake of a request that opened its own connection.
 Every row carries `connectionReused` (`false` when the request opened its own
 connection).
 Endpoint/token validation and TLS preparation occur once before replay.
