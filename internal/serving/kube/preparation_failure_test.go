@@ -133,7 +133,8 @@ func TestPrepareFailureSurvivesObservationWindow(t *testing.T) {
 				profile.Batches[i].MemoryBytes++
 			}
 			snapshot.Options[0].Instance.Profile = &profile
-			next, _ = c.reconcileSnapshot(snapshot, later.Add(c.config.Settings.ObservationWindow), c.config.Settings.ObservationWindow, c.runtime)
+			snapshot.ObservationEnd = later.Add(c.config.Settings.ObservationWindow)
+			next, _ = c.reconcileSnapshot(snapshot, snapshot.ObservationEnd, c.config.Settings.ObservationWindow, c.runtime)
 			if slices.ContainsFunc(next.Actions, func(a serving.Action) bool { return a.ID == result.Operation.ID }) {
 				t.Fatal("changed memory input retained obsolete start failure")
 			}

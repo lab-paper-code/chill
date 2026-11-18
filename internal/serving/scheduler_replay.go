@@ -718,7 +718,7 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 		if ctx.Err() != nil {
 			return false
 		}
-		if !a.At.Before(start) && a.At.Before(s.snap.ObservationEnd) && (a.Compute || a.Accepted) && a.Definition != nil {
+		if !a.At.Before(start) && a.At.Before(s.snap.ObservationEnd) && a.computeInput() {
 			arrivals = append(arrivals, a)
 			s.out.observedArrivals[a.Definition.UID]++
 		}

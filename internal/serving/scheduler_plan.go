@@ -149,7 +149,7 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 			search.Accepted++
 			load.Accepted++
 		}
-		if (a.Compute || a.Accepted) && a.Definition != nil {
+		if a.computeInput() {
 			search.ComputeInputs++
 			load.ComputeInputs++
 			if !a.At.Before(search.RecentWindowStart) {

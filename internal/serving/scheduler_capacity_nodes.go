@@ -23,11 +23,14 @@ func newCapacityDemand(observed, floor float64) capacityDemand {
 
 type capacityWorkload struct {
 	d              *Definition
-	capacityDemand                // λ
-	least          capacityDemand // at the least arrival rate of one control interval in the observation window
-	queued         int            // q
-	current        int            // instances serving it now
-	totalNanos     float64        // frozen current-window TOTAL, heuristic only
+	capacityDemand                         // λ
+	least          capacityDemand          // at the least arrival rate of one control interval in the observation window
+	queued         int                     // q
+	current        int                     // instances serving it now
+	totalNanos     float64                 // frozen current-window TOTAL, heuristic only
+	serving        []SchedulerServingShare // how the running configuration serves it
+	window         *SchedulerMeasurement   // the running serving's measurement in this window
+	misses         []SchedulerMeasurement  // remembered misses of its Definition
 }
 
 // profileRoutingWeight is optimistic observed support, not an SLO certificate.
@@ -44,6 +47,7 @@ type capacityItem struct {
 	model         *schedulerLoadModel
 	weight        int32
 	prepare       bool
+	option        SchedulerServingShare // the instance's serving option, without weight
 }
 
 type capacityPlan struct {
@@ -566,7 +570,7 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 		item := chosen[i.ID]
 		existing := slices.ContainsFunc(p.snapshot.Instances, func(c SchedulerInstance) bool { return c.ID == i.ID })
 		item.id, item.order, item.weight, item.prepare = i.ID, capacityEnergyOrder(i), i.Weight, !existing
-		item.node, item.model = i.Node, p.loadModels.of(i)
+		item.node, item.model, item.option = i.Node, p.loadModels.of(i), servingOption(i)
 		if weight, current := p.keep.Routing[i.WorkloadUID][i.ID]; current || existing {
 			item.weight = weight
 		}

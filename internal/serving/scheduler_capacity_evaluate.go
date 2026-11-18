@@ -222,14 +222,12 @@ type capacityResult struct {
 	missingCells                      []SchedulerMissingEnergyCell
 	loadUnknowns                      []schedulerLoadUnknown
 	replaySkipped                     bool
+	serving                           [][]SchedulerServingShare // per Workload, its routed options and weights
+	running                           []bool                    // per Workload, served as the running configuration serves it
 }
 
-// capacityShortfall is the throughput a replay measured for a Workload it
-// served short: the replay missed w's SLO and completed only part of w's
-// population. completed is the rate of successful completions, on time or
-// late: λ_w times their share of the population. A Workload the replay
-// completed entirely, late or not, shows only that its supply reached λ_w and
-// is no shortfall.
+// capacityShortfall is the throughput a judged score shows for a Workload served
+// short (capacityPlanner.shortfall): completed is a rate.
 type capacityShortfall struct {
 	w         int
 	completed float64
@@ -246,9 +244,11 @@ func (p *capacityPlanner) shortfalls(res capacityResult) []capacityShortfall {
 	var out []capacityShortfall
 	for _, score := range res.feedback {
 		w, controlled := p.index[score.UID]
-		completed := score.OnTime + score.Late
-		if controlled && !score.Satisfied && completed < score.Population {
-			out = append(out, capacityShortfall{w: w, completed: float64(completed) / float64(score.Population) * p.ws[w].rate})
+		if !controlled {
+			continue
+		}
+		if rate, short := p.shortfall(w, score); short {
+			out = append(out, capacityShortfall{w: w, completed: rate})
 		}
 	}
 	return out
@@ -351,7 +351,14 @@ func (p *capacityPlanner) assessResult(res capacityResult) capacityResult {
 		return res
 	}
 	result := memo.result
-	res.feedback, res.slo, res.conditional = result.Workloads, result.SLO, result.ConditionalService
+	// The memo is shared by every result of this configuration; a fact judges
+	// only the Workloads of this result it applies to (measurement).
+	res.feedback, res.slo, res.conditional = slices.Clone(result.Workloads), result.SLO, result.ConditionalService
+	for j, score := range res.feedback {
+		if w, controlled := p.index[score.UID]; controlled {
+			res.feedback[j].Measured = p.measurement(w, res.running[w], res.serving[w], score.Population)
+		}
+	}
 	res.assumptions, res.sources = result.Assumptions, result.Sources
 	if len(result.InvalidReasons) > 0 {
 		res.exclusion = strings.Join(result.InvalidReasons, ",")
@@ -415,20 +422,16 @@ func (p *capacityPlanner) evaluateEnergyForRoutes(choice []int, r float64, bridg
 		}
 		res.weights = append(res.weights, routes)
 		res.sums = append(res.sums, [2]float64{mu, retainedRate})
-		if res.keep {
-			currentCount := 0
-			for id, weight := range p.keep.Routing[ws.d.UID] {
-				if weight > 0 {
-					currentCount++
-					if routes[id] != weight {
-						res.keep = false
-					}
-				}
+		res.serving = append(res.serving, servingShares(routes, func(id string) (SchedulerServingShare, bool) {
+			at := slices.IndexFunc(items[w], func(item capacityItem) bool { return item.id == id })
+			if at < 0 {
+				return SchedulerServingShare{}, false
 			}
-			if len(routes) != currentCount {
-				res.keep = false
-			}
-		}
+			return items[w][at].option, true
+		}))
+		running := sameServing(res.serving[w], ws.serving)
+		res.running = append(res.running, running)
+		res.keep = res.keep && running
 	}
 	initial, final := p.requestRates(res)
 	if bridge != nil {
@@ -445,6 +448,7 @@ func (p *capacityPlanner) evaluateEnergyForRoutes(choice []int, r float64, bridg
 	res.key = strings.Join(keys, "|")
 	return res
 }
+
 func (p *capacityPlanner) candidate(res capacityResult) SchedulerCandidate {
 	c := SchedulerCandidate{Keep: res.keep, Nodes: slices.Clone(p.keep.Nodes), Routing: map[string]map[string]int32{}}
 	for uid, routes := range p.keep.Routing {
@@ -489,9 +493,10 @@ func (p *capacityPlanner) rankFeedback(res *capacityResult) {
 			continue
 		}
 		score := res.feedback[at]
+		population, onTime, _, satisfied := score.judged()
 		value := tuple{uid: score.UID, success: score.SuccessExcess}
-		if score.Population > 0 {
-			value.failure = 1 - float64(score.OnTime)/float64(score.Population)
+		if population > 0 {
+			value.failure = 1 - float64(onTime)/float64(population)
 		}
 		if score.FailureFraction > 0 {
 			value.potential = math.Inf(1)
@@ -500,7 +505,7 @@ func (p *capacityPlanner) rankFeedback(res *capacityResult) {
 			}
 		}
 		values = append(values, value)
-		res.feasible = res.feasible && score.Satisfied
+		res.feasible = res.feasible && satisfied
 		res.worst = max(res.worst, value.success)
 	}
 	priority := func(uid string) int {

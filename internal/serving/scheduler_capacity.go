@@ -239,7 +239,7 @@ func evaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	}
 	settings = settings.Clone()
 	snapshot = schedulerReplayScopedSnapshot(schedulerCanonical(snapshot))
-	decision = SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References)}
+	decision = SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References), Measurements: slices.Clone(snapshot.Measurements)}
 	decision.Reasons = appendUnique(decision.Reasons, schedulerReplayInitialScope(snapshot).evidence...)
 	fixSchedulerWorkloads(&decision, snapshot)
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
@@ -377,6 +377,9 @@ type capacityPlanner struct {
 	// shortfall's completed rate to the plan's uncorrected profile throughput,
 	// kept only below 1. It scales w's surrogate supply (planTable).
 	supplyCorrection map[int]float64
+	// remembered are the facts of sets that missed (remember), which the
+	// decision returns; each Workload judges by its own (capacityWorkload.misses).
+	remembered []SchedulerMeasurement
 	// Resolved once during construction; every plan and sweep worker only reads.
 	optionCapacity  map[int][]capacityChoice
 	currentCapacity map[capacityInstanceKey]capacityItem
@@ -396,6 +399,7 @@ func (p *capacityPlanner) currentKeep() capacityResult {
 func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, keep SchedulerCandidate, decision SchedulerDecision) *capacityPlanner {
 	snapshot = schedulerReplayScopedSnapshot(snapshot)
 	p := &capacityPlanner{ctx: ctx, settings: settings, snapshot: snapshot, keep: keep, index: map[string]int{}}
+	var window []SchedulerMeasurement
 	for _, state := range decision.Workloads {
 		if state.State != WorkloadControlled {
 			continue
@@ -428,6 +432,10 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		w.capacityDemand = newCapacityDemand(w.rate, floor)
 		w.least = newCapacityDemand(capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID), floor)
 		w.totalNanos = p.pathFeedback(w.d).TotalNanos
+		w.serving = instanceServing(snapshot.Instances, keep.Routing[w.d.UID])
+		if w.window = windowMeasurement(snapshot, decision.Search, w.d, keep.Routing[w.d.UID], w.serving); w.window != nil {
+			window = append(window, *w.window)
+		}
 		for _, i := range snapshot.Instances {
 			if i.WorkloadUID == w.d.UID || i.OwnerWorkloadUID == w.d.UID {
 				w.current++
@@ -435,6 +443,15 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		}
 		p.index[w.d.UID] = len(p.ws)
 		p.ws = append(p.ws, w)
+	}
+	p.remembered = remember(snapshot, window)
+	for w := range p.ws {
+		identity := p.ws[w].d.Identity()
+		for _, m := range p.remembered {
+			if m.DefinitionID == identity {
+				p.ws[w].misses = append(p.ws[w].misses, m)
+			}
+		}
 	}
 	for _, node := range snapshot.Nodes {
 		for _, instance := range schedulerUncreatedReservations(snapshot, node.Node) {
@@ -504,7 +521,7 @@ func capacityMinimumRate(settings SchedulerSettings, search SchedulerSearch, arr
 	start := search.WindowEnd.Add(-time.Duration(buckets) * width)
 	counts := make([]int, buckets)
 	for _, a := range arrivals {
-		if (!a.Compute && !a.Accepted) || a.Definition == nil || a.Definition.UID != uid || a.At.Before(start) || !a.At.Before(search.WindowEnd) {
+		if !a.computeInput() || a.Definition.UID != uid || a.At.Before(start) || !a.At.Before(search.WindowEnd) {
 			continue
 		}
 		counts[min(buckets-1, int(a.At.Sub(start)/width))]++

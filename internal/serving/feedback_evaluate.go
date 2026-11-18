@@ -11,25 +11,28 @@ import (
 )
 
 // FeedbackWorkloadScore separates replayed finite outcomes from conditional
-// compute potential. Null quantile means no successful completion.
+// compute potential. Null quantile means no successful completion. Measured,
+// when present, is the measurement that judges the Workload in place of the
+// replayed counts (judged).
 type FeedbackWorkloadScore struct {
-	UID                         string   `json:"uid"`
-	Population                  int      `json:"population"`
-	ObservedArrivals            int      `json:"observedArrivals"`
-	ReplayedArrivals            int      `json:"replayedArrivals"`
-	MinimumDemandArrivals       int      `json:"minimumDemandArrivals"`
-	OnTime                      int      `json:"onTime"`
-	Late                        int      `json:"late"`
-	Rejected                    int      `json:"rejected"`
-	Timeout                     int      `json:"timeout"`
-	Failed                      int      `json:"failed"`
-	Unfinished                  int      `json:"unfinished"`
-	FailureFraction             float64  `json:"failureFraction"`
-	SuccessQuantileNanos        *float64 `json:"successQuantileNanos"`
-	SuccessExcess               float64  `json:"successExcess"`
-	PotentialExcess             *float64 `json:"potentialExcess"`
-	PotentialUnavailableReasons []string `json:"potentialUnavailableReasons,omitempty"`
-	Satisfied                   bool     `json:"satisfied"`
+	UID                         string                `json:"uid"`
+	Population                  int                   `json:"population"`
+	ObservedArrivals            int                   `json:"observedArrivals"`
+	ReplayedArrivals            int                   `json:"replayedArrivals"`
+	MinimumDemandArrivals       int                   `json:"minimumDemandArrivals"`
+	OnTime                      int                   `json:"onTime"`
+	Late                        int                   `json:"late"`
+	Rejected                    int                   `json:"rejected"`
+	Timeout                     int                   `json:"timeout"`
+	Failed                      int                   `json:"failed"`
+	Unfinished                  int                   `json:"unfinished"`
+	FailureFraction             float64               `json:"failureFraction"`
+	SuccessQuantileNanos        *float64              `json:"successQuantileNanos"`
+	SuccessExcess               float64               `json:"successExcess"`
+	PotentialExcess             *float64              `json:"potentialExcess"`
+	PotentialUnavailableReasons []string              `json:"potentialUnavailableReasons,omitempty"`
+	Satisfied                   bool                  `json:"satisfied"`
+	Measured                    *SchedulerMeasurement `json:"measured,omitempty"`
 }
 
 // FeedbackCandidateResult owns scalars and reduced evidence, never replay state

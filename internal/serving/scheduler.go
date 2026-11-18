@@ -387,16 +387,29 @@ type SchedulerRequest struct {
 	CompletionMarginMS    *float64      `json:"completionMarginMS,omitempty"`
 	NativeOutcome         string        `json:"nativeOutcome,omitempty"`
 }
+
+// SchedulerArrival is one received request. ClientOutcome and ClientElapsed
+// are its client's report (ClientObservation), set once the report has reached
+// the server; an unreported arrival has an empty ClientOutcome.
 type SchedulerArrival struct {
-	ID          string        `json:"id"`
-	Lifetime    time.Duration `json:"lifetimeNanos"`
-	At          time.Time     `json:"at"`
-	Definition  *Definition   `json:"definition,omitempty"`
-	Accepted    bool          `json:"accepted"`
-	Compute     bool          `json:"compute"`
-	WorkloadUID string        `json:"workloadUID,omitempty"`
-	Outcome     string        `json:"outcome,omitempty"`
+	ID            string        `json:"id"`
+	Lifetime      time.Duration `json:"lifetimeNanos"`
+	At            time.Time     `json:"at"`
+	Definition    *Definition   `json:"definition,omitempty"`
+	Accepted      bool          `json:"accepted"`
+	Compute       bool          `json:"compute"`
+	WorkloadUID   string        `json:"workloadUID,omitempty"`
+	Outcome       string        `json:"outcome,omitempty"`
+	ClientOutcome string        `json:"clientOutcome,omitempty"`
+	ClientElapsed time.Duration `json:"clientElapsedNanos,omitempty"`
 }
+
+// computeInput reports an arrival the replay serves: a validated or accepted
+// request of a known Definition.
+func (a SchedulerArrival) computeInput() bool {
+	return (a.Compute || a.Accepted) && a.Definition != nil
+}
+
 type NodeBaseline struct {
 	ID              string            `json:"id"`
 	Node            NodeReference     `json:"node"`
@@ -465,9 +478,11 @@ type Action struct {
 	// final goal. It contains no Actions and only routes already-prepared peers.
 	RouteTarget *SchedulerCandidate `json:"routeTarget,omitempty"`
 	// Fixed lowers an available Node to its lowest power mode; every candidate shares it.
-	Fixed              bool                `json:"fixed,omitempty"`
-	Status             string              `json:"status"` // planned, running, complete, failed, cancel
-	Elapsed            time.Duration       `json:"elapsedNanos"`
+	Fixed   bool          `json:"fixed,omitempty"`
+	Status  string        `json:"status"` // planned, running, complete, failed, cancel
+	Elapsed time.Duration `json:"elapsedNanos"`
+	// EndedAt is when the action's operation ended; nil until it has ended.
+	EndedAt            *time.Time          `json:"endedAt,omitempty"`
 	Cancelable         bool                `json:"cancelable"`
 	Reason             string              `json:"reason,omitempty"`
 	PreparationFailure *PreparationFailure `json:"preparationFailure,omitempty"`
@@ -502,6 +517,8 @@ type SchedulerSnapshot struct {
 	Reasons           []string               `json:"reasons"`
 	References        []string               `json:"references"`
 	Reservations      []SchedulerReservation `json:"reservations,omitempty"`
+	// Measurements are the remembered misses the last decision returned.
+	Measurements []SchedulerMeasurement `json:"measurements,omitempty"`
 	// replayScope is immutable, decision-local prediction authority, never stored.
 	replayScope *schedulerReplayScope
 }
@@ -595,6 +612,9 @@ type SchedulerDecision struct {
 	References   []string                 `json:"references"`
 	Capacity     *SchedulerCapacity       `json:"capacity,omitempty"`
 	PathFeedback []PathFeedback           `json:"pathFeedback,omitempty"`
+	// Measurements are the remembered misses after this decision (remember),
+	// carried into the next snapshot.
+	Measurements []SchedulerMeasurement `json:"measurements,omitempty"`
 	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
 	EvaluationElapsed time.Duration             `json:"evaluationElapsedNanos"`
 	EvaluationTiming  SchedulerEvaluationTiming `json:"evaluationTiming"`

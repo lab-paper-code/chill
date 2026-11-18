@@ -476,10 +476,6 @@ func (l *ObservationLog) LoadWindowTimed(ctx context.Context, from, to time.Time
 	if err != nil {
 		return result, err
 	}
-	result.PathSamples, result.ClientObservations, err = l.clientWindow(read, rows, nativeRows, from, to)
-	if err != nil {
-		return result, err
-	}
 	loads := map[string]*WorkloadLoad{}
 	in := func(row *serving.RequestRow, offset *int64) bool {
 		return offset != nil && serving.ObservationInInterval(row.ReceivedAt.Add(time.Duration(*offset)), from, to)
@@ -517,6 +513,10 @@ func (l *ObservationLog) LoadWindowTimed(ctx context.Context, from, to time.Time
 			load.Completed++
 		}
 	}
+	result.PathSamples, result.ClientObservations, err = l.clientWindow(read, rows, nativeRows, arrivalsByID(result.Arrivals), from, to)
+	if err != nil {
+		return result, err
+	}
 	seconds := result.Duration.Seconds()
 	for _, load := range loads {
 		load.ReceivedRate = float64(load.Received) / seconds
@@ -543,6 +543,16 @@ func requestArrival(row *serving.RequestRow, definitions map[string]*serving.Def
 		ID: row.RequestID, At: row.ReceivedAt, WorkloadUID: row.WorkloadUID, Definition: definitions[row.DefinitionID],
 		Lifetime: time.Duration(row.LifetimeNanos), Accepted: row.Accepted(), Compute: row.ValidatedNanos != nil || row.Accepted(), Outcome: row.Outcome,
 	}
+}
+
+// arrivalsByID indexes arrivals by request ID so their client reports can be
+// attached in place.
+func arrivalsByID(arrivals []serving.SchedulerArrival) map[string]*serving.SchedulerArrival {
+	byID := make(map[string]*serving.SchedulerArrival, len(arrivals))
+	for i := range arrivals {
+		byID[arrivals[i].ID] = &arrivals[i]
+	}
+	return byID
 }
 
 // SchedulerObservationSelection is validated once by the HTTP query boundary.

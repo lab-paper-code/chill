@@ -11,11 +11,14 @@ import (
 )
 
 // annotateHistory sets each captured instance's UnroutedSince and HeldUntil
-// from the controller's records and drops records of instances that left.
-// A restart starts the records again, so an instance waits one more window.
+// from the controller's records, drops records of instances that left, and
+// carries the published decision's measurements into the snapshot. A restart
+// starts the records again, so an instance waits one more window and no
+// measured miss is remembered.
 func (c *reservationState) annotateHistory(s *serving.SchedulerSnapshot, window time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	s.Measurements = slices.Clone(c.state.Decision.Measurements)
 	if c.unrouted == nil {
 		c.unrouted, c.overloaded = map[string]time.Time{}, map[string]time.Time{}
 	}
@@ -93,8 +96,9 @@ func (c *reservationState) reconcileSnapshot(snapshot serving.SchedulerSnapshot,
 	defer c.mu.Unlock()
 	c.freezePreparingExecutorsLocked(snapshot)
 	lost := c.reconcileOwnersLocked(snapshot, now, runtime)
-	cutoff := now.Add(-observationWindow)
-	c.retireRunsLocked(cutoff, snapshot)
+	// A run that ended inside the observation window still starts the
+	// measured window, so runs retire only before the window's start.
+	c.retireRunsLocked(snapshot.ObservationEnd.Add(-observationWindow), snapshot)
 	snapshot.Actions = c.actionsLocked(now)
 	snapshot.Reservations = c.reservationsLocked()
 	return snapshot, lost

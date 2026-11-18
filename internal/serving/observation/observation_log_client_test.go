@@ -41,7 +41,7 @@ func TestClientStreamUsesCapturedPrefixAndArchiveRetention(t *testing.T) {
 	if err := log.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
-	samples, clients, err := log.clientWindow(read, nil, nil, from, to)
+	samples, clients, err := log.clientWindow(read, nil, nil, nil, from, to)
 	if err != nil || len(samples) != 0 || len(clients) != 1 || clients[0].ObservationID != firstReason {
 		t.Fatalf("client capture leaked later FIFO admission: %+v %+v %v", samples, clients, err)
 	}
@@ -152,6 +152,15 @@ func TestClientWindowAddsNativeEvidenceWithoutRewritingReports(t *testing.T) {
 	before, err := log.LoadWindow(ctx, from, to)
 	if err != nil || len(before.PathSamples) != 0 || len(before.ClientObservations) != 2 {
 		t.Fatalf("missing terminal native evidence invented a sample: %+v %v", before, err)
+	}
+	for _, arrival := range before.Arrivals {
+		want := map[string]string{"full-reply": outcomeCompleted, timedOut: timedOut}[arrival.ID]
+		if arrival.ClientOutcome != want || arrival.ClientElapsed != 120*time.Millisecond {
+			t.Fatalf("arrival lacks its joined client report: %+v", arrival)
+		}
+	}
+	if len(before.Arrivals) != 2 {
+		t.Fatalf("window arrivals: %+v", before.Arrivals)
 	}
 	for _, id := range []string{"full-reply", timedOut} {
 		if err := log.RecordNativeSupplement(serving.RequestEvent{

@@ -297,6 +297,9 @@ func (c *reservationState) actionsLocked(now time.Time) []serving.Action {
 		}
 		if a.Status == servingstate.NativeOperationRunning {
 			a.Elapsed = now.Sub(r.started)
+		} else if r.result != nil && !r.result.EndedAt.IsZero() {
+			ended := r.result.EndedAt
+			a.EndedAt = &ended
 		}
 		result = append(result, a)
 	}

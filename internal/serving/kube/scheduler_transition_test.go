@@ -482,7 +482,7 @@ func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, i
 		}
 	}
 	controller.releaseObservedScopes(nodes, nil, nil, now.Add(time.Minute))
-	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, now.Add(2*time.Minute), time.Minute, controller.runtime)
+	controller.reconcileSnapshot(serving.SchedulerSnapshot{ObservationEnd: now.Add(2 * time.Minute)}, now.Add(2*time.Minute), time.Minute, controller.runtime)
 	if controller.runs[id] != nil {
 		t.Fatal("failed action outlived the observation window")
 	}

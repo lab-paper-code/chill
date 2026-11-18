@@ -194,7 +194,8 @@ func (l *ObservationLog) ClientObservationPage(ctx context.Context, from, to tim
 
 // clientWindow selects first reports before applying cohort filters. A later
 // report can link both identities, but cannot replace the first observation.
-func (l *ObservationLog) clientWindow(read *observationRead, rows []*serving.RequestRow, nativeRows map[string]serving.RequestRow, from, to time.Time) ([]serving.PathTimingSample, []serving.ClientObservation, error) {
+// A joined report also completes its request's arrival in arrivals.
+func (l *ObservationLog) clientWindow(read *observationRead, rows []*serving.RequestRow, nativeRows map[string]serving.RequestRow, arrivals map[string]*serving.SchedulerArrival, from, to time.Time) ([]serving.PathTimingSample, []serving.ClientObservation, error) {
 	retainedFrom := read.now.Add(-l.config.Retention)
 	requests := make(map[string]*serving.RequestRow, len(rows))
 	for _, row := range rows {
@@ -242,6 +243,9 @@ func (l *ObservationLog) clientWindow(read *observationRead, rows []*serving.Req
 		}
 		client.WorkloadUID = row.WorkloadUID
 		clients = append(clients, client)
+		if arrival := arrivals[client.RequestID]; arrival != nil {
+			arrival.ClientOutcome, arrival.ClientElapsed = client.Outcome, time.Duration(client.ElapsedNanos)
+		}
 		if sample, ok := serving.PathTimingSampleFromRequest(*row, client); ok {
 			samples = append(samples, sample)
 		}

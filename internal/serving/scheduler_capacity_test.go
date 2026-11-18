@@ -1000,6 +1000,7 @@ func capacityRawPlannerForTest(p *capacityPlanner) {
 						instance.Weight = 1
 					}
 					instance.Profile.RuntimeMetadata.CPUAffinity = []int{w*16 + k}
+					item.option = servingOption(instance)
 					plan.instances = append(plan.instances, instance)
 					p.snapshot.Options = append(p.snapshot.Options, poolsOption(instance))
 					if j == 0 {
@@ -1014,6 +1015,9 @@ func capacityRawPlannerForTest(p *capacityPlanner) {
 	p.keep.Instances = slices.Clone(p.snapshot.Instances)
 	p.snapshot.Routing = schedulerInstanceRouting(p.ctx, p.snapshot.Workloads, p.snapshot.Instances)
 	p.keep.Routing = p.snapshot.Routing
+	for w := range p.ws {
+		p.ws[w].serving = instanceServing(p.snapshot.Instances, p.keep.Routing[p.ws[w].d.UID])
+	}
 	capacityFeedbackForTest(p.settings, &p.snapshot)
 	p.keepWatts = p.evaluateEnergyForRoutes(make([]int, len(p.plans)), 0, nil, 1, p.keep.Routing).joules
 }
