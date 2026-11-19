@@ -15,10 +15,7 @@ import (
 
 func measurementConfig(opts options) measurement.Config {
 	return measurement.Config{
-		ServingNamespace: opts.servingNamespace, ProfileNamespaces: opts.profileNamespaces,
-		SchedulerConfigMap: opts.schedulerConfigMap, SchedulerConfigKey: opts.schedulerConfigKey,
-		MaxRequestBytes: opts.maxRequestBytes, StoreName: opts.storeName,
-		LoadGeneratorNamespace: opts.loadGenerator.Namespace,
+		ServingNamespace: opts.servingNamespace, ProfileNamespaces: opts.profileNamespaces, StoreName: opts.storeName,
 	}
 }
 
@@ -32,11 +29,7 @@ func newMeasurementService(native client.Client, kube kubernetes.Interface, sche
 	var inputs *measurement.SchedulerInputs
 	if scheduler != nil {
 		inputs = &measurement.SchedulerInputs{
-			Lock: &scheduler.Lock, RefreshLock: &scheduler.RefreshLock, GatewayRequestTimeout: scheduler.GatewayRequestTimeout,
-			DecodePolicy: func(raw string, maxBytes int64) (*measurement.DispatchOccupancyPolicy, error) {
-				config, err := application.DecodeSchedulerConfiguration(raw, maxBytes)
-				return config.DispatchOccupancy, err
-			},
+			Lock: &scheduler.Lock, RefreshLock: &scheduler.RefreshLock,
 			LoadProfiles: func() (string, []serving.Profile, map[string]servingstate.PrepareSpec, bool) {
 				snapshot := scheduler.Profiles.Load()
 				if snapshot == nil {

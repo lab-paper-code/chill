@@ -109,10 +109,6 @@ func TestSchedulerPolicyAcknowledgmentIgnoresMeasuredDeadlinePolicy(t *testing.T
 			if !schedulerPolicyAcknowledged(wanted, actual) {
 				t.Fatal("measured deadline provenance constrained serving acknowledgment")
 			}
-			actual.Policy.FixedBatchSize = 1
-			if schedulerPolicyAcknowledged(wanted, actual) {
-				t.Fatal("fixed batch mismatch escaped serving acknowledgment")
-			}
 		})
 	}
 }

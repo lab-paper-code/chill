@@ -52,7 +52,7 @@ func TestManualOperationsRejectKindFieldsBeforeExecution(t *testing.T) {
 	for _, tc := range []struct{ body, field string }{
 		{`{"kind":"route","workloadUID":"w","weights":{"p/c":1},"reason":"test","node":null}`, "node"},
 		{`{"kind":"unroute","workloadUID":"w","reason":"test","weights":{}}`, "weights"},
-		{`{"kind":"release","workloadUID":"w","reason":"test","fixedBatchSize":0}`, "fixedBatchSize"},
+		{`{"kind":"release","workloadUID":"w","reason":"test","maxBatch":0}`, "maxBatch"},
 		{`{"kind":"reset","workloadUIDs":["w"],"reason":"test","workloadUID":""}`, "workloadUID"},
 		{`{"kind":"reset","workloadUIDs":["w"],"reason":"test","actorUID":"forged"}`, "actorUID"},
 		{`{"kind":"reset","workloadUIDs":["w"],"reason":null}`, "reason"},

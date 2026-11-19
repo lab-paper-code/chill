@@ -102,7 +102,7 @@ func TestAcknowledgedExistingHandoffDoesNotStarveCleanupOnPolicyRefresh(t *testi
 }
 
 func TestHandoffCleanupRequiresExistingAcknowledgedReadyEffectNotJustGatewayMap(t *testing.T) {
-	for _, missing := range []string{"completed run", "native readiness", "profile identity", "allocation", "policy ack", "fixed batch ack", "routing", "physical destination"} {
+	for _, missing := range []string{"completed run", "native readiness", "profile identity", "allocation", "policy ack", "routing", "physical destination"} {
 		t.Run(missing, func(t *testing.T) {
 			controller, target, physical := acknowledgedHandoffFixture(t)
 			switch missing {
@@ -116,8 +116,6 @@ func TestHandoffCleanupRequiresExistingAcknowledgedReadyEffectNotJustGatewayMap(
 				controller.state.Snapshot.Instances[0].Allocation.MemoryBytes++
 			case "policy ack":
 				physical.State.Native.Metadata.Policy.MaxBatchSize++
-			case "fixed batch ack":
-				physical.State.Native.Metadata.Policy.FixedBatchSize = 1
 			case "routing":
 				target.Routing = map[string]map[string]int32{target.Instances[0].WorkloadUID: {target.Instances[0].ID: 2}}
 			case "physical destination":
@@ -1577,7 +1575,7 @@ func TestPolicyOnlyTargetOwnsUIDAndAppliesNativePolicyAC38(t *testing.T) {
 			}
 			policy := actual[index].Native.Metadata.Policy
 			if policy.DecisionID != target.ID || policy.MaxBatchSize != instance.MaxBatch ||
-				policy.MaxBatchWaitMS != float64(instance.MaxWait)/float64(time.Millisecond) || policy.FixedBatchSize != instance.FixedBatchSize {
+				policy.MaxBatchWaitMS != float64(instance.MaxWait)/float64(time.Millisecond) || policy.FixedBatchSize != 0 {
 				t.Fatalf("native did not apply policy-only target: %+v", policy)
 			}
 		})

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -21,17 +20,14 @@ type CatalogSource interface {
 }
 
 type CoverageService struct {
-	Reader           client.Reader
-	Objects          evidencestore.LocationReader
-	Catalog          CatalogSource
-	Decoder          queryapi.OccupancyEvidenceDecoder
-	Inventory        func(context.Context) (queryapi.InventoryView, error)
-	Compatibility    func(context.Context) (queryapi.ModelCompatibilityMatrixView, error)
-	Authorize        func(string) error
-	RequestTimeout   time.Duration
-	MaxRequestBytes  int64
-	MaxEvidenceBytes int64
-	cache            measurementCoverageCache
+	Reader          client.Reader
+	Catalog         CatalogSource
+	Inventory       func(context.Context) (queryapi.InventoryView, error)
+	Compatibility   func(context.Context) (queryapi.ModelCompatibilityMatrixView, error)
+	Authorize       func(string) error
+	RequestTimeout  time.Duration
+	MaxRequestBytes int64
+	cache           measurementCoverageCache
 }
 
 type measurementCoverageCache struct {
@@ -189,25 +185,6 @@ func (o *CoverageService) readCoverage(
 		results <- sourceResult{"Run", err, time.Now().UTC()}
 	}()
 	go func() {
-		var value api.DispatchOccupancyMeasurementList
-		err := o.Reader.List(ctx, &value, client.InNamespace(namespace))
-		projected := make(map[string]queryapi.OccupancyEvidenceProjection, len(value.Items))
-		if err == nil {
-			for _, task := range value.Items {
-				var result queryapi.OccupancyEvidenceProjection
-				result, err = ProjectDispatchOccupancy(ctx, o.Objects, o.MaxEvidenceBytes, task, o.Decoder)
-				if err != nil {
-					break
-				}
-				projected[string(task.UID)] = result
-			}
-		}
-		if err == nil {
-			next.Occupancies, next.OccupancyResults = value, projected
-		}
-		results <- sourceResult{"DOM", err, time.Now().UTC()}
-	}()
-	go func() {
 		var datasets api.DatasetList
 		var preprocessors api.PreprocessorList
 		err := o.Reader.List(ctx, &datasets)
@@ -221,10 +198,6 @@ func (o *CoverageService) readCoverage(
 		results <- sourceResult{"input-contract", err, time.Now().UTC()}
 	}()
 	go func() {
-		// Reporting may retain stale facts, but adoption needs this refresh's
-		// confirmed selection, never the previous successful read.
-		next.AcceptedOccupancy = nil
-		next.ObservedOccupancy = nil
 		read, err := o.Catalog.Read(ctx)
 		value := read.Reporting
 		at := read.SourceCheckedAt
@@ -241,10 +214,6 @@ func (o *CoverageService) readCoverage(
 			}
 			if value.SourceError != "" {
 				err = errors.New(value.SourceError)
-			}
-			if err == nil && read.Accepted != nil {
-				next.AcceptedOccupancy = read.AcceptedOccupancy
-				next.ObservedOccupancy = read.ObservedOccupancy
 			}
 		}
 		results <- sourceResult{queryapi.CoverageCatalogSource, err, at}

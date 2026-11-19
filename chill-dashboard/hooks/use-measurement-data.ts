@@ -47,11 +47,11 @@ export function useCoverageInventory() {
 }
 
 export function useMeasurementCoverage(namespace:string,enabled=true) {
-  const {token,config}=useSession(),params=useSearchParams()
+  const {token}=useSession(),params=useSearchParams()
   const query=new URLSearchParams({view:"summary",summary:"v2"})
   for(const key of ["batches","node"]) {const value=params.get(key);if(value)query.set(key,value)}
   const path=`v1/namespaces/${encodeURIComponent(namespace)}/measurement-coverage${query.size?`?${query}`:""}`
-  const result=useQuery<MeasurementCoverageResponse,ApiError>({queryKey:["chill",path],enabled,retry:warmingRetry,retryDelay:warmingDelay,refetchOnMount:"always",refetchInterval:query=>query.state.error&&[401,403].includes(query.state.error.status)?false:query.state.data?.cells.some(cell=>cell.occupancy?.some(row=>row.state==="measuring"))?config.pollIntervalMs:false,queryFn:({signal})=>readPage<MeasurementCoverageResponse>(path,token,signal)})
+  const result=useQuery<MeasurementCoverageResponse,ApiError>({queryKey:["chill",path],enabled,retry:warmingRetry,retryDelay:warmingDelay,refetchOnMount:"always",queryFn:({signal})=>readPage<MeasurementCoverageResponse>(path,token,signal)})
   return {...result,data:result.error?undefined:result.data}
 }
 

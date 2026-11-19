@@ -16,8 +16,7 @@ const manualOperationsPath = "/api/v1/scheduler/operations"
 // longOperation bounds operations and historical observation I/O by OperationTimeout.
 func longOperation(r *http.Request) bool {
 	return r.Method == http.MethodPost && r.URL.Path == manualOperationsPath ||
-		r.Method == http.MethodGet && (r.URL.Path == "/api/v1/observations/scheduler" ||
-			r.URL.Path == occupancyObservationsPath || r.URL.Path == rawObservationsPath ||
+		r.Method == http.MethodGet && (r.URL.Path == "/api/v1/observations/scheduler" || r.URL.Path == rawObservationsPath ||
 			strings.HasPrefix(r.URL.Path, rawObservationsPath+"/"))
 }
 

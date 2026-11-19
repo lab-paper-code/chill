@@ -82,15 +82,6 @@ func assertMeasurementLiveHistory(t *testing.T, handler http.Handler, event meas
 }
 
 func TestMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T) {
-	testMeasurementMutationEventsMatchHistoryAndReplay(t, false)
-}
-
-func TestOccupancyMutationEventsMatchHistoryAndReplay(t *testing.T) {
-	testMeasurementMutationEventsMatchHistoryAndReplay(t, true)
-}
-
-func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy bool) {
-	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	publisher := newLivePublisher(ctx, nil, nil)
@@ -143,12 +134,6 @@ func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy 
 			return measurement.MeasurementMutationResult{Request: "DeletionRequested", Task: &api.BatchEnergyOptimization{}}, nil
 		},
 	}
-	mutationPath, mutationBody := liveMeasurementPath, liveMeasurementBody
-	if occupancy {
-		configureOccupancyLiveMutations(&config)
-		mutationPath = "/api/v1/namespaces/default/dispatch-occupancy-measurements"
-		mutationBody = `{"name":"task","node":"node","batchEnergyOptimization":"beo","workload":"workload","batch":1}`
-	}
 	handler, err := httpapi.NewHandler(
 		&management.Manager{}, &serving.Runtime{}, &servingkube.Authorizer{Client: client},
 		log, &servingkube.Observer{}, config,
@@ -182,7 +167,7 @@ func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy 
 		{http.MethodDelete, "/task?uid=native", "DeletionRequested"},
 		{http.MethodPost, "?dryRun=All", liveMeasurementNotSubmitted},
 	} {
-		request := httptest.NewRequest(tc.method, mutationPath+tc.suffix, strings.NewReader(mutationBody))
+		request := httptest.NewRequest(tc.method, liveMeasurementPath+tc.suffix, strings.NewReader(liveMeasurementBody))
 		request.Header.Set("Authorization", "Bearer test")
 		if tc.method == http.MethodDelete {
 			request.Header.Set("If-Match", `"7"`)
@@ -224,38 +209,10 @@ func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy 
 	if err := log.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, mutationPath, strings.NewReader(mutationBody))
+	request := httptest.NewRequest(http.MethodPost, liveMeasurementPath, strings.NewReader(liveMeasurementBody))
 	request.Header.Set("Authorization", "Bearer test")
 	handler.ServeHTTP(httptest.NewRecorder(), request)
 	if callbackCount != 6 {
 		t.Fatal("failed append published a live event")
-	}
-}
-
-func configureOccupancyLiveMutations(config *httpapi.HandlerConfig) {
-	config.BuildOccupancy = func(
-		_ context.Context, namespace string, intent measurement.OccupancyIntent,
-	) (*api.DispatchOccupancyMeasurement, error) {
-		task := &api.DispatchOccupancyMeasurement{}
-		task.Name, task.Namespace = intent.Name, namespace
-		task.Spec.Node, task.Spec.Batch = intent.Node, intent.Batch
-		return task, nil
-	}
-	config.SubmitOccupancy = func(
-		_ context.Context, task api.DispatchOccupancyMeasurement, dry bool,
-	) (measurement.OccupancyMutationResult, error) {
-		task.UID, task.ResourceVersion = "native", "7"
-		state := "Accepted"
-		if dry {
-			state = "NOT_SUBMITTED"
-		}
-		return measurement.OccupancyMutationResult{Request: state, Task: &task}, nil
-	}
-	config.DeleteOccupancy = func(
-		context.Context, string, string, string, string,
-	) (measurement.OccupancyMutationResult, error) {
-		return measurement.OccupancyMutationResult{
-			Request: "DeletionRequested", Task: &api.DispatchOccupancyMeasurement{},
-		}, nil
 	}
 }

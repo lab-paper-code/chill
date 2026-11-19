@@ -44,15 +44,15 @@ func TestTickWithoutCapacityRows(t *testing.T) {
 }
 
 // Synthetic PLC-like Nodes, margin 1 ms and d 1 ms: the b1 latency is the p99
-// sample + 2 ms, the fastest option per Node counts. The unmeasured fast option
-// uses configured d=20ms rather than disappearing or assuming zero. The widest
+// sample + 2 ms, the fastest option per Node counts. The fast option without
+// profile occupancy samples uses configured d=20ms rather than disappearing or assuming zero. The widest
 // gap with at least half passing and two failing is lp/r5, so L = 7.1 ms.
 func TestProposeSLOSplitsFastFromSlowNodes(t *testing.T) {
 	w := &serving.Definition{Name: "plc", UID: "w"}
 	snap := serving.SchedulerSnapshot{}
 	option := func(node string, d bool, uid string, samples ...float64) {
 		ref := serving.NodeReference{Name: node, UID: node + "-uid"}
-		// Measured occupancy matches the exact profile cell; image is history only.
+		// The profile batch samples select d for the option's batch.
 		cond := profilederivation.CurvePlanSpec{PowerMode: fmt.Sprint("mode-", len(snap.Options)), RuntimeImage: "current-image", LogicalModel: "plc"}
 		paired := []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, int64(samples[0]))}
 		for i, service := range samples {
@@ -61,9 +61,7 @@ func TestProposeSLOSplitsFastFromSlowNodes(t *testing.T) {
 		p := &serving.Profile{ID: node, Condition: cond, Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: paired}, {Batch: 2, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 1), fixtures.ServiceSample("physical-trial", 1, 1)}}}}
 		snap.Options = append(snap.Options, serving.SchedulerOption{Instance: serving.SchedulerInstance{Node: ref, Profile: p, MaxBatch: 2}, CompatibleUIDs: []string{uid}})
 		if d {
-			snap.DispatchOccupancy = append(snap.DispatchOccupancy, serving.DispatchOccupancy{Node: ref, PowerMode: cond.PowerMode, RuntimeImage: "historical-image", Model: "plc",
-				ProfileID: p.ID, ExecutionPath: cond.Artifact.ExecutionPath, Batch: 2, PerRequest: time.Millisecond,
-				Provenance: &serving.DispatchOccupancyProvenance{Source: "measured"}})
+			p.Batches[1].DispatchOccupancyNanos = []float64{float64(time.Millisecond)}
 		}
 	}
 	spread := make([]float64, 100)

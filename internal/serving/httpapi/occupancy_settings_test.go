@@ -1,17 +1,17 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"reflect"
 	"testing"
+	"time"
 
-	core "k8s.io/api/core/v1"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
+	authentication "k8s.io/api/authentication/v1"
+	authorization "k8s.io/api/authorization/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 )
 
 const (
@@ -19,74 +19,41 @@ const (
 	settingsTestConfigMap = "scheduler"
 )
 
-func TestSettingsPutPreservesDispatchOccupancyBlock(t *testing.T) {
-	h, _ := occupancyHandler(t, "")
-	h.config.MaxRequestBytes = 1 << 20
-	before := schedulerSettingsForTest()
-	service, execution := settingsServiceForTest(t, h.authorizer.Client, h.observationLog, before, false, false)
-	raw, err := os.ReadFile("../../../config/samples/serving-scheduler.json")
+func settingsHandler(t *testing.T) *Handler {
+	t.Helper()
+	log, err := observation.NewObservationLog(
+		observation.ObservationLogConfig{
+			Directory: cleanObservationDirectory(t),
+			Store:     "evidence",
+			Retention: time.Hour,
+			Writer:    settingsArchive{directory: t.TempDir()},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var config map[string]json.RawMessage
-	if err = json.Unmarshal(raw, &config); err != nil {
-		t.Fatal(err)
-	}
-	var policyBefore any
-	if err = json.Unmarshal(config["dispatchOccupancy"], &policyBefore); err != nil {
-		t.Fatal(err)
-	}
-	config["settings"], err = json.Marshal(before)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err = json.Marshal(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cm := &core.ConfigMap{ObjectMeta: meta.ObjectMeta{Namespace: settingsTestNamespace, Name: settingsTestConfigMap, ResourceVersion: "1"},
-		Data: map[string]string{"scheduler.json": string(raw)}}
-	if _, err = h.authorizer.Client.CoreV1().ConfigMaps(settingsTestNamespace).Create(context.Background(), cm, meta.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if err = service.Refresh(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	controller := service.Controller
-	h.runtime = execution
-	h.config.Scheduler = controller
-	h.config.SchedulerNamespace = settingsTestNamespace
-	h.config.SchedulerConfigMap = settingsTestConfigMap
-	h.config.SchedulerConfigKey = "scheduler.json"
-	h.config.ChangeSchedulerSettings = service.ChangeSchedulerSettings
-	after := before
-	after.MaxInstances++
-	body, err := json.Marshal(after)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/scheduler/settings", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer caller-token")
-	req.Header.Set("If-Match", `"1"`)
-	response := httptest.NewRecorder()
-	h.scheduler(response, req)
-	if response.Code != http.StatusOK {
-		t.Fatalf("settings PUT: %d %s", response.Code, response.Body.String())
-	}
-	persisted, err := h.authorizer.Client.CoreV1().
-		ConfigMaps(settingsTestNamespace).
-		Get(context.Background(), settingsTestConfigMap, meta.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = json.Unmarshal([]byte(persisted.Data["scheduler.json"]), &config); err != nil {
-		t.Fatal(err)
-	}
-	var policyAfter any
-	if err = json.Unmarshal(config["dispatchOccupancy"], &policyAfter); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(policyBefore, policyAfter) {
-		t.Fatal("settings PUT altered dispatchOccupancy")
+	t.Cleanup(func() {
+		if err := log.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	kube := fake.NewSimpleClientset()
+	kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &authentication.TokenReview{
+			Status: authentication.TokenReviewStatus{
+				Authenticated: true,
+				User:          authentication.UserInfo{Username: "operator", UID: "actor-uid"},
+			},
+		}, nil
+	})
+	kube.PrependReactor("create", "subjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &authorization.SubjectAccessReview{
+			Status: authorization.SubjectAccessReviewStatus{Allowed: true},
+		}, nil
+	})
+	return &Handler{
+		observationLog: log,
+		authorizer:     &servingkube.Authorizer{Client: kube},
+		config:         HandlerConfig{MaxRequestBytes: 1024},
 	}
 }

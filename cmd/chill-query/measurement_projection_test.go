@@ -34,10 +34,7 @@ func TestMeasurementProjectionNativeListsDetailsAndNamespace(t *testing.T) {
 	for _, namespace := range []string{"allowed", "outside"} {
 		for _, name := range []string{"z-last", "a-first"} {
 			metadata := meta.ObjectMeta{Namespace: namespace, Name: name, UID: "uid-" + "original"}
-			objects = append(objects,
-				&api.OperationCostMeasurement{ObjectMeta: metadata},
-				&api.DispatchOccupancyMeasurement{ObjectMeta: metadata},
-			)
+			objects = append(objects, &api.OperationCostMeasurement{ObjectMeta: metadata})
 		}
 	}
 	service := &measurementService{
@@ -53,19 +50,6 @@ func TestMeasurementProjectionNativeListsDetailsAndNamespace(t *testing.T) {
 		get  func(context.Context, string, string) (httpapi.MeasurementProjection, error)
 	}{
 		{"operation", service.listOperationCosts, service.getOperationCost},
-		{"occupancy",
-			func(ctx context.Context, ns string) (httpapi.MeasurementProjectionList, error) {
-				list, err := service.listDispatchOccupancies(ctx, ns)
-				out := httpapi.MeasurementProjectionList{Items: []httpapi.MeasurementProjection{}}
-				for _, item := range list.Items {
-					out.Items = append(out.Items, item.MeasurementProjection)
-				}
-				return out, err
-			},
-			func(ctx context.Context, ns, name string) (httpapi.MeasurementProjection, error) {
-				item, err := service.getDispatchOccupancy(ctx, ns, name)
-				return item.MeasurementProjection, err
-			}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			list, err := tc.list(ctx, "allowed")

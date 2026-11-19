@@ -31,7 +31,7 @@ ROLES = {
     "query": ("chill-query", "query", ["linux/amd64"], "query.image"),
     "metric-observer": ("metric-observer", "metric-observer", MULTI, "profiling.metricObserverImage"),
     "workload-observer": ("workload-observer", "workload-observer", MULTI, "profiling.workloadObserverImage"),
-    "load-generator": ("load-generator", "load-generator", ["linux/amd64"], "loadGenerator.image"),
+    "load-generator": ("load-generator", "load-generator", ["linux/amd64"], None),
     "evaluation-harness": ("evaluation-harness", "evaluation-harness", ["linux/amd64"], None),
     "firstfloor": ("firstfloor", "firstfloor", MULTI, None),
     "firstfloor-cuda": ("firstfloor", "firstfloor", ["linux/amd64"], None),

@@ -193,10 +193,7 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 				}
 			}
 			storage := deletionStore(t, nil)
-			opts := Config{
-				ServingNamespace: "serving", ProfileNamespaces: []string{"allowed"}, SchedulerConfigMap: "scheduler",
-				SchedulerConfigKey: "scheduler.json", MaxRequestBytes: 1 << 20, StoreName: "evidence",
-			}
+			opts := Config{ServingNamespace: "serving", ProfileNamespaces: []string{"allowed"}, StoreName: "evidence"}
 			service := &Service{
 				client: native, kube: kube, objects: storage, opts: opts,
 				scheduler: &SchedulerInputs{Lock: &sync.Mutex{}, RefreshLock: &sync.Mutex{}},

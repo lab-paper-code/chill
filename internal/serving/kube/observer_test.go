@@ -750,25 +750,6 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	if result.Outcomes["completed"] != 1 {
 		t.Fatalf("response outcome changed: %+v", result)
 	}
-	// The runtime no longer owns the Call, but the response row is still open.
-	// Preserve all physical evidence separately without fabricating HTTP stages.
-	nativeRows := 0
-	_, err = manager.observationLog.ScanOccupancyRows(context.Background(), definition.UID, "node-uid", now.Add(-time.Second), now.Add(time.Second), func(row serving.RequestRow) {
-		if row.Kind != serving.RequestRowNative {
-			return
-		}
-		nativeRows++
-		if row.RequestID != requestID || row.Instance != id || row.QueuedNanos != nil ||
-			row.RunningNanos != nil || row.ExecutedNanos != nil || !row.ReceivedAt.IsZero() {
-			t.Fatalf("native supplement invented legacy HTTP evidence: %+v", row)
-		}
-		if row.NativeQueuedAt == nil && row.NativeRunningAt == nil && row.NativeFinishedAt == nil {
-			t.Fatalf("native supplement lost direct physical evidence: %+v", row)
-		}
-	})
-	if err != nil || nativeRows != 3 {
-		t.Fatalf("unknown-runtime physical evidence lost: rows=%d err=%v", nativeRows, err)
-	}
 }
 
 func TestObserverRejectedProgressIdentifiesPhysicalRequest(t *testing.T) {

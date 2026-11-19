@@ -51,7 +51,6 @@ func TestDecodeManualOperationStrictKindFields(t *testing.T) {
 		{"prepare weights null", `{"kind":"prepare","reason":"test","weights":null}`, "weights"},
 		{"prepare scope empty", `{"kind":"prepare","reason":"test","scope":""}`, "scope"},
 		{"remove profile empty", `{"kind":"remove","reason":"test","profileID":""}`, "profileID"},
-		{"remove batch zero", `{"kind":"remove","reason":"test","fixedBatchSize":0}`, "fixedBatchSize"},
 		{"remove max batch zero", `{"kind":"remove","reason":"test","maxBatch":0}`, "maxBatch"},
 		{"route max batch null", `{"kind":"route","reason":"test","maxBatch":null}`, "maxBatch"},
 		{"route node empty", `{"kind":"route","reason":"test","node":{}}`, "node"},

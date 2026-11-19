@@ -136,7 +136,6 @@ func TestMeasurementIsolationJudgesPowerModeGeneration(t *testing.T) {
 		{name: "prepare changed", operation: servingstate.Operation{Kind: servingstate.OperationPrepare}, start: &servingops.PowerModeGeneration{Start: 3}, end: 4, changed: true},
 		{name: "idle changed", operation: servingstate.Operation{Kind: servingstate.OperationIdle}, start: &servingops.PowerModeGeneration{Start: 3}, end: 4, changed: true},
 		{name: "remove changed", operation: servingstate.Operation{Kind: servingstate.OperationRemove}, start: &servingops.PowerModeGeneration{Start: 3}, end: 4, changed: true},
-		{name: "occupancy load window changed", operation: servingstate.Operation{Kind: occupancyKind}, start: &servingops.PowerModeGeneration{Start: 3}, end: 4, changed: true},
 		{name: "Fixed Node", operation: servingstate.Operation{Kind: servingstate.OperationPrepare}, end: 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {

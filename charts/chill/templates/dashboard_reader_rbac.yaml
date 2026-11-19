@@ -50,7 +50,7 @@ metadata:
     {{- include "chill.labels" . | nindent 4 }}
 rules:
   - apiGroups: [edge.dacs.io]
-    resources: [profilingruns, batchenergyoptimizations, operationcostmeasurements, dispatchoccupancymeasurements]
+    resources: [profilingruns, batchenergyoptimizations, operationcostmeasurements]
     verbs: [get, list]
   {{- if .Values.evaluation.enabled }}
   - apiGroups: [edge.dacs.io]

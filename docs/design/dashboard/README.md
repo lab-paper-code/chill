@@ -159,8 +159,7 @@ Summary-v1/v2는 표시용 dictionary projection이다. 정밀 값/null/zero와 
 요청 실행 실패와 result 파일 오류는 독립이다. Passport 202는 대기이며 null을 0으로
 보이지 않는다. 목표 총수가 없으면 진행률/ETA를 만들지 않는다.
 
-DOM은 frozen spec의 closed-loop burst다. Scalar d 부재를 실패로 만들거나 포화 판정을
-복원하지 않는다. Signed 관측 median/IQR/분위수/negativeFraction과 실제 scheduler의
+Signed 관측 median/IQR/분위수/negativeFraction과 실제 scheduler의
 채택 d/provenance를 구별한다. Runtime image를 포함한 현재 identity/source로 연결한다.
 기간 상한은 서버 값을 따르며 400에 원 code와 직전 적용 기간을 보존한다.
 

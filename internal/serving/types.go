@@ -313,22 +313,17 @@ func NativeMaxBatch(m firstfloor.Metadata) int {
 	return m.MaxBatchSize
 }
 
-// RunnableBatch reports whether an executor whose policy allows batches up to
-// maxBatch, and fixes fixedBatch when that is not zero, may run a batch of size.
-func RunnableBatch(maxBatch, fixedBatch, size int) bool {
-	return size <= maxBatch && (fixedBatch == 0 || size == fixedBatch)
-}
-
-// MeasuredRunnable reports whether profile p has a batch such an executor may
-// run and every such batch has a measured mean service time. At runtime this
-// holds by construction: the catalog builds a batch only from samples with a
-// preceding idle gap (kube sessionProfile) and the native probe admits an
-// executor only with a runnable batch. The replay's scope, which reads stored
-// snapshots, checks it (schedulerReplayInstanceReason).
-func MeasuredRunnable(p *Profile, maxBatch, fixedBatch int) bool {
+// MeasuredRunnable reports whether profile p has a batch an executor whose
+// policy allows batches up to maxBatch may run, and every such batch has a
+// measured mean service time. At runtime this holds by construction: the
+// catalog builds a batch only from samples with a preceding idle gap (kube
+// sessionProfile) and the native probe admits an executor only with a
+// runnable batch. The replay's scope, which reads stored snapshots, checks it
+// (schedulerReplayInstanceReason).
+func MeasuredRunnable(p *Profile, maxBatch int) bool {
 	runnable := false
 	for _, b := range p.Batches {
-		if RunnableBatch(maxBatch, fixedBatch, b.Batch) {
+		if b.Batch <= maxBatch {
 			if _, ok := b.ServiceDistribution.MeanNanos(); !ok {
 				return false
 			}
@@ -347,10 +342,10 @@ func MeasuredRunnable(p *Profile, maxBatch, fixedBatch int) bool {
 // queue size beyond which it refuses requests (QueueFull). Whether a request
 // can still meet its deadline is the executor's judgment alone.
 // MeasuredRunnable holds for p at every caller.
-func admissionLimit(p *Profile, maxBatch, fixedBatch int, target time.Duration, queue int) int {
+func admissionLimit(p *Profile, maxBatch int, target time.Duration, queue int) int {
 	rate, smallest := 0.0, queue // rate in requests per nanosecond
 	for _, b := range p.Batches {
-		if RunnableBatch(maxBatch, fixedBatch, b.Batch) {
+		if b.Batch <= maxBatch {
 			mean, _ := b.ServiceDistribution.MeanNanos()
 			rate, smallest = max(rate, float64(b.Batch)/mean), min(smallest, b.Batch)
 		}

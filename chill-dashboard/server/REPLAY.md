@@ -6,7 +6,7 @@ Serves the dashboard against a captured ChillServer, without a cluster. Local de
 
 One process starts a fake ChillServer on `port+1` (HTTPS, loopback), a browser-facing HTTPS server on `port` (the live proxy from `live-proxy.mjs` plus a raw pipe for Next HMR upgrades), and `next dev` on `port+2` wired to the fake upstream. `--no-next` starts only the two servers. Files: `replay.mjs` (routes, mutations, live, self-check), `replay-capture.mjs` (capture reader, paging), `replay-journal.mjs` (scheduler journal), `replay-requests.mjs` (measurement requests and runs, both scenes), `replay-scene.mjs` (active scene), `replay-measure.mjs` (active measurement evidence).
 
-Every start runs a self-consistency sweep over both scenes (about 50 s): each list the dashboard reads must resolve through every detail path it builds (requests → `/result` and `profiling-runs?parentUID=`; runs → evidence passport; coverage request ids, profiles → `profile=`; occupancy, operation-cost, evaluations, experiments, load scenarios, catalog kinds, workloads and their observations in both orders), every body must decode with `lib/` parsers, every node named must be in the inventory, and no record may lie in the future. Failures are printed; `--self-check` exits 1 on any failure (0 otherwise) without serving. A GET that throws answers 500 `{code: ReplayError}` (no JS message) and logs the stack.
+Every start runs a self-consistency sweep over both scenes (about 50 s): each list the dashboard reads must resolve through every detail path it builds (requests → `/result` and `profiling-runs?parentUID=`; runs → evidence passport; coverage request ids, profiles → `profile=`; operation-cost, evaluations, experiments, load scenarios, catalog kinds, workloads and their observations in both orders), every body must decode with `lib/` parsers, every node named must be in the inventory, and no record may lie in the future. Failures are printed; `--self-check` exits 1 on any failure (0 otherwise) without serving. A GET that throws answers 500 `{code: ReplayError}` (no JS message) and logs the stack.
 
 ## Scenes and tokens
 
@@ -33,7 +33,7 @@ Every captured timestamp is shifted once by process start minus `capturedAt` (wh
 
 ## Mutations
 
-Settings PUT (If-Match ETag, 428/409); catalog POST/PUT/DELETE (If-Match resourceVersion); infer; `scheduler/operations` (operation result); evaluations create/replace/delete/release and preflight (checks, live targets); load scenarios create/replace/delete and preflight; batch-energy-optimizations preflight, dry run (`NOT_SUBMITTED` + task), submit (`Accepted`, then listed), delete; dispatch-occupancy dry run (frozen spec), submit, delete. The captured scene has no occupancy policy and answers `OccupancyPolicyUnavailable`, and its services are not admitted (`MissingEvidence`). Unknown mutations return 404 `ReplayMissing`.
+Settings PUT (If-Match ETag, 428/409); catalog POST/PUT/DELETE (If-Match resourceVersion); infer; `scheduler/operations` (operation result); evaluations create/replace/delete/release and preflight (checks, live targets); load scenarios create/replace/delete and preflight; batch-energy-optimizations preflight, dry run (`NOT_SUBMITTED` + task), submit (`Accepted`, then listed), delete. The captured scene's services are not admitted (`MissingEvidence`). Unknown mutations return 404 `ReplayMissing`.
 
 ## Capture format
 

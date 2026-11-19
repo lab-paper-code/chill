@@ -52,7 +52,7 @@ type SchedulerSettings struct {
 	CapacityGridSteps       int     `json:"capacityGridSteps"`
 	CapacityBisectionWidth  float64 `json:"capacityBisectionWidth"`
 	CapacityTailSamples     int     `json:"capacityTailSamples"`
-	// Dispatch occupancy defaults to configured ns/request when no measured/DOM d exists.
+	// Dispatch occupancy defaults to configured ns/request when no measured or profile d exists.
 	DefaultDispatchOccupancyNanos int64 `json:"defaultDispatchOccupancyNanos"`
 	// DefaultOperationCost supplies whole-wall costs for unmeasured operations.
 	// Every operation kind and DefaultIdlePower must be configured explicitly.
@@ -117,9 +117,10 @@ func ValidateSchedulerSettingsPatch(current SchedulerSettings, patch json.RawMes
 
 // DispatchOccupancy is the operational extra busy time per request beyond the
 // profile's runner-service samples. Throughput and replay add batch size × d
-// once per batch, including when d is a configured default. Signed estimator
-// statistics remain in their original evidence; only operational d is clamped.
-// Source retains the evidence record key; Provenance.Source classifies selection.
+// once per batch, including when d is a configured default. Signed session
+// samples remain in the profile; only operational d is clamped.
+// Source is always empty; it stays in the wire shape because capacity row
+// keys (CapacityInput.Key) marshal it. Provenance.Source classifies selection.
 type DispatchOccupancy struct {
 	Node          NodeReference                `json:"node"`
 	PowerMode     string                       `json:"powerMode"`
@@ -134,79 +135,37 @@ type DispatchOccupancy struct {
 }
 
 // DispatchOccupancyProvenance records the selected operational value and facts
-// behind it without making a refreshed observation a new numerical capacity row.
+// behind it.
 type DispatchOccupancyProvenance struct {
-	Source    string           `json:"source"` // measured, profile, dom or default
-	Pairs     int              `json:"pairs"`
-	Window    *OccupancyWindow `json:"window,omitempty"`
-	UpdatedAt time.Time        `json:"updatedAt"`
-	Value     int64            `json:"value"`
+	Source    string    `json:"source"` // profile or default
+	Pairs     int       `json:"pairs"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	Value     int64     `json:"value"`
 }
 
 const (
-	occupancySourceMeasured = "measured"
-	occupancySourceProfile  = "profile"
-	occupancySourceDOM      = "dom"
-	occupancySourceDefault  = "default"
+	occupancySourceProfile = "profile"
+	occupancySourceDefault = "default"
 )
 
-// ResolveDispatchOccupancy selects cache-qualified measured B, then the median
-// of the profile batch's own saturation samples (the cache's statistic), then
-// legacy DOM, then the configured default. The cache admits B using configured
-// minimumPairs; core never promotes raw Observed burst records into accepted
-// evidence. Measured B and DOM must match the immutable profile and batch condition.
-//
-//nolint:gocyclo // Keep source priority and exact cell matching together.
-func ResolveDispatchOccupancy(settings SchedulerSettings, occupancy []DispatchOccupancy, i SchedulerInstance) *DispatchOccupancy {
+// ResolveDispatchOccupancy selects the median of the profile batch's own
+// saturation samples, else the configured default.
+func ResolveDispatchOccupancy(settings SchedulerSettings, i SchedulerInstance) *DispatchOccupancy {
 	if i.Profile == nil {
 		return nil
 	}
 	c := &i.Profile.Condition
-	var measured, dom, fallback *DispatchOccupancy
-	for n := range occupancy {
-		o := &occupancy[n]
-		if o.Node.UID != i.Node.UID || o.PowerMode != c.PowerMode || o.Model != c.LogicalModel {
-			continue
-		}
-		if o.Provenance != nil && o.Provenance.Source == occupancySourceMeasured {
-			if o.ProfileID == i.Profile.ID && o.ExecutionPath == c.Artifact.ExecutionPath && o.Batch == i.MaxBatch {
-				measured = o
-				break
-			}
-		} else if (o.Provenance == nil || o.Provenance.Source == occupancySourceDOM) &&
-			o.ProfileID == i.Profile.ID && o.ExecutionPath == c.Artifact.ExecutionPath && o.Batch == i.MaxBatch && dom == nil {
-			dom = o
-		} else if o.Provenance != nil && o.Provenance.Source == occupancySourceDefault &&
-			o.ProfileID == i.Profile.ID && o.ExecutionPath == c.Artifact.ExecutionPath && o.Batch == i.MaxBatch && fallback == nil {
-			fallback = o
-		}
-	}
-	selected := measured
-	if b := schedulerBatch(i.Profile, i.MaxBatch); selected == nil && b != nil && len(b.DispatchOccupancyNanos) > 0 {
-		value := int64(math.Round(max(directStatistics(slices.Clone(b.DispatchOccupancyNanos)).Median, 0)))
-		selected = &DispatchOccupancy{PerRequest: time.Duration(value), RuntimeImage: c.RuntimeImage,
-			Provenance: &DispatchOccupancyProvenance{Source: occupancySourceProfile, Pairs: len(b.DispatchOccupancyNanos), UpdatedAt: i.Profile.MeasuredAt}}
-	}
-	if selected == nil {
-		selected = dom
-	}
-	if selected == nil {
-		selected = fallback
-	}
-	var o DispatchOccupancy
+	o := DispatchOccupancy{Node: i.Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel,
+		ProfileID: i.Profile.ID, ExecutionPath: c.Artifact.ExecutionPath, Batch: i.MaxBatch,
+		PerRequest: time.Duration(settings.DefaultDispatchOccupancyNanos)}
 	provenance := DispatchOccupancyProvenance{Source: occupancySourceDefault}
-	if selected != nil {
-		o = *selected
-		provenance.Source = occupancySourceDOM
-		if selected.Provenance != nil {
-			provenance = *selected.Provenance
-		}
-	} else {
-		o.PerRequest = time.Duration(settings.DefaultDispatchOccupancyNanos)
-		o.RuntimeImage = c.RuntimeImage
+	if b := schedulerBatch(i.Profile, i.MaxBatch); b != nil && len(b.DispatchOccupancyNanos) > 0 {
+		sample := slices.Clone(b.DispatchOccupancyNanos)
+		slices.Sort(sample)
+		median := sample[int(math.RoundToEven(float64(len(sample)-1)*.5))]
+		o.PerRequest = time.Duration(math.Round(max(median, 0)))
+		provenance = DispatchOccupancyProvenance{Source: occupancySourceProfile, Pairs: len(sample), UpdatedAt: i.Profile.MeasuredAt}
 	}
-	o.Node, o.PowerMode, o.Model = i.Node, c.PowerMode, c.LogicalModel
-	o.ProfileID, o.ExecutionPath, o.Batch = i.Profile.ID, c.Artifact.ExecutionPath, i.MaxBatch
 	o.PerRequest = max(o.PerRequest, 0)
 	provenance.Value = int64(o.PerRequest)
 	o.Provenance = &provenance
@@ -235,7 +194,7 @@ func SchedulerSelectedOccupancy(settings SchedulerSettings, snapshot SchedulerSn
 			return
 		}
 		seen[key] = true
-		selected = append(selected, *ResolveDispatchOccupancy(settings, snapshot.DispatchOccupancy, i))
+		selected = append(selected, *ResolveDispatchOccupancy(settings, i))
 	}
 	for _, i := range snapshot.Instances {
 		add(i)
@@ -331,7 +290,6 @@ type SchedulerInstance struct {
 	Capacity       int                            `json:"capacity"`
 	Weight         int32                          `json:"weight"`
 	MaxBatch       int                            `json:"maxBatch"`
-	FixedBatchSize int                            `json:"fixedBatchSize,omitempty"` // Strict baseline B; autonomous control never moves it.
 	MaxWait        time.Duration                  `json:"maxWaitNanos"`
 	ObservedAt     time.Time                      `json:"observedAt"`
 	// NativeSpanAt anchors derived native idle/arrival spans. Zero means the

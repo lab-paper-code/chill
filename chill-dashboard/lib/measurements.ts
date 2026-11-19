@@ -1,6 +1,5 @@
-import type { DispatchOccupancyMeasurement, OperationCondition, OperationCostMeasurement, OperationStepStatus, ProfilingRun } from "./read-types.ts"
+import type { OperationCondition, OperationCostMeasurement, OperationStepStatus, ProfilingRun } from "./read-types.ts"
 import { codeMessage } from "./status-labels.ts"
-import { nanosToMilliseconds } from "./scheduler.ts"
 
 export function measurementRequestName(condition:{model:string;node:string;powerMode:string;path:string},taken:Set<string>,now=new Date()):string {
   const day=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}`
@@ -15,7 +14,7 @@ export function formatMeasurementNumber(value:unknown, unit=""):string {
   const digits = unit === "J/건" || unit === "J/item" ? 4 : unit === "W" ? 1 : ["ms", "%", "%p"].includes(unit) ? 2 : 0
   return value.toLocaleString("ko-KR", {minimumFractionDigits:digits,maximumFractionDigits:digits})
 }
-export type ProjectionMeasurementKind = "operation-cost-measurements" | "dispatch-occupancy-measurements"
+export type ProjectionMeasurementKind = "operation-cost-measurements"
 export const measurementPath = (kind:ProjectionMeasurementKind, namespace:string, name?:string) => `v1/namespaces/${encodeURIComponent(namespace)}/${kind}${name === undefined ? "" : `/${encodeURIComponent(name)}`}`
 export function measurementReasonSummary(reason:string) {
   if(!reason.trim())return "상세 사유 미제공"
@@ -31,8 +30,6 @@ export function measurementReasonSummary(reason:string) {
   if(/No verified catalog profile/i.test(reason))return "현재 조건의 검증된 프로파일 없음"
   if(/unknown field/i.test(reason))return "설정 항목 미지원"
   if(/native preparation Pod failed/i.test(reason))return "모델 준비 실패"
-  if(/Stored occupancy does not match/i.test(reason))return "요청과 점유시간 근거 불일치"
-  if(/Signed negative d/i.test(reason))return "점유시간 음수"
   const message=codeMessage(reason)
   if(message) return message
   if(/exactly one proven primitive state effect/i.test(reason)) return "단일 상태 변경 미확인"
@@ -40,40 +37,6 @@ export function measurementReasonSummary(reason:string) {
   if(/memory|OOM/i.test(reason)) return "측정 메모리 부족"
   return /[가-힣]/.test(reason)?reason:"상세 사유: 원문"
 }
-// Numeric table cells stay unitless; diagnostics belong in the adjacent reason column.
-export function occupancyDuration(value?:unknown) {
-  if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && !Number.isSafeInteger(value)) || value < 0) return "—"
-  const milliseconds=Number(nanosToMilliseconds(value))
-  return Number.isFinite(milliseconds)?formatMeasurementNumber(milliseconds,"ms"):"—"
-}
-export const occupancyThroughput = (value?:string) => !value || !/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)) || Number(value) < 0 ? "—" : significant(Number(value))
-export function occupancyReason(data:Pick<DispatchOccupancyMeasurement,"status"|"assessment">) {
-  const {perRequestNanos:d,throughput:x,reason}=data.status
-  if((typeof d==="number"||typeof d==="bigint")&&d<0)return "점유시간 음수"
-  if(d!==undefined&&occupancyDuration(d)==="—")return "점유시간 오류"
-  if(x&&occupancyThroughput(x)==="—")return "처리량 오류"
-  const reasonLabels:Record<string,string>={
-    TooFewBatches:"배치 표본 부족",NotSaturated:"부하 미포화",LoadFailed:"부하 생성 실패",
-    PowerChangedDuringMeasurement:"측정 중 전력모드 변경",
-    ChillServerRestart:"서버 재시작으로 측정 중단",Failed:"측정 실패",Insufficient:"채택 근거 부족",
-    OccupancyEvidenceMissing:"점유시간 근거 파일 없음",OccupancyEvidenceUnavailable:"점유시간 근거 읽기 실패",OccupancyEvidenceInvalid:"점유시간 근거 해석 실패",OccupancyThroughputInvalid:"처리량 오류",
-    BatchUnmeasured:"배치 미측정",WorkloadMissing:"서비스 근거 없음",WorkloadAutonomous:"CHILL 자동 운영 사용 중",WorkloadServing:"서비스 실행 중",ConditionsInfeasible:"측정 조건 불충족",
-    MissingPhysicalEvidence:"실행 근거 없음",MissingWindowBoundary:"측정 구간 경계 없음",UnknownPhysicalContinuity:"실행 연속성 미확인",NativeExecutionError:"실행 오류",UnknownRequestExecution:"요청 실행 미확인",ObservationRetentionGap:"관측 보존 공백",PhysicalDrainUnconfirmed:"실행 종료 미확인",
-    OccupancyEvidenceInsufficient:"점유시간 근거 부족",OccupancyNegativeD:"점유시간 음수",OccupancyEvidenceMismatch:"요청과 점유시간 근거 불일치",OccupancyValueProblem:"점유시간 또는 처리량 오류",
-  }
-  const recorded=reason||data.assessment?.reasons[0]?.code||data.assessment?.reasons[0]?.message||""
-  if(recorded) {
-    return recorded.split(/;\s*/).map(part=>{
-      const label=reasonLabels[part.split(/\s/)[0]]
-      if(label)return label
-      if(/^[A-Za-z][A-Za-z0-9_]*$/.test(part)&&!codeMessage(part))return part
-      const summary=measurementReasonSummary(part)
-      return summary==="상세 사유: 원문"?part:summary
-    }).join(", ")
-  }
-  return data.assessment?.displayStatus==="problem"?"상세 사유 미제공":d===undefined||!x?"결과 없음":"—"
-}
-export const significant = (value:number) => Number.isFinite(value) ? value.toLocaleString("ko-KR",{maximumSignificantDigits:3}) : `${String(value)} (품질 경고)`
 export function safeMeasurementReturn(value:string|null, fallback="/measurements") {
   if (!value || !value.startsWith("/") || value.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(value)) return fallback
   try {

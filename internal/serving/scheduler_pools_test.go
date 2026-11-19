@@ -446,23 +446,6 @@ func TestSchedulerMeasurementNodeIsFixed(t *testing.T) {
 	}
 }
 
-// 고정 배치 비교 실행: autonomy is rejected while the Workload is routed to a fixed-batch baseline.
-func TestSchedulerFixedBatchAutonomyRejectsRoutedBaseline(t *testing.T) {
-	_, snap := schedulerFixture()
-	uid := snap.Instances[0].WorkloadUID
-	if err := SchedulerFixedBatchAutonomy(snap, []string{uid}); err != nil {
-		t.Fatal(err)
-	}
-	snap.Instances[0].FixedBatchSize = 1
-	if err := SchedulerFixedBatchAutonomy(snap, []string{uid}); err == nil {
-		t.Fatal("autonomy accepted for a Workload routed to a fixed-batch instance")
-	}
-	snap.Routing = map[string]map[string]int32{uid: {snap.Instances[0].ID: 0}}
-	if err := SchedulerFixedBatchAutonomy(snap, []string{uid}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestSchedulerLowestSwitchableModePlans(t *testing.T) {
 	for _, current := range []string{"GPU_1500", targetMode} {
 		t.Run(current, func(t *testing.T) {

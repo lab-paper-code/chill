@@ -29,7 +29,7 @@ native slack은 남은 SLO에서 frozen completion reserve와 조건부 service 
 
 ## 과부하 정책과 physical 완료
 
-`Workload.spec.admission`의 Reject와 Delay, maxQueuedRequests를 Definition과 요청에 동결한다. gateway는 route의 ready executor 가운데 응답을 받지 못한 dispatch 요청 수(inFlight)가 한도 미만인 것만 남기고 plan의 share로 고른다. 한도는 `min(max(floor(R x T), 최소 실행 가능 batch), executor 큐 크기)`이며 T는 Workload latency target, R은 인스턴스가 실행할 수 있는 batch들의 batch size / 평균 service 시간 중 최댓값이다. batch는 허용 최대 batch 이하이고 고정 batch 정책이면 그 고정 batch와 같을 때 실행 가능하다(`RunnableBatch`). 고정 batch 인스턴스의 한도는 그 batch만으로 계산하고 어떤 인스턴스도 가장 작은 실행 가능 batch보다 낮게 제한되지 않는다. 한도는 target 시간 동안 처리하는 요청 수인 운영점이며 초과 요청이 target을 놓친다는 증명이 아니다. 한도 함수 `admissionLimit`은 runtime(`chooseLocked`)과 scheduler replay(`chooseAdmission`)가 함께 쓴다. 한도에 닿은 executor만 남으면 Reject는 즉시 `QueueFull`(429, stage=gateway)로 거절하고 Delay는 gateway 큐에서 기다린다. Workload ingress 큐가 상한이면 같은 코드로 거절한다. ready한 route executor가 없으면 정책과 무관하게 기다린다. 취소한 요청은 executor 상태가 떠났음을 확인할 때까지 inFlight로 센다. replay는 executor가 요청을 놓는 지점(service 종료, executor 거절, 큐 안 만료)에서 반환 시간 0으로 inFlight를 줄인다.
+`Workload.spec.admission`의 Reject와 Delay, maxQueuedRequests를 Definition과 요청에 동결한다. gateway는 route의 ready executor 가운데 응답을 받지 못한 dispatch 요청 수(inFlight)가 한도 미만인 것만 남기고 plan의 share로 고른다. 한도는 `min(max(floor(R x T), 최소 실행 가능 batch), executor 큐 크기)`이며 T는 Workload latency target, R은 인스턴스가 실행할 수 있는 batch들의 batch size / 평균 service 시간 중 최댓값이다. batch는 허용 최대 batch 이하일 때 실행 가능하다. 어떤 인스턴스도 가장 작은 실행 가능 batch보다 낮게 제한되지 않는다. 한도는 target 시간 동안 처리하는 요청 수인 운영점이며 초과 요청이 target을 놓친다는 증명이 아니다. 한도 함수 `admissionLimit`은 runtime(`chooseLocked`)과 scheduler replay(`chooseAdmission`)가 함께 쓴다. 한도에 닿은 executor만 남으면 Reject는 즉시 `QueueFull`(429, stage=gateway)로 거절하고 Delay는 gateway 큐에서 기다린다. Workload ingress 큐가 상한이면 같은 코드로 거절한다. ready한 route executor가 없으면 정책과 무관하게 기다린다. 취소한 요청은 executor 상태가 떠났음을 확인할 때까지 inFlight로 센다. replay는 executor가 요청을 놓는 지점(service 종료, executor 거절, 큐 안 만료)에서 반환 시간 0으로 inFlight를 줄인다.
 
 요청이 자신의 기한을 지킬 수 있는지는 executor만 판단한다(firstfloor `policy.go`). gateway는 기한을 예측하지 않는다.
 
@@ -109,14 +109,6 @@ gateway는 실행된 요청의 완료로 service 종료의 범위를 정한다. 
 
 표본 수의 marginal quantile coverage를 정밀 conditional tail이나 κ 안전 보장으로 해석하지 않는다. sparse와 밖 support, 선택 거리와 trial 수를 남긴다. 원시 sample과 SLO를 수정해 공백을 숨기지 않는다.
 
-## Strict fixed-size baseline serving
-
-수동 prepare의 `fixedBatchSize=B`를 frozen policy와 instance, metadata ACK에 남긴다.0이나 생략은 dynamic이다. B는 measured/initialized와 MaxBatch, queue cap 안이어야 하며 profiling mode는 거절한다. instance 수명 중 fixed B 변경은 교체다.
-
-같은 UID/Definition의 B개를 stable EDF로 정확히 실행한다. B 미만은 실행하지 않는다. max wait, SLO 여유와 energy gain, drop/defer를 선택에 쓰지 않으며 overdue도 포함한다. cancel과 최종 lifetime은 적용하고 shutdown tail은 실행하지 않는다.
-
-fixed instance는 자동 후보와 replay에서 제외한다. baseline 비교는 같은 부하의 실제 지연과 에너지다. profiling fixed K와 Serving strict baseline은 다른 실행 mode다.
-
 ## Baseline과 원자 측정
 
 profile은 노드 전력의 네 값(정착한 유휴 전력, 깨어 있는 전력 증가, 유지 시간, 배치 크기별 입력당 줄)과 메모리 최댓값, 서비스 기록을 보존한다. 노드 전력은 `유휴 전력 + 깨어 있는 전력 증가 × 깨어 있는 시간 비율 + 입력당 줄 × 입력률`이다. 구하지 못한 값은 식별되지 않음으로 남고, 그 값이 필요한 에너지는 비교하지 않는다. NodeBaseline은 실제 Node/mode와 loaded state, node-exclusive meter에 연결한다. 공존 additive 예상은 실측 co-loaded baseline과 구분한다.
@@ -137,4 +129,4 @@ memory와 whole GPU UUID는 물리 안전 제약이다. CPU는 공유한다. SLO
 
 저장 형식 변경은 측정과 측정 사이에 한 번 적용하고 영향받는 작업용 객체를 정리한다. 게시된 과학 원문은 변경하지 않는다. observation 현행 버전은 `v1alpha7`이며 profiling과 bundle의 현재 schema는 각 owner source를 따른다. [Durable Stored-Contract Compatibility](../../adr/0019-durable-stored-contract-compatibility.md)에 따른 단일 reader다.
 
-native-pair 통계와 rolling d 채택은 [측정 API](measurement-api.md#디스패치-점유-측정), 원시 조회와 crash 경계는 [관측 설계](observability-split.md)에 둔다.
+d 선택은 [측정 API](measurement-api.md#scheduler의-d-선택), 원시 조회와 crash 경계는 [관측 설계](observability-split.md)에 둔다.

@@ -11,7 +11,6 @@ ChillServer가 `chill.dacs.io/measurement:NoSchedule` taint와 측정 예약을 
 | 독립 ProfilingRun | `spec.targetNode` | ExecutionComplete True 또는 False |
 | PowerModeTransitionCost | `spec.targetNode` | Complete, Failed |
 | OperationCostMeasurement | `spec.node` | Complete, Insufficient, Failed |
-| DispatchOccupancyMeasurement | `spec.node` | Complete, Insufficient, Failed |
 
 BEO 세션은 ChillServer가 승인된 노드에서 직접 실행하며 ProfilingRun을 만들지 않는다. 모델 적재 유휴 기준선의 자식 ProfilingRun은 승인된 root 아래 생성한다. 일시 Kubernetes와 evidence 오류를 측정 조건의 terminal 실패로 바꾸지 않는다.
 
@@ -19,7 +18,7 @@ BEO 세션은 ChillServer가 승인된 노드에서 직접 실행하며 Profilin
 
 Admit는 `tickMu`로 Node 승인과 제어 진행을 직렬화한다. 긴 runner 준비, 측정과 반환은 범위 예약된 actionRun으로 등록한 뒤 잠금 밖에서 실행한다. 같은 범위에 다른 writer를 허가하지 않는다.
 
-namespace별 여섯 kind를 metadata-only List로 읽는다. UID와 opaque resourceVersion이 같으면 decoded payload와 terminal 판정을 재사용한다. 새 객체와 변경 객체만 GET하며 사라진 identity를 제거한다. 초기화는 종류별 full List 뒤 metadata boundary를 검증한다.
+namespace별 다섯 kind를 metadata-only List로 읽는다. UID와 opaque resourceVersion이 같으면 decoded payload와 terminal 판정을 재사용한다. 새 객체와 변경 객체만 GET하며 사라진 identity를 제거한다. 초기화는 종류별 full List 뒤 metadata boundary를 검증한다.
 
 모든 boundary 완료 뒤 creationTimestamp, namespace/name 순으로 정렬한다. 읽기 실패나 취소이면 그 round의 승인과 반환 판단을 하지 않는다. Node taint와 RV, power pending, serving Pod와 DeviceClass는 매 Admit 직접 읽는다. Tick은 window 조회와 비동기 반환 뒤 live 사실을 새로 읽는다.
 
@@ -53,8 +52,6 @@ steps는 production Measure로 순서 실행한다. ID는 `<CR UID>.<순번>.<�
 
 미완료 sequence는 `serving/operation-sequences/<CR UID>.json`이다. 재시작으로 끊긴 Granted/nonterminal opcost는 ChillServerRestart와 저장 step 목록을 남기고 반환한다. 재시작으로 끊긴 세션은 ChillServerRestart로 Failed가 되고 반환한다. terminal 결과는 다시 쓰지 않는다.
 
-DOM은 비자율 Workload, serving 충돌, batch 근거와 frozen native queue/부하 한도를 확인한다. burst 판정, signed 통계와 scheduler 채택은 [측정 API](measurement-api.md)의 별도 경계다.
-
 ## 정상 반환과 무효 근거
 
 terminal이나 삭제 root, 살아 있는 root/run이 없는 taint와 종료 operation은 hand-back을 만든다.
@@ -72,4 +69,4 @@ record의 power generation과 자기 전환 수로 예상 밖 power 변경을 �
 
 ## 저장 경계
 
-taint와 admission annotation은 승인 상태를 나타낸다. operation은 `chill.dacs.io/serving-operation-measurement.v1alpha2`, sequence는 `serving-operation-sequence.v1alpha1`이다. legacy scalar DOM과 신규 burst DOM은 별도 prefix와 schema다. 상세는 [저장 계약](measurement-api.md#저장-계약)을 따른다.
+taint와 admission annotation은 승인 상태를 나타낸다. operation은 `chill.dacs.io/serving-operation-measurement.v1alpha2`, sequence는 `serving-operation-sequence.v1alpha1`이다. 상세는 [저장 계약](measurement-api.md#저장-계약)을 따른다.

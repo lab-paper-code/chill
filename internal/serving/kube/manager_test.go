@@ -136,7 +136,7 @@ func newManagerHarness(t *testing.T) (*managerHarness, observation.ObservationLo
 			t.Fatal(err)
 		}
 	}
-	store := &Store{client: &managerAPI{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(testExecutionFacts()).WithStatusSubresource(&api.Workload{}, &corev1.Pod{}, &api.OperationCostMeasurement{}, &api.DispatchOccupancyMeasurement{}).Build()}}
+	store := &Store{client: &managerAPI{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(testExecutionFacts()).WithStatusSubresource(&api.Workload{}, &corev1.Pod{}, &api.OperationCostMeasurement{}).Build()}}
 	config := observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()}}
 	// These lifecycle fixtures begin after a successful, physically empty
 	// predecessor handoff. Crash recovery is exercised separately.

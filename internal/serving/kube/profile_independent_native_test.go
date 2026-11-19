@@ -43,7 +43,7 @@ func TestSessionMeasurementRealNative(t *testing.T) {
 	fixture, node, profile, class := observerSourceFixture()
 	spec := measurementInstanceSpec(node, profile)
 	spec.Config.BatchSizes, spec.Config.MaxBatchSize = []int{batch}, batch
-	spec.Config.Policy.FixedBatchSize, spec.Instance.MaxBatch, spec.Instance.FixedBatchSize = batch, batch, batch
+	spec.Config.Policy.FixedBatchSize, spec.Instance.MaxBatch = batch, batch
 	endpoint, client := realNativeServer(t, ctx, spec.Config, root, directory)
 	manager, kube, measure := measurementOperations(t, ctx, fixture, node, class, spec, client)
 

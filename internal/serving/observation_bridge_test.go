@@ -161,42 +161,37 @@ func TestNativeHTTPServicePairsReachPersistedRequestConsumers(t *testing.T) {
 	if err != nil || len(read.Requests) != len(samples) {
 		t.Fatalf("persisted final request read: %d rows, %v", len(read.Requests), err)
 	}
-	populations := map[string][]native.ServiceSample{}
-	unknown := map[string]int{}
-	_, err = log.ScanOccupancyRows(ctx, definition.UID, "", from, to, func(row serving.RequestRow) {
-		if row.Kind != serving.RequestRowFinal && row.Kind != serving.RequestRowNative {
-			return
+	population := make([]native.ServiceSample, 0, len(read.Requests))
+	unknown := 0
+	for _, row := range read.Requests {
+		if row.Kind != serving.RequestRowFinal {
+			continue
 		}
 		if row.ServiceDurationNanos == 0 {
 			if row.PrecedingIdleNanos != nil {
 				t.Error("legacy progress became an observed zero gap")
 			}
-			unknown[row.Kind]++
-			return
+			unknown++
+			continue
 		}
-		populations[row.Kind] = append(populations[row.Kind], native.ServiceSample{
+		population = append(population, native.ServiceSample{
 			ServiceDurationNanos: row.ServiceDurationNanos, PrecedingIdleNanos: row.PrecedingIdleNanos, TrialID: row.NativeTrialID,
 		})
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	for _, kind := range []string{serving.RequestRowFinal, serving.RequestRowNative} {
-		if len(populations[kind]) != 4 || unknown[kind] != 1 {
-			t.Fatalf("%s consumer lost canonical/legacy population: %+v, unknown=%d", kind, populations[kind], unknown[kind])
+	if len(population) != 4 || unknown != 1 {
+		t.Fatalf("final-row consumer lost canonical/legacy population: %+v, unknown=%d", population, unknown)
+	}
+	// Every persisted pair keeps its gap and service; hydration drops only
+	// the gapless first execution.
+	for j, want := range samples[:4] {
+		got := population[j]
+		if got.ServiceDurationNanos != want.ServiceDurationNanos || (got.PrecedingIdleNanos == nil) != (want.PrecedingIdleNanos == nil) ||
+			got.PrecedingIdleNanos != nil && *got.PrecedingIdleNanos != *want.PrecedingIdleNanos {
+			t.Fatalf("persisted G/S pair %d: got %+v want %+v", j, got, *want)
 		}
-		// Every persisted pair keeps its gap and service; hydration drops only
-		// the gapless first execution.
-		for j, want := range samples[:4] {
-			got := populations[kind][j]
-			if got.ServiceDurationNanos != want.ServiceDurationNanos || (got.PrecedingIdleNanos == nil) != (want.PrecedingIdleNanos == nil) ||
-				got.PrecedingIdleNanos != nil && *got.PrecedingIdleNanos != *want.PrecedingIdleNanos {
-				t.Fatalf("%s persisted G/S pair %d: got %+v want %+v", kind, j, got, *want)
-			}
-		}
-		distribution, err := native.NewServiceDistribution(populations[kind])
-		if err != nil || distribution.DroppedFirstExecutions() != 1 {
-			t.Fatalf("%s hydration: %v", kind, err)
-		}
+	}
+	distribution, err := native.NewServiceDistribution(population)
+	if err != nil || distribution.DroppedFirstExecutions() != 1 {
+		t.Fatalf("hydration: %v", err)
 	}
 }

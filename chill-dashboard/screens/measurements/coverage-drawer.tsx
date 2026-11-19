@@ -5,7 +5,6 @@ import { formatNumber, msNumber } from "@/lib/format"
 import { coverageBatchState, coverageMeasurementStatus, coverageProgress, coverageRequestHref, coverageVariant } from "@/lib/measurement-coverage"
 import { deviceClassLabel, executionPathLabel, powerModeLabel } from "@/lib/display-labels"
 import { measurementSchedulerUsed } from "@/lib/measurement-assessment"
-import { coverageOccupancyRequestHref, occupancyReasonLabel, occupancyRequestHref, occupancyStates } from "@/lib/dispatch-occupancy"
 import { measurementStatus, type StatusInfo } from "@/lib/status-labels"
 import type { MeasurementCoverageCell as Cell, MeasurementCoverageResponse, ResultRow } from "@/lib/read-types"
 import { Button, DataTable, DetailDrawer, Feed, Fields, Hint, Section, StatusDot, TimeText, buttonClassName, type Column } from "@/components/kit"
@@ -35,11 +34,8 @@ export function CellDrawer({ cell, namespace, returnTo, onClose }: { cell: Cell;
     result: variant?.resultRows.find(row => row.batch === batch && row.rowKind === "direct") ?? variant?.resultRows.find(row => row.batch === batch),
   }))
   const used = measurementSchedulerUsed(cell.assessment)
-  const occupancy = cell.occupancy ?? []
   const reasons = cellReasons(cell)
   const measuredAt = cell.currentMeasurement?.measuredAt ?? variant?.measuredAt
-  const occupancyHref = occupancy[0] ? coverageOccupancyRequestHref(cell, occupancy[0], namespace)
-    : occupancyRequestHref(namespace, { node: cell.node.name, model: cell.model.name, deviceClass: cell.deviceClass.name, path: cell.executionPath, powerMode: cell.powerMode, measurementID: cell.currentMeasurement?.id })
   const history = `/measurements/requests?${new URLSearchParams({ node: cell.node.name, model: cell.model.name, deviceClass: cell.deviceClass.name, path: cell.executionPath, powerMode: cell.powerMode })}`
   return (
     <DetailDrawer
@@ -49,9 +45,6 @@ export function CellDrawer({ cell, namespace, returnTo, onClose }: { cell: Cell;
       footer={
         <div className="flex flex-wrap justify-end gap-2">
           <Link href={history} className={buttonClassName({ variant: "ghost" })}>요청 기록</Link>
-          {cell.currentMeasurement
-            ? <Link href={occupancyHref} className={buttonClassName({ variant: "outline" })}>분배 점유시간 측정 요청</Link>
-            : <Button variant="outline" disabled disabledReason="측정 결과 필요">분배 점유시간 측정 요청</Button>}
           {code !== "unsupported" && <Link href={coverageRequestHref(cell, namespace, returnTo)} className={buttonClassName({ variant: "default" })}>이 조건으로 측정 요청</Link>}
         </div>
       }
@@ -66,7 +59,6 @@ export function CellDrawer({ cell, namespace, returnTo, onClose }: { cell: Cell;
         { label: "모델", value: cell.model.name },
         { label: "실행 경로", value: <Hint text={cell.executionPath}>{executionPathLabel(cell.executionPath)}</Hint> },
         { label: "측정 시각", value: measuredAt && <TimeText at={measuredAt} mode="detail" />, reason: "측정 없음" },
-        { label: "분배 점유시간", value: occupancy.length ? <Hint text={[...new Set(occupancy.map(row => occupancyReasonLabel(row.reason)))].join(", ")}>{[...new Set(occupancy.map(row => occupancyStates[row.state]))].join(", ")}</Hint> : null, reason: "기록 없음" },
       ]} />
       {rows.length > 0 && (
         <Section title="배치별 결과">

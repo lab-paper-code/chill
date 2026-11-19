@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, measurementPath, occupancyDuration, occupancyThroughput, occupancyReason, operationSteps } from "./measurements.ts"
+import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, measurementPath, operationSteps } from "./measurements.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
-import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
+import type { OperationCostMeasurement } from "./read-types.ts"
 import { measurementReasonSummary } from "./measurements.ts"
 import { formatMeasurementNumber, measurementRequestName } from "./measurements.ts"
 
@@ -34,12 +34,6 @@ const operation:OperationCostMeasurement = {
   conditions:{steps:[{name:"power",kind:"power",powerMode:"low"},{name:"prepare",kind:"prepare",batchEnergyOptimization:"beo"},{name:"idle",kind:"idle",idleDurationSeconds:5},{name:"remove",kind:"remove",batchEnergyOptimization:"beo"}]},
   status:{phase:"Insufficient",reason:"UnknownVerdict",steps:[{name:"remove",key:"remove-key",verdict:"NewVerdict"},{name:"power",key:"power-key",verdict:"Accepted"},{name:"orphan",key:"",verdict:"Rejected"}]},
 }
-const occupancy:DispatchOccupancyMeasurement = {
-  kind:"DispatchOccupancyMeasurement",metadata,node:"node-1",references:{...references,cr:{...references.cr,kind:"DispatchOccupancyMeasurement"},evidence:[]},
-  phase:"Complete",d:null,
-  conditions:{workload:"demo",batchEnergyOptimization:"beo",batch:4,warmupSeconds:2,durationSeconds:10,workers:8},status:{phase:"Complete"},
-}
-
 test("operation result joins retain condition order, missing results and unmatched status without inferring acceptance", () => {
   const steps = operationSteps(operation)
   assert.deepEqual(steps.map(step => step.name),["power","prepare","idle","remove","orphan"])
@@ -53,12 +47,7 @@ test("operation result joins retain condition order, missing results and unmatch
   assert.deepEqual(operationSteps({...operation,status:{phase:"Complete"}}).map(step => step.results),[[],[],[],[]])
 })
 
-test("raw occupancy negatives and invalid values warn without replacing zero or precision",()=>{
-  for(const value of [-3807875n,-5720000,-1n]) {assert.equal(occupancyDuration(value),"—");assert.equal(occupancyReason({...occupancy,status:{perRequestNanos:value}}),"점유시간 음수")}
-  for(const value of [NaN,Infinity,-Infinity,"NaN","broken",null]) assert.equal(occupancyDuration(value),"—")
-  for(const value of ["NaN","Infinity","-1","broken"," "]) {assert.equal(occupancyThroughput(value),"—");assert.equal(occupancyReason({...occupancy,status:{throughput:value}}),"처리량 오류")}
-  assert.equal(significant(0.09261),"0.0926")
-  assert.equal(significant(0.08682),"0.0868")
+test("measurement return paths stay inside the dashboard",()=>{
   for(const value of ["//evil.test","https://evil.test","/settings","/measurements\\evil","\n/measurements"])assert.equal(safeMeasurementReturn(value),"/measurements")
   assert.equal(safeMeasurementReturn("/measurements?model=x&page=2"),"/measurements?model=x&page=2")
 })
@@ -92,7 +81,6 @@ test("R10: projection reasons summarize repeated state-effect errors and preserv
   assert.doesNotMatch(measurementReasonSummary("accepted evidence"),/채택되지/)
   assert.match(measurementReasonSummary('native preparation Pod failed; json: unknown field "energyBelowResolution"'),/설정.*지원/)
   assert.match(measurementReasonSummary("native preparation Pod failed"),/모델 준비/)
-  assert.match(measurementReasonSummary("Stored occupancy does not match this request and status"),/요청.*일치/)
 })
 
 test("failure actions name the measured node model path and smallest-batch limit",()=>{
@@ -106,59 +94,18 @@ test("failure actions name the measured node model path and smallest-batch limit
   }
 })
 
-test("R13: occupancy quantity cells are unitless while invalid-value reasons remain separate",()=>{
-  assert.equal(occupancyDuration(3807875n),"3.81")
-  assert.equal(occupancyDuration(-1n),"—")
-  assert.equal(occupancyDuration(undefined),"—")
-  assert.equal(occupancyThroughput("87.1"),"87.1")
-  assert.equal(occupancyThroughput("-1"),"—")
-  assert.equal(occupancyThroughput(undefined),"—")
-})
-
-test("R13: occupancy issues retain short reasons even when the checklist has no checks",()=>{
-  assert.equal(occupancyReason({...occupancy,status:{perRequestNanos:0,throughput:"0",reason:"Stored occupancy does not match this request and status"}}),"요청과 점유시간 근거 불일치")
-  assert.equal(occupancyReason({...occupancy,status:{reason:"Signed negative d"}}),"점유시간 음수")
-  assert.equal(occupancyReason({...occupancy,status:{reason:"UnknownReason"}}),"UnknownReason")
-  assert.equal(occupancyReason({...occupancy,status:{reason:"TooFewBatches 12; NotSaturated 0.123456; FutureReason 7"}}),"배치 표본 부족, 부하 미포화, FutureReason 7")
-  assert.equal(occupancyReason({...occupancy,status:{reason:"UnknownPhysicalContinuity"}}),"실행 연속성 미확인")
-  assert.equal(occupancyReason({...occupancy,status:{},assessment:{...occupancy.assessment!,reasons:[{code:"OccupancyEvidenceMismatch",message:"",label:"",sourceIds:[]}]}}),"요청과 점유시간 근거 불일치")
-})
-
-test("R14: occupancy evidence and interruption codes use server-grounded Korean statuses",()=>{
-  const labels={OccupancyEvidenceMissing:"점유시간 근거 파일 없음",OccupancyEvidenceUnavailable:"점유시간 근거 읽기 실패",OccupancyEvidenceInvalid:"점유시간 근거 해석 실패",OccupancyThroughputInvalid:"처리량 오류",ChillServerRestart:"서버 재시작으로 측정 중단",Failed:"측정 실패",Insufficient:"채택 근거 부족"}
-  for(const [reason,label] of Object.entries(labels))assert.equal(occupancyReason({...occupancy,status:{reason}}),label)
-  assert.equal(occupancyReason({...occupancy,status:{reason:"FutureOccupancyCode"}}),"FutureOccupancyCode")
-})
-
 test("measurement reason summaries translate known server text",()=>{
   assert.equal(measurementReasonSummary("No verified catalog profile for current condition"),"현재 조건의 검증된 프로파일 없음")
 })
 
-test("measurement routes accept only the two projection kinds and keep UI queries outside the upstream request", () => {
+test("measurement routes accept only the operation-cost projection and keep UI queries outside the upstream request", () => {
   const config = serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
-  for (const kind of ["operation-cost-measurements","dispatch-occupancy-measurements"] as const) {
-    for (const name of [undefined,"sample"]) {
-      const path = measurementPath(kind,"research",name)
-      assert.deepEqual(relayPlan("GET",path.split("/"),"",config),{path:`/api/${path}`,kind:"query",timeoutMs:config.queryTimeoutMs,bodyAllowed:false})
-      for (const search of ["?namespace=other","?uid=uid-1","?workload=uid","?row=key","?limit=10","?offset=0","?q=sample"]) {
-        assert.throws(() => relayPlan("GET",path.split("/"),search,config),/DashboardQueryInvalid/)
-      }
-      for (const method of ["POST","PUT","DELETE"]) {
-        if(kind==="dispatch-occupancy-measurements"&&!name&&method==="POST") {
-          assert.equal(relayPlan(method,path.split("/"),"",config).kind,"mutation")
-        } else if(kind==="dispatch-occupancy-measurements"&&name&&method==="DELETE") {
-          assert.equal(relayPlan(method,path.split("/"),"?uid=uid-1",config).kind,"mutation")
-        } else assert.throws(() => relayPlan(method,path.split("/"),"",config),/DashboardMethodNotAllowed/)
-      }
+  for (const name of [undefined,"sample"]) {
+    const path = measurementPath("operation-cost-measurements","research",name)
+    assert.deepEqual(relayPlan("GET",path.split("/"),"",config),{path:`/api/${path}`,kind:"query",timeoutMs:config.queryTimeoutMs,bodyAllowed:false})
+    for (const search of ["?namespace=other","?uid=uid-1","?workload=uid","?row=key","?limit=10","?offset=0","?q=sample"]) {
+      assert.throws(() => relayPlan("GET",path.split("/"),search,config),/DashboardQueryInvalid/)
     }
+    for (const method of ["POST","PUT","DELETE"]) assert.throws(() => relayPlan(method,path.split("/"),"",config),/DashboardMethodNotAllowed/)
   }
-})
-
-test("occupancy preserves missing and zero d, string throughput and logical location identity", () => {
-  assert.equal(occupancyDuration(occupancy.status.perRequestNanos),"—")
-  assert.equal(occupancyDuration(0),"0.00")
-  assert.equal(occupancyDuration(3807875n),"3.81")
-  assert.equal(occupancyThroughput("0.0000012300"),"0.00000123")
-  assert.equal(occupancyThroughput("0"),"0")
-  for (const value of [undefined,""]) assert.equal(occupancyThroughput(value),"—")
 })

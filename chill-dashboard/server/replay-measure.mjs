@@ -1,6 +1,6 @@
 // Synthetic healthy measurement evidence for the replay 'active' scene. Every overlay is derived from
 // captured names (models, device classes, nodes, paths, power modes, requests) and follows the Query
-// wire types in internal/queryapi (coverage, result rows, BEO result, evidence passport, occupancy).
+// wire types in internal/queryapi (coverage, result rows, BEO result, evidence passport).
 import { createHash } from 'node:crypto'
 import { MEASUREMENT_NODE } from './replay-scene.mjs'
 
@@ -371,13 +371,6 @@ export function activeMeasurements(capture, epoch) {
       return unresolved('the measurement has no session settings')
     },
 
-    // Accepted profile of a BEO by name (profile ID ns/name/uid), with its node and measured batches.
-    beoProfile(name) {
-      const p = profiles.find(row => row.profile.split('/')[1] === name && !row.partial)
-      return p && { id: p.profile, node: p.node, nodeUID: nodeUID[p.node], batches: p.measured, model: p.cell.model.name, path: p.cell.executionPath, powerMode: p.cell.powerMode,
-        runtimeImage: p.condition.runtimeImage, serviceSeconds: batch => perf(p.id, batch).callMs / 1000 }
-    },
-
     beoResult(item, t) {
       const name = item.metadata.name, o = overlay.get(name)
       const status = beoStatus(item, t)
@@ -419,34 +412,6 @@ export function activeMeasurements(capture, epoch) {
             watts: { minimum: round(watts * 0.94, 2), mean: round(watts, 2), maximum: round(watts * 1.07, 2) }, meanRequestLatencySeconds: round(mean / 1000, 5), p95RequestLatencySeconds: round(f.p95 / 1000, 5), maximumSampleGapSeconds: 1.03, sourceTimestampAbsent: false },
           thermal: { samples: duration + 4, observationAvailableSamples: duration + 4, activeSamples: 0, latchedSamples: 0, maximumTemperatureCelsius: { samples: duration + 4, minimum: gpu ? 51 : 44, maximum: gpu ? 63 : 52 }, issues: 0 } },
         assessment: run.assessment }
-    },
-
-    // Dispatch occupancy: one complete short-burst item and one measuring item, prepended to the capture.
-    occupancy(t) {
-      const ic = PLACEMENTS[0], plc = PLACEMENTS[2], uidA = uuid('dom/burst/complete'), uidB = uuid('dom/burst/measuring')
-      const pA = profileByCell[cellID(ic[1], nodeClass[ic[0]], ic[2], ic[3])], pB = profileByCell[cellID(plc[1], nodeClass[plc[0]], plc[2], plc[3])]
-      const per = perf(pA.id, 4).callMs * 1e6 / 4, start = epoch - 2_700_000, end = start + 120_000
-      const key = `serving/dispatch-occupancy-observations/${nodeUID[ic[0]]}/${uidA}.json`
-      const statistics = { median: Math.round(per), p25: Math.round(per * 0.88), p75: Math.round(per * 1.13), iqr: Math.round(per * 0.25), p10: Math.round(per * 0.71), p90: Math.round(per * 1.31), mean: Math.round(per * 1.02), negativeFraction: 0.012 }
-      const item = (name, uid, node, workload, profile, batch, status, extra) => ({ kind: 'DispatchOccupancyMeasurement',
-        metadata: { namespace: ns, name, uid, resourceVersion: String(386100000 + batch), creationTimestamp: seconds(extra.created) }, node,
-        conditions: { workload, batchEnergyOptimization: profile.split('/')[1], batch, supplyMode: 'closed-loop', warmupSeconds: 30, durationSeconds: 120, workers: batch * 2 }, status,
-        references: { cr: { apiVersion: 'edge.dacs.io/v1alpha1', kind: 'DispatchOccupancyMeasurement', namespace: ns, name, uid }, evidence: extra.evidence ? [{ store: STORE, key: extra.evidence.key }] : [] },
-        assessment: extra.assessment, name, uid, batchEnergyOptimization: profile.split('/')[1], workload, batch, profileID: profile, phase: status.phase, reason: '', createdAt: seconds(extra.created),
-        measurementWindow: extra.window ?? null, d: null, evidence: extra.evidence ?? null, schemaVersion: extra.evidence ? 'chill.dacs.io/dispatch-occupancy-measurement.v1alpha2' : '',
-        estimate: extra.estimate ?? null, verdict: extra.estimate ? 'Observed' : '', minimumPairs: 200, saturation: null, idleFraction: null })
-      const pairs = 1840
-      return [
-        item('genesis2-burst-d40-occ-mnv2-cuda', uidA, ic[0], 'image-classification-tight-slo', pA.profile, 4, { phase: 'Complete', powerMode: ic[3], result: { store: STORE, key } }, {
-          created: start - 60_000, window: { start: iso(start), end: iso(end) }, evidence: { store: STORE, key, size: 52_840 },
-          estimate: { node: { name: ic[0], uid: nodeUID[ic[0]] }, workloadUID: '', model: ic[1], powerMode: ic[3], executionPath: ic[2], runtimeImage: pA.condition.runtimeImage, batch: 4,
-            profile: { profileID: pA.profile, reference: { store: STORE, key: `batch-energy-optimizations/${pA.profile.split('/')[2]}/result.json`, size: 11284 }, evidence: [], meanNanos: Math.round(per * 1.04) },
-            pairs, batches: 3712, completeBatches: 3698, requests: 14848, completeRequests: 14792, rawRows: 29696, completeRawRows: 29584, enrichedCompleteRawRows: 29584, finalRows: 14848, completeFinalRows: 14792,
-            statistics, window: { start: iso(start), end: iso(end) } },
-          assessment: { ...assessment('complete', { scope: { schedulerUsed: null, reused: false, facts: [`Observed signed ns/request estimate: ${pairs} adjacent pairs; minimumPairs: 200`] } }), execution: { phase: 'Complete', generation: 1, observedGeneration: 0 }, evidence: { available: true, accepted: false, reasons: [] } } }),
-        item('jetson-nano-burst-d41-occ-plc-cuda', uidB, plc[0], 'plc-anomaly', pB.profile, 2, { phase: 'Measuring', powerMode: plc[3] }, {
-          created: t - 70_000, assessment: { ...assessment('running'), execution: { phase: 'Measuring', generation: 1, observedGeneration: 0 } } }),
-      ]
     },
   }
 }

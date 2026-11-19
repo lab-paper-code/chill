@@ -586,12 +586,6 @@ servingEntrypoint:
       drop:
         - ALL
 
-# Image shared by off-node profiling and dispatch-occupancy load Jobs.
-loadGenerator:
-  image:
-    repository: daclab/chill-load-generator
-    tag: ""
-
 # Independent web process; the caller's bearer is never a pod credential.
 dashboard:
   enabled: false

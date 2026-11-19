@@ -990,12 +990,7 @@ func TestReplayNextGapStartsAtNativeFinishNotOccupancyOrReturn(t *testing.T) {
 	b := &snapshot.Instances[0].Profile.Batches[0]
 	*b = schedulerTestPairedBatch(*b, schedulerTestGapLaws([2]int64{busy, int64(2 * time.Millisecond)}, [2]int64{occupancyGap, int64(20 * time.Millisecond)}))
 	snapshot.Instances[0].LastServiceEndAgeNanos = &busy
-	condition := snapshot.Instances[0].Profile.Condition
-	snapshot.DispatchOccupancy = []DispatchOccupancy{{
-		Node: snapshot.Nodes[0].Node, PowerMode: condition.PowerMode, RuntimeImage: condition.RuntimeImage, Model: condition.LogicalModel,
-		ProfileID: snapshot.Instances[0].Profile.ID, ExecutionPath: condition.Artifact.ExecutionPath, Batch: snapshot.Instances[0].MaxBatch,
-		Source: "synthetic", PerRequest: 30 * time.Millisecond,
-	}}
+	b.DispatchOccupancyNanos = []float64{float64(occupancyGap)}
 	zero := 0.0
 	for _, id := range []string{"first", "second"} {
 		snapshot.Outstanding = append(snapshot.Outstanding, SchedulerRequest{ID: id, Definition: d, ReceivedAt: snapshot.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero})

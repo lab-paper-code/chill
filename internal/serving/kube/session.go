@@ -599,7 +599,7 @@ func sessionInstance(beo *edge.BatchEnergyOptimization, preparation SessionPrepa
 	actor.BuildRunnerCommand()
 	spec := servingstate.PrepareSpec{Name: name, MemoryBytes: preparation.MemoryBytes, Config: actor,
 		Instance: serving.SchedulerInstance{ID: name, Node: ref, Allocation: serving.SchedulerAllocation{GPUUUID: actor.GPUUUID, MemoryBytes: preparation.MemoryBytes},
-			Capacity: actor.MaxQueueRequests, Weight: 1, MaxBatch: batch, FixedBatchSize: batch}}
+			Capacity: actor.MaxQueueRequests, Weight: 1, MaxBatch: batch}}
 	if actor.Backend == "rknnlite" {
 		spec.Delivery.RKNNLite = preparation.RuntimeDelivery
 	} else if access := preparation.RunConfig.Delivery.RuntimeAccess; access != nil {

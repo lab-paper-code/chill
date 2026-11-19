@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -196,8 +195,4 @@ func measurementJobTerminal(job *batch.Job) bool {
 func derivedProfile(profile serving.Profile, id string) bool {
 	return profile.ID == id || strings.HasPrefix(profile.ID, id+"/") ||
 		profile.Reuse != nil && profile.Reuse.SourceProfileID == id
-}
-
-func (o *Service) measurementLocation(key string) evidencestore.ObjectLocation {
-	return evidencestore.ObjectLocation{Store: o.opts.StoreName, Key: key}
 }

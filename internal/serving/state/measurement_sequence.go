@@ -12,19 +12,18 @@ import (
 // ManualOperation prepares or removes one instance of a Workload outside
 // autonomous control.
 type ManualOperation struct {
-	Kind           string                `json:"kind"`
-	WorkloadUID    string                `json:"workloadUID"`
-	ProfileID      string                `json:"profileID,omitempty"`
-	Node           serving.NodeReference `json:"node"`
-	Instance       string                `json:"instance,omitempty"`
-	FixedBatchSize int                   `json:"fixedBatchSize,omitempty"`
-	MaxBatch       *int                  `json:"maxBatch,omitempty"`
-	Reason         string                `json:"reason"`
-	Weights        map[string]int32      `json:"weights,omitempty"`
-	WorkloadUIDs   []string              `json:"workloadUIDs,omitempty"`
-	Scope          string                `json:"scope,omitempty"`
-	ActorUsername  string                `json:"-"`
-	ActorUID       string                `json:"-"`
+	Kind          string                `json:"kind"`
+	WorkloadUID   string                `json:"workloadUID"`
+	ProfileID     string                `json:"profileID,omitempty"`
+	Node          serving.NodeReference `json:"node"`
+	Instance      string                `json:"instance,omitempty"`
+	MaxBatch      *int                  `json:"maxBatch,omitempty"`
+	Reason        string                `json:"reason"`
+	Weights       map[string]int32      `json:"weights,omitempty"`
+	WorkloadUIDs  []string              `json:"workloadUIDs,omitempty"`
+	Scope         string                `json:"scope,omitempty"`
+	ActorUsername string                `json:"-"`
+	ActorUID      string                `json:"-"`
 }
 
 // DecodeManualOperation rejects fields belonging to another operation kind,
@@ -41,7 +40,7 @@ func DecodeManualOperation(raw json.RawMessage) (ManualOperation, error) {
 	allowed := []string{"kind", "workloadUID", "reason"}
 	switch request.Kind {
 	case OperationPrepare:
-		allowed = append(allowed, "profileID", "node", "fixedBatchSize", "maxBatch")
+		allowed = append(allowed, "profileID", "node", "maxBatch")
 	case OperationRemove:
 		allowed = append(allowed, "node", "instance")
 	case OperationRoute:

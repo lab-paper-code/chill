@@ -57,7 +57,6 @@ func TestRefreshPreparesDeclaredRuntimeImage(t *testing.T) {
 		pod.Spec.Containers[0].Image != declared || pod.Spec.InitContainers[2].Image != declared {
 		t.Fatalf("declared image did not reach serving containers: profile=%s pod=%+v", fixture.profile.Condition.RuntimeImage, pod.Spec)
 	}
-	assertUnchangedPreparationKeepsOccupancy(t, fixture)
 }
 
 // A refresh builds each registered service's quantile tables for the profiles
@@ -180,7 +179,6 @@ func TestRefreshRecoversPreparationsAfterCompatibilityRestored(t *testing.T) {
 			if !found {
 				t.Fatal("incompatible profile lost its preparation diagnostic")
 			}
-			assertUnchangedPreparationKeepsOccupancy(t, fixture)
 			restore()
 			if err := fixture.service.Refresh(ctx); err != nil {
 				t.Fatal(err)
@@ -189,61 +187,8 @@ func TestRefreshRecoversPreparationsAfterCompatibilityRestored(t *testing.T) {
 			if healthy.Revision != partial.Revision || healthy.ConfigVersion != partial.ConfigVersion {
 				t.Fatal("recovery changed the measurement or configuration identity")
 			}
-			fresh, ok := batchOccupancy(healthy.Accepted.DispatchOccupancy, 1)
-			if !ok || fresh.Provenance == nil || fresh.Provenance.Source == measuredOccupancySource {
-				t.Fatal("changed preparation outcome did not publish a fresh occupancy selection")
-			}
 		})
 	}
-}
-
-func assertUnchangedPreparationKeepsOccupancy(t *testing.T, fixture *preparationCatalogFixture) {
-	t.Helper()
-	ctx := context.Background()
-	// A permanently incompatible preparation still has measured occupancy.
-	// Refresh the real cache so both selection and scan publication matter.
-	input := fixture.service.occupancy.published.Load().input
-	now := time.Now().UTC()
-	assertMeasured := func(want time.Duration) {
-		t.Helper()
-		read, err := fixture.service.ReadCatalog(ctx)
-		if err != nil || read.Accepted == nil || len(read.Accepted.DispatchOccupancy) != len(fixture.profile.Batches) {
-			t.Fatalf("measured occupancy unavailable: %+v err=%v", read, err)
-		}
-		got, _ := batchOccupancy(read.Accepted.DispatchOccupancy, 1)
-		if got.ProfileID != fixture.profile.ID || got.Batch != 1 || got.PerRequest != want ||
-			got.Provenance == nil || got.Provenance.Source != measuredOccupancySource || got.Provenance.Value != int64(want) {
-			t.Errorf("accepted catalog lost measured occupancy: %+v want=%s", got, want)
-		}
-	}
-	for scan, value := range []time.Duration{198305, 287654} {
-		if err := fixture.service.occupancy.refresh(ctx, input, now,
-			func(context.Context, *rollingOccupancyInput, time.Time, time.Time) ([]serving.OccupancyEstimate, error) {
-				if scan == 1 {
-					// Refresh completes while aggregation is in flight, before
-					// its result is available for cache publication.
-					if err := fixture.service.Refresh(ctx); err != nil {
-						return nil, err
-					}
-					assertMeasured(198305)
-				}
-				return []serving.OccupancyEstimate{rollingEstimate(input, fixture.profile.ID, 1,
-					int(input.configuration.DispatchOccupancy.MinimumPairs), float64(value), now)}, nil
-			}); err != nil {
-			t.Fatal(err)
-		}
-		assertMeasured(value)
-	}
-}
-
-// batchOccupancy is the selected occupancy of one batch size.
-func batchOccupancy(selected []serving.DispatchOccupancy, batch int) (serving.DispatchOccupancy, bool) {
-	for _, value := range selected {
-		if value.Batch == batch {
-			return value, true
-		}
-	}
-	return serving.DispatchOccupancy{}, false
 }
 
 type preparationCatalogFixture struct {
@@ -296,8 +241,6 @@ func newSessionCatalogFixture(t *testing.T, mutate func(*derivation.SessionResul
 	t.Helper()
 	config := schedulerTestConfiguration()
 	config.Settings.ServingMemoryBytes = 128 << 20
-	policy := syntheticOccupancyPolicy()
-	config.DispatchOccupancy = &policy
 	service := schedulerTestService(t, config)
 	resources, objects := preparationSessionEvidence(t, "", mutate)
 	var sourceFailed atomic.Bool

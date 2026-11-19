@@ -151,36 +151,24 @@ func (o *measurementService) register(mux *http.ServeMux) {
 
 		},
 	)
-	for _, resource := range []string{"operation-cost-measurements", "dispatch-occupancy-measurements"} {
-		for _, suffix := range []string{"", "/{name}"} {
-			mux.HandleFunc(
-				"GET /api/v1/namespaces/{namespace}/"+resource+suffix,
-				func(w http.ResponseWriter, r *http.Request) {
-					namespace, name := r.PathValue("namespace"), r.PathValue("name")
-					var value any
-					var err error
-					if resource == "operation-cost-measurements" {
-						if name == "" {
-							value, err = o.listOperationCosts(r.Context(), namespace)
-						} else {
-							value, err = o.getOperationCost(r.Context(), namespace, name)
-						}
-					} else {
-						if name == "" {
-							value, err = o.listDispatchOccupancies(r.Context(), namespace)
-						} else {
-							value, err = o.getDispatchOccupancy(r.Context(), namespace, name)
-						}
-					}
-					if err != nil {
-						httpapi.SendQueryError(w, err)
-						return
-					}
-					readapi.WriteMeasurement(w, value)
-				},
-			)
-		}
-	}
+	mux.HandleFunc("GET /api/v1/namespaces/{namespace}/operation-cost-measurements",
+		func(w http.ResponseWriter, r *http.Request) {
+			value, err := o.listOperationCosts(r.Context(), r.PathValue("namespace"))
+			if err != nil {
+				httpapi.SendQueryError(w, err)
+				return
+			}
+			readapi.WriteMeasurement(w, value)
+		})
+	mux.HandleFunc("GET /api/v1/namespaces/{namespace}/operation-cost-measurements/{name}",
+		func(w http.ResponseWriter, r *http.Request) {
+			value, err := o.getOperationCost(r.Context(), r.PathValue("namespace"), r.PathValue("name"))
+			if err != nil {
+				httpapi.SendQueryError(w, err)
+				return
+			}
+			readapi.WriteMeasurement(w, value)
+		})
 }
 
 func adoptedCatalogView(read servingkube.CatalogRead) httpapi.ProfilesView {

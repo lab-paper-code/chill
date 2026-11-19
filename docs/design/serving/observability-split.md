@@ -104,7 +104,6 @@ decoded request/client cache는 설정 rolling span과 log retention 이내 minu
 | `/api/v1/observations/scheduler` | 사건창의 판단과 action, control 기록 |
 | `/api/v1/observations/events` | exact at 또는 최대24시간 범위의 작은 사건 |
 | `/api/v1/observations/power` | 기간 적분 또는 UTC bucket |
-| `/api/v1/observations/occupancy` | accepted aggregationWindow 이하 fresh pair 진단 |
 
 scheduler full/compact/summary와 filter, uid와 offset은 [설정과 관측 API](scheduler-api.md#이력과-compact-조회)를 따른다. compact의 projection과 omitted 목록은 원본과 다른 공개 범위를 표시한다. stored journal과 원본 상세는 유지한다.
 

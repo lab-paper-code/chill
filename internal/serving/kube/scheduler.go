@@ -44,18 +44,13 @@ type SchedulerControllerConfig struct {
 	Costs             []serving.OperationCost
 	Baselines         []serving.NodeBaseline
 	CostIssues        []CostIssue
-	// DispatchOccupancy holds legacy evidence for controllers without a cache.
-	DispatchOccupancy []serving.DispatchOccupancy
 	// DispatchOccupancySnapshot reads an immutable, already-resolved selection;
 	// it must not scan observations, list runtime state or perform I/O.
 	DispatchOccupancySnapshot func() []serving.DispatchOccupancy
 	// CatalogIssues are the profiles the catalog or the preparations omit.
 	CatalogIssues []CatalogIssue
-	LoadGenerator LoadGeneratorConfig
 	Session       SessionConfig
-	// GatewayRequestTimeout is the actual HTTP handler lifetime cap.
-	GatewayRequestTimeout time.Duration
-	Meters                []servingops.MeterDeclaration
+	Meters        []servingops.MeterDeclaration
 	// PowerPolicies are the configured actuation policies; a non-Fixed
 	// DeviceClass mode with a policy is a mode ChillServer can request.
 	PowerPolicies []nodeactuator.ActuationPolicySpec

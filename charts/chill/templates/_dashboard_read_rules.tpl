@@ -10,8 +10,6 @@
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power", "/chill/api/v1/observations/events", "/chill/api/v1/observations/clients"]
     verbs: [get]
-  - nonResourceURLs: ["/chill/api/v1/observations/occupancy"]
-    verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/experiments", "/chill/api/v1/experiments/*", "/chill/api/v1/evaluations", "/chill/api/v1/evaluations/*"]
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/systems", "/chill/api/v1/inventory", "/chill/api/v1/model-compatibility", "/chill/api/v1/model-compatibility-matrix"]
@@ -27,8 +25,6 @@
       - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs/*" $namespace | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/operation-cost-measurements" $namespace | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/operation-cost-measurements/*" $namespace | quote }}
-      - {{ printf "/chill/api/v1/namespaces/%s/dispatch-occupancy-measurements" $namespace | quote }}
-      - {{ printf "/chill/api/v1/namespaces/%s/dispatch-occupancy-measurements/*" $namespace | quote }}
     verbs: [get]
   {{- end }}
 {{- end -}}

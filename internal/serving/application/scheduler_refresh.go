@@ -79,7 +79,6 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	occupancy, skipped := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
 	signature := refreshSourceSignature(config, view, costs, factsVersion)
 	currentProfiles := view.CurrentProfiles()
 	// Build the registered services' quantile tables now, outside the lock and
@@ -125,11 +124,9 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 		Settings:          config.Settings,
 		ConfigurationName: o.opts.SchedulerConfigMap, ConfigurationKey: o.opts.SchedulerConfigKey,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
-		CostIssues: costs.Issues, DispatchOccupancy: costs.DispatchOccupancy, CatalogIssues: view.Insufficiencies,
-		DispatchOccupancySnapshot: o.occupancy.selected,
-		LoadGenerator:             o.opts.LoadGenerator,
+		CostIssues: costs.Issues, CatalogIssues: view.Insufficiencies,
+		DispatchOccupancySnapshot: o.dispatchOccupancy,
 		Session:                   o.opts.Session,
-		GatewayRequestTimeout:     o.GatewayRequestTimeout,
 		Meters:                    config.Meters, PowerPolicies: policies,
 		StaticRouting: len(config.StaticRouting) > 0, MeasurementNamespaces: namespaces,
 		Evidence: o.objects, EvidenceStore: o.opts.StoreName, MeterSource: metricSource,
@@ -151,21 +148,49 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 	published := ProfilesView{
 		ConfigVersion: cm.ResourceVersion, CatalogView: view,
 		Preparations: make(map[string]servingstate.PrepareSpec, len(preparations)),
-		Occupancy:    occupancy, OccupancySkipped: skipped,
 	}
 	for id, spec := range preparations {
 		spec.Instance.Profile = nil // the profile body is in Profiles
 		published.Preparations[id] = spec
 	}
 	o.Profiles.Store(&published)
-	o.occupancy.configure(&rollingOccupancyInput{
-		configuration: &config, catalog: &published, profiles: o.observer.OccupancyProfiles(),
-		legacy: costs.DispatchOccupancy,
-	})
+	o.occupancy.Store(catalogOccupancy(config.Settings, &published, o.observer.OccupancyProfiles()))
 	o.resourceVersion = cm.ResourceVersion
 	o.sources = signature
 	o.restartPower(config)
 	return nil
+}
+
+// dispatchOccupancy is the accepted d selection the scheduler snapshot records.
+func (o *SchedulerService) dispatchOccupancy() []serving.DispatchOccupancy {
+	if selected := o.occupancy.Load(); selected != nil {
+		return *selected
+	}
+	return nil
+}
+
+// catalogOccupancy resolves d for every accepted profile batch, in catalog
+// then batch order.
+func catalogOccupancy(settings serving.SchedulerSettings, catalog *ProfilesView, profiles map[string]*serving.Profile) *[]serving.DispatchOccupancy {
+	batches := 0
+	for _, profile := range profiles {
+		batches += len(profile.Batches)
+	}
+	selected := make([]serving.DispatchOccupancy, 0, batches)
+	for _, profile := range catalog.Profiles {
+		p := profiles[profile.ID]
+		if p == nil {
+			continue
+		}
+		for _, batch := range p.Batches {
+			instance := serving.SchedulerInstance{
+				Node:    serving.NodeReference{Name: p.NodeName, UID: p.Condition.NodeUID},
+				Profile: p, MaxBatch: batch.Batch,
+			}
+			selected = append(selected, *serving.ResolveDispatchOccupancy(settings, instance))
+		}
+	}
+	return &selected
 }
 
 func refreshSourceSignature(config SchedulerConfiguration, view servingkube.CatalogView, costs servingkube.CostView, factsVersion string) string {

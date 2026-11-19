@@ -334,7 +334,7 @@ func (s *schedulerReplayState) chooseAdmission(r *schedulerReplayRequest) (selec
 		if s.weights[j] <= 0 || !replayExecutable(i) || i.stopped || i.config.Terminated || !s.potentialProfileMatches(d, i.config.Profile) {
 			continue
 		}
-		s.available[j] = i.outstanding < admissionLimit(i.config.Profile, i.config.MaxBatch, i.config.FixedBatchSize, d.SLO.TargetLatency, i.config.Capacity)
+		s.available[j] = i.outstanding < admissionLimit(i.config.Profile, i.config.MaxBatch, d.SLO.TargetLatency, i.config.Capacity)
 		full = full || !s.available[j]
 	}
 	if selected = SmoothWeightedRoute(s.weights, credits, s.available); selected >= 0 {
@@ -492,9 +492,6 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 			if choice.WaitMS > 0 {
 				i.wake = s.now + math.Max(1, math.Ceil(choice.WaitMS*1e6))
 				break
-			}
-			if choice.Reason == "fixed_batch_filling" {
-				break // Native fixed-B waits for an arrival/lifetime event, without a timer.
 			}
 			if choice.Size <= 0 {
 				s.out.reasons = append(s.out.reasons, "BatchPolicyNoExecutableChoice:"+i.config.ID)

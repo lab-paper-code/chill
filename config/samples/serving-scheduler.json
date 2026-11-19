@@ -51,22 +51,5 @@
       "MaximumGap": 3000000000
     }
   },
-  "dispatchOccupancy": {
-    "aggregationWindowSeconds": 120,
-    "refreshIntervalSeconds": 60,
-    "scanTimeoutSeconds": 30,
-    "maximumRequests": 250000,
-    "warmupSeconds": 5,
-    "burstSeconds": 15,
-    "workers": 8,
-    "minimumPairs": 100,
-    "requestLifetimeSeconds": 8,
-    "deliveryMarginMillis": 25,
-    "preparationSeconds": 2,
-    "jobSetupSeconds": 10,
-    "collectionSeconds": 10,
-    "plannedElapsedCapSeconds": 120,
-    "seed": 1
-  },
   "reserved": {}
 }

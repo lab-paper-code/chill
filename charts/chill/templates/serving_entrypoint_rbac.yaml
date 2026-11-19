@@ -23,7 +23,7 @@ rules:
   # Check cross-namespace shared evidence references before destructive cleanup.
   # This owner-only grant never permits mutation outside profileNamespaces.
   - apiGroups: [edge.dacs.io]
-    resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts, operationcostmeasurements, dispatchoccupancymeasurements]
+    resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts, operationcostmeasurements]
     verbs: [list]
   - apiGroups: [edge.dacs.io]
     resources: [modelspecs, preprocessors, datasets]
@@ -135,7 +135,7 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{- $loadRole := printf "%s-load" $name }}
 ---
-# Dispatch-occupancy and profile-session measurements run their load Job here.
+# Profile-session measurements run their load Job here.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -210,7 +210,7 @@ metadata:
     {{- include "chill.labels" $ | nindent 4 }}
 rules:
   - apiGroups: [edge.dacs.io]
-    resources: [batchenergyoptimizations, dispatchoccupancymeasurements]
+    resources: [batchenergyoptimizations]
     verbs: [get, list, create, delete]
   - apiGroups: [edge.dacs.io]
     resources: [profilingruns]
@@ -220,11 +220,11 @@ rules:
     verbs: [get, list]
   # ChillServer refreshes measurement payloads when direct metadata identity changes.
   - apiGroups: [edge.dacs.io]
-    resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts, operationcostmeasurements, dispatchoccupancymeasurements]
+    resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts, operationcostmeasurements]
     verbs: [get, patch]
   # ChillServer is the only writer of the measurements it runs.
   - apiGroups: [edge.dacs.io]
-    resources: [batchenergyoptimizations/status, operationcostmeasurements/status, dispatchoccupancymeasurements/status]
+    resources: [batchenergyoptimizations/status, operationcostmeasurements/status]
     verbs: [patch]
   # Power mode transition cost preparations are owned ConfigMaps named after the measurement.
   - apiGroups: [""]
@@ -269,11 +269,9 @@ rules:
   - nonResourceURLs:
       - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations" $namespace | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/preflight" $namespace | quote }}
-      - {{ printf "/chill/api/v1/namespaces/%s/dispatch-occupancy-measurements" $namespace | quote }}
     verbs: [post]
   - nonResourceURLs:
       - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/*" $namespace | quote }}
-      - {{ printf "/chill/api/v1/namespaces/%s/dispatch-occupancy-measurements/*" $namespace | quote }}
     verbs: [delete]
   {{- end }}
 ---
@@ -317,7 +315,7 @@ metadata:
     {{- include "chill.labels" $ | nindent 4 }}
 rules:
   - apiGroups: [edge.dacs.io]
-    resources: [batchenergyoptimizations, dispatchoccupancymeasurements]
+    resources: [batchenergyoptimizations]
     verbs: [get, list, create, delete]
   - apiGroups: [edge.dacs.io]
     resources: [profilingruns]
@@ -384,7 +382,7 @@ rules:
     verbs: [update]
 {{- end }}
 ---
-# The dispatch-occupancy load Job sends Workload requests as this account.
+# The load Job sends Workload requests as this account.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

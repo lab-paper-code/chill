@@ -386,8 +386,6 @@ func kindScheduler(t *testing.T, kube kubernetes.Interface, autonomous []string,
 		spec.Instance.MaxBatch, spec.Instance.Capacity = 1, 4
 		spec.Instance.IdleMeter, spec.Instance.IdleScope = "wall-"+profile.NodeName, "node-exclusive-wall"
 		config.Preparations[profile.ID] = spec
-		c := profile.Condition
-		config.DispatchOccupancy = append(config.DispatchOccupancy, serving.DispatchOccupancy{Node: spec.Instance.Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel, Source: "fake"})
 		config.Costs = append(config.Costs, serving.OperationCost{ID: "prepare-" + profile.ID, Node: spec.Instance.Node, Kind: servingstate.OperationPrepare, From: "unloaded",
 			To: serving.SchedulerInstanceState(spec.Instance), PowerMode: "fixed",
 			Trials: []serving.OperationTrial{{Duration: time.Millisecond, Joules: 0.01}}, EnergyScope: "whole-wall", Meter: "wall-" + profile.NodeName,

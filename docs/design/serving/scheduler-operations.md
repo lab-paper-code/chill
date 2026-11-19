@@ -67,7 +67,7 @@ prepare/remove/route/unroute/release는 비자율 Workload UID 하나다. reset�
 
 | kind | 입력과 의미 |
 |---|---|
-| prepare | `workloadUID`, `profileID`, exact `node`, 선택 `fixedBatchSize`. 대상 UID owner로 준비 |
+| prepare | `workloadUID`, `profileID`, exact `node`. 대상 UID owner로 준비 |
 | remove | `workloadUID`, exact `instance`. 모든 UID의 양수 route와 outstanding이 없어야 함 |
 | route | `workloadUID`, `weights`, `reason`. nonnegative int32, 양수 목적지 하나 이상 |
 | unroute | `workloadUID`, `reason`. 명시 빈 선언과 신규 분배0. accepted 수명은 유지 |
@@ -111,7 +111,7 @@ terminal owner의 전체 UID와 책임 Node가 reset의 실제 cleanup scope 안
 
 `serving-operation --execute-config FILE`은 strict JSON을 HTTPS origin 하나로 보내고 결과를 stdout으로 낸다. `--chill-server`, `--chill-ca-file`, `--chill-token-file`, `--timeout`을 쓴다. 명시 CA와 token만 사용하고 redirect를 금지한다. 오류는 nonzero이며 timeout 기본30분이다.
 
-정적 비교는 비자율 UID를 확인하고 profile을 골라 prepare한 뒤 actual physical instance를 state/pools에서 읽어 route한다. fixed-size 비교만 fixedBatchSize를 지정한다. 배분 중단은 unroute, seed 복귀는 release, 완전 정리는 reset이다. settings PUT으로 배분하거나 client에서 drain/remove/power를 조립하지 않는다.
+정적 비교는 비자율 UID를 확인하고 profile을 골라 prepare한 뒤 actual physical instance를 state/pools에서 읽어 route한다. 배분 중단은 unroute, seed 복귀는 release, 완전 정리는 reset이다. settings PUT으로 배분하거나 client에서 drain/remove/power를 조립하지 않는다.
 
 ## 측정 격리
 

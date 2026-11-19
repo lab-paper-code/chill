@@ -36,6 +36,11 @@ type opcostHarness struct {
 func newOpcostHarness(t *testing.T) *opcostHarness {
 	t.Helper()
 	h, _, evidence := sequenceHarness(t)
+	return opcostHarnessOn(t, h, evidence)
+}
+
+func opcostHarnessOn(t *testing.T, h *admissionHarness, evidence *memEvidence) *opcostHarness {
+	t.Helper()
 	o := &opcostHarness{admissionHarness: h, evidence: evidence, verdicts: map[string]string{}}
 	class := cpuClass()
 	beo := beoRoot("beo", "node", catalogCompletePhase)

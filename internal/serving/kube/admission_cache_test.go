@@ -85,8 +85,8 @@ func TestAdmitDoesNotRedecodeTerminalProfilingRuns(t *testing.T) {
 	if api.profilingLists != 1 || api.profilingItems != 6500 || api.profilingGets != 0 {
 		t.Fatalf("terminal payload reads: lists=%d items=%d gets=%d, want 1/6500/0", api.profilingLists, api.profilingItems, api.profilingGets)
 	}
-	if api.metadataLists != 18 {
-		t.Fatalf("metadata lists=%d, want six per round", api.metadataLists)
+	if api.metadataLists != 15 {
+		t.Fatalf("metadata lists=%d, want five per round", api.metadataLists)
 	}
 }
 
@@ -247,8 +247,8 @@ func TestMeasurementRootsRetainReferencedTerminalBEO(t *testing.T) {
 	beo := &edge.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "source", UID: "source-uid"}}
 	beo.Status.Phase = catalogCompletePhase
 	beo.Spec.State.TargetNode = "measured-node"
-	measurement := &edge.DispatchOccupancyMeasurement{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "waiting", UID: "waiting-uid"}}
-	measurement.Spec.BatchEnergyOptimization = beo.Name
+	measurement := &edge.OperationCostMeasurement{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "waiting", UID: "waiting-uid"}}
+	measurement.Spec.Steps = []edge.OperationCostStep{{Name: "load", BatchEnergyOptimization: beo.Name}}
 	if err := api.Create(ctx, beo); err != nil {
 		t.Fatal(err)
 	}

@@ -56,68 +56,23 @@ func depthTestProfile(id string, means ...float64) *Profile {
 func TestAdmissionLimitOfControl410Profiles(t *testing.T) {
 	orangepi := depthTestProfile("orangepi", 17672911, 30520545, 58671629, 116672712, 235869031)
 	nano := depthTestProfile("jetson-nano", 56001757, 84054761, 167772853, 337812846, 637774039)
+	slow := depthTestProfile("slow", 250e6)
 	for _, tc := range []struct {
-		name                        string
-		profile                     *Profile
-		maxBatch, fixedBatch, queue int
-		want                        int
+		name            string
+		profile         *Profile
+		maxBatch, queue int
+		want            int
 	}{
-		{"orangepi max batch 2", orangepi, 2, 0, 256, 13},
-		{"orangepi max batch 16", orangepi, 16, 0, 256, 13},
-		{"orangepi max batch 1", orangepi, 1, 0, 256, 11},
-		{"jetson-nano max batch 1", nano, 1, 0, 256, 3},
-		{"orangepi queue 8", orangepi, 16, 0, 8, 8},
-		// Only batch 2 runs: 2 per 30.5 ms clears 13 in 200 ms.
-		{"orangepi fixed batch 2", orangepi, 16, 2, 256, 13},
-		// 16 per 636 ms clears 5 in 200 ms, but one batch needs 16.
-		{"jetson-nano fixed batch 16", nano, 16, 16, 256, 16},
+		{"orangepi max batch 2", orangepi, 2, 256, 13},
+		{"orangepi max batch 16", orangepi, 16, 256, 13},
+		{"orangepi max batch 1", orangepi, 1, 256, 11},
+		{"jetson-nano max batch 1", nano, 1, 256, 3},
+		{"orangepi queue 8", orangepi, 16, 8, 8},
+		// 1 per 250 ms clears none in 200 ms; the limit still holds one batch.
+		{"slow max batch 1", slow, 1, 256, 1},
 	} {
-		if got := admissionLimit(tc.profile, tc.maxBatch, tc.fixedBatch, 200*time.Millisecond, tc.queue); got != tc.want {
+		if got := admissionLimit(tc.profile, tc.maxBatch, 200*time.Millisecond, tc.queue); got != tc.want {
 			t.Errorf("%s: limit %d, want %d", tc.name, got, tc.want)
-		}
-	}
-}
-
-// A fixed-batch executor runs only full batches, so the gateway must let it
-// hold one batch even where its throughput at the target is smaller: the
-// executor alone judges the deadline. Here 4 per 100 ms clears 2 in 50 ms.
-func TestReplayFixedBatchExecutorFillsItsBatch(t *testing.T) {
-	s := replayAdmissionState(t)
-	i := s.instances[0]
-	profile := *i.config.Profile
-	profile.Batches = []BatchProfile{
-		schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{40e6}),
-		schedulerTestBatchProfile(BatchProfile{Batch: 4}, []float64{100e6}),
-	}
-	i.config.Profile, i.config.MaxBatch, i.config.FixedBatchSize = &profile, 4, 4
-	i.policy = schedulerPolicy(i.config)
-	d := *s.snap.Workloads[0]
-	d.SLO.TargetLatency = 50 * time.Millisecond
-	requests := make([]*schedulerReplayRequest, 0, 4)
-	for j := range 4 {
-		requests = append(requests, replayAdmissionPending(s, fmt.Sprint("fixed-", j), &d))
-	}
-	s.arrived = len(s.requests)
-	for step := 0; ; step++ {
-		if step > 100 {
-			t.Fatal("replay did not settle")
-		}
-		s.expireRequests()
-		s.completeExecution()
-		s.routeRequests(context.Background())
-		s.receiveNative()
-		if !s.chooseBatches(context.Background()) {
-			t.Fatalf("batch choice failed: %v", s.out.reasons)
-		}
-		next, remaining := s.nextEvent()
-		if !remaining {
-			break
-		}
-		s.now = next
-	}
-	for _, r := range requests {
-		if !r.dispatched || r.dropped || r.expired || !r.completed {
-			t.Fatalf("a fixed-batch executor limited below its batch never ran: %+v", r)
 		}
 	}
 }
@@ -253,7 +208,7 @@ func TestAdmissionRuntimeAndReplayDecideAlike(t *testing.T) {
 	script := []string{"+", "+", "+", "+", "+", "+", "!1", "+", "+", "x8", "-2", "-3", "+", "-5", "+", "+", "+"}
 	for _, policy := range []AdmissionPolicy{AdmissionPolicyReject, AdmissionPolicyDelay} {
 		t.Run(string(policy), func(t *testing.T) {
-			final := requireDecideAlike(t, policy, []float64{10e6, 12e6}, []int32{1, 2}, 0, script)
+			final := requireDecideAlike(t, policy, []float64{10e6, 12e6}, []int32{1, 2}, script)
 			want := map[AdmissionPolicy]string{AdmissionPolicyReject: CodeQueueFull, AdmissionPolicyDelay: "waiting"}[policy]
 			if !slices.Contains(final, want) || slices.Contains(final, schedulerOutcomeTimeout) != (policy == AdmissionPolicyDelay) {
 				t.Fatalf("script did not reach a %s request and the lifetime path: %v", want, final)
@@ -262,37 +217,14 @@ func TestAdmissionRuntimeAndReplayDecideAlike(t *testing.T) {
 	}
 }
 
-// A fixed-batch executor whose floor(R x T) is below its batch (4 per 100 ms
-// clears 2 within 50 ms) is still sent one full batch, in the runtime as in
-// the replay: four requests are placed and the fifth meets the limit.
-func TestAdmissionFixedBatchRuntimeAndReplayDecideAlike(t *testing.T) {
-	for _, policy := range []AdmissionPolicy{AdmissionPolicyReject, AdmissionPolicyDelay} {
-		t.Run(string(policy), func(t *testing.T) {
-			final := requireDecideAlike(t, policy, []float64{40e6}, []int32{1}, 4, []string{"+", "+", "+", "+", "+"})
-			placed := 0
-			for _, state := range final {
-				if state == "executor-0" {
-					placed++
-				}
-			}
-			if placed != 4 {
-				t.Fatalf("a fixed batch of 4 was not sent whole: %v", final)
-			}
-		})
-	}
-}
-
 // requireDecideAlike runs script through the runtime and the replay at a 35 ms
-// target (50 ms with a fixed batch) and fails at the first event after which
-// they differ; it returns the runtime's final states.
-func requireDecideAlike(t *testing.T, policy AdmissionPolicy, services []float64, weights []int32, fixed int, script []string) []string {
+// target and fails at the first event after which they differ; it returns the
+// runtime's final states.
+func requireDecideAlike(t *testing.T, policy AdmissionPolicy, services []float64, weights []int32, script []string) []string {
 	t.Helper()
 	target := 35 * time.Millisecond
-	if fixed > 0 {
-		target = 50 * time.Millisecond
-	}
-	runtimeStates := runtimeDepthScript(t, policy, target, services, weights, fixed, script)
-	replayStates := replayDepthScript(t, policy, target, services, weights, fixed, script)
+	runtimeStates := runtimeDepthScript(t, policy, target, services, weights, script)
+	replayStates := replayDepthScript(t, policy, target, services, weights, script)
 	for j := range script {
 		if !slices.Equal(runtimeStates[j], replayStates[j]) {
 			t.Fatalf("after %q runtime and replay differ:\nruntime %v\nreplay  %v", script[j], runtimeStates[j], replayStates[j])
@@ -301,29 +233,8 @@ func requireDecideAlike(t *testing.T, policy AdmissionPolicy, services []float64
 	return runtimeStates[len(script)-1]
 }
 
-// depthBatches is batch 1 at service and, for a fixed batch, that batch at
-// 2.5 times service.
-func depthBatches(service float64, fixed int) []BatchProfile {
-	batches := []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{service})}
-	if fixed > 0 {
-		batches = append(batches, schedulerTestBatchProfile(BatchProfile{Batch: fixed}, []float64{2.5 * service}))
-	}
-	return batches
-}
-
-func runtimeDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duration, services []float64, weights []int32, fixed int, script []string) [][]string {
-	r, gates, ids := depthRuntime(t, policy, target, services, weights)
-	if fixed > 0 {
-		r.mu.Lock()
-		for j, id := range ids {
-			i := r.instances[id]
-			p := *i.Profile
-			p.Batches = depthBatches(services[j], fixed)
-			i.Profile = &p
-			i.State.Native.Metadata.Policy.MaxBatchSize, i.State.Native.Metadata.Policy.FixedBatchSize = fixed, fixed
-		}
-		r.mu.Unlock()
-	}
+func runtimeDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duration, services []float64, weights []int32, script []string) [][]string {
+	r, gates, _ := depthRuntime(t, policy, target, services, weights)
 	t.Cleanup(func() {
 		gates.mu.Lock()
 		defer gates.mu.Unlock()
@@ -372,7 +283,7 @@ func runtimeDepthScript(t *testing.T, policy AdmissionPolicy, target time.Durati
 	return states
 }
 
-func replayDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duration, services []float64, weights []int32, fixed int, script []string) [][]string {
+func replayDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duration, services []float64, weights []int32, script []string) [][]string {
 	s := replayAdmissionState(t)
 	d := *s.snap.Workloads[0]
 	d.SLO.TargetLatency, d.Admission.Policy = target, policy
@@ -382,8 +293,8 @@ func replayDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duratio
 	for j, service := range services {
 		i := *prototype
 		p := *prototype.config.Profile
-		p.ID, p.Batches = fmt.Sprintf("profile-%d", j), depthBatches(service, fixed)
-		i.config.ID, i.config.Profile, i.config.Capacity, i.config.MaxBatch, i.config.FixedBatchSize = fmt.Sprintf("executor-%d", j), &p, 100, max(1, fixed), fixed
+		p.ID, p.Batches = fmt.Sprintf("profile-%d", j), []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{service})}
+		i.config.ID, i.config.Profile, i.config.Capacity, i.config.MaxBatch = fmt.Sprintf("executor-%d", j), &p, 100, 1
 		s.instances, s.byID[i.config.ID] = append(s.instances, &i), &i
 		routes[i.config.ID] = weights[j]
 	}

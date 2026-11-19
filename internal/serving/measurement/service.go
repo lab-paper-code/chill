@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"slices"
 	"sync"
-	"time"
 
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
@@ -48,25 +47,18 @@ type Service struct {
 }
 
 type Config struct {
-	ServingNamespace       string
-	ProfileNamespaces      []string
-	SchedulerConfigMap     string
-	SchedulerConfigKey     string
-	MaxRequestBytes        int64
-	StoreName              string
-	LoadGeneratorNamespace string
+	ServingNamespace  string
+	ProfileNamespaces []string
+	StoreName         string
 }
 
 // SchedulerInputs shares the scheduler's mutation authority and accepted snapshot.
-// DecodePolicy must use the scheduler's full configuration decoder.
 type SchedulerInputs struct {
 	Lock *sync.Mutex
 	// RefreshLock serializes catalog refresh, which writes profile bundles and
 	// reuse records.
-	RefreshLock           *sync.Mutex
-	LoadProfiles          func() (string, []serving.Profile, map[string]servingstate.PrepareSpec, bool)
-	DecodePolicy          func(string, int64) (*DispatchOccupancyPolicy, error)
-	GatewayRequestTimeout time.Duration
+	RefreshLock  *sync.Mutex
+	LoadProfiles func() (string, []serving.Profile, map[string]servingstate.PrepareSpec, bool)
 }
 
 type Objects interface {

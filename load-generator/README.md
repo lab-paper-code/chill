@@ -5,8 +5,7 @@ A dependency-free Python client and open-loop or fixed-outstanding dataset repla
 ## Image
 
 `make docker-build-load-generator` builds `build/docker/load-generator.Dockerfile`
-(Python 3.12). ChillServer runs it as the load Job of a
-DispatchOccupancyMeasurement.
+(Python 3.12). An EvaluationRun names it in `spec.loadGenerator.image` for its load Jobs.
 
 ## Dataset replay
 
@@ -74,7 +73,7 @@ chill-loadgen replay \
 
 ### Fixed outstanding measurement supply and lifetime
 
-For dispatch-occupancy measurements, `--arrivals closed-loop --workers K` keeps
+`--arrivals closed-loop --workers K` keeps
 one sequential request per connection and immediately replaces each completed
 response, including HTTP rejections or transport failures. There is no arrival
 schedule, rate or seed in this mode; `--rate` is rejected. The ordinary fixed
@@ -103,11 +102,7 @@ Without a lifetime the existing 30-second socket default and absent header are
 unchanged. The Python API exposes the same header as
 `request_lifetime_seconds`; `timeout_seconds` must exceed it.
 
-The dispatch-occupancy controller freezes warmup, burst duration, workers,
-minimum pairs, lifetime, delivery margin, setup, preparation, drain and collection
-conditions. Its finite Job budget includes post-window supply extension as well
-as burst and drain. Use the server-built task. Lifetime expiry does not interrupt
-a running physical batch.
+Lifetime expiry does not interrupt a running physical batch.
 
 ChillServer's `--request-timeout` caps the header and HTTP context.
 `--drain-timeout` bounds shutdown drain; configure Pod termination grace to

@@ -9,7 +9,7 @@ metadata:
     {{- include "chill.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["edge.dacs.io"]
-    resources: ["chillsystems", "deviceclasses", "modelspecs", "profilingruns", "batchenergyoptimizations", "operationcostmeasurements", "dispatchoccupancymeasurements"]
+    resources: ["chillsystems", "deviceclasses", "modelspecs", "profilingruns", "batchenergyoptimizations", "operationcostmeasurements"]
     verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["nodes"]
@@ -20,7 +20,6 @@ rules:
       - /chill/api/v1/model-compatibility
       - /chill/api/v1/model-compatibility-matrix
       - /chill/api/v1/scheduler/profiles
-      - /chill/api/v1/observations/occupancy
       {{- range $profileNamespaces }}
       - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs" . | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs/*" . | quote }}
@@ -29,8 +28,6 @@ rules:
       - {{ printf "/chill/api/v1/namespaces/%s/measurement-coverage" . | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/operation-cost-measurements" . | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/operation-cost-measurements/*" . | quote }}
-      - {{ printf "/chill/api/v1/namespaces/%s/dispatch-occupancy-measurements" . | quote }}
-      - {{ printf "/chill/api/v1/namespaces/%s/dispatch-occupancy-measurements/*" . | quote }}
       {{- end }}
     verbs: ["get"]
   - nonResourceURLs:

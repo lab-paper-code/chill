@@ -87,7 +87,7 @@ def check():
                  patch.object(feeder, 'node_released', return_value=True), \
                  patch.object(feeder.time, 'sleep'), \
                  contextlib.redirect_stdout(io.StringIO()) as output:
-                counts = feeder.run(queues, {}, continue_on_failure=True)
+                counts = feeder.run(queues, continue_on_failure=True)
             assert created == ['healthy']  # stopped lane never creates its next document
             assert counts == {'success': 1, 'failed': 3 if reset else limit, 'skipped': 2 if reset else 4 - limit}
             message = f'LANE STOPPED node after {limit} consecutive failures'

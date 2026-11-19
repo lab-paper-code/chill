@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +23,7 @@ import (
 func TestCapacityArchiveCutoverDoesNotLoadControlledExecutionRows(t *testing.T) {
 	settings, snapshot := capacityFixture()
 	windows := serving.CapacityWindows{Window: time.Second, Windows: 3, PassingWindows: 2}
-	input := serving.NewCapacityInput(settings, windows, snapshot.DispatchOccupancy, snapshot.Options[0], snapshot.Workloads[0])
+	input := serving.NewCapacityInput(settings, windows, snapshot.Options[0], snapshot.Workloads[0])
 	// Before the shared-execution cutover the input hash had no namespace.
 	payload, _ := json.Marshal(input)
 	sum := sha256.Sum256(payload)
@@ -60,16 +60,16 @@ func TestCapacityRecordsReturnLatestRowPerKey(t *testing.T) {
 	}
 }
 
-func TestDecisionRecordIncludesSelectedDOMAndDefaultOccupancy(t *testing.T) {
-	for _, source := range []string{"dom", "default"} {
+func TestDecisionRecordIncludesSelectedOccupancy(t *testing.T) {
+	for _, source := range []string{"profile", "default"} {
 		t.Run(source, func(t *testing.T) {
 			settings, snapshot := capacityFixture()
 			settings.DefaultDispatchOccupancyNanos = int64(2 * time.Millisecond)
-			expected := int64(time.Millisecond)
-			snapshot.DispatchOccupancy[0].PerRequest = time.Millisecond
-			if source == "default" {
-				snapshot.DispatchOccupancy = nil
-				expected = settings.DefaultDispatchOccupancyNanos
+			expected := settings.DefaultDispatchOccupancyNanos
+			if source == "profile" {
+				expected = int64(time.Millisecond)
+				snapshot.Instances[0].Profile.Batches[0].DispatchOccupancyNanos = []float64{float64(expected)}
+				snapshot.Options[0].Instance = snapshot.Instances[0]
 			}
 			// Cover deduplication across the current instance and matching option.
 			snapshot.At = observationTestHour
@@ -89,14 +89,14 @@ func TestDecisionRecordIncludesSelectedDOMAndDefaultOccupancy(t *testing.T) {
 			recorded := page[0].Snapshot
 			option := recorded.Options[0]
 			option.Instance.Profile = snapshot.Options[0].Instance.Profile
-			roundtrip := serving.NewCapacityInput(page[0].Decision.Settings, serving.CapacityWindows{}, recorded.DispatchOccupancy, option, snapshot.Workloads[0])
+			roundtrip := serving.NewCapacityInput(page[0].Decision.Settings, serving.CapacityWindows{}, option, snapshot.Workloads[0])
 			if !reflect.DeepEqual(*roundtrip.DispatchOccupancy, d) || roundtrip.DispatchOccupancy.Provenance == d.Provenance {
 				t.Fatalf("record/read/capacity roundtrip lost source/value or aliased provenance: %+v want %+v", roundtrip.DispatchOccupancy, d)
 			}
-			if source == "dom" && snapshot.DispatchOccupancy[0].Provenance != nil || source == "default" && snapshot.DispatchOccupancy != nil {
+			if snapshot.DispatchOccupancy != nil {
 				t.Fatal("decision recording mutated incoming evidence")
 			}
-			// Empty pools still record the default selected by their option.
+			// Empty pools still record the occupancy selected by their option.
 			snapshot.Instances = nil
 			if got := serving.SchedulerSelectedOccupancy(settings, snapshot); len(got) != 1 || got[0].Provenance.Source != source {
 				t.Fatalf("option-only decision lost provenance: %+v", got)
@@ -109,23 +109,21 @@ func TestSelectedDispatchOccupancyProvenanceSurvivesDecisionRecord(t *testing.T)
 	settings, snapshot := capacityFixture()
 	settings.DefaultDispatchOccupancyNanos = int64(2 * time.Millisecond)
 	log, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
-	instance := snapshot.Options[0].Instance
-	dom := snapshot.DispatchOccupancy[0]
-	measured := *serving.ResolveDispatchOccupancy(settings, []serving.DispatchOccupancy{dom}, instance)
-	window := serving.OccupancyWindow{Start: observationTestHour.Add(-time.Minute), End: observationTestHour}
-	measured.PerRequest = 500000
-	measured.Source = "rolling"
-	measured.Provenance = &serving.DispatchOccupancyProvenance{Source: "measured", Pairs: 1000, Window: &window, UpdatedAt: observationTestHour, Value: 500000}
+	profiled := snapshot.Options[0].Instance
+	batches := slices.Clone(profiled.Profile.Batches)
+	batches[0].DispatchOccupancyNanos = []float64{500000}
+	profile := *profiled.Profile
+	profile.Batches = batches
+	profiled.Profile = &profile
 	for n, tc := range []struct {
 		source   string
-		incoming []serving.DispatchOccupancy
+		instance serving.SchedulerInstance
 	}{
-		{"measured", []serving.DispatchOccupancy{dom, measured}},
-		{"dom", []serving.DispatchOccupancy{dom}},
-		{"default", nil},
+		{"profile", profiled},
+		{"default", snapshot.Options[0].Instance},
 	} {
 		at := observationTestHour.Add(time.Duration(n) * time.Millisecond)
-		selected := serving.ResolveDispatchOccupancy(settings, tc.incoming, instance)
+		selected := serving.ResolveDispatchOccupancy(settings, tc.instance)
 		recordedSnapshot := serving.SchedulerSnapshot{At: at, DispatchOccupancy: []serving.DispatchOccupancy{*selected}}
 		decision := serving.SchedulerDecision{At: at, Settings: settings}
 		if err := log.SchedulerRecord(SchedulerObservation{At: at, Decision: &decision, Snapshot: &recordedSnapshot}); err != nil {
@@ -146,12 +144,6 @@ func capacityFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	s, snap := schedulerFixture()
 	s.CapacityMinimumRequests = 200
 	s.CompletionMarginMS = 0
-	c := snap.Instances[0].Profile.Condition
-	snap.DispatchOccupancy = []serving.DispatchOccupancy{{
-		Node: snap.Nodes[0].Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel,
-		ProfileID: snap.Instances[0].Profile.ID, ExecutionPath: c.Artifact.ExecutionPath, Batch: snap.Instances[0].MaxBatch,
-		Source: "fixture",
-	}}
 	p := *snap.Instances[0].Profile
 	p.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 8e5), fixtures.ServiceSample("physical-trial", 1, 1e6), fixtures.ServiceSample("physical-trial", 2, 1.2e6)}, InputSlopeJoules: observationTestSlope(`{"status":"Identified","value":0.01}`), SaturationJoulesPerInput: &[]float64{0.01}[0], MemoryBytes: 100}}
 	distribution, err := firstfloor.NewServiceDistribution(p.Batches[0].ServiceSamples)
@@ -195,29 +187,6 @@ func schedulerFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 func fixtureAdmissionNative(profile *serving.Profile) *firstfloor.State {
 	return &firstfloor.State{Ready: true, LastServiceEndAgeNanos: new(int64), Metadata: firstfloor.Metadata{ProfileID: profile.ID,
 		Policy: firstfloor.Policy{ProfileID: profile.ID, MaxBatchSize: 1}}}
-}
-
-func directFixture(batch int) (*serving.Profile, map[string]firstfloor.Metadata, time.Time) {
-	at := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
-	p := &serving.Profile{ID: "profile", NodeName: "node", Batches: []serving.BatchProfile{{Batch: batch, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 100*int64(batch)), fixtures.ServiceSample("physical-trial", 1, 100*int64(batch))}}}}
-	distribution, err := firstfloor.NewServiceDistribution(p.Batches[0].ServiceSamples)
-	if err != nil {
-		panic(err)
-	}
-	p.Batches[0].ServiceDistribution = distribution
-	p.Condition.NodeUID = "node-uid"
-	p.Condition.LogicalModel = "model"
-	p.Condition.PowerMode = "fixture-fixed-mode"
-	p.Condition.RuntimeImage = "image"
-	p.Condition.Artifact.ExecutionPath = "cpu"
-	policies := map[string]firstfloor.Metadata{"instance": {ProfileID: p.ID, DecisionID: "decision", AppliedAt: at.Add(-time.Second), Policy: firstfloor.Policy{FixedBatchSize: batch}}}
-	return p, policies, at
-}
-
-func occupancyScanRow(at time.Time, id uint64) serving.RequestRow {
-	q, s, f := at, at, at.Add(20)
-	// Receipt anchors incomplete-request facts; worker timestamps anchor execution.
-	return serving.RequestRow{Kind: serving.RequestRowFinal, RequestID: fmt.Sprintf("%d/0", id), ReceivedAt: at, Node: &serving.NodeReference{Name: "node", UID: "node-uid"}, Instance: "instance", WorkloadUID: "workload", ProfileID: "profile", DecisionID: "decision", DefinitionID: "definition", BatchID: id, BatchSize: 1, Outcome: "completed", ExecutionComplete: true, NativeOutcome: "completed", NativeExecutionComplete: true, NativeQueuedAt: &q, NativeRunningAt: &s, NativeFinishedAt: &f}
 }
 
 func observationTestSlope(wire string) *derivation.SessionParameter {

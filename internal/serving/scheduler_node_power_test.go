@@ -2,6 +2,7 @@ package serving
 
 import (
 	"math"
+	"slices"
 	"testing"
 	"time"
 )
@@ -136,37 +137,32 @@ func TestCapacityDeltaEqualsRecomputedSharedNodeLoad(t *testing.T) {
 	}
 }
 
-// Occupancy source order: serving-measured, then the profile batch's own
-// samples (their median), then the dispatch-occupancy measurement, then the
-// configured default.
-func TestResolveDispatchOccupancyReadsProfileBeforeDOM(t *testing.T) {
+// Occupancy source order: the profile batch's own samples (their median),
+// then the configured default. Operational d is clamped at zero; the signed
+// samples stay in the profile.
+func TestResolveDispatchOccupancyReadsProfileThenDefault(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.DefaultDispatchOccupancyNanos = 7
 	i := snap.Instances[0]
 	profile := *i.Profile
 	profile.Batches = []BatchProfile{profile.Batches[0]}
-	profile.Batches[0].DispatchOccupancyNanos = []float64{300, 100, 200}
 	i.Profile = &profile
-	c := profile.Condition
-	cell := DispatchOccupancy{Node: i.Node, PowerMode: c.PowerMode, Model: c.LogicalModel, RuntimeImage: c.RuntimeImage, ProfileID: profile.ID, ExecutionPath: c.Artifact.ExecutionPath, Batch: i.MaxBatch}
-	dom, measured := cell, cell
-	dom.PerRequest, dom.Provenance = 50, &DispatchOccupancyProvenance{Source: occupancySourceDOM}
-	measured.PerRequest, measured.Provenance = 400, &DispatchOccupancyProvenance{Source: occupancySourceMeasured}
 	for _, tc := range []struct {
 		name    string
-		cells   []DispatchOccupancy
 		samples []float64
 		want    time.Duration
 		source  string
 	}{
-		{"measured", []DispatchOccupancy{dom, measured}, []float64{300, 100, 200}, 400, occupancySourceMeasured},
-		{"profile", []DispatchOccupancy{dom}, []float64{300, 100, 200}, 200, occupancySourceProfile},
-		{"dom", []DispatchOccupancy{dom}, nil, 50, occupancySourceDOM},
-		{"default", nil, nil, 7, occupancySourceDefault},
+		{"profile", []float64{300, 100, 200}, 200, occupancySourceProfile},
+		{"profile even count", []float64{600, 100, 300, 200, 500, 400}, 300, occupancySourceProfile},
+		{"profile negative", []float64{-300, -100, -200}, 0, occupancySourceProfile},
+		{"default", nil, 7, occupancySourceDefault},
 	} {
-		profile.Batches[0].DispatchOccupancyNanos = tc.samples
-		got := ResolveDispatchOccupancy(s, tc.cells, i)
-		if got.PerRequest != tc.want || got.Provenance.Source != tc.source {
+		samples := slices.Clone(tc.samples)
+		profile.Batches[0].DispatchOccupancyNanos = samples
+		got := ResolveDispatchOccupancy(s, i)
+		if got.PerRequest != tc.want || got.Provenance.Source != tc.source || got.Provenance.Value != int64(tc.want) ||
+			got.Provenance.Pairs != len(tc.samples) || !slices.Equal(samples, tc.samples) {
 			t.Fatalf("%s: %+v %+v", tc.name, got, got.Provenance)
 		}
 	}

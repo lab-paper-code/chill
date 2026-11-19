@@ -22,7 +22,7 @@ metadata:
     {{- $labels | nindent 4 }}
 rules:
   - apiGroups: ["edge.dacs.io"]
-    resources: ["profilingruns", "batchenergyoptimizations", "operationcostmeasurements", "dispatchoccupancymeasurements"]
+    resources: ["profilingruns", "batchenergyoptimizations", "operationcostmeasurements"]
     verbs: ["get", "list"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
@@ -283,8 +283,6 @@ metadata:
 rules:
   - nonResourceURLs: ["/chill/api/v1/scheduler/catalog-read"]
     verbs: ["get"]
-  - nonResourceURLs: ["/chill/api/v1/observations/occupancy"]
-    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -314,7 +312,7 @@ metadata:
   namespace: {{ . }}
 rules:
   - apiGroups: ["edge.dacs.io"]
-    resources: ["profilingruns", "batchenergyoptimizations", "operationcostmeasurements", "dispatchoccupancymeasurements"]
+    resources: ["profilingruns", "batchenergyoptimizations", "operationcostmeasurements"]
     verbs: ["get", "list"]
   - apiGroups: ["batch"]
     resources: ["jobs"]

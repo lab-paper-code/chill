@@ -123,7 +123,7 @@ func TestWindowMatchesLogAcrossLateSupplementAndRestart(t *testing.T) {
 	}
 }
 
-func TestWindowConcurrentWriterAndOccupancy(t *testing.T) {
+func TestWindowConcurrentWriterAndReaders(t *testing.T) {
 	log, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	ctx := context.Background()
 	from, to := observationTestHour, observationTestHour.Add(time.Minute)
@@ -142,7 +142,7 @@ func TestWindowConcurrentWriterAndOccupancy(t *testing.T) {
 				case 1:
 					_, err = log.LoadWindow(ctx, from, to)
 				case 2:
-					_, err = log.ScanOccupancyRows(ctx, "", "", from, to, func(serving.RequestRow) {})
+					_, err = log.Query(ctx, "uid", from, to, nil, nil, 0, "", "")
 				}
 				if err != nil {
 					errors <- err

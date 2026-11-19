@@ -46,66 +46,9 @@ gateway 큐 상한은 Workload의 `spec.admission.maxQueuedRequests`에 있고 a
 
 Node sampling과 batch cadence의 출처는 배포 설정이다. `sampledAt`과 `receivedAt`은 관측 시각이며 선택한 cadence와 누락 표본을 모두 설명하지 않는다.
 
-## Native dispatch occupancy policy
+## Dispatch occupancy
 
-The scheduler ConfigMap has one strictly decoded top-level `dispatchOccupancy` block. Its maintained example is [serving-scheduler.json](../../../config/samples/serving-scheduler.json). The chart references an external ConfigMap; operators must update that actual object.
-
-Omission disables rolling aggregation and makes native measurement POST return `503 OccupancyPolicyUnavailable`. The sole scalar fallback is `settings.defaultDispatchOccupancyNanos`, including zero. The block cannot override that field; duplicate fallback knobs are rejected.
-
-POST reads the current ConfigMap. The accepted profile snapshot must have the same resourceVersion. A settings-only PUT leaves the full-acceptance resourceVersion unchanged, so native measurement creation can remain unavailable until profile refresh accepts the complete configuration.
-
-Native creation uses a configured closed-loop burst. The sample values are experimental choices and do not guarantee saturation, precision or stationarity.
-
-| Field | Bounds and meaning |
-|---|---|
-| `aggregationWindowSeconds` | int32 ≥ `burstSeconds`; rolling scan and public query window cap |
-| `refreshIntervalSeconds` | int32 ≥1 |
-| `scanTimeoutSeconds` | int32 ≥1 and ≤ half the refresh interval |
-| `maximumRequests` | Required positive selected-request-ID cap; overflow rejects the whole refresh |
-| `warmupSeconds` | Explicit int32 ≥0, excluded from the native measurement window |
-| `burstSeconds` | Explicit int32 ≥1, frozen as native `durationSeconds` |
-| `workers` | Explicit int32 from batch size through 64 |
-| `minimumPairs` | Explicit int32 ≥1; a population requirement |
-| `requestLifetimeSeconds` | int32 ≥1; covers SLO and outstanding profile-tail batches within the gateway and Workload lifetime cap |
-| `deliveryMarginMillis` | int32 >0 |
-| `preparationSeconds` | int32 ≥1 |
-| `jobSetupSeconds`, `collectionSeconds` | Explicit int32 ≥0 |
-| `plannedElapsedCapSeconds` | Finite positive value ≤ int32 maximum; contains every segment |
-| `seed` | Explicit uint64, including zero |
-
-For fixed batch size B, configured workers K, lifetime L, delivery margin m in seconds, maximum measured service time t, and decoded length-framed request bytes R:
-
-```text
-Q = min(native maxQueueBytes, 64MiB)
-require B <= K <= 64 and K*R <= Q
-q = ceil(K/B)-1
-require B*q <= native maxQueueRequests and B*q*R <= Q
-require L >= ceil(SLO seconds) and L >= ceil((q+1)*t+m)
-require L <= effective gateway/Workload lifetime cap
-drain = ceil(L+t+m)
-extension = L+ceil(deliveryMarginMillis/1000)
-elapsed = preparationSeconds+jobSetupSeconds+collectionSeconds
-          +warmupSeconds+burstSeconds+extension+drain
-require elapsed <= floor(plannedElapsedCapSeconds)
-```
-
-An infeasible plan returns `400 OccupancyInfeasible`. It never reduces configured workers, duration, minimum pairs or allowances to fit.
-
-The exact block, ConfigMap identity/resourceVersion/key, Node UID, accepted profile identity/evidence/raw population and Workload/SLO identity are frozen in `Conditions.InputsJSON`. Computed facts include service tail, decoded request bytes, queue caps, minimum lifetime and supply extension. Dry-run and create use the same validated object.
-
-The actor uses fixed batch size B with zero batch-fill wait. Frozen native metadata proves policy/profile/decision/applied-at identity. Worker-native timestamps bound the actual half-open burst window. Too few valid pairs yields `Insufficient/TooFewPairs` with statistics retained. Zero pairs has null statistics.
-
-The factual observation under `serving/dispatch-occupancy-observations/` remains separate from accepted legacy scalars under `serving/dispatch-occupancy/`. The rolling cache reads serving observations directly without merging the two stored evidence populations.
-
-### Rolling aggregation and memory
-
-One dedicated worker scans outside Tick and request-writer callbacks. It briefly captures accepted profiles and native metadata, then releases the scheduler lock. Each scan is bounded by time and selected request IDs. Failed, timed-out or over-cap scans publish no partial or stale measured result; selection returns to accepted legacy measurements and the configured fallback.
-
-The first decision uses legacy/default values without waiting for aggregation. Each profile/batch receives an exact resolved entry. A batch median can supersede legacy measurements only after the configured minimum pair count is met. Signed measured values stay separate from the nonnegative operational value.
-
-After each attempt the worker idles for at least its scan and reduction elapsed time, including reduction beyond the scanner deadline. This limits nominal scan duty. Go GC, runtime activity and other workers still consume process CPU.
-
-The chart's serving memory limit is 4Gi and its `goMemLimit` is 3GiB. The sample selected-request cap is 250000. Reassess both memory settings and the explicit request cap when overriding the Pod limit. Count and cooperative-time limits do not establish byte-allocation or process-CPU ceilings; measure RSS and CPU under the intended workload.
+The scheduler ConfigMap has no occupancy policy block; the strict decoder rejects a top-level `dispatchOccupancy` key. The dispatch occupancy d for an exact Node UID, model, mode, path, batch and profile ID is the median of the profile's session saturation-level occupancy samples, else `settings.defaultDispatchOccupancyNanos` (including zero). The scalar default applies to every batch. Serving observations do not change d.
 
 ## 실험과 환경 입력의 동결
 

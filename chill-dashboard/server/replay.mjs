@@ -55,7 +55,7 @@ const capturedETag = Number(JSON.parse(capture.match('v1/scheduler/settings').et
 const state = Object.fromEntries(SCENES.map(name => {
   const settings = name === 'active' ? active.settings(capturedSettings) : capturedSettings
   const history = name === 'active' ? [active.settingsChange(capturedSettings, settings)] : []
-  return [name, { settings, etag: capturedETag, history, catalog: {}, inferRows: [], beo: { added: [], removed: new Set() }, dom: { added: [], removed: new Set() },
+  return [name, { settings, etag: capturedETag, history, catalog: {}, inferRows: [], beo: { added: [], removed: new Set() },
     evaluations: null, loadScenarios: null, released: null, stopRequested: null }]
 }))
 
@@ -108,13 +108,6 @@ function loadScenarios(scene) {
     own.loadScenarios = new Map(parsed('v1/evaluations/load-scenarios').items.map(item => [item.name, inUse.includes(item.name) ? { ...item, inUse: [active.evaluationNames.running] } : item]))
   }
   return own.loadScenarios
-}
-
-// Occupancy list: submissions, active overlays, captured items, deletions. BEO requests and runs live in replay-requests.mjs.
-function domItems(scene, now) {
-  const own = state[scene].dom
-  const items = [...own.added, ...(scene === 'active' ? measure.occupancy(now) : []), ...parsed(`${NS}dispatch-occupancy-measurements`).items]
-  return items.filter(item => !own.removed.has(item.metadata.name))
 }
 
 // Captured power columns re-bucketed onto the requested window; buckets outside the capture are empty.
@@ -265,10 +258,7 @@ function get(scene, path, url, now) {
     const item = evaluations(scene, now).find(view => view.name === decodeURIComponent(evaluation[1]))
     return item ? [200, item] : error(404, 'NotFound', `evaluation ${evaluation[1]} not found`)
   }
-  // Occupancy and operation-cost measurements.
-  if (path === `${NS}dispatch-occupancy-measurements`) return [200, { items: domItems(scene, now) }]
-  const dom = /^dispatch-occupancy-measurements\/([^/]+)$/.exec(path.startsWith(NS) ? path.slice(NS.length) : '')
-  if (dom) { const item = domItems(scene, now).find(row => row.metadata.name === decodeURIComponent(dom[1])); return item ? [200, item] : error(404, 'NotFound', `dispatch-occupancy-measurement ${dom[1]} not found`) }
+  // Operation-cost measurements.
   // Active-scene projections.
   if (act) {
     if (path === 'v1/pools') return [200, active.pools(parsed(path), now)]
@@ -442,52 +432,6 @@ async function mutate(scene, req, path, url) {
     own.beo.removed.add(name); own.beo.added = own.beo.added.filter(row => row.metadata.name !== name)
     return [202, { request: 'DeletionRequested', task: item }]
   }
-  // Dispatch occupancy measurements.
-  if (path === `${NS}dispatch-occupancy-measurements` && req.method === 'POST') {
-    if (q.has('dryRun') && q.get('dryRun') !== 'All') return error(400, 'InvalidQuery', 'dryRun must be All when supplied')
-    if ((body?.name && !dns(body.name)) || !dns(body?.node) || !dns(body?.batchEnergyOptimization) || !dns(body?.workload) || !(body?.batch >= 1)) return error(400, 'InvalidBody', 'valid node, BEO, Workload and positive batch are required')
-    if (!act) return error(503, 'OccupancyPolicyUnavailable', 'dispatchOccupancy block is required')
-    const profile = measure.beoProfile(body.batchEnergyOptimization)
-    if (!profile || profile.node !== body.node) return error(400, 'OccupancyInfeasible', profile ? 'BEO must be Complete on the selected Node' : 'BEO has no current accepted profile')
-    if (!profile.batches.includes(body.batch)) return error(400, 'OccupancyInfeasible', 'selected batch has no measured service population')
-    const workload = catalog(scene, 'workloads').items.get(body.workload)
-    if (!workload) return error(404, 'NotFound', `workloads.edge.dacs.io "${body.workload}" not found`)
-    const policy = { aggregationWindowSeconds: 120, refreshIntervalSeconds: 60, scanTimeoutSeconds: 30, maximumRequests: 250000, warmupSeconds: 5, burstSeconds: 15, workers: 8, minimumPairs: 100,
-      requestLifetimeSeconds: 8, deliveryMarginMillis: 25, preparationSeconds: 2, jobSetupSeconds: 10, collectionSeconds: 10, plannedElapsedCapSeconds: 120, seed: 1 }
-    const tail = profile.serviceSeconds(body.batch) * 1.3, outstanding = Math.ceil(policy.workers / body.batch), drain = Math.ceil(policy.requestLifetimeSeconds + tail + 0.025), extension = policy.requestLifetimeSeconds + 1
-    const elapsed = policy.preparationSeconds + policy.jobSetupSeconds + policy.collectionSeconds + policy.warmupSeconds + policy.burstSeconds + extension + drain
-    if (policy.workers < body.batch) return error(400, 'OccupancyInfeasible', 'invalid occupancy burst, workers or minimum pairs')
-    const inputs = { dispatchOccupancy: policy, configuration: { namespace: ns, name: 'chill-scheduler', resourceVersion: String(state[scene].etag), key: 'scheduler.json' }, node: { name: profile.node, uid: profile.nodeUID }, coefficients: policy,
-      profile: { profileID: profile.id, runtimeImage: profile.runtimeImage, batch: body.batch, meanBatchSeconds: profile.serviceSeconds(body.batch), maxObservedSeconds: tail,
-        workload: { name: body.workload, uid: workload.desired.metadata.uid, generation: workload.desired.metadata.generation } },
-      computed: { tailBatchSeconds: tail, minimumRequestLifetimeSeconds: Math.max(1, Math.ceil(outstanding * tail + 0.025)), queueRequestCap: 256, queueBytesCap: 67108864, supplyExtensionSeconds: extension } }
-    const spec = { node: body.node, batchEnergyOptimization: body.batchEnergyOptimization, workload: body.workload, batch: body.batch, warmupSeconds: policy.warmupSeconds, durationSeconds: policy.burstSeconds,
-      minimumPairs: policy.minimumPairs, workers: policy.workers, supplyMode: 'closed-loop', seed: policy.seed, requestLifetimeSeconds: policy.requestLifetimeSeconds, deliveryMarginMillis: policy.deliveryMarginMillis,
-      drainSeconds: drain, preparationSeconds: policy.preparationSeconds, jobSetupSeconds: policy.jobSetupSeconds, collectionSeconds: policy.collectionSeconds, plannedElapsedSeconds: elapsed,
-      conditions: { profileID: profile.id, inputsJSON: JSON.stringify(inputs), waitingBatches: outstanding - 1 } }
-    const name = body.name || `occ-${body.node.slice(0, 40)}-${body.batchEnergyOptimization.slice(0, 40)}-b${body.batch}-${hash(JSON.stringify(spec)).slice(0, 10)}`
-    const task = { apiVersion: 'edge.dacs.io/v1alpha1', kind: 'DispatchOccupancyMeasurement', metadata: { namespace: ns, name }, spec }
-    if (q.get('dryRun') === 'All') return [200, { request: 'NOT_SUBMITTED', task }]
-    if (domItems(scene, now).some(item => item.metadata.name === name)) return error(409, 'AlreadyExists', `dispatchoccupancymeasurements.edge.dacs.io "${name}" already exists`)
-    const uid = randomUUID(), created = { ...task, metadata: { ...task.metadata, uid, resourceVersion: String(now), generation: 1, creationTimestamp: seconds(now) } }
-    own.dom.added.unshift({ kind: 'DispatchOccupancyMeasurement', metadata: { namespace: ns, name, uid, resourceVersion: String(now), creationTimestamp: seconds(now) }, node: body.node,
-      conditions: { workload: body.workload, batchEnergyOptimization: body.batchEnergyOptimization, batch: body.batch, supplyMode: 'closed-loop', warmupSeconds: spec.warmupSeconds, durationSeconds: spec.durationSeconds, workers: spec.workers },
-      status: {}, references: { cr: { apiVersion: 'edge.dacs.io/v1alpha1', kind: 'DispatchOccupancyMeasurement', namespace: ns, name, uid }, evidence: [] },
-      assessment: { status: 'running', displayStatus: 'running', label: '진행', reasons: [], execution: { phase: 'Pending', generation: 1, observedGeneration: 0 }, evidence: { available: false, accepted: false, reasons: [] },
-        checklist: { criteriaMet: null, version: 'result-checklist.v1', checks: [] }, scope: { schedulerUsed: null, reused: false, facts: [] } },
-      name, uid, batchEnergyOptimization: body.batchEnergyOptimization, workload: body.workload, batch: body.batch, profileID: profile.id, phase: null, reason: '', createdAt: seconds(now),
-      measurementWindow: null, d: null, evidence: null, schemaVersion: '', estimate: null, verdict: '', minimumPairs: spec.minimumPairs, saturation: null, idleFraction: null })
-    return [202, { request: 'Accepted', task: created }]
-  }
-  const domDelete = /^dispatch-occupancy-measurements\/([^/]+)$/.exec(path.startsWith(NS) ? path.slice(NS.length) : '')
-  if (domDelete && req.method === 'DELETE') {
-    const name = decodeURIComponent(domDelete[1]), item = domItems(scene, now).find(row => row.metadata.name === name)
-    if (!version(req) || !q.get('uid')) return error(400, 'ResourceVersionRequired', 'native UID and resourceVersion are required')
-    if (!item) return error(404, 'NotFound', `dispatchoccupancymeasurements.edge.dacs.io "${name}" not found`)
-    if (item.metadata.uid !== q.get('uid') || item.metadata.resourceVersion !== version(req)) return error(409, 'ResourceVersionConflict', 'native UID or resourceVersion changed')
-    own.dom.removed.add(name); own.dom.added = own.dom.added.filter(row => row.metadata.name !== name)
-    return [202, { request: 'DeletionRequested', task: { apiVersion: 'edge.dacs.io/v1alpha1', kind: 'DispatchOccupancyMeasurement', metadata: item.metadata } }]
-  }
   return error(404, 'ReplayMissing', `${req.method} /api/${path}`)
 }
 
@@ -574,7 +518,7 @@ function selfCheck() {
       for (const id of new Set(ids)) { const [, name, uid] = id.split('/'); if (names.get(name)?.metadata.uid !== uid) fail(`coverage ${cell.id}: request ${id} is not listed`) }
       for (const row of cell.failureSummary) if (row.runName && !runs.some(run => run.name === row.runName)) fail(`coverage ${cell.id}: failure run ${row.runName} is not listed`)
     }
-    // Profiles, operation costs, occupancy, evaluations, experiments, load scenarios, catalog, workloads.
+    // Profiles, operation costs, evaluations, experiments, load scenarios, catalog, workloads.
     const profiles = []
     for (let offset = 0; offset !== undefined;) { const page = read(`v1/scheduler/profiles?limit=50&offset=${offset}`).body; profiles.push(...(page?.profiles ?? [])); offset = page?.page?.nextOffset }
     for (const p of profiles) {
@@ -583,10 +527,6 @@ function selfCheck() {
     }
     const nodes = new Set(read('v1/inventory?limit=200').body?.classes?.flatMap(cls => cls.nodes.map(node => node.name)) ?? [])
     for (const row of read(`${NS}operation-cost-measurements`).body?.items ?? []) read(`${NS}operation-cost-measurements/${enc(row.metadata.name)}`)
-    for (const row of read(`${NS}dispatch-occupancy-measurements`).body?.items ?? []) {
-      read(`${NS}dispatch-occupancy-measurements/${enc(row.metadata.name)}`)
-      if (!nodes.has(row.node)) fail(`occupancy ${row.metadata.name}: node ${row.node} not in inventory`)
-    }
     for (const row of read('v1/evaluations').body?.items ?? []) read(`v1/evaluations/${enc(row.name)}`)
     for (const row of read('v1/evaluations/load-scenarios').body?.items ?? []) read(`v1/evaluations/load-scenarios/${enc(row.name)}`)
     for (let offset = 0; offset !== undefined;) { const page = read(`v1/experiments?limit=50&offset=${offset}`).body; for (const row of page?.items ?? []) read(`v1/experiments/${enc(row.id)}`); offset = page?.page?.nextOffset }

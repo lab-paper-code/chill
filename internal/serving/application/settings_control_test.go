@@ -35,7 +35,6 @@ func installPolicyControlSources(t *testing.T, service *SchedulerService) {
 			{Name: "profilingruns", Kind: "ProfilingRun", Namespaced: true, Verbs: meta.Verbs{"get", "list"}},
 			{Name: "powermodetransitioncosts", Kind: "PowerModeTransitionCost", Namespaced: true, Verbs: meta.Verbs{"get", "list"}},
 			{Name: "operationcostmeasurements", Kind: "OperationCostMeasurement", Namespaced: true, Verbs: meta.Verbs{"get", "list"}},
-			{Name: "dispatchoccupancymeasurements", Kind: "DispatchOccupancyMeasurement", Namespaced: true, Verbs: meta.Verbs{"get", "list"}},
 		},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

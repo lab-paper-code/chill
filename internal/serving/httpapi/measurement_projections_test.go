@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/serving/measurement"
-
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,34 +12,6 @@ import (
 
 func TestMeasurementProjectionWhitelistAndOriginalReferences(t *testing.T) {
 	metadata := meta.ObjectMeta{Namespace: "allowed", Name: "measurement", UID: "original-uid", ResourceVersion: "42", Annotations: map[string]string{"secret": "hidden"}}
-	for _, phase := range []api.MeasurementPhase{api.MeasurementPhaseMeasuring, api.MeasurementPhaseFailed, api.MeasurementPhaseInsufficient} {
-		occupancy := api.DispatchOccupancyMeasurement{ObjectMeta: metadata, Spec: api.DispatchOccupancyMeasurementSpec{Node: "node", Workload: "workload", BatchEnergyOptimization: "option", Batch: 8, Workers: 16, DurationSeconds: 60, Conditions: api.DispatchOccupancyConditions{InputsJSON: "secret-input"}}, Status: api.DispatchOccupancyMeasurementStatus{Phase: phase, Reason: "original-reason"}}
-		p := ProjectDispatchOccupancyMeasurement(occupancy)
-		if len(p.References.Evidence) != 0 || p.References.CR.UID != "original-uid" {
-			t.Fatalf("lost original identity: %+v", p)
-		}
-		raw, err := json.Marshal(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, forbidden := range []string{"inputsJSON", "secret-input", "annotations", "perRequestNanos", "supplyMode", "\"result\"", "\"spec\""} {
-			if strings.Contains(string(raw), forbidden) {
-				t.Fatalf("projection leaked %s: %s", forbidden, raw)
-			}
-		}
-		if !strings.Contains(string(raw), string(phase)) || !strings.Contains(string(raw), "original-reason") {
-			t.Fatalf("lost status: %s", raw)
-		}
-		occupancy.Status.Result = &api.ProfilingRunEvidenceReference{Store: "original-store", Key: "original-key", Size: 123}
-		p = ProjectDispatchOccupancyMeasurement(occupancy)
-		if p.References.Evidence[0] != (measurement.MeasurementEvidenceLocation{Store: "original-store", Key: "original-key"}) {
-			t.Fatal("result reference changed")
-		}
-		raw, _ = json.Marshal(p)
-		if strings.Contains(string(raw), "size") {
-			t.Fatalf("result exposed non-whitelisted metadata: %s", raw)
-		}
-	}
 	idle := int32(7)
 	operation := api.OperationCostMeasurement{ObjectMeta: metadata, Spec: api.OperationCostMeasurementSpec{Node: "node", Steps: []api.OperationCostStep{{Name: "idle", Kind: api.OperationCostStepIdle, IdleDurationSeconds: &idle}}}, Status: api.OperationCostMeasurementStatus{Phase: api.MeasurementPhaseFailed, Steps: []api.OperationCostStepStatus{{Name: "idle", Key: "saved-key", Verdict: "Rejected"}, {Name: "pending"}}}}
 	duration, zero := int64(123456789), 0.0

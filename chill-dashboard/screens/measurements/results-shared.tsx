@@ -7,7 +7,6 @@ import type { Choice } from "@/components/kit"
 export const resultKinds = [
   { value: "throughput", label: "처리 성능" },
   { value: "operation-cost", label: "전환 비용" },
-  { value: "dispatch-occupancy", label: "분배 점유시간" },
 ] as const
 export type ResultKind = (typeof resultKinds)[number]["value"]
 

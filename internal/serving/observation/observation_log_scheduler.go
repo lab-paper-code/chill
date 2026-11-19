@@ -471,7 +471,7 @@ func (l *ObservationLog) LoadWindowTimed(ctx context.Context, from, to time.Time
 	result.Coverage = read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}, observationClientStream: {from, to}})
 	result.GapUntil = result.Coverage.GapUntil(from)
 	nativeRows := map[string]serving.RequestRow{}
-	l.retainWindow(from, to, false, read.now)
+	l.retainWindow(from, to, read.now)
 	rows, err := l.windowRequests(read, nativeRows, from, to)
 	if err != nil {
 		return result, err

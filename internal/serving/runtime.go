@@ -613,8 +613,7 @@ func (r *Runtime) chooseLocked(route inputRoute, c *Call) (entry *routeEntry, fu
 			continue
 		}
 		i := e.instance
-		m := i.State.Native.Metadata
-		e.limit = admissionLimit(i.Profile, NativeMaxBatch(m), m.Policy.FixedBatchSize, c.definition.SLO.TargetLatency, i.Capacity)
+		e.limit = admissionLimit(i.Profile, NativeMaxBatch(i.State.Native.Metadata), c.definition.SLO.TargetLatency, i.Capacity)
 		route.available[index] = i.outstanding < e.limit
 		full = full || !route.available[index]
 	}
@@ -1668,20 +1667,6 @@ func (r *Runtime) Instances() []InstanceState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.instancesLocked()
-}
-
-// OccupancyPolicies snapshots only immutable native policy metadata, without
-// constructing routing/outstanding request views under the runtime lock.
-func (r *Runtime) OccupancyPolicies() map[string]firstfloor.Metadata {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	policies := make(map[string]firstfloor.Metadata, len(r.instances))
-	for id, instance := range r.instances {
-		if instance.State.Native != nil {
-			policies[id] = instance.State.Native.Metadata
-		}
-	}
-	return policies
 }
 
 func (r *Runtime) instancesLocked() []InstanceState {

@@ -42,7 +42,7 @@ Routes live in `app/(app)/`. Each `page.tsx` renders one screen from `screens/`.
 | `/measurements/coverage` | 측정 범위 |
 | `/measurements/requests`, `/measurements/requests/new`, `/measurements/requests/[name]` | 측정 요청 목록, 작성, 상세 |
 | `/measurements/runs/[name]` | 측정 회차 상세 |
-| `/measurements/results` | 측정 결과 (`?kind=` 처리 성능, 전환 비용, 분배 점유시간) |
+| `/measurements/results` | 측정 결과 (`?kind=` 처리 성능, 전환 비용) |
 | `/experiments` | 실험 실행으로 이동 |
 | `/experiments/runs`, `/experiments/runs/new`, `/experiments/runs/[name]`, `/experiments/runs/[name]/edit` | 실험 실행 목록, 작성, 상세, 수정 |
 | `/experiments/results`, `/experiments/results/[id]` | 게시된 결과 목록, 결과 상세 |

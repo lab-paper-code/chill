@@ -234,7 +234,7 @@ func assertPolicySettingsConsumers(t *testing.T, service *SchedulerService, sett
 		!reflect.DeepEqual(storedConfig.Settings, settings) {
 		t.Fatal("stored, controller and atomic settings diverged")
 	}
-	for _, value := range service.occupancy.selected() {
+	for _, value := range service.dispatchOccupancy() {
 		if value.PerRequest != time.Duration(settings.DefaultDispatchOccupancyNanos) {
 			t.Fatalf("occupancy retained old policy fallback: %+v", value)
 		}

@@ -73,23 +73,6 @@ type operationStepStatus struct {
 	ToPowerMode   string   `json:"toPowerMode,omitempty"`
 	Model         string   `json:"model,omitempty"`
 }
-type occupancyConditions struct {
-	Workload                string `json:"workload"`
-	BatchEnergyOptimization string `json:"batchEnergyOptimization"`
-	Batch                   int32  `json:"batch"`
-	SupplyMode              string `json:"supplyMode,omitempty"`
-	WarmupSeconds           int32  `json:"warmupSeconds"`
-	DurationSeconds         int32  `json:"durationSeconds"`
-	Workers                 int32  `json:"workers"`
-}
-type occupancyStatus struct {
-	Phase           api.MeasurementPhase                     `json:"phase,omitempty"`
-	Reason          string                                   `json:"reason,omitempty"`
-	PowerMode       string                                   `json:"powerMode,omitempty"`
-	PerRequestNanos *int64                                   `json:"perRequestNanos,omitempty"`
-	Throughput      string                                   `json:"throughput,omitempty"`
-	Result          *measurement.MeasurementEvidenceLocation `json:"result,omitempty"`
-}
 
 func measurementProjection(kind, node string, m meta.ObjectMeta) MeasurementProjection {
 	return MeasurementProjection{Kind: kind, Node: node,
@@ -122,21 +105,5 @@ func ProjectOperationCostMeasurement(cr api.OperationCostMeasurement, store stri
 		}
 	}
 	p.Conditions, p.Status = conditions, status
-	return p
-}
-
-// ProjectDispatchOccupancyMeasurement preserves absent results and unspecified supply mode.
-func ProjectDispatchOccupancyMeasurement(cr api.DispatchOccupancyMeasurement) MeasurementProjection {
-	p := measurementProjection("DispatchOccupancyMeasurement", cr.Spec.Node, cr.ObjectMeta)
-	s := cr.Spec
-	p.Conditions = occupancyConditions{s.Workload, s.BatchEnergyOptimization, s.Batch, s.SupplyMode, s.WarmupSeconds, s.DurationSeconds, s.Workers}
-	status := occupancyStatus{Phase: cr.Status.Phase, Reason: cr.Status.Reason, PowerMode: cr.Status.PowerMode, PerRequestNanos: cr.Status.PerRequestNanos, Throughput: cr.Status.Throughput}
-	if cr.Status.Result != nil {
-		status.Result = &measurement.MeasurementEvidenceLocation{Store: cr.Status.Result.Store, Key: cr.Status.Result.Key}
-		if status.Result.Key != "" {
-			p.References.Evidence = append(p.References.Evidence, *status.Result)
-		}
-	}
-	p.Status = status
 	return p
 }

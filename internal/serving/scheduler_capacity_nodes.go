@@ -116,15 +116,15 @@ func (p *capacityPlanner) resolveCapacity() {
 	}
 }
 
-// fixed reports an instance autonomous control never moves: a strict baseline,
-// or one serving or owned by a current Workload outside control.
+// fixed reports an instance autonomous control never moves: one serving or
+// owned by a current Workload outside control.
 func (p *capacityPlanner) fixed(i SchedulerInstance) bool {
 	current := func(uid string) bool {
 		return slices.ContainsFunc(p.snapshot.Workloads, func(d *Definition) bool { return d != nil && d.UID == uid })
 	}
 	_, ownerControlled := p.index[i.OwnerWorkloadUID]
 	_, servedControlled := p.index[i.WorkloadUID]
-	return i.FixedBatchSize > 0 || !ownerControlled && current(i.OwnerWorkloadUID) || !servedControlled && current(i.WorkloadUID)
+	return !ownerControlled && current(i.OwnerWorkloadUID) || !servedControlled && current(i.WorkloadUID)
 }
 
 // build lists every Node's plans and the comparison period T.
@@ -373,7 +373,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 			// the Pod initializes every measured batch. An unrouted one needs its
 			// prepared slot or owner as proof.
 			if !used[old.ID] && !old.Terminated &&
-				mode == node.PowerMode && old.FixedBatchSize == 0 && schedulerState(old) == schedulerState(i) &&
+				mode == node.PowerMode && schedulerState(old) == schedulerState(i) &&
 				old.Capacity == i.Capacity && schedulerOwnerAllows(old.OwnerWorkloadUID, uid) &&
 				(old.WorkloadUID == uid || old.WorkloadUID == "" && old.Ready && !old.Stopped && (old.TargetID != "" || old.OwnerWorkloadUID == uid)) {
 				used[old.ID] = true
@@ -641,7 +641,7 @@ func (p *capacityPlanner) profileTerms(i SchedulerInstance, d *Definition) (prof
 		key.gap = *i.LastServiceEndAgeNanos
 	}
 	gap := key.gap
-	occupancy := ResolveDispatchOccupancy(p.settings, p.snapshot.DispatchOccupancy, i)
+	occupancy := ResolveDispatchOccupancy(p.settings, i)
 	key.occupancy = occupancy.PerRequest
 	if cached, ok := p.profileScalars[key]; ok {
 		return cached.routingWeight, cached.throughput, cached.serviceNanos, cached.reason

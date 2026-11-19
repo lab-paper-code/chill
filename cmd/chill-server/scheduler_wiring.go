@@ -32,8 +32,7 @@ func newSchedulerService(
 	ctx context.Context, cluster *servingkube.ClusterState, store *servingkube.Store,
 	kube, settingsKube kubernetes.Interface,
 	execution *serving.Runtime, observer *servingkube.Observer, objects *stores3.Store,
-	observationLog *observation.ObservationLog, opts options,
-	gatewayRequestTimeout time.Duration, publisher *livePublisher,
+	observationLog *observation.ObservationLog, opts options, publisher *livePublisher,
 ) (*application.SchedulerService, error) {
 	if opts.schedulerConfigMap == "" {
 		return nil, nil
@@ -55,8 +54,8 @@ func newSchedulerService(
 		costs, err = servingkube.NewCostEvidence(store, objects, opts.maxEvidenceBytes)
 	}
 	session := servingkube.SessionConfig{
-		Image: opts.sessionLoadImage, Namespace: opts.loadGenerator.Namespace,
-		ServiceAccount: opts.loadGenerator.ServiceAccount, NodeName: opts.loadGenerator.NodeName,
+		Image: opts.sessionLoadImage, Namespace: opts.sessionLoadNamespace,
+		ServiceAccount: opts.sessionLoadServiceAccount, NodeName: opts.sessionLoadNodeName,
 		MaxResultBytes: opts.maxEvidenceBytes,
 		// The serving preparation reads the same two options.
 		RunnerTimeout: opts.operationTimeout, MaxRequestBytes: opts.maxRequestBytes,
@@ -78,13 +77,12 @@ func newSchedulerService(
 		Cluster:    cluster,
 		Operations: operations, Store: store, Kube: kube, SettingsKube: settingsKube,
 		Execution: execution, Observer: observer, Objects: objects,
-		ObservationLog: observationLog, GatewayRequestTimeout: gatewayRequestTimeout, Live: live,
+		ObservationLog: observationLog, Live: live,
 		Catalog: catalog, Costs: costs,
 		Options: application.Options{
 			ActuationPoliciesKey:   opts.actuationPoliciesKey,
 			FactsConfigMap:         opts.factsConfigMap,
 			FactsNamespace:         opts.factsNamespace,
-			LoadGenerator:          opts.loadGenerator,
 			MaxEvidenceBytes:       opts.maxEvidenceBytes,
 			MaxRequestBytes:        opts.maxRequestBytes,
 			MetricSourcesKey:       opts.metricSourcesKey,

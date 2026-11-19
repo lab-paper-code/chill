@@ -53,21 +53,9 @@ type CoverageCatalog struct {
 }
 
 type CoverageCatalogRead struct {
-	Reporting         CoverageCatalog
-	SourceCheckedAt   time.Time
-	Accepted          *CoverageCatalog
-	AcceptedOccupancy []CoverageSelectedOccupancy
-	ObservedOccupancy []OccupancyEstimate
-}
-
-type CoverageSelectedOccupancy struct {
-	Node          MeasurementIdentity
-	Model         string
-	PowerMode     string
-	ExecutionPath string
-	ProfileID     string
-	Batch         int
-	Provenance    *SchedulerOccupancy
+	Reporting       CoverageCatalog
+	SourceCheckedAt time.Time
+	Accepted        *CoverageCatalog
 }
 
 // CoverageDataset and CoveragePreprocessor retain only the native input-contract
@@ -98,16 +86,12 @@ type CoverageBase struct {
 	Compatibility                ModelCompatibilityMatrixView
 	Requests                     api.BatchEnergyOptimizationList
 	Runs                         api.ProfilingRunList
-	Occupancies                  api.DispatchOccupancyMeasurementList
-	OccupancyResults             map[string]OccupancyEvidenceProjection
 	Catalog                      CoverageCatalog
 	Datasets                     []CoverageDataset
 	Preprocessors                []CoveragePreprocessor
 	DatasetsResourceVersion      string
 	PreprocessorsResourceVersion string
 	Adopted                      map[string]bool
-	AcceptedOccupancy            []CoverageSelectedOccupancy // nil is unavailable; empty confirms no selection.
-	ObservedOccupancy            []OccupancyEstimate
 	Checked                      map[string]time.Time
 	Failures                     map[string]error
 }
@@ -118,7 +102,7 @@ const (
 )
 
 var CoverageSourceKinds = [...]string{
-	"inventory", "compatibility", CoverageCatalogSource, "BEO", "Run", "DOM", "input-contract",
+	"inventory", "compatibility", CoverageCatalogSource, "BEO", "Run", "input-contract",
 }
 
 func (b *CoverageBase) Oldest() time.Time {

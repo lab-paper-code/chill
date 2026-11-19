@@ -20,7 +20,6 @@ type coverageProjection struct {
 	profiles  map[string][]CoverageProfile
 	adopted   map[string]bool
 	replaced  map[string]bool
-	occupancy []api.DispatchOccupancyMeasurement
 }
 
 func BuildMeasurementCoverage(
@@ -37,7 +36,6 @@ func BuildMeasurementCoverage(
 	p.addRuns()
 	for i := range p.out.Cells {
 		p.assessCell(&p.out.Cells[i])
-		p.addOccupancy(&p.out.Cells[i])
 	}
 	SummarizeMeasurementCoverage(&p.out, base.Failures)
 	CompactMeasurementCoverage(&p.out)
@@ -45,13 +43,6 @@ func BuildMeasurementCoverage(
 }
 
 func (p *coverageProjection) initialize() {
-	p.occupancy = append([]api.DispatchOccupancyMeasurement{}, p.base.Occupancies.Items...)
-	slices.SortFunc(p.occupancy, func(a, b api.DispatchOccupancyMeasurement) int {
-		if compared := a.CreationTimestamp.Compare(b.CreationTimestamp.Time); compared != 0 {
-			return compared
-		}
-		return strings.Compare(a.Name, b.Name)
-	})
 	basis := "requested"
 	if len(p.query.Batches) > 0 {
 		basis = "explicit"
@@ -59,7 +50,7 @@ func (p *coverageProjection) initialize() {
 	p.out = MeasurementCoverageResponse{
 		SchemaVersion: "measurement-coverage.v1", AssessmentVersion: "result-checklist.v1",
 		SnapshotID: p.namespace + "/" + p.base.Catalog.Revision + "/" +
-			p.base.Requests.ResourceVersion + "/" + p.base.Runs.ResourceVersion + "/" + p.base.Occupancies.ResourceVersion,
+			p.base.Requests.ResourceVersion + "/" + p.base.Runs.ResourceVersion,
 		DataAsOf:  p.base.Oldest().UTC().Format(time.RFC3339Nano),
 		Freshness: "fresh", Completeness: MeasurementComplete,
 		Scope: MeasurementCoverageScope{
@@ -97,8 +88,6 @@ func (p *coverageProjection) addSources() {
 			source.ResourceVersions = []string{p.base.Requests.ResourceVersion}
 		case "Run":
 			source.ResourceVersions = []string{p.base.Runs.ResourceVersion}
-		case "DOM":
-			source.ResourceVersions = []string{p.base.Occupancies.ResourceVersion}
 		case "compatibility":
 			for _, row := range p.base.Compatibility.NodeRows {
 				if row.Inputs.RuntimeDeclaration != nil {

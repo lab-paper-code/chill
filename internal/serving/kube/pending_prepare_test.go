@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
+	edge "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
-	edge "github.com/lab-paper-code/chill/api/v1alpha1"
-	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,7 +30,7 @@ func (c *pendingPreparationAPI) Create(ctx context.Context, object client.Object
 	if pod, ok := object.(*core.Pod); ok {
 		pod.Status.Phase = core.PodPending
 		// An ordinary delivery wait must exhaust the preparation deadline;
-		// observed pull failures now end preparation and are separately retryable.
+		// observed pull failures end preparation and are separately retryable.
 		pod.Status.ContainerStatuses = []core.ContainerStatus{{Name: servingstate.FirstfloorContainerName, State: core.ContainerState{Waiting: &core.ContainerStateWaiting{Reason: "ContainerCreating"}}}}
 	}
 	if err := c.Client.Create(ctx, object, opts...); err != nil {
@@ -78,43 +78,47 @@ func (c *pendingPreparationAPI) Delete(ctx context.Context, object client.Object
 	return nil
 }
 
-func TestOccupancyPreparationTimeoutHandsBackPendingPod(t *testing.T) {
+// A prepare step that ends while its Pod is still Pending hands the Pod back:
+// the finalizer survives the DELETE request, and the Node taint and the
+// reservation stay until the kubelet writes the terminal state.
+func TestOperationCostPrepareTimeoutHandsBackPendingPod(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	h := newAdmissionHarness(t)
-	c := h.controller
-	_, _, _, class := observerSourceFixture()
-	workload := &edge.Workload{ObjectMeta: meta.ObjectMeta{Name: "pending-owner"}}
-	measurement := occupancyRoot("pending-timeout", time.Now(), 1)
-	measurement.Spec.PreparationSeconds = 1
-	h.create(&class, workload, measurement)
-	spec := measuredCPUPreparationFixture()
-	profile := spec.Instance.Profile
-	c.observer.SetProfiles([]serving.Profile{*profile})
-	bridge := &pendingPreparationAPI{Client: c.store.client, kube: h.kube, deleted: make(chan *core.Pod, 1)}
+	o := opcostHarnessOn(t, newAdmissionHarness(t), nil)
+	c := o.controller
+	bridge := &pendingPreparationAPI{Client: c.store.client, kube: o.kube, deleted: make(chan *core.Pod, 1)}
 	c.store.client = bridge
-	h.setNode(func(node *core.Node) {
-		node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: string(measurement.UID), Effect: core.TaintEffectNoSchedule}}
-	})
+	c.measureStep = func(ctx context.Context, _ SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
+		prepare, stop := context.WithTimeout(ctx, time.Second)
+		defer stop()
+		_, err := c.measurement.PrepareInstance(prepare, *request.Operation.Prepare)
+		return servingops.OperationMeasurement{}, evidencestore.Receipt{}, err
+	}
 	completed := make(chan servingstate.OperationResult, 1)
 	c.mu.Lock()
-	c.config.Preparations = map[string]servingstate.PrepareSpec{profile.ID: spec}
+	for id, spec := range c.config.Preparations {
+		spec.Config.Policy.ProfileID = id
+		c.config.Preparations[id] = spec
+	}
 	c.config.OnAction = func(result servingstate.OperationResult) error { completed <- result; return nil }
-	config := c.config
 	c.mu.Unlock()
-	c.startOccupancy(h.node, measurement, occupancyPlan{profile: profile, workload: workload, powered: true}, config)
+	m := opcostRoot("pending-timeout", time.Now(), edge.OperationCostStep{Name: "prepare", Kind: edge.OperationCostStepPrepare, BatchEnergyOptimization: "beo"})
+	o.create(m)
+	if err := c.Admit(ctx); err != nil {
+		t.Fatal(err)
+	}
 	var deleting *core.Pod
 	select {
 	case deleting = <-bridge.deleted:
 	case result := <-completed:
-		t.Fatalf("occupancy ended before retained DELETE: %+v", result)
+		t.Fatalf("measurement ended before retained DELETE: %+v", result)
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
 	if deleting.DeletionTimestamp == nil || len(deleting.Finalizers) != 1 || deleting.Finalizers[0] != servingstate.SourceFinalizer || servingstate.PodTerminated(deleting) || !servingstate.PodAwaitingExecutor(deleting) {
 		t.Fatalf("pending deletion did not retain termination proof: %+v", deleting)
 	}
-	if h.holder() != string(measurement.UID) {
+	if o.holder() != string(m.UID) {
 		t.Fatal("hand-back released taint before terminal status")
 	}
 	if err := c.authorize(servingstate.Operation{Node: testNode}); err == nil {
@@ -139,20 +143,21 @@ func TestOccupancyPreparationTimeoutHandsBackPendingPod(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	c.wg.Wait()
-	if result.Status != servingstate.NativeOperationFailed || !strings.Contains(result.Error, context.DeadlineExceeded.Error()) {
-		t.Fatalf("prepare timeout was not preserved: %+v", result)
+	status := o.status(m)
+	if status.Phase != edge.MeasurementPhaseFailed || !strings.Contains(status.Reason, context.DeadlineExceeded.Error()) {
+		t.Fatalf("prepare timeout was not preserved: %+v", status)
 	}
-	if !strings.Contains(strings.Join(result.Progress, ";"), "taint removed") || h.holder() != "" {
-		t.Fatalf("hand-back incomplete: %+v, holder %q", result, h.holder())
+	if !strings.Contains(strings.Join(result.Progress, ";"), "taint removed") || o.holder() != "" {
+		t.Fatalf("hand-back incomplete: %+v, holder %q", result, o.holder())
 	}
 	if err := c.store.client.Get(ctx, client.ObjectKeyFromObject(deleting), &core.Pod{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("terminated preparation Pod retained: %v", err)
 	}
-	pods, err := h.kube.CoreV1().Pods(c.observer.config.Namespace).List(ctx, meta.ListOptions{})
+	pods, err := o.kube.CoreV1().Pods(c.observer.config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil || len(pods.Items) != 0 {
 		t.Fatalf("native Pods remain: %v, %v", pods, err)
 	}
-	if err := c.authorize(servingstate.Operation{Node: testNode, WorkloadUID: string(workload.UID)}); err != nil {
+	if err := c.authorize(servingstate.Operation{Node: testNode}); err != nil {
 		t.Fatal("hand-back retained reservation", err)
 	}
 	c.observer.mu.Lock()

@@ -143,7 +143,7 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(overlay["servingEntrypoint"]["image"]["tag"], "sha-" + SHA[:12] + "@" + server["digest"])
         self.assertEqual(overlay["profiling"]["metricObserverImage"], publication["roles"]["metric-observer"]["image"])
         self.assertEqual(overlay["profiling"]["workloadObserverImage"], publication["roles"]["workload-observer"]["image"])
-        self.assertEqual(set(overlay), {"servingEntrypoint", "profiling", "loadGenerator"})
+        self.assertEqual(set(overlay), {"servingEntrypoint", "profiling"})
 
     def test_prebuilt_verifies_without_docker_and_freezes_input(self):
         spec = self.plan(["firstfloor-cuda"])[0]

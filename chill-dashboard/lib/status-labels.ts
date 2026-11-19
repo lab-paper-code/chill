@@ -321,7 +321,6 @@ const codeMessages: Record<string, string> = {
   ObservationNotReady: "닫힌 관측 구간 없음", InvalidClientObservation: "관측 기록 형식 오류", InvalidCoverageQuery: "조회 조건 오류",
   CoverageWarming: "측정 범위 집계 중", CoverageUnavailable: "측정 범위 읽기 실패", ModelCompatibilityUnavailable: "지원 여부 확인 실패",
   ExperimentUnavailable: "실험 읽기 실패", EvaluationAuditUnavailable: "실험 변경 기록 불가", EvaluationAuditIncomplete: "실험 변경 기록 미완료",
-  OccupancyPolicyUnavailable: "점유시간 측정 정책 없음", OccupancyInfeasible: "점유시간 측정 조건 불가", OccupancySelectionLimit: "선택 요청 수 초과",
   EvidencePassportPending: "검증 기록 작성 중",
   // Catalog insufficiencies (internal/serving/kube/catalog.go)
   ReplacementSelection: "교체 대상 선택 불가", NegativeIncrementalEnergy: "추가 에너지 음수", ProfileReuseRejected: "측정 재사용 불가",

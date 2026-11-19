@@ -30,28 +30,6 @@ func (a coverageCatalogSourceAdapter) Read(ctx context.Context) (queryapi.Covera
 	if read.Accepted != nil {
 		accepted := queryCoverageSnapshot(*read.Accepted)
 		out.Accepted = &accepted
-		if read.Accepted.DispatchOccupancy != nil {
-			out.AcceptedOccupancy = make([]queryapi.CoverageSelectedOccupancy, len(read.Accepted.DispatchOccupancy))
-			for i, selected := range read.Accepted.DispatchOccupancy {
-				out.AcceptedOccupancy[i] = queryapi.CoverageSelectedOccupancy{
-					Node:  queryapi.MeasurementIdentity{Name: selected.Node.Name, UID: selected.Node.UID},
-					Model: selected.Model, PowerMode: selected.PowerMode, ExecutionPath: selected.ExecutionPath,
-					ProfileID: selected.ProfileID, Batch: selected.Batch,
-				}
-				if p := selected.Provenance; p != nil {
-					out.AcceptedOccupancy[i].Provenance = &queryapi.SchedulerOccupancy{
-						Source: p.Source, Value: p.Value, Pairs: p.Pairs,
-						Window: (*queryapi.OccupancyMeasurementWindow)(p.Window), UpdatedAt: p.UpdatedAt,
-					}
-				}
-			}
-		}
-		if read.Accepted.OccupancyEstimates != nil {
-			out.ObservedOccupancy = make([]queryapi.OccupancyEstimate, len(read.Accepted.OccupancyEstimates))
-			for i := range read.Accepted.OccupancyEstimates {
-				out.ObservedOccupancy[i] = *queryOccupancyEstimate(&read.Accepted.OccupancyEstimates[i])
-			}
-		}
 	}
 	return out, err
 }

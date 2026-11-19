@@ -60,47 +60,6 @@ var _ = Describe("OperationCostMeasurement API", func() {
 	})
 })
 
-var _ = Describe("DispatchOccupancyMeasurement API", func() {
-	It("accepts one configured closed-loop burst", func() {
-		ctx := context.Background()
-		request := validDispatchOccupancyMeasurement(uniqueMeasurementName("occupancy"))
-		Expect(k8sClient.Create(ctx, request)).To(Succeed())
-		DeferCleanup(func() { _ = k8sClient.Delete(ctx, request) })
-	})
-
-	It("accepts a positive configured burst window and pair sampling floor", func() {
-		request := validDispatchOccupancyMeasurement(uniqueMeasurementName("occupancy-configured"))
-		request.Spec.DurationSeconds, request.Spec.MinimumPairs = 30, 1000
-		Expect(k8sClient.Create(context.Background(), request)).To(Succeed())
-		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), request) })
-	})
-
-	DescribeTable("rejects invalid burst, batch or sampling bounds",
-		func(mutate func(*edgev1alpha1.DispatchOccupancyMeasurement)) {
-			request := validDispatchOccupancyMeasurement(uniqueMeasurementName("occupancy-invalid"))
-			mutate(request)
-			err := k8sClient.Create(context.Background(), request)
-			Expect(err).To(HaveOccurred())
-			Expect(apierrors.IsInvalid(err)).To(BeTrue())
-		},
-		Entry("negative minimum pairs", func(r *edgev1alpha1.DispatchOccupancyMeasurement) { r.Spec.MinimumPairs = -1 }),
-		Entry("zero window", func(r *edgev1alpha1.DispatchOccupancyMeasurement) { r.Spec.DurationSeconds = 0 }),
-		Entry("zero workers", func(r *edgev1alpha1.DispatchOccupancyMeasurement) { r.Spec.Workers = 0 }),
-		Entry("zero batch", func(r *edgev1alpha1.DispatchOccupancyMeasurement) { r.Spec.Batch = 0 }),
-	)
-
-	It("rejects changing an existing request", func() {
-		ctx := context.Background()
-		request := validDispatchOccupancyMeasurement(uniqueMeasurementName("occupancy-immutable"))
-		Expect(k8sClient.Create(ctx, request)).To(Succeed())
-		DeferCleanup(func() { _ = k8sClient.Delete(ctx, request) })
-		request.Spec.DurationSeconds++
-		err := k8sClient.Update(ctx, request)
-		Expect(err).To(HaveOccurred())
-		Expect(apierrors.IsInvalid(err)).To(BeTrue())
-	})
-})
-
 func uniqueMeasurementName(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
@@ -125,16 +84,6 @@ func validOperationCostMeasurement(name string) *edgev1alpha1.OperationCostMeasu
 				{Name: "idle", Kind: edgev1alpha1.OperationCostStepIdle, IdleDurationSeconds: ptr.To[int32](120)},
 				{Name: "remove", Kind: edgev1alpha1.OperationCostStepRemove, BatchEnergyOptimization: "beo"},
 			},
-		},
-	}
-}
-
-func validDispatchOccupancyMeasurement(name string) *edgev1alpha1.DispatchOccupancyMeasurement {
-	return &edgev1alpha1.DispatchOccupancyMeasurement{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
-		Spec: edgev1alpha1.DispatchOccupancyMeasurementSpec{
-			Node: "rasp5", BatchEnergyOptimization: "beo", Workload: "plc", Batch: 1,
-			WarmupSeconds: 5, DurationSeconds: 15, MinimumPairs: 100, Workers: 8, SupplyMode: "closed-loop",
 		},
 	}
 }

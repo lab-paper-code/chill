@@ -179,7 +179,7 @@ func TestFeedbackConsumerCapacityWindowAllowsConfiguredTail(t *testing.T) {
 			for j := range tc.misses {
 				gaps[500+j] = 0
 			}
-			replay := capacityReplay{settings: settings, at: snapshot.At, option: option, w: definition, occupancy: snapshot.DispatchOccupancy[0], gaps: map[[2]int][]float64{{1, n}: gaps}}
+			replay := capacityReplay{settings: settings, at: snapshot.At, option: option, w: definition, gaps: map[[2]int][]float64{{1, n}: gaps}}
 			window, err := replay.window(context.Background(), 1, n, 1)
 			if err != nil || window.met != tc.met {
 				t.Fatalf("capacity consumer rejected allowed tail or admitted excess: %+v %v", window, err)

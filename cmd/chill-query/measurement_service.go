@@ -96,34 +96,6 @@ func (o *measurementService) projectOperationCost(
 	return projection, err
 }
 
-func (o *measurementService) listDispatchOccupancies(
-	ctx context.Context, namespace string,
-) (dispatchOccupancyProjectionList, error) {
-	result := dispatchOccupancyProjectionList{Items: []dispatchOccupancyProjection{}}
-	list, err := querykube.ListDispatchOccupancyMeasurements(ctx, o.client, namespace, o.namespace)
-	if err != nil {
-		return result, err
-	}
-	for _, cr := range list.Items {
-		projection, err := o.projectDispatchOccupancy(ctx, cr)
-		if err != nil {
-			return dispatchOccupancyProjectionList{}, err
-		}
-		result.Items = append(result.Items, projection)
-	}
-	return result, nil
-}
-
-func (o *measurementService) getDispatchOccupancy(
-	ctx context.Context, namespace, name string,
-) (dispatchOccupancyProjection, error) {
-	cr, err := querykube.GetDispatchOccupancyMeasurement(ctx, o.client, namespace, name, o.namespace)
-	if err != nil {
-		return dispatchOccupancyProjection{}, err
-	}
-	return o.projectDispatchOccupancy(ctx, cr)
-}
-
 func catalogView(read servingkube.CatalogSnapshot) httpapi.ProfilesView {
 	out := httpapi.ProfilesView{
 		ConfigVersion: read.ConfigVersion,

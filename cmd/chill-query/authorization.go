@@ -66,15 +66,13 @@ func authorizeQueryRead(
 	verb, name := queryListVerb, ""
 	switch parts[5] {
 	case "measurement-coverage":
-		resources = []string{"batchenergyoptimizations", "profilingruns", "dispatchoccupancymeasurements"}
+		resources = []string{"batchenergyoptimizations", "profilingruns"}
 	case "batch-energy-optimizations":
 		resources = []string{"batchenergyoptimizations"}
 	case "profiling-runs":
 		resources = []string{"profilingruns"}
 	case "operation-cost-measurements":
 		resources = []string{"operationcostmeasurements"}
-	case "dispatch-occupancy-measurements":
-		resources = []string{"dispatchoccupancymeasurements"}
 	}
 	isPreflight := r.Method == http.MethodPost && len(parts) == 7 &&
 		parts[5] == "batch-energy-optimizations" && parts[6] == "preflight"

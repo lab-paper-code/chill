@@ -57,13 +57,13 @@ profile의 양의 `RoutingWeight`는 빠른 관측 support에서 도출한 상�
 
 ### 디스패치 점유
 
-현행 native-pair 측정은 인접한 고정 배치의 시작 간격에서 앞 배치의 실제 Go runner exchange S를 빼고 배치 크기로 나눈 signed ns/request다. 원 signed 통계와 운영 선택값은 구분한다.
+현행 점유 d는 프로파일 세션이 포화 수준에서 모은 배치별 점유 표본(요청 하나가 실행기를 차지한 ns)에서 얻는다.
 
-운영 선택은 minimumPairs를 충족한 rolling median, 프로파일의 세션 포화 수준 점유 표본 중앙값, 정확한 legacy Accepted DOM, configured `defaultDispatchOccupancyNanos` 순이다. Node UID, 모델, 전력모드, 실행 경로, batch, profile ID를 맞춘다. 운영 median은 0 이상으로 clamp하고 반올림한다.
+배치당 선택은 프로파일의 세션 포화 수준 점유 표본 중앙값, 없으면 configured `defaultDispatchOccupancyNanos`다. Node UID, 모델, 전력모드, 실행 경로, batch, profile ID를 맞춘다. 운영값은 0 이상으로 clamp하고 반올림한다. 서빙 관측으로 d를 갱신하지 않는다.
 
 rate 계산의 처리율 추정은 측정 batch별 `b/(profileMean(b)+b×d)`의 최댓값이며 replay는 시작한 실제 batch마다 `batch size×d`를 한 번 더한다. 저비용 service 항은 gap의 조건부 SLO 분위수에 batch 점유를 더한다. 실행 중인 인스턴스의 gap은 현재 idle 나이다. 아직 실행하지 않은 option은 Workload 요청률 λ가 뜻하는 평균 idle 구간 1/λ(Poisson 도착에서 빈 실행기가 기다리는 평균)에서 같은 방식으로 질의한다. λ=0은 그 극한인 가장 긴 gap이다. 분위수가 식별되지 않으면(기록이 표본 하한보다 적음) profile 부재와 같은 `MissingConditionalService`다. 분배값, 처리율 추정과 실제 지연은 각각의 의미를 유지한다.
 
-snapshot과 검사 입력은 선택 tuple, source와 `provenance{source,pairs,window,updatedAt,value}`를 보존한다. metadata만 달라지고 선택 d와 전체 수치 입력이 같으면 계산을 재사용할 수 있다. legacy scalar와 신규 burst evidence의 저장 계약은 [측정 API](measurement-api.md)에 둔다.
+snapshot과 검사 입력은 선택 tuple, source와 `provenance{source,pairs,updatedAt,value}`(source는 profile 또는 default)를 보존한다. metadata만 달라지고 선택 d와 전체 수치 입력이 같으면 계산을 재사용할 수 있다.
 
 ## SLO 판정과 후보 순서
 

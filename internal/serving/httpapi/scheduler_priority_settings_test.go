@@ -17,7 +17,7 @@ import (
 )
 
 func TestSchedulerPrioritySettingsRoundTrip(t *testing.T) {
-	h, _ := occupancyHandler(t, "")
+	h := settingsHandler(t)
 	h.config.MaxRequestBytes = 1 << 20
 	before := schedulerSettingsForTest()
 	before.CompletionMarginMS = 23

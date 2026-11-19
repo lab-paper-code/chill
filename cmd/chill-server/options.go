@@ -12,48 +12,44 @@ import (
 
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 type options struct {
-	bindAddress, servingNamespace, tlsCert, tlsKey, observationDirectory             string
-	storeName, storeEndpoint, storeBucket, storeRegion                               string
-	evaluationStore                                                                  stores3.Config
-	queryURL, dashboardURL                                                           string
-	storeCredentialsSecret                                                           string
-	kube                                                                             kubeconfig.Options
-	kubeAPIQPS                                                                       float64
-	kubeAPIBurst                                                                     int
-	maxQueryEvents                                                                   int
-	eventLookupHours                                                                 int
-	maxRequestBytes, maxEvidenceBytes                                                int64
-	requestTimeout, drainTimeout, sourceInterval, profileInterval                    time.Duration
-	operationTimeout                                                                 time.Duration
-	observationRetention                                                             time.Duration
-	profileNamespaces                                                                []string
-	definitions, outcomes                                                            []string
-	materializeProfile                                                               bool
-	profileObjectKey, profileOutput                                                  string
-	profileObjectSize                                                                int64
-	schedulerConfigMap, schedulerConfigKey                                           string
-	factsNamespace, factsConfigMap, actuationPoliciesKey, metricSourcesKey           string
-	executionFactsKey, executionPoliciesKey                                          string
-	measurementMemoryFraction                                                        float64
-	sessionLoadImage                                                                 string
-	diagnosticDirectory                                                              string
-	checkDeploymentManifest, schedulerConfigMapFile                                  string
-	diagnosticStartDelay, diagnosticTraceOffset                                      time.Duration
-	pprofAddress                                                                     string
-	pprofMutexFraction                                                               int
-	pprofBlockRate                                                                   time.Duration
-	resourceMaxSamples, resourceMaxContainers, resourceMaxThermal, resourceMaxErrors int
-	resourceRelease, resourceSystem                                                  string
-	resourceControlComponents                                                        []string
-	resourceDirectoryInterval                                                        time.Duration
-
-	// loadGenerator runs the load Job of dispatch-occupancy measurements.
-	loadGenerator servingkube.LoadGeneratorConfig
+	bindAddress, servingNamespace, tlsCert, tlsKey, observationDirectory                   string
+	storeName, storeEndpoint, storeBucket, storeRegion                                     string
+	evaluationStore                                                                        stores3.Config
+	queryURL, dashboardURL                                                                 string
+	storeCredentialsSecret                                                                 string
+	kube                                                                                   kubeconfig.Options
+	kubeAPIQPS                                                                             float64
+	kubeAPIBurst                                                                           int
+	maxQueryEvents                                                                         int
+	eventLookupHours                                                                       int
+	maxRequestBytes, maxEvidenceBytes                                                      int64
+	requestTimeout, drainTimeout, sourceInterval, profileInterval                          time.Duration
+	operationTimeout                                                                       time.Duration
+	observationRetention                                                                   time.Duration
+	profileNamespaces                                                                      []string
+	definitions, outcomes                                                                  []string
+	materializeProfile                                                                     bool
+	profileObjectKey, profileOutput                                                        string
+	profileObjectSize                                                                      int64
+	schedulerConfigMap, schedulerConfigKey                                                 string
+	factsNamespace, factsConfigMap, actuationPoliciesKey, metricSourcesKey                 string
+	executionFactsKey, executionPoliciesKey                                                string
+	measurementMemoryFraction                                                              float64
+	sessionLoadImage, sessionLoadNamespace, sessionLoadServiceAccount, sessionLoadNodeName string
+	diagnosticDirectory                                                                    string
+	checkDeploymentManifest, schedulerConfigMapFile                                        string
+	diagnosticStartDelay, diagnosticTraceOffset                                            time.Duration
+	pprofAddress                                                                           string
+	pprofMutexFraction                                                                     int
+	pprofBlockRate                                                                         time.Duration
+	resourceMaxSamples, resourceMaxContainers, resourceMaxThermal, resourceMaxErrors       int
+	resourceRelease, resourceSystem                                                        string
+	resourceControlComponents                                                              []string
+	resourceDirectoryInterval                                                              time.Duration
 }
 
 func (o *options) bindFlags(f *flag.FlagSet) {
@@ -164,12 +160,9 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 			o.definitions = append(o.definitions, value)
 			return nil
 		})
-	f.StringVar(&o.loadGenerator.Image, "load-generator-image", "", "Image of the dispatch-occupancy load Job.")
-	f.StringVar(&o.loadGenerator.ServiceAccount, "load-generator-service-account", "", "ServiceAccount of the load Job.")
-	f.StringVar(&o.loadGenerator.Namespace, "load-generator-namespace", "", "Namespace of the load Job.")
-	f.StringVar(&o.loadGenerator.Endpoint, "load-generator-endpoint", "",
-		"HTTPS origin of the serving Service by its .svc name.")
-	f.StringVar(&o.loadGenerator.CASecret, "load-generator-ca-secret", "", "Secret whose tls.crt the load Job trusts.")
+	f.StringVar(&o.sessionLoadServiceAccount, "load-generator-service-account", "",
+		"ServiceAccount of the session-load Job.")
+	f.StringVar(&o.sessionLoadNamespace, "load-generator-namespace", "", "Namespace of the session-load Job.")
 	f.Func("observation-outcome", "Default aggregate response-outcome filter; repeatable; empty selects all.",
 		func(value string) error {
 			o.outcomes = append(o.outcomes, value)

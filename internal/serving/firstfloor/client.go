@@ -213,11 +213,8 @@ func validateMetadata(spec Spec, actual native.Metadata) error {
 	if condition.RuntimeFamily != "firstfloor" || condition.NodeUID != spec.Node.UID || spec.Profile.NodeName != spec.Node.Name {
 		return errors.New("profile does not match native physical execution")
 	}
-	if actual.Model != spec.ModelName || actual.Mode != "serving" || actual.ProfileID != spec.Profile.ID || actual.AppliedAt.IsZero() || actual.Runtime.Synthetic || actual.MaxQueueRequests != spec.Capacity || actual.ModelInstanceCount != 1 || condition.Firstfloor == nil || actual.MaxBatchSize < 1 || actual.Policy.MaxBatchSize < 0 {
+	if actual.Model != spec.ModelName || actual.Mode != "serving" || actual.ProfileID != spec.Profile.ID || actual.AppliedAt.IsZero() || actual.Runtime.Synthetic || actual.MaxQueueRequests != spec.Capacity || actual.ModelInstanceCount != 1 || condition.Firstfloor == nil || actual.MaxBatchSize < 1 || actual.Policy.MaxBatchSize < 0 || actual.Policy.FixedBatchSize != 0 {
 		return errors.New("native prepared model/profile/policy mismatch")
-	}
-	if b := actual.Policy.FixedBatchSize; b < 0 || actual.Policy.MaxBatchSize > 0 && b > actual.Policy.MaxBatchSize || b > 0 && !slices.ContainsFunc(spec.Profile.Batches, func(p serving.BatchProfile) bool { return p.Batch == b }) {
-		return errors.New("native fixed batch size has no measured profile")
 	}
 	if err := validateProfileInputs(spec, actual); err != nil {
 		return err
@@ -235,9 +232,9 @@ func validateProfileInputs(spec Spec, actual native.Metadata) error {
 	}
 	// Every catalog batch has a measured mean (kube sessionProfile); the probe
 	// admits an executor only with a batch it may run.
-	maxBatch, fixedBatch, selected := serving.NativeMaxBatch(actual), actual.Policy.FixedBatchSize, false
+	maxBatch, selected := serving.NativeMaxBatch(actual), false
 	for _, batch := range spec.Profile.Batches {
-		if !serving.RunnableBatch(maxBatch, fixedBatch, batch.Batch) {
+		if batch.Batch > maxBatch {
 			continue
 		}
 		selected = true

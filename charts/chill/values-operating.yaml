@@ -244,10 +244,6 @@ evidenceStore:
   credentialsSecret:
     name: chill-evidence-store-credentials
   enabled: true
-loadGenerator:
-  image:
-    repository: 155.230.35.213:5000/chill/chill-load-generator
-    tag: pools-d2-4fb9bf8b0f81
 nodeAgent:
   actuation:
     enabled: true

@@ -93,7 +93,6 @@ func run(ctx context.Context, opts options) (retErr error) {
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
-		OccupancyTail:    httpapi.MaximumInferenceRequestTimeout + opts.drainTimeout,
 		Diagnostics:      recorder,
 		Retention:        opts.observationRetention,
 		EventLookupHours: opts.eventLookupHours,
@@ -192,8 +191,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	scheduler, err := newSchedulerService(
-		ctx, cluster, store, kube, reviews, execution, observer, objects, observationLog, opts,
-		httpapi.MaximumInferenceRequestTimeout, publisher,
+		ctx, cluster, store, kube, reviews, execution, observer, objects, observationLog, opts, publisher,
 	)
 	if err != nil {
 		return fmt.Errorf("initialize scheduler service: %w", err)
@@ -206,12 +204,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 
 	handlerConfig.ReadCatalog = scheduler.ReadCatalog
-	handlerConfig.OccupancyObservations = scheduler.OccupancyObservations
 	handlerConfig.SubmitMeasurement = measurements.Submit
 	handlerConfig.DeleteMeasurement = measurements.Delete
-	handlerConfig.BuildOccupancy = measurements.BuildOccupancy
-	handlerConfig.SubmitOccupancy = measurements.SubmitOccupancy
-	handlerConfig.DeleteOccupancy = measurements.DeleteOccupancy
 	handlerConfig.OnMutationAction = publisher.action
 
 	experiments := &experimentService{

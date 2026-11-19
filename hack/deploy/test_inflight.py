@@ -31,8 +31,7 @@ class InflightTests(unittest.TestCase):
                                        'finishedAt': '2026-11-03T00:00:00Z',
                                        'conditions': [condition('Published')]})]
         for kind, phases in [('BatchEnergyOptimization', ('Complete', 'Failed')),
-                             ('ModelLoadedIdleBaseline', ('Complete', 'Insufficient')),
-                             ('DispatchOccupancyMeasurement', ('Complete', 'Insufficient', 'Failed'))]:
+                             ('ModelLoadedIdleBaseline', ('Complete', 'Insufficient'))]:
             states.extend(obj(kind, {'phase': phase}) for phase in phases)
         for reason in inflight.TERMINAL_FAILURES:
             for name in ('ExecutionComplete', 'EvidenceVerified'):
@@ -60,16 +59,13 @@ class InflightTests(unittest.TestCase):
         self.assertEqual(inflight.blockers([state], [])[0]['name'], 'measurement')
 
     def test_campaign_boundaries(self):
-        for kind in ('BatchEnergyOptimization', 'ModelLoadedIdleBaseline', 'DispatchOccupancyMeasurement'):
+        for kind in ('BatchEnergyOptimization', 'ModelLoadedIdleBaseline'):
             self.assertTrue(inflight.blockers([obj(kind, {'phase': 'Running'})], []))
         self.assertTrue(inflight.blockers([obj('ModelLoadedIdleBaseline', {'phase': 'Failed'})], []))
         self.assertTrue(inflight.blockers([obj('BatchEnergyOptimization', {'phase': 'Insufficient'})], []))
-        state = obj('DispatchOccupancyMeasurement', {'phase': 'Running'})
-        self.assertEqual(inflight.blockers([state], [])[0]['kind'], 'DispatchOccupancyMeasurement')
-        state['spec'] = {'conditions': [{'deviceClass': 'cpu'}]}
-        self.assertEqual(inflight.blockers([state], [])[0]['name'], 'measurement')
+        state = obj('BatchEnergyOptimization', {'phase': 'Running'})
+        self.assertEqual(inflight.blockers([state], [])[0]['kind'], 'BatchEnergyOptimization')
         state['status']['phase'] = 'Complete'
-        state.pop('spec')
         self.assertEqual(inflight.blockers([state], []), [])
         state['metadata']['deletionTimestamp'] = 'now'
         self.assertTrue(inflight.blockers([state], []))
@@ -101,8 +97,8 @@ class InflightTests(unittest.TestCase):
     def test_check_persists_evidence_before_refusing_and_uses_unique_labels(self):
         kube = ['kubectl', '--kubeconfig', '/private/config', '--context', 'selected', '--namespace', 'chill']
         objects = [obj('ProfilingRun'), *[
-            obj('DispatchOccupancyMeasurement', {'phase': phase, 'retainedEvidence': '原始'})
-            for phase in ('Complete', 'Insufficient', 'Failed')]]
+            obj('BatchEnergyOptimization', {'phase': phase, 'retainedEvidence': '原始'})
+            for phase in ('Complete', 'Failed')]]
         jobs = [job('ForeignController', {'active': 1}), job('EvaluationStage', {})]
         calls = []
         def run(argv, name, timeout=120, cwd=None, env=None, read_output=True):
@@ -135,7 +131,7 @@ class InflightTests(unittest.TestCase):
             jobs.pop()
             report = inflight.check(kube, run, out, 'before-cutover')
             self.assertEqual(report['blockers'], [])
-            self.assertEqual(report['checked'], {'DispatchOccupancyMeasurement': 3})
+            self.assertEqual(report['checked'], {'BatchEnergyOptimization': 2})
             self.assertNotEqual(report['evidenceDirectory'], str(evidence))
             self.assertEqual(sum(path.is_dir() for path in Path(out).iterdir()), 2)
             self.assertEqual((evidence / 'objects.json').read_bytes(), calls[0][2])

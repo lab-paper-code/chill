@@ -10,7 +10,5 @@ import (
 type ProfilesView struct {
 	ConfigVersion string `json:"configVersion"`
 	servingkube.CatalogView
-	Preparations     map[string]servingstate.PrepareSpec `json:"preparations"`
-	Occupancy        []servingkube.OccupancySelection    `json:"-"`
-	OccupancySkipped []servingkube.OccupancySkipped      `json:"-"`
+	Preparations map[string]servingstate.PrepareSpec `json:"preparations"`
 }

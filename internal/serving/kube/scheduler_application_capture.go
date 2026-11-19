@@ -28,8 +28,7 @@ func (c *SchedulerController) captureTimed(ctx context.Context, now time.Time, c
 			return serving.SchedulerSnapshot{}, err
 		}
 	}
-	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: window.Arrivals, Costs: config.Costs, Baselines: config.Baselines,
-		DispatchOccupancy: config.DispatchOccupancy}
+	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: window.Arrivals, Costs: config.Costs, Baselines: config.Baselines}
 	if config.DispatchOccupancySnapshot != nil {
 		s.DispatchOccupancy = config.DispatchOccupancySnapshot()
 	}
@@ -195,10 +194,9 @@ func (c *SchedulerController) releaseCapturedScopes(
 // Function ports do not carry admission policy. All accepted values do.
 func schedulerApprovalConfiguration(config SchedulerControllerConfig) SchedulerControllerConfig {
 	config.OnDecision, config.OnAction = nil, nil
-	config.DispatchOccupancySnapshot, config.MeterSource, config.Session.Prepare = nil, nil, nil
 	// Occupancy reaches approval through the capture a new target is admitted
-	// on, not through raw cache evidence or unused legacy rows.
-	config.DispatchOccupancy = nil
+	// on, not through raw cache evidence.
+	config.DispatchOccupancySnapshot, config.MeterSource, config.Session.Prepare = nil, nil, nil
 	return config
 }
 
@@ -224,8 +222,7 @@ func schedulerApprovalLedger(actions []serving.Action, reservations []serving.Sc
 func capturePreparationOptions(s *serving.SchedulerSnapshot, profiles []serving.Profile, profileByID map[string]*serving.Profile, preparations map[string]servingstate.PrepareSpec, now time.Time) {
 	for _, profile := range profiles {
 		template, ok := preparations[profile.ID]
-		// A strict fixed-size preparation is a baseline, never an autonomous candidate.
-		if !ok || template.Config.Policy.FixedBatchSize > 0 {
+		if !ok {
 			continue
 		}
 		instance := template.Instance

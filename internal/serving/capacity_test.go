@@ -20,9 +20,6 @@ func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
 	s, snap := schedulerFixture()
 	s.CapacityMinimumRequests = 200
 	s.CompletionMarginMS = 0
-	c := snap.Instances[0].Profile.Condition
-	snap.DispatchOccupancy = []DispatchOccupancy{{Node: snap.Nodes[0].Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel,
-		ProfileID: snap.Instances[0].Profile.ID, ExecutionPath: c.Artifact.ExecutionPath, Batch: snap.Instances[0].MaxBatch, Source: "fixture"}}
 	p := *snap.Instances[0].Profile
 	p.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, InputSlopeJoules: schedulerTestSlope(0.01), MemoryBytes: 100}, []float64{8e5, 1e6, 1.2e6})}
 	snap.Instances[0].Profile = &p
@@ -33,7 +30,7 @@ func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
 
 func capacityBuildForTest(t *testing.T, s SchedulerSettings, w CapacityWindows, snap SchedulerSnapshot) CapacityRow {
 	t.Helper()
-	row, err := BuildCapacityRow(context.Background(), s, w, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], snap.At)
+	row, err := BuildCapacityRow(context.Background(), s, w, snap.Options[0], snap.Workloads[0], snap.At)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +244,6 @@ func TestCapacityWindowDropTailAllowance(t *testing.T) {
 
 func TestCapacityRowWithoutOccupancyUsesConfiguredDefault(t *testing.T) {
 	s, snap := capacityFixture()
-	snap.DispatchOccupancy = nil
 	s.DefaultDispatchOccupancyNanos = int64(time.Millisecond)
 	row := capacityBuildForTest(t, s, capacityTestWindows, snap)
 	if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa <= 0 {
@@ -261,107 +257,6 @@ func TestCapacityRowWithoutOccupancyUsesConfiguredDefault(t *testing.T) {
 	zero := capacityBuildForTest(t, s, capacityTestWindows, snap)
 	if zero.Kappa == nil || *zero.Kappa <= *row.Kappa || zero.Key == row.Key {
 		t.Fatalf("zero scalar default not used exactly once per request: %+v", zero)
-	}
-}
-
-func TestCapacityRowUsesQualifiedMeasuredCacheEntryBeforeDOM(t *testing.T) {
-	s, snap := capacityFixture()
-	s.DefaultDispatchOccupancyNanos = int64(2 * time.Millisecond)
-	i := snap.Options[0].Instance
-	snap.DispatchOccupancy[0].PerRequest = time.Millisecond
-	window := OccupancyWindow{Start: snap.At.Add(-time.Minute), End: snap.At}
-	// The incoming cache publishes only entries meeting its minimumPairs policy.
-	entry := DispatchOccupancy{
-		Node: i.Node, PowerMode: i.Profile.Condition.PowerMode, Model: i.Profile.Condition.LogicalModel,
-		ProfileID: i.Profile.ID, ExecutionPath: i.Profile.Condition.Artifact.ExecutionPath, Batch: i.MaxBatch,
-		PerRequest: 500 * time.Microsecond, Source: "rolling-cache",
-		Provenance: &DispatchOccupancyProvenance{Source: "measured", Pairs: 1000, Window: &window, UpdatedAt: snap.At, Value: 500000},
-	}
-	snap.DispatchOccupancy = append(snap.DispatchOccupancy, entry)
-	row := capacityBuildForTest(t, s, capacityTestWindows, snap)
-	d := row.Input.DispatchOccupancy
-	if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa <= 0 ||
-		d.Source != entry.Source || !reflect.DeepEqual(d.Provenance, entry.Provenance) {
-		t.Fatalf("qualified measured entry lost priority/provenance: %+v", row)
-	}
-}
-
-func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
-	s, snap := capacityFixture()
-	s.DefaultDispatchOccupancyNanos = int64(2 * time.Millisecond)
-	i := snap.Options[0].Instance
-	dom := snap.DispatchOccupancy[0]
-	dom.RuntimeImage, dom.PerRequest = i.Profile.Condition.RuntimeImage, time.Millisecond
-	dom.ProfileID, dom.ExecutionPath, dom.Batch = i.Profile.ID, i.Profile.Condition.Artifact.ExecutionPath, i.MaxBatch
-	measured := dom
-	measured.ProfileID, measured.ExecutionPath, measured.Batch = i.Profile.ID, i.Profile.Condition.Artifact.ExecutionPath, i.MaxBatch
-	measured.PerRequest = 500 * time.Microsecond
-	measured.Provenance = &DispatchOccupancyProvenance{Source: "measured", Pairs: 1000, Value: 500000}
-	for _, tc := range []struct {
-		name   string
-		change func(*DispatchOccupancy)
-	}{
-		{"node", func(d *DispatchOccupancy) { d.Node.UID = schedulerTestOther }},
-		{"model", func(d *DispatchOccupancy) { d.Model = schedulerTestOther }},
-		{"mode", func(d *DispatchOccupancy) { d.PowerMode = schedulerTestOther }},
-		{"profile", func(d *DispatchOccupancy) { d.ProfileID = schedulerTestOther }},
-		{"path", func(d *DispatchOccupancy) { d.ExecutionPath = schedulerTestOther }},
-		{"batch", func(d *DispatchOccupancy) { d.Batch++ }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			mismatch := measured
-			tc.change(&mismatch)
-			got := ResolveDispatchOccupancy(s, []DispatchOccupancy{mismatch, dom}, i)
-			if got.PerRequest != dom.PerRequest || got.Provenance.Source != "dom" || got.Source != dom.Source {
-				t.Fatalf("nonmatching measured entry beat legacy DOM: %+v", got)
-			}
-			got = ResolveDispatchOccupancy(s, []DispatchOccupancy{mismatch}, i)
-			if got.Provenance.Source != occupancySourceDefault || got.PerRequest != 2*time.Millisecond {
-				t.Fatalf("nonmatching measured entry blocked configured fallback: %+v", got)
-			}
-		})
-	}
-	// DOM never borrows a profile, path or batch.
-	other := i
-	profile := *i.Profile
-	profile.ID, profile.Condition.Artifact.ExecutionPath = "another-profile", "another-path"
-	other.Profile, other.MaxBatch = &profile, 8
-	got := ResolveDispatchOccupancy(s, []DispatchOccupancy{dom}, other)
-	if got.PerRequest != 2*time.Millisecond || got.Provenance.Source != occupancySourceDefault {
-		t.Fatalf("legacy DOM borrowed a different profile/batch: %+v", got)
-	}
-	// The runtime image is profile provenance and does not select DOM.
-	recorded := dom
-	recorded.RuntimeImage = "image-the-profile-was-measured-with"
-	if got := ResolveDispatchOccupancy(s, []DispatchOccupancy{recorded}, i); got.Provenance.Source != "dom" || got.PerRequest != dom.PerRequest {
-		t.Fatalf("DOM of the same profile missed by image string: %+v", got)
-	}
-	for _, change := range []func(*DispatchOccupancy){
-		func(d *DispatchOccupancy) { d.ProfileID = "" },
-		func(d *DispatchOccupancy) { d.Batch = 0 },
-	} {
-		mismatch := dom
-		change(&mismatch)
-		got := ResolveDispatchOccupancy(s, []DispatchOccupancy{mismatch}, i)
-		if got.Provenance.Source != occupancySourceDefault {
-			t.Fatalf("inexact DOM remained applicable: %+v", got)
-		}
-	}
-	// A recorded resolved default retains its source/value on readback, even
-	// when a caller supplies unrelated current settings.
-	s.DefaultDispatchOccupancyNanos = 0
-	projected := ResolveDispatchOccupancy(s, nil, other)
-	s.DefaultDispatchOccupancyNanos = 123
-	if got := ResolveDispatchOccupancy(s, []DispatchOccupancy{*projected}, other); got.PerRequest != 0 ||
-		got.Provenance.Source != occupancySourceDefault || got.Provenance.Value != 0 || got.Provenance == projected.Provenance {
-		t.Fatalf("recorded default provenance/value lost or aliased: %+v", got)
-	}
-	// Clamp operational d only; never rewrite the incoming signed measurement.
-	measured.PerRequest, measured.Provenance.Value = -100, -100
-	got = ResolveDispatchOccupancy(s, []DispatchOccupancy{measured, dom}, i)
-	if got.PerRequest != 0 || got.Provenance.Value != 0 || got.Provenance.Source != occupancySourceMeasured ||
-		measured.PerRequest != -100 || measured.Provenance.Value != -100 {
-		t.Fatalf("signed fact mutated or operational d not clamped: %+v %+v", measured, got)
 	}
 }
 
@@ -388,7 +283,7 @@ func TestCapacityConditionalSupportWithDispatchOccupancy(t *testing.T) {
 	if without.Kappa == nil || *without.Kappa <= 30 {
 		t.Fatalf("quiet-gap service incorrectly capped busy throughput: %+v", without)
 	}
-	snapshot.DispatchOccupancy[0].PerRequest = 4 * time.Millisecond
+	batch.DispatchOccupancyNanos = []float64{float64(4 * time.Millisecond)}
 	with := capacityBuildForTest(t, settings, w, snapshot)
 	if with.Kappa == nil || *with.Kappa >= *without.Kappa {
 		t.Fatalf("conditional service discarded dispatch occupancy: without=%+v with=%+v", without, with)
@@ -548,8 +443,8 @@ func TestCapacityTableCancelsUnwantedQueuedAndRunning(t *testing.T) {
 		recorded.Add(1)
 		return nil
 	}, nil)
-	key := NewCapacityInput(s, capacityTestWindows, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0]).Key()
-	queuedKey := NewCapacityInput(s, capacityTestWindows, snap.DispatchOccupancy, snap.Options[1], snap.Workloads[0]).Key()
+	key := NewCapacityInput(s, capacityTestWindows, snap.Options[0], snap.Workloads[0]).Key()
+	queuedKey := NewCapacityInput(s, capacityTestWindows, snap.Options[1], snap.Workloads[0]).Key()
 	original, cancel := context.WithCancel(context.Background())
 	blocked := &capacityBlockedContext{Context: original, started: make(chan struct{}), release: make(chan struct{})}
 	// Publish the complete task before either build or Ensure can read its
@@ -560,7 +455,7 @@ func TestCapacityTableCancelsUnwantedQueuedAndRunning(t *testing.T) {
 	table.parallel <- struct{}{}
 	runningDone := make(chan struct{})
 	go func() {
-		table.build(s, snap.DispatchOccupancy, running, snap.At)
+		table.build(s, running, snap.At)
 		close(runningDone)
 	}()
 	table.Ensure(context.Background(), s, snap)
@@ -599,7 +494,6 @@ func TestCapacityTableRoundRobinWorkloads(t *testing.T) {
 	s, snap := capacityFixture()
 	baseWorkload, baseOption := *snap.Workloads[0], snap.Options[0]
 	s.AutonomousWorkloads, snap.Workloads, snap.Options = nil, nil, nil
-	snap.DispatchOccupancy = nil
 	for i, count := range []int{3, 1, 2} {
 		w := baseWorkload
 		w.UID = string(rune('a' + i))
@@ -634,7 +528,7 @@ func TestCapacityTableRoundRobinWorkloads(t *testing.T) {
 // A recorded row stands in for a row being computed and gives way once built.
 func TestCapacityTableUsesRecordedRowUntilBuilt(t *testing.T) {
 	s, snap := capacityFixture()
-	key := NewCapacityInput(s, capacityTestWindows, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0]).Key()
+	key := NewCapacityInput(s, capacityTestWindows, snap.Options[0], snap.Workloads[0]).Key()
 	recordedKappa := 1.0
 	table := NewCapacityTable(1, capacityTestWindows, nil, func(_ context.Context, keys []string) (map[string]CapacityRow, error) {
 		if len(keys) != 1 || keys[0] != key {
@@ -722,10 +616,10 @@ func TestCapacityKeyIgnoresOccupancyImageHistory(t *testing.T) {
 
 func TestCapacityKeyIgnoresOccupancyProvenance(t *testing.T) {
 	s, snap := capacityFixture()
-	in := NewCapacityInput(s, capacityTestWindows, nil, snap.Options[0], snap.Workloads[0])
+	in := NewCapacityInput(s, capacityTestWindows, snap.Options[0], snap.Workloads[0])
 	key := in.Key()
 	in.DispatchOccupancy.Source = "new-record-key"
-	in.DispatchOccupancy.Provenance.Source = occupancySourceDOM
+	in.DispatchOccupancy.Provenance.Source = occupancySourceProfile
 	if key != in.Key() {
 		t.Fatal("source-only change invalidated numerical capacity")
 	}
@@ -737,27 +631,28 @@ func TestCapacityKeyIgnoresOccupancyProvenance(t *testing.T) {
 
 func TestCapacityKeyAndTableReuseIgnoreProvenanceRefresh(t *testing.T) {
 	s, snap := capacityFixture()
-	i := snap.Options[0].Instance
-	window := OccupancyWindow{Start: snap.At.Add(-time.Minute), End: snap.At}
-	snap.DispatchOccupancy = []DispatchOccupancy{{
-		Node: i.Node, PowerMode: i.Profile.Condition.PowerMode, Model: i.Profile.Condition.LogicalModel,
-		ProfileID: i.Profile.ID, ExecutionPath: i.Profile.Condition.Artifact.ExecutionPath, Batch: i.MaxBatch,
-		Source: "cache-before", Provenance: &DispatchOccupancyProvenance{Source: "measured", Pairs: 1000, Window: &window, UpdatedAt: snap.At},
-	}}
+	withOccupancy := func(nanos []float64, measuredAt time.Time) {
+		p := *snap.Options[0].Instance.Profile
+		p.Batches = slices.Clone(p.Batches)
+		p.Batches[0].DispatchOccupancyNanos = nanos
+		p.MeasuredAt = measuredAt
+		snap.Options[0].Instance.Profile = &p
+	}
+	withOccupancy([]float64{1000, 2000, 3000}, snap.At)
 	var recorded int
 	table := NewCapacityTable(1, capacityTestWindows, func(CapacityRow) error { recorded++; return nil }, nil)
 	table.Ensure(context.Background(), s, snap)
 	table.Wait()
 	before := table.Rows()[0]
-	refreshedWindow := OccupancyWindow{Start: window.Start.Add(time.Second), End: window.End.Add(time.Second)}
-	snap.DispatchOccupancy[0].Source = "cache-after"
-	snap.DispatchOccupancy[0].Provenance = &DispatchOccupancyProvenance{Source: "measured", Pairs: 2000, Window: &refreshedWindow, UpdatedAt: snap.At.Add(time.Second)}
+	// Same median d, different evidence: provenance changes, numerical key does not.
+	withOccupancy([]float64{1000, 2000, 2000, 2000, 3000}, snap.At.Add(time.Second))
 	table.Ensure(context.Background(), s, snap)
 	table.Wait()
 	after := table.Rows()[0]
+	want := ResolveDispatchOccupancy(s, snap.Options[0].Instance).Provenance
 	if recorded != 1 || before.Key != after.Key || !before.BuiltAt.Equal(after.BuiltAt) || *before.Kappa != *after.Kappa ||
-		!reflect.DeepEqual(after.Input.DispatchOccupancy.Provenance, snap.DispatchOccupancy[0].Provenance) ||
-		after.Input.DispatchOccupancy.Source != "cache-after" || before.Input.DispatchOccupancy.Provenance.Pairs != 1000 {
+		before.Input.DispatchOccupancy.Provenance.Pairs != 3 || !reflect.DeepEqual(after.Input.DispatchOccupancy.Provenance, want) ||
+		after.Input.DispatchOccupancy.Provenance.Pairs != 5 {
 		t.Fatalf("refresh rebuilt κ or lost current/original provenance: %+v %+v records=%d", before, after, recorded)
 	}
 	after.Input.DispatchOccupancy.PerRequest++
@@ -769,7 +664,6 @@ func TestCapacityKeyAndTableReuseIgnoreProvenanceRefresh(t *testing.T) {
 func TestConfiguredDispatchOccupancyMultipliesBatchOnceInReplay(t *testing.T) {
 	settings, snapshot := capacityFixture()
 	settings.DefaultDispatchOccupancyNanos = 500000
-	snapshot.DispatchOccupancy = nil
 	snapshot.Instances[0].MaxBatch = 4
 	snapshot.Instances[0].Profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 4}, []float64{4e6})}
 	state := schedulerReplayState{settings: settings, snap: snapshot, rng: rand.New(rand.NewPCG(1, 0)), now: 100}

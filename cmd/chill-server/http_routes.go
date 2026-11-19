@@ -99,8 +99,6 @@ func composeChillServer(
 		"GET /api/v1/namespaces/{namespace}/batch-energy-optimizations",
 		"GET /api/v1/namespaces/{namespace}/operation-cost-measurements",
 		"GET /api/v1/namespaces/{namespace}/operation-cost-measurements/{name}",
-		"GET /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements",
-		"GET /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements/{name}",
 		"GET /api/v1/systems",
 		"GET /api/v1/inventory",
 		"GET /api/v1/model-compatibility",
@@ -167,13 +165,11 @@ func authorizeQueryResources(
 	case isMeasurementPreflight(request):
 		resources = []string{"batchenergyoptimizations"}
 	case strings.HasSuffix(request.URL.Path, "/measurement-coverage"):
-		resources = []string{"batchenergyoptimizations", "profilingruns", "dispatchoccupancymeasurements"}
+		resources = []string{"batchenergyoptimizations", "profilingruns"}
 	case strings.HasSuffix(request.URL.Path, "/batch-energy-optimizations"):
 		resources = []string{"batchenergyoptimizations"}
 	case strings.Contains(request.URL.Path, "/operation-cost-measurements"):
 		resources = []string{"operationcostmeasurements"}
-	case strings.Contains(request.URL.Path, "/dispatch-occupancy-measurements"):
-		resources = []string{"dispatchoccupancymeasurements"}
 	}
 	if request.PathValue("name") != "" {
 		resourceVerb = queryGetVerb

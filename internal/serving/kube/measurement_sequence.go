@@ -322,11 +322,6 @@ func (c *SchedulerController) manualPreparationLocked(ctx context.Context, reque
 			return servingstate.PrepareSpec{}, servingstate.Refused("InvalidInput", "maxBatch must be a positive measured batch")
 		}
 		spec.Config.Policy.MaxBatchSize, spec.Instance.MaxBatch = *request.MaxBatch, *request.MaxBatch
-	}
-	if request.FixedBatchSize != 0 {
-		spec.Config.Policy.FixedBatchSize, spec.Instance.FixedBatchSize = request.FixedBatchSize, request.FixedBatchSize
-	}
-	if request.MaxBatch != nil || request.FixedBatchSize != 0 {
 		checked := spec.Config
 		checked.Policy.Batches = spec.Instance.Profile.NativeBundle().Batches
 		if err := native.ValidateConfig(&checked); err != nil {
@@ -353,7 +348,7 @@ func (c *SchedulerController) manualPreparationLocked(ctx context.Context, reque
 }
 
 func manualRemovalAllowed(snapshot serving.SchedulerSnapshot, request servingstate.ManualOperation) error {
-	if request.FixedBatchSize != 0 || request.MaxBatch != nil || request.ProfileID != "" {
+	if request.MaxBatch != nil || request.ProfileID != "" {
 		return servingstate.Refused("InvalidInput", "remove takes only the instance")
 	}
 	if err := removableBy(snapshot, request.Instance, request.WorkloadUID); err != nil {

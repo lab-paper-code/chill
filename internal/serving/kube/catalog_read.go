@@ -1,8 +1,6 @@
 package kube
 
 import (
-	"fmt"
-	"slices"
 	"time"
 
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
@@ -107,72 +105,6 @@ type CatalogRead struct {
 	Accepted *CatalogSnapshot `json:"accepted"`
 }
 
-// OccupancySelection names the exact retained record already selected by CostEvidence.
-// It is not a second occupancy selector or a declaration that a pending DOM succeeded.
-type OccupancySelection struct {
-	Node          serving.NodeReference        `json:"node"`
-	PowerMode     string                       `json:"powerMode"`
-	Model         string                       `json:"model"`
-	RuntimeImage  string                       `json:"runtimeImage"`
-	ExecutionPath string                       `json:"executionPath"`
-	ProfileID     string                       `json:"profileID"`
-	Batch         int                          `json:"batch"`
-	Evidence      evidencestore.ObjectIdentity `json:"evidence"`
-}
-
-// OccupancySkipped reports a selection whose cached evidence cannot be projected.
-type OccupancySkipped struct {
-	Source    string                `json:"source"`
-	Node      serving.NodeReference `json:"node"`
-	Model     string                `json:"model"`
-	PowerMode string                `json:"powerMode"`
-	ProfileID string                `json:"profileID"`
-	Reason    string                `json:"reason"`
-}
-
-// OccupancySelections joins the existing scheduler selection to its cached source.
-// The cache belongs to the same Refresh; no store read or selection rule is repeated.
-func (e *CostEvidence) OccupancySelections(selected []serving.DispatchOccupancy, profiles []serving.Profile) ([]OccupancySelection, []OccupancySkipped) {
-	out := make([]OccupancySelection, 0, len(selected))
-	var skipped []OccupancySkipped
-	for _, selection := range selected {
-		var candidate OccupancySelection
-		matches := 0
-		for identity, record := range e.occupancy {
-			if identity.Key != selection.Source || record.Node != selection.Node ||
-				record.PowerMode != selection.PowerMode || record.Model != selection.Model ||
-				record.Verdict != servingstate.MeasurementAccepted {
-				continue
-			}
-			executionPath := record.ExecutionPath
-			if executionPath == "" {
-				if index := slices.IndexFunc(profiles, func(p serving.Profile) bool { return p.ID == record.ProfileID }); index >= 0 {
-					executionPath = profiles[index].Condition.Artifact.ExecutionPath
-				}
-			}
-			matches++
-			candidate = OccupancySelection{
-				Node: record.Node, PowerMode: record.PowerMode, Model: record.Model, RuntimeImage: record.RuntimeImage,
-				ExecutionPath: executionPath,
-				ProfileID:     record.ProfileID, Batch: record.Batch, Evidence: identity,
-			}
-		}
-		if matches != 1 {
-			reason := "noMatchingEvidence"
-			if matches > 1 {
-				reason = fmt.Sprintf("ambiguousEvidence(%d)", matches)
-			}
-			skipped = append(skipped, OccupancySkipped{
-				Source: selection.Source, Node: selection.Node, Model: selection.Model,
-				PowerMode: selection.PowerMode, ProfileID: selection.ProfileID, Reason: reason,
-			})
-			continue
-		}
-		out = append(out, candidate)
-	}
-	return out, skipped
-}
-
 type CatalogSnapshot struct {
 	ConfigVersion       string                            `json:"configVersion"`
 	Profiles            []ProfileSummary                  `json:"profiles"`
@@ -184,13 +116,6 @@ type CatalogSnapshot struct {
 	SourceCheckedAt     time.Time                         `json:"sourceCheckedAt"`
 	SourceError         string                            `json:"sourceError"`
 	Revision            string                            `json:"revision"`
-	Occupancy           []OccupancySelection              `json:"occupancy"`
-	OccupancySkipped    []OccupancySkipped                `json:"occupancySkipped,omitempty"`
-	// DispatchOccupancy is the same resolved immutable source list captured by
-	// the scheduler: exact measured B, legacy DOM, or configured default.
-	DispatchOccupancy []serving.DispatchOccupancy `json:"dispatchOccupancy"`
-	// OccupancyEstimates retain signed rolling facts, including unqualified cells.
-	OccupancyEstimates []serving.OccupancyEstimate `json:"occupancyEstimates"`
 }
 
 func ProjectCatalogSnapshot(

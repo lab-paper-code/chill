@@ -104,9 +104,8 @@ gateway는 요청마다 route의 ready executor 가운데 응답을 받지 못�
 그 executor의 한도 미만인 것만 남기고, 남은 것 중에서 plan의 share로 고른다.
 한도는 `min(max(floor(R x T), 최소 실행 가능 batch), executor 큐 크기)`다. T는
 Workload의 latency target이고 R은 그 인스턴스가 실행할 수 있는 batch들의 batch size /
-평균 service 시간 중 가장 큰 값이다. batch는 허용 최대 batch 이하이고, 고정 batch
-정책이면 그 고정 batch와 같을 때 실행 가능하다. 고정 batch 인스턴스의 한도는 그
-batch만으로 계산하며, 어떤 인스턴스도 실행할 수 있는 가장 작은 batch보다 낮게
+평균 service 시간 중 가장 큰 값이다. batch는 허용 최대 batch 이하일 때 실행
+가능하다. 어떤 인스턴스도 실행할 수 있는 가장 작은 batch보다 낮게
 제한되지 않으므로 batch 하나는 항상 담을 수 있다. 한도는 인스턴스가 target 시간
 동안 처리하는 요청 수인 운영점이며, 한도를 넘는 요청이 target을 놓친다는 증명이
 아니다. 한도에 닿은 executor만 남으면 gateway는 `Reject` 요청을 즉시

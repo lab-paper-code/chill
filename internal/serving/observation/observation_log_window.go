@@ -113,7 +113,7 @@ func (l *ObservationLog) commitWindowAppend(row *observationAppend, size int64) 
 	l.windowRecords++
 }
 
-func (l *ObservationLog) retainWindow(from, to time.Time, occupancy bool, now time.Time) {
+func (l *ObservationLog) retainWindow(from, to, now time.Time) {
 	l.windowMu.Lock()
 	defer l.windowMu.Unlock()
 	if now.After(l.windowNow) {
@@ -124,18 +124,13 @@ func (l *ObservationLog) retainWindow(from, to time.Time, occupancy bool, now ti
 		if l.windowSegments == nil {
 			l.windowSegments = map[string]*windowSegment{}
 		}
-		span := min(max(to.Sub(from), 0), l.config.Retention)
-		if occupancy {
-			l.occupancySpan = span
-		} else {
-			l.windowSpan = span
-		}
+		l.windowSpan = min(max(to.Sub(from), 0), l.config.Retention)
 	}
 	l.pruneWindowLocked()
 }
 
 func (l *ObservationLog) windowCacheEligibleLocked(at time.Time) bool {
-	floor := l.windowNow.Add(-max(l.windowSpan, l.occupancySpan)).Truncate(time.Minute)
+	floor := l.windowNow.Add(-l.windowSpan).Truncate(time.Minute)
 	return l.windowSegments != nil && !at.Before(floor) && !at.After(l.windowNow.Truncate(time.Minute))
 }
 

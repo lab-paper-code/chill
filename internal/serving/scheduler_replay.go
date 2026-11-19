@@ -96,7 +96,7 @@ type schedulerReplayInstance struct {
 	outstanding     int
 	policy          firstfloor.Policy
 	arrivalTimes    map[string][]float64
-	occupancyNanos  float64 // selected measured, DOM or configured extra ns/request
+	occupancyNanos  float64 // selected measured, profile or configured extra ns/request
 	batchStarted    float64
 	batchElapsed    int64
 	batchIdle       int64
@@ -493,7 +493,7 @@ func (s *schedulerReplayState) initializeInstances() {
 		if i.Profile != nil {
 			x.policy = schedulerPolicy(i)
 		}
-		if o := ResolveDispatchOccupancy(s.settings, s.snap.DispatchOccupancy, i); o != nil {
+		if o := ResolveDispatchOccupancy(s.settings, i); o != nil {
 			x.occupancyNanos = float64(o.PerRequest)
 		}
 		s.instances = append(s.instances, x)
@@ -829,7 +829,7 @@ func (s *schedulerReplayState) nextEvent() (float64, bool) {
 	for _, i := range s.instances {
 		next = math.Min(next, i.finish)
 		for _, r := range i.queue {
-			if r.source.Definition.Admission.Policy != AdmissionPolicyReject || r.deferred || i.policy.FixedBatchSize > 0 {
+			if r.source.Definition.Admission.Policy != AdmissionPolicyReject || r.deferred {
 				continue
 			}
 			remaining := firstfloor.RemainingSLOMS(s.nativeRequestState(i, r))

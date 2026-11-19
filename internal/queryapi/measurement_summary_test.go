@@ -10,9 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
 func restoreSummary(t *testing.T, raw []byte) map[string]any {
@@ -194,111 +191,6 @@ func TestMeasurementSummaryOperationalPayloads(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestOccupancySummaryRetainsSignedTuplesWithinDecoderBudget(t *testing.T) {
-	d := int64(-9223372036854775807)
-	throughput, idle := 52.24, 0.012
-	cells := make([]MeasurementCoverageCell, 390)
-	for i := range cells {
-		cells[i].ID = fmt.Sprintf("cell-%d", i)
-		cells[i].Occupancy = []MeasurementOccupancy{}
-	}
-	// The retained operating snapshot has 150 DOM requests across 390 cells.
-	// Even if every request has a different physical tuple, do not fan out
-	// inventory nodes and profile batches into invented unmeasured entries.
-	for request := range 150 {
-		cell, node, batch := request%len(cells), request%3, request%6
-		window := OccupancyMeasurementWindow{
-			Start: time.Date(2026, 11, 3, 0, 0, 0, 1, time.UTC),
-			End:   time.Date(2026, 11, 3, 0, 1, 0, 2, time.UTC),
-		}
-		profile := fmt.Sprintf("profile-%d", cell)
-		identity := evidencestore.ObjectIdentity{Store: "evidence",
-			Key: fmt.Sprintf("profiles/node-%d/request-%d/profile.json", node, request), Size: 12345}
-		cells[cell].Occupancy = append(cells[cell].Occupancy, MeasurementOccupancy{
-			Node:      MeasurementIdentity{Name: fmt.Sprintf("node-%d", node), UID: fmt.Sprintf("physical-node-uid-%d", node)},
-			ProfileID: fmt.Sprintf("profile-%d", cell), Batch: batch + 1, State: "present",
-			Request:    &MeasurementIdentity{Name: fmt.Sprintf("occ-%d", request), UID: fmt.Sprintf("request-uid-%d", request)},
-			D:          &OccupancyValue{PerRequestNanos: &d, Throughput: &throughput, IdleFraction: &idle, Verdict: "Accepted"},
-			Evidence:   &OccupancyEvidence{Store: "evidence", Key: fmt.Sprintf("serving/dispatch-occupancy/node-%d/request-%d.json", node, request), Size: 12345},
-			SchedulerD: &SchedulerOccupancy{Source: "measured", Value: 0, Pairs: 12, Window: &window, UpdatedAt: window.End},
-			ObservedD: &OccupancyEstimate{
-				Node:  MeasurementIdentity{Name: fmt.Sprintf("node-%d", node), UID: fmt.Sprintf("physical-node-uid-%d", node)},
-				Model: "model", PowerMode: "fixed", ExecutionPath: "cpu", RuntimeImage: "registry/runtime:retained",
-				WorkloadUID: fmt.Sprintf("workload-%d", request), Batch: batch + 1,
-				Profile: OccupancyProfile{ProfileID: profile, Reference: identity,
-					Evidence: []evidencestore.ObjectIdentity{identity, {Store: "evidence",
-						Key: fmt.Sprintf("measurements/node-%d/request-%d/raw.json", node, request), Size: 54321}}, MeanNanos: 123.5},
-				Pairs: 12, Batches: 24, CompleteBatches: 24, Requests: 96, CompleteRequests: 96,
-				RawRows: 288, CompleteRawRows: 288, EnrichedCompleteRawRows: 288, FinalRows: 96, CompleteFinalRows: 96,
-				Statistics: &OccupancyStatistics{Median: -20.5, P25: -30, P75: 10,
-					IQR: 40, P10: -50, P90: 20, Mean: -10.25, NegativeFraction: .75}, Window: window,
-			},
-		})
-	}
-	for _, cell := range cells {
-		for _, entry := range cell.Occupancy {
-			if entry.SchedulerD == nil || entry.ObservedD == nil {
-				t.Fatal("budget fixture must include scheduler and observed attachments")
-			}
-		}
-	}
-	raw, err := json.Marshal(map[string]any{"cells": cells})
-	if err != nil {
-		t.Fatal(err)
-	}
-	summary := assertSummaryRoundTrip(t, raw, false)
-	restored := restoreSummary(t, summary)
-	// Both wire encodings must retain the full attachment fixture.
-	for _, sharePaths := range []bool{false, true} {
-		encoded, err := MeasurementSummaryJSON(json.RawMessage(raw), false, sharePaths)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(encoded) > 256<<10 {
-			t.Fatalf("attachment response exceeds 256 KiB: %d", len(encoded))
-		}
-		if !reflect.DeepEqual(restoreSummary(t, encoded), restored) {
-			t.Fatal("summary encoding changed scheduler or observed attachments")
-		}
-	}
-	var count func(any) (int, int)
-	stringUnits := 0
-	count = func(value any) (int, int) {
-		nodes, depth := 1, 1
-		child := func(entry any) {
-			n, d := count(entry)
-			nodes += n
-			if d+1 > depth {
-				depth = d + 1
-			}
-		}
-		switch item := value.(type) {
-		case string:
-			// Conservatively count all expanded strings, not only joined paths.
-			for _, r := range item {
-				stringUnits++
-				if r > 0xffff {
-					stringUnits++
-				}
-			}
-		case map[string]any:
-			for _, entry := range item {
-				child(entry)
-			}
-		case []any:
-			for _, entry := range item {
-				child(entry)
-			}
-		}
-		return nodes, depth
-	}
-	nodes, depth := count(restored)
-	if nodes+230362 > 2_000_000 || depth > 64 || len(summary) > 256<<10 || stringUnits > 8*1024*1024 {
-		t.Fatalf("occupancy exceeds response/decoder budget: bytes=%d nodes=%d depth=%d stringUnits=%d", len(summary), nodes, depth, stringUnits)
-	}
-	t.Logf("390 cells, 150 recorded DOM tuples: raw=%d summary=%d expanded nodes=%d depth=%d stringUnits=%d", len(raw), len(summary), nodes, depth, stringUnits)
 }
 
 func TestMeasurementSummarySharesPathComponents(t *testing.T) {

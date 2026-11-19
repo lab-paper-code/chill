@@ -105,7 +105,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(refusedNodeMissing, root.node)))
 			continue
 		}
-		if c.authorize(c.measurementRootOperation(root, node, byName, config)) != nil {
+		if c.authorize(measurementRootOperation(root, node)) != nil {
 			claimed[node.Name] = true
 			continue
 		}
@@ -135,7 +135,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			}
 		}
 		claimed[node.Name] = true
-		if !c.reserveMeasurementLease(c.measurementRootOperation(root, node, byName, config)) {
+		if !c.reserveMeasurementLease(measurementRootOperation(root, node)) {
 			continue
 		}
 		if err := c.setMeasurementTaint(ctx, node, string(root.object.GetUID())); err != nil {
@@ -191,9 +191,6 @@ func (c *SchedulerController) rootRefusal(ctx context.Context, root measurementR
 	case *edge.OperationCostMeasurement:
 		profiles, reason, detail, wait := c.operationCostRefusal(o, node, in)
 		return reason, detail, wait, func() { c.startOperationCost(node, o.DeepCopy(), profiles, in) }
-	case *edge.DispatchOccupancyMeasurement:
-		plan, reason, detail, wait := c.occupancyRefusal(ctx, o, node, in)
-		return reason, detail, wait, func() { c.startOccupancy(node, o.DeepCopy(), plan, in.config) }
 	case *edge.BatchEnergyOptimization:
 		plan, reason, detail, wait := c.sessionRefusal(ctx, o, node, in)
 		return reason, detail, wait, func() { c.startSession(node, o.DeepCopy(), plan, in.config) }
@@ -213,7 +210,7 @@ func (c *SchedulerController) refuseMeasurement(ctx context.Context, object clie
 // chillServerRun reports a measurement kind ChillServer runs itself.
 func chillServerRun(object client.Object) bool {
 	switch object.(type) {
-	case *edge.OperationCostMeasurement, *edge.DispatchOccupancyMeasurement, *edge.BatchEnergyOptimization:
+	case *edge.OperationCostMeasurement, *edge.BatchEnergyOptimization:
 		return true
 	}
 	return false
@@ -238,11 +235,7 @@ func (c *SchedulerController) continueHeldNodes(ctx context.Context, nodes []cor
 				continue
 			}
 			if granted {
-				byName := map[string]*core.Node{}
-				for i := range nodes {
-					byName[nodes[i].Name] = &nodes[i]
-				}
-				c.reserveMeasurementLease(c.measurementRootOperation(*root, node, byName, config))
+				c.reserveMeasurementLease(measurementRootOperation(*root, node))
 				continue
 			}
 			if _, transition := root.object.(*edge.PowerModeTransitionCost); !transition && !chillServerRun(root.object) {
@@ -506,20 +499,9 @@ func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.
 	return nil
 }
 
-func (c *SchedulerController) measurementRootOperation(root measurementRoot, node *core.Node, nodes map[string]*core.Node, config SchedulerControllerConfig) servingstate.Operation {
+func measurementRootOperation(root measurementRoot, node *core.Node) servingstate.Operation {
 	holder := string(root.object.GetUID())
-	operation := servingstate.Operation{ID: measurementLeaseKind + "/" + holder, Kind: measurementLeaseKind, Holder: holder, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}
-	if occupancy, ok := root.object.(*edge.DispatchOccupancyMeasurement); ok {
-		for _, definition := range c.runtime.SchedulerInputs(time.Now).Workloads {
-			if definition.Name == occupancy.Spec.Workload {
-				operation.WorkloadUID = definition.UID
-			}
-		}
-		if load := nodes[config.LoadGenerator.NodeName]; load != nil {
-			operation.Nodes = append(operation.Nodes, serving.NodeReference{Name: load.Name, UID: string(load.UID)})
-		}
-	}
-	return operation
+	return servingstate.Operation{ID: measurementLeaseKind + "/" + holder, Kind: measurementLeaseKind, Holder: holder, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}
 }
 
 func (c *reservationState) reserveMeasurementLease(operation servingstate.Operation) bool {

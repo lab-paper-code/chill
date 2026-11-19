@@ -33,28 +33,3 @@ func GetOperationCostMeasurement(
 	err := reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &cr)
 	return cr, err
 }
-
-func ListDispatchOccupancyMeasurements(
-	ctx context.Context, reader client.Reader, namespace string, authorize func(string) error,
-) (api.DispatchOccupancyMeasurementList, error) {
-	var list api.DispatchOccupancyMeasurementList
-	if err := authorize(namespace); err != nil {
-		return list, err
-	}
-	if err := reader.List(ctx, &list, client.InNamespace(namespace)); err != nil {
-		return list, err
-	}
-	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
-	return list, nil
-}
-
-func GetDispatchOccupancyMeasurement(
-	ctx context.Context, reader client.Reader, namespace, name string, authorize func(string) error,
-) (api.DispatchOccupancyMeasurement, error) {
-	var cr api.DispatchOccupancyMeasurement
-	if err := authorize(namespace); err != nil {
-		return cr, err
-	}
-	err := reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &cr)
-	return cr, err
-}

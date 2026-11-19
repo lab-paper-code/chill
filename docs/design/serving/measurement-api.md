@@ -1,10 +1,10 @@
 # 측정 API와 근거 소비
 
-이 문서는 동작 비용, 디스패치 점유와 공개 측정 조회를 정한다. 노드별 승인과 실제 반환은 [측정 승인](measurement-admission.md), 실행 조건은 [실행기와 측정](scheduler-runtime-measurement.md), 판단은 [계획기](analytic-planner.md), 프로파일 측정은 [프로파일 측정 세션](profile-session.md)을 따른다.
+이 문서는 동작 비용, 디스패치 점유 선택과 공개 측정 조회를 정한다. 노드별 승인과 실제 반환은 [측정 승인](measurement-admission.md), 실행 조건은 [실행기와 측정](scheduler-runtime-measurement.md), 판단은 [계획기](analytic-planner.md), 프로파일 측정은 [프로파일 측정 세션](profile-session.md)을 따른다.
 
 ## 소유권과 근거 경계
 
-`internal/serving/measurement`가 occupancy intent 해석, 동결 객체와 제출, BEO와 DOM 삭제를 소유한다. producer 종료 확인과 evidence-before-native 삭제를 같은 owner에서 처리한다.
+`internal/serving/measurement`가 BEO 삭제를 소유한다.
 
 HTTP는 인증과 strict decode, 응답을 맡고 composition root가 기존 mutation mutex와 accepted profile, configuration decoder와 timeout을 주입한다. 별도 측정 writer나 scheduler 권한을 만들지 않는다.
 
@@ -47,27 +47,11 @@ Accepted는 실제 effect와 격리, 무추론, boundary와 확장 support, 유�
 
 planner는 nominal 평균을 유지하고 동일 immutable reference/trial의 signed 노출을 먼저 상쇄한다. 잔여 B 절댓값 합보다 이득이 클 때 에너지 이동한다. 같으면 keep이며 keep 미충족 회복은 별도 순서를 따른다. profile 통계 CI를 이 문턱에 더하지 않는다.
 
-## 디스패치 점유 측정
-
-신규 DispatchOccupancyMeasurement는 configured 짧은 closed-loop burst다. legacy Accepted scalar DOM은 별도 저장 계약으로 보존한다.
-
-### 공개 생성과 삭제
-
-`POST /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements`는 다음 intent만 받는다.
-
-```json
-{"name":"occupancy-example","node":"target-node","batchEnergyOptimization":"profile-source","workload":"target-workload","batch":1}
-```
-
-name은 선택이다. 서버가 같은 수락 configuration revision의 dispatchOccupancy 정책과 accepted profile로 전체 native spec을 동결한다. caller protocol 필드는 거절한다. 불가능한 조건은400 OccupancyInfeasible, 정책 부재나 오류는503 OccupancyPolicyUnavailable이다.
-
-정상 제출은 `202 {request:"Accepted",task:<DOM>}`다. `?dryRun=All`은 native 생성과 physical effect 없이 `200 {request:"NOT_SUBMITTED",task:<동결 DOM>}`을 반환한다. 수락 뒤 측정 완료와 과학적 Accepted를 별도로 판정한다.
-
-DELETE는 항목 URL의 `?uid=<UID>`와 `If-Match` RV가 필요하다. Measuring이나 살아 있는 owned load Job/Pod는409다. 삭제 대상은 동결 Node UID와 DOM UID로 정한 producer key 하나이며 저장된 record를 읽지 않는다. 그 key를 지운 뒤 native CR을 삭제한다. partial 삭제 실패는 rollback하지 않고, 이미 없는 key는 삭제된 것으로 본다.
+## BEO 생성과 삭제
 
 Bearer TokenReview와 정확한 URL SAR, namespace allowlist와 native resource SAR를 모두 적용한다. POST create는 collection scope, DELETE는 URL 이름의 delete다. 삭제 lookup과 evidence 정리는 owner SA가 수행하며 caller get을 추가 권한으로 요구하지 않는다.
 
-BEO 생성과 삭제도 같은 두 권한 층을 사용한다. BEO 삭제는 소유와 위치로만 결정하며 저장된 payload를 읽거나 decode하지 않는다. 따라서 이전 schema로 쓴 객체도 삭제할 수 있다. 거절(409 MeasurementInUse)은 네 가지다.
+BEO 삭제는 소유와 위치로만 결정하며 저장된 payload를 읽거나 decode하지 않는다. 따라서 이전 schema로 쓴 객체도 삭제할 수 있다. 거절(409 MeasurementInUse)은 네 가지다.
 
 - 현재 generation을 관측한 terminal 상태(Complete 또는 Failed)가 아니다. ChillServer가 세션의 마지막 기록으로 terminal 상태를 쓰므로 그 전에는 지울 수 없다. 실행 중 세션의 취소는 지원하지 않는다.
 - BEO가 controller인 Run이 결과를 기록하지 않았거나, 그 Run의 Job 또는 Run이 기록한 Pod가 종료되지 않았다. worker가 cleanup 뒤에 raw를 다시 쓸 수 있다. 결과는 `status.evidence`, 현재 generation의 `ExecutionComplete=False`, 또는 `EvidenceVerified=False/EvidenceInvalid`다. 사유는 나열하지 않으므로 이전 Run도 삭제할 수 있다.
@@ -78,56 +62,11 @@ BEO 생성과 삭제도 같은 두 권한 층을 사용한다. BEO 삭제는 소
 
 삭제 대상은 `batch-energy-optimizations/<BEO UID>/`, `serving/profiles/<namespace>/<name>/<BEO UID>/`, 이전 형식이 쓴 `serving/profile-reuse/<namespace>/<name>/<BEO UID>/`, 세션의 동작 비용 기록(`serving/operation-measurements/<Node UID>/<BEO UID>.` 접두), 그리고 BEO가 controller인 각 Run의 `profiling-runs/<Run UID>/` 아래 모든 객체다. 모든 writer는 자기 owner ID 아래에만 쓰고, 끝의 구분자가 다른 UID와의 접두 일치를 막는다. 거절 판정은 scheduler mutation lock 안에서 하고, store 삭제와 native 삭제는 그 lock을 놓은 뒤 scheduler refresh lock만 잡고 한다. refresh는 profile bundle을 쓰므로, 다음 refresh는 native 삭제 뒤에 시작해 이 BEO를 보지 않는다. 주기 refresh는 삭제가 refresh lock을 잡고 있으면 그 tick을 건너뛰어 main loop를 막지 않는다. 실패 뒤 같은 UID/RV 재시도는 남은 객체만 다시 나열해 끝낸다. native 객체가 이미 사라진 측정의 객체는 이 API로 지정할 수 없어 운영자가 지운다.
 
-### 동결 protocol과 실행
-
-batchEnergyOptimization, node, workload와 batch는 exact profile과 현재 물리 Node, Dataset evaluation 입력을 연결한다. supplyMode와 workers, warmupSeconds, durationSeconds와 minimumPairs는 명시 정책이다.
-
-request lifetime과 delivery, preparation과 Job setup, collection과 drain, planned elapsed cap을 동결한다. sample은 burst 15초, warmup 5초, workers 8과 minimumPairs 100을 사용한다. 정밀도는 실제 trial 결과로 판단한다.
-
-고정 B와 maxBatchWaitMS0의 accepted instance를 준비하고 공통 TLS gateway와 projected token, CA로 부하를 공급한다. native queue와 수명, profile tail과 전체 예산을 대조한다. 공급과 watchdog의 모든 구간이 frozen cap에 맞아야 하며 자동 clamp와 retry, 연장은 없다.
-
-Job의 half-open receipt cohort를 requestID로 결합한 뒤 최초 direct native start에서 warmup을 전진시켜 D초 native window를 정한다. 생성시각을 측정 시작으로 쓰지 않는다. cleanup과 physical drain, 격리 witness를 원본에 보존한다.
-
-### 공통 native-pair estimator
-
-read-only GET과 DOM, rolling 집계는 같은 factual estimator를 사용한다. assigned/final/late-native를 RequestID로 결합하고 충돌하는 identity와 timestamp, 중복 final은 invalid로 처리한다.
-
-physical batch는 exact instance와 BatchID로 식별한다. 전체 unique member가 성공과 execution-complete, 같은 configuration과 시작/종료 identity, 직접 queued/running/finished 시각을 가져야 한다.
-
-인접 batch의 두 start는 native half-open window 안이어야 한다. 같은 profile와 decision/definition, fixed B와 no-wait 정책이 앞 start 전에 ACK됐음을 historical metadata로 확인한다. 모든 다음 member가 앞 finish 전에 queued여야 한다.
-
-`max(next.NativeQueuedAt) ≤ previous.NativeFinishedAt ≤ next.NativeRunningAt`
-
-signed 표본은 다음과 같다.
-
-```text
-d_i = (next.NativeRunningAt - previous.NativeRunningAt
-       - previous.ServiceSample.ServiceDurationNanos) / previous.BatchSize
-```
-
-앞 배치의 실제 Go runner exchange S를 뺀다. profile 평균이나 gateway offset으로 대체하지 않는다. 누락 batch와 gap, restart, overlap과 변경 경계를 건너 pair를 만들지 않는다.
-
-statistics는 signed ns/request의 mean, median, p25/p75와 IQR, p10/p90과 negativeFraction이다. 실제 표본을 정렬하고 `roundToEven((n−1)×p)` index를 사용한다. 보간과 negative censoring은 없다.0 pair는 statistics:null이다.
-
-rawRows와 completeRawRows, enrichedCompleteRawRows, finalRows와 completeFinalRows, joined requests와 complete requests, batches와 completeBatches, eligible pairs를 별도 분모로 남긴다. open snapshot과 supplement를 추가 raw 요청으로 세지 않는다.
-
-burst는 minimumPairs 미만이면 Insufficient/TooFewPairs로 통계를 보존하고 나머지는 Observed와 native Complete다. 포화, idle fraction과 CI gate를 추가하지 않는다. load와 retention, drain과 격리 실패는 실제 사유와 데이터를 남긴다.
-
 ## Scheduler의 d 선택
 
-정확한 Node UID, 모델, mode, path, batch와 profile ID별 선택 순서는 qualified rolling median, profile의 세션 포화 수준 점유 표본 중앙값, legacy Accepted DOM, configured `defaultDispatchOccupancyNanos`다.
+정확한 Node UID, 모델, mode, path, batch와 profile ID별 선택 순서는 profile의 세션 포화 수준 점유 표본 중앙값, configured `defaultDispatchOccupancyNanos`다. scalar default는 모든 batch 공통이다. 운영값은 `round(max(value,0))`다. 서빙 관측으로 d를 갱신하거나 별도 점유 조회 route를 두지 않는다.
 
-rolling은 UID 사이 실제 pair 표본을 같은 exact cell에 pool하며 median의 median을 쓰지 않는다. 운영값만 `round(max(median,0))`로 만든다. signed raw와 진단은 그대로다. scalar default는 모든 batch 공통이며 dispatchOccupancy 블록이 이를 shadow하지 않는다.
-
-worker 하나가 Tick과 writer lock 밖에서 scan과 reduce한다. selected-ID cap은 estimator allocation 전에 적용한다. scan은 겹치지 않고 cooldown은 scan+reduce 이상이다. timeout은 cooperative이며 실패와 cap 초과는 partial/stale measured를 폐기하고 DOM/default로 돌아간다.
-
-Tick은 atomic cache만 읽는다. source, pairs와 window, updatedAt과 value의 provenance를 수치 입력과 판단에 남긴다. value 변경은 검사 결과를 무효화하며 metadata-only 변경은 같은 전체 수치 입력의 결과를 재사용할 수 있다.
-
-`GET /api/v1/observations/occupancy?from=...&to=...`는 fresh 진단이다. from과 to 각각 하나, 양수 구간이며 accepted aggregationWindowSeconds 이하여야 한다. 초과는 scan 전400과 정수 maximumWindowSeconds다. 긴 과거 분석은 raw export와 offline reducer를 쓴다.
-
-bounded scan은 수명 cap과 drain allowance의 tail 안 segment만 두 번 읽어 선택 ID와 supplement를 연결한다. raw granularity는 minute나 gzip hour이며 밖 evidence를 가짜 완료로 만들지 않는다. operation timeout과 caller 취소를 지킨다. request count cap은 요청 수에 적용한다.
-
-private `GET /api/v1/scheduler/catalog-read`의 accepted.dispatchOccupancy가 실제 d 선택의 권위다. accepted.occupancyEstimates는 signed 관측이며 accepted.occupancy는 legacy evidence다. burst Observed 자체를 scalar Accepted나 scheduler 채택으로 승격하지 않는다.
+private `GET /api/v1/scheduler/catalog-read`는 accepted catalog와 reporting을 제공한다. 결정 snapshot은 선택한 d를 포함한다.
 
 ## 공개 Query와 권한
 
@@ -141,11 +80,10 @@ Query가 집계, 정적 호환성, assessment와 retained result를 소유한다
 | `/api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}/result` | 세션 결과. 조건, 설정, 전력 값, 배치별 요약 |
 | `/api/v1/namespaces/{namespace}/profiling-runs` | 정확 owner와 제한 labels, assessment |
 | `/api/v1/namespaces/{namespace}/operation-cost-measurements[/{name}]` | CR와 exact step 결과 |
-| `/api/v1/namespaces/{namespace}/dispatch-occupancy-measurements[/{name}]` | 원 phase, ref와 burst/legacy evidence, assessment |
 | `/api/v1/namespaces/{namespace}/measurement-coverage` | 현재 측정 셀과 근거 집계 |
 | `/api/v1/scheduler/profiles` | 공개 profile와 preparation, 결과 행과 insufficiency |
 
-목록과 단건은 native list/get SAR를 각각 요구한다. coverage는 정확 URL GET에 더해 같은 namespace BEO, ProfilingRun과 DOM list SAR를 요구한다. 인증 오류나 권한 거절에 cache 자료를 반환하지 않는다.
+목록과 단건은 native list/get SAR를 각각 요구한다. coverage는 정확 URL GET에 더해 같은 namespace BEO와 ProfilingRun list SAR를 요구한다. 인증 오류나 권한 거절에 cache 자료를 반환하지 않는다.
 
 정적 compatibility는 Compatible/Incompatible/Unknown이다. Ready와 측정 완료, admission 성공은 별도로 확인한다. 없거나 무효인 선언은 Unknown과 이유다. 같은 scope의 마지막 matching declaration을 사용하고 앞선 일치는 비차단 진단으로 남긴다. 대표 Node를 다른 Node 지원으로 복제하지 않는다.
 
@@ -173,10 +111,6 @@ assessment는 status, displayStatus와 label, execution과 evidence, checklist�
 
 failureSummary는 세션의 `status.outcome`과 `MeasurementComplete` 조건의 원문 문장을 쓴다. 세션은 Run을 소유하지 않는다. ProfilingRun의 failureSummary는 exact owner Run UID와 조건, 실제 exit와 안전한 한 줄 근거를 사용하며 일반 allocator 문구만으로 GPU 원인을 단정하지 않는다. 원시 로그와 미확정 인과를 보존한다.
 
-coverage occupancy의 present는 current exact profile와 Node의 검증 legacy Accepted 또는 burst Observed다. scheduler adopted는 accepted.dispatchOccupancy provenance의 measured/dom이면 true, default와 확인된 선택 부재면 false, catalog나 provenance 미확인이면 null이다.
-
-관측 signed d(B)와 실제 선택 d를 따로 표시한다. DOM 요청 없이 rolling 관측과 선택만 있는 tuple도 생성할 수 있다. 현재/과거 physical UID와 profile을 합치지 않는다. 한 DOM evidence 실패는 해당 행의 문제로 남기며 무관한 profile 결과를 숨기지 않는다.
-
 namespace cache는 fresh30초, stale 최대5분이며 갱신 하나를 공유한다. 초기화는503 CoverageWarming과 Retry-After2다. 일부 source 실패는 마지막 성공 시각과 partial/stale를 유지한다.5분 초과 요청은 같은 in-flight 갱신을 기다린 뒤 유효 입력이 없으면503 CoverageUnavailable이다.
 
 응답은 no-store다.8MiB를 넘으면 오류이며 임의 행 생략은 없다. 실제 배포 성능과 과학적 수용 결과는 이 계약만으로 달성 처리하지 않는다.
@@ -199,10 +133,8 @@ Evaluation의 공개 procedure와 stage progress, loadJobs는 기록된 사실�
 |---|---|
 | operation | `chill.dacs.io/serving-operation-measurement.v1alpha2`, `serving/operation-measurements/<Node UID>/<operation ID>.json` |
 | 미완료 sequence | `serving-operation-sequence.v1alpha1`, `serving/operation-sequences/<CR UID>.json` |
-| legacy scalar DOM | `chill.dacs.io/dispatch-occupancy-measurement.v1alpha1`, `serving/dispatch-occupancy/` |
-| burst DOM | `chill.dacs.io/dispatch-occupancy-measurement.v1alpha2`, `serving/dispatch-occupancy-observations/<NodeUID>/<CRUID>.json` |
 | experiment | `serving-experiment.v1alpha1`, `serving/experiments.v1alpha1/` |
 
 ## 저장 계약
 
-신규 burst와 legacy scalar의 reader와 prefix를 합치지 않는다. 누락 Timing과 B를 관측0으로 채우지 않는다. source별 판정, signed 원본과 immutable evidence를 보존한다. [Durable Stored-Contract Compatibility](../../adr/0019-durable-stored-contract-compatibility.md)를 따른다.
+누락 Timing과 B를 관측 0으로 채우지 않는다. signed 원본과 immutable evidence를 보존한다. [Durable Stored-Contract Compatibility](../../adr/0019-durable-stored-contract-compatibility.md)를 따른다.

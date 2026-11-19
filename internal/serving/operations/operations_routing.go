@@ -70,7 +70,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 			continue
 		}
 		policy := native.Policy{DecisionID: target.ID, ProfileID: instance.Profile.ID,
-			MaxBatchSize: instance.MaxBatch, MaxBatchWaitMS: float64(instance.MaxWait) / float64(time.Millisecond), FixedBatchSize: instance.FixedBatchSize}
+			MaxBatchSize: instance.MaxBatch, MaxBatchWaitMS: float64(instance.MaxWait) / float64(time.Millisecond)}
 		if err := o.ApplyPolicy(ctx, instance.ID, policy, result); err != nil {
 			return fmt.Errorf("apply policy to %s: %w", instance.ID, err)
 		}

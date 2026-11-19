@@ -20,7 +20,6 @@ type ProfilesView struct {
 	ConfigVersion string `json:"configVersion"`
 	servingkube.CatalogView
 	Preparations  map[string]servingstate.PrepareSpec `json:"preparations"`
-	Occupancy     []servingkube.OccupancySelection    `json:"-"`
 	Page          *ProfilePage                        `json:"page,omitempty"`
 	Filters       ProfileFilters                      `json:"filters"`
 	DisplayStatus func(serving.Profile) string        `json:"-"`

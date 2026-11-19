@@ -212,12 +212,11 @@ func buildHandler(
 		},
 	}
 	measurements.coverage = &querykube.CoverageService{
-		Reader: reader, Objects: measurements.objects,
+		Reader:          reader,
 		Catalog:         queryCatalogSource(catalog),
-		Decoder:         decodeOccupancyEvidence,
 		Authorize:       measurements.namespace,
 		RequestTimeout:  opts.requestTimeout,
-		MaxRequestBytes: opts.maxRequestBytes, MaxEvidenceBytes: opts.maxEvidenceBytes,
+		MaxRequestBytes: opts.maxRequestBytes,
 		Inventory: func(ctx context.Context) (queryapi.InventoryView, error) {
 			snapshot, err := inventory.Read(ctx)
 			return queryapi.BuildInventory(snapshot), err

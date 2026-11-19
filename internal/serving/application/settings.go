@@ -52,15 +52,6 @@ func (o *SchedulerService) ChangeSchedulerSettings(ctx context.Context, input Se
 	settings.AutonomousWorkloads = slices.DeleteFunc(slices.Clone(settings.AutonomousWorkloads),
 		func(uid string) bool { return !current[uid] },
 	)
-	if err := serving.SchedulerFixedBatchAutonomy(
-		o.Controller.State().Snapshot, settings.AutonomousWorkloads,
-	); err != nil {
-		return observation.SchedulerSettingsChange{}, "", &serving.Error{
-			Code:    "InvalidBody",
-			Message: err.Error(),
-			Field:   "autonomousWorkloads",
-		}
-	}
 	o.Lock.Lock()
 	defer o.Lock.Unlock()
 	if err := ctx.Err(); err != nil {

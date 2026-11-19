@@ -55,14 +55,10 @@ type HandlerConfig struct {
 	SchedulerMeters                                            func() []servingops.MeterDeclaration
 	ReceiveResources                                           func(context.Context, observation.ResourceBatch) ([]observation.ResourceTarget, error)
 
-	ReadCatalog           func(context.Context) (servingkube.CatalogRead, error)
-	OccupancyObservations OccupancyObservationReader
+	ReadCatalog func(context.Context) (servingkube.CatalogRead, error)
 
 	SubmitMeasurement     func(context.Context, api.BatchEnergyOptimization, bool) (measurement.MeasurementMutationResult, error)
 	DeleteMeasurement     func(context.Context, string, string, string, string) (measurement.MeasurementMutationResult, error)
-	BuildOccupancy        func(context.Context, string, measurement.OccupancyIntent) (*api.DispatchOccupancyMeasurement, error)
-	SubmitOccupancy       func(context.Context, api.DispatchOccupancyMeasurement, bool) (measurement.OccupancyMutationResult, error)
-	DeleteOccupancy       func(context.Context, string, string, string, string) (measurement.OccupancyMutationResult, error)
 	OperatingPower        func(context.Context, time.Time, time.Time, int) (observation.OperatingPowerWindow, error)
 	OperatingPowerSeries  func(context.Context, time.Time, time.Time, time.Duration, int) (observation.OperatingPowerSeries, error)
 	ListExperiments       func(context.Context) (ExperimentList, error)
@@ -150,14 +146,11 @@ func NewHandler(manager *management.Manager, runtime *serving.Runtime, authorize
 
 	h.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
 	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}", h.measurements)
-	h.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements", h.measurements)
-	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements/{name}", h.measurements)
 	h.mux.HandleFunc("GET /api/v1/observations/load", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/scheduler", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/clients", h.clientObservations)
 	h.mux.HandleFunc("POST /api/v1/internal/observations/resources", h.resources)
 	h.mux.HandleFunc("GET /api/v1/observations/power", h.operatingPower)
-	h.mux.HandleFunc("GET "+occupancyObservationsPath, h.occupancyObservations)
 	h.mux.HandleFunc("GET /api/v1/experiments", h.experiments)
 	h.mux.HandleFunc("GET /api/v1/experiments/{id}", h.experiments)
 	h.mux.HandleFunc("GET /api/v1/evaluations/active", h.activeEvaluations)

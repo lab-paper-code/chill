@@ -141,7 +141,7 @@ func schedulerAdmissionSameInstances(actual, wanted []SchedulerInstance) bool {
 		if !slices.ContainsFunc(actual, func(current SchedulerInstance) bool {
 			return schedulerSamePhysicalTarget(current, target) && current.Allocation == target.Allocation &&
 				current.WorkloadUID == target.WorkloadUID && current.Capacity == target.Capacity &&
-				current.MaxBatch == target.MaxBatch && current.MaxWait == target.MaxWait && current.FixedBatchSize == target.FixedBatchSize
+				current.MaxBatch == target.MaxBatch && current.MaxWait == target.MaxWait
 		}) {
 			return false
 		}

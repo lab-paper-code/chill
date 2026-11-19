@@ -281,12 +281,10 @@ func TestQueryReadResourceGrantsPrecedeBackendAndCache(t *testing.T) {
 		resources []string
 		name      string
 	}{
-		{"/measurement-coverage", []string{"batchenergyoptimizations", "profilingruns", "dispatchoccupancymeasurements"}, ""},
+		{"/measurement-coverage", []string{"batchenergyoptimizations", "profilingruns"}, ""},
 		{"/batch-energy-optimizations", []string{"batchenergyoptimizations"}, ""},
 		{"/operation-cost-measurements", []string{"operationcostmeasurements"}, ""},
 		{"/operation-cost-measurements/item", []string{"operationcostmeasurements"}, "item"},
-		{"/dispatch-occupancy-measurements", []string{"dispatchoccupancymeasurements"}, ""},
-		{"/dispatch-occupancy-measurements/item", []string{"dispatchoccupancymeasurements"}, "item"},
 	}
 	for _, tc := range cases {
 		for _, denied := range append([]string{"url", ""}, tc.resources...) {

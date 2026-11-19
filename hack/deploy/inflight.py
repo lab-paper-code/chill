@@ -7,9 +7,9 @@ import tempfile
 
 
 RESOURCES = ('profilingruns,batchenergyoptimizations,modelloadedidlebaselines,'
-             'dispatchoccupancymeasurements,evaluationruns')
+             'evaluationruns')
 KINDS = {'ProfilingRun', 'BatchEnergyOptimization', 'ModelLoadedIdleBaseline',
-         'DispatchOccupancyMeasurement', 'EvaluationRun', 'EvaluationStage'}
+         'EvaluationRun', 'EvaluationStage'}
 TERMINAL_FAILURES = {'InvalidRunSpec', 'ExecutionPolicyInvalid', 'ActuationPolicyInvalid',
                      'ExecutionLost', 'JobFailed', 'RequiredStateNotConfirmed', 'EvidenceInvalid'}
 
@@ -43,11 +43,6 @@ def blockers(objects, jobs):
         elif kind == 'ModelLoadedIdleBaseline':
             if status.get('phase') not in ('Complete', 'Insufficient'):
                 reasons.append('idle campaign nonterminal/unfrozen')
-        elif kind == 'DispatchOccupancyMeasurement':
-            if status.get('phase') not in ('Complete', 'Insufficient', 'Failed'):
-                if not obj.get('spec', {}).get('conditions'):
-                    reasons.append('occupancy inputs unfrozen')
-                reasons.append('occupancy nonterminal')
         elif kind == 'EvaluationRun':
             if not (status.get('frozenConfigMapRef') or status.get('frozenConfig')):
                 reasons.append('evaluation config unfrozen')

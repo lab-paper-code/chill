@@ -1,46 +1,11 @@
 package serving
 
 import (
-	"fmt"
 	"math"
 	"slices"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
-
-// schedulerRouted reports whether some instance of c receives uid's requests.
-func schedulerRouted(c SchedulerCandidate, uid string) bool {
-	for _, i := range c.Instances {
-		weight := int32(0)
-		if i.WorkloadUID == uid {
-			weight = i.Weight
-		}
-		if route, explicit := c.Routing[uid]; explicit {
-			weight = route[i.ID]
-		}
-		if weight > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// SchedulerFixedBatchAutonomy rejects autonomy for a Workload still routed to a
-// strict fixed-batch baseline; the operator removes that routing first.
-func SchedulerFixedBatchAutonomy(snapshot SchedulerSnapshot, autonomous []string) error {
-	fixed := SchedulerCandidate{Routing: snapshot.Routing}
-	for _, i := range snapshot.Instances {
-		if i.FixedBatchSize > 0 {
-			fixed.Instances = append(fixed.Instances, i)
-		}
-	}
-	for _, uid := range autonomous {
-		if schedulerRouted(fixed, uid) {
-			return fmt.Errorf("workload %s is routed to a fixedBatchSize instance; remove that routing before enabling autonomy", uid)
-		}
-	}
-	return nil
-}
 
 func appendUnique(xs []string, more ...string) []string {
 	for _, s := range more {
@@ -275,7 +240,7 @@ func ValidateNodeBudget(n SchedulerNode, allocations []SchedulerAllocation, reas
 
 func schedulerPolicy(i SchedulerInstance) firstfloor.Policy {
 	p := firstfloor.Policy{
-		ProfileID: i.Profile.ID, MaxBatchSize: i.MaxBatch, FixedBatchSize: i.FixedBatchSize, MaxBatchWaitMS: float64(i.MaxWait) / 1e6,
+		ProfileID: i.Profile.ID, MaxBatchSize: i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / 1e6,
 	}
 	p.Batches = i.Profile.NativeBundle().Batches
 	return p

@@ -13,11 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-
-	"github.com/lab-paper-code/chill/internal/serving/measurement"
-
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
@@ -28,6 +23,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -42,10 +39,9 @@ type SchedulerConfiguration struct {
 	Settings serving.SchedulerSettings              `json:"settings"`
 	Reserved map[string]serving.SchedulerAllocation `json:"reserved"`
 	// Meters are derived from the Profiler metric sources, never configured.
-	Meters            []servingops.MeterDeclaration        `json:"-"`
-	PowerObservation  *powerObservationConfig              `json:"powerObservation,omitempty"`
-	DispatchOccupancy *measurement.DispatchOccupancyPolicy `json:"dispatchOccupancy,omitempty"`
-	StaticRouting     map[string]map[string]int            `json:"staticRouting,omitempty"`
+	Meters           []servingops.MeterDeclaration `json:"-"`
+	PowerObservation *powerObservationConfig       `json:"powerObservation,omitempty"`
+	StaticRouting    map[string]map[string]int     `json:"staticRouting,omitempty"`
 	// StaticRoutingValidatedAt names the settings change that wrote StaticRouting.
 	StaticRoutingValidatedAt *time.Time `json:"staticRoutingValidatedAt,omitempty"`
 }
@@ -67,14 +63,13 @@ type SchedulerService struct {
 	observationLog           *observation.ObservationLog
 	live                     *Live
 	opts                     Options
-	GatewayRequestTimeout    time.Duration
 	catalog                  *servingkube.Catalog
 	costs                    *servingkube.CostEvidence
 	resourceVersion, sources string
 	configuration            atomic.Pointer[SchedulerConfiguration]
 	Profiles                 atomic.Pointer[ProfilesView]
 	catalogRead              atomic.Pointer[ProfilesView]
-	occupancy                rollingOccupancyCache
+	occupancy                atomic.Pointer[[]serving.DispatchOccupancy]
 	ctx                      context.Context
 	cancel                   context.CancelFunc
 	powerCancel              context.CancelFunc
@@ -90,7 +85,7 @@ func NewSchedulerService(ctx context.Context, dependencies Dependencies) *Schedu
 		settingsKube: dependencies.SettingsKube,
 		execution:    dependencies.Execution, observer: dependencies.Observer, objects: dependencies.Objects,
 		observationLog: dependencies.ObservationLog, opts: dependencies.Options, ctx: serviceCtx, cancel: cancel,
-		GatewayRequestTimeout: dependencies.GatewayRequestTimeout, live: dependencies.Live,
+		live:    dependencies.Live,
 		catalog: dependencies.Catalog, costs: dependencies.Costs,
 	}
 }
@@ -127,11 +122,6 @@ func DecodeSchedulerConfiguration(raw string, maxBytes int64) (SchedulerConfigur
 	}
 	if err := config.validatePower(); err != nil {
 		return config, err
-	}
-	if config.DispatchOccupancy != nil {
-		if err := config.DispatchOccupancy.Validate(); err != nil {
-			return config, err
-		}
 	}
 	return config, nil
 }
@@ -427,11 +417,6 @@ func (o *SchedulerService) Start() {
 	if o == nil {
 		return
 	}
-	o.wg.Add(1)
-	go func() {
-		defer o.wg.Done()
-		o.occupancy.run(o.ctx, o.aggregateOccupancy)
-	}()
 	o.wg.Add(1)
 	go func() {
 		defer o.wg.Done()

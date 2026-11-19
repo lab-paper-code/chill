@@ -132,8 +132,6 @@ func (c *SchedulerController) failMeasurement(ctx context.Context, object client
 	switch o := object.(type) {
 	case *edge.OperationCostMeasurement:
 		return c.patchMeasurementStatus(ctx, o, func() { o.Status.Phase, o.Status.Reason = edge.MeasurementPhaseFailed, reason })
-	case *edge.DispatchOccupancyMeasurement:
-		return c.patchMeasurementStatus(ctx, o, func() { o.Status.Phase, o.Status.Reason = edge.MeasurementPhaseFailed, reason })
 	case *edge.BatchEnergyOptimization:
 		return c.patchMeasurementStatus(ctx, o, func() { setSessionStatus(o, edge.MeasurementPhaseFailed, reason, reason, nil, 0) })
 	}

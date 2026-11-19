@@ -142,7 +142,6 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				spec.Config.Policy.ProfileID = profile.ID
 				spec.Config.Model = profile.Condition.Actor.Model
 				c.config.Preparations[profile.ID] = spec
-				c.config.DispatchOccupancy = append(c.config.DispatchOccupancy, serving.DispatchOccupancy{Node: spec.Instance.Node, PowerMode: profile.Condition.PowerMode, RuntimeImage: profile.Condition.RuntimeImage, Model: profile.Condition.LogicalModel, Source: "AC-39 measured fixture"})
 				ref := evidencestore.ObjectIdentity{Store: "raw", Key: "baseline-" + profile.ID, Size: 1}
 				c.config.Baselines = append(c.config.Baselines, serving.NodeBaseline{ID: ref.Key, Node: spec.Instance.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", Reference: ref, MeasuredAt: time.Now()})
 				c.config.Meters = append(c.config.Meters, servingops.MeterDeclaration{ID: "wall-" + profile.NodeName, Node: spec.Instance.Node, Scope: "node-exclusive-wall", Source: profile.MetricSource})
@@ -357,7 +356,6 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 		spec.Instance = *instance
 		spec.Config.Policy.ProfileID = instance.Profile.ID
 		c.config.Preparations[instance.Profile.ID] = spec
-		c.config.DispatchOccupancy = append(c.config.DispatchOccupancy, serving.DispatchOccupancy{Node: instance.Node, PowerMode: "fixed", RuntimeImage: instance.Profile.Condition.RuntimeImage, Model: instance.Profile.Condition.LogicalModel, Source: "AC-43 measured fixture"})
 		ref := evidencestore.ObjectIdentity{Store: "raw", Key: "reserve-baseline-" + instance.Profile.ID, Size: 1}
 		meter := "reserve-wall-" + instance.Node.Name
 		c.config.Baselines = append(c.config.Baselines, serving.NodeBaseline{ID: ref.Key, Node: instance.Node, PowerMode: "fixed", Watts: 5, Meter: meter, Scope: "node-exclusive-wall", Reference: ref, MeasuredAt: time.Now()})

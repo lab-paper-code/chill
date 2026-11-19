@@ -63,7 +63,7 @@
 | `/measurements/requests/new` | 측정 요청 작성 |
 | `/measurements/requests/[name]` | 측정 요청 상세 |
 | `/measurements/runs/[name]` | 측정 회차 상세 |
-| `/measurements/results` | 측정 결과. 종류: 처리 성능, 전환 비용, 분배 점유시간 (`?kind=`) |
+| `/measurements/results` | 측정 결과. 종류: 처리 성능, 전환 비용 (`?kind=`) |
 | `/experiments/runs` | 실험 실행 목록 |
 | `/experiments/runs/new`, `/experiments/runs/[name]/edit` | 실험 작성, 수정 |
 | `/experiments/runs/[name]` | 실험 실행 상세 |
@@ -291,7 +291,7 @@ Avara UI 레지스트리의 부품을 먼저 쓴다. Avara에 없는 기본 부�
 - 요약 줄: 서버 요약 값만 쓴다(지원 조합, 측정 완료, 기준 충족, 실패). 기준 시각. "다음 조치 n"을 누르면 서버가 준 다음 조치 목록이 열린다.
 - 선택: 모델(구간 선택), 장치 종류, 상태.
 - 행렬: 행은 장치 종류와 전력 모드, 열은 실행 경로. 칸은 상태 점과 측정된 배치 수.
-- 칸 미리보기: 상태, 사용 여부, 배치별 결과 표(배치, 지연, 건당 에너지), 분배 점유시간 상태, 실패 사유. 동작: "이 조건으로 측정 요청", "분배 점유시간 측정 요청", "요청 기록".
+- 칸 미리보기: 상태, 사용 여부, 배치별 결과 표(배치, 지연, 건당 에너지), 실패 사유. 동작: "이 조건으로 측정 요청", "요청 기록".
 - 자료: `v1/namespaces/{ns}/measurement-coverage`, `v1/inventory`, `v1/scheduler/profiles`, `v1/namespaces/{ns}/profiling-runs`.
 
 요청 `/measurements/requests`
@@ -314,19 +314,17 @@ Avara UI 레지스트리의 부품을 먼저 쓴다. Avara에 없는 기본 부�
 
 요청 작성 `/measurements/requests/new`
 
-- 종류 선택: 프로파일, 분배 점유시간. 방법 선택: 폼, 문서 가져오기.
+- 방법 선택: 폼, 문서 가져오기.
 - 프로파일 폼은 세 단계: 대상(서비스, 장치, 실행 경로, 전력 모드), 조건(측정 방식 값. 고급 값은 접힘), 검토(사전 검사 결과와 제출).
-- 분배 점유시간 폼은 한 단계: 측정된 조합, 서비스, 배치, 이름. 검사 뒤 제출.
 - 범위 화면의 칸에서 오면 대상이 채워져 있다. 주소로 들어와도 자동으로 제출하지 않는다.
-- 자료: `v1/models`, `v1/workloads?view=summary`, `v1/preprocessors`, `v1/datasets`, `v1/inventory`, `v1/model-compatibility`, `v1/namespaces/{ns}/batch-energy-optimizations`(검사, 사전 검사, 제출), `v1/namespaces/{ns}/dispatch-occupancy-measurements`(검사, 제출).
+- 자료: `v1/models`, `v1/workloads?view=summary`, `v1/preprocessors`, `v1/datasets`, `v1/inventory`, `v1/model-compatibility`, `v1/namespaces/{ns}/batch-energy-optimizations`(검사, 사전 검사, 제출).
 
 결과 `/measurements/results`
 
-- 종류 구간 선택: 처리 성능, 전환 비용, 분배 점유시간.
+- 종류 구간 선택: 처리 성능, 전환 비용.
 - 처리 성능 표. 열: 모델, 장치와 조건, 대표 배치, 지연, 건당 에너지, 사용 여부, 품질. 미리보기: 배치별 표(지연, 표본 수, 총 에너지와 추가 에너지, 유휴 전력과 실행 전력, 신뢰 구간), 조건, 측정일.
 - 전환 비용 표. 열: 모델, 장치, 동작, 시간, 에너지, 표본 수, 상태. 통계는 서버가 준 값만 쓴다. 미리보기: 동작별 실측 값.
-- 분배 점유시간 표. 열: 측정, 장치, 서비스, 배치, 점유시간, 상태. 미리보기: 분포와 조건. 행 메뉴: 삭제.
-- 자료: `v1/scheduler/profiles`, `v1/namespaces/{ns}/operation-cost-measurements`, `v1/namespaces/{ns}/dispatch-occupancy-measurements`.
+- 자료: `v1/scheduler/profiles`, `v1/namespaces/{ns}/operation-cost-measurements`.
 
 ### 7.6 실험
 

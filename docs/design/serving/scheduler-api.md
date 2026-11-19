@@ -34,7 +34,6 @@
 | `settings.planPostFilterFinalists`, `planPricedStart` | 기본false와true |
 | `reserved` | Node별 memoryBytes와 GPUUUID 예약. CPU 예약 없음 |
 | `powerObservation` | sampler와 적분 coverage 설정 |
-| `dispatchOccupancy` | rolling 집계와 native DOM 생성 정책 |
 | `staticRouting`, `staticRoutingValidatedAt` | 읽기 전용 배분 선언과 검증 시각 |
 
 sample의 observation60초, control10초, comparison600초, margin29ms는 설정 예시다. 전체 sample은 [scheduler 구성](../../../config/samples/serving-scheduler.json)을 따른다.
@@ -51,7 +50,7 @@ PUT은 `SchedulerSettings`만 받는다. `staticRouting`과 `staticRoutingValida
 
 `If-Match` 누락은428, stale과 충돌은409다. 검증 Principal의 groups/extra로 정확한 namespace/name ConfigMap update SAR를 추가 확인한다. 사용자 포괄 권한이나 owner SA 권한으로 대신하지 않는다.
 
-최초 완전 refresh 뒤 PUT은 수락된 typed catalog와 preparation에 정책을 동기 적용한다. 200의 appliedAt은 정책 수락이며 다음 Tick이 소비한다. queue cap, 초기 margin과 occupancy fallback도 갱신한다. 미수락 desired의 reserved나 전력, static routing을 실행하지 않는다.
+최초 완전 refresh 뒤 PUT은 수락된 typed catalog와 preparation에 정책을 동기 적용한다. 200의 appliedAt은 정책 수락이며 다음 Tick이 소비한다. queue cap, 초기 margin과 occupancy fallback(`defaultDispatchOccupancyNanos`)도 갱신한다. 미수락 desired의 reserved나 전력, static routing을 실행하지 않는다.
 
 원격 preparation은 별도 직렬 잠금에서 만들고 게시 직전 ConfigMap RV를 확인한다. 실패, 취소와 구버전 준비는 기존 accepted를 보존한다. full acceptance의 configVersion은 PUT ETag로 바꾸지 않는다. profile ticker는 이후 외부 변경을 수락하고 control loop는 accepted 입력으로 계속한다.
 
@@ -73,7 +72,6 @@ PUT은 `SchedulerSettings`만 받는다. `staticRouting`과 `staticRoutingValida
 | `GET /api/v1/observations/load` | 모든 UID 유입과 실행 rate, assignment |
 | `GET /api/v1/observations/scheduler` | 판단과 제어 원시 이력 |
 | `GET /api/v1/observations/power` | raw 적분과 coverage, 전체와 활성 풀 |
-| `GET /api/v1/observations/occupancy` | bounded fresh native-pair 진단 |
 
 측정 생성과 삭제, profile 재사용, 공개 Query 응답은 [측정 API](measurement-api.md)에 둔다. ChillServer는 공개 Query route의 인증과 proxy를 소유하며 Query는 Serving 패키지를 import하지 않는다.
 
@@ -91,7 +89,7 @@ keep과 target의 Workload별 `feedback`은 replay 예측이다. 측정 사실�
 
 private catalog-read의 reporting과 accepted는 독립 revision이다. source 일부 실패나 preparation 문제는 per-source issue이며 필수 read와 설정, meter, 저장 실패는 adoption을 중단한다. 이전 accepted가 남아도 현재 reporting에 수락을 추정하지 않는다.
 
-`accepted.dispatchOccupancy`가 실제 선택된 d와 provenance의 권위다. qualified measured, legacy dom, default 순이다. `accepted.occupancyEstimates`는 완료 rolling reduction의 signed 진단이고 `accepted.occupancy`는 legacy evidence identity다. 이 셋을 같은 채택 표로 합치지 않는다.
+`accepted.dispatchOccupancy`가 실제 선택된 d와 provenance의 권위다. profile median, default 순이다.
 
 ## 제어 시간과 탐색 진단
 

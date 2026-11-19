@@ -143,9 +143,9 @@ does not add keep, patch ownership or separately apply CRDs.
 
 The loss guard reads measurement roots and owned native Jobs across all namespaces
 at preflight and immediately before upgrade. Incomplete or unfrozen work, pending
-cleanup and deleting roots stop ordinary deployment. Terminal dispatch-occupancy
-measurements need no `spec.conditions`. The runner preserves blockers without
-draining or deleting them. The narrow image-only exception is described below.
+cleanup and deleting roots stop ordinary deployment. The runner preserves
+blockers without draining or deleting them. The narrow image-only exception is
+described below.
 
 ### Image-only measurement-preserving boundaries
 
@@ -366,8 +366,6 @@ active ones awaited, and failed/refused ones stop the lane. `AlreadyExists`
 stops a create race. Approved holds and node handback remain operator-owned.
 A running feeder retains its frozen plan.
 
-`hack/measure/capture-progress.py` captures measurement progress. See the
-[operations guide](../docs/operations/ops-agent-guide.md).
 `hack/measure/smoke/smoke.py NODE OUTDIR WL=PROFILE:DATASET` records preparation,
 routing and cleanup in an external directory. Partial or failed reset stops
 further mutations while preserving read-only observations.

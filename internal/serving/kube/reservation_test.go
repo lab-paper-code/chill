@@ -30,6 +30,7 @@ const (
 	unknownPodUID            = "unknown"
 	unreadyReason            = "unready"
 	nodeUIDEvidence          = "node-uid"
+	timeoutOutcome           = "timeout"
 )
 
 func TestCommonReservationConflictAndReleaseAC38(t *testing.T) {
@@ -43,7 +44,6 @@ func TestCommonReservationConflictAndReleaseAC38(t *testing.T) {
 	for _, operation := range []servingstate.Operation{
 		{ID: "power", Kind: servingstate.OperationPower, Node: n1},
 		{ID: "reset", Kind: servingstate.OperationReset, WorkloadUIDs: []string{"w1"}},
-		{ID: "occupancy", Kind: occupancyKind, Node: n2, WorkloadUID: "w1"},
 	} {
 		ended, result := c.startNodeRun(operation, SchedulerControllerConfig{}, func(context.Context, *servingstate.OperationResult) error {
 			t.Error("conflicting operation executed")

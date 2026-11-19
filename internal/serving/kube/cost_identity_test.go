@@ -15,6 +15,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+const costTestExecutionPath = "cpu"
+
 func TestCostEvidenceRetainsHistoricalMeasurementCells(t *testing.T) {
 	const retainedModelName = "model"
 	scheme := runtime.NewScheme()
@@ -25,7 +27,7 @@ func TestCostEvidenceRetainsHistoricalMeasurementCells(t *testing.T) {
 	profile.Condition.LogicalModel = retainedModelName
 	profile.Condition.RuntimeFamily = "firstfloor"
 	profile.Condition.Backend = "ort-cpu"
-	profile.Condition.Artifact.ExecutionPath = catalogOccupancyPath
+	profile.Condition.Artifact.ExecutionPath = costTestExecutionPath
 	key, raw := costTestRecord(t, servingstate.OperationPrepare, identityTestMode, time.Now().UTC())
 	var record servingops.OperationMeasurement
 	if err := json.Unmarshal(raw, &record); err != nil {

@@ -43,7 +43,6 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (/^v1\/observations\/workloads\/[^/]+$/.test(route)) { methods = ["GET"]; query = "observations" }
   else if (route === "v1/observations/load") { methods = ["GET"]; query = "load" }
   else if (route === "v1/observations/power") { methods = ["GET"]; query = "power" }
-  else if (route === "v1/observations/occupancy") { methods = ["GET"]; query = "load" }
   else if (route === "v1/observations/scheduler") { methods = ["GET"]; query = "schedulerHistory" }
   else if (route === "v1/observations/events") { methods = ["GET"]; query = "event" }
   else if (route === "v1/model-compatibility") { methods = ["GET"]; query = "compatibility" }
@@ -57,8 +56,6 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (/^v1\/evaluations\/load-scenarios\/[^/]+$/.test(route)) { methods = ["GET", "PUT", "DELETE"]; if (method !== "GET") query = "uid" }
   else if (/^v1\/evaluations\/[^/]+\/release$/.test(route)) methods = ["POST"]
   else if (/^v1\/evaluations\/[^/]+$/.test(route)) { methods = ["GET", "PUT", "DELETE"]; if (method !== "GET") query = "uid" }
-  else if (/^v1\/namespaces\/[^/]+\/dispatch-occupancy-measurements$/.test(route)) { methods = ["GET", "POST"]; if (method === "POST") query = "dryRun" }
-  else if (/^v1\/namespaces\/[^/]+\/dispatch-occupancy-measurements\/[^/]+$/.test(route)) { methods = ["GET", "DELETE"]; if (method === "DELETE") query = "uid" }
   else if (/^v1\/namespaces\/[^/]+\/operation-cost-measurements(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
   else if (route === "v1/scheduler" || route === "v1/scheduler/state") methods = ["GET"]
   else if (route === "v1/scheduler/settings") methods = ["GET", "PUT"]

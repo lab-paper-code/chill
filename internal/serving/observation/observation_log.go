@@ -44,9 +44,7 @@ type ObservationLogConfig struct {
 	Now func() time.Time
 	// EventLookupHours bounds append-time hours read by each event query page.
 	EventLookupHours int
-	// OccupancyTail bounds receipt lookback and late native supplement delivery.
-	OccupancyTail time.Duration
-	Diagnostics   *serving.Diagnostics
+	Diagnostics      *serving.Diagnostics
 	// Queue gauges are published under submission ordering; readers only load.
 	QueueLength         *atomic.Int64
 	QueueOldestEnqueued *atomic.Int64
@@ -147,7 +145,6 @@ type ObservationLog struct {
 	windowMu        sync.Mutex
 	windowSegments  map[string]*windowSegment
 	windowSpan      time.Duration
-	occupancySpan   time.Duration
 	windowNow       time.Time
 	windowRecords   int
 }
@@ -158,9 +155,6 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 	}
 	if config.Retention <= 0 {
 		return nil, errors.New("observation retention must be positive")
-	}
-	if config.OccupancyTail < 0 {
-		return nil, errors.New("occupancy supplement tail must not be negative")
 	}
 	if config.EventLookupHours <= 0 {
 		config.EventLookupHours = 1

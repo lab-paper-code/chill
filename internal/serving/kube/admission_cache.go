@@ -36,7 +36,6 @@ func measurementCaches(namespace string) []*measurementCache {
 		{namespace: namespace, object: &edge.ProfilingRun{}},
 		{namespace: namespace, object: &edge.PowerModeTransitionCost{}},
 		{namespace: namespace, object: &edge.OperationCostMeasurement{}},
-		{namespace: namespace, object: &edge.DispatchOccupancyMeasurement{}},
 	}
 }
 
@@ -61,8 +60,6 @@ func measurementObjectRoot(object client.Object) (measurementRoot, bool) {
 		root.node = o.Spec.TargetNode
 		root.terminal = o.Status.Phase == edge.PowerModeTransitionCostPhaseComplete || o.Status.Phase == edge.PowerModeTransitionCostPhaseFailed
 	case *edge.OperationCostMeasurement:
-		root.node, root.terminal = o.Spec.Node, measurementTerminal(o.Status.Phase)
-	case *edge.DispatchOccupancyMeasurement:
 		root.node, root.terminal = o.Spec.Node, measurementTerminal(o.Status.Phase)
 	default:
 		return root, false
@@ -187,10 +184,6 @@ func (c *SchedulerController) measurementRoots(ctx context.Context, namespaces [
 					if step.BatchEnergyOptimization != "" {
 						references[client.ObjectKey{Namespace: object.Namespace, Name: step.BatchEnergyOptimization}] = true
 					}
-				}
-			case *edge.DispatchOccupancyMeasurement:
-				if object.Spec.BatchEnergyOptimization != "" {
-					references[client.ObjectKey{Namespace: object.Namespace, Name: object.Spec.BatchEnergyOptimization}] = true
 				}
 			}
 		}

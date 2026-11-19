@@ -117,7 +117,7 @@ func TestCapacityAdmissionChangesInvalidateRowKey(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	definition := snapshot.Workloads[0]
 	option := snapshot.Options[0]
-	baseline := NewCapacityInput(settings, capacityTestWindows, nil, option, definition).Key()
+	baseline := NewCapacityInput(settings, capacityTestWindows, option, definition).Key()
 	for _, change := range []string{"policy", "queue limit"} {
 		frozen := *definition
 		if change == "policy" {
@@ -125,7 +125,7 @@ func TestCapacityAdmissionChangesInvalidateRowKey(t *testing.T) {
 		} else {
 			frozen.Admission.MaxQueuedRequests++
 		}
-		if NewCapacityInput(settings, capacityTestWindows, nil, option, &frozen).Key() == baseline {
+		if NewCapacityInput(settings, capacityTestWindows, option, &frozen).Key() == baseline {
 			t.Fatalf("%s reused old capacity input", change)
 		}
 	}

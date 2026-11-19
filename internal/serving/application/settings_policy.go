@@ -52,26 +52,6 @@ func (o *SchedulerService) applySchedulerSettings(ctx context.Context, settings 
 	o.configuration.Store(&config)
 	// ConfigVersion and resourceVersion still name the last full acceptance.
 	o.Profiles.Store(published)
-	o.occupancy.mu.Lock()
-	defer o.occupancy.mu.Unlock()
-	if snapshot := o.occupancy.published.Load(); snapshot != nil {
-		input := *snapshot.input
-		input.configuration, input.catalog = &config, published
-		// Keep qualified rolling facts, but resolve DOM/default again with the
-		// new policy. Old fallback values must not become measurement evidence.
-		var measured []serving.DispatchOccupancy
-		for _, value := range snapshot.selected {
-			if value.Provenance != nil && value.Provenance.Source == measuredOccupancySource {
-				measured = append(measured, value)
-			}
-		}
-		o.occupancy.published.Store(&rollingOccupancySnapshot{
-			input: &input, selected: resolveOccupancy(&input, measured), estimates: snapshot.estimates,
-		})
-		select {
-		case o.occupancy.changed <- struct{}{}:
-		default:
-		}
-	}
+	o.occupancy.Store(catalogOccupancy(settings, published, o.observer.OccupancyProfiles()))
 	return nil
 }

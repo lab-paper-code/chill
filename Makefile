@@ -465,7 +465,7 @@ docker-build-dashboard: ## Build the independent Dashboard image.
 	$(CONTAINER_TOOL) build -f build/docker/dashboard.Dockerfile -t $(DASHBOARD_IMG) .
 
 .PHONY: docker-build-load-generator
-docker-build-load-generator: ## Build the dispatch-occupancy load generator image.
+docker-build-load-generator: ## Build the evaluation load generator image.
 	$(CONTAINER_TOOL) build -f build/docker/load-generator.Dockerfile -t $(LOAD_GENERATOR_IMG) .
 
 .PHONY: docker-build-all
@@ -495,7 +495,7 @@ docker-push-dashboard: ## Push the independent Dashboard image.
 	$(CONTAINER_TOOL) push $(DASHBOARD_IMG)
 
 .PHONY: docker-push-load-generator
-docker-push-load-generator: ## Push the dispatch-occupancy load generator image.
+docker-push-load-generator: ## Push the evaluation load generator image.
 	$(CONTAINER_TOOL) push $(LOAD_GENERATOR_IMG)
 
 .PHONY: docker-push-metric-observer

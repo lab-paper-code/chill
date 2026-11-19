@@ -35,40 +35,27 @@ func (h *Handler) measurements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verb := map[string]string{http.MethodGet: "list", http.MethodPost: "create", http.MethodDelete: "delete"}[r.Method]
-	nativeResource := "batchenergyoptimizations"
-	occupancy := strings.Contains(r.URL.Path, "/dispatch-occupancy-measurements")
-	if occupancy {
-		nativeResource = "dispatchoccupancymeasurements"
-	}
 	resource := authorizationv1.ResourceAttributes{
 		Namespace: namespace, Verb: verb, Group: api.GroupVersion.Group, Version: api.GroupVersion.Version,
-		Resource: nativeResource, Name: name,
+		Resource: "batchenergyoptimizations", Name: name,
 	}
 	principal := servingkube.PrincipalFromContext(r.Context())
 	if err := h.authorizer.AuthorizeResource(r.Context(), principal, resource); err != nil {
 		sendError(w, err)
 		return
 	}
-	var value any
+	var value measurement.MeasurementMutationResult
 	var err error
 	var audit *observation.SchedulerActionObservation
 	status := http.StatusOK
 	switch r.Method {
 	case http.MethodPost:
-		if occupancy {
-			value, audit, err = h.submitOccupancy(w, r)
-		} else {
-			value, audit, err = h.submitMeasurement(w, r)
-		}
+		value, audit, err = h.submitMeasurement(w, r)
 		if r.URL.Query().Get("dryRun") == "" {
 			status = http.StatusAccepted
 		}
 	case http.MethodDelete:
-		if occupancy {
-			value, audit, err = h.deleteOccupancy(r)
-		} else {
-			value, audit, err = h.deleteMeasurement(r)
-		}
+		value, audit, err = h.deleteMeasurement(r)
 		status = http.StatusAccepted
 	}
 	if audit != nil {
@@ -140,7 +127,7 @@ func (h *Handler) deleteMeasurement(
 }
 
 func (h *Handler) finishMeasurementAudit(
-	audit *observation.SchedulerActionObservation, value any, mutationErr error,
+	audit *observation.SchedulerActionObservation, result measurement.MeasurementMutationResult, mutationErr error,
 ) error {
 	now := time.Now().UTC()
 	audit.CompletedAt = &now
@@ -152,17 +139,9 @@ func (h *Handler) finishMeasurementAudit(
 	var spec any
 	var deleted bool
 	var cleaned int
-	switch result := value.(type) {
-	case measurement.MeasurementMutationResult:
-		if result.Task != nil {
-			request, uid, version, spec = result.Request, string(result.Task.UID), result.Task.ResourceVersion, result.Task.Spec
-			deleted, cleaned = result.EvidenceDeleted, len(result.DeletedEvidence)
-		}
-	case measurement.OccupancyMutationResult:
-		if result.Task != nil {
-			request, uid, version, spec = result.Request, string(result.Task.UID), result.Task.ResourceVersion, result.Task.Spec
-			deleted, cleaned = result.EvidenceDeleted, len(result.DeletedEvidence)
-		}
+	if result.Task != nil {
+		request, uid, version, spec = result.Request, string(result.Task.UID), result.Task.ResourceVersion, result.Task.Spec
+		deleted, cleaned = result.EvidenceDeleted, len(result.DeletedEvidence)
 	}
 	if spec != nil {
 		if mutationErr == nil {
@@ -211,10 +190,6 @@ func (h *Handler) beginMeasurementAudit(
 	action := &observation.SchedulerActionObservation{
 		ID:   "measurement/" + r.Method + "/" + r.PathValue("namespace") + "/" + name + "/" + now.Format(time.RFC3339Nano),
 		Kind: "measurement-" + strings.ToLower(r.Method), Phase: "validated", StartedAt: now, Expected: expected,
-	}
-	if strings.Contains(r.URL.Path, "/dispatch-occupancy-measurements") {
-		action.ID = "occupancy/" + r.Method + "/" + r.PathValue("namespace") + "/" + name + "/" + now.Format(time.RFC3339Nano)
-		action.Kind = "occupancy-" + strings.ToLower(r.Method)
 	}
 	if err := h.recordMutationAudit(action); err != nil {
 		return nil, err

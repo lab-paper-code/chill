@@ -1,6 +1,6 @@
 # feeder.py: lane orchestrator. Each node's documents are created in file order, one at a time, after the
 # previous one is terminal (the node queue runs them one at a time anyway, so per-node order is unchanged).
-# Occupancies obey the persisted feeder-cap limit. Held documents block their lane;
+# Held documents block their lane;
 # failed terminal records stop approved campaigns, but coverage plans record them and continue.
 # Coverage lanes stop after measure.maxConsecutiveFailures (default 2); other lanes continue.
 # Restartable: existing terminal CRs are never recreated. Skipped counts existing successes
@@ -15,14 +15,11 @@ CONFIG = json.loads(Path(os.environ["CHILL_EXPERIMENT_CONFIG"]).read_text())
 ENV = CONFIG["measure"]
 V = CONFIG["paths"]["campaign"]
 ST = ENV["statusLog"]
-CAPF = V + '/feeder-cap'
-KIND = {'BatchEnergyOptimization': 'beo', 'ModelLoadedIdleBaseline': 'idlebase', 'OperationCostMeasurement': 'opcost',
-        'DispatchOccupancyMeasurement': 'occupancy'}
+KIND = {'BatchEnergyOptimization': 'beo', 'ModelLoadedIdleBaseline': 'idlebase', 'OperationCostMeasurement': 'opcost'}
 now = lambda: dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 log = None
 def L(*a): log.write(now() + ' ' + ' '.join(map(str, a)) + '\n'); log.flush()
 def S(msg): open(ST, 'a').write(f'{msg} {now()}\n'); L('STATUS', msg)
-def cap(): return int(open(CAPF).read()) if os.path.exists(CAPF) else 1000
 def k(*a, inp=None): return subprocess.run([ENV['kubectl'], '--kubeconfig', ENV['kubeconfig'], '--context', ENV['kubeContext'], '-n', ENV['namespace'], *a], input=inp, capture_output=True, text=True)
 def docs(path): return [json.loads(d) for d in open(path).read().split('---\n') if d.strip()]
 def manifest_queues(path, stages):
@@ -57,13 +54,10 @@ def state(kind, name):
     o = json.loads(r.stdout); s = o.get('status') or {}
     return s.get('phase') or '', s.get('reason') or s.get('outcome') or '', (o['metadata'].get('annotations') or {}).get('chill.dacs.io/admission', '')
 def terminal(st): return st[0] in ('Complete', 'Failed', 'Insufficient') or st[2].startswith('Refused')
-def occ_inflight():
-    o = json.loads(k('get', 'occupancy', '-o', 'json').stdout)['items']
-    return sum(1 for x in o if not terminal(((x.get('status') or {}).get('phase') or '', '', (x['metadata'].get('annotations') or {}).get('chill.dacs.io/admission', ''))))
 HOLDF = V + '/feeder-hold.json'
 def held(d):
     # Hold rules (feeder-hold.json, re-read every pass): block creation and advancement of matching documents.
-    #   drop: regex of names never created; occupancy: regex of held occupancy names;
+    #   drop: regex of names never created;
     #   opcostSmolvlm: hold operation costs with a SmolVLM2 step; beoCuda: hold CUDA BEOs.
     if not os.path.exists(HOLDF): return False
     h = json.load(open(HOLDF)); kind, name = d['kind'], d['metadata']['name']
@@ -71,9 +65,6 @@ def held(d):
     if kind == 'OperationCostMeasurement':
         if h.get('opcost'): return True
         if h.get('opcostSmolvlm') and any('smolvlm' in (s.get('batchEnergyOptimization') or '') for s in d['spec']['steps']): return True
-    if kind == 'DispatchOccupancyMeasurement' and re.search(h.get('occupancy', '^$'), name): return True
-    # An occupancy whose BatchEnergyOptimization was not created (held) would be refused ProfileMissing.
-    if kind == 'DispatchOccupancyMeasurement' and state('BatchEnergyOptimization', d['spec']['batchEnergyOptimization']) is None: return True
     if kind == 'BatchEnergyOptimization' and h.get('beoCuda') and 'cuda' in d['spec']['state']['candidate']['executionPath']: return True
     return False
 def previous_names(lines):
@@ -84,7 +75,7 @@ def previous_names(lines):
         if len(fields) > 3 and fields[1] == 'HELD': held_names.add(fields[3])
     return terminal, held_names
 assert previous_names(('t HELD n later', 't TERMINAL n done')) == ({'done'}, {'later'})
-def run(queues, final, continue_on_failure=False):
+def run(queues, continue_on_failure=False):
     pos = {n: 0 for n in queues}
     created = set()
     failures = {n: 0 for n in queues}
@@ -115,8 +106,6 @@ def run(queues, final, continue_on_failure=False):
                         busy = True; break
                     if not node_released(n):
                         busy = True; break
-                    if kind == 'DispatchOccupancyMeasurement' and occ_inflight() >= cap():
-                        busy = True; break
                     r = k('create', '-f', '-', inp=json.dumps(d)); L('CREATE', n, name, r.returncode, (r.stdout + r.stderr).strip()[:200])
                     if r.returncode:
                         raise SystemExit(f'cannot create staged CR: {name}: {r.stderr.strip()}')
@@ -132,8 +121,6 @@ def run(queues, final, continue_on_failure=False):
                     if failed:
                         S(f'FAILED {n} {kind} {name} {st}')
                         open(V + '/feeder-failed.txt', 'a').write(f'{now()} {n} {kind} {name} {st}\n')
-                    elif kind == 'DispatchOccupancyMeasurement':
-                        final[n] = name
                 stop = continue_on_failure and failed and failures[n] + 1 >= limit
                 if not stop and not node_released(n):
                     busy = True; break
@@ -148,7 +135,6 @@ def run(queues, final, continue_on_failure=False):
                     break
             if n not in stopped and pos[n] == len(q) and ('done', n) not in seen:
                 seen.add(('done', n)); S(f'LANE DONE {n}')
-        json.dump(final, open(V + '/feeder-final.json', 'w'))
         if not busy:
             summary = 'CAMPAIGN SUMMARY ' + ' '.join(f'{key}={value}' for key, value in counts.items())
             S(summary)
@@ -164,8 +150,6 @@ def main():
     args = parser.parse_args()
     queues = manifest_queues(args.manifest, args.stages)
     if args.check_manifest:
-        assert all(d['kind'] != 'DispatchOccupancyMeasurement' or
-                   d['spec']['supplyMode'] == 'closed-loop' for q in queues.values() for d in q)
         cost_names = [d['metadata']['name'] for q in queues.values() for d in q if d['kind'] == 'OperationCostMeasurement']
         assert len(cost_names) == len(set(cost_names)) <= 14
         hold = json.load(open(HOLDF)) if os.path.exists(HOLDF) else {}
@@ -187,7 +171,7 @@ def main():
     summary = 'FEEDER HOLD ' + json.dumps({
         'pauseNodes': hold.get('pauseNodes', []), 'drop': hold.get('drop', '')}, sort_keys=True)
     S(summary); print(summary)
-    run(queues, {}, continue_on_failure=
+    run(queues, continue_on_failure=
         json.load(open(args.manifest)).get('schemaVersion') == 'coverage-feeder-plan.v1')
     S('APPROVED FEEDER DONE')
 

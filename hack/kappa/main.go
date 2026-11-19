@@ -313,15 +313,15 @@ func kappaCell(kappa map[string]float64, node string) string {
 }
 
 // nodeLatencies is the lowest b1 latency (ms) per Node over the options of
-// Workload w: the q quantile of the b1 execution samples plus selected DOM or
-// configured default d plus the completion margin.
+// Workload w: the q quantile of the b1 execution samples plus selected d
+// plus the completion margin.
 func nodeLatencies(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot, w *serving.Definition, q float64) map[string]float64 {
 	out := map[string]float64{}
 	for _, o := range snapshot.Options {
 		if !slices.Contains(o.CompatibleUIDs, w.UID) || o.Instance.Profile == nil {
 			continue
 		}
-		d := serving.NewCapacityInput(settings, serving.CapacityWindows{}, snapshot.DispatchOccupancy, o, w).DispatchOccupancy
+		d := serving.NewCapacityInput(settings, serving.CapacityWindows{}, o, w).DispatchOccupancy
 		for _, b := range o.Instance.Profile.Batches {
 			if b.Batch != 1 || len(b.ServiceSamples) == 0 || d == nil {
 				continue

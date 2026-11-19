@@ -208,10 +208,10 @@ if name=='kubectl':
   denied=state.get('denyEvaluationPermission') and '/chill/api/v1/workloads' in args and '--as=system:serviceaccount:review:custom-action' in args
   print('no' if denied else 'yes');sys.exit(1 if denied else 0)
  if 'current-context' in args:print(state.get('currentContext','isolated-review'));sys.exit(0)
- if 'get' in args and 'profilingruns,batchenergyoptimizations,modelloadedidlebaselines,dispatchoccupancymeasurements,evaluationruns' in args and '--all-namespaces' in args:
+ if 'get' in args and 'profilingruns,batchenergyoptimizations,modelloadedidlebaselines,evaluationruns' in args and '--all-namespaces' in args:
   state['inflightChecks']=state.get('inflightChecks',0)+1;save()
   items=state.get('inflightObjects',[])
-  if state.get('inflightAt')==state['inflightChecks']:items=[{'kind':'DispatchOccupancyMeasurement','metadata':{'name':'active','namespace':'another-chill-ns'},'status':{'phase':'Running'}}]
+  if state.get('inflightAt')==state['inflightChecks']:items=[{'kind':'BatchEnergyOptimization','metadata':{'name':'active','namespace':'another-chill-ns'},'status':{'phase':'Running'}}]
   print(json.dumps({'items':items}));sys.exit(0)
  if 'get' in args and args[args.index('get')+1]=='jobs' and '--all-namespaces' in args:
   print(json.dumps({'items':state.get('inflightJobs',[])}));sys.exit(0)

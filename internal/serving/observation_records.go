@@ -326,13 +326,6 @@ func ObservationInInterval(at, from, to time.Time) bool {
 	return !at.IsZero() && (from.IsZero() || !at.Before(from)) && (to.IsZero() || at.Before(to))
 }
 
-func OccupancyRowInWindow(row *RequestRow, from, to time.Time) bool {
-	if row.NativeRunningAt != nil && ObservationInInterval(*row.NativeRunningAt, from, to) {
-		return true
-	}
-	return !row.ReceivedAt.IsZero() && ObservationInInterval(row.ReceivedAt, from, to)
-}
-
 func LaterTime(a, b time.Time) time.Time {
 	if a.After(b) {
 		return a
@@ -341,8 +334,3 @@ func LaterTime(a, b time.Time) time.Time {
 }
 
 const ObservationUnavailableCode = "ObservationUnavailable"
-
-const (
-	RequestRowOpen              = "occupancy-open"
-	RequestRowOccupancySelected = "occupancy-selected"
-)

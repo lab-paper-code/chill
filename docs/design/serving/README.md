@@ -16,7 +16,7 @@
 | [이기종 워크로드](heterogeneous-workloads.md) | 원시 표본, 전처리, Dataset, 다중 모델 파일 |
 | [워크로드별 풀](workload-pools.md) | 자동제어, 활성 풀, 측정 노드와 전체 전력 범위 |
 | [측정 노드 승인](measurement-admission.md) | 노드별 순서, 거절, 단일 writer와 정상 반환 |
-| [측정 API](measurement-api.md) | 동작 비용, 디스패치 점유, 측정 조회와 커버리지 |
+| [측정 API](measurement-api.md) | 동작 비용, 디스패치 점유 선택, 측정 조회와 커버리지 |
 | [관측과 증거 API](observability-split.md) | 요청과 catalog 기록, 보존, 원시 내보내기 |
 | [피드백 기반 계획기](analytic-planner.md) | 시간 회계, 후보 평가, 탐색과 에너지 비교 |
 | [인스턴스 전달과 수동 작업](scheduler-operations.md) | Pod-bound Service, 원자 작업과 운영 수용 |

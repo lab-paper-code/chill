@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,34 @@ import (
 // sessionLoadContainer is the load Job container whose termination message
 // is the level table.
 const sessionLoadContainer = "load"
+
+// loadNodeLabel names the measured Node UID on a load Job.
+const loadNodeLabel = "chill.dacs.io/measurement-load"
+
+// deleteLoadJobs removes the load Jobs of the Node with their Pods.
+func (c *SchedulerController) deleteLoadJobs(ctx context.Context, ref serving.NodeReference, config SchedulerControllerConfig) error {
+	namespaces := slices.Clone(config.MeasurementNamespaces)
+	if !slices.Contains(namespaces, config.Session.Namespace) {
+		namespaces = append(namespaces, config.Session.Namespace)
+	}
+	for _, namespace := range namespaces {
+		if namespace == "" {
+			continue
+		}
+		jobs, err := c.kube.BatchV1().Jobs(namespace).List(ctx, meta.ListOptions{LabelSelector: loadNodeLabel + "=" + ref.UID})
+		if err != nil {
+			return err
+		}
+		for _, job := range jobs.Items {
+			// Background propagation removes the Pods; the default orphans them and the load goes on.
+			if err = servingstate.IgnoreNotFound(c.kube.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name,
+				meta.DeleteOptions{PropagationPolicy: ptr.To(meta.DeletePropagationBackground)})); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 // sessionLoad is what one batch size's load Job needs besides the session.
 type sessionLoad struct {

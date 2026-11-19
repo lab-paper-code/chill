@@ -14,14 +14,14 @@ func TestTerminalRootHandbackDeletesProfilingLoadsAcrossMeasurementNamespaces(t 
 	h := newAdmissionHarness(t)
 	h.controller.mu.Lock()
 	h.controller.config.MeasurementNamespaces = []string{"chill-system", "profiling"}
-	h.controller.config.LoadGenerator.Namespace = "load-system"
+	h.controller.config.Session.Namespace = "load-system"
 	h.controller.mu.Unlock()
 	root := baselineRoot("idle", time.Now())
 	h.create(root)
 	h.admit()
 	jobs := []*batch.Job{
 		{ObjectMeta: meta.ObjectMeta{Namespace: "profiling", Name: "profiling-load", Labels: map[string]string{loadNodeLabel: "node-uid", "chill.dacs.io/profiling-load": "run-uid"}}},
-		{ObjectMeta: meta.ObjectMeta{Namespace: "load-system", Name: "occupancy-load", Labels: map[string]string{loadNodeLabel: "node-uid"}}},
+		{ObjectMeta: meta.ObjectMeta{Namespace: "load-system", Name: "session-load", Labels: map[string]string{loadNodeLabel: "node-uid"}}},
 		{ObjectMeta: meta.ObjectMeta{Namespace: "profiling", Name: "another-node-load", Labels: map[string]string{loadNodeLabel: "other-node-uid", "chill.dacs.io/profiling-load": "other-run"}}},
 		{ObjectMeta: meta.ObjectMeta{Namespace: "unmanaged", Name: "unmanaged-load", Labels: map[string]string{loadNodeLabel: "node-uid", "chill.dacs.io/profiling-load": "unmanaged-run"}}},
 	}

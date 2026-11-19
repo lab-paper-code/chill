@@ -418,8 +418,7 @@ func TestObservationQueriesHonorPreCancelledContext(t *testing.T) {
 	_, loadErr := log.LoadWindow(ctx, from, to)
 	_, _, _, _, pageErr := log.SchedulerObservationPage(ctx, from, to, 10, 0, SchedulerObservationSelection{})
 	_, powerErr := log.OperatingPower(ctx, from, to, nil, 10)
-	_, occupancyErr := log.ScanOccupancyRows(ctx, archiveTestUID, "node", from, to, func(serving.RequestRow) {})
-	for _, err := range []error{queryErr, loadErr, pageErr, powerErr, occupancyErr} {
+	for _, err := range []error{queryErr, loadErr, pageErr, powerErr} {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("query ignored cancellation: %v", err)
 		}

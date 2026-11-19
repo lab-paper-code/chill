@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,7 +41,7 @@ func TestColdWindowScanDoesNotBlockWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer read.close()
-	log.retainWindow(at, at.Add(time.Minute), false, read.now)
+	log.retainWindow(at, at.Add(time.Minute), read.now)
 	read.cacheWindow = true
 	stalled := &stalledWindowContext{Context: ctx, entered: make(chan struct{}), release: make(chan struct{})}
 	read.ctx = stalled
@@ -69,49 +68,6 @@ func TestColdWindowScanDoesNotBlockWriter(t *testing.T) {
 	defer cancel()
 	if err := log.Drain(deadline); err != nil {
 		t.Fatalf("cold decode blocked FIFO writer/barrier: %v", err)
-	}
-}
-
-func TestOccupancyLimitStopsBeforeColdCachePopulation(t *testing.T) {
-	for _, corruptTail := range []bool{false, true} {
-		t.Run(fmt.Sprint(corruptTail), func(t *testing.T) {
-			log, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
-			var data bytes.Buffer
-			encoder := json.NewEncoder(&data)
-			for i := 1; i <= 100; i++ {
-				if err := encoder.Encode(occupancyScanRow(observationTestHour, uint64(i))); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if corruptTail {
-				data.WriteString("not JSON\n")
-			}
-			name := log.segment(observationRequestStream, observationTestHour)
-			if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(name, data.Bytes(), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := log.indexSegments([]time.Time{observationTestHour}); err != nil {
-				t.Fatal(err)
-			}
-			visited := 0
-			_, err := log.ScanOccupancyRowsBounded(context.Background(), "", "", observationTestHour, observationTestHour.Add(time.Second), 1, func(serving.RequestRow) { visited++ })
-			var failure *serving.Error
-			if !errors.As(err, &failure) || failure.Code != "OccupancySelectionLimit" || visited != 0 {
-				t.Fatalf("selection did not stop at the limit: %v visited=%d", err, visited)
-			}
-			log.windowMu.Lock()
-			cached := 0
-			for _, segment := range log.windowSegments {
-				cached += len(segment.records)
-			}
-			log.windowMu.Unlock()
-			if cached != 0 {
-				t.Fatalf("refused occupancy scan populated %d cached records", cached)
-			}
-		})
 	}
 }
 

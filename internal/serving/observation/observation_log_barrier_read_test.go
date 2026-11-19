@@ -29,10 +29,6 @@ func scientificReaders(log *ObservationLog, at time.Time) []struct {
 			_, _, _, _, err := log.SchedulerObservationPage(ctx, at, at.Add(time.Minute), 1, 0, SchedulerObservationSelection{})
 			return err
 		}},
-		{"occupancy", func(ctx context.Context) error {
-			_, err := log.ScanOccupancyRows(ctx, "w", "", at, at.Add(time.Minute), func(serving.RequestRow) {})
-			return err
-		}},
 		{"capacity", func(ctx context.Context) error { _, err := log.CapacityRecords(ctx, []string{"capacity"}); return err }},
 		{"events", func(ctx context.Context) error { _, _, _, err := log.EventObservations(ctx, at, 1, ""); return err }},
 		{"raw-index", func(ctx context.Context) error { _, err := log.RawHour(ctx, observationHour(at)); return err }},

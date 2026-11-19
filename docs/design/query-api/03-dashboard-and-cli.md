@@ -57,7 +57,7 @@ delete로 취소할 수 없다. 저장 객체의 schema는 삭제 여부에 영�
 공유 산출물과 이미지는 cleanup 밖이다. scheduler가 준비하는 profile의 측정은
 `chill.dacs.io/measurement-invalid` annotation을 붙이고 다음 profile refresh 뒤
 새 resourceVersion으로 지운다. 거절 조건 전체는
-[측정 API](../serving/measurement-api.md#공개-생성과-삭제)를 따른다.
+[측정 API](../serving/measurement-api.md#beo-생성과-삭제)를 따른다.
 
 | 오류 | 보존할 사실과 다음 행동 |
 |---|---|

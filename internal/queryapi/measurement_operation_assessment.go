@@ -2,6 +2,9 @@ package queryapi
 
 import api "github.com/lab-paper-code/chill/api/v1alpha1"
 
+// MeasurementVerdictAccepted is the stored verdict of an accepted measurement record.
+const MeasurementVerdictAccepted = "Accepted"
+
 // OperationStepEvidence contains only facts consulted by the measurement assessment.
 type OperationStepEvidence struct {
 	OperationID   string

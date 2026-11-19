@@ -94,7 +94,7 @@ Node grant가 한 시점의 요청자를 정한다. ResourceVersion 조건 patch
 | 동작 | 요청자 |
 |---|---|
 | 계획기 power와 반환 시 낮춤 | ChillServer |
-| Operation/occupancy의 전력 단계 | 루트 측정 taint를 확인한 ChillServer |
+| Operation의 전력 단계 | 루트 측정 taint를 확인한 ChillServer |
 | BEO 측정 세션 | 루트 측정 taint를 확인한 ChillServer |
 | ProfilingRun, loaded-idle baseline, 전환 비용 | 자기 루트 taint를 확인한 Profiler |
 
@@ -118,8 +118,7 @@ provenance이며 terminal container/Node workload snapshot은 없다. 과거 스
 인스턴스 공유는 연구 범위 밖이다. Serving routing annotation은 필수이며 Workload는
 하나 이하만 허용한다. UID map과 workload별 native waiting/running은 그대로 보존한다.
 수동 remove는 다른 Workload 소유/binding instance를 거절한다. Static routing 비교는
-[운영 설정과 비교 실험 관리](../../spec/scheduler/SRS.md#운영-설정과-비교-실험-관리)와
-[고정 배치 비교 실행](../../spec/scheduler/SRS.md#고정-배치-비교-실행)을 따른다.
+[운영 설정과 비교 실험 관리](../../spec/scheduler/SRS.md#운영-설정과-비교-실험-관리)를 따른다.
 
 관측 프로세스는 blocking 파일 잠금으로 이전 소유자 종료를 기다린다. 장애 시 storage
 session timeout까지 대기할 수 있다. Process는 모든 stream을 올린 과거 시간대를 기억하며

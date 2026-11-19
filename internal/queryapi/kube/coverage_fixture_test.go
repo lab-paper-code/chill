@@ -2,8 +2,6 @@ package kube
 
 import (
 	"context"
-	"strings"
-	"testing"
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -84,76 +82,4 @@ func coverageSizeBase() *queryapi.CoverageBase {
 		},
 	}
 	return base
-}
-
-func coverageOccupancyFixture(
-	t *testing.T,
-) (*queryapi.CoverageBase, queryapi.MeasurementCoverageCell, api.DispatchOccupancyMeasurement) {
-	t.Helper()
-	base := coverageSizeBase()
-	initial := queryapi.BuildMeasurementCoverage(base, coverageSizeNamespace, queryapi.CoverageQuery{})
-	var selected queryapi.MeasurementCoverageCell
-	for _, cell := range initial.Cells {
-		if cell.Occupancy == nil || len(cell.Occupancy) != 0 {
-			t.Fatal("request-free coverage invented node/batch occupancy tuples")
-		}
-		if selected.ID == "" && len(cell.Variants) > 0 && len(cell.Variants[0].ProfileIDs) > 0 {
-			selected = cell
-		}
-	}
-	if selected.ID == "" {
-		t.Fatal("current profile cell missing")
-	}
-	task := api.DispatchOccupancyMeasurement{
-		ObjectMeta: meta.ObjectMeta{
-			Name:              "occupancy",
-			UID:               "occupancy-uid",
-			CreationTimestamp: meta.NewTime(time.Unix(1, 0)),
-		},
-		Spec: api.DispatchOccupancyMeasurementSpec{
-			Node:                    coverageSizeNode,
-			BatchEnergyOptimization: strings.Split(selected.CurrentMeasurement.ID, "/")[1],
-			Batch:                   int32(selected.Variants[0].BatchProgress.Measured[0]),
-		},
-	}
-	task.Spec.Conditions.ProfileID = selected.Variants[0].ProfileIDs[0]
-	base.OccupancyResults = map[string]queryapi.OccupancyEvidenceProjection{}
-	return base, selected, task
-}
-
-func findCoverageOccupancy(
-	t *testing.T,
-	base *queryapi.CoverageBase,
-	selected queryapi.MeasurementCoverageCell,
-	task api.DispatchOccupancyMeasurement,
-) queryapi.MeasurementOccupancy {
-	t.Helper()
-	got := queryapi.BuildMeasurementCoverage(base, coverageSizeNamespace, queryapi.CoverageQuery{})
-	for _, cell := range got.Cells {
-		if cell.ID != selected.ID {
-			continue
-		}
-		for _, entry := range cell.Occupancy {
-			if entry.ProfileID == task.Spec.Conditions.ProfileID && entry.Batch == int(task.Spec.Batch) {
-				return entry
-			}
-		}
-	}
-	t.Fatal("occupancy tuple missing")
-	return queryapi.MeasurementOccupancy{}
-}
-
-func acceptCoverageOccupancy(base *queryapi.CoverageBase, task api.DispatchOccupancyMeasurement) {
-	progress := queryapi.OccupancyProgress(task)
-	d := int64(-9223372036854775807)
-	progress.D = &queryapi.OccupancyValue{PerRequestNanos: &d, Verdict: queryapi.MeasurementVerdictAccepted}
-	progress.Evidence = &queryapi.OccupancyEvidence{Store: "evidence", Key: "accepted.json", Size: 123}
-	base.OccupancyResults[string(task.UID)] = queryapi.OccupancyEvidenceProjection{
-		DispatchOccupancyProgress: progress,
-		Record: &queryapi.OccupancyRecordFacts{
-			Node:      queryapi.MeasurementIdentity{Name: coverageSizeNode, UID: coverageSizeNodeUID},
-			Verdict:   queryapi.MeasurementVerdictAccepted,
-			ProfileID: task.Spec.Conditions.ProfileID,
-		},
-	}
 }

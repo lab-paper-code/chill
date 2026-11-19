@@ -17,7 +17,6 @@ type Options struct {
 	ActuationPoliciesKey   string
 	FactsConfigMap         string
 	FactsNamespace         string
-	LoadGenerator          servingkube.LoadGeneratorConfig
 	MaxEvidenceBytes       int64
 	MaxRequestBytes        int64
 	MetricSourcesKey       string
@@ -48,14 +47,13 @@ type Dependencies struct {
 	Store      *servingkube.Store
 	Kube       kubernetes.Interface
 	// SettingsKube preserves the HTTP mutation client's budget independently of control refreshes.
-	SettingsKube          kubernetes.Interface
-	Execution             *serving.Runtime
-	Observer              *servingkube.Observer
-	Objects               *stores3.Store
-	ObservationLog        *observation.ObservationLog
-	Options               Options
-	GatewayRequestTimeout time.Duration
-	Live                  *Live
-	Catalog               *servingkube.Catalog
-	Costs                 *servingkube.CostEvidence
+	SettingsKube   kubernetes.Interface
+	Execution      *serving.Runtime
+	Observer       *servingkube.Observer
+	Objects        *stores3.Store
+	ObservationLog *observation.ObservationLog
+	Options        Options
+	Live           *Live
+	Catalog        *servingkube.Catalog
+	Costs          *servingkube.CostEvidence
 }

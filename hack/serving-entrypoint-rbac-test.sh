@@ -63,8 +63,7 @@ if reader:
     namespaces = {d["metadata"]["namespace"] for d in documents if d["kind"] == "Role"
                   and d["metadata"]["name"] == "chill-serving-manager"}
     for namespace in namespaces:
-        for resource in ("profilingruns", "batchenergyoptimizations", "operationcostmeasurements",
-                         "dispatchoccupancymeasurements"):
+        for resource in ("profilingruns", "batchenergyoptimizations", "operationcostmeasurements"):
             for verb in ("get", "list"):
                 assert (namespace, "edge.dacs.io", resource, verb, ()) in reader_resources
         evaluation_enabled = any(d["kind"] == "Role" and d["metadata"]["name"] == "chill-serving-manager"
@@ -163,7 +162,6 @@ catalog = next(d for d in documents if d.get("kind") == "ClusterRole"
                and d["metadata"]["name"] == "chill-query-catalog-reader")
 if catalog["rules"] != [
     {"nonResourceURLs": ["/chill/api/v1/scheduler/catalog-read"], "verbs": ["get"]},
-    {"nonResourceURLs": ["/chill/api/v1/observations/occupancy"], "verbs": ["get"]},
 ]:
     sys.exit("query owner read grants differ")
 # Prove the rendered owner-read binding, not external bootstrap roles such as
@@ -185,14 +183,14 @@ profiles = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoi
 if not profiles:
     sys.exit("profile namespace Role is missing")
 for kind in ("batchenergyoptimizations", "profilingruns", "modelloadedidlebaselines",
-             "powermodetransitioncosts", "operationcostmeasurements", "dispatchoccupancymeasurements"):
+             "powermodetransitioncosts", "operationcostmeasurements"):
     if not all(grants(r, kind, "get") and not grants(r, kind, "watch") for r in profiles):
         sys.exit("a profile namespace Role needs admission get without watch for " + kind)
-for kind in ("operationcostmeasurements", "dispatchoccupancymeasurements"):
+for kind in ("operationcostmeasurements",):
     if not all(grants(r, kind, "patch") and grants(r, kind + "/status", "patch") for r in profiles):
         sys.exit("a profile namespace Role lacks " + kind + " and status patch")
-# occupancy_service.go / BEO create and delete natively as the server's own SA.
-for kind in ("batchenergyoptimizations", "dispatchoccupancymeasurements"):
+# BEO is created and deleted natively as the server's own SA.
+for kind in ("batchenergyoptimizations",):
     for verb in ("get", "list", "create", "delete"):
         if not all(grants(r, kind, verb) for r in profiles):
             sys.exit("server SA profile Role lacks " + verb + " " + kind)
@@ -230,8 +228,6 @@ def caller_path_grants(path, verb):
                any(url == path or url.endswith("*") and path.startswith(url[:-1])
                    for url in rule.get("nonResourceURLs", []))
                for rule in manager.get("rules", []))
-assert caller_path_grants("/chill/api/v1/observations/occupancy", "get"), "dashboard lacks occupancy GET"
-assert not caller_path_grants("/chill/api/v1/observations/occupancy", "post"), "dashboard acquired occupancy write"
 assert caller_path_grants("/chill/api/v1/observations/clients", "get"), "dashboard lacks client observation GET"
 assert not any(caller_path_grants("/chill/api/v1/observations/clients", verb)
                for verb in ("post", "put", "patch", "delete")), "dashboard acquired client observation writes"
@@ -245,8 +241,7 @@ def caller_resource_grants(role, resource, verb, name=""):
 for role in callers:
     namespace = role["metadata"]["namespace"]
     prefix = "/chill/api/v1/namespaces/" + namespace + "/"
-    for collection, resource in (("batch-energy-optimizations", "batchenergyoptimizations"),
-                                 ("dispatch-occupancy-measurements", "dispatchoccupancymeasurements")):
+    for collection, resource in (("batch-energy-optimizations", "batchenergyoptimizations"),):
         for http_verb, resource_verb, name in (("post", "create", ""), ("delete", "delete", "native-task")):
             path = prefix + collection + ("/" + name if name else "")
             assert caller_path_grants(path, http_verb), \

@@ -535,7 +535,7 @@ func assertRouteNativeACKs(t *testing.T, target serving.SchedulerCandidate, resu
 	}
 }
 
-func TestRouteRejectsImmutableProfileAndFixedBatchBeforePersistence(t *testing.T) {
+func TestRouteRejectsImmutableProfileBeforePersistence(t *testing.T) {
 	operations, target, pods := routeAcknowledgmentFixture(t)
 	for _, instance := range target.Instances {
 		target.Routing[instance.WorkloadUID][instance.ID] = 1
@@ -547,33 +547,21 @@ func TestRouteRejectsImmutableProfileAndFixedBatchBeforePersistence(t *testing.T
 	if err := operations.Store.Client().Get(ctx, key, original); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{profileInitContainerName, "fixed batch size"} {
-		t.Run(field, func(t *testing.T) {
-			profile := *target.Instances[0].Profile
-			wanted := target
-			wanted.Instances = slices.Clone(target.Instances)
-			if field == profileInitContainerName {
-				profile.ID = "different-profile"
-			} else {
-				wanted.Instances[0].FixedBatchSize = 1
-			}
-			wanted.Instances[0].Profile = &profile
-			wantError := "immutable " + field
-			if field == profileInitContainerName {
-				wantError = "lacks matching actual readiness"
-			}
-			result, err := operations.Execute(ctx, servingstate.Operation{ID: wanted.ID, Kind: servingstate.OperationRoute, Target: &wanted})
-			if err == nil || !strings.Contains(err.Error(), wantError) || result.Status != servingstate.NativeOperationFailed || len(result.Actual.Native) != 0 || len(result.Progress) != 0 {
-				t.Fatalf("immutable %s mutation escaped rejection: result=%+v err=%v", field, result, err)
-			}
-			current := &core.ConfigMap{}
-			if err := operations.Store.Client().Get(ctx, key, current); err != nil {
-				t.Fatal(err)
-			}
-			if !maps.Equal(current.Data, original.Data) {
-				t.Fatalf("immutable %s changed desired config", field)
-			}
-		})
+	profile := *target.Instances[0].Profile
+	profile.ID = "different-profile"
+	wanted := target
+	wanted.Instances = slices.Clone(target.Instances)
+	wanted.Instances[0].Profile = &profile
+	result, err := operations.Execute(ctx, servingstate.Operation{ID: wanted.ID, Kind: servingstate.OperationRoute, Target: &wanted})
+	if err == nil || !strings.Contains(err.Error(), "lacks matching actual readiness") || result.Status != servingstate.NativeOperationFailed || len(result.Actual.Native) != 0 || len(result.Progress) != 0 {
+		t.Fatalf("immutable %s mutation escaped rejection: result=%+v err=%v", profileInitContainerName, result, err)
+	}
+	current := &core.ConfigMap{}
+	if err := operations.Store.Client().Get(ctx, key, current); err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(current.Data, original.Data) {
+		t.Fatalf("immutable %s changed desired config", profileInitContainerName)
 	}
 }
 
@@ -607,7 +595,7 @@ func TestRouteUsesRequestAdmissionPolicyWithoutRestart(t *testing.T) {
 	result := servingstate.OperationResult{}
 	for _, instance := range target.Instances {
 		policy := native.Policy{DecisionID: target.ID, ProfileID: instance.Profile.ID,
-			MaxBatchSize: instance.MaxBatch, FixedBatchSize: instance.FixedBatchSize,
+			MaxBatchSize:   instance.MaxBatch,
 			MaxBatchWaitMS: float64(instance.MaxWait) / float64(time.Millisecond)}
 		if err := operations.ApplyPolicy(ctx, instance.ID, policy, &result); err != nil {
 			t.Fatalf("measured deadline policy blocked native policy update: %v", err)

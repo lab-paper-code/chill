@@ -57,17 +57,6 @@ builder 사용량을 빌드 전후 기록한다. 기본 prune은 꺼져 있다.
 
 ## 측정과 평가 증거
 
-CR 생성 직후 또는 생성 전 백그라운드에서 progress 수집을 시작한다:
-
-```sh
-python3 hack/measure/capture-progress.py \
-  --node NODE --measurement CR_NAME --output-dir /tmp/NEW \
-  --wait-for-pod 300 --capture-load
-```
-
-도구는 Workload 소유 Pod를 기다린 뒤 timestamped follow를 시작하고 `READY`를 출력한다.
-원본 로그와 수집 실패를 보존한다.
-
 평가 prepare는 동결한 입력의 도착 offsets를 한 번 준비한다.
 producer에는 workspace PVC의 읽기 전용 파일을 전달한다.
 실제 응답, 부분 결과와 exact-UID 소유 writer 정리 경계를 유지한다.
