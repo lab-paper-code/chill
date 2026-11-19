@@ -151,6 +151,7 @@ func (s *schedulerReplayState) expireRequests() {
 					}
 				}
 				i.queue = kept
+				i.outstanding-- // released where the executor lets it go
 				r.completion = s.now + r.marginNanos
 				if !math.IsInf(r.native, 1) {
 					r.completion = math.Max(s.now, r.native) + r.marginNanos
@@ -166,12 +167,12 @@ func (s *schedulerReplayState) completeExecution() {
 		if i.finish <= s.now {
 			i.lastNativeFinish, i.hasNativeFinish = i.nativeFinish, true
 			i.hasNativeFinishBounds = false
-			i.hasBatchIdleBounds = false
 			i.idleUnknown = false
 			for _, r := range i.batch {
 				r.running = false
 				r.returning = true
 				r.completion = s.now + r.marginNanos
+				i.outstanding-- // released at the executor's end, as the runtime's reply
 			}
 			i.batch = nil
 			i.finish = math.Inf(1)
@@ -181,10 +182,6 @@ func (s *schedulerReplayState) completeExecution() {
 	for _, r := range s.live {
 		if r.returning && !r.completed && r.completion <= s.now {
 			r.completed = true
-			i := s.byID[r.source.Instance]
-			if i != nil && r.dispatched {
-				i.outstanding--
-			}
 			key := r.identity
 			if !r.expired && !r.dropped && !r.failed {
 				latency := r.accountedAgeNanos + r.completion - r.arrival
@@ -337,7 +334,7 @@ func (s *schedulerReplayState) chooseAdmission(r *schedulerReplayRequest) (selec
 		if s.weights[j] <= 0 || !replayExecutable(i) || i.stopped || i.config.Terminated || !s.potentialProfileMatches(d, i.config.Profile) {
 			continue
 		}
-		s.available[j] = i.outstanding < admissionLimit(i.config.Profile, i.config.MaxBatch, d.SLO.TargetLatency, i.config.Capacity)
+		s.available[j] = i.outstanding < admissionLimit(i.config.Profile, i.config.MaxBatch, i.config.FixedBatchSize, d.SLO.TargetLatency, i.config.Capacity)
 		full = full || !s.available[j]
 	}
 	if selected = SmoothWeightedRoute(s.weights, credits, s.available); selected >= 0 {
@@ -542,7 +539,6 @@ func (s *schedulerReplayState) startChosenBatch(i *schedulerReplayInstance, choi
 	var ok bool
 	percentile := i.batch[0].source.Definition.SLO.Percentile
 	if upper := i.idleUpperNanos(s.now); upper != nil && gap != nil {
-		i.hasBatchIdleBounds, i.batchIdleUpper = true, *upper
 		durationNanos, support, ok = b.ServiceDistribution.SampleMaximum(*gap, *upper, percentile, s.rng)
 		s.out.assumptions = appendUnique(s.out.assumptions, "gateway-completion gap interval uses the exact maximum conditional inverse-CDF envelope until the next simulated service completion")
 	} else {

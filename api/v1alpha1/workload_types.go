@@ -75,7 +75,11 @@ type WorkloadAppliedDefinition struct {
 	RequestLifetime *metav1.Duration `json:"requestLifetime,omitempty"`
 }
 
-// AdmissionPolicy controls requests predicted to miss their SLO deadline.
+// AdmissionPolicy decides what the gateway does with a request when every
+// ready routed instance already holds as many dispatched requests without a
+// reply as its limit: Reject refuses the request at once, Delay keeps it in
+// the gateway queue until an instance is below its limit. A request also waits
+// when no routed instance is ready, whatever the policy.
 // +kubebuilder:validation:Enum=Reject;Delay
 type AdmissionPolicy string
 

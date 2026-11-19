@@ -76,8 +76,8 @@ func TestFeedbackConsumerInfeasibleSLORetainsDropAndPotential(t *testing.T) {
 		candidate.Instances = snapshot.Instances
 		result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 		score := result.Workloads[0]
-		// The service exceeds the target, so the limit is zero: the gateway rejects both.
-		if score.Population != 2 || score.Rejected != 2 || score.Late != 0 || score.OnTime != 0 || score.FailureFraction != 1 || score.PotentialExcess == nil || result.SLO[0].PredictedOutcomes[schedulerOutcomeRejected] != 2 {
+		// The idle executor runs its only request late; the request behind it is dropped.
+		if score.Population != 2 || score.Rejected != 1 || score.Late != 1 || score.OnTime != 0 || score.FailureFraction != .5 || score.PotentialExcess == nil || result.SLO[0].PredictedOutcomes[schedulerOutcomeRejected] != 1 {
 			t.Fatalf("drop became successful latency or disappeared: %+v", result)
 		}
 		potentials = append(potentials, *score.PotentialExcess)
@@ -94,13 +94,12 @@ func TestFeedbackConsumerDelayDrainsFiniteCohortAcrossMeasuredModes(t *testing.T
 			snapshot.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = mode
 			snapshot.Workloads[0].Admission.Policy = AdmissionPolicyDelay
 			snapshot.Instances[0].MaxBatch = 1
-			// 35 ms at 30 ms per request: one in flight, the second waits for its reply.
-			snapshot.Workloads[0].SLO.TargetLatency = 35 * time.Millisecond
+			snapshot.Workloads[0].SLO.TargetLatency = time.Millisecond
 			snapshot.PathFeedback = []PathFeedback{{WorkloadUID: snapshot.Workloads[0].UID, TotalNanos: 20e6, PostNanos: 10e6}}
 			result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 			score := result.Workloads[0]
-			// The second waits for the first's reply: PRE 10 + 30 + POST 10 + its own 30 + POST 10 ms.
-			if score.Population != 2 || score.Late != 2 || score.FailureFraction != 0 || score.Satisfied || *score.SuccessQuantileNanos != 90e6 {
+			// One request in flight (one batch); the second follows the first's service end.
+			if score.Population != 2 || score.Late != 2 || score.FailureFraction != 0 || score.Satisfied || *score.SuccessQuantileNanos != 80e6 {
 				t.Fatalf("finite Delay cohort must drain beyond 1ms horizon regardless of measured mode: %+v", result)
 			}
 		})

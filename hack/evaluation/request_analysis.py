@@ -146,8 +146,9 @@ def request_class(row, final, timing, target_ns):
     return 'incomplete', None, None
 
 
-# A wait entry of a ready instance has no reason and carries its depth: the instance holds its limit.
-ADMISSION_WAIT_REASONS = ('AtLimit', 'NoCapacity', 'AdmissionStopped')
+# A wait entry's reason: QueueFull (the ready instance holds its limit; the entry
+# carries its depth), NoCapacity (not ready), AdmissionStopped.
+ADMISSION_WAIT_REASONS = ('QueueFull', 'NoCapacity', 'AdmissionStopped')
 DIAGNOSTIC_FIELDS = (
     'admissionDepths', 'admissionWaits', 'nativeDeferredAt',
     'nativeHTTP', 'serverTiming', 'gatewayWaitNanos', 'executorWaitNanos',
@@ -275,8 +276,8 @@ def non_on_time_breakdown(requests, missing_rows):
             if facts[key] is None:
                 missing[key] += 1
         waits = facts['admissionWaits']
-        observed = {wait.get('reason') or ('AtLimit' if isinstance(wait.get('depth'), dict) else None)
-                    for wait in waits if isinstance(wait, dict)} if isinstance(waits, list) else set()
+        observed = {wait.get('reason') for wait in waits if isinstance(wait, dict)} if isinstance(waits, list) else set()
+        observed.discard(None)
         if not observed:
             reasons['none' if waits == [] else 'missing'] += 1
         for reason in observed:

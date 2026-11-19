@@ -22,6 +22,9 @@ func schedulerReplayInstanceReason(i SchedulerInstance) string {
 	if i.Profile == nil {
 		return "MissingProfile"
 	}
+	if i.Ready && !MeasuredRunnable(i.Profile, i.MaxBatch, i.FixedBatchSize) {
+		return "MissingConditionalServiceSupport"
+	}
 	for _, batch := range i.Profile.Batches {
 		if batch.Batch <= i.MaxBatch && (batch.ServiceDistribution == nil || len(batch.ServiceSamples) == 0) {
 			return "MissingConditionalServiceSupport"

@@ -613,7 +613,8 @@ func (r *Runtime) chooseLocked(route inputRoute, c *Call) (entry *routeEntry, fu
 			continue
 		}
 		i := e.instance
-		e.limit = admissionLimit(i.Profile, NativeMaxBatch(i.State.Native.Metadata), c.definition.SLO.TargetLatency, i.Capacity)
+		m := i.State.Native.Metadata
+		e.limit = admissionLimit(i.Profile, NativeMaxBatch(m), m.Policy.FixedBatchSize, c.definition.SLO.TargetLatency, i.Capacity)
 		route.available[index] = i.outstanding < e.limit
 		full = full || !route.available[index]
 	}
@@ -625,7 +626,7 @@ func (r *Runtime) chooseLocked(route inputRoute, c *Call) (entry *routeEntry, fu
 
 func admissionRejection(c *Call, now time.Time) *Error {
 	remaining := int64(c.definition.SLO.TargetLatency - now.Sub(c.receipt.ReceivedAt))
-	return &Error{Code: CodeDeadlineInfeasible, Message: "every routed executor holds its limit of requests without a reply", Stage: AdmissionStageGateway, Policy: c.definition.Admission.Policy, RemainingSLONanos: &remaining}
+	return &Error{Code: CodeQueueFull, Message: "every routed executor holds its limit of requests without a reply", Stage: AdmissionStageGateway, Policy: c.definition.Admission.Policy, RemainingSLONanos: &remaining}
 }
 
 func (r *Runtime) finishQueuedLocked(c *Call, err error) {
@@ -655,12 +656,13 @@ func (r *Runtime) dispatchLocked() {
 	}
 	slices.Sort(uids)
 	r.dispatchWorkloads = uids
-	now := time.Now()
+	// Expired-queue removal uses Index/Delete and can cost O(Q²) shifts/scans.
+	expiredBy := time.Now()
 	for _, uid := range uids {
 		w := r.workloads[uid]
 		for index := 0; index < len(w.queue); {
 			c := w.queue[index]
-			if !c.receipt.Deadline.IsZero() && !now.Before(c.receipt.Deadline) {
+			if !c.receipt.Deadline.IsZero() && !expiredBy.Before(c.receipt.Deadline) {
 				r.finishQueuedLocked(c, failure(firstfloor.CodeRequestTimeout, "request lifetime expired in ingress queue"))
 			} else {
 				index++
@@ -670,11 +672,12 @@ func (r *Runtime) dispatchLocked() {
 	// A Workload's queue is served in arrival order. Whether a request can be
 	// placed depends only on its Definition (latency target and policy) and
 	// the route, so once one waits, every later request of that Definition
-	// waits too and is not decided again; a request of another Definition is.
-	// Expired-queue removal uses Index/Delete and can cost O(Q²) shifts/scans.
+	// waits too, with the same limits, and is not decided again; a request of
+	// another Definition is.
 	type waiting struct {
 		definition *Definition
 		state      string
+		limits     []int
 	}
 	for _, uid := range uids {
 		w := r.workloads[uid]
@@ -687,7 +690,7 @@ func (r *Runtime) dispatchLocked() {
 				continue
 			}
 			if at := slices.IndexFunc(held, func(h waiting) bool { return h.definition == c.definition }); at >= 0 {
-				c.recordAdmissionWaits(w.route, held[at].state, now)
+				c.recordAdmissionWaits(w.route, held[at].state, held[at].limits, now)
 				index++
 				continue
 			}
@@ -700,12 +703,12 @@ func (r *Runtime) dispatchLocked() {
 				c.admissionDepths = admissionDepths(w.route)
 				r.finishQueuedLocked(c, admissionRejection(c, now))
 			default:
-				state := AdmissionNoCapacity
+				wait := waiting{c.definition, AdmissionNoCapacity, admissionLimits(w.route)}
 				if full {
-					state = CodeDeadlineInfeasible
+					wait.state = CodeQueueFull
 				}
-				c.recordAdmissionWaits(w.route, state, now)
-				held = append(held, waiting{c.definition, state})
+				c.recordAdmissionWaits(w.route, wait.state, wait.limits, now)
+				held = append(held, wait)
 				index++
 			}
 		}

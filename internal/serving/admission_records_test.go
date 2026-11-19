@@ -72,19 +72,19 @@ func TestAdmissionRecordDepthSurvivesExecutorRejection(t *testing.T) {
 }
 
 func TestAdmissionRecordEveryProducibleWaitReason(t *testing.T) {
-	for _, reason := range []string{"NoCapacity", "AdmissionStopped", "AtLimit"} {
+	for _, reason := range []string{AdmissionNoCapacity, AdmissionStopped, CodeQueueFull} {
 		t.Run(reason, func(t *testing.T) {
 			r, _, ids := depthRuntime(t, AdmissionPolicyDelay, 35*time.Millisecond, []float64{10e6}, []int32{1})
 			r.mu.Lock()
 			i := r.instances[ids[0]]
 			switch reason {
-			case "NoCapacity":
+			case AdmissionNoCapacity:
 				i.State.Ready = false
-			case "AdmissionStopped":
+			case AdmissionStopped:
 				i.State.Stopped = true
 			}
 			r.mu.Unlock()
-			if reason == "AtLimit" {
+			if reason == CodeQueueFull {
 				for range 3 {
 					admissionRuntimeCall(t, r, "w1", time.Now(), time.Now().Add(time.Second))
 				}
@@ -110,8 +110,8 @@ func TestAdmissionRecordEveryProducibleWaitReason(t *testing.T) {
 			}
 			depth, _ := wait["depth"].(map[string]any)
 			switch reason {
-			case "AtLimit":
-				if wait["state"] != CodeDeadlineInfeasible || wait["reason"] != nil || depth["inFlight"] != float64(3) || depth["limit"] != float64(3) {
+			case CodeQueueFull:
+				if wait["state"] != CodeQueueFull || wait["reason"] != CodeQueueFull || depth["inFlight"] != float64(3) || depth["limit"] != float64(3) {
 					t.Fatalf("wait at the limit lost its depth: %+v", wait)
 				}
 			default:

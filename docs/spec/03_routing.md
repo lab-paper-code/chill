@@ -102,19 +102,27 @@ evidence 기반 정책으로 판단한다. 시간 여유가 있다는 이유만�
 
 gateway는 요청마다 route의 ready executor 가운데 응답을 받지 못한 dispatch 요청 수가
 그 executor의 한도 미만인 것만 남기고, 남은 것 중에서 plan의 share로 고른다.
-한도는 `min(floor(R x T), executor 큐 크기)`다. T는 Workload의 latency target이고
-R은 그 인스턴스의 허용 최대 batch 이하 프로파일 batch들의 batch size / 평균
-service 시간 중 가장 큰 값이다. R로 쉬지 않고 실행해도 target 안에 이보다 많이
-끝내지 못하므로 한도를 넘는 요청은 반드시 target을 놓친다. 한도에 닿은 executor만
-남으면 `Reject` 요청은 즉시 `DeadlineInfeasible`(503, stage=gateway)로 거절하고
-`Delay` 요청은 gateway 큐에서 기다린다. ready한 route executor가 없으면 요청은
-정책과 무관하게 큐에서 기다린다. 큐는 Workload별 FIFO이며 기다리는 요청이 뒤
-요청을 붙잡는다. runtime과 scheduler replay는 같은 한도 함수(`admissionLimit`)를 쓴다.
+한도는 `min(max(floor(R x T), 최소 실행 가능 batch), executor 큐 크기)`다. T는
+Workload의 latency target이고 R은 그 인스턴스가 실행할 수 있는 batch들의 batch size /
+평균 service 시간 중 가장 큰 값이다. batch는 허용 최대 batch 이하이고, 고정 batch
+정책이면 그 고정 batch와 같을 때 실행 가능하다. 고정 batch 인스턴스의 한도는 그
+batch만으로 계산하며, 어떤 인스턴스도 실행할 수 있는 가장 작은 batch보다 낮게
+제한되지 않으므로 batch 하나는 항상 담을 수 있다. 한도는 인스턴스가 target 시간
+동안 처리하는 요청 수인 운영점이며, 한도를 넘는 요청이 target을 놓친다는 증명이
+아니다. 한도에 닿은 executor만 남으면 gateway는 `Reject` 요청을 즉시
+`QueueFull`(429, stage=gateway)로 거절하고 `Delay` 요청은 gateway 큐에서 기다린다.
+Workload의 ingress 큐가 상한(`maxQueuedRequests`)에 있을 때도 gateway가 같은
+`QueueFull`로 거절한다. ready한 route executor가 없으면 요청은 정책과 무관하게 큐에서
+기다린다. 큐는 Workload별 도착순이다. 기다리는 요청은 같은 정의의 뒤 요청만
+붙잡고, 다른 정의의 뒤 요청은 따로 판단한다. runtime과 scheduler replay는 같은 한도
+함수(`admissionLimit`)를 쓴다. 취소한 요청은 executor 상태가 그 요청이 떠났음을
+확인할 때까지 처리 중으로 센다. replay는 executor가 요청을 놓는 지점(service 종료,
+executor 거절, 큐 안 만료)에서 반환 시간 0으로 처리 중 수를 줄인다.
 
 요청이 자신의 기한을 지킬 수 있는지는 executor만 판단한다. executor는 배치 실행
 직전 monotonic 시각으로 남은 SLO를 확인하고 지킬 수 없으면 `DeadlineInfeasible`
-(503, stage=executor)로 거절한다. 큐 포화는 `QueueFull`(429)이며 gateway/executor
-단계를 기록한다. fixed-batch는 기존 SLO 판단 예외를 유지한다.
+(503, stage=executor)로 거절한다. executor 큐 포화는 `QueueFull`(429,
+stage=executor)이다. gateway와 executor의 `QueueFull`은 `stage`로 구분한다.
 최종 기한은 수신 때 확정한 요청 lifetime이며 명시 timeout/cancel은 gateway 큐와
 executor 큐에 함께 적용한다. active batch는 SLO만으로 취소하지 않고 실제 물리
 완료까지 점유한다.

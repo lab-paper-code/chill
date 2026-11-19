@@ -89,7 +89,10 @@ func TestReplayRouteRetainsUnboundPreparingOccupancy(t *testing.T) {
 	}
 }
 
-func TestReadyExpansionFiltersSlowerIntegerRoute(t *testing.T) {
+// An executor slower than the target still takes one batch at the gateway
+// and, idle, runs it late (the executor's rule), so adding it to the route
+// makes the Workload worse than the 30 ms executor alone and is refused.
+func TestReadyExpansionRefusesSlowerExecutor(t *testing.T) {
 	for _, binding := range []string{"bound", "unbound"} {
 		t.Run(binding, func(t *testing.T) {
 			settings, snapshot := schedulerFixture()
@@ -107,8 +110,8 @@ func TestReadyExpansionFiltersSlowerIntegerRoute(t *testing.T) {
 			snapshot.Routing = map[string]map[string]int32{old.WorkloadUID: {old.ID: schedulerRouteUnits}}
 			capacityServiceRatesForTest(&snapshot, map[string]float64{old.Profile.ID: 1 / .03, added.Profile.ID: 1 / .07})
 			old.Profile, added.Profile = snapshot.Instances[0].Profile, snapshot.Instances[1].Profile
-			if weights, admitted := SchedulerReadyExpansion(context.Background(), settings, snapshot, old.WorkloadUID, []SchedulerInstance{old}, []SchedulerInstance{added}); !admitted || weights[old.ID] <= 0 {
-				t.Fatalf("admission-filtered expansion must retain the feasible 30ms executor: %v", weights)
+			if weights, admitted := SchedulerReadyExpansion(context.Background(), settings, snapshot, old.WorkloadUID, []SchedulerInstance{old}, []SchedulerInstance{added}); admitted {
+				t.Fatalf("expansion with a 70 ms executor at a 50 ms target was admitted: %v", weights)
 			}
 		})
 	}

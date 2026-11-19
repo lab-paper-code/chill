@@ -70,7 +70,9 @@ func TestSchedulerRunningResidualBeyondSupportRestartsSameGap(t *testing.T) {
 	}
 }
 
-func TestSchedulerRunningResidualMissingGapSupportStaysInvalid(t *testing.T) {
+// A batch with no sample of known idle gap has no measured service time: the
+// replay excludes its executor rather than predict its running batch.
+func TestSchedulerRunningWithoutGapSupportIsExcluded(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	settings.AutonomousWorkloads = nil
 	gap, elapsed := int64(0), int64(50*time.Millisecond)
@@ -85,7 +87,9 @@ func TestSchedulerRunningResidualMissingGapSupportStaysInvalid(t *testing.T) {
 	result := schedulerReplayForTest(settings, snapshot, SchedulerCandidate{
 		Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances,
 	})
-	schedulerRequireReason(t, result.reasons, "RunningElapsedOutsideProfileRange:i1")
+	if !slices.Contains(result.assumptions, "ReplayExcludedInstance:n1:i1:MissingConditionalServiceSupport") {
+		t.Fatalf("executor without measured service time stayed in the prediction: %v %v", result.reasons, result.assumptions)
+	}
 	if len(result.conditional.RunningResidualBeyondSupport) != 0 {
 		t.Fatalf("missing gap support fabricated a restart: %+v", result.conditional)
 	}

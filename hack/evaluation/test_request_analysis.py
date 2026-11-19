@@ -31,8 +31,8 @@ class RequestAnalysisTest(unittest.TestCase):
                   'reason': 'NoCapacity', 'instance': 'i'},
                  {'at': '2026-11-12T00:00:00Z', 'elapsedNanos': 2, 'state': 'AdmissionStopped',
                   'reason': 'AdmissionStopped', 'instance': 'i'},
-                 {'at': '2026-11-12T00:00:00Z', 'elapsedNanos': 3, 'state': 'DeadlineInfeasible',
-                  'instance': 'i', 'depth': {'inFlight': 8, 'limit': 8}}]
+                 {'at': '2026-11-12T00:00:00Z', 'elapsedNanos': 3, 'state': 'QueueFull',
+                  'reason': 'QueueFull', 'instance': 'i', 'depth': {'inFlight': 8, 'limit': 8}}]
         final = self.final(admissionDepths=depths, admissionWaits=waits)
         before = copy.deepcopy(final)
         result = self.metrics(final)

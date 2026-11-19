@@ -31,12 +31,14 @@ func replayAdmissionPending(s *schedulerReplayState, id string, definition *Defi
 func TestReplayAdmissionSkipsExecutorAtLimit(t *testing.T) {
 	s := replayAdmissionState(t)
 	slow := s.instances[0]
-	// 200 ms per request allows none within the fixture's 100 ms target.
+	// 200 ms per request clears none within the fixture's 100 ms target, so
+	// the limit is one batch, one request, which it already holds.
 	profile := *slow.config.Profile
 	profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{200e6})}
 	slow.config.Profile, slow.policy = &profile, schedulerPolicy(SchedulerInstance{Profile: &profile, MaxBatch: 1})
+	slow.outstanding = 1
 	fast := *slow
-	fast.config.ID, fast.config.Profile = "fast", s.snap.Instances[0].Profile
+	fast.config.ID, fast.config.Profile, fast.outstanding = "fast", s.snap.Instances[0].Profile, 0
 	fast.policy = schedulerPolicy(fast.config)
 	s.instances = append(s.instances, &fast)
 	s.byID["fast"] = &fast

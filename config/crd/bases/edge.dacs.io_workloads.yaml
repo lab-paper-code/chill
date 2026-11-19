@@ -55,8 +55,12 @@ spec:
                     type: integer
                   policy:
                     default: Reject
-                    description: AdmissionPolicy controls requests predicted to miss
-                      their SLO deadline.
+                    description: |-
+                      AdmissionPolicy decides what the gateway does with a request when every
+                      ready routed instance already holds as many dispatched requests without a
+                      reply as its limit: Reject refuses the request at once, Delay keeps it in
+                      the gateway queue until an instance is below its limit. A request also waits
+                      when no routed instance is ready, whatever the policy.
                     enum:
                     - Reject
                     - Delay
@@ -162,8 +166,12 @@ spec:
                         type: integer
                       policy:
                         default: Reject
-                        description: AdmissionPolicy controls requests predicted to
-                          miss their SLO deadline.
+                        description: |-
+                          AdmissionPolicy decides what the gateway does with a request when every
+                          ready routed instance already holds as many dispatched requests without a
+                          reply as its limit: Reject refuses the request at once, Delay keeps it in
+                          the gateway queue until an instance is below its limit. A request also waits
+                          when no routed instance is ready, whatever the policy.
                         enum:
                         - Reject
                         - Delay

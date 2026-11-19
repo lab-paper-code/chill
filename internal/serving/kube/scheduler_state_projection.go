@@ -256,11 +256,7 @@ func schedulerPolicyAcknowledged(wanted serving.SchedulerInstance, actual native
 	if wanted.Profile.Condition.Firstfloor == nil {
 		return false
 	}
-	maxBatch := actual.Policy.MaxBatchSize
-	if maxBatch == 0 {
-		maxBatch = actual.MaxBatchSize
-	}
-	return actual.Policy.ProfileID == wanted.Profile.ID && maxBatch == wanted.MaxBatch && actual.Policy.FixedBatchSize == wanted.FixedBatchSize &&
+	return actual.Policy.ProfileID == wanted.Profile.ID && serving.NativeMaxBatch(actual) == wanted.MaxBatch && actual.Policy.FixedBatchSize == wanted.FixedBatchSize &&
 		actual.Policy.MaxBatchWaitMS == float64(wanted.MaxWait)/float64(time.Millisecond)
 }
 

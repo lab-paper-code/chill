@@ -15,8 +15,9 @@ type AdmissionDepth struct {
 }
 
 // AdmissionWait records a change of a routed instance's eligibility while a
-// request waits in the gateway queue. Depth is present while the instance is
-// ready: it then holds its limit.
+// request waits in the gateway queue. State is QueueFull while a ready routed
+// instance holds its limit, NoCapacity while none is ready. Reason is the
+// instance's own: QueueFull with its Depth, NoCapacity, or AdmissionStopped.
 type AdmissionWait struct {
 	At           time.Time       `json:"at"`
 	ElapsedNanos int64           `json:"elapsedNanos"`
@@ -53,25 +54,34 @@ func admissionDepths(route inputRoute) map[string]AdmissionDepth {
 	return depths
 }
 
-// recordAdmissionWaits records why c waits on each entry of route, as the
-// decision chooseLocked made on route left them.
-func (c *Call) recordAdmissionWaits(route inputRoute, state string, now time.Time) {
-	if len(route.entries) == 0 {
-		c.recordAdmissionWait(nil, state, now)
+// admissionLimits copies the limits chooseLocked set on route's entries for
+// the request it decided; deciding a request of another Definition rewrites
+// them, so a waiting request keeps its own copy.
+func admissionLimits(route inputRoute) []int {
+	limits := make([]int, len(route.entries))
+	for j, e := range route.entries {
+		limits[j] = e.limit
 	}
-	for j := range route.entries {
-		c.recordAdmissionWait(&route.entries[j], state, now)
+	return limits
+}
+
+// recordAdmissionWaits records why c waits on each entry of route, with the
+// limits of c's own decision.
+func (c *Call) recordAdmissionWaits(route inputRoute, state string, limits []int, now time.Time) {
+	if len(route.entries) == 0 {
+		c.recordAdmissionWait("", AdmissionNoCapacity, nil, state, now)
+	}
+	for j, e := range route.entries {
+		if e.reason != "" {
+			c.recordAdmissionWait(e.instance.State.ID, e.reason, nil, state, now)
+		} else {
+			c.recordAdmissionWait(e.instance.State.ID, CodeQueueFull, &AdmissionDepth{InFlight: e.instance.outstanding, Limit: limits[j]}, state, now)
+		}
 	}
 }
 
-func (c *Call) recordAdmissionWait(e *routeEntry, state string, now time.Time) {
-	wait := AdmissionWait{At: now.UTC(), ElapsedNanos: int64(now.Sub(c.receipt.ReceivedAt)), State: state, Reason: AdmissionNoCapacity}
-	if e != nil {
-		wait.Instance, wait.Reason = e.instance.State.ID, e.reason
-		if e.reason == "" {
-			wait.Depth = &AdmissionDepth{InFlight: e.instance.outstanding, Limit: e.limit}
-		}
-	}
+func (c *Call) recordAdmissionWait(instance, reason string, depth *AdmissionDepth, state string, now time.Time) {
+	wait := AdmissionWait{At: now.UTC(), ElapsedNanos: int64(now.Sub(c.receipt.ReceivedAt)), State: state, Reason: reason, Instance: instance, Depth: depth}
 	identity := admissionWaitIdentity{state: state, reason: wait.Reason}
 	if previous, ok := c.admissionWaitIdentities[wait.Instance]; ok && previous == identity {
 		return

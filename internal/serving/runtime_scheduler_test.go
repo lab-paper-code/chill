@@ -364,8 +364,10 @@ func TestReturningPOSTIncludesExchangeReturnAfterEarlySDKCompletion(t *testing.T
 		replay.initializeOutstanding()
 		executor := replay.instances[0]
 		executor.config.Capacity = 2
-		if len(executor.batch) != 0 || len(executor.queue) != 0 || executor.outstanding != 1 || !replay.requests[0].returning {
-			t.Fatal("replay restored completed execution as queued/running or released transport occupancy")
+		// The replay releases a request at the executor's end, so a returning
+		// request no longer counts against the limit.
+		if len(executor.batch) != 0 || len(executor.queue) != 0 || executor.outstanding != 0 || !replay.requests[0].returning {
+			t.Fatal("replay restored completed execution as queued/running or kept it in flight")
 		}
 		candidate := replayAdmissionPending(replay, "after-completion", d)
 		if selected, full := replay.chooseAdmission(candidate); selected < 0 || full {

@@ -26,7 +26,7 @@ requests는 assigned와 final, late native supplement를 requestID로 결합한�
 | 경과 | receivedAt 기준 정수 ns offset, 원 monotonic elapsed |
 | batch | 실제 BatchID와 size, service/backend와 pre/post, first token과 units |
 | canonical service | 실제 Go IPC S와 nullable G, 물리 TrialID |
-| admission | prediction, waits와 당시 source/actual policy. 추정 duration과 receipt elapsed 분리 |
+| admission | 당시 actual policy, instance별 `admissionDepths`와 gateway 큐 `admissionWaits`. receipt elapsed와 구분 |
 
 미도달 단계는 비우고 관측0은 유지한다. UTC를 다시 빼 duration을 만들지 않는다. 중앙 serverTiming은 receive와 auth/body/accept, assigned와 HTTP, 결과 lock/reply와 response write/flush의 실제 경계를 남긴다. marker 배열 순서를 goroutine 인과 순서로 해석하지 않는다.
 

@@ -116,8 +116,9 @@ func TestRuntimeTimingKeepsReachedStagesOnRejection(t *testing.T) {
 	const (
 		expired = "expired"
 		changed = "changed"
+		stopped = "stopped"
 	)
-	for _, rejection := range []string{expired, changed, "input", "stopped"} {
+	for _, rejection := range []string{expired, changed, "input", stopped} {
 		t.Run(rejection, func(t *testing.T) {
 			r, _, _ := routingRuntime(t, map[string]int32{"w1": 1})
 			receipt, err := r.Receive(r.workloads["w1"].definition.Name, time.Now())
@@ -132,7 +133,7 @@ func TestRuntimeTimingKeepsReachedStagesOnRejection(t *testing.T) {
 				receipt.DefinitionID = "other-definition"
 			case "input":
 				input = &InferenceInput{}
-			case "stopped":
+			case stopped:
 				if err := r.StopAdmission(receipt.UID, "TimingStopped"); err != nil {
 					t.Fatal(err)
 				}

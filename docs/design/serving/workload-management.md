@@ -78,7 +78,7 @@ W는 SLO 이상이어야 한다. 더 짧은 H는 허용한다. Receipt에 W를 �
 
 gateway는 원시 필드 집합, BYTES, 길이, JPEG header와 UTF8을 한 번 검사한다. tensor 변환은 runner 전처리 책임이다. [이기종 입력 계약](heterogeneous-workloads.md)을 따른다.
 
-gate 확인과 정의 수락, 카운터와 큐 삽입은 같은 Workload 동기화 경계다. gateway는 ready route executor 가운데 응답을 받지 못한 dispatch 요청 수가 한도 `min(floor(R x T), executor 큐 크기)` 미만인 것만 남겨 plan share로 고른다. T는 latency target, R은 허용 최대 batch 이하 프로파일 batch들의 batch size / 평균 service 시간 최댓값이다. 한도 함수는 runtime과 scheduler replay가 공유한다. 한도에 닿은 executor만 남으면 Reject는 즉시 `DeadlineInfeasible`로 거절하고 Delay는 gateway 큐에서 기다린다. 요청이 기한을 지킬 수 있는지는 executor만 판단한다. Workload 큐와 native count/byte cap, HTTP 동시 처리 상한은 별도 물리 한도다.
+gate 확인과 정의 수락, 카운터와 큐 삽입은 같은 Workload 동기화 경계다. gateway는 ready route executor 가운데 응답을 받지 못한 dispatch 요청 수가 한도 `min(max(floor(R x T), 최소 실행 가능 batch), executor 큐 크기)` 미만인 것만 남겨 plan share로 고른다. T는 latency target, R은 실행 가능한 batch(허용 최대 batch 이하이고 고정 batch 정책이면 그 batch)들의 batch size / 평균 service 시간 최댓값이다. 한도는 target 시간 동안 처리하는 요청 수인 운영점이며 초과 요청이 target을 놓친다는 증명이 아니다. 한도 함수는 runtime과 scheduler replay가 공유한다. 한도에 닿은 executor만 남으면 Reject는 즉시 `QueueFull`(429, stage=gateway)로 거절하고 Delay는 gateway 큐에서 기다린다. 요청이 기한을 지킬 수 있는지는 executor만 판단하며 `DeadlineInfeasible`(503)은 executor만 낸다. 취소한 요청은 executor 상태가 떠났음을 확인할 때까지 처리 중으로 센다. Workload 큐와 native count/byte cap, HTTP 동시 처리 상한은 별도 물리 한도다.
 
 분배는 정확한 physical instance와 유효 weight를 사용한다. 실제 Ready, owner, 입력과 가용 capacity를 확인한다. backend 전달 뒤 연결 오류로 자동 재실행하지 않는다.
 

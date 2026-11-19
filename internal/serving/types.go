@@ -35,6 +35,10 @@ const (
 )
 
 // Overload admission codes and stages are shared by gateway and executor paths.
+// QueueFull at the gateway: the Workload's ingress queue holds its maximum, or
+// every ready routed instance holds its limit of requests without a reply
+// (admissionLimit); at the executor: its own queue is full. DeadlineInfeasible
+// is the executor's judgment that a request cannot meet its deadline.
 const (
 	CodeQueueFull          = "QueueFull"
 	CodeDeadlineInfeasible = "DeadlineInfeasible"
@@ -309,29 +313,49 @@ func NativeMaxBatch(m firstfloor.Metadata) int {
 	return m.MaxBatchSize
 }
 
-// admissionLimit is the gateway admission rule's bound on the requests an
-// instance holds unanswered for a Workload with latency target target:
-// floor(R x target), where R is the instance's fastest measured throughput,
-// batch size over the mean of the batch's service samples, among profile p's
-// batches up to maxBatch. Working flat out at R, the instance finishes no
-// more within the target, so a request beyond it would certainly miss it.
-// Whether a request can still meet its own deadline is the executor's
-// judgment alone (firstfloor ChooseBatch). The executor refuses requests
-// beyond its queue size (QueueFull), so the limit never exceeds queue.
-// R is defined: the catalog builds a batch only from at least two samples
-// that each carry a preceding idle gap (kube sessionProfile), so its mean has
-// records, and an executor is ready only with an allowed measured batch
-// (firstfloor Client.Probe, validateProfileInputs).
-// Runtime.chooseLocked and its replay, chooseAdmission, are the callers.
-func admissionLimit(p *Profile, maxBatch int, target time.Duration, queue int) int {
-	rate := 0.0 // requests per nanosecond
+// RunnableBatch reports whether an executor whose policy allows batches up to
+// maxBatch, and fixes fixedBatch when that is not zero, may run a batch of size.
+func RunnableBatch(maxBatch, fixedBatch, size int) bool {
+	return size <= maxBatch && (fixedBatch == 0 || size == fixedBatch)
+}
+
+// MeasuredRunnable reports whether profile p has a batch such an executor may
+// run and every such batch has a measured mean service time. At runtime this
+// holds by construction: the catalog builds a batch only from samples with a
+// preceding idle gap (kube sessionProfile) and the native probe admits an
+// executor only with a runnable batch. The replay's scope, which reads stored
+// snapshots, checks it (schedulerReplayInstanceReason).
+func MeasuredRunnable(p *Profile, maxBatch, fixedBatch int) bool {
+	runnable := false
 	for _, b := range p.Batches {
-		if b.Batch <= maxBatch {
-			mean, _ := b.ServiceDistribution.MeanNanos()
-			rate = max(rate, float64(b.Batch)/mean)
+		if RunnableBatch(maxBatch, fixedBatch, b.Batch) {
+			if _, ok := b.ServiceDistribution.MeanNanos(); !ok {
+				return false
+			}
+			runnable = true
 		}
 	}
-	return min(int(math.Floor(rate*float64(target))), queue)
+	return runnable
+}
+
+// admissionLimit is the gateway's operating point for an instance serving a
+// Workload with latency target target: the requests the instance clears in
+// one target time working flat out, floor(R x target), where R is its
+// fastest throughput (batch size over the batch's mean service time) among
+// the batches it may run. It is never below the smallest such batch, so the
+// instance can always fill one batch, and never above queue, the executor's
+// queue size beyond which it refuses requests (QueueFull). Whether a request
+// can still meet its deadline is the executor's judgment alone.
+// MeasuredRunnable holds for p at every caller.
+func admissionLimit(p *Profile, maxBatch, fixedBatch int, target time.Duration, queue int) int {
+	rate, smallest := 0.0, queue // rate in requests per nanosecond
+	for _, b := range p.Batches {
+		if RunnableBatch(maxBatch, fixedBatch, b.Batch) {
+			mean, _ := b.ServiceDistribution.MeanNanos()
+			rate, smallest = max(rate, float64(b.Batch)/mean), min(smallest, b.Batch)
+		}
+	}
+	return min(max(int(math.Floor(rate*float64(target))), smallest), queue)
 }
 
 type NodeReference struct {

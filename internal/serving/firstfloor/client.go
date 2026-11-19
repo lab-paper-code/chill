@@ -233,14 +233,16 @@ func validateProfileInputs(spec Spec, actual native.Metadata) error {
 	if !slices.Equal(actual.Runtime.Inputs, condition.Preprocessor.Inputs) || !slices.Equal(actual.Runtime.Outputs, condition.Preprocessor.Outputs) || len(spec.Profile.Batches) == 0 {
 		return errors.New("actual native raw fields or measured batches unavailable")
 	}
-	selected := false
+	// Every catalog batch has a measured mean (kube sessionProfile); the probe
+	// admits an executor only with a batch it may run.
+	maxBatch, fixedBatch, selected := serving.NativeMaxBatch(actual), actual.Policy.FixedBatchSize, false
 	for _, batch := range spec.Profile.Batches {
-		if (actual.Policy.MaxBatchSize == 0 || batch.Batch <= actual.Policy.MaxBatchSize) &&
-			(actual.Policy.FixedBatchSize == 0 || actual.Policy.FixedBatchSize == batch.Batch) {
-			selected = true
-			if batch.Batch > actual.MaxBatchSize || !slices.Contains(actual.Runtime.InitializedBatches, batch.Batch) {
-				return errors.New("selected native batch is not initialized")
-			}
+		if !serving.RunnableBatch(maxBatch, fixedBatch, batch.Batch) {
+			continue
+		}
+		selected = true
+		if batch.Batch > actual.MaxBatchSize || !slices.Contains(actual.Runtime.InitializedBatches, batch.Batch) {
+			return errors.New("selected native batch is not initialized")
 		}
 	}
 	if !selected {

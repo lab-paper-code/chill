@@ -59,12 +59,12 @@ func TestReplayUsesCompletionGapEnvelopeUntilNextServiceEnd(t *testing.T) {
 	native := replayAdmissionPending(s, "native", definition)
 	native.dispatched, native.source.Instance, native.native = true, i.config.ID, math.Inf(1)
 	i.queue, i.outstanding = []*schedulerReplayRequest{native}, 1
-	if !s.chooseBatches(context.Background()) || i.nativeFinish != float64(50*time.Millisecond) || !i.hasBatchIdleBounds {
-		t.Fatalf("replay sampled an optimistic initial gap: finish=%g bounds=%v", i.nativeFinish, i.hasBatchIdleBounds)
+	if !s.chooseBatches(context.Background()) || i.nativeFinish != float64(50*time.Millisecond) {
+		t.Fatalf("replay sampled an optimistic initial gap: finish=%g", i.nativeFinish)
 	}
 	s.now = i.finish
 	s.completeExecution()
-	if i.idleUpperNanos(s.now) != nil || i.runningIdleUpper() != nil {
+	if i.idleUpperNanos(s.now) != nil {
 		t.Fatal("completed simulated service retained old gap uncertainty")
 	}
 }

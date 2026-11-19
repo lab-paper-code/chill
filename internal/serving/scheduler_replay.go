@@ -88,18 +88,21 @@ type schedulerReplayInstance struct {
 	gapNanos                 int64 // reusable query storage; no per-dispatch allocation
 	gapUpperNanos            int64
 	wake                     float64
-	outstanding              int
-	policy                   firstfloor.Policy
-	arrivalTimes             map[string][]float64
-	occupancyNanos           float64 // selected measured, DOM or configured extra ns/request
-	batchStarted             float64
-	batchElapsed             int64
-	batchIdle                int64
-	hasBatchIdle             bool
-	batchIdleUpper           int64
-	hasBatchIdleBounds       bool
-	exchangeKnown            bool
-	exchangeElapsed          int64
+	// outstanding counts the requests the gateway dispatched here without a
+	// reply: the runtime releases one when its exchange ends. The snapshot
+	// carries no executor-end-to-exchange-end time (POST includes the client
+	// round trip), so the replay releases one where the executor lets it go
+	// (service end, drop, or expiry) and takes that return as zero.
+	outstanding     int
+	policy          firstfloor.Policy
+	arrivalTimes    map[string][]float64
+	occupancyNanos  float64 // selected measured, DOM or configured extra ns/request
+	batchStarted    float64
+	batchElapsed    int64
+	batchIdle       int64
+	hasBatchIdle    bool
+	exchangeKnown   bool
+	exchangeElapsed int64
 }
 
 type schedulerReplayResult struct {
@@ -183,13 +186,6 @@ func (i *schedulerReplayInstance) idleUpperNanos(now float64) *int64 {
 	}
 	i.gapUpperNanos = int64(math.Max(0, now-i.lastNativeFinishEarliest))
 	return &i.gapUpperNanos
-}
-
-func (i *schedulerReplayInstance) runningIdleUpper() *int64 {
-	if i.hasBatchIdleBounds {
-		return &i.batchIdleUpper
-	}
-	return nil
 }
 
 // schedulerReplayEstimate replays candidate c once with seed and records each
@@ -659,7 +655,9 @@ func (s *schedulerReplayState) restoreNativeOutstanding(x *schedulerReplayReques
 		s.out.reasons = appendUnique(s.out.reasons, "MissingOutstandingInstance:"+r.Instance)
 		return
 	}
-	i.outstanding++
+	if r.Phase != phaseReturning {
+		i.outstanding++
+	}
 	switch r.Phase {
 	case phaseAssigned:
 		// In transit: it reaches the tail of the native queue at replay start.
