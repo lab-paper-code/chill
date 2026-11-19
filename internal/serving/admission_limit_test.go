@@ -250,19 +250,10 @@ func TestRuntimeAdmissionAtLimitRejectsOrWaitsUntilReply(t *testing.T) {
 // executor paths: service end (completeExecution) and drop
 // (transitionQueuedChoice).
 func TestAdmissionRuntimeAndReplayDecideAlike(t *testing.T) {
-	const target = 35 * time.Millisecond
-	services, weights := []float64{10e6, 12e6}, []int32{1, 2}
 	script := []string{"+", "+", "+", "+", "+", "+", "!1", "+", "+", "x8", "-2", "-3", "+", "-5", "+", "+", "+"}
 	for _, policy := range []AdmissionPolicy{AdmissionPolicyReject, AdmissionPolicyDelay} {
 		t.Run(string(policy), func(t *testing.T) {
-			runtimeStates := runtimeDepthScript(t, policy, target, services, weights, script)
-			replayStates := replayDepthScript(t, policy, target, services, weights, script)
-			for j := range script {
-				if !slices.Equal(runtimeStates[j], replayStates[j]) {
-					t.Fatalf("after %q runtime and replay differ:\nruntime %v\nreplay  %v", script[j], runtimeStates[j], replayStates[j])
-				}
-			}
-			final := runtimeStates[len(script)-1]
+			final := requireDecideAlike(t, policy, []float64{10e6, 12e6}, []int32{1, 2}, 0, script)
 			want := map[AdmissionPolicy]string{AdmissionPolicyReject: CodeQueueFull, AdmissionPolicyDelay: "waiting"}[policy]
 			if !slices.Contains(final, want) || slices.Contains(final, schedulerOutcomeTimeout) != (policy == AdmissionPolicyDelay) {
 				t.Fatalf("script did not reach a %s request and the lifetime path: %v", want, final)
@@ -271,8 +262,68 @@ func TestAdmissionRuntimeAndReplayDecideAlike(t *testing.T) {
 	}
 }
 
-func runtimeDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duration, services []float64, weights []int32, script []string) [][]string {
-	r, gates, _ := depthRuntime(t, policy, target, services, weights)
+// A fixed-batch executor whose floor(R x T) is below its batch (4 per 100 ms
+// clears 2 within 50 ms) is still sent one full batch, in the runtime as in
+// the replay: four requests are placed and the fifth meets the limit.
+func TestAdmissionFixedBatchRuntimeAndReplayDecideAlike(t *testing.T) {
+	for _, policy := range []AdmissionPolicy{AdmissionPolicyReject, AdmissionPolicyDelay} {
+		t.Run(string(policy), func(t *testing.T) {
+			final := requireDecideAlike(t, policy, []float64{40e6}, []int32{1}, 4, []string{"+", "+", "+", "+", "+"})
+			placed := 0
+			for _, state := range final {
+				if state == "executor-0" {
+					placed++
+				}
+			}
+			if placed != 4 {
+				t.Fatalf("a fixed batch of 4 was not sent whole: %v", final)
+			}
+		})
+	}
+}
+
+// requireDecideAlike runs script through the runtime and the replay at a 35 ms
+// target (50 ms with a fixed batch) and fails at the first event after which
+// they differ; it returns the runtime's final states.
+func requireDecideAlike(t *testing.T, policy AdmissionPolicy, services []float64, weights []int32, fixed int, script []string) []string {
+	t.Helper()
+	target := 35 * time.Millisecond
+	if fixed > 0 {
+		target = 50 * time.Millisecond
+	}
+	runtimeStates := runtimeDepthScript(t, policy, target, services, weights, fixed, script)
+	replayStates := replayDepthScript(t, policy, target, services, weights, fixed, script)
+	for j := range script {
+		if !slices.Equal(runtimeStates[j], replayStates[j]) {
+			t.Fatalf("after %q runtime and replay differ:\nruntime %v\nreplay  %v", script[j], runtimeStates[j], replayStates[j])
+		}
+	}
+	return runtimeStates[len(script)-1]
+}
+
+// depthBatches is batch 1 at service and, for a fixed batch, that batch at
+// 2.5 times service.
+func depthBatches(service float64, fixed int) []BatchProfile {
+	batches := []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{service})}
+	if fixed > 0 {
+		batches = append(batches, schedulerTestBatchProfile(BatchProfile{Batch: fixed}, []float64{2.5 * service}))
+	}
+	return batches
+}
+
+func runtimeDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duration, services []float64, weights []int32, fixed int, script []string) [][]string {
+	r, gates, ids := depthRuntime(t, policy, target, services, weights)
+	if fixed > 0 {
+		r.mu.Lock()
+		for j, id := range ids {
+			i := r.instances[id]
+			p := *i.Profile
+			p.Batches = depthBatches(services[j], fixed)
+			i.Profile = &p
+			i.State.Native.Metadata.Policy.MaxBatchSize, i.State.Native.Metadata.Policy.FixedBatchSize = fixed, fixed
+		}
+		r.mu.Unlock()
+	}
 	t.Cleanup(func() {
 		gates.mu.Lock()
 		defer gates.mu.Unlock()
@@ -321,7 +372,7 @@ func runtimeDepthScript(t *testing.T, policy AdmissionPolicy, target time.Durati
 	return states
 }
 
-func replayDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duration, services []float64, weights []int32, script []string) [][]string {
+func replayDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duration, services []float64, weights []int32, fixed int, script []string) [][]string {
 	s := replayAdmissionState(t)
 	d := *s.snap.Workloads[0]
 	d.SLO.TargetLatency, d.Admission.Policy = target, policy
@@ -331,8 +382,8 @@ func replayDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duratio
 	for j, service := range services {
 		i := *prototype
 		p := *prototype.config.Profile
-		p.ID, p.Batches = fmt.Sprintf("profile-%d", j), []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{service})}
-		i.config.ID, i.config.Profile, i.config.Capacity, i.config.MaxBatch = fmt.Sprintf("executor-%d", j), &p, 100, 1
+		p.ID, p.Batches = fmt.Sprintf("profile-%d", j), depthBatches(service, fixed)
+		i.config.ID, i.config.Profile, i.config.Capacity, i.config.MaxBatch, i.config.FixedBatchSize = fmt.Sprintf("executor-%d", j), &p, 100, max(1, fixed), fixed
 		s.instances, s.byID[i.config.ID] = append(s.instances, &i), &i
 		routes[i.config.ID] = weights[j]
 	}
@@ -478,5 +529,41 @@ func TestAdmissionWaitingDefinitionDoesNotHoldAnother(t *testing.T) {
 	s.routeRequests(context.Background())
 	if waiting.dispatched || waiting.dropped || !admitted.dispatched {
 		t.Fatalf("replay: waiting request held back another Definition: held=%+v later=%+v", waiting, admitted)
+	}
+}
+
+// A request whose lifetime ends while the executor still holds it unserved
+// frees its place: the count falls by one, never below zero, and the next
+// request is admitted. A request that expires in the gateway queue holds none.
+func TestReplayExpiryReleasesExecutorPlace(t *testing.T) {
+	s := replayAdmissionState(t)
+	i := s.instances[0]
+	profile := *i.config.Profile
+	profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{200e6})} // limit 1
+	i.config.Profile, i.config.MaxBatch = &profile, 1
+	i.policy = schedulerPolicy(i.config)
+	d := *s.snap.Workloads[0]
+	d.Admission.Policy = AdmissionPolicyDelay
+	held := replayAdmissionPending(s, "held", &d)
+	gateway := replayAdmissionPending(s, "gateway", &d)
+	next := replayAdmissionPending(s, "next", &d)
+	s.routeRequests(context.Background())
+	if !held.dispatched || gateway.dispatched || i.outstanding != 1 {
+		t.Fatalf("setup: held=%v gateway=%v outstanding=%d", held.dispatched, gateway.dispatched, i.outstanding)
+	}
+	s.now = float64(time.Second)
+	gateway.expires, next.expires = s.now, math.Inf(1)
+	s.expireRequests()
+	if !gateway.expired || i.outstanding != 1 {
+		t.Fatalf("a gateway expiry touched the executor count: expired=%v outstanding=%d", gateway.expired, i.outstanding)
+	}
+	held.expires = s.now
+	s.expireRequests()
+	if !held.expired || i.outstanding != 0 {
+		t.Fatalf("an expired unserved request still holds its place: expired=%v outstanding=%d", held.expired, i.outstanding)
+	}
+	s.routeRequests(context.Background())
+	if !next.dispatched || i.outstanding != 1 {
+		t.Fatalf("the freed place was not given to the next request: dispatched=%v outstanding=%d", next.dispatched, i.outstanding)
 	}
 }
