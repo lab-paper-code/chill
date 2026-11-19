@@ -354,7 +354,10 @@ func capacityInfeasibleSLOFixture() (SchedulerSettings, SchedulerSnapshot, NodeR
 	settings.ObservationWindow, settings.ControlInterval, settings.ComparisonPeriod = time.Second, time.Second, time.Second
 	settings.MaxReplicas, settings.MaxInstances = 1, 3
 	first := snapshot.Workloads[0]
-	first.SLO.TargetLatency = time.Millisecond
+	// 21 ms admits one 20 ms request and four 5 ms ones; a 20 ms return makes
+	// every completion late, the recovery's less so.
+	first.SLO.TargetLatency = 21 * time.Millisecond
+	settings.CompletionMarginMS = 20
 	first.Admission.Policy = AdmissionPolicyReject
 	second := poolsAddWorkload(&snapshot, "w2")
 	settings.AutonomousWorkloads = []string{first.UID, second.UID}
@@ -400,8 +403,7 @@ func capacityCheckInfeasibleSLODecision(t *testing.T, decision SchedulerDecision
 		t.Fatal("common feedback missing")
 	}
 	targetScore, keepScore := decision.Target.Feedback[selected], decision.Keep.Feedback[baseline]
-	// Idle executors run the 1 ms requests late instead of rejecting them, so
-	// the recovery's gain is a smaller late excess.
+	// Admitted requests complete late, so the recovery's gain is a smaller late excess.
 	if targetScore.Satisfied || targetScore.SuccessQuantileNanos == nil || keepScore.SuccessQuantileNanos == nil || targetScore.SuccessExcess >= keepScore.SuccessExcess {
 		t.Fatalf("infeasible recovery did not improve late excess: target=%+v keep=%+v", targetScore, keepScore)
 	}

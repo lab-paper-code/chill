@@ -8,6 +8,7 @@ import (
 
 func TestRuntimeConfiguredTickUsesCurrentMarginForNewAccept(t *testing.T) {
 	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	publishDelay(t, r, "w1") // the second request waits for the first's reply
 	r.SetCompletionMargin(7)
 	r.SetPathFeedback([]PathFeedback{BuildPathFeedback("w1", nil, r.workloads["w1"].definition.SLO, 7*time.Millisecond)})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

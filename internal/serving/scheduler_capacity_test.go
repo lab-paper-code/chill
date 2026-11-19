@@ -134,7 +134,7 @@ func capacityE1Fixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ComparisonPeriod, s.CompletionMarginMS = time.Second, time.Minute, 177
 	d := snap.Workloads[0]
-	// Reject leaves 88/2400 failures on the slow expansion and 34/2400 on
+	// Reject leaves 89/2400 failures on the slow expansion and 34/2400 on
 	// the fast one. p98 keeps this fixture's finite-demand recovery distinction.
 	d.SLO = SLO{Percentile: 98, TargetLatency: time.Second}
 	d.Admission.Policy = AdmissionPolicyReject
@@ -186,7 +186,7 @@ func TestCapacityRejectAtP95PrefersCheaperFeasibleExpansion(t *testing.T) {
 	for _, tc := range []struct {
 		result   capacityResult
 		rejected int
-	}{{slow, 88}, {fast, 34}} {
+	}{{slow, 89}, {fast, 34}} {
 		if !tc.result.feasible || len(tc.result.feedback) != 1 || !tc.result.feedback[0].Satisfied ||
 			tc.result.feedback[0].Population != 2400 || tc.result.feedback[0].Rejected != tc.rejected ||
 			tc.result.feedback[0].OnTime+tc.result.feedback[0].Late != 2400-tc.rejected {

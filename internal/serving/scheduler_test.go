@@ -700,17 +700,20 @@ func TestSchedulerExpiredLifetimesDoNotBecomeCheapSuccessfulSamples(t *testing.T
 	}
 	snap.Outstanding = nil
 	snap.Arrivals = []SchedulerArrival{{ID: "trace", At: snap.At.Add(-s.ObservationWindow), Definition: d, Compute: true, Lifetime: life}}
-	pe := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), d.UID)
-	if pe.PredictedOutcomes[schedulerOutcomeRejected] != 1 || pe.Samples != 0 {
-		t.Fatalf("Reject must not execute when frozen lifetime cannot contain service: %+v", pe)
-	}
-	d.Admission.Policy = AdmissionPolicyDelay
-	delayed := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), d.UID)
-	if delayed.PredictedOutcomes[schedulerOutcomeTimeout] != 1 || delayed.Samples != 0 {
-		t.Fatalf("Delay must keep infeasible-lifetime ingress until final timeout: %+v", delayed)
+	// Only the executor judges deadlines: a request whose 5 ms lifetime cannot
+	// contain its 10 ms service ends as a timeout at its lifetime, never as an
+	// on-time result or a service-time sample, whatever its policy.
+	for _, policy := range []AdmissionPolicy{AdmissionPolicyReject, AdmissionPolicyDelay} {
+		d.Admission.Policy = policy
+		pe := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), d.UID)
+		if pe.PredictedOutcomes[schedulerOutcomeTimeout] != 1 || pe.PredictedOutcomes[schedulerOutcomeOnTime] != 0 || pe.Samples != 0 {
+			t.Fatalf("%s: lifetime-infeasible request became a success or sample: %+v", policy, pe)
+		}
 	}
 	snap.Arrivals[0].Lifetime = 0
-	d.SLO.TargetLatency = time.Millisecond
+	// 15 ms admits one 10 ms request; its 10 ms return makes it late.
+	d.SLO.TargetLatency = 15 * time.Millisecond
+	s.CompletionMarginMS = 10
 	d.Admission.Policy = AdmissionPolicyDelay
 	unlimited := schedulerKeepForTest(t, s, snap)
 	ue := schedulerRequireEstimate(t, unlimited, d.UID)

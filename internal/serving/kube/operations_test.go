@@ -421,7 +421,7 @@ func TestReassignedInstancePersistsOnlyItsDeclaredWorkload(t *testing.T) {
 			ctx := context.Background()
 			m, _ := newManagerHarness(t)
 			createManagerCatalog(t, m)
-			first, err := m.CreateWorkload(ctx, "first", managerWorkloadSpec())
+			first, err := m.CreateWorkload(ctx, "first", managerDelayWorkloadSpec())
 			if err != nil {
 				t.Fatal(err)
 			}

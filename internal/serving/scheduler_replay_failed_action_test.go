@@ -181,7 +181,7 @@ func TestReplayCommonScopeRetainsPhysicalOccupancyAndOutstanding(t *testing.T) {
 	state.initializeOutstanding()
 	occupant := state.byID[unknown.ID]
 	if !occupant.loaded || !occupant.ready || !occupant.excluded || occupant.config.Allocation != unknown.Allocation ||
-		occupant.outstanding != 1 || len(occupant.queue) != 1 || replayHasCapacity(occupant) {
+		occupant.outstanding != 1 || len(occupant.queue) != 1 || replayExecutable(occupant) {
 		t.Fatalf("exclusion changed physical state or supplied capacity: %+v", occupant)
 	}
 	if !state.startActions() || state.actionByID["unknown-power"].started || !state.actionByID["dependent-remove"].blocked {

@@ -315,6 +315,7 @@ func runtimeTimingAssertFinal(t *testing.T, final RequestRow, outcome, responseO
 
 func TestRuntimeTimingQueuedDeadlineDoesNotInventExecution(t *testing.T) {
 	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	publishDelay(t, r, "w1") // the full executor holds the request in the queue
 	r.instances[instance.ID].outstanding = r.instances[instance.ID].Capacity
 	receipt, err := r.Receive(r.workloads["w1"].definition.Name, time.Now())
 	if err != nil {

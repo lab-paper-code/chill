@@ -314,7 +314,7 @@ export function activeScene(capture, epoch, options = {}) {
     const timing = (stages, offsets) => stages.map((stage, i) => ({ stage, elapsedNanos: offsets[i] }))
     if (outcome === 'rejected') {
       const code = svc === plc && rand(seed, 9) < 0.5 ? 'DeadlineInfeasible' : 'QueueFull', elapsed = accepted + 400_000
-      return { ...base, outcome: 'rejected', error: code, rejection: { code, stage: code === 'QueueFull' ? 'gateway' : 'executor', policy: d.admission.policy, ...(code === 'DeadlineInfeasible' ? { predictedCompletionNanos: Math.round(svc.target * 1.4e9) } : {}), remainingSLONanos: Math.round(svc.target * 1e9) - elapsed },
+      return { ...base, outcome: 'rejected', error: code, rejection: { code, stage: code === 'QueueFull' ? 'gateway' : 'executor', policy: d.admission.policy, remainingSLONanos: Math.round(svc.target * 1e9) - elapsed },
         elapsedNanos: elapsed, validatedNanos: validated, executionComplete: false, serverTiming: timing(['receiveDone', 'authDone', 'bodyDecodeDone', 'inputValidateDone', 'validatedEventDone', 'acceptDone', 'responseWriteStart', 'responseWriteDone'],
           [40_000, 290_000, validated - 60_000, validated - 20_000, validated, accepted, accepted + 100_000, elapsed - 50_000]) }
     }

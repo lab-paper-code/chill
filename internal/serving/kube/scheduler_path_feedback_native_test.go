@@ -28,6 +28,13 @@ func TestTickFeedbackUpdatesRoutedCallsWithoutRewritingAssignedNativeContext(t *
 	}
 	snapshot := c.State().Snapshot
 	workload := snapshot.Workloads[0]
+	// A request beyond the executor's limit waits in the gateway queue.
+	delayed := *workload
+	delayed.Generation++
+	delayed.Admission.Policy = serving.AdmissionPolicyDelay
+	if err := c.runtime.Publish(&delayed); err != nil {
+		t.Fatal(err)
+	}
 	ready := readyNativeFeedbackInstance(t, snapshot.Instances)
 	seen, release := interceptNativeFeedbackCalls(t, c, ctx, ready)
 	var calls []*serving.Call

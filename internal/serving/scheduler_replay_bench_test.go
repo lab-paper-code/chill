@@ -43,6 +43,8 @@ func schedulerReplayWindow(n int) (SchedulerSettings, SchedulerSnapshot) {
 	return s, snap
 }
 
+// blockedReplayDispatch holds queued requests at executors that are not
+// ready, or, when full, at executors holding their limit for Delay requests.
 func blockedReplayDispatch(tb testing.TB, executors, queued int, full bool) *schedulerReplayState {
 	tb.Helper()
 	s := replayAdmissionState(tb)
@@ -51,19 +53,19 @@ func blockedReplayDispatch(tb testing.TB, executors, queued int, full bool) *sch
 	s.byID = make(map[string]*schedulerReplayInstance)
 	definition := s.snap.Workloads[0]
 	definition.Admission.MaxQueuedRequests = int32(queued)
+	definition.Admission.Policy = AdmissionPolicyDelay
 	for j := range executors {
 		instance := prototype
 		instance.config.ID = fmt.Sprintf("executor-%d", j)
 		if full {
 			instance.outstanding = instance.config.Capacity
 		} else {
-			instance.outstanding = 1
-			instance.exchangeKnown, instance.batchElapsed = true, int64(time.Second)
-			instance.batch = []*schedulerReplayRequest{{source: SchedulerRequest{ID: fmt.Sprintf("running-%d", j), Definition: definition}, identity: definition.Identity(), running: true}}
+			instance.ready = false
 		}
 		s.instances = append(s.instances, &instance)
 		s.byID[instance.config.ID] = &instance
 	}
+	s.weights, s.available = make([]int32, executors), make([]bool, executors)
 	for j := range queued {
 		request := replayAdmissionPending(s, fmt.Sprintf("queued-%d", j), definition)
 		request.expires = math.Inf(1)
@@ -71,7 +73,7 @@ func blockedReplayDispatch(tb testing.TB, executors, queued int, full bool) *sch
 	return s
 }
 
-func TestReplayDispatchCachesUnknownExecutorsBeforeScanningQueue(t *testing.T) {
+func TestReplayBlockedDispatchDoesNotScanQueue(t *testing.T) {
 	for _, full := range []bool{false, true} {
 		s := blockedReplayDispatch(t, 64, 4096, full)
 		ctx := &capacityCountingContext{Context: context.Background()}
@@ -80,7 +82,7 @@ func TestReplayDispatchCachesUnknownExecutorsBeforeScanningQueue(t *testing.T) {
 		}
 		for _, request := range s.live {
 			if request.dispatched || request.dropped {
-				t.Fatal("unknown/no-capacity executor fabricated admission or rejection")
+				t.Fatal("a blocked executor fabricated admission or rejection")
 			}
 		}
 	}
@@ -93,7 +95,6 @@ func BenchmarkReplayDispatchBlockedExecutors(b *testing.B) {
 				b.Run(fmt.Sprintf("executors=%d/queued=%d/full=%t", executors, queued, full), func(b *testing.B) {
 					s := blockedReplayDispatch(b, executors, queued, full)
 					ctx := context.Background()
-					s.routeRequests(ctx) // allocate reusable executor indexes before measuring
 					b.ReportAllocs()
 					b.ResetTimer()
 					for range b.N {
@@ -104,20 +105,5 @@ func BenchmarkReplayDispatchBlockedExecutors(b *testing.B) {
 				})
 			}
 		}
-	}
-}
-
-func TestReplayAdmissionProjectionDoesNotAllocatePerCandidate(t *testing.T) {
-	s := replayAdmissionState(t)
-	r := replayAdmissionPending(s, "candidate", s.snap.Workloads[0])
-	ctx := context.Background()
-	var estimate AdmissionEstimate
-	allocations := testing.AllocsPerRun(100, func() {
-		s.beginAdmission(ctx)
-		estimate = s.estimateAdmission(s.instances[0], r)
-		s.endAdmission()
-	})
-	if !estimate.Known || allocations != 0 {
-		t.Fatalf("warm dispatch projection: estimate=%+v allocations=%g, want 0", estimate, allocations)
 	}
 }

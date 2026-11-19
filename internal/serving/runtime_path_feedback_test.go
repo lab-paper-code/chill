@@ -13,6 +13,7 @@ func TestRuntimeFreezesRoutedPostThroughQueueSettingsAndFailure(t *testing.T) {
 	for _, post := range []float64{0, 30} {
 		t.Run(fmt.Sprint(post), func(t *testing.T) {
 			r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1, "w2": 1})
+			publishDelay(t, r, "w1", "w2") // later requests wait for capacity
 			r.SetCompletionMargin(7)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

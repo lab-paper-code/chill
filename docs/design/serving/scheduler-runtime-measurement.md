@@ -29,13 +29,13 @@ native slack은 남은 SLO에서 frozen completion reserve와 조건부 service 
 
 ## 과부하 정책과 physical 완료
 
-`Workload.spec.admission`의 Reject와 Delay, maxQueuedRequests를 Definition과 요청에 동결한다. Reject는 SLO 불가능 head를 `DeadlineInfeasible`로 실행 없이 거절한다. Delay는 후순위 FIFO로 옮겨 normal 뒤 늦은 완료를 허용한다.
+`Workload.spec.admission`의 Reject와 Delay, maxQueuedRequests를 Definition과 요청에 동결한다. gateway는 route의 ready executor 가운데 응답을 받지 못한 dispatch 요청 수(inFlight)가 한도 미만인 것만 남기고 plan의 share로 고른다. 한도는 `min(floor(R x T), executor 큐 크기)`이며 T는 Workload latency target, R은 인스턴스의 허용 최대 batch 이하 프로파일 batch들의 batch size / 평균 service 시간 중 최댓값이다. 한도 함수 `admissionLimit`은 runtime(`chooseLocked`)과 scheduler replay(`chooseAdmission`)가 함께 쓴다. 한도에 닿은 executor만 남으면 Reject는 즉시 `DeadlineInfeasible`(stage=gateway)로 거절하고 Delay는 gateway 큐에서 기다린다. ready한 route executor가 없으면 정책과 무관하게 기다린다.
 
-거절과 지연은 대기 중인 다른 요청을 지키려는 것이다. 실행기에 요청이 하나뿐이고 실행 중인 batch도 없으면 그 요청은 SLO가 남아 있는 한 예측 완료가 SLO를 넘어도 거절하거나 미루지 않고 실행한다. gateway는 후보가 도착한 시점의 실행기 상태로 이 규칙을 판단한다. 실행 중, 대기 중, 지연 중인 요청과 아직 관측에 나타나지 않은 배정이 하나도 없는 실행기는 예측 완료와 무관하게 후보를 받을 수 있는 실행기다(`AdmissionEstimate.Idle`). 이때도 최종 lifetime 초과 예측은 거절한다. 다른 일이 남은 실행기가 늦은 후보를 받으면 실행기는 그 앞에 받은 요청을 drop하게 된다. route 안에서는 SLO 안에 완료할 실행기를 고르고, 그런 실행기가 없을 때만 비어 있는 실행기를 고른다(`admissionPreferOnTime`). SLO가 이미 지난 요청은 실행해도 SLO를 지킬 수 없으므로 drop한다. 실행기의 선택(`ChooseBatch`)은 결정 시점의 상태로, gateway 예측과 직접 재생의 gateway는 후보 도착 시점의 상태로 같은 함수 `firstfloor.IdleTakes`를 판단한다.
+요청이 자신의 기한을 지킬 수 있는지는 executor만 판단한다(firstfloor `policy.go`). gateway는 기한을 예측하지 않는다.
 
-입력과 support를 판단할 수 없으면 AdmissionUnknown이다. batch 확정 직전 최신 monotonic 시각으로 cancel, 최종 기한과 SLO를 다시 검사하고 제거와 지연 전이 뒤 다시 선택한다. fixed-batch는 별도 예외다.
+batch 확정 직전 executor는 최신 monotonic 시각으로 cancel, 최종 기한과 SLO를 다시 검사하고 제거 뒤 다시 선택한다. fixed-batch는 별도 예외다.
 
-gateway normal과 deferred 합은 maxQueuedRequests 기본1024다. native count/byte와 HTTP semaphore는 별도다. timeout/cancel은 큐에 적용하되 active batch는 실제 완료나 runner 종료까지 점유한다.
+gateway 큐 합은 maxQueuedRequests 기본1024다. native count/byte와 HTTP semaphore는 별도다. timeout/cancel은 큐에 적용하되 active batch는 실제 완료나 runner 종료까지 점유한다.
 
 | executor 결과 | 계약 |
 |---|---|
@@ -54,9 +54,9 @@ native가 HTTP보다 먼저 완료되면 outstanding은 returning이다. 열린 
 
 ## Admission 근거와 transport
 
-assigned/final은 허용 당시 admissionPrediction과 exact instance/profile, actual policy, source와 span anchor, outstanding과 normal/deferred, running/IPC를 동결한다. prediction은 판단부터 예상 완료까지이며 receipt부터 elapsed와 구분한다.
+assigned/final은 허용 당시 `admissionDepths`(instance ID별 `{inFlight, limit}`)와 exact instance/profile, actual policy, source와 span anchor, outstanding, running/IPC를 동결한다. inFlight는 receipt부터 elapsed와 구분한 dispatch 후 미응답 요청 수다.
 
-admissionWaits는 eligibility와 queue class가 바뀔 때 실제 실패 사유와 입력을 남긴다. support 부재를 최종 수명 불가능으로 대체하지 않는다. gateway와 native deferred 시각은 다른 local clock이다.
+admissionWaits는 gateway 큐에서 기다리는 동안 executor별 eligibility가 바뀔 때 상태와 사유(`NoCapacity`, `AdmissionStopped`)를 남긴다. ready executor의 항목은 reason 없이 `depth`(`inFlight`, `limit`)를 가지며 한도에 닿았음을 뜻한다. gateway와 native deferred 시각은 다른 local clock이다.
 
 workerHTTP의 connection acquire, connect, request write와 first byte는 기존 body-read exchange 안의 관측이다. connect는 acquire와 겹친다. nativeHTTP는 handler-entry anchor와 로컬 received/decode/enqueue/finished/write-start offset이다. write-start는 응답 쓰기 시작을 나타낸다.
 

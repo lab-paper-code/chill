@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -169,7 +170,6 @@ func TestCapacityWindowStopsOnlyAfterCertainFailure(t *testing.T) {
 	}{
 		{"passing window is complete", 5e5, 95, false},
 		{"overload p95", 5e6, 95, true},
-		{"overload p100", 5e6, 100, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const n = 400
@@ -198,6 +198,17 @@ func TestCapacityWindowStopsOnlyAfterCertainFailure(t *testing.T) {
 			}
 		})
 	}
+	// A p100 target identifies no finite service window
+	// (firstfloor.MinimumServiceSamples), so the replay cannot draw the
+	// service of a request the executor runs and names that, not a verdict.
+	t.Run("p100 service is unidentified", func(t *testing.T) {
+		s, snap := schedulerReplayWindow(400)
+		snap.Workloads[0].SLO = SLO{Percentile: 100, TargetLatency: 20 * time.Millisecond}
+		full, err := schedulerReplayEstimate(context.Background(), s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, 1, nil, nil)
+		if err != nil || !slices.Contains(full.Reasons, "MissingConditionalServiceSupport:i1") {
+			t.Fatalf("p100 service draw must be reported unidentified: %v %+v", err, full.Reasons)
+		}
+	})
 	// Empirical p95 of 20 permits exactly one miss; equality is not a miss,
 	// and observing the same late request twice must not count it twice.
 	limit := capacityWindowLimit{requests: 20, slo: SLO{Percentile: 95, TargetLatency: time.Millisecond}}
@@ -363,9 +374,13 @@ func TestCapacityConditionalSupportWithDispatchOccupancy(t *testing.T) {
 	// sqrt(1e6*1e10) ns = 100ms: busy and arrival gaps below 100ms read the
 	// fast law, quieter gaps the slow one. Each law is one p95 window (59
 	// records). From 50 req/s fewer than 1% of Poisson gaps exceed 100ms.
+	// The quiet law alone would cap a busy actor at 25 req/s. The gateway
+	// limit reads the mean of both laws, 20.5 ms: two requests in flight at
+	// the 50 ms target. A quiet law beyond the target would put that mean
+	// above half the target and hold the limit at one.
 	short, long := int64(time.Millisecond), int64(10*time.Second)
 	batch := &snapshot.Instances[0].Profile.Batches[0]
-	*batch = schedulerTestPairedBatch(*batch, schedulerTestGapLaws([2]int64{short, int64(time.Millisecond)}, [2]int64{long, int64(100 * time.Millisecond)}))
+	*batch = schedulerTestPairedBatch(*batch, schedulerTestGapLaws([2]int64{short, int64(time.Millisecond)}, [2]int64{long, int64(40 * time.Millisecond)}))
 	snapshot.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: 50 * time.Millisecond}
 	without := capacityBuildForTest(t, settings, w, snapshot)
 	// A marginal mean closes search below 30 req/s despite fast recorded

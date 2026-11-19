@@ -53,7 +53,6 @@ type schedulerReplayRequest struct {
 	running             bool
 	expired             bool
 	deferred            bool
-	gatewayDeferred     bool
 	dropped             bool
 	failed              bool
 	expires             float64
@@ -66,7 +65,6 @@ type schedulerReplayRequest struct {
 	potential           float64 // conditional failure excess, never a completion time
 	hasPotential        bool
 	minimumDemand       bool
-	admissionTarget     bool
 }
 
 type schedulerReplayInstance struct {
@@ -93,7 +91,6 @@ type schedulerReplayInstance struct {
 	outstanding              int
 	policy                   firstfloor.Policy
 	arrivalTimes             map[string][]float64
-	arrivalsKnown            bool
 	occupancyNanos           float64 // selected measured, DOM or configured extra ns/request
 	batchStarted             float64
 	batchElapsed             int64
@@ -103,12 +100,6 @@ type schedulerReplayInstance struct {
 	hasBatchIdleBounds       bool
 	exchangeKnown            bool
 	exchangeElapsed          int64
-	admissionObserved        []firstfloor.RequestState
-	admissionAssignments     []firstfloor.RequestState
-	admissionCalls           []*schedulerReplayRequest
-	admissionArrivals        map[string]admissionArrival
-	admissionUnknown         bool
-	admissionNormal          int
 }
 
 type schedulerReplayResult struct {
@@ -263,43 +254,36 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 }
 
 type schedulerReplayState struct {
-	settings          SchedulerSettings
-	snap              SchedulerSnapshot
-	c                 SchedulerCandidate
-	rng               *rand.Rand
-	out               schedulerReplayResult
-	horizon           float64
-	instances         []*schedulerReplayInstance
-	byID              map[string]*schedulerReplayInstance
-	nodes             []SchedulerNode
-	goal              SchedulerCandidate
-	applied           SchedulerCandidate
-	previousRoute     map[string]map[string]int32
-	creditInvalid     map[string]map[string]bool
-	actions           []*schedulerReplayAction
-	actionByID        map[string]*schedulerReplayAction
-	requests          []*schedulerReplayRequest // ordered by arrival
-	live              []*schedulerReplayRequest // arrived and not completed, in requests order
-	arrived           int                       // requests[:arrived] have arrived
-	routeCredits      map[string][]int64        // Workload UID
-	routingApplied    bool
-	weights           []int32
-	available         []bool
-	idle              []bool
-	queuedCounts      map[string]int
-	dispatchUIDs      []string
-	admissionPrepared bool
-	admissionReady    bool
-	admissionBlocked  bool
-	admissionPending  map[string][]*schedulerReplayRequest
-	admissionTargets  map[*Definition]bool
-	now               float64
+	settings       SchedulerSettings
+	snap           SchedulerSnapshot
+	c              SchedulerCandidate
+	rng            *rand.Rand
+	out            schedulerReplayResult
+	horizon        float64
+	instances      []*schedulerReplayInstance
+	byID           map[string]*schedulerReplayInstance
+	nodes          []SchedulerNode
+	goal           SchedulerCandidate
+	applied        SchedulerCandidate
+	previousRoute  map[string]map[string]int32
+	creditInvalid  map[string]map[string]bool
+	actions        []*schedulerReplayAction
+	actionByID     map[string]*schedulerReplayAction
+	requests       []*schedulerReplayRequest // ordered by arrival
+	live           []*schedulerReplayRequest // arrived and not completed, in requests order
+	arrived        int                       // requests[:arrived] have arrived
+	routeCredits   map[string][]int64        // Workload UID
+	routingApplied bool
+	weights        []int32
+	available      []bool
+	queuedCounts   map[string]int
+	dispatchUIDs   []string
+	now            float64
 	// compared limits energy to these Nodes; nil counts every Node.
 	compared map[NodeReference]bool
 	// chooseBatches scratch, reused across events.
 	entries            []schedulerReplayQueued
 	states             []firstfloor.RequestState
-	admissionScratch   admissionScratch
 	capacity           *capacityWindowLimit // nil for ordinary candidate estimates
 	finalizingFeedback bool
 	potentialQueues    map[*schedulerReplayInstance]*feedbackQueueSummary // non-nil only during immutable final reduction
@@ -346,7 +330,6 @@ func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings
 	s.routingApplied = c.Keep
 	s.weights = make([]int32, len(s.instances))
 	s.available = make([]bool, len(s.instances))
-	s.idle = make([]bool, len(s.instances))
 	err = s.run(ctx)
 	return s.out, err
 }
@@ -489,7 +472,6 @@ func (s *schedulerReplayState) initializeInstances() {
 	addInstance := func(i SchedulerInstance, loaded bool) {
 		x := &schedulerReplayInstance{config: i, loaded: loaded, ready: loaded && i.Ready, stopped: i.Stopped, finish: math.Inf(1), wake: 0, arrivalTimes: map[string][]float64{}}
 		x.excluded = scope.instances[i.ID] != ""
-		x.arrivalsKnown = !loaded || i.ArrivalAgesMS != nil
 		x.idleUnknown = loaded && i.AdmissionIdleUnknown
 		spanAt := i.ObservedAt
 		if !i.NativeSpanAt.IsZero() {
@@ -632,14 +614,14 @@ func (s *schedulerReplayState) initializeOutstanding() {
 			}
 			s.out.outcomes[x.identity][schedulerOutcomeFailed]++
 		}
-		if r.Phase == phaseAssigned || r.Phase == phaseQueued || r.Phase == phaseDeferred && r.Instance != "" || r.Phase == phaseRunning || r.Phase == phaseReturning {
+		if r.Phase == phaseAssigned || r.Phase == phaseQueued || r.Phase == phaseDeferred || r.Phase == phaseRunning || r.Phase == phaseReturning {
 			s.restoreNativeOutstanding(x)
 		}
 	}
 }
 
 func (s *schedulerReplayState) outstandingRequest(r SchedulerRequest) *schedulerReplayRequest {
-	x := &schedulerReplayRequest{source: r, identity: r.Definition.Identity(), observed: true, admitted: true, native: math.Inf(1), expires: math.Inf(1), queueAt: -float64(r.QueueAge), running: r.Phase == phaseRunning, deferred: r.Phase == phaseDeferred && r.Instance != "", gatewayDeferred: r.Phase == phaseDeferred && r.Instance == ""}
+	x := &schedulerReplayRequest{source: r, identity: r.Definition.Identity(), observed: true, admitted: true, native: math.Inf(1), expires: math.Inf(1), queueAt: -float64(r.QueueAge), running: r.Phase == phaseRunning, deferred: r.Phase == phaseDeferred}
 	x.accountedAgeNanos = float64(r.Elapsed)
 	// An unrouted request takes its path's POST when routed (marginNanos).
 	if r.CompletionMarginMS != nil {

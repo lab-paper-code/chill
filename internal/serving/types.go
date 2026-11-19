@@ -38,7 +38,6 @@ const (
 const (
 	CodeQueueFull          = "QueueFull"
 	CodeDeadlineInfeasible = "DeadlineInfeasible"
-	AdmissionUnknown       = "AdmissionUnknown"
 	AdmissionStageGateway  = "gateway"
 	AdmissionStageExecutor = "executor"
 )
@@ -67,27 +66,23 @@ const DefinitionAdmissionInvalid = "DefinitionAdmissionInvalid"
 
 // Error carries a consumer-visible failure without depending on its transport.
 type Error struct {
-	Code                     string          `json:"code"`
-	Message                  string          `json:"message"`
-	Field                    string          `json:"field,omitempty"`
-	Stage                    string          `json:"stage,omitempty"`
-	Policy                   AdmissionPolicy `json:"policy,omitempty"`
-	RemainingSLONanos        *int64          `json:"remainingSLONanos,omitempty"`
-	PredictedCompletionNanos *int64          `json:"predictedCompletionNanos,omitempty"`
-	ExecutorWaitNanos        *int64          `json:"executorWaitNanos,omitempty"`
-	OutsideSupport           bool            `json:"outsideSupport,omitempty"`
+	Code              string          `json:"code"`
+	Message           string          `json:"message"`
+	Field             string          `json:"field,omitempty"`
+	Stage             string          `json:"stage,omitempty"`
+	Policy            AdmissionPolicy `json:"policy,omitempty"`
+	RemainingSLONanos *int64          `json:"remainingSLONanos,omitempty"`
+	ExecutorWaitNanos *int64          `json:"executorWaitNanos,omitempty"`
 }
 
 func (e *Error) Error() string { return e.Message }
 
 // AdmissionRejection is the public overload decision, without transport details.
 type AdmissionRejection struct {
-	Code                     string          `json:"code"`
-	Stage                    string          `json:"stage"`
-	Policy                   AdmissionPolicy `json:"policy"`
-	PredictedCompletionNanos *int64          `json:"predictedCompletionNanos,omitempty"`
-	RemainingSLONanos        *int64          `json:"remainingSLONanos,omitempty"`
-	OutsideSupport           bool            `json:"outsideSupport,omitempty"`
+	Code              string          `json:"code"`
+	Stage             string          `json:"stage"`
+	Policy            AdmissionPolicy `json:"policy"`
+	RemainingSLONanos *int64          `json:"remainingSLONanos,omitempty"`
 }
 
 func failure(code, format string, args ...any) error {
@@ -305,6 +300,40 @@ func (p *Profile) NativeBundle() firstfloor.ProfileBundle {
 	return bundle
 }
 
+// NativeMaxBatch is the largest batch native metadata m allows: its policy's
+// limit, or its largest initialized batch when the policy sets none.
+func NativeMaxBatch(m firstfloor.Metadata) int {
+	if m.Policy.MaxBatchSize > 0 {
+		return m.Policy.MaxBatchSize
+	}
+	return m.MaxBatchSize
+}
+
+// admissionLimit is the gateway admission rule's bound on the requests an
+// instance holds unanswered for a Workload with latency target target:
+// floor(R x target), where R is the instance's fastest measured throughput,
+// batch size over the mean of the batch's service samples, among profile p's
+// batches up to maxBatch. Working flat out at R, the instance finishes no
+// more within the target, so a request beyond it would certainly miss it.
+// Whether a request can still meet its own deadline is the executor's
+// judgment alone (firstfloor ChooseBatch). The executor refuses requests
+// beyond its queue size (QueueFull), so the limit never exceeds queue.
+// R is defined: the catalog builds a batch only from at least two samples
+// that each carry a preceding idle gap (kube sessionProfile), so its mean has
+// records, and an executor is ready only with an allowed measured batch
+// (firstfloor Client.Probe, validateProfileInputs).
+// Runtime.chooseLocked and its replay, chooseAdmission, are the callers.
+func admissionLimit(p *Profile, maxBatch int, target time.Duration, queue int) int {
+	rate := 0.0 // requests per nanosecond
+	for _, b := range p.Batches {
+		if b.Batch <= maxBatch {
+			mean, _ := b.ServiceDistribution.MeanNanos()
+			rate = max(rate, float64(b.Batch)/mean)
+		}
+	}
+	return min(int(math.Floor(rate*float64(target))), queue)
+}
+
 type NodeReference struct {
 	Name string `json:"name"`
 	UID  string `json:"uid"`
@@ -413,32 +442,31 @@ type WorkloadState struct {
 // RequestEvent records facts, including responses that failed to reach their
 // caller. An absent assignment or completion is never synthesized.
 type RequestEvent struct {
-	RequestID           string                        `json:"requestID"`
-	WorkloadName        string                        `json:"workloadName"`
-	WorkloadUID         string                        `json:"workloadUID,omitempty"`
-	Definition          string                        `json:"definition,omitempty"`
-	Kind                string                        `json:"kind"`
-	At                  time.Time                     `json:"at"`
-	ReceivedAt          time.Time                     `json:"receivedAt"`
-	ElapsedNanos        int64                         `json:"elapsedNanos"`
-	ServerTiming        RequestTimings                `json:"serverTiming,omitempty"`
-	Assignment          *Assignment                   `json:"assignment,omitempty"`
-	NativeInstance      string                        `json:"nativeInstance,omitempty"`
-	NativeProgress      *BackendProgress              `json:"nativeProgress,omitempty"`
-	NativeHTTP          *firstfloor.HTTPRequestTiming `json:"nativeHTTP,omitempty"`
-	ClientSpanNanos     int64                         `json:"clientSpanNanos,omitempty"`
-	ExecutionComplete   bool                          `json:"executionComplete"`
-	LifetimeNanos       int64                         `json:"lifetimeNanos,omitempty"`
-	CompletionMarginMS  *float64                      `json:"completionMarginMS,omitempty"`
-	SLO                 *SLO                          `json:"slo,omitempty"`
-	Outcome             string                        `json:"outcome,omitempty"`
-	Error               string                        `json:"error,omitempty"`
-	Policy              AdmissionPolicy               `json:"policy,omitempty"`
-	Rejection           *Error                        `json:"rejection,omitempty"`
-	GatewayWaitNanos    *int64                        `json:"gatewayWaitNanos,omitempty"`
-	AdmissionPrediction *AdmissionPrediction          `json:"admissionPrediction,omitempty"`
-	AdmissionWaits      []AdmissionWait               `json:"admissionWaits,omitempty"`
-	DeferredNanos       *int64                        `json:"deferredNanos,omitempty"`
+	RequestID          string                        `json:"requestID"`
+	WorkloadName       string                        `json:"workloadName"`
+	WorkloadUID        string                        `json:"workloadUID,omitempty"`
+	Definition         string                        `json:"definition,omitempty"`
+	Kind               string                        `json:"kind"`
+	At                 time.Time                     `json:"at"`
+	ReceivedAt         time.Time                     `json:"receivedAt"`
+	ElapsedNanos       int64                         `json:"elapsedNanos"`
+	ServerTiming       RequestTimings                `json:"serverTiming,omitempty"`
+	Assignment         *Assignment                   `json:"assignment,omitempty"`
+	NativeInstance     string                        `json:"nativeInstance,omitempty"`
+	NativeProgress     *BackendProgress              `json:"nativeProgress,omitempty"`
+	NativeHTTP         *firstfloor.HTTPRequestTiming `json:"nativeHTTP,omitempty"`
+	ClientSpanNanos    int64                         `json:"clientSpanNanos,omitempty"`
+	ExecutionComplete  bool                          `json:"executionComplete"`
+	LifetimeNanos      int64                         `json:"lifetimeNanos,omitempty"`
+	CompletionMarginMS *float64                      `json:"completionMarginMS,omitempty"`
+	SLO                *SLO                          `json:"slo,omitempty"`
+	Outcome            string                        `json:"outcome,omitempty"`
+	Error              string                        `json:"error,omitempty"`
+	Policy             AdmissionPolicy               `json:"policy,omitempty"`
+	Rejection          *Error                        `json:"rejection,omitempty"`
+	GatewayWaitNanos   *int64                        `json:"gatewayWaitNanos,omitempty"`
+	AdmissionDepths    map[string]AdmissionDepth     `json:"admissionDepths,omitempty"`
+	AdmissionWaits     []AdmissionWait               `json:"admissionWaits,omitempty"`
 }
 
 type ManagementEvent struct {

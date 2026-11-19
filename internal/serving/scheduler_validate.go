@@ -141,8 +141,7 @@ func schedulerValidateRequest(r SchedulerRequest, ids map[string]bool, reasons [
 	if r.Phase != phasePending && r.Phase != phaseAssigned && r.Phase != phaseQueued && r.Phase != phaseDeferred && r.Phase != phaseRunning && r.Phase != phaseReturning {
 		reasons = appendUnique(reasons, "UnknownRequestPhase:"+r.ID)
 	}
-	gatewayDeferred := r.Phase == phaseDeferred && r.Instance == ""
-	if r.Phase != phasePending && !gatewayDeferred && !ids[r.Instance] {
+	if r.Phase != phasePending && !ids[r.Instance] {
 		reasons = appendUnique(reasons, "UnknownNativeInstance:"+r.ID)
 	}
 	if r.Phase == phaseRunning && r.BatchID == "" {
@@ -154,7 +153,7 @@ func schedulerValidateRequest(r SchedulerRequest, ids map[string]bool, reasons [
 	if r.Phase == phaseReturning && r.ReturnElapsed < 0 {
 		reasons = appendUnique(reasons, "MissingReturningCompletionEvidence:"+r.ID)
 	}
-	if (r.Phase == phaseQueued || r.Phase == phaseDeferred && !gatewayDeferred || r.Phase == phaseRunning) && (r.NativeSenderElapsedMS == nil || !schedulerFinite(*r.NativeSenderElapsedMS) || *r.NativeSenderElapsedMS < 0) {
+	if (r.Phase == phaseQueued || r.Phase == phaseDeferred || r.Phase == phaseRunning) && (r.NativeSenderElapsedMS == nil || !schedulerFinite(*r.NativeSenderElapsedMS) || *r.NativeSenderElapsedMS < 0) {
 		reasons = appendUnique(reasons, "MissingNativeSenderContext:"+r.ID)
 	}
 	return reasons

@@ -8,6 +8,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
+type admissionRequestKey struct{ request, workload, definition string }
+
 type admissionCompletion struct {
 	receivedAt, notBefore time.Time
 	executed, unknown     bool

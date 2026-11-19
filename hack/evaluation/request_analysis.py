@@ -146,11 +146,10 @@ def request_class(row, final, timing, target_ns):
     return 'incomplete', None, None
 
 
-ADMISSION_WAIT_REASONS = (
-    'PreIPCRunning', 'ProfileMismatch', 'MissingPolicyOrBatch', 'ResidualUnsupported',
-    'MissingObservedAt', 'NoCapacity', 'AdmissionStopped', 'DeadlineInfeasible')
+# A wait entry of a ready instance has no reason and carries its depth: the instance holds its limit.
+ADMISSION_WAIT_REASONS = ('AtLimit', 'NoCapacity', 'AdmissionStopped')
 DIAGNOSTIC_FIELDS = (
-    'admissionPrediction', 'admissionWaits', 'deferredNanos', 'nativeDeferredAt',
+    'admissionDepths', 'admissionWaits', 'nativeDeferredAt',
     'nativeHTTP', 'serverTiming', 'gatewayWaitNanos', 'executorWaitNanos',
     'nativeElapsedMS', 'nativeOutcome', 'nativeError', 'error', 'rejection')
 
@@ -268,7 +267,7 @@ def non_on_time_breakdown(requests, missing_rows):
     sources = {}
     durations = {}
     states = {}
-    predictions = {'withinRemainingSLO': 0, 'exceedsRemainingSLO': 0, 'unknown': missing_rows}
+    depths_at_decision = {'allAtLimit': 0, 'someBelowLimit': 0, 'unknown': missing_rows}
     rejections, native_outcomes, errors = {}, {}, {}
     for row in selected:
         facts = row['facts']
@@ -276,22 +275,22 @@ def non_on_time_breakdown(requests, missing_rows):
             if facts[key] is None:
                 missing[key] += 1
         waits = facts['admissionWaits']
-        observed = {wait.get('reason') for wait in waits if isinstance(wait, dict)} if isinstance(waits, list) else set()
+        observed = {wait.get('reason') or ('AtLimit' if isinstance(wait.get('depth'), dict) else None)
+                    for wait in waits if isinstance(wait, dict)} if isinstance(waits, list) else set()
         if not observed:
             reasons['none' if waits == [] else 'missing'] += 1
         for reason in observed:
             reasons[reason if reason in ADMISSION_WAIT_REASONS else 'unknown'] += 1
         for state in {wait.get('state', 'unknown') for wait in waits if isinstance(wait, dict)} if isinstance(waits, list) else ():
             states[state] = states.get(state, 0) + 1
-        prediction = facts['admissionPrediction']
-        predicted = prediction.get('predictedCompletionNanos') if isinstance(prediction, dict) else None
-        remaining = prediction.get('remainingSLONanos') if isinstance(prediction, dict) else None
-        if type(predicted) is int and type(remaining) is int:
-            predictions['withinRemainingSLO' if predicted <= remaining else 'exceedsRemainingSLO'] += 1
-            durations.setdefault('predictedCompletionNanos', []).append(predicted)
-            durations.setdefault('remainingSLONanos', []).append(remaining)
+        depths = facts['admissionDepths']
+        if isinstance(depths, dict) and depths and all(
+                isinstance(d, dict) and type(d.get('inFlight')) is int and type(d.get('limit')) is int
+                for d in depths.values()):
+            depths_at_decision['allAtLimit' if all(d['inFlight'] >= d['limit'] for d in depths.values())
+                               else 'someBelowLimit'] += 1
         else:
-            predictions['unknown'] += 1
+            depths_at_decision['unknown'] += 1
         rejection = facts['rejection']
         if isinstance(rejection, dict):
             key = '/'.join(str(rejection.get(field, 'unknown')) for field in ('stage', 'policy', 'code'))
@@ -303,7 +302,7 @@ def non_on_time_breakdown(requests, missing_rows):
         for key, source in facts['fieldSources'].items():
             counts = sources.setdefault(key, {})
             counts[source] = counts.get(source, 0) + 1
-        for key in ('deferredNanos', 'gatewayWaitNanos', 'executorWaitNanos'):
+        for key in ('gatewayWaitNanos', 'executorWaitNanos'):
             value = facts[key]
             if type(value) is int and value >= 0:
                 durations.setdefault(key, []).append(value)
@@ -324,7 +323,7 @@ def non_on_time_breakdown(requests, missing_rows):
                     durations.setdefault(group + '.' + key, []).append(value)
     return {'requests': len(selected) + missing_rows,
             'directFacts': {'admissionWaitReasons': reasons, 'missingFields': missing,
-                            'admissionWaitStates': states, 'admissionPrediction': predictions,
+                            'admissionWaitStates': states, 'admissionDepths': depths_at_decision,
                             'rejections': rejections, 'nativeOutcomes': native_outcomes, 'errors': errors,
                             'fieldSources': sources, 'timingNS': {key: stats(values) for key, values in sorted(durations.items())}},
             'meaning': 'Wait reasons and recorded timings are overlapping direct observations, not exclusive root causes. Missing evidence remains unknown. Native supplements never change HTTP/client classifications. Connect/native spans overlap gateway segments and must not be summed; residual retains unmeasured transport/write/read costs.'}

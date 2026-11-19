@@ -26,7 +26,6 @@ func (s *schedulerReplayState) completeActions() bool {
 					// Preparation creates a new physical actor whose ready ends
 					// its warm-up service, so its idle age starts here.
 					i.lastNativeFinish, i.hasNativeFinish, i.hasNativeFinishBounds = a.finish, true, false
-					i.arrivalsKnown = true
 					clear(i.arrivalTimes)
 				}
 			case schedulerActionRemove:

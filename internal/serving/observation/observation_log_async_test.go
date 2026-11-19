@@ -22,6 +22,7 @@ func TestRuntimeDispatchDoesNotWaitForOwnObservationWrite(t *testing.T) {
 	}
 	_, snapshot := schedulerFixture()
 	definition, instance := snapshot.Workloads[0], snapshot.Instances[0]
+	definition.Admission.Policy = serving.AdmissionPolicyDelay // the second request waits for the first's reply
 	runtime.SetProfiles([]serving.Profile{*instance.Profile})
 	if err := runtime.Publish(definition); err != nil {
 		t.Fatal(err)

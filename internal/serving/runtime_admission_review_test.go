@@ -8,6 +8,10 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
+func admissionTestRequest(id string) firstfloor.RequestState {
+	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: id, WorkloadUID: "w", Definition: "d", AdmissionPolicy: "Reject", SLO: firstfloor.SLO{Percentile: 95, TargetMS: 1000}}, Phase: phaseQueued}
+}
+
 func admissionReviewCompletion(t *testing.T, phase string) (*Runtime, *runtimeInstance, firstfloor.State, *Call) {
 	t.Helper()
 	r, wanted, _ := routingRuntime(t, map[string]int32{"w1": 1})
@@ -83,34 +87,6 @@ func TestAdmissionQueuedObservationUsesConfirmedExecutedBatchEnd(t *testing.T) {
 	r.completeAdmissionLocked(c)
 	if i.State.Native.LastServiceEndAgeNanos == nil {
 		t.Fatal("queued observation retained startup after confirmed batch execution completed")
-	}
-}
-
-func TestAdmissionCompletionUsesMaximumQuantileOverPossibleGap(t *testing.T) {
-	r, i, _, c := admissionReviewCompletion(t, phaseRunning)
-	zero, thirty := int64(0), int64(30*time.Millisecond)
-	profile := *i.Profile
-	profile.Batches = []BatchProfile{schedulerTestPairedBatch(BatchProfile{Batch: 1}, schedulerTestGapLaws([2]int64{zero, int64(20 * time.Millisecond)}, [2]int64{thirty, int64(50 * time.Millisecond)}))}
-	i.Profile = &profile
-	i.admissionBatches = profile.NativeBundle().Batches
-	i.State.Native.Metadata.Policy.MaxBatchSize = 1
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.completeAdmissionLocked(c)
-	now := time.Now()
-	r.beginAdmissionLocked(now)
-	defer r.endAdmissionLocked()
-	definition := *r.workloads["w1"].definition
-	definition.SLO.TargetLatency = 35 * time.Millisecond
-	candidate := &Call{receipt: Receipt{ID: "candidate", UID: definition.UID, ReceivedAt: now, Deadline: now.Add(time.Second)}, definition: &definition, identity: c.identity, completionMarginSet: true}
-	estimate := r.estimateLocked(i, candidate, now)
-	if !estimate.Known || estimate.Completion != 50*time.Millisecond {
-		t.Fatalf("completion gap uncertainty admitted with an optimistic conditional quantile: %+v", estimate)
-	}
-	// The executor is idle, so it still takes the candidate late; the gap
-	// uncertainty must not count it on time.
-	if onTime, _ := admissionCandidateAvailable(estimate, false, 35*time.Millisecond); onTime {
-		t.Fatal("uncertain completion counted a 35ms candidate on time")
 	}
 }
 

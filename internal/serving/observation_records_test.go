@@ -24,11 +24,12 @@ func TestRequestRowAdmissionAbsentAndZero(t *testing.T) {
 	zero, remaining := int64(0), int64(-1)
 	rejection := &Error{
 		Code: CodeDeadlineInfeasible, Stage: AdmissionStageGateway, Policy: AdmissionPolicyReject,
-		PredictedCompletionNanos: &zero, RemainingSLONanos: &remaining,
+		RemainingSLONanos: &remaining,
 	}
 	row.Fold(&RequestEvent{
 		Kind: eventResponseFinished, Outcome: "rejected", Error: CodeDeadlineInfeasible,
 		Policy: AdmissionPolicyReject, Rejection: rejection, GatewayWaitNanos: &zero,
+		AdmissionDepths: map[string]AdmissionDepth{"i": {InFlight: 13, Limit: 13}},
 	})
 	row.FoldNative(&BackendProgress{ExecutorWaitNanos: &zero})
 	// Fold must own pointer values; later source mutation cannot change stored facts.
@@ -41,10 +42,14 @@ func TestRequestRowAdmissionAbsentAndZero(t *testing.T) {
 		t.Fatalf("zero wait or rejection facts lost: %+v", body)
 	}
 	decision, ok := body["rejection"].(map[string]any)
-	if !ok || len(decision) != 5 || decision["code"] != CodeDeadlineInfeasible ||
+	if !ok || len(decision) != 4 || decision["code"] != CodeDeadlineInfeasible ||
 		decision["stage"] != AdmissionStageGateway || decision["policy"] != "Reject" ||
-		decision["predictedCompletionNanos"] != float64(0) || decision["remainingSLONanos"] != float64(-1) {
+		decision["remainingSLONanos"] != float64(-1) {
 		t.Fatalf("rejection decision lost: %+v", decision)
+	}
+	depth, ok := body["admissionDepths"].(map[string]any)["i"].(map[string]any)
+	if !ok || depth["inFlight"] != float64(13) || depth["limit"] != float64(13) {
+		t.Fatalf("decision depth lost: %+v", body["admissionDepths"])
 	}
 }
 
@@ -86,14 +91,4 @@ func requestRowJSON(t *testing.T, row RequestRow) map[string]any {
 		t.Fatal(err)
 	}
 	return body
-}
-
-func TestRequestRowPreservesAdmissionOutsideSupport(t *testing.T) {
-	row := RequestRow{}
-	row.Fold(&RequestEvent{Rejection: &Error{Code: CodeDeadlineInfeasible, Stage: AdmissionStageGateway, Policy: AdmissionPolicyReject, OutsideSupport: true}})
-	body := requestRowJSON(t, row)
-	decision := body["rejection"].(map[string]any)
-	if decision["outsideSupport"] != true {
-		t.Fatalf("support evidence lost: %+v", decision)
-	}
 }

@@ -56,50 +56,16 @@ func TestReplayUsesCompletionGapEnvelopeUntilNextServiceEnd(t *testing.T) {
 	s.initializeInstances()
 	i := s.instances[0]
 	definition := s.snap.Workloads[0]
-	definition.SLO.TargetLatency = 35 * time.Millisecond
-	r := replayAdmissionPending(s, "candidate", definition)
-	ctx := context.Background()
-	s.beginAdmission(ctx)
-	estimate := s.estimateAdmission(i, r)
-	s.endAdmission()
-	if !estimate.Known || estimate.Completion != 50*time.Millisecond {
-		t.Fatalf("replay lost runtime's completion-gap bound: %+v", estimate)
-	}
-	r.completed = true
-	definition.SLO.TargetLatency = 100 * time.Millisecond
 	native := replayAdmissionPending(s, "native", definition)
 	native.dispatched, native.source.Instance, native.native = true, i.config.ID, math.Inf(1)
 	i.queue, i.outstanding = []*schedulerReplayRequest{native}, 1
-	if !s.chooseBatches(ctx) || i.nativeFinish != float64(50*time.Millisecond) || !i.hasBatchIdleBounds {
+	if !s.chooseBatches(context.Background()) || i.nativeFinish != float64(50*time.Millisecond) || !i.hasBatchIdleBounds {
 		t.Fatalf("replay sampled an optimistic initial gap: finish=%g bounds=%v", i.nativeFinish, i.hasBatchIdleBounds)
-	}
-	s.now = float64(10 * time.Millisecond)
-	candidate := replayAdmissionPending(s, "during-bounded-service", definition)
-	s.beginAdmission(ctx)
-	estimate = s.estimateAdmission(i, candidate)
-	s.endAdmission()
-	if !estimate.Known || estimate.Completion != 60*time.Millisecond {
-		t.Fatalf("replay lost uncertain running-gap residual: %+v", estimate)
 	}
 	s.now = i.finish
 	s.completeExecution()
 	if i.idleUpperNanos(s.now) != nil || i.runningIdleUpper() != nil {
 		t.Fatal("completed simulated service retained old gap uncertainty")
-	}
-}
-
-func TestReplayRouteCannotEraseOwnedUnknownIdleState(t *testing.T) {
-	s := replayAdmissionState(t)
-	s.snap.Instances[0].AdmissionIdleUnknown = true
-	s.initializeInstances()
-	i := s.instances[0]
-	// Route application replaces config, but cannot change a physical fact.
-	updated := i.config
-	updated.AdmissionIdleUnknown = false
-	i.config = updated
-	candidate := replayAdmissionPending(s, "candidate", s.snap.Workloads[0])
-	if selected, reason := s.chooseAdmission(context.Background(), candidate); selected >= 0 || reason != AdmissionUnknown {
-		t.Fatalf("route erased unknown service history: selected=%d reason=%s", selected, reason)
 	}
 }
 

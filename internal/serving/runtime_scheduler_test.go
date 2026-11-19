@@ -298,7 +298,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 	state := schedulerReplayState{
 		snap: snapshot, c: SchedulerCandidate{Keep: true, Instances: snapshot.Instances},
 		routeCredits: map[string][]int64{},
-		weights:      make([]int32, len(instances)), available: make([]bool, len(instances)), idle: make([]bool, len(instances)),
+		weights:      make([]int32, len(instances)), available: make([]bool, len(instances)),
 		out: schedulerReplayResult{definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}},
 	}
 	state.initializeInstances()
@@ -368,8 +368,8 @@ func TestReturningPOSTIncludesExchangeReturnAfterEarlySDKCompletion(t *testing.T
 			t.Fatal("replay restored completed execution as queued/running or released transport occupancy")
 		}
 		candidate := replayAdmissionPending(replay, "after-completion", d)
-		if selected, state := replay.chooseAdmission(context.Background(), candidate); selected < 0 || state != schedulerStatusFeasible {
-			t.Fatalf("replay did not admit after physical completion: %d %s", selected, state)
+		if selected, full := replay.chooseAdmission(candidate); selected < 0 || full {
+			t.Fatalf("replay did not admit after physical completion: %d %v", selected, full)
 		}
 		// The SDK callback can precede HTTP completion by a material return leg.
 		time.Sleep(20 * time.Millisecond)
@@ -398,6 +398,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	_, snapshot := schedulerFixture()
 	d := snapshot.Workloads[0]
 	p := snapshot.Instances[0].Profile
+	d.Admission.Policy = AdmissionPolicyDelay // the second request waits for the first's reply
 	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
@@ -844,7 +845,6 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 	replay.initializeInstances()
 	replay.weights = make([]int32, len(replay.instances))
 	replay.available = make([]bool, len(replay.instances))
-	replay.idle = make([]bool, len(replay.instances))
 	for _, wanted := range candidate.Instances {
 		// Prepared slots are ready now, as the physical actors below: their
 		// warm-up ended at replay time 0.

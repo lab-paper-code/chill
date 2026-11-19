@@ -40,7 +40,9 @@ func TestCapacityArchiveCutoverDoesNotLoadControlledExecutionRows(t *testing.T) 
 	table := serving.NewCapacityTable(1, windows, nil, observationLog.CapacityRecords)
 	table.Ensure(context.Background(), settings, snapshot)
 	table.Wait()
-	if row := table.Rows()[0]; row.Status != serving.CapacityBuilt || row.Previous {
+	// The fixture's three service samples identify no p95 service, so the
+	// fresh build may itself be rejected, but never with the archived row.
+	if row := table.Rows()[0]; row.Previous || row.Reason == old.Reason || row.BuiltAt.IsZero() {
 		t.Fatalf("old archived rejection survived fresh build: %+v", row)
 	}
 }

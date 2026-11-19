@@ -81,12 +81,9 @@ type Call struct {
 	completionMarginMS                           float64
 	completionMarginSet                          bool
 	enqueuedAt, queueEndedAt                     time.Time
-	deferred                                     bool
-	admissionState                               string
 	admissionWaits                               []AdmissionWait
 	admissionWaitIdentities                      map[string]admissionWaitIdentity
-	admissionPrediction                          *AdmissionPrediction
-	deferredNanos                                *int64
+	admissionDepths                              map[string]AdmissionDepth
 	admissionComplete                            bool
 	admissionNoExecution                         bool
 	backendContext                               context.Context
@@ -102,25 +99,18 @@ type runtimeInstance struct {
 	finalizing                 int
 	bindings                   map[string]bool
 	recoveryRecorded           bool
-	admissionProfile           string
-	admissionBatches           []firstfloor.BatchProfile
-	admissionObserved          map[admissionRequestKey]struct{}
-	admissionCalls             []*Call
-	admissionAssignments       []firstfloor.RequestState
-	admissionArrivals          map[string]admissionArrival
-	admissionUnobserved        int
-	admissionUnknown           bool
-	admissionUnknownReason     string
-	admissionNormal            int
-	admissionDeferred          int
 	admissionCompleted         map[admissionRequestKey]admissionCompletion
 	admissionSourceIdleUnknown bool
 }
+
+// routeEntry's reason and limit are the last gateway decision's: reason is
+// why the instance cannot take a request, empty when ready, and limit is
+// then its admissionLimit.
 type routeEntry struct {
-	instance          *runtimeInstance
-	path              *ModelPath
-	admissionEstimate AdmissionEstimate
-	admissionReason   string
+	instance *runtimeInstance
+	path     *ModelPath
+	reason   string
+	limit    int
 }
 
 // inputRoute distributes a Workload's samples; the raw contract is common to
@@ -131,19 +121,17 @@ type inputRoute struct {
 	weights   []int32
 	current   []int64
 	available []bool
-	idle      []bool
 }
 type runtimeWorkload struct {
-	definition       *Definition
-	identity         string
-	stopped          bool
-	detached         bool
-	reason           string
-	route            inputRoute
-	queue            []*Call
-	calls            map[string]*Call
-	finalizing       int
-	admissionBlocked bool
+	definition *Definition
+	identity   string
+	stopped    bool
+	detached   bool
+	reason     string
+	route      inputRoute
+	queue      []*Call
+	calls      map[string]*Call
+	finalizing int
 }
 
 // The owner lock protects routing and physical ownership, never observation
@@ -174,8 +162,6 @@ type Runtime struct {
 	executionsStopped  bool
 	executions         sync.WaitGroup
 	overloaded         atomic.Bool
-	admissionPrepared  bool
-	admissionScratch   admissionScratch
 	dispatchWorkloads  []string
 }
 
@@ -327,7 +313,7 @@ func (r *Runtime) eventAt(c *Call, kind, outcome, code string, now time.Time) er
 
 func requestEvent(c *Call, kind, outcome, code string, now time.Time) RequestEvent {
 	e := RequestEvent{RequestID: c.receipt.ID, WorkloadName: c.receipt.Name, WorkloadUID: c.receipt.UID, Definition: c.identity, Kind: kind, At: now.UTC(), ReceivedAt: c.receipt.ReceivedAt, ElapsedNanos: now.Sub(c.receipt.ReceivedAt).Nanoseconds(), Assignment: c.assignment, Outcome: outcome, Error: code}
-	e.AdmissionPrediction, e.AdmissionWaits, e.DeferredNanos = c.admissionPrediction, c.admissionWaits, c.deferredNanos
+	e.AdmissionDepths, e.AdmissionWaits = c.admissionDepths, c.admissionWaits
 	if len(c.receipt.admissionWaits) > 0 {
 		e.AdmissionWaits = c.receipt.admissionWaits
 	}
@@ -605,345 +591,41 @@ func (r *Runtime) removeQueuedLocked(c *Call) {
 		c.queueEndedAt = time.Now()
 	}
 	if index := slices.Index(w.queue, c); index >= 0 {
-		if r.admissionPrepared {
-			for _, entry := range w.route.entries {
-				if c.deferred {
-					entry.instance.admissionDeferred--
-				} else {
-					entry.instance.admissionNormal--
-				}
-			}
-		}
 		w.queue = slices.Delete(w.queue, index, index+1)
 	}
 }
 
-type admissionChoice struct {
-	entry          *routeEntry
-	state          string
-	completion     time.Duration
-	outsideSupport bool
-	infeasible     bool
-	blocked        bool
-}
-
-type admissionRequestKey struct{ request, workload, definition string }
-
-type admissionArrival struct{ last, previous time.Time }
-
-func (a admissionArrival) accepted(at time.Time) admissionArrival {
-	if a.last.IsZero() || !at.Before(a.last) {
-		a.previous, a.last = a.last, at
-	} else if a.previous.IsZero() || at.After(a.previous) {
-		a.previous = at
-	}
-	return a
-}
-
-func (a admissionArrival) rate() float64 {
-	if !a.previous.IsZero() && a.last.After(a.previous) {
-		return float64(time.Second) / float64(a.last.Sub(a.previous))
-	}
-	return 0
-}
-
-func (r *Runtime) beginAdmissionLocked(now time.Time) {
-	r.admissionPrepared = true
-	r.admissionScratch.quantiles.Reset()
-	for _, i := range r.instances {
-		i.indexAdmissionSnapshot()
-	}
-	// Index native identities once; each unobserved assignment is grouped in a
-	// single global call scan rather than one scan per candidate and executor.
-	for _, c := range r.calls {
-		i := c.instance
-		if i == nil || c.backendDone {
-			continue
-		}
-		if _, found := i.admissionObserved[admissionRequestKey{c.receipt.ID, c.receipt.UID, c.identity}]; !found {
-			i.admissionUnobserved++
-			if !i.admissionUnknown {
-				i.admissionCalls = append(i.admissionCalls, c)
-			}
-		}
-	}
-	for _, i := range r.instances {
-		if !i.admissionUnknown {
-			i.prepareAdmissionAssignments(now)
-		}
-	}
-	for _, w := range r.workloads {
-		w.admissionBlocked = false
-		normal, deferred := 0, 0
-		for _, c := range w.queue {
-			if c.deferred {
-				deferred++
-			} else {
-				normal++
-			}
-		}
-		for _, entry := range w.route.entries {
-			entry.instance.admissionNormal += normal
-			entry.instance.admissionDeferred += deferred
-		}
-	}
-}
-
-func admissionInstanceAvailable(i *runtimeInstance) bool {
-	return i.State.Ready && !i.State.Stopped && !i.State.Terminated && !i.State.RecoveryUnknown && i.outstanding < i.Capacity
-}
-
-func (i *runtimeInstance) indexAdmissionSnapshot() {
-	clear(i.admissionCalls[:cap(i.admissionCalls)])
-	i.admissionCalls = i.admissionCalls[:0]
-	clear(i.admissionAssignments[:cap(i.admissionAssignments)])
-	i.admissionAssignments = i.admissionAssignments[:0]
-	clear(i.admissionObserved)
-	clear(i.admissionArrivals)
-	i.admissionUnobserved = 0
-	i.admissionNormal, i.admissionDeferred = 0, 0
-	i.admissionUnknownReason = admissionUnavailableReason(i)
-	i.admissionUnknown = i.admissionUnknownReason != ""
-	if i.State.Native == nil {
-		return
-	}
-	native := i.State.Native
-	if i.admissionObserved == nil {
-		i.admissionObserved = make(map[admissionRequestKey]struct{}, len(native.Requests))
-	}
-	for _, q := range native.Requests {
-		i.admissionObserved[admissionRequestKey{q.Context.RequestID, q.Context.WorkloadUID, q.Context.Definition}] = struct{}{}
-	}
-	if i.admissionUnknown {
-		return
-	}
-	if i.admissionArrivals == nil {
-		i.admissionArrivals = make(map[string]admissionArrival, len(native.ArrivalAgesMS))
-	}
-	for uid, ages := range native.ArrivalAgesMS {
-		var a admissionArrival
-		if len(ages) > 0 {
-			a.last = i.nativeAdmissionAt().Add(-time.Duration(ages[0] * float64(time.Millisecond)))
-		}
-		if len(ages) > 1 {
-			a.previous = i.nativeAdmissionAt().Add(-time.Duration(ages[1] * float64(time.Millisecond)))
-		}
-		i.admissionArrivals[uid] = a
-	}
-}
-
-func compareAdmissionAssignments(a, b *Call) int {
-	if a.assignment != nil && b.assignment != nil {
-		if a.assignment.DispatchedAt.Before(b.assignment.DispatchedAt) {
-			return -1
-		}
-		if a.assignment.DispatchedAt.After(b.assignment.DispatchedAt) {
-			return 1
-		}
-	}
-	return strings.Compare(a.receipt.ID, b.receipt.ID)
-}
-
-func (i *runtimeInstance) prepareAdmissionAssignments(now time.Time) {
-	slices.SortFunc(i.admissionCalls, compareAdmissionAssignments)
-	for _, c := range i.admissionCalls {
-		at := now
-		if c.assignment != nil {
-			at = c.assignment.DispatchedAt
-		}
-		i.admissionArrivals[c.receipt.UID] = i.admissionArrivals[c.receipt.UID].accepted(at)
-		q := admissionCallState(c, now)
-		q.ArrivalRate = i.admissionArrivals[c.receipt.UID].rate()
-		i.admissionAssignments = append(i.admissionAssignments, q)
-	}
-	policy := i.State.Native.Metadata.Policy
-	policy.Batches = i.admissionBatches
-	i.admissionUnknownReason = ""
-	if policy.FixedBatchSize == 0 {
-		switch {
-		case i.State.AdmissionIdleUnknown:
-			i.admissionUnknownReason = AdmissionResidualUnsupported
-		case i.State.ObservedAt.IsZero():
-			i.admissionUnknownReason = AdmissionMissingObservedAt
-		case policy.ProfileID != i.Profile.ID:
-			i.admissionUnknownReason = AdmissionProfileMismatch
-		default:
-			i.admissionUnknownReason = admissionExecutorUnknownReason(AdmissionInput{Policy: policy, Observed: i.State.Native.Requests, Assignments: i.admissionAssignments, LastServiceEndAgeNanos: i.State.Native.LastServiceEndAgeNanos, LastServiceEndAgeUpperNanos: i.State.LastServiceEndAgeUpperNanos})
-		}
-	}
-	i.admissionUnknown = i.admissionUnknownReason != ""
-}
-
-func (r *Runtime) endAdmissionLocked() {
-	r.admissionPrepared = false
-	r.admissionScratch.quantiles.Reset()
-	for _, i := range r.instances {
-		clear(i.admissionObserved)
-		clear(i.admissionArrivals)
-		clear(i.admissionCalls[:cap(i.admissionCalls)])
-		i.admissionCalls = i.admissionCalls[:0]
-		clear(i.admissionAssignments[:cap(i.admissionAssignments)])
-		i.admissionAssignments = i.admissionAssignments[:0]
-	}
-}
-
-func (r *Runtime) estimateLocked(i *runtimeInstance, c *Call, now time.Time) AdmissionEstimate {
-	if i.admissionUnknown {
-		return AdmissionEstimate{}
-	}
-	native := i.State.Native
-	policy := native.Metadata.Policy
-	policy.Batches = i.admissionBatches
-	candidate := admissionCallState(c, now)
-	candidate.Context.CompletionMarginMS = r.pathMarginLocked(c.receipt.UID, i.State.ID)
-	candidate.ArrivalRate = i.admissionArrivals[c.receipt.UID].accepted(now).rate()
-	for j, call := range i.admissionCalls {
-		q := admissionCallState(call, now)
-		q.ArrivalRate = i.admissionArrivals[call.receipt.UID].rate()
-		i.admissionAssignments[j] = q
-	}
-	age := max(now.Sub(i.nativeAdmissionAt()), 0)
-	return projectAdmission(AdmissionInput{Policy: policy, Observed: native.Requests, Assignments: i.admissionAssignments, SnapshotAge: age, LastServiceEndAgeNanos: native.LastServiceEndAgeNanos, LastServiceEndAgeUpperNanos: i.State.LastServiceEndAgeUpperNanos, Candidate: candidate}, &r.admissionScratch)
-}
-
-func admissionCallState(c *Call, now time.Time) firstfloor.RequestState {
-	phase := phaseQueued
-	if c.deferred {
-		phase = phaseDeferred
-	}
-	state := firstfloor.RequestState{Context: firstfloor.RequestContext{
-		RequestID: c.receipt.ID, WorkloadUID: c.receipt.UID, Definition: c.identity,
-		AdmissionPolicy: string(c.definition.Admission.Policy), ReceivedAt: c.receipt.ReceivedAt,
-		SenderElapsedMS:    float64(max(now.Sub(c.receipt.ReceivedAt), 0)) / float64(time.Millisecond),
-		CompletionMarginMS: c.completionMarginMS,
-		SLO:                firstfloor.SLO{Percentile: c.definition.SLO.Percentile, TargetMS: float64(c.definition.SLO.TargetLatency) / float64(time.Millisecond)},
-	}, Phase: phase}
-	if !c.receipt.Deadline.IsZero() {
-		state.Context.LifetimeMS = float64(c.receipt.Deadline.Sub(c.receipt.ReceivedAt)) / float64(time.Millisecond)
-	}
-	return state
-}
-
-func (r *Runtime) chooseLocked(route inputRoute, c *Call, now time.Time) admissionChoice {
+// chooseLocked is the gateway admission rule, and the replay applies the same
+// rule (schedulerReplayState.chooseAdmission). Among the ready routed
+// instances it keeps those holding fewer requests without a reply than their
+// admissionLimit for c, and chooses among them by the plan's shares. With
+// none, full reports that a ready routed instance holds its limit;
+// otherwise no routed instance is ready.
+func (r *Runtime) chooseLocked(route inputRoute, c *Call) (entry *routeEntry, full bool) {
 	if r.mu.Recorder.Active() {
 		r.mu.Mark(DiagnosticChoose, DiagnosticBegin)
 		defer r.mu.Mark(DiagnosticChoose, DiagnosticEnd)
 	}
-	if !r.admissionPrepared {
-		r.beginAdmissionLocked(now)
-		defer r.endAdmissionLocked()
-	}
-	choice := r.admissionMaskLocked(route, c, now)
-	if c.deferred && choice.entry != nil {
-		choice.state = schedulerStatusFeasible
-		return choice
-	}
-	if !c.deferred {
-		if index := SmoothWeightedRoute(route.weights, route.current, route.available); index >= 0 {
-			choice.entry, choice.state = &route.entries[index], schedulerStatusFeasible
-		}
-	}
-	return choice
-}
-
-func (r *Runtime) admissionMaskLocked(route inputRoute, c *Call, now time.Time) admissionChoice {
-	choice := admissionChoice{state: AdmissionNoCapacity, blocked: true}
-	unknown, known := false, false
-	for index, entry := range route.entries {
-		i := entry.instance
-		route.available[index], route.idle[index] = false, false
-		route.entries[index].admissionEstimate = AdmissionEstimate{}
-		route.entries[index].admissionReason = admissionUnavailableReason(i)
-		if !admissionInstanceAvailable(i) {
+	for index := range route.entries {
+		e := &route.entries[index]
+		route.available[index] = false
+		if e.reason = admissionUnreadyReason(e.instance); e.reason != "" {
 			continue
 		}
-		if i.admissionUnknown {
-			route.entries[index].admissionReason = i.admissionUnknownReason
-			unknown = true
-			continue
-		}
-		choice.blocked = false
-		if c.deferred && r.normalUsesInstanceLocked(i) {
-			continue
-		}
-		estimate := r.estimateLocked(i, c, now)
-		route.entries[index].admissionEstimate = estimate
-		route.entries[index].admissionReason = estimate.UnknownReason
-		if estimate.FixedBatch {
-			route.available[index] = true
-			if c.deferred && choice.entry == nil {
-				choice.entry = &route.entries[index]
-			}
-			continue
-		}
-		if !estimate.Known {
-			unknown = true
-			continue
-		}
-		if !known || !c.deferred && estimate.Completion < choice.completion {
-			choice.completion, choice.infeasible, choice.outsideSupport = estimate.Completion, estimate.Infeasible, estimate.OutsideSupport
-		}
-		known = true
-		remaining := c.definition.SLO.TargetLatency - now.Sub(c.receipt.ReceivedAt)
-		route.available[index], route.idle[index] = admissionCandidateAvailable(estimate, c.deferred, remaining)
-		if c.deferred && route.available[index] && (choice.entry == nil || estimate.Completion < choice.completion) {
-			choice.entry, choice.completion = &route.entries[index], estimate.Completion
-			choice.infeasible, choice.outsideSupport = estimate.Infeasible, estimate.OutsideSupport
-		}
+		i := e.instance
+		e.limit = admissionLimit(i.Profile, NativeMaxBatch(i.State.Native.Metadata), c.definition.SLO.TargetLatency, i.Capacity)
+		route.available[index] = i.outstanding < e.limit
+		full = full || !route.available[index]
 	}
-	admissionPreferOnTime(route.available, route.idle)
-	if unknown {
-		choice.state = AdmissionUnknown
-	} else if known {
-		choice.state = CodeDeadlineInfeasible
+	if index := SmoothWeightedRoute(route.weights, route.current, route.available); index >= 0 {
+		return &route.entries[index], false
 	}
-	return choice
+	return nil, full
 }
 
-// admissionCandidateAvailable is the per-executor gateway rule the replay
-// shares. onTime: the executor completes the candidate within its SLO, or the
-// candidate is deferred. idle: the executor holds no other unfinished request
-// and takes the candidate late. Neither holds when the final lifetime is missed.
-func admissionCandidateAvailable(estimate AdmissionEstimate, deferred bool, remaining time.Duration) (onTime, idle bool) {
-	feasible := !estimate.Infeasible
-	return feasible && (deferred || estimate.Completion <= remaining), feasible && estimate.Idle
-}
-
-// admissionPreferOnTime is the route rule the replay shares: the idle
-// executors of a route are available only when no executor of the route is
-// available on time.
-func admissionPreferOnTime(available, idle []bool) {
-	if !slices.Contains(available, true) {
-		copy(available, idle)
-	}
-}
-
-func admissionRejection(c *Call, choice admissionChoice, now time.Time) *Error {
-	predicted, remaining := int64(choice.completion), int64(c.definition.SLO.TargetLatency-now.Sub(c.receipt.ReceivedAt))
-	var prediction *int64
-	if !choice.infeasible || choice.completion > 0 {
-		prediction = &predicted
-	}
-	return &Error{Code: CodeDeadlineInfeasible, Message: "no executor can complete within request deadlines", Stage: AdmissionStageGateway, Policy: c.definition.Admission.Policy, PredictedCompletionNanos: prediction, RemainingSLONanos: &remaining, OutsideSupport: choice.outsideSupport}
-}
-
-func (r *Runtime) normalUsesInstanceLocked(i *runtimeInstance) bool {
-	if r.admissionPrepared {
-		return i.admissionNormal > 0
-	}
-	for _, w := range r.workloads {
-		for _, c := range w.queue {
-			if c.deferred {
-				continue
-			}
-			for _, entry := range w.route.entries {
-				if entry.instance == i {
-					return true
-				}
-			}
-		}
-	}
-	return false
+func admissionRejection(c *Call, now time.Time) *Error {
+	remaining := int64(c.definition.SLO.TargetLatency - now.Sub(c.receipt.ReceivedAt))
+	return &Error{Code: CodeDeadlineInfeasible, Message: "every routed executor holds its limit of requests without a reply", Stage: AdmissionStageGateway, Policy: c.definition.Admission.Policy, RemainingSLONanos: &remaining}
 }
 
 func (r *Runtime) finishQueuedLocked(c *Call, err error) {
@@ -967,8 +649,6 @@ func (r *Runtime) dispatchLocked() {
 	if r.executionsStopped || r.observationErrLocked() != nil {
 		return
 	}
-	// A single logical queue retains accepted routes and counts both classes.
-	// Two bounded passes prioritize every Workload's normal work before delay.
 	uids := r.dispatchWorkloads[:0]
 	for uid := range r.workloads {
 		uids = append(uids, uid)
@@ -987,69 +667,46 @@ func (r *Runtime) dispatchLocked() {
 			}
 		}
 	}
-	r.beginAdmissionLocked(now)
-	defer r.endAdmissionLocked()
-	// C live calls, Q queued, E executors, W Workloads, R route entries, N native
-	// rows and A unobserved assignments: preparation is O(C+N+A log A+Q+R+W log W).
+	// A Workload's queue is served in arrival order. Whether a request can be
+	// placed depends only on its Definition (latency target and policy) and
+	// the route, so once one waits, every later request of that Definition
+	// waits too and is not decided again; a request of another Definition is.
 	// Expired-queue removal uses Index/Delete and can cost O(Q²) shifts/scans.
-	// Each all-Unknown/full workload scans its routes once without projections.
-	// Otherwise at most 2*Q*E projections reuse O(max(N_i+A_i)) scratch, each bounded
-	// by 8*(N_i+A_i+1)+16 shared ChooseBatch transitions; no Q*E*N allocation.
-	for _, delayed := range [...]bool{false, true} {
-		for _, uid := range uids {
-			w := r.workloads[uid]
-			if w.admissionBlocked {
+	type waiting struct {
+		definition *Definition
+		state      string
+	}
+	for _, uid := range uids {
+		w := r.workloads[uid]
+		var held []waiting
+		for index := 0; index < len(w.queue); {
+			c := w.queue[index]
+			now := time.Now()
+			if !c.receipt.Deadline.IsZero() && !now.Before(c.receipt.Deadline) {
+				r.finishQueuedLocked(c, failure(firstfloor.CodeRequestTimeout, "request lifetime expired in ingress queue"))
 				continue
 			}
-			index := 0
-			for range len(w.queue) {
-				if index >= len(w.queue) {
-					break
+			if at := slices.IndexFunc(held, func(h waiting) bool { return h.definition == c.definition }); at >= 0 {
+				c.recordAdmissionWaits(w.route, held[at].state, now)
+				index++
+				continue
+			}
+			entry, full := r.chooseLocked(w.route, c)
+			switch {
+			case entry != nil:
+				c.admissionDepths = admissionDepths(w.route)
+				r.assignLocked(c, entry, now)
+			case full && c.definition.Admission.Policy == AdmissionPolicyReject:
+				c.admissionDepths = admissionDepths(w.route)
+				r.finishQueuedLocked(c, admissionRejection(c, now))
+			default:
+				state := AdmissionNoCapacity
+				if full {
+					state = CodeDeadlineInfeasible
 				}
-				c := w.queue[index]
-				if c.deferred != delayed {
-					index++
-					continue
-				}
-				now := time.Now()
-				if !c.receipt.Deadline.IsZero() && !now.Before(c.receipt.Deadline) {
-					r.finishQueuedLocked(c, failure(firstfloor.CodeRequestTimeout, "request lifetime expired in ingress queue"))
-					continue
-				}
-				choice := r.chooseLocked(w.route, c, now)
-				c.admissionState = choice.state
-				r.recordAdmissionWaitLocked(c, w.route, choice, now)
-				if choice.blocked {
-					for _, pending := range w.queue {
-						if pending != c {
-							r.recordAdmissionWaitLocked(pending, w.route, choice, now)
-						}
-					}
-					w.admissionBlocked = true
-					break
-				}
-				if choice.entry == nil {
-					if choice.state == CodeDeadlineInfeasible && !c.deferred {
-						if c.definition.Admission.Policy == AdmissionPolicyDelay {
-							for _, entry := range w.route.entries {
-								entry.instance.admissionNormal--
-								entry.instance.admissionDeferred++
-							}
-							c.deferred = true
-							elapsed := int64(now.Sub(c.receipt.ReceivedAt))
-							c.deferredNanos = &elapsed
-							for _, entry := range w.route.entries {
-								r.recordAdmissionCandidateWait(c, entry.instance, phaseDeferred, CodeDeadlineInfeasible, now)
-							}
-						} else {
-							r.finishQueuedLocked(c, admissionRejection(c, choice, now))
-							continue
-						}
-					}
-					index++
-					continue
-				}
-				r.assignLocked(c, choice.entry, now)
+				c.recordAdmissionWaits(w.route, state, now)
+				held = append(held, waiting{c.definition, state})
+				index++
 			}
 		}
 	}
@@ -1059,7 +716,6 @@ func (r *Runtime) assignLocked(c *Call, entry *routeEntry, assignedAt time.Time)
 	i := entry.instance
 	// The routing path is now known: freeze its POST reserve once.
 	c.completionMarginMS, c.completionMarginSet = r.pathMarginLocked(c.receipt.UID, i.State.ID), true
-	r.recordAdmissionPredictionLocked(c, entry, assignedAt)
 	c.receipt.ServerTiming.Record(ServerAssigned, assignedAt.Sub(c.receipt.ReceivedAt))
 	c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: assignedAt.UTC(), ProfileBody: i.Profile}
 	// Reserve physical ownership before FIFO admission; native execution starts
@@ -1068,14 +724,6 @@ func (r *Runtime) assignLocked(c *Call, entry *routeEntry, assignedAt time.Time)
 	r.removeQueuedLocked(c)
 	c.instance, c.phase = i, phaseAssigned
 	i.outstanding++
-	if r.admissionPrepared {
-		i.admissionUnobserved++
-		i.admissionCalls = append(i.admissionCalls, c)
-		i.admissionArrivals[c.receipt.UID] = i.admissionArrivals[c.receipt.UID].accepted(assignedAt)
-		q := admissionCallState(c, assignedAt)
-		q.ArrivalRate = i.admissionArrivals[c.receipt.UID].rate()
-		i.admissionAssignments = append(i.admissionAssignments, q)
-	}
 	c.backendContext, c.cancelBackend = context.WithCancel(r.ctx)
 	dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Deadline: c.receipt.Deadline, CompletionMarginMS: c.completionMarginMS}
 	c.input = nil
@@ -1673,8 +1321,8 @@ func validateReadyInstances(instances []ReadyInstance) error {
 		if candidate.State.ID == "" && candidate.State.PodUID == "" || candidate.State.Ready && candidate.State.Node.UID == "" {
 			return failure("InvalidDistribution", "actual Pod or executor identity is required")
 		}
-		if candidate.State.Ready && (candidate.Profile == nil || candidate.Capacity <= 0 || candidate.Execute == nil) {
-			return failure("InvalidDistribution", "ready instance needs verified profile, bounds and execution")
+		if candidate.State.Ready && (candidate.Profile == nil || candidate.Capacity <= 0 || candidate.Execute == nil || candidate.State.Native == nil) {
+			return failure("InvalidDistribution", "ready instance needs verified profile, bounds, native policy and execution")
 		}
 		if candidate.State.Terminated && candidate.State.Ready {
 			return failure("InvalidDistribution", "terminated executor cannot be ready")
@@ -1742,10 +1390,6 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) (result erro
 		}
 		i.ReadyInstance = candidate
 		i.installAdmissionSnapshot()
-		if candidate.Profile != nil && i.admissionProfile != candidate.Profile.ID {
-			i.admissionProfile = candidate.Profile.ID
-			i.admissionBatches = candidate.Profile.NativeBundle().Batches
-		}
 		for _, c := range r.calls {
 			if c.assignment != nil && c.assignment.Instance == candidate.State.ID && c.instance == nil && !c.backendDone {
 				c.instance = i
@@ -1968,7 +1612,6 @@ func (r *Runtime) rebuildWorkloadRoutesLocked() {
 		route.weights = make([]int32, len(route.entries))
 		route.current = make([]int64, len(route.entries))
 		route.available = make([]bool, len(route.entries))
-		route.idle = make([]bool, len(route.entries))
 		for index, entry := range route.entries {
 			route.weights[index] = r.routeWeightLocked(uid, entry.instance)
 			for oldIndex, old := range previous.entries {
@@ -2012,12 +1655,6 @@ func (r *Runtime) workloadStateLocked(w *runtimeWorkload) WorkloadState {
 			state.Reason = "Preparing"
 		default:
 			state.Reason = reasonReady
-			for _, c := range w.queue {
-				if c.admissionState == AdmissionUnknown {
-					state.Reason = AdmissionUnknown
-					break
-				}
-			}
 		}
 	}
 	return state

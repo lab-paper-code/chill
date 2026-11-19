@@ -95,37 +95,37 @@ evidence 기반 정책으로 판단한다. 시간 여유가 있다는 이유만�
 요청별 시간 예산은 워크로드의 백분위 SLO를 따른다. serving 과부하 정책은
 `Workload.spec.admission`이 소유하며 applied Definition에 동결한다.
 `policy=Reject`(기본)는 SLO 안에 완료할 수 없는 요청을 실행 없이 거절한다.
-`Delay`는 정상 요청 뒤로 미뤄 늦은 완료를 허용하며 최종 기한까지 처리한다.
-`maxQueuedRequests`는 gateway 정상과 지연 큐 합의 양의 상한이며 기본 1024다.
+`Delay`는 gateway 큐에서 기다려 늦은 완료를 허용하며 최종 기한까지 처리한다.
+`maxQueuedRequests`는 gateway 큐의 양의 상한이며 기본 1024다.
 정책 변경은 새 Workload generation에 적용하고 이미 수락한 요청의 정책은 유지한다.
 요청별 정책 전달에는 executor 재시작이 필요 없다.
 
-gateway는 완료 가능한 후보를 고르고 executor는 실행 직전에 실제 남은 SLO를
-재확인한다. 거절과 지연은 대기 중인 다른 요청을 지키려는 것이다. 후보가 도착한
-시점에 대기도 실행도 없는 executor는 SLO가 남은 요청을 예측 완료와 무관하게
-받는다(최종 lifetime 초과 예측만 거절한다). route에 SLO 안에 완료할 executor가
-있으면 그 executor를 고르고, 그런 executor가 없을 때만 대기도 실행도 없는
-executor를 고른다. executor는 홀로 남은 요청을 거절하거나 미루지 않고 실행한다.
-판단 입력이 없으면 `AdmissionUnknown`으로 최종 기한까지 기다린다.
-fixed-batch는 기존 SLO 판단 예외를 유지한다. 큐 포화는 `QueueFull`(429),
-완료 불가능 거절은 `DeadlineInfeasible`(503)이며 gateway/executor 단계를 기록한다.
-최종 기한은 수신 때 확정한 요청 lifetime이며 명시 timeout/cancel은 정상과 지연 큐에
-함께 적용한다. active batch는 SLO만으로 취소하지 않고 실제 물리 완료까지 점유한다.
+gateway는 요청마다 route의 ready executor 가운데 응답을 받지 못한 dispatch 요청 수가
+그 executor의 한도 미만인 것만 남기고, 남은 것 중에서 plan의 share로 고른다.
+한도는 `min(floor(R x T), executor 큐 크기)`다. T는 Workload의 latency target이고
+R은 그 인스턴스의 허용 최대 batch 이하 프로파일 batch들의 batch size / 평균
+service 시간 중 가장 큰 값이다. R로 쉬지 않고 실행해도 target 안에 이보다 많이
+끝내지 못하므로 한도를 넘는 요청은 반드시 target을 놓친다. 한도에 닿은 executor만
+남으면 `Reject` 요청은 즉시 `DeadlineInfeasible`(503, stage=gateway)로 거절하고
+`Delay` 요청은 gateway 큐에서 기다린다. ready한 route executor가 없으면 요청은
+정책과 무관하게 큐에서 기다린다. 큐는 Workload별 FIFO이며 기다리는 요청이 뒤
+요청을 붙잡는다. runtime과 scheduler replay는 같은 한도 함수(`admissionLimit`)를 쓴다.
 
-gateway와 replay가 쓰는 `EstimateAdmission`은 native snapshot의 나이, 관측 요청,
-미관측 assignment와 새 요청을 공유 `ChooseBatch`로 진행한다. 실행 중 batch는
-BatchID별 한 번만 세고, service 경과를 조건으로 한 생존 분위수를 남은 시간으로
-쓴다. batch별 service 분위수와 그 경로(인스턴스)의 POST reserve를 합친 **판단 규칙**이다.
-이 규칙으로 E2E 분위수를 보장하지 않는다. service 표본이 남지 않거나 필요한 입력이 없으면 판단은
-unknown이다. idle은 로그 gap 최근접 N개 모형(N은 SLO 분위수의 표본 하한)을 쓰며, 관측 idle 지원 범위 밖의
-예측이 거절을 결정했으면 `outsideSupport: true`를 거절 metadata에 남긴다.
+요청이 자신의 기한을 지킬 수 있는지는 executor만 판단한다. executor는 배치 실행
+직전 monotonic 시각으로 남은 SLO를 확인하고 지킬 수 없으면 `DeadlineInfeasible`
+(503, stage=executor)로 거절한다. 큐 포화는 `QueueFull`(429)이며 gateway/executor
+단계를 기록한다. fixed-batch는 기존 SLO 판단 예외를 유지한다.
+최종 기한은 수신 때 확정한 요청 lifetime이며 명시 timeout/cancel은 gateway 큐와
+executor 큐에 함께 적용한다. active batch는 SLO만으로 취소하지 않고 실제 물리
+완료까지 점유한다.
 
-정상 요청과 지연 요청은 하나의 gateway 소유 큐에 보존하고 두 번의 유한 순회로
-처리한다. 공유 실행기로 갈 수 있는 다른 Workload의 정상 요청도 지연 요청보다
-먼저 처리한다. 지연 요청은 예상 완료가 가장 이른 실행기로 배정한다.
+server final 행의 `admissionDepths`는 결정 시점의 ready route executor별
+`{inFlight, limit}`이다(키는 instance ID). gateway 큐에서 기다린 요청은
+`admissionWaits[]`에 executor별 eligibility 변화를 남기며 ready executor의 항목은
+같은 `depth`를 가진다.
 
 HTTP 오류의 기존 `code`와 `message` 필드는 유지하고 overload 거절에 `stage`,
-`policy`, 선택적 `predictedCompletionNanos`와 `remainingSLONanos`를 추가한다.
+`policy`와 선택적 `remainingSLONanos`를 추가한다.
 server final 행의 적용 정책은 `admissionPolicy`, 거절 결정은 `rejection`에 둔다.
 `gatewayWaitNanos`는 enqueue부터 dispatch 또는 큐 안 종료까지, `executorWaitNanos`는
 native enqueue부터 running 또는 큐 안 종료까지의 monotonic span이다. 해당 큐에

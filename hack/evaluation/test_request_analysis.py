@@ -25,25 +25,28 @@ class RequestAnalysisTest(unittest.TestCase):
         return analysis.request_metrics([row or self.client()], {'r': final} if final else {},
                                         100, 1, 1000, 0, **kwargs)
 
-    def test_prediction_and_each_wait_reason_survive_executor_rejection(self):
-        prediction = {'at': '2026-11-12T00:00:00Z', 'predictedCompletionNanos': 40,
-                      'remainingSLONanos': 80, 'input': {'instance': 'i', 'running': []}}
-        waits = [{'at': prediction['at'], 'elapsedNanos': i, 'state': 'AdmissionUnknown',
-                  'reason': reason, 'input': {'instance': 'i'}}
-                 for i, reason in enumerate(analysis.ADMISSION_WAIT_REASONS)]
-        final = self.final(admissionPrediction=prediction, admissionWaits=waits, deferredNanos=0)
+    def test_depths_and_each_wait_reason_survive_executor_rejection(self):
+        depths = {'i': {'inFlight': 3, 'limit': 8}}
+        waits = [{'at': '2026-11-12T00:00:00Z', 'elapsedNanos': 1, 'state': 'NoCapacity',
+                  'reason': 'NoCapacity', 'instance': 'i'},
+                 {'at': '2026-11-12T00:00:00Z', 'elapsedNanos': 2, 'state': 'AdmissionStopped',
+                  'reason': 'AdmissionStopped', 'instance': 'i'},
+                 {'at': '2026-11-12T00:00:00Z', 'elapsedNanos': 3, 'state': 'DeadlineInfeasible',
+                  'instance': 'i', 'depth': {'inFlight': 8, 'limit': 8}}]
+        final = self.final(admissionDepths=depths, admissionWaits=waits)
         before = copy.deepcopy(final)
         result = self.metrics(final)
         request = result['requestAnalysis'][0]
         self.assertEqual(request['outcomeClass'], 'rejected')
-        self.assertEqual(request['facts']['admissionPrediction'], prediction)
+        self.assertEqual(request['facts']['admissionDepths'], depths)
         self.assertEqual(request['facts']['admissionWaits'], waits)
         self.assertEqual(final, before)
         facts = result['nonOnTimeBreakdown']['directFacts']
         for reason in analysis.ADMISSION_WAIT_REASONS:
             self.assertEqual(facts['admissionWaitReasons'][reason], 1)
-        self.assertEqual(facts['admissionPrediction']['withinRemainingSLO'], 1)
-        self.assertEqual(facts['timingNS']['deferredNanos']['p50'], 0)
+        self.assertEqual(facts['admissionDepths'], {'allAtLimit': 0, 'someBelowLimit': 1, 'unknown': 0})
+        gateway = self.metrics(self.final(admissionDepths={'i': {'inFlight': 8, 'limit': 8}}))
+        self.assertEqual(gateway['nonOnTimeBreakdown']['directFacts']['admissionDepths']['allAtLimit'], 1)
 
     def test_supplement_native_clock_and_gateway_exclusive_accounting(self):
         stages = ('workerHTTPStart', 'workerHTTPGetConn', 'workerHTTPGotConn',
@@ -167,7 +170,7 @@ class RequestAnalysisTest(unittest.TestCase):
         facts = result['nonOnTimeBreakdown']['directFacts']
         self.assertEqual(facts['missingFields']['nativeHTTP'], 2)
         self.assertEqual(facts['admissionWaitReasons']['missing'], 2)
-        self.assertEqual(facts['admissionPrediction']['unknown'], 2)
+        self.assertEqual(facts['admissionDepths']['unknown'], 2)
         unknown = self.metrics(self.final(admissionWaits=[{'reason': 'future', 'state': 'deferred'}]))
         self.assertEqual(unknown['nonOnTimeBreakdown']['directFacts']['admissionWaitReasons']['unknown'], 1)
         records = [{'row': {'nativeHTTP': {'finishedNanos': value}}, 'ref': {'line': value}} for value in (1, 2)]

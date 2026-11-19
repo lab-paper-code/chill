@@ -9,18 +9,9 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
-func TestRuntimeAdmissionPreIPCCompletionDispatchesBeforeRefresh(t *testing.T) {
-	testRuntimeAdmissionPreIPCCompletion(t, "jetsonx", 16, 12742, 0.098432)
-}
-
-// control379 PLC 20:04:35: lattepanda profile's name contains "fixed", but
-// its actual ACK is dynamic maxBatchSize=1, not a fixed-batch exception.
-func TestRuntimeAdmissionPLCPreIPCCompletionDispatchesBeforeRefresh(t *testing.T) {
-	testRuntimeAdmissionPreIPCCompletion(t, "lattepanda", 1, 16197, 1.059477)
-}
-
-func testRuntimeAdmissionPreIPCCompletion(t *testing.T, node string, maxBatch int, batchID uint64, serviceElapsedMS float64) {
-	t.Helper()
+// A reply removes its request from the gateway's copy of the executor state
+// before the next probe, without touching the probe itself.
+func TestRuntimeAdmissionCompletionReconcilesBeforeRefresh(t *testing.T) {
 	r, wanted, _ := routingRuntime(t, map[string]int32{"w1": 1})
 	finish := make(chan struct{})
 	t.Cleanup(func() {
@@ -32,13 +23,9 @@ func testRuntimeAdmissionPreIPCCompletion(t *testing.T, node string, maxBatch in
 	})
 	r.mu.Lock()
 	i := r.instances[wanted.ID]
-	i.Capacity = 2
-	i.State.Node.Name = node
-	i.State.Native.Metadata.Policy.FixedBatchSize = 0
-	i.State.Native.Metadata.Policy.MaxBatchSize = maxBatch
 	i.Execute = func(context.Context, Dispatch) (BackendResult, error) {
 		<-finish
-		return BackendResult{Finished: true, Progress: executedTestProgress(batchID, 1, 0, time.Microsecond)}, nil
+		return BackendResult{Finished: true, Progress: executedTestProgress(12742, 1, 0, time.Microsecond)}, nil
 	}
 	r.mu.Unlock()
 	first, receipt := admissionRuntimeCall(t, r, "w1", time.Now(), time.Now().Add(time.Second))
@@ -47,15 +34,9 @@ func testRuntimeAdmissionPreIPCCompletion(t *testing.T, node string, maxBatch in
 	original := *i.State.Native
 	original.Requests = []firstfloor.RequestState{{
 		Context: firstfloor.RequestContext{RequestID: receipt.ID, WorkloadUID: receipt.UID, Definition: first.identity, AdmissionPolicy: "Reject", SLO: firstfloor.SLO{Percentile: 95, TargetMS: 1000}},
-		Phase:   phaseRunning, BatchID: batchID, BatchSize: 1, ServiceElapsedMS: serviceElapsedMS,
+		Phase:   phaseRunning, BatchID: 12742, BatchSize: 1, ServiceElapsedMS: 0.098432,
 	}}
 	i.State.Native, i.State.ObservedAt = &original, observedAt
-	r.mu.Unlock()
-	second, _ := admissionRuntimeCall(t, r, "w1", time.Now(), time.Now().Add(time.Second))
-	r.mu.Lock()
-	if second.assignment != nil || second.admissionState != AdmissionUnknown {
-		t.Fatal("pre-IPC running must remain unknown without completion proof")
-	}
 	r.mu.Unlock()
 	close(finish)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -63,16 +44,10 @@ func testRuntimeAdmissionPreIPCCompletion(t *testing.T, node string, maxBatch in
 	if _, err := first.Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Wait(ctx); err != nil {
-		t.Fatalf("completed pre-IPC observation blocked dispatch before next refresh: %v", err)
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if second.assignment == nil {
-		t.Fatal("queued request did not dispatch")
-	}
 	if len(i.State.Native.Requests) != 0 {
-		t.Fatal("physical completion remained in admission state")
+		t.Fatal("physical completion remained in the executor state")
 	}
 	if !i.State.ObservedAt.Equal(observedAt) {
 		t.Fatal("gateway completion forged a fresh physical observation")

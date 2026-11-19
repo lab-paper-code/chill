@@ -107,7 +107,7 @@ func TestOverloadErrorResponse(t *testing.T) {
 					ExecutorWaitNanos: &zero,
 				}
 				if stage == serving.AdmissionStageGateway {
-					cause.PredictedCompletionNanos, cause.RemainingSLONanos = &zero, &negative
+					cause.RemainingSLONanos = &negative
 				}
 				writer := httptest.NewRecorder()
 				if err := writeError(writer, fmt.Errorf("wrapped: %w", cause)); err != nil {
@@ -122,8 +122,7 @@ func TestOverloadErrorResponse(t *testing.T) {
 					t.Fatalf("response status=%d body=%s", writer.Code, writer.Body.String())
 				}
 				if stage == serving.AdmissionStageGateway {
-					if len(body) != 8 || body["message"] != "internal detail" || body["predictedCompletionNanos"] != float64(0) ||
-						body["remainingSLONanos"] != float64(-1) {
+					if len(body) != 7 || body["message"] != "internal detail" || body["remainingSLONanos"] != float64(-1) {
 						t.Fatalf("decision values lost: %s", writer.Body.String())
 					}
 				} else if len(body) != 6 || body["message"] != "internal detail" {

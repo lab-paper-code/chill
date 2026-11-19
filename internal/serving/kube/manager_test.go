@@ -223,6 +223,14 @@ func managerWorkloadSpec() api.WorkloadSpec {
 	return spec
 }
 
+// managerDelayWorkloadSpec's requests wait in the gateway queue while every
+// routed executor holds its limit, instead of being rejected.
+func managerDelayWorkloadSpec() api.WorkloadSpec {
+	spec := managerWorkloadSpec()
+	spec.Admission.Policy = api.AdmissionPolicyDelay
+	return spec
+}
+
 func managerProfile(d *serving.Definition) serving.Profile {
 	path := d.Model.Paths[0]
 	profile := serving.Profile{ID: "measured", Condition: derivation.CurvePlanSpec{LogicalModel: d.Model.Name, RuntimeFamily: path.RuntimeFamily, Backend: path.Backend, Firstfloor: path.Firstfloor,

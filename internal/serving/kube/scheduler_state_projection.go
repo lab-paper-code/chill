@@ -187,11 +187,8 @@ func captureNativeState(instance *serving.SchedulerInstance, state *native.State
 	}
 	instance.Allocation.GPUUUID = m.Runtime.GPUUUID
 	instance.Ready = instance.Ready && state.Ready
-	instance.Capacity, instance.MaxBatch, instance.FixedBatchSize = m.MaxQueueRequests, m.MaxBatchSize, m.Policy.FixedBatchSize
+	instance.Capacity, instance.MaxBatch, instance.FixedBatchSize = m.MaxQueueRequests, serving.NativeMaxBatch(m), m.Policy.FixedBatchSize
 	instance.MaxWait = time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond))
-	if m.Policy.MaxBatchSize > 0 {
-		instance.MaxBatch = m.Policy.MaxBatchSize
-	}
 }
 
 func appendReason(reasons []string, reason string) []string {

@@ -26,12 +26,10 @@ func admissionFinalJSON(t *testing.T, r *Runtime, id string) map[string]any {
 	return nil
 }
 
-func TestAdmissionRecordPredictionSurvivesExecutorRejection(t *testing.T) {
+func TestAdmissionRecordDepthSurvivesExecutorRejection(t *testing.T) {
 	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
 	i := r.instances[instance.ID]
 	i.Capacity = 4
-	i.State.Native.At = time.Now().UTC()
-	i.State.Native.Metadata.Policy.DecisionID = "ack-policy"
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 	firstID := ""
@@ -45,7 +43,7 @@ func TestAdmissionRecordPredictionSurvivesExecutorRejection(t *testing.T) {
 		}
 		return BackendResult{Finished: true}, &Error{Code: CodeDeadlineInfeasible, Stage: AdmissionStageExecutor, Policy: AdmissionPolicyReject}
 	}
-	// Hold one real unobserved assignment while admitting the second request.
+	// Hold one unanswered request while admitting the second.
 	receipt, err := r.Receive(r.workloads["w1"].definition.Name, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -65,48 +63,35 @@ func TestAdmissionRecordPredictionSurvivesExecutorRejection(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := admissionFinalJSON(t, r, second.ID)
-	prediction, ok := row["admissionPrediction"].(map[string]any)
-	if !ok || prediction["predictedCompletionNanos"] == nil || prediction["predictedCompletionNanos"].(float64) <= 0 || prediction["remainingSLONanos"] == nil {
-		t.Fatalf("admitted prediction missing from rejected final: %+v", row)
-	}
-	input := prediction["input"].(map[string]any)
-	policy := input["ackPolicy"].(map[string]any)
-	if input["instance"] != instance.ID || input["profileID"] != i.Profile.ID || input["observedAt"] == nil || input["nativeAt"] == nil || input["snapshotAgeNanos"] == nil || input["unobservedAssignments"] != float64(1) || policy["decisionID"] != "ack-policy" {
-		t.Fatalf("prediction lost exact admission input: %+v", input)
+	depths, _ := row["admissionDepths"].(map[string]any)
+	depth, _ := depths[instance.ID].(map[string]any)
+	// The fixture's 10 ms service at its 100 ms target allows 10; the queue 4.
+	if len(depths) != 1 || depth["inFlight"] != float64(1) || depth["limit"] != float64(4) {
+		t.Fatalf("admitted depth missing from rejected final: %+v", row)
 	}
 }
 
 func TestAdmissionRecordEveryProducibleWaitReason(t *testing.T) {
-	for _, reason := range []string{"PreIPCRunning", "ProfileMismatch", "MissingPolicyOrBatch", "ResidualUnsupported", "MissingObservedAt", "NoCapacity", "AdmissionStopped"} {
+	for _, reason := range []string{"NoCapacity", "AdmissionStopped", "AtLimit"} {
 		t.Run(reason, func(t *testing.T) {
-			r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
-			i := r.instances[instance.ID]
-			i.State.Native.At = time.Now().UTC()
-			i.State.Native.Metadata.Policy.DecisionID = "observed-ack"
-			w := r.workloads["w1"]
-			q := admissionCallState(&Call{receipt: Receipt{ID: "running", UID: "w1", ReceivedAt: time.Now()}, definition: w.definition, identity: w.identity}, time.Now())
-			q.Phase, q.BatchID, q.BatchSize = "running", 12, 1
+			r, _, ids := depthRuntime(t, AdmissionPolicyDelay, 35*time.Millisecond, []float64{10e6}, []int32{1})
+			r.mu.Lock()
+			i := r.instances[ids[0]]
 			switch reason {
-			case "PreIPCRunning":
-				i.State.Native.Requests = []firstfloor.RequestState{q}
-			case "ProfileMismatch":
-				i.State.Native.Metadata.Policy.ProfileID = "other-profile"
-			case "MissingPolicyOrBatch":
-				i.State.Native = nil
-			case "ResidualUnsupported":
-				elapsed := int64(time.Hour)
-				q.ExchangeElapsedNanos = &elapsed
-				i.State.Native.Requests = []firstfloor.RequestState{q}
-			case "MissingObservedAt":
-				i.State.ObservedAt = time.Time{}
 			case "NoCapacity":
-				i.Capacity = 0
+				i.State.Ready = false
 			case "AdmissionStopped":
 				i.State.Stopped = true
 			}
+			r.mu.Unlock()
+			if reason == "AtLimit" {
+				for range 3 {
+					admissionRuntimeCall(t, r, "w1", time.Now(), time.Now().Add(time.Second))
+				}
+			}
 			c, receipt := admissionRuntimeCall(t, r, "w1", time.Now(), time.Now().Add(time.Second))
-			if c.assignment != nil {
-				t.Fatal("recording changed unknown/capacity behavior")
+			if c.assignment != nil || c.receipt.Rejection != nil {
+				t.Fatal("a waiting request was dispatched or rejected")
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
@@ -116,18 +101,22 @@ func TestAdmissionRecordEveryProducibleWaitReason(t *testing.T) {
 			}
 			row := admissionFinalJSON(t, r, receipt.ID)
 			waits, ok := row["admissionWaits"].([]any)
-			if !ok || len(waits) == 0 {
-				t.Fatalf("wait subreason missing: %+v", row)
+			if !ok || len(waits) != 1 {
+				t.Fatalf("wait record missing: %+v", row)
 			}
 			wait := waits[0].(map[string]any)
-			input := wait["input"].(map[string]any)
-			if wait["reason"] != reason || wait["at"] == nil || wait["elapsedNanos"] == nil || input["instance"] != instance.ID || input["capacity"] == nil || input["outstanding"] == nil {
+			if wait["at"] == nil || wait["elapsedNanos"] == nil || wait["instance"] != ids[0] {
 				t.Fatalf("wrong wait provenance: %+v", wait)
 			}
-			if reason == "PreIPCRunning" {
-				running := input["running"].([]any)[0].(map[string]any)
-				if running["batchID"] != float64(12) || running["batchSize"] != float64(1) || running["exchangeElapsedNanos"] != nil || input["observedAt"] == nil {
-					t.Fatalf("pre-IPC evidence lost: %+v", input)
+			depth, _ := wait["depth"].(map[string]any)
+			switch reason {
+			case "AtLimit":
+				if wait["state"] != CodeDeadlineInfeasible || wait["reason"] != nil || depth["inFlight"] != float64(3) || depth["limit"] != float64(3) {
+					t.Fatalf("wait at the limit lost its depth: %+v", wait)
+				}
+			default:
+				if wait["state"] != AdmissionNoCapacity || wait["reason"] != reason || depth != nil {
+					t.Fatalf("unready wait fabricated a depth or lost its reason: %+v", wait)
 				}
 			}
 		})
@@ -154,35 +143,6 @@ func TestAdmissionRecordWorkloadStoppedBeforeAcceptance(t *testing.T) {
 	waits, ok := row["admissionWaits"].([]any)
 	if !ok || len(waits) != 1 || waits[0].(map[string]any)["reason"] != "AdmissionStopped" || waits[0].(map[string]any)["detail"] != "retirement" {
 		t.Fatalf("stopped decision missing: %+v", row)
-	}
-}
-
-func TestAdmissionRecordDeferredTransition(t *testing.T) {
-	r, _, _ := routingRuntime(t, map[string]int32{"w1": 1})
-	d := *r.workloads["w1"].definition
-	d.Generation++
-	d.Admission.Policy = AdmissionPolicyDelay
-	if err := r.Publish(&d); err != nil {
-		t.Fatal(err)
-	}
-	c, receipt := admissionRuntimeCall(t, r, "w1", time.Now().Add(-time.Second), time.Now().Add(time.Second))
-	if _, err := c.Wait(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Response(receipt, "completed", ""); err != nil {
-		t.Fatal(err)
-	}
-	row := admissionFinalJSON(t, r, receipt.ID)
-	if row["deferredNanos"] == nil || row["deferredNanos"].(float64) <= 0 {
-		t.Fatalf("normal→deferred timestamp missing: %+v", row)
-	}
-	found := false
-	for _, value := range row["admissionWaits"].([]any) {
-		wait := value.(map[string]any)
-		found = found || wait["state"] == "deferred" && wait["elapsedNanos"] == row["deferredNanos"] && wait["input"] != nil
-	}
-	if !found {
-		t.Fatalf("deferred transition reason missing: %+v", row)
 	}
 }
 
