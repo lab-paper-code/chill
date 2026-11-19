@@ -93,7 +93,7 @@ func TestReplayFixedBatchExecutorFillsItsBatch(t *testing.T) {
 	i.policy = schedulerPolicy(i.config)
 	d := *s.snap.Workloads[0]
 	d.SLO.TargetLatency = 50 * time.Millisecond
-	var requests []*schedulerReplayRequest
+	requests := make([]*schedulerReplayRequest, 0, 4)
 	for j := range 4 {
 		requests = append(requests, replayAdmissionPending(s, fmt.Sprint("fixed-", j), &d))
 	}
@@ -264,7 +264,7 @@ func TestAdmissionRuntimeAndReplayDecideAlike(t *testing.T) {
 			}
 			final := runtimeStates[len(script)-1]
 			want := map[AdmissionPolicy]string{AdmissionPolicyReject: CodeQueueFull, AdmissionPolicyDelay: "waiting"}[policy]
-			if !slices.Contains(final, want) || slices.Contains(final, "timeout") != (policy == AdmissionPolicyDelay) {
+			if !slices.Contains(final, want) || slices.Contains(final, schedulerOutcomeTimeout) != (policy == AdmissionPolicyDelay) {
 				t.Fatalf("script did not reach a %s request and the lifetime path: %v", want, final)
 			}
 		})
@@ -283,7 +283,7 @@ func runtimeDepthScript(t *testing.T, policy AdmissionPolicy, target time.Durati
 		}
 	})
 	var calls []*Call
-	var states [][]string
+	states := make([][]string, 0, len(script))
 	for _, event := range script {
 		if event == "+" {
 			c, _ := admissionRuntimeCall(t, r, "w1", time.Now(), time.Now().Add(time.Hour))
@@ -310,7 +310,7 @@ func runtimeDepthScript(t *testing.T, policy AdmissionPolicy, target time.Durati
 			case c.receipt.Rejection != nil:
 				state[j] = c.receipt.Rejection.Code
 			case c.backendDone:
-				state[j] = "timeout"
+				state[j] = schedulerOutcomeTimeout
 			default:
 				state[j] = "waiting"
 			}
@@ -339,7 +339,7 @@ func replayDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duratio
 	s.snap.Routing = map[string]map[string]int32{d.UID: routes}
 	s.weights, s.available = make([]int32, len(s.instances)), make([]bool, len(s.instances))
 	var requests []*schedulerReplayRequest
-	var states [][]string
+	states := make([][]string, 0, len(script))
 	for _, event := range script {
 		if event == "+" {
 			r := replayAdmissionPending(s, fmt.Sprint("arrival-", len(requests)), &d)
@@ -369,7 +369,7 @@ func replayDepthScript(t *testing.T, policy AdmissionPolicy, target time.Duratio
 			case r.dropped:
 				state[j] = CodeQueueFull
 			case r.expired:
-				state[j] = "timeout"
+				state[j] = schedulerOutcomeTimeout
 			default:
 				state[j] = "waiting"
 			}
