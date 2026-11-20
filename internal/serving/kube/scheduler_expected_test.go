@@ -1,7 +1,6 @@
 package kube
 
 import (
-	"slices"
 	"testing"
 	"time"
 
@@ -42,24 +41,6 @@ func TestActionProjectionCarriesResultEnd(t *testing.T) {
 	projected := controller.actionsLocked(start.Add(4 * time.Second))
 	if len(projected) != 3 || projected[0].EndedAt != nil || projected[1].EndedAt == nil || !projected[1].EndedAt.Equal(ended) || projected[2].EndedAt != nil {
 		t.Fatalf("projection must carry only an ended run's end: %+v", projected)
-	}
-}
-
-// The measurements of the published decision come back in the next captured
-// snapshot: that is the planner's only memory of a miss.
-func TestPublishedMeasurementsReturnInTheNextSnapshot(t *testing.T) {
-	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
-	fact := serving.SchedulerMeasurement{DefinitionID: "w/1/m/1/p/1", Serving: []serving.SchedulerServingShare{{ProfileID: "profile", MaxBatch: 4}}, OnTimeRate: 18}
-	at := time.Unix(1000, 0).UTC()
-	published := serving.SchedulerSnapshot{At: at}
-	c.mu.Lock()
-	c.publishDecisionLocked(&published, &serving.SchedulerDecision{At: at, Measurements: []serving.SchedulerMeasurement{fact}})
-	c.mu.Unlock()
-	next := serving.SchedulerSnapshot{At: at.Add(time.Second)}
-	c.annotateHistory(&next, time.Minute)
-	if len(next.Measurements) != 1 || next.Measurements[0].DefinitionID != fact.DefinitionID || next.Measurements[0].OnTimeRate != fact.OnTimeRate ||
-		!slices.Equal(next.Measurements[0].Serving, fact.Serving) {
-		t.Fatalf("the next snapshot must carry the published measurements: %+v", next.Measurements)
 	}
 }
 

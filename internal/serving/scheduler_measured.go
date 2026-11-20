@@ -12,33 +12,24 @@ import (
 // batch cap and its route weight. The profile ID fixes the Node, device, power
 // mode and measured condition. An instance ID is not part of it: a re-created
 // instance of the same profile and cap serves the same way. The batch wait is
-// not part of it. A remembered miss is about the set, so its shares carry no
-// weight.
+// not part of it.
 type SchedulerServingShare struct {
 	ProfileID string `json:"profileID"`
 	MaxBatch  int    `json:"maxBatch"`
 	Weight    int32  `json:"weight,omitempty"`
 }
 
-// SchedulerMeasurement is a measured fact about a Definition served as
-// Serving.
+// SchedulerMeasurement is how the running configuration served a Definition
+// in the current load window, as its clients reported it.
 //
-// The window's measurement holds its client-reported outcomes over its
-// compute arrivals from Since to one SLO target before the end of the
-// observation window, the arrivals that had the whole target to report: OnTime
-// and Late are completions within and beyond the SLO target, every other
-// report and every unreported arrival is a failure. OnTimeRate is its on-time
-// completions per second of that stretch and Satisfied the empirical rank rule
-// over Population. It judges every result that serves the Workload as it runs.
-//
-// A remembered miss holds only the set and the most it delivered on time,
-// OnTimeRate (remember). It judges every result whose instances for the
-// Workload it covers while the result's demand needs more on time than that.
-// This assumes that lowering a batch cap, removing an instance or shifting
-// shares among the same instances does not raise what they deliver on time.
-// Where that is wrong, the planner adds capacity instead of re-batching or
-// shrinking the set: it spends energy, never the SLO. The replay judges where
-// no fact applies.
+// It holds the client-reported outcomes over the Definition's compute arrivals
+// from Since to one SLO target before the end of the observation window, the
+// arrivals that had the whole target to report: OnTime and Late are
+// completions within and beyond the SLO target, every other report and every
+// unreported arrival is a failure. OnTimeRate is its on-time completions per
+// second of that stretch and Satisfied the empirical rank rule over
+// Population. It judges every result that serves the Workload as it runs; the
+// replay judges every other result.
 type SchedulerMeasurement struct {
 	DefinitionID string                  `json:"definitionID"`
 	Serving      []SchedulerServingShare `json:"serving"`
@@ -48,28 +39,6 @@ type SchedulerMeasurement struct {
 	OnTime       int                     `json:"onTime,omitempty"`
 	Late         int                     `json:"late,omitempty"`
 	Satisfied    bool                    `json:"satisfied"`
-}
-
-// covers reports whether the options are instances of m's set at no larger
-// batch caps: each option takes its own instance of the same profile with an
-// equal or larger cap.
-func (m SchedulerMeasurement) covers(options []SchedulerServingShare) bool {
-	if len(options) == 0 {
-		return false
-	}
-	left := slices.Clone(m.Serving)
-	// Options are sorted, so within a profile the largest cap comes first; an
-	// instance that takes it takes every smaller cap of that profile too.
-	for k := len(options) - 1; k >= 0; k-- {
-		at := slices.IndexFunc(left, func(s SchedulerServingShare) bool {
-			return s.ProfileID == options[k].ProfileID && options[k].MaxBatch <= s.MaxBatch
-		})
-		if at < 0 {
-			return false
-		}
-		left = slices.Delete(left, at, at+1)
-	}
-	return true
 }
 
 // servingShares lists the routed options of routes in a fixed order.
@@ -91,7 +60,9 @@ func servingShares(routes map[string]int32, option func(id string) (SchedulerSer
 // Weights route by their ratios, so scaling them all is the same serving;
 // shifting load between the same options is not.
 func sameServing(a, b []SchedulerServingShare) bool {
-	if !sameSet(a, b) {
+	if !slices.EqualFunc(a, b, func(x, y SchedulerServingShare) bool {
+		return x.ProfileID == y.ProfileID && x.MaxBatch == y.MaxBatch
+	}) {
 		return false
 	}
 	totalA, totalB := int64(0), int64(0)
@@ -104,13 +75,6 @@ func sameServing(a, b []SchedulerServingShare) bool {
 		}
 	}
 	return true
-}
-
-// sameSet reports the same options, whatever their weights.
-func sameSet(a, b []SchedulerServingShare) bool {
-	return slices.EqualFunc(a, b, func(x, y SchedulerServingShare) bool {
-		return x.ProfileID == y.ProfileID && x.MaxBatch == y.MaxBatch
-	})
 }
 
 // windowMeasurement is d's measurement on the running serving over its load
@@ -161,39 +125,6 @@ func windowMeasurement(snapshot SchedulerSnapshot, since, end time.Time, d *Defi
 	return &m
 }
 
-// remember folds the window's measurements into the remembered misses. A set
-// that missed is remembered once by its Definition, its options and the most
-// it delivered on time; any later window of the same set that delivers more on
-// time raises OnTimeRate, and one that delivers less changes nothing. A fact
-// lasts while its Definition is in the snapshot: an SLO, admission or lifetime
-// change is a new Definition generation. A fact naming a profile no longer in
-// the catalog covers no re-measured profile, which has a new ID.
-func remember(snapshot SchedulerSnapshot, window []SchedulerMeasurement) []SchedulerMeasurement {
-	defined := map[string]bool{}
-	for _, d := range snapshot.Workloads {
-		if d != nil {
-			defined[d.Identity()] = true
-		}
-	}
-	facts := slices.DeleteFunc(slices.Clone(snapshot.Measurements), func(m SchedulerMeasurement) bool { return !defined[m.DefinitionID] })
-	for _, m := range window {
-		at := slices.IndexFunc(facts, func(old SchedulerMeasurement) bool {
-			return old.DefinitionID == m.DefinitionID && sameSet(old.Serving, m.Serving)
-		})
-		switch {
-		case at >= 0:
-			facts[at].OnTimeRate = max(facts[at].OnTimeRate, m.OnTimeRate)
-		case !m.Satisfied:
-			set := slices.Clone(m.Serving)
-			for k := range set {
-				set[k].Weight = 0
-			}
-			facts = append(facts, SchedulerMeasurement{DefinitionID: m.DefinitionID, Serving: set, OnTimeRate: m.OnTimeRate})
-		}
-	}
-	return facts
-}
-
 // judged returns the population, on-time and completed counts and the verdict
 // that judge the Workload: the measurement when one applies, else the replay's.
 func (s FeedbackWorkloadScore) judged() (population, onTime, completed int, satisfied bool) {
@@ -208,8 +139,7 @@ func (s FeedbackWorkloadScore) judged() (population, onTime, completed int, sati
 // of its population. A replayed score shows λ_w times the completed share, on
 // time or late; the window's measurement shows the on-time rate the running
 // set delivered (OnTimeRate), what the set did rather than a share of the
-// planned demand. A remembered miss shows nothing: its rate is another
-// window's, perhaps limited by that window's demand.
+// planned demand.
 func (p *capacityPlanner) shortfall(w int, s FeedbackWorkloadScore) (float64, bool) {
 	population, _, completed, satisfied := s.judged()
 	switch m := s.Measured; {
@@ -217,10 +147,9 @@ func (p *capacityPlanner) shortfall(w int, s FeedbackWorkloadScore) (float64, bo
 		return 0, false
 	case m == nil:
 		return float64(completed) / float64(population) * p.ws[w].rate, true
-	case m == p.ws[w].window:
+	default:
 		return m.OnTimeRate, true
 	}
-	return 0, false
 }
 
 // servingOption is the instance's serving option, without weight.
@@ -241,31 +170,4 @@ func instanceServing(instances []SchedulerInstance, routes map[string]int32) []S
 		}
 		return servingOption(instances[at]), true
 	})
-}
-
-// measurement is the fact that judges Workload w served as serving over
-// population replayed requests, or nil when the replay judges it: the
-// window's measurement when the result serves w as it runs (running), else a
-// covering remembered miss.
-func (p *capacityPlanner) measurement(w int, running bool, serving []SchedulerServingShare, population int) *SchedulerMeasurement {
-	ws := p.ws[w]
-	if m := ws.window; running && m != nil {
-		return m
-	}
-	if population == 0 {
-		return nil
-	}
-	// The on-time rate w's demand needs: the SLO rank of the population at the
-	// planned rate.
-	need := ws.rate * float64(empiricalSLORank(population, ws.d.SLO.Percentile)) / float64(population)
-	for _, m := range ws.misses {
-		if need > m.OnTimeRate && m.covers(serving) {
-			// The result completes on time at most the rate the set delivered,
-			// that share of its population.
-			judged := m
-			judged.Population, judged.OnTime = population, int(m.OnTimeRate*float64(population)/ws.rate)
-			return &judged
-		}
-	}
-	return nil
 }

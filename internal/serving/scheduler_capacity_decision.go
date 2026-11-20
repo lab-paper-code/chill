@@ -21,7 +21,7 @@ const (
 // target, or a target whose actions come from schedulerPlan.
 func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult) SchedulerDecision {
 	keepResult := p.evaluateCurrentKeep(best.period)
-	decision.Measurements, decision.Committed = p.remembered, p.committed
+	decision.Committed = p.committed
 	keep := &decision.Keep
 	keep.Feedback, keep.SLO, keep.ConditionalService = keepResult.feedback, keepResult.slo, keepResult.conditional
 	keep.Assumptions, keep.Sources = keepResult.assumptions, keepResult.sources

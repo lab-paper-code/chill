@@ -473,8 +473,6 @@ type SchedulerSnapshot struct {
 	References        []string            `json:"references"`
 	// Reservations are in launch order: their owners' first actions' starts.
 	Reservations []SchedulerReservation `json:"reservations,omitempty"`
-	// Measurements are the remembered misses the last decision returned.
-	Measurements []SchedulerMeasurement `json:"measurements,omitempty"`
 	// LoadChangedAt is, by Workload UID, the latest arrival-rate change an
 	// earlier decision detected (SchedulerLoad.WindowStart). It starts the
 	// Workload's load window while it lies inside the observation window.
@@ -579,9 +577,6 @@ type SchedulerDecision struct {
 	References   []string                 `json:"references"`
 	Capacity     *SchedulerCapacity       `json:"capacity,omitempty"`
 	PathFeedback []PathFeedback           `json:"pathFeedback,omitempty"`
-	// Measurements are the remembered misses after this decision (remember),
-	// carried into the next snapshot.
-	Measurements []SchedulerMeasurement `json:"measurements,omitempty"`
 	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
 	EvaluationElapsed time.Duration             `json:"evaluationElapsedNanos"`
 	EvaluationTiming  SchedulerEvaluationTiming `json:"evaluationTiming"`

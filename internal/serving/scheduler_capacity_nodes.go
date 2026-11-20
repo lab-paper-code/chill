@@ -19,7 +19,6 @@ type capacityWorkload struct {
 	totalNanos float64                 // frozen current-window TOTAL, heuristic only
 	serving    []SchedulerServingShare // how the running configuration serves it
 	window     *SchedulerMeasurement   // the running serving's measurement in this window
-	misses     []SchedulerMeasurement  // remembered misses of its Definition
 }
 
 // profileRoutingWeight is optimistic observed support, not an SLO certificate.

@@ -13,14 +13,13 @@ import (
 
 // annotateHistory sets each captured instance's UnroutedSince and HeldUntil
 // from the controller's records, drops records of instances that left, and
-// carries the published decision's measurements and the load changes still
+// carries the load changes still
 // inside the observation window into the snapshot. A restart starts the
-// records again, so an instance waits one more window, no measured miss is
-// remembered and each load window starts at what the next decision detects.
+// records again, so an instance waits one more window and each load window
+// starts at what the next decision detects.
 func (c *reservationState) annotateHistory(s *serving.SchedulerSnapshot, window time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	s.Measurements = slices.Clone(c.state.Decision.Measurements)
 	maps.DeleteFunc(c.loadChanged, func(_ string, at time.Time) bool { return !at.After(s.ObservationEnd.Add(-window)) })
 	s.LoadChangedAt = maps.Clone(c.loadChanged)
 	if c.unrouted == nil {

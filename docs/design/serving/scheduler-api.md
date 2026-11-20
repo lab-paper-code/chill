@@ -86,7 +86,7 @@ snapshot reservations는 owner, nodes, workloadUIDs, podUIDs, instances, frozen 
 
 인스턴스 `routable`은 현재 새 요청의 양수 분배와 Ready, Stopped, owner와 모델 적격성으로 계산한다. accepted 요청의 drain용 보존 route는 새 요청 가능으로 세지 않는다. Pod Ready와 새 정책 ACK도 별도다.
 
-keep과 target의 Workload별 `feedback`은 replay 예측이다. 측정 사실이 그 Workload를 판정했으면 같은 항목에 `measured{definitionID,serving[{profileID,maxBatch,weight}],onTimeRate,since,population,onTime,late,satisfied}`가 있고 없으면 replay가 판정했다([측정 사실의 판정](analytic-planner.md#slo-판정과-후보-순서)). 기억한 놓침이 판정한 항목에는 `since`가 없다. keep `status`는 판정 결과다. snapshot의 `measurements[{definitionID,serving[{profileID,maxBatch}],onTimeRate}]`는 이전 결정이 기억한 놓친 사실이고 decision의 `measurements`는 이 결정 뒤 기억하는 놓친 사실이다. snapshot action의 `endedAt`은 끝난 action의 종료 시각이다. 이 필드는 모두 추가 필드이며 없는 기록은 기억한 사실 없음, action 종료 미상으로 읽는다. arrival의 `clientOutcome`과 `clientElapsedNanos`는 capture까지 도착한 첫 client 보고이며 메모리의 snapshot에만 있다. 저장 기록과 조회 API의 snapshot에는 arrival이 없다.
+keep과 target의 Workload별 `feedback`은 replay 예측이다. 실행 중 serving과 같고 이번 부하 창에 백분위를 식별할 client 보고가 있으면 같은 항목의 `measured{definitionID,serving[{profileID,maxBatch,weight}],onTimeRate,since,population,onTime,late,satisfied}`로 판정한다. 그 밖에는 replay가 판정한다([창 측정의 판정](analytic-planner.md#slo-판정과-후보-순서)). `measured`의 JSON 형태는 유지한다. snapshot과 decision에는 `measurements` 배열이 없다. keep `status`는 판정 결과다. snapshot action의 `endedAt`은 끝난 action의 종료 시각이며 없으면 종료 미상이다. arrival의 `clientOutcome`과 `clientElapsedNanos`는 capture까지 도착한 첫 client 보고이며 메모리 snapshot에만 있다. 저장 기록과 조회 API의 snapshot에는 arrival이 없다. 이전 `measurements` 필드가 있는 snapshot은 현재 계약의 strict decoder에서 거절되므로 현재 계약으로 새로 capture한다.
 
 decision의 `committed`는 준비 중이지만 예약된 target의 인스턴스로서 keep과 target의 예측이 Ready로 세는 인스턴스의 ID 목록이다. 없으면 비어 있다. keep의 `instances`와 `routing`은 실행 중 구성 그대로다.
 

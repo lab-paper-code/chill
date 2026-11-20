@@ -358,12 +358,12 @@ func (p *capacityPlanner) assessResult(res capacityResult) capacityResult {
 		return res
 	}
 	result := memo.result
-	// The memo is shared by every result of this configuration; a fact judges
-	// only the Workloads of this result it applies to (measurement).
+	// The memo is shared by every result of this configuration; the window's
+	// measurement judges only a result serving the Workload as it runs.
 	res.feedback, res.slo, res.conditional = slices.Clone(result.Workloads), result.SLO, result.ConditionalService
 	for j, score := range res.feedback {
-		if w, controlled := p.index[score.UID]; controlled {
-			res.feedback[j].Measured = p.measurement(w, res.running[w], res.serving[w], score.Population)
+		if w, controlled := p.index[score.UID]; controlled && res.running[w] {
+			res.feedback[j].Measured = p.ws[w].window
 		}
 	}
 	res.assumptions, res.sources = result.Assumptions, result.Sources
