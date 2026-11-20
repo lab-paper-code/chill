@@ -20,16 +20,11 @@ type heldEvaluationContext struct {
 	context.Context
 	entered, release chan struct{}
 	once             sync.Once
-	function         string
 }
 
 func (c *heldEvaluationContext) Err() error {
 	pc, _, _, _ := runtime.Caller(1)
-	function := c.function
-	if function == "" {
-		function = ".evaluateScheduler"
-	}
-	if fn := runtime.FuncForPC(pc); fn != nil && strings.HasSuffix(fn.Name(), function) {
+	if fn := runtime.FuncForPC(pc); fn != nil && strings.HasSuffix(fn.Name(), ".evaluateScheduler") {
 		c.once.Do(func() {
 			close(c.entered)
 			<-c.release
@@ -184,59 +179,6 @@ func TestSchedulerEvaluationAllowsPrepareToRouteProgress(t *testing.T) {
 	}
 }
 
-func TestSchedulerTargetAdmissionDoesNotBlockProgress(t *testing.T) {
-	c := schedulerEmptyPoolController(t)
-	snapshot, err := c.capture(context.Background(), time.Now(), c.config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.state.Snapshot = snapshot
-	parent, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	ctx := &heldEvaluationContext{Context: parent, entered: make(chan struct{}), release: make(chan struct{}),
-		function: ".SchedulerTargetAdmission"}
-	var release sync.Once
-	resume := func() { release.Do(func() { close(ctx.release) }) }
-	defer resume()
-	config := c.config
-	target := serving.SchedulerCandidate{ID: "admitted-during-progress", Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing,
-		Actions: []serving.Action{{ID: "admitted-route", Kind: servingstate.OperationRoute}}}
-	done := make(chan error, 1)
-	go func() {
-		c.tickMu.Lock()
-		_, err := c.approveEvaluation(ctx, time.Now(), config, snapshot.At, snapshot, serving.SchedulerDecision{Target: &target},
-			&observation.SchedulerControlObservation{}, func(string, *time.Duration) {})
-		c.tickMu.Unlock()
-		done <- err
-	}()
-	select {
-	case <-ctx.entered:
-	case <-parent.Done():
-		t.Fatal(parent.Err())
-	}
-	continued := make(chan error, 1)
-	go func() { continued <- c.Continue(parent, time.Now()) }()
-	select {
-	case err := <-continued:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		resume()
-		<-done
-		<-continued
-		t.Fatal("Continue waited for target admission replay")
-	}
-	at := c.State().Snapshot.At
-	resume()
-	if err := <-done; err != nil {
-		t.Fatalf("progress during admission discarded an admitted target: %v", err)
-	}
-	if c.State().Snapshot.At.Before(at) {
-		t.Fatal("target approval published a snapshot older than progress")
-	}
-}
-
 // approvalOnLatestCapture is a controller whose published capture is newer than
 // an evaluation input: it returns that input (snapshot) and a route target on
 // the latest capture, after an unrelated owner completed and progress published.
@@ -283,68 +225,58 @@ func approvalOnLatestCapture(t *testing.T) (*SchedulerController, context.Contex
 	return c, parent, snapshot, target, ready
 }
 
-// The evaluation input predates an unrelated owner's completion and a newer
-// published capture. Approval asks admission on the latest capture only.
-func TestSchedulerApprovalAdmitsTargetOnLatestCapture(t *testing.T) {
-	const reservedDuringAdmission = "reserved-during-admission"
-	for _, change := range []string{"unrelated-completion", "instance-changed", reservedDuringAdmission} {
-		t.Run(change, func(t *testing.T) {
+// A decision is evaluated once, on its own capture. While it was evaluated an
+// unrelated owner completed and progress published. On the other Node an
+// executor moved from its Pod to a Ready container: a target that only routes,
+// or acts only on Node a, still launches. An executor on a Node the target acts
+// on that became Ready since evaluation discards it.
+func TestSchedulerApprovalChecksOnlyTheNodesTheTargetActsOn(t *testing.T) {
+	podStage := func(i *serving.SchedulerInstance) { i.ID, i.Ready = i.PodUID, false }
+	notReady := func(i *serving.SchedulerInstance) { i.Ready = false }
+	for _, tc := range []struct {
+		name      string
+		actsOnA   bool
+		instance  int // the instance the evaluated capture saw before it progressed
+		evaluated func(*serving.SchedulerInstance)
+		want      string // the discard reason; empty launches
+	}{
+		{"route only, other Node progressed", false, 1, podStage, ""},
+		{"acts on Node a, other Node progressed", true, 1, podStage, ""},
+		{"acts on Node a, its executor became Ready", true, 0, notReady, "planned Node changed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			c, parent, snapshot, target, ready := approvalOnLatestCapture(t)
-			if change == "instance-changed" {
-				target.Instances[0].Allocation.MemoryBytes++
+			if tc.actsOnA {
+				target.Actions[0].Node = ready.Node
 			}
-			ctx := &heldEvaluationContext{Context: parent, entered: make(chan struct{}), release: make(chan struct{}),
-				function: ".SchedulerTargetAdmission"}
-			if change != reservedDuringAdmission {
-				close(ctx.release)
-			}
-			config := c.config
+			snapshot.Instances = slices.Clone(snapshot.Instances)
+			routes := target.Routing[ready.WorkloadUID]
+			weight := routes[target.Instances[tc.instance].ID]
+			delete(routes, target.Instances[tc.instance].ID)
+			tc.evaluated(&snapshot.Instances[tc.instance])
+			tc.evaluated(&target.Instances[tc.instance])
+			routes[target.Instances[tc.instance].ID] = weight
 			event := &observation.SchedulerControlObservation{}
-			done := make(chan error, 1)
-			go func() {
-				c.tickMu.Lock()
-				_, err := c.approveEvaluation(ctx, time.Now(), config, snapshot.At, snapshot,
-					serving.SchedulerDecision{At: snapshot.At, Target: &target}, event, func(string, *time.Duration) {})
-				c.tickMu.Unlock()
-				done <- err
-			}()
-			if change == reservedDuringAdmission {
-				<-ctx.entered
-				c.mu.Lock()
-				c.runs["taker"] = &actionRun{owner: "taker", reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{ready.Node}},
-					action: serving.Action{ID: "taker", Kind: measurementLeaseKind}, result: &servingstate.OperationResult{}}
-				c.mu.Unlock()
-				close(ctx.release)
-			}
-			err := <-done
+			c.tickMu.Lock()
+			_, err := c.approveEvaluation(parent, time.Now(), c.config, snapshot.At, snapshot,
+				serving.SchedulerDecision{At: snapshot.At, Target: &target}, event, func(string, *time.Duration) {})
+			c.tickMu.Unlock()
 			c.wg.Wait()
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			route := c.runs["latest-capture-route"]
-			// A discarded decision keeps the target it chose in the record.
-			if discarded := event.DiscardedActions; (err == nil) != (len(discarded) == 0) || err != nil && (len(discarded) != 1 || discarded[0].Kind != servingstate.OperationRoute) {
-				t.Fatalf("record of the target: err=%v discarded=%+v", err, discarded)
+			if tc.want == "" && (err != nil || len(event.DiscardedActions) != 0 || route == nil || route.action.Status != servingstate.NativeOperationComplete) {
+				t.Fatalf("progress on a Node the target does not act on discarded it: %v %+v", err, route)
 			}
-			switch change {
-			case "unrelated-completion":
-				if err != nil || route == nil || route.action.Status != servingstate.NativeOperationComplete {
-					t.Fatalf("admissible target was not approved and launched: %v %+v", err, route)
-				}
-			case "instance-changed":
-				if err == nil || !strings.Contains(err.Error(), "latest target admission: TargetWorkloadOutsideControl") || route != nil {
-					t.Fatalf("target for a changed instance was not rejected by admission: %v", err)
-				}
-			case reservedDuringAdmission:
-				if err == nil || !strings.Contains(err.Error(), "live reservations changed") || route != nil {
-					t.Fatalf("target admitted before a reservation was launched: %v", err)
-				}
+			if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want) || route != nil) {
+				t.Fatalf("a target launched although a Node it acts on changed: %v", err)
 			}
 		})
 	}
 }
 
 // A decision that never launches keeps the target it chose in the record, at
-// every one of the five places approval discards it.
+// every one of the four places approval discards it.
 func TestEveryDiscardRecordsTheChosenActions(t *testing.T) {
 	for _, exit := range []struct {
 		name, want string
@@ -358,10 +290,6 @@ func TestEveryDiscardRecordsTheChosenActions(t *testing.T) {
 					snapshot.Nodes[k].PowerMode += "-changed"
 				}
 			}
-			return nil
-		}},
-		{"latest target admission", "latest target admission", func(_ *SchedulerController, _ *serving.SchedulerSnapshot, target *serving.SchedulerCandidate, _ *SchedulerControllerConfig, _ serving.SchedulerInstance) func() {
-			target.Instances[0].Allocation.MemoryBytes++
 			return nil
 		}},
 		{"configuration changed", "configuration changed", func(_ *SchedulerController, _ *serving.SchedulerSnapshot, _ *serving.SchedulerCandidate, config *SchedulerControllerConfig, _ serving.SchedulerInstance) func() {
@@ -388,10 +316,13 @@ func TestEveryDiscardRecordsTheChosenActions(t *testing.T) {
 			config := c.config
 			during := exit.arrange(c, &snapshot, &target, &config, ready)
 			event := &observation.SchedulerControlObservation{}
+			captured := false
 			c.tickMu.Lock()
 			_, err := c.approveEvaluation(parent, time.Now(), config, snapshot.At, snapshot,
 				serving.SchedulerDecision{At: snapshot.At, Target: &target}, event, func(step string, _ *time.Duration) {
-					if step == "lock" && during != nil {
+					// Between the fresh capture and the ledger read.
+					captured = captured || step == "capture"
+					if step == "publish" && captured && during != nil {
 						during()
 					}
 				})

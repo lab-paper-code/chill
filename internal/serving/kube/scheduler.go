@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -380,7 +381,8 @@ type plannedNodeState struct {
 }
 
 // plannedNodeStates is the state of every Node the actions touch: its power
-// mode and readiness and the executors on it that are not yet terminated.
+// mode and readiness and the executors on it that are not yet terminated, with
+// their readiness.
 func plannedNodeStates(actions []serving.Action, s serving.SchedulerSnapshot) map[string]plannedNodeState {
 	states := map[string]plannedNodeState{}
 	for _, action := range actions {
@@ -393,7 +395,7 @@ func plannedNodeStates(actions []serving.Action, s serving.SchedulerSnapshot) ma
 	}
 	for _, instance := range s.Instances {
 		if state, planned := states[instance.Node.UID]; planned && !instance.Terminated {
-			state.Instances = append(state.Instances, instance.ID+"\x00"+instance.PodUID+"\x00"+instance.ProfileID)
+			state.Instances = append(state.Instances, instance.ID+"\x00"+instance.PodUID+"\x00"+instance.ProfileID+"\x00"+strconv.FormatBool(instance.Ready))
 			states[instance.Node.UID] = state
 		}
 	}
@@ -401,10 +403,11 @@ func plannedNodeStates(actions []serving.Action, s serving.SchedulerSnapshot) ma
 }
 
 // approveEvaluation is called with tickMu held and returns holding it. Progress
-// during evaluation only selects a fresh capture for publication. A new target
-// needs the Nodes its actions touch unchanged since evaluation and admission
-// on that capture; afterwards only a changed action and reservation ledger or
-// approval configuration discards the evaluation.
+// during evaluation only selects a fresh capture for publication. A decision is
+// evaluated once, on its own capture: a new target needs only the Nodes its
+// actions touch unchanged since evaluation and the action and reservation
+// ledger unchanged since the fresh capture. Nodes it does not act on may have
+// progressed. Otherwise only a changed approval configuration discards it.
 func (c *SchedulerController) approveEvaluation(
 	ctx context.Context, now time.Time, config SchedulerControllerConfig, publishedAt time.Time,
 	snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision,
@@ -441,23 +444,9 @@ func (c *SchedulerController) approveEvaluation(
 	c.mu.Lock()
 	newTarget := planned && c.runs[transitionRunKind+"/"+decision.Target.ID] == nil
 	c.mu.Unlock()
-	if newTarget {
-		// The action plan was built for the evaluated state of its Nodes.
-		if !reflect.DeepEqual(plannedNodeStates(decision.Target.Actions, snapshot), plannedNodeStates(decision.Target.Actions, current)) {
-			return discard(errors.New("scheduler evaluation invalidated: planned Node changed"))
-		}
-		// Exact replay uses fresh worker-clock history without blocking control progress.
-		next("evaluate", &event.Evaluate)
-		c.tickMu.Unlock()
-		reason, err := serving.SchedulerTargetAdmission(ctx, latest.Settings, current, *decision.Target)
-		next("lock", &event.LockWait)
-		c.tickMu.Lock()
-		if err != nil {
-			return decision, err
-		}
-		if reason != "" {
-			return discard(fmt.Errorf("scheduler evaluation invalidated: latest target admission: %s", reason))
-		}
+	// The action plan was built for the evaluated state of its Nodes.
+	if newTarget && !reflect.DeepEqual(plannedNodeStates(decision.Target.Actions, snapshot), plannedNodeStates(decision.Target.Actions, current)) {
+		return discard(errors.New("scheduler evaluation invalidated: planned Node changed"))
 	}
 	next("publish", &event.Publish)
 	c.mu.Lock()
@@ -470,8 +459,8 @@ func (c *SchedulerController) approveEvaluation(
 		return discard(errors.New("scheduler evaluation invalidated: configuration changed"))
 	}
 	config = c.config
-	// Executors may finish while admission runs. A new target launches only on
-	// the ledger it was admitted on, read under the ledger mutex.
+	// Executors may finish after the fresh capture. A new target launches only
+	// on the ledger of that capture, read under the ledger mutex.
 	if newTarget && !reflect.DeepEqual(schedulerApprovalLedger(current.Actions, current.Reservations),
 		schedulerApprovalLedger(c.actionsLocked(current.At), c.reservationsLocked())) {
 		c.mu.Unlock()

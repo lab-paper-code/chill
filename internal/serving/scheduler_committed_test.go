@@ -1,7 +1,6 @@
 package serving
 
 import (
-	"context"
 	"slices"
 	"testing"
 	"time"
@@ -67,10 +66,6 @@ func TestPreparingInstanceIsCommittedCapacity(t *testing.T) {
 	}
 	if !slices.Equal(d.Committed, []string{"pod2"}) || !slices.ContainsFunc(d.Keep.Instances, func(i SchedulerInstance) bool { return i.ID == "pod2" && !i.Ready }) {
 		t.Fatalf("the record must name the committed instance beside the running keep: committed %v keep %+v", d.Committed, d.Keep.Instances)
-	}
-	// The admission of a launch sees the same committed capacity.
-	if reason, err := SchedulerTargetAdmission(context.Background(), s, snap, *d.Target); err != nil || reason != "" {
-		t.Fatalf("the decision's own target is not admitted: %q %v", reason, err)
 	}
 }
 

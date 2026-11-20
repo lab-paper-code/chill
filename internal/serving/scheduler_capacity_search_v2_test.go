@@ -331,7 +331,6 @@ func TestSchedulerV2InfeasibleSLOUsesPriorityThroughFinalAdmission(t *testing.T)
 			t.Fatal(err)
 		}
 		capacityCheckInfeasibleSLODecision(t, decision, uid, recoveryNode)
-		capacityCheckInfeasibleSLOAdmission(t, settings, snapshot, decision, uid, recoveryNode)
 		chosen[uid] = decision.Target.ID
 		offline[0].Status = CapacityRejected
 		again, err := EvaluateScheduler(context.Background(), settings, snapshot)
@@ -409,77 +408,6 @@ func capacityCheckInfeasibleSLODecision(t *testing.T, decision SchedulerDecision
 	}
 }
 
-func capacityCheckInfeasibleSLOAdmission(t *testing.T, settings SchedulerSettings, snapshot SchedulerSnapshot, decision SchedulerDecision, uid string, recoveryNode NodeReference) {
-	t.Helper()
-	reason, err := SchedulerTargetAdmission(context.Background(), settings, snapshot, *decision.Target)
-	if err != nil || reason != "" {
-		t.Fatalf("improved infeasible target failed final admission: reason=%s err=%v", reason, err)
-	}
-	// NEW admission cannot take authority from an existing reservation,
-	// even when that owner holds this exact frozen target.
-	reserved := snapshot
-	reservedTarget := *decision.Target
-	reserveTargetForTest(&reserved, &reservedTarget)
-	if reserved.Reservations[0].Owner != reservedTarget.ID || reserved.Reservations[0].Target != &reservedTarget {
-		t.Fatal("fixture lost exact reservation ownership")
-	}
-	frozen := struct {
-		Snapshot SchedulerSnapshot
-		Target   SchedulerCandidate
-	}{reserved, reservedTarget}
-	before, err := json.Marshal(frozen)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reason, err = SchedulerTargetAdmission(context.Background(), settings, reserved, reservedTarget)
-	if err != nil || reason == "" {
-		t.Fatalf("NEW admission accepted reserved owner target: reason=%s err=%v", reason, err)
-	}
-	after, err := json.Marshal(struct {
-		Snapshot SchedulerSnapshot
-		Target   SchedulerCandidate
-	}{reserved, reservedTarget})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
-		t.Fatal("NEW admission changed reserved snapshot or frozen target")
-	}
-	for _, changed := range []string{"allocation", "owner", "unavailable node"} {
-		current := snapshot
-		target := *decision.Target
-		target.Instances = slices.Clone(target.Instances)
-		current.Instances, current.Nodes, current.Workloads = slices.Clone(snapshot.Instances), slices.Clone(snapshot.Nodes), slices.Clone(snapshot.Workloads)
-		switch changed {
-		case "allocation":
-			for k := range target.Instances {
-				if target.Instances[k].Node == recoveryNode {
-					target.Instances[k].Allocation.MemoryBytes++
-				}
-			}
-		case "owner":
-			foreign := *snapshot.Workloads[0]
-			foreign.UID = "external-owner"
-			current.Workloads = append(current.Workloads, &foreign)
-			for k := range current.Instances {
-				if current.Instances[k].WorkloadUID == uid {
-					current.Instances[k].OwnerWorkloadUID = foreign.UID
-				}
-			}
-		case "unavailable node":
-			for k := range current.Nodes {
-				if current.Nodes[k].Node == recoveryNode {
-					current.Nodes[k].Ready = false
-				}
-			}
-		}
-		reason, err := SchedulerTargetAdmission(context.Background(), settings, current, target)
-		if err != nil || reason == "" {
-			t.Fatalf("%s escaped final physical admission: reason=%s err=%v", changed, reason, err)
-		}
-	}
-}
-
 func TestSchedulerV2FeasibleFinalAdmissionUsesOriginalEnergy(t *testing.T) {
 	settings, snapshot, retired, _ := capacityR5Fixture()
 	settings.PlanSearchStrategy = protocol.V2
@@ -494,10 +422,6 @@ func TestSchedulerV2FeasibleFinalAdmissionUsesOriginalEnergy(t *testing.T) {
 	}
 	if decision.Target == nil || decision.Target.Keep || decision.Status != schedulerStatusFeasible || poolsOn(*decision.Target, retired) || decision.Target.ExpectedJoules == nil || decision.Keep.ExpectedJoules == nil || *decision.Target.ExpectedJoules >= *decision.Keep.ExpectedJoules {
 		t.Fatalf("feasible lower-energy finalist lost final admission: %+v", decision)
-	}
-	reason, err := SchedulerTargetAdmission(context.Background(), settings, snapshot, *decision.Target)
-	if err != nil || reason != "" {
-		t.Fatalf("lower-energy feasible target failed final admission: reason=%s err=%v", reason, err)
 	}
 	for _, score := range decision.Target.Feedback {
 		if !score.Satisfied || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos > float64(snapshot.Workloads[0].SLO.TargetLatency) {

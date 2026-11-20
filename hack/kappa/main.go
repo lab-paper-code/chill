@@ -39,10 +39,10 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "table", "table, tick, compare, guard or slo")
+	mode := flag.String("mode", "table", "table, tick, compare or slo")
 	schedulerFile := flag.String("scheduler", "", "ChillServer /api/v1/scheduler dump; options carry profile bodies")
-	profilesFile := flag.String("profiles", "", "ChillServer /api/v1/scheduler/profiles dump (compare/guard)")
-	recordsFile := flag.String("records", "", "scheduler record JSONL with decisions (compare/guard)")
+	profilesFile := flag.String("profiles", "", "ChillServer /api/v1/scheduler/profiles dump (compare)")
+	recordsFile := flag.String("records", "", "scheduler record JSONL with decisions (compare)")
 	rowsFile := flag.String("rows", "", "table: output full offline capacity rows JSON")
 	margin := flag.Float64("margin", -1, "completion margin ms; negative uses the settings of the input")
 	window := flag.Float64("window", 60, "table/slo: least seconds of arrivals per row window")
@@ -52,10 +52,9 @@ func main() {
 	rate := flag.Float64("rate", 0, "tick: Poisson arrivals (req/s) in the observation window; 0 keeps the dump's")
 	repeat := flag.Int("repeat", 200, "tick: planner runs")
 	workers := flag.Int("workers", 3, "planSearchWorkers")
-	format := flag.String("format", "markdown", "compare/guard: markdown or jsonl")
-	next := flag.Int("next", 3, "guard: revalidate frozen target for this many following decision ticks")
-	catalogFile := flag.String("catalog", "", "compare/guard: archived catalog JSONL restoring workload, cost and baseline references")
-	arrivalsFile := flag.String("arrivals", "", "compare/guard: real request arrival JSONL restoring omitted snapshot arrivals")
+	format := flag.String("format", "markdown", "compare: markdown or jsonl")
+	catalogFile := flag.String("catalog", "", "compare: archived catalog JSONL restoring workload, cost and baseline references")
+	arrivalsFile := flag.String("arrivals", "", "compare: real request arrival JSONL restoring omitted snapshot arrivals")
 	flag.Parse()
 	if *rowsFile != "" && *mode != "table" {
 		fmt.Fprintln(os.Stderr, "-rows is only valid with -mode table")
@@ -81,15 +80,9 @@ func main() {
 			err = tick(settings, snapshot, *rate, *repeat)
 		case "compare":
 			if *format == replayJSONL {
-				err = replay(settings, *profilesFile, *recordsFile, *catalogFile, *arrivalsFile, *margin, -1, *format)
+				err = replay(settings, *profilesFile, *recordsFile, *catalogFile, *arrivalsFile, *margin)
 			} else {
 				err = compare(settings, *profilesFile, *recordsFile, *margin)
-			}
-		case "guard":
-			if *next < 0 {
-				err = errors.New("-next must be nonnegative")
-			} else {
-				err = replay(settings, *profilesFile, *recordsFile, *catalogFile, *arrivalsFile, *margin, *next, *format)
 			}
 		case "slo":
 			err = slo(settings, rows, snapshot)

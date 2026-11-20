@@ -36,17 +36,9 @@ type replayResult struct {
 	PopulationMismatch bool           `json:"populationMismatch"`
 	RecordedCounts     [3]int         `json:"recordedCounts"`
 	ReplayCounts       [3]int         `json:"replayCounts"`
-	Checks             []guardCheck   `json:"checks,omitempty"`
 	Demand             []replayDemand `json:"demand"`
 	ReplayDemand       []replayDemand `json:"replayDemand,omitempty"`
 	ElapsedSeconds     float64        `json:"elapsedSeconds"`
-}
-
-type guardCheck struct {
-	At       time.Time `json:"at"`
-	Offset   int       `json:"offset"`
-	Rejected bool      `json:"rejected"`
-	Reason   string    `json:"reason,omitempty"`
 }
 
 // replayKey also compares integer routes and wait limits: placement alone misses
@@ -214,44 +206,29 @@ func (reader *replayReader) readTick() (*replayTick, error) {
 	return nil, reader.scanner.Err()
 }
 
-func evaluateReplayTick(queue []*replayTick, next int) (replayResult, error) {
-	t := queue[0]
+func evaluateReplayTick(t *replayTick) (replayResult, error) {
 	began := time.Now()
 	r := replayResult{At: t.r.At, Status: t.r.Decision.Status, TargetKey: replayKey(t.r.Decision.Target), Demand: replayDemands(t.r.Decision)}
 	if target := t.r.Decision.Target; target != nil {
 		r.TargetID = target.ID
 	}
-	if next < 0 {
-		d, err := serving.EvaluateScheduler(context.Background(), t.settings, t.snap)
-		if err != nil {
-			return r, err
-		}
-		r.ReplayStatus, r.ReplayTargetKey = d.Status, replayKey(d.Target)
-		r.RecordedCounts = [3]int{t.r.Decision.Search.Received, t.r.Decision.Search.Accepted, t.r.Decision.Search.ComputeInputs}
-		r.ReplayCounts = [3]int{d.Search.Received, d.Search.Accepted, d.Search.ComputeInputs}
-		r.PopulationMismatch = r.RecordedCounts != r.ReplayCounts
-		r.Disagreement = r.TargetKey != r.ReplayTargetKey
-		r.ReplayDemand = replayDemands(&d)
-	} else if target := t.r.Decision.Target; target != nil {
-		// Check new admission of the immutable recorded target against the
-		// untouched snapshot. This does not authorize cancelling an existing
-		// transition or overriding its owner's continuation rules.
-		for offset, future := range queue {
-			reason, err := serving.SchedulerTargetAdmission(context.Background(), t.settings, future.snap, *target)
-			if err != nil {
-				return r, err
-			}
-			r.Checks = append(r.Checks, guardCheck{future.r.At, offset, reason != "", reason})
-		}
+	d, err := serving.EvaluateScheduler(context.Background(), t.settings, t.snap)
+	if err != nil {
+		return r, err
 	}
+	r.ReplayStatus, r.ReplayTargetKey = d.Status, replayKey(d.Target)
+	r.RecordedCounts = [3]int{t.r.Decision.Search.Received, t.r.Decision.Search.Accepted, t.r.Decision.Search.ComputeInputs}
+	r.ReplayCounts = [3]int{d.Search.Received, d.Search.Accepted, d.Search.ComputeInputs}
+	r.PopulationMismatch = r.RecordedCounts != r.ReplayCounts
+	r.Disagreement = r.TargetKey != r.ReplayTargetKey
+	r.ReplayDemand = replayDemands(&d)
 	r.ElapsedSeconds = time.Since(began).Seconds()
 	return r, nil
 }
 
-func replay(base serving.SchedulerSettings, profilesFile, recordsFile, catalogFile, arrivalsFile string, margin float64, next int, format string) error {
-	if format != replayJSONL && format != "markdown" {
-		return fmt.Errorf("unknown format %q", format)
-	}
+// replay writes, per recorded decision, a JSONL row comparing it with a fresh
+// evaluation of its own snapshot.
+func replay(base serving.SchedulerSettings, profilesFile, recordsFile, catalogFile, arrivalsFile string, margin float64) error {
 	var profileCatalog struct {
 		Profiles []serving.Profile `json:"profiles"`
 	}
@@ -304,47 +281,20 @@ func replay(base serving.SchedulerSettings, profilesFile, recordsFile, catalogFi
 		scanner: scanner, base: base, margin: margin, profiles: profiles,
 		catalog: catalog, arrivals: arrivals, restoreArrivals: arrivalsFile != "", definitions: definitions,
 	}
-	if format == "markdown" {
-		fmt.Println("| at | status | target key | offset / snapshot at | new admission rejected / reason |\n|---|---|---|---|---|")
-	}
 	encoder := json.NewEncoder(os.Stdout)
-	queue := []*replayTick{}
-	eof := false
 	for {
-		for !eof && len(queue) < max(1, next+1) {
-			t, err := reader.readTick()
-			if err != nil {
-				return err
-			}
-			if t == nil {
-				eof = true
-				break
-			}
-			if len(queue) > 0 && !t.r.At.After(queue[len(queue)-1].r.At) {
-				return fmt.Errorf("decision ticks not strictly increasing at %s", t.r.At)
-			}
-			queue = append(queue, t)
+		t, err := reader.readTick()
+		if err != nil || t == nil {
+			return err
 		}
-		if len(queue) == 0 {
-			break
-		}
-		r, err := evaluateReplayTick(queue, next)
+		r, err := evaluateReplayTick(t)
 		if err != nil {
 			return err
 		}
-		if format == replayJSONL {
-			if err := encoder.Encode(r); err != nil {
-				return err
-			}
-		} else {
-			for _, c := range r.Checks {
-				fmt.Printf("| %s | %s | %s | %d / %s | %t %s |\n", r.At.Format(time.RFC3339Nano), r.Status, strings.ReplaceAll(r.TargetKey, "|", "/"), c.Offset, c.At.Format(time.RFC3339Nano), c.Rejected, c.Reason)
-			}
+		if err := encoder.Encode(r); err != nil {
+			return err
 		}
-		queue[0] = nil
-		queue = queue[1:]
 	}
-	return nil
 }
 
 type replayArrival struct {

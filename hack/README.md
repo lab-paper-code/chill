@@ -306,8 +306,6 @@ The power reducer derives meters from settings and actual Node state. Explicit
 `-mode compare -scheduler scheduler.json -profiles profiles.json -records records.jsonl`은
 보관된 결정과 재결정을 비교한다. `-format jsonl`, `-catalog catalog.jsonl`,
 `-arrivals arrivals.jsonl`로 생략된 참조와 실제 도착을 복원할 수 있다.
-`-mode guard`와 `-next N`은 보관 target을 후속 snapshot에서 신규 접수 기준으로 검사한다.
-기존 전환의 소유권과 계속 실행 권한은 유지된다.
 `-mode slo -scheduler scheduler.json -workloads plc-anomaly,smolvlm2-vqa`는
 지정 Workload의 배치 크기 1 지연을 바탕으로 SLO 후보를 제안한다.
 

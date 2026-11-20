@@ -72,7 +72,7 @@ PUT은 `SchedulerSettings`만 받는다. `staticRouting`과 `staticRoutingValida
 | `GET /api/v1/observations/scheduler` | 판단과 제어 원시 이력 |
 | `GET /api/v1/observations/power` | raw 적분과 coverage, 전체와 활성 풀 |
 
-제어 기록(`SchedulerControlObservation`)은 평가가 고른 target을 실행 전에 버리면(계획한 Node 변경, 최신 admission 거절, 구성 변경, 예약 장부 변경, 판단 저장 실패) 그 target의 동작을 `discardedActions`(action 객체 목록. 판단의 `target.actions`와 같은 모양)에 남기고 사유를 `error`에 남긴다. 실행한 판단은 비어 있다.
+제어 기록(`SchedulerControlObservation`)은 평가가 고른 target을 실행 전에 버리면(계획한 Node 변경, 구성 변경, 예약 장부 변경, 판단 저장 실패) 그 target의 동작을 `discardedActions`(action 객체 목록. 판단의 `target.actions`와 같은 모양)에 남기고 사유를 `error`에 남긴다. 실행한 판단은 비어 있다. tick의 `evaluateNanos`는 그 판단의 평가 하나다.
 
 측정 생성과 삭제, profile 재사용, 공개 Query 응답은 [측정 API](measurement-api.md)에 둔다. ChillServer는 공개 Query route의 인증과 proxy를 소유하며 Query는 Serving 패키지를 import하지 않는다.
 
