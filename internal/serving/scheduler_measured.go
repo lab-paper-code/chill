@@ -85,10 +85,10 @@ func sameServing(a, b []SchedulerServingShare) bool {
 // d is routable for it: otherwise the serving it would measure is not settled.
 func windowMeasurement(snapshot SchedulerSnapshot, since, end time.Time, d *Definition, routes map[string]int32, serving []SchedulerServingShare) *SchedulerMeasurement {
 	until := end.Add(-d.SLO.TargetLatency)
+	if !schedulerActionsEnded(snapshot.Actions) {
+		return nil
+	}
 	for _, a := range snapshot.Actions {
-		if a.EndedAt == nil {
-			return nil
-		}
 		if a.EndedAt.After(since) {
 			since = *a.EndedAt
 		}
@@ -123,6 +123,11 @@ func windowMeasurement(snapshot SchedulerSnapshot, since, end time.Time, d *Defi
 	m.OnTimeRate = float64(m.OnTime) / until.Sub(since).Seconds()
 	m.Satisfied = m.OnTime >= empiricalSLORank(m.Population, d.SLO.Percentile)
 	return &m
+}
+
+// schedulerActionsEnded reports whether no action is in flight.
+func schedulerActionsEnded(actions []Action) bool {
+	return !slices.ContainsFunc(actions, func(a Action) bool { return a.EndedAt == nil })
 }
 
 // judged returns the population, on-time and completed counts and the verdict

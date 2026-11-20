@@ -54,7 +54,9 @@ func (s *capacityState) Choice() []int      { return s.state.choice }
 func (s *capacityState) Reset(choice []int) { s.state.reset(choice) }
 func (s *capacityState) Apply(n, q int)     { s.state.apply(n, q) }
 func (s *capacityState) Delta(n, q int) protocol.Rank {
-	return capacityRank(s.state.delta(n, q), s.table)
+	rank := capacityRank(s.state.delta(n, q), s.table)
+	rank.Unmet = s.state.planner.unmet(rank.Route)
+	return rank
 }
 func capacityRank(key orderKey, table *protocol.Table) protocol.Rank {
 	return protocol.Rank{Feasible: key.feasible, Final: key.final, Keep: key.keep, WeightsExceeded: key.weightsExceeded,

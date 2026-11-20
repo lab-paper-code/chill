@@ -6,11 +6,11 @@ Accepted
 
 ## Decision
 
-Use one planner to compare allocation, expansion, reduction, replacement and empty-Node saving each control cycle. Preserve admission, resource bounds, SLO, exact readiness/native acknowledgment, reservations, frozen targets and Ready-subset allocation.
+Use one planner that judges the running configuration (keep) each control cycle. It compares allocation, expansion, reduction, replacement and empty-Node saving when keep misses an SLO, and, while keep meets them, once after a detected load change, a changed Workload definition or changed settings. Preserve admission, resource bounds, SLO, exact readiness/native acknowledgment, reservations, frozen targets and Ready-subset allocation.
 
-The policy times are `ControlInterval`, `ObservationWindow` and `ComparisonPeriod`. There is no stabilization history, replacement dwell, observation-age TTL or bounded bootstrap timer.
+The policy times are `ControlInterval`, `ObservationWindow` and `ComparisonPeriod`. There is no replacement dwell, observation-age TTL or bounded bootstrap timer. The one decision memory is what the configuration was decided for, cleared by a detected load change or a configuration change; no elapsed time is involved.
 
-Effective demand is one load estimate per Workload plus unexpired pending, assigned, queued and deferred requests divided by actual observed window length. The estimate is the Workload's arrival rate over a window that restarts where a change of arrival rate is detected: an exact two-sided binomial test at each control-interval boundary, at significance (1 − SLO percentile/100) divided by the number of boundaries in the window. There is no demand floor. Observed running and returning work is excluded from this backlog term.
+Effective demand is one load estimate per Workload plus unexpired pending, assigned, queued and deferred requests divided by actual observed window length. The estimate is the Workload's arrival rate over a window that restarts where a change of arrival rate is detected: an exact two-sided binomial test at each control-interval boundary, at significance (1 − SLO percentile/100) divided by the number of boundaries in the window, decides whether the rate changed, and the instant just after an arrival, within one interval of the selected boundary, that best splits the window into two Poisson rates with each part at least the window's mean gap between arrivals long places the change. There is no demand floor. Observed running and returning work is excluded from this backlog term.
 
 After restart, require one control interval of observation, bounded by the configured observation window. Until the complete observation window is available, plans only expand and preserve existing routes.
 
@@ -20,7 +20,7 @@ Validate the existing scheduler settings:
 - `scaleDownHeadroomFraction`: finite in `[0,1]`, default 0. Final energy-downscale routes and idle cleanup require effective demand multiplied by one plus this fraction, carried on positive integer weights within executor capacity. Do not inflate bridge/reserve demand or actual request energy.
 - `comparisonPeriodNanos`: positive integer nanoseconds shared by keep and every candidate. Freeze the selected value in decisions and Run bindings.
 
-Use the same current-demand and SLO rules for reduction and empty-Node saving. No rolling maximum, trend gate or elapsed stabilization period excludes an otherwise eligible candidate.
+Use the same current-demand and SLO rules for reduction and empty-Node saving. No rolling maximum, trend gate or elapsed stabilization period excludes an otherwise eligible candidate; the decision memory above decides only whether candidates are compared, never which one is chosen.
 
 Compare new empty-Node saving with unchanged keep using common-period payback and minimum gain. Gain must be positive and pass both gates. Do not preapply saving to every candidate, cancel its cost as a common term or dispatch targetless saving without admission.
 

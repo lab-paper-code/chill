@@ -58,8 +58,6 @@ func TestCapacityTerminalSlotIsRepreparedWithoutReuseAC45(t *testing.T) {
 	old := &snap.Instances[0]
 	old.Ready, old.Stopped, old.Terminated = false, true, true
 	old.ObservedAt = snap.At.Add(-time.Hour)
-	until := snap.At.Add(s.ObservationWindow)
-	old.HeldUntil = &until
 	snap.Routing = map[string]map[string]int32{"w1": {old.ID: 1000}}
 	// Reproduce E5-7's terminal route1000 while recent demand is growing.
 	capacityLoad(s, &snap, snap.Workloads[0], 10)

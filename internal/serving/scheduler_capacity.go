@@ -19,7 +19,17 @@ const (
 	schedulerPlanInfeasibleResources = "InfeasibleResources"
 	schedulerPlanFixedWorkload       = "FixedWorkload"
 	schedulerPlanPreparationFailed   = "PreparationFailed"
-	schedulerPlanHeld                = "HeldAfterOverload"
+	// schedulerLoadUnchanged keeps a configuration that meets every SLO without
+	// a search: it was decided for the current Workload definitions, loads and
+	// settings.
+	schedulerLoadUnchanged = "LoadUnchangedSinceDecided"
+	// schedulerEnergyDecisionWaits keeps a configuration that meets every SLO
+	// and was not decided for the current definitions, loads and settings: the
+	// decision that searches for the cheapest one waits until no action is in
+	// flight and no reservation holds Nodes, every load is observed for
+	// min(ObservationWindow, ControlInterval) and the observation window is
+	// whole.
+	schedulerEnergyDecisionWaits = "EnergyDecisionWaits"
 	// schedulerPartialObservation waits for one control interval of complete
 	// arrival observation after the process starts; until one observation
 	// window is observed it names the node plans that remove or replace.
@@ -294,6 +304,46 @@ func evaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	}
 	timing.Preparation = time.Since(stageStarted)
 	stage, stageStarted = &timing.Search, time.Now()
+	// Keep is judged before any candidate. While it misses an SLO the search
+	// ranks a candidate's route time, in whole control intervals, before its
+	// energy. While it meets them the configuration stands, except in the one
+	// decision that searches for the cheapest configuration once the
+	// definitions, a load or the settings changed.
+	keepResult := planner.currentKeep()
+	keepElapsed := time.Since(stageStarted)
+	decidedFor := planner.decidedFor()
+	undecided := snapshot.DecidedFor != decidedFor
+	// A reservation can hold Nodes with steps not yet dispatched, which are
+	// not among the actions: a search then sees only keep plans for them.
+	open := !planner.partial && schedulerActionsEnded(snapshot.Actions) && len(snapshot.Reservations) == 0
+	for _, load := range decision.Search.Loads {
+		undecided = undecided || load.Changed
+		// The one interval of observation the restart gate above asks for.
+		open = open && decision.Search.WindowEnd.Sub(load.WindowStart) >= min(settings.ObservationWindow, settings.ControlInterval)
+	}
+	if keepResult.feasible && !(open && undecided) {
+		timing.Search, timing.Exact = time.Since(stageStarted), keepElapsed
+		stage, stageStarted = &timing.Projection, time.Now()
+		reason := schedulerLoadUnchanged
+		if undecided {
+			reason = schedulerEnergyDecisionWaits
+		}
+		decision.Reasons = appendUnique(decision.Reasons, reason)
+		decision = planner.decide(decision, keepResult)
+		// Keep in the committed view is the configuration a reserved
+		// transition is committing; it shows as a target and creates no
+		// action of its own: that transition applies its own routes. It
+		// carries only keep's authorized Fixed continuations.
+		if decision.Target != nil && !decision.Target.Keep {
+			decision.Target.Actions = slices.Clone(decision.Keep.Actions)
+		}
+		markFixedEstimates(&decision)
+		return decision, ctx.Err()
+	}
+	if !keepResult.feasible {
+		planner.routeStep = settings.ControlInterval.Seconds()
+	}
+	// The keep replay above counts in Search; Exact stays the backend's own.
 	best, err := planner.search(deadline)
 	timing.Surrogate, timing.Exact = planner.searched.SurrogateElapsed, planner.searched.ExactElapsed
 	if err != nil {
@@ -307,8 +357,22 @@ func evaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	timing.Payback = time.Since(stageStarted)
 	stage, stageStarted = &timing.Projection, time.Now()
 	decision = planner.decide(decision, best)
+	if keepResult.feasible {
+		decision.DecidedFor = decidedFor
+	}
 	markFixedEstimates(&decision)
 	return decision, ctx.Err()
+}
+
+// decidedFor is the signature of the controlled Workload definitions: their
+// sorted identities.
+func (p *capacityPlanner) decidedFor() string {
+	ids := make([]string, len(p.ws))
+	for w, ws := range p.ws {
+		ids[w] = ws.d.Identity()
+	}
+	slices.Sort(ids)
+	return strings.Join(ids, ",")
 }
 
 // schedulerCanonical orders the snapshot lists the planner iterates, so the
@@ -384,6 +448,9 @@ type capacityPlanner struct {
 	// process started: arrivals there still reflect the restart, so plans
 	// only add instances and keep every route.
 	partial bool
+	// routeStep is the control interval in seconds while keep misses an SLO
+	// and 0 while it meets them (unmet).
+	routeStep float64
 }
 
 func (p *capacityPlanner) currentKeep() capacityResult {

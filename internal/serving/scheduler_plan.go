@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"reflect"
 	"slices"
 	"sort"
@@ -172,6 +173,7 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 		if i := slices.IndexFunc(snapshot.Workloads, func(d *Definition) bool { return d != nil && d.UID == key }); i >= 0 {
 			load.WindowStart = schedulerLoadStart(settings.ControlInterval, snapshot.Workloads[i], times[key], search.WindowStart, search.WindowEnd, snapshot.LoadChangedAt[key])
 		}
+		load.Changed = load.WindowStart.After(schedulerLoadStretchStart(search.WindowStart, search.WindowEnd, snapshot.LoadChangedAt[key]))
 		index[key] = len(search.Loads)
 		search.Loads = append(search.Loads, load)
 	}
@@ -205,15 +207,25 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 // schedulerLoadStart is where Workload d's load starts in the observation
 // window [start, end): at the last change of its arrival rate. The stretch
 // since the change an earlier decision detected (changed), while that change
-// is inside the window, or else the whole window, is tested for the next one:
-// the control-interval boundary of the stretch after which d's compute
-// arrivals (times) least fit a Poisson stream at the stretch's mean rate starts
-// the load, when the exact two-sided binomial test of the count after it
-// rejects that fit at the level d's SLO percentile leaves, (1 - percentile/100),
-// shared among the stretch's boundaries. A stretch of one interval or less
-// holds no boundary, so nothing is tested and the stretch stands.
+// is inside the window, or else the whole window, is tested for the next one.
+// The test decides whether the rate changed: it selects the control-interval
+// boundary of the stretch after which d's compute arrivals (times) least fit a
+// Poisson stream at the stretch's mean rate, when the exact two-sided binomial
+// test of the count after it rejects that fit at the level d's SLO percentile
+// leaves, (1 - percentile/100), shared among the stretch's boundaries. The
+// arrivals decide when: the load starts at the instant within one interval of
+// the selected boundary that best splits the stretch into two Poisson rates
+// (the largest n1·ln(n1/t1) + n2·ln(n2/t2)). Candidates are the instants just
+// after an arrival, which closes the first part: a part that starts right
+// after an arrival holds whole gaps between arrivals, so its count over its
+// length does not overstate its rate, while one that starts at an arrival
+// does, without bound as it shortens. Each part is at least the stretch's
+// mean gap between arrivals long: a shorter part holds less time than one
+// arrival takes on average, so its rate is not judged from it. A stretch of
+// one interval or less holds no boundary, so nothing is tested and the
+// stretch stands.
 func schedulerLoadStart(interval time.Duration, d *Definition, times []time.Time, start, end, changed time.Time) time.Time {
-	from := SchedulerLoadStretchStart(start, end, changed)
+	from := schedulerLoadStretchStart(start, end, changed)
 	slices.SortFunc(times, time.Time.Compare)
 	times = times[sort.Search(len(times), func(i int) bool { return !times[i].Before(from) }):]
 	var splits []time.Time
@@ -228,15 +240,48 @@ func schedulerLoadStart(interval time.Duration, d *Definition, times []time.Time
 			best, bestP = split, p
 		}
 	}
-	return best
+	if best.Equal(from) {
+		return best
+	}
+	lo, hi := best.Add(-interval), best.Add(interval)
+	if lo.Before(from) {
+		lo = from
+	}
+	if hi.After(end) {
+		hi = end
+	}
+	poisson := func(n, t float64) float64 { // one part's log-likelihood term
+		if n == 0 {
+			return 0
+		}
+		return n * math.Log(n/t)
+	}
+	span, total := end.Sub(from).Seconds(), float64(len(times))
+	gap := span / total // the test rejects only with arrivals
+	at, top := best, math.Inf(-1)
+	for k := 0; k < len(times); {
+		next := k + 1 // arrivals at one instant stay in one part
+		for next < len(times) && times[next].Equal(times[k]) {
+			next++
+		}
+		instant := times[k].Add(1)
+		t1 := instant.Sub(from).Seconds()
+		if instant.After(lo) && instant.Before(hi) && t1 >= gap && span-t1 >= gap {
+			if l := poisson(float64(next), t1) + poisson(total-float64(next), span-t1); l > top {
+				at, top = instant, l
+			}
+		}
+		k = next
+	}
+	return at
 }
 
-// SchedulerLoadStretchStart is where the stretch tested for the next change of
+// schedulerLoadStretchStart is where the stretch tested for the next change of
 // a Workload's arrival rate starts in the observation window [start, end): at
 // the change an earlier decision detected (changed) while it is inside the
 // window, else at the window start. A load starting after it is a detected
 // change.
-func SchedulerLoadStretchStart(start, end, changed time.Time) time.Time {
+func schedulerLoadStretchStart(start, end, changed time.Time) time.Time {
 	if changed.After(start) && changed.Before(end) {
 		return changed
 	}

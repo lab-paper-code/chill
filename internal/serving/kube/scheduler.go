@@ -188,6 +188,7 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	before := len(c.config.Settings.AutonomousWorkloads) > 0
 	previousStatic := c.config.StaticRouting
 	c.config = config
+	c.decidedFor = "" // decided for other settings
 	c.mu.Unlock()
 	after := len(config.Settings.AutonomousWorkloads) > 0
 	c.setRoutingControl(before, after)
@@ -211,6 +212,7 @@ func (c *SchedulerController) AcceptSettings(ctx context.Context, settings servi
 	c.mu.Lock()
 	before := len(c.config.Settings.AutonomousWorkloads) > 0
 	c.config.Settings, c.config.Preparations = settings.Clone(), preparations
+	c.decidedFor = "" // decided for other settings
 	c.mu.Unlock()
 	c.setRoutingControl(before, len(settings.AutonomousWorkloads) > 0)
 	return nil
@@ -472,6 +474,12 @@ func (c *SchedulerController) approveEvaluation(
 		if err := config.OnDecision(decision, snapshot); err != nil {
 			return discard(fmt.Errorf("persist decision before physical action: %w", err))
 		}
+	}
+	// The configuration is decided once the record of its decision persisted.
+	if decision.DecidedFor != "" {
+		c.mu.Lock()
+		c.decidedFor = decision.DecidedFor
+		c.mu.Unlock()
 	}
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err

@@ -6,10 +6,13 @@ import "slices"
 // Retain a candidate with CopyInto and caller-owned buffers, allocated once.
 // Excesses contains heuristic e_h in the adapter's Workload priority order.
 // Better preserves that order; exact outcomes are ranked by the native port.
+// Unmet is Route in whole control intervals while keep misses an SLO, else 0;
+// it ranks after the excesses and before the energy.
 type Rank struct {
 	Feasible, Final, Keep, WeightsExceeded bool
 	UnroutedPrepare, Searchable, Bounded   bool
 	Joules, Route, KeepJoules, Period      float64
+	Unmet                                  float64
 	Excesses, Demand, Supply               []float64
 	Satisfied                              []bool
 	Instances, CountExcess                 int
@@ -46,6 +49,9 @@ func (a Rank) Better(b *Rank) bool {
 		if order := slices.Compare(a.Excesses, b.Excesses); order != 0 {
 			return order < 0
 		}
+	}
+	if a.Unmet != b.Unmet {
+		return a.Unmet < b.Unmet
 	}
 	if a.Joules-a.KeepJoules != b.Joules-b.KeepJoules {
 		return a.Joules-a.KeepJoules < b.Joules-b.KeepJoules

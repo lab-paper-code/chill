@@ -35,11 +35,12 @@ type reservationState struct {
 	runs         map[string]*actionRun
 	routeWriters map[string]servingstate.RouteWriters
 	state        SchedulerControllerState
-	// unrouted holds when each captured instance last lost every route weight.
-	// overloaded holds the slots prepared while keep was in Overload: zero
-	// until the instance is Ready, then the end of its hold. loadChanged holds
-	// each Workload's latest detected arrival-rate change.
-	unrouted, overloaded, loadChanged map[string]time.Time
+	// loadChanged holds each Workload's latest detected arrival-rate change.
+	loadChanged map[string]time.Time
+	// decidedFor is what the configuration was last decided for
+	// (SchedulerDecision.DecidedFor, stored once its record persisted), empty
+	// since a detected load change or a configuration change.
+	decidedFor string
 }
 
 // observerState keeps the existing native-source mutex distinct from the

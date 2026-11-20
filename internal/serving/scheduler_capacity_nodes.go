@@ -63,11 +63,6 @@ type capacityPlan struct {
 	retires bool
 }
 
-// held reports an instance prepared under Overload still inside its hold.
-func (p *capacityPlanner) held(i SchedulerInstance) bool {
-	return !i.Terminated && i.HeldUntil != nil && i.HeldUntil.After(p.snapshot.At)
-}
-
 // resolveCapacity freezes profile routing and conditional service terms once.
 // Offline capacity rows never decide online option eligibility.
 func (p *capacityPlanner) resolveCapacity() {
@@ -389,13 +384,6 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	})
 	for _, batch := range changed {
 		plan.replaces = plan.replaces || batch
-	}
-	// An instance prepared under Overload is neither removed nor replaced
-	// during its hold.
-	if plan.record.Reason == "" && slices.ContainsFunc(current, func(old SchedulerInstance) bool {
-		return p.held(old) && (!used[old.ID] || changed[old.ID])
-	}) {
-		plan.record.Reason = schedulerPlanHeld
 	}
 	if plan.record.Reason == "" && p.partial && removed {
 		plan.record.Reason = schedulerPartialObservation

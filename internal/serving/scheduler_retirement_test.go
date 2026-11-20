@@ -30,10 +30,8 @@ func TestPlannerRetirementUsesSLOAndHorizonGain(t *testing.T) {
 			s.Controls.Routing = false
 			snap.Costs[0].Trials[0].Joules = 100
 			snap.Workloads[0].SLO.TargetLatency = time.Second
-			since := snap.At.Add(-s.ObservationWindow)
 			for k := 1; k < len(snap.Instances); k++ {
 				i := &snap.Instances[k]
-				i.UnroutedSince = &since
 				if i.Node == idleNode {
 					profile := *i.Profile
 					profile.Power = schedulerTestPower(tc.loaded)

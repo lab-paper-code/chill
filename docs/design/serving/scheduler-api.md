@@ -78,7 +78,7 @@ PUT은 `SchedulerSettings`만 받는다. `staticRouting`과 `staticRoutingValida
 
 ## 현재 상태와 catalog
 
-decision은 keep, target, Workload 제어 상태, capacity, search와 제외 이유를 연결한다. capacity는 period, route 시각, UID별 rate와 queued, profile routingRate와 retainedRoutingRate, 정수 weights를 제공한다. `search.loads[].windowStart`는 워크로드의 부하 창 시작이고, 같은 행의 `received`, `accepted`, `computeInputs`, `inputsPerSecond`는 그 시작부터 센 값이다(관측 창 전체가 아니다). snapshot `loadChangedAt`은 앞선 판단이 감지한 도착률 변화 시각(UID별)이다.
+decision은 keep, target, Workload 제어 상태, capacity, search와 제외 이유를 연결한다. capacity는 period, route 시각, UID별 rate와 queued, profile routingRate와 retainedRoutingRate, 정수 weights를 제공한다. `search.loads[].windowStart`는 워크로드의 부하 창 시작이고, 같은 행의 `received`, `accepted`, `computeInputs`, `inputsPerSecond`는 그 시작부터 센 값이다(관측 창 전체가 아니다). `search.loads[].changed`는 이번 판단이 그 워크로드의 부하 변화를 감지했을 때 참이다. snapshot `loadChangedAt`은 앞선 판단이 감지한 도착률 변화 시각(UID별)이다. snapshot `decidedFor`는 구성을 마지막으로 정한 대상(제어 Workload 정의 identity의 정렬 목록)이고 부하 변화를 감지하거나 설정이 바뀌면 비워진다. decision `decidedFor`는 keep이 SLO를 지키는 동안 에너지 탐색을 한 판단에만 있다([계획기](analytic-planner.md#탐색과-예산)).
 
 `ComparedNodes`는 keep 외 적격 계획이 있는 Node다. expectedJoules도 이 집합을 합한다. 전체 풀 실측과 구분한다. `missingCells`는 decision 전체에서 중복 제거하며 energyComparison과 undecidableCandidates는 정수 `missingCellRefs`로 참조한다. keep 충족 상태의 비-exact 새 operation 후보는 `replaySkipped:true`일 수 있다.
 

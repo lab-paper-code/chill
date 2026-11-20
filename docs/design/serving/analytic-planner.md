@@ -37,7 +37,7 @@ Workload별 TOTAL과 POST는 SLO percentile로 각각 가공한다. POST는 경�
 
 관측 구간의 끝은 `snapshot.observationEnd`, 진행 요청을 동결한 판단 원점은 `snapshot.at`이다. 워크로드마다 부하 추정이 하나다. 추정은 그 워크로드의 부하 창 `[search.loads[].windowStart, observationEnd)` 안 계산 도착 수를 창 길이로 나눈 `inputsPerSecond`이며, 후보 용량과 SLO, 재생 도착, 에너지, 본전 판단이 모두 이 하나의 추정을 쓴다.
 
-부하 창은 마지막으로 감지한 도착률 변화 이후의 구간이고, 다음 변화는 그 안에서 찾는다. 변화가 없으면 부하 창은 관측 창 전체다. 감지는 제어 주기 경계마다 그 경계 뒤의 계산 도착 수를 창 전체 평균률이 기대하는 수와 정확 양측 이항 검정으로 비교한다. 유의수준은 (1 − 워크로드 SLO 백분위/100)를 창 안 제어 주기 경계 수로 나눈 값이다. 기각한 경계 중 p값이 가장 작은 경계가 새 변화 시각이고, 부하 창은 거기서 시작한다. 판단이 감지한 변화 시각은 `snapshot.loadChangedAt`(UID별)에 남아 다음 판단이 이어받는다.
+부하 창은 마지막으로 감지한 도착률 변화 이후의 구간이고, 다음 변화는 그 안에서 찾는다. 변화가 없으면 부하 창은 관측 창 전체다. 감지는 제어 주기 경계마다 그 경계 뒤의 계산 도착 수를 창 전체 평균률이 기대하는 수와 정확 양측 이항 검정으로 비교한다. 유의수준은 (1 − 워크로드 SLO 백분위/100)를 창 안 제어 주기 경계 수로 나눈 값이다. 검정은 바뀌었는지를 답한다. 기각한 경계 중 p값이 가장 작은 경계를 고르면, 그 경계 앞뒤 한 제어 주기 안(그리고 구간 안)에서 도착 직후의 시점(그 도착이 앞 부하를 닫는다, 시각 +1ns) 가운데 구간 `[시작, observationEnd)`를 두 포아송 부하로 가장 잘 가르는 시점, 곧 `n1·ln(n1/t1) + n2·ln(n2/t2)`이 가장 큰 시점이 새 변화 시각이고 부하 창은 거기서 시작한다. 도착 직후에 시작하는 부분은 도착 사이 간격을 온전히 담으므로 그 수를 길이로 나눈 값이 율을 부풀리지 않는다. 도착 시각에서 시작하는 부분은 짧아질수록 한없이 부풀린다. 또 두 부분은 모두 구간의 평균 도착 간격(구간 길이/도착 수) 이상이어야 한다. 그보다 짧은 부분은 도착 하나가 평균적으로 차지하는 시간보다 짧아 그 율을 판단할 수 없다. 검정 횟수는 늘지 않으므로 유의수준은 그대로다. 판단이 감지한 변화 시각은 `snapshot.loadChangedAt`(UID별)에 남아 다음 판단이 이어받고, 이번 판단이 감지했으면 `search.loads[].changed`가 참이다.
 
 `λ = inputsPerSecond + q / 부하 창 길이`
 
@@ -83,13 +83,13 @@ snapshot과 검사 입력은 선택 tuple, source와 `provenance{source,pairs,up
 
 창 측정은 결과의 Workload score에 `measured{definitionID,serving,onTimeRate,since,population,onTime,late,satisfied}`로 붙는다. 충족 여부와 아래 tuple의 미완료 비율은 측정이 있으면 그 counts를 읽는다. 성공 지연 초과, potential의 적용 여부와 값, `worstExceedance`는 replay의 값이다. score의 나머지 필드는 replay 예측 그대로 기록한다. 에너지 계산은 측정과 무관하다. 창 측정은 정밀 판정에 적용하며 surrogate 공급은 아래 재생 공급 보정으로만 바뀐다.
 
-물리적으로 적격인 후보 중 모든 Workload의 SLO를 충족한 후보를 먼저 비교한다. 충족 후보는 에너지 차이, 현재 구성 유지, 논리 key 순이다. 미충족 후보의 Workload별 tuple은 다음 순서다.
+물리적으로 적격인 후보 중 모든 Workload의 SLO를 충족한 후보를 먼저 비교한다. 충족 후보는 `unmet`, 에너지 차이, 현재 구성 유지, 논리 key 순이다. `unmet`은 keep이 SLO를 못 지키는 판단에서 후보의 경로 시각(교량 계획은 교량의 경로 시각)을 제어 주기로 나눠 내림한 값이고, keep이 지키면 모든 후보에서 0이다. 한 주기 안에서 먼저 준비되는 것은 다음 판단이 구별하지 못하므로 주기 단위로 묶는다. 같은 항이 정밀 순서(`capacityResult.better`)와 탐색 순서(`protocol.Rank.Better`)에 있다. 미충족 후보의 Workload별 tuple은 다음 순서다.
 
 1. `1 − OnTime/Population`: 늦은 성공도 포함한 기한 내 미완료 비율.
 2. 유한 성공 요청의 상대 지연 초과.
 3. 실패가 있을 때의 조건부 potential 초과. 계산할 근거가 없으면 무한대로 비교하고 진단의 결손 이유를 남긴다.
 
-`sloPriorityStrategy=excess`는 나쁜 tuple부터 비교한다. `workload`는 설정 UID 순서를 먼저 적용하고 미지정 UID끼리 worst-first 순서를 쓴다. 빈 순위는 excess와 같다. 미등록 UID는 설정에 보존하고 현재 비교에서 제외한다. tuple 동률 뒤에 에너지와 keep, key를 적용한다.
+`sloPriorityStrategy=excess`는 나쁜 tuple부터 비교한다. `workload`는 설정 UID 순서를 먼저 적용하고 미지정 UID끼리 worst-first 순서를 쓴다. 빈 순위는 excess와 같다. 미등록 UID는 설정에 보존하고 현재 비교에서 제외한다. tuple 동률 뒤에 `unmet`, 에너지와 keep, key를 적용한다.
 
 전체 SLO 미충족만으로 개선 후보의 retirement를 일괄 거절하지 않는다. [SLO 미충족 후보 비교](../../spec/scheduler/SRS.md#slo-미충족-후보-비교)는 accepted 요청의 소유권이나 물리 handoff를 면제하지 않는다.
 
@@ -136,6 +136,8 @@ minimumGain은 선택 operation의 `energyUncertaintyJoules`와 baseline의 `wat
 `transitionReserveFraction>0`이면 전환 구간마다 실제 Ready와 ACK, owner와 예약상 사용 가능한 공급으로 예비를 검사한다. 같은 공급의 중복 담보를 금지한다. 부족은 후보별 `TransitionReserveInsufficient`이며 f=0은 추가 예비만 끈다. `scaleDownHeadroomFraction`의 하강 보호도 현재 유효 수요에 적용하며 실제 요청 J를 할증하지 않는다.
 
 ## 탐색과 예산
+
+판단은 탐색 전에 keep을 평가한다(재생은 memo로 탐색과 공유한다). keep이 SLO를 못 지키면 위 `unmet` 순서로 탐색한다. keep이 지키면 탐색하지 않고 keep을 낸다. 예외는 구성을 아직 정하지 않은 경우다: `snapshot.decidedFor`가 제어 Workload 정의 identity를 정렬해 이은 서명과 다르거나 이번 판단이 부하 변화를 감지했고(`search.loads[].changed`), 진행 중인 동작이 없고(모든 action에 `endedAt`), 예약(`snapshot.reservations`)이 없고, 모든 부하 창이 `min(observationWindow, controlInterval)` 이상이며 관측 창이 온전하면(재시작 뒤 partial이 아니면) 에너지 순서로 한 번 탐색하고 판단의 `decidedFor`에 서명을 적는다. 정한 구성을 유지할 때의 사유는 `LoadUnchangedSinceDecided`, 정하지 않았지만 위 조건을 기다릴 때의 사유는 `EnergyDecisionWaits`다. 탐색 없이 낸 판단이 committed view의 구성(예약된 전환이 만드는 중인 구성)을 target으로 보일 때 그 target은 keep의 Fixed 후속 동작만 가지며 새 동작을 만들지 않는다. 컨트롤러는 부하 변화를 감지한 평가(승인 여부와 무관)와 설정 변경(`SetConfiguration`, `AcceptSettings`)에서 기록을 지우고, `decidedFor`가 있는 판단이 게시되고 그 기록(`OnDecision`)이 저장된 뒤 적으며, 다음 capture의 `snapshot.decidedFor`로 넘긴다. keep이 못 지켜서 탐색한 판단은 기록을 바꾸지 않는다.
 
 이웃 탐색 전략은 keep과 빈 구성에서 두 노드 이웃을 탐색한 뒤 각 끝점에서 세 노드 탐색을 이어 간다. 정밀 평가는 `planSearchWorkers`로 나눠 수행하고 전순서로 합친다.
 

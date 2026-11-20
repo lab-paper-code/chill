@@ -303,12 +303,6 @@ type SchedulerInstance struct {
 	ArrivalAgesMS map[string][]float64 `json:"arrivalAgesMS"`
 	IdleMeter     string               `json:"idleMeter"`
 	IdleScope     string               `json:"idleScope"`
-	// UnroutedSince is when the instance last lost every positive route weight
-	// (nil while routed); after one observation window unrouted it is removed.
-	UnroutedSince *time.Time `json:"unroutedSince,omitempty"`
-	// HeldUntil keeps an instance prepared while keep was in Overload from
-	// removal and replacement for one observation window after it became Ready.
-	HeldUntil *time.Time `json:"heldUntil,omitempty"`
 }
 
 // Options are evidence-bound placements supplied by the catalog, not invented
@@ -477,6 +471,10 @@ type SchedulerSnapshot struct {
 	// earlier decision detected (SchedulerLoad.WindowStart). It starts the
 	// Workload's load window while it lies inside the observation window.
 	LoadChangedAt map[string]time.Time `json:"loadChangedAt,omitempty"`
+	// DecidedFor is what the configuration was last decided for: the
+	// SchedulerDecision.DecidedFor of the latest published energy decision,
+	// cleared by a detected load change. Empty means never decided.
+	DecidedFor string `json:"decidedFor,omitempty"`
 	// replayScope is immutable, decision-local prediction authority, never stored.
 	replayScope *schedulerReplayScope
 }
@@ -538,10 +536,11 @@ type SchedulerSearch struct {
 // SchedulerLoad is one Workload's load: its arrivals since WindowStart, the
 // last detected change of its arrival rate in the observation window or the
 // window's start (schedulerLoadStart). Demand, replay, energy and payback all
-// read it.
+// read it. Changed is set when this decision detected the change.
 type SchedulerLoad struct {
 	UID             string    `json:"uid"`
 	WindowStart     time.Time `json:"windowStart"`
+	Changed         bool      `json:"changed,omitempty"`
 	Received        int       `json:"received"`
 	Accepted        int       `json:"accepted"`
 	ComputeInputs   int       `json:"computeInputs"`
@@ -580,6 +579,10 @@ type SchedulerDecision struct {
 	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
 	EvaluationElapsed time.Duration             `json:"evaluationElapsedNanos"`
 	EvaluationTiming  SchedulerEvaluationTiming `json:"evaluationTiming"`
+	// DecidedFor is the signature of the controlled Workload definitions
+	// (capacityPlanner.decidedFor) when this decision searched for the
+	// cheapest configuration while keep met every SLO; empty otherwise.
+	DecidedFor string `json:"decidedFor,omitempty"`
 }
 
 // SchedulerEvaluationTiming records non-overlapping EvaluateScheduler stages.

@@ -25,6 +25,31 @@ func capacitySegmentsForTest(snap *SchedulerSnapshot, window time.Duration, rate
 	}
 }
 
+// capacityStepAtForTest places a step of the arrival rate from before to after
+// exactly at step. A change is located just after an arrival: the arrivals
+// before step are shifted to end 1 ns before it. After a drop the first
+// new-rate arrival would close the first part instead when it follows within
+// about ln(before/after)/(before-after) s, so the arrivals after a drop are
+// shifted to start half a new-rate interval after step.
+func capacityStepAtForTest(snap *SchedulerSnapshot, step time.Time, before, after float64) {
+	var last time.Time
+	for _, a := range snap.Arrivals {
+		if a.At.Before(step) && a.At.After(last) {
+			last = a.At
+		}
+	}
+	for k := range snap.Arrivals {
+		var shift time.Duration
+		switch {
+		case snap.Arrivals[k].At.Before(step):
+			shift = step.Sub(last) - 1
+		case after < before:
+			shift = time.Duration(float64(time.Second)/after) / 2
+		}
+		snap.Arrivals[k].At = snap.Arrivals[k].At.Add(shift)
+	}
+}
+
 // Once a step in the arrival rate is detected the estimate is the rate after
 // it, and that one value is the candidate demand, the replay's arrivals, the
 // energy's request rate and the payback's load: each equals what a steady
@@ -49,6 +74,7 @@ func TestDetectedStepIsTheOneLoadEveryConsumerUses(t *testing.T) {
 			capacityServiceRatesForTest(&snap, map[string]float64{snap.Instances[0].Profile.ID: 100})
 
 			capacitySegmentsForTest(&snap, s.ObservationWindow, c.rates...)
+			capacityStepAtForTest(&snap, snap.ObservationEnd.Add(-c.since), c.rates[0], c.after)
 			d := capacityDecideForTest(t, s, snap)
 			p := capacityPlannerForTest(t, s, snap)
 			capacitySegmentsForTest(&snap, s.ObservationWindow, c.after, c.after, c.after, c.after, c.after, c.after)
@@ -127,11 +153,11 @@ func TestChangeDetectionFalseAlarmRateStaysUnderItsSignificance(t *testing.T) {
 }
 
 // A real step is found: at the significance the SLO percentile leaves, a step
-// of a third (30 to 39 req/s) starts the load at the first decision after it,
-// and a tripling of a sparse stream (0.5 to 1.5 req/s) within three, in at
-// least 90 % of 400 seeded Poisson streams. A level stricter than (1 -
-// percentile/100) over the boundaries misses more (one over the cube of the
-// boundaries: 79 % and 67 %).
+// of a third (30 to 39 req/s) starts the load later than one control interval
+// before the step at the first decision after it, and a tripling of a sparse
+// stream (0.5 to 1.5 req/s) within three decisions, in at least 90 % of 400
+// seeded Poisson streams. A level stricter than (1 - percentile/100) over the
+// boundaries misses more (one over the cube of the boundaries: 79 % and 67 %).
 func TestChangeDetectionFindsARealStep(t *testing.T) {
 	const streams = 400
 	for _, c := range []struct {
@@ -156,7 +182,7 @@ func TestChangeDetectionFindsARealStep(t *testing.T) {
 							window = append(window, at)
 						}
 					}
-					if !schedulerLoadStart(s.ControlInterval, d, window, start, end, time.Time{}).Before(step) {
+					if schedulerLoadStart(s.ControlInterval, d, window, start, end, time.Time{}).After(step.Add(-s.ControlInterval)) {
 						found++
 						break
 					}
@@ -202,7 +228,7 @@ func loadsOverDecisionsForTest(s SchedulerSettings, snap SchedulerSnapshot, time
 		snap.LoadChangedAt = map[string]time.Time{d.UID: changed}
 		search := schedulerSearchPopulation(context.Background(), s, snap)
 		load := search.Loads[0]
-		if load.WindowStart.After(SchedulerLoadStretchStart(search.WindowStart, search.WindowEnd, changed)) {
+		if load.Changed {
 			changed = load.WindowStart
 		}
 		loads = append(loads, load)
@@ -310,6 +336,7 @@ func TestMeasuredVerdictCoversTheLoadWindow(t *testing.T) {
 		}
 		snap.Arrivals = append(snap.Arrivals, SchedulerArrival{ID: fmt.Sprint(j), At: at, Definition: d, Accepted: true, Compute: true, WorkloadUID: d.UID, ClientOutcome: outcomeCompleted, ClientElapsed: elapsed})
 	}
+	capacityStepAtForTest(&snap, step, 20, 80)
 	if load := schedulerSearchPopulation(context.Background(), s, snap).Loads[0]; !load.WindowStart.Equal(step) {
 		t.Fatalf("fixture: load window from %v, not the step at %v", load.WindowStart, step)
 	}

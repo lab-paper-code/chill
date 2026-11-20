@@ -243,8 +243,10 @@ func liveReasonExplanation(reason string) string {
 		return "검토한 구성으로는 서비스 응답 목표를 충족하지 못해요."
 	case "MissingOperationCost":
 		return "변경 소요 시간과 전력 근거가 없어 해당 변경을 선택하지 않아요."
-	case "HeldAfterOverload":
-		return "부하 증가에 대비해 준비한 인스턴스를 관측 기간 동안 유지해요."
+	case "LoadUnchangedSinceDecided":
+		return "지금 구성이 목표를 지키고 부하가 그대로여서 탐색 없이 유지해요."
+	case "EnergyDecisionWaits":
+		return "지금 구성이 목표를 지켜요. 절감 판단은 변경이 끝나고 부하가 충분히 관측된 뒤에 해요."
 	case "ReplacementUnpaid":
 		return "교체에 든 비용을 회수하지 못해 현재 인스턴스를 유지해요."
 	case "TransitionGainWithinUncertainty":

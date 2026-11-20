@@ -414,8 +414,6 @@ func TestSchedulerV2FeasibleFinalAdmissionUsesOriginalEnergy(t *testing.T) {
 	settings.Controls.Routing = false
 	snapshot.Instances[1].Profile.Power = schedulerTestPower(60)
 	snapshot.Options[1].Instance.Profile = snapshot.Instances[1].Profile
-	since := snapshot.At.Add(-settings.ObservationWindow)
-	snapshot.Instances[1].UnroutedSince = &since
 	decision, err := EvaluateScheduler(context.Background(), settings, snapshot)
 	if err != nil {
 		t.Fatal(err)

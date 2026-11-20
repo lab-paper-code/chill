@@ -173,7 +173,10 @@ func TestCapacityTransientRuleRejectsCheaperSlowRoute(t *testing.T) {
 	}
 }
 
-func TestCapacityRejectAtP95PrefersCheaperFeasibleExpansion(t *testing.T) {
+// Under p95 Reject both expansions are feasible. While keep meets the SLOs the
+// cheaper one ranks first; keep misses it here (40 req/s on 34.3), so the
+// decision takes the expansion that routes in fewer control intervals.
+func TestCapacityRejectAtP95FeasibleExpansionsRankByRouteWhileKeepMisses(t *testing.T) {
 	s, snap, genesis3 := capacityE1Fixture()
 	snap.Workloads[0].SLO.Percentile = 95
 	p := capacityPlannerForTest(t, s, snap)
@@ -190,11 +193,11 @@ func TestCapacityRejectAtP95PrefersCheaperFeasibleExpansion(t *testing.T) {
 		}
 	}
 	if slow.joules >= fast.joules || !slow.better(&fast) {
-		t.Fatalf("both feasible expansions must retain energy preference: slow=%+v fast=%+v", slow, fast)
+		t.Fatalf("both feasible expansions must retain energy preference while keep meets the SLOs: slow=%+v fast=%+v", slow, fast)
 	}
 	decision := capacityDecideForTest(t, s, snap)
-	if decision.Target == nil || !poolsOn(*decision.Target, NodeReference{Name: "node-lut", UID: "lut"}) || poolsOn(*decision.Target, genesis3) {
-		t.Fatalf("p95 Reject must choose the cheaper feasible route: target=%+v exclusions=%v termination=%s budgetCut=%t", decision.Target, decision.Capacity.Search.Excluded, decision.Capacity.Search.TerminationReason, decision.Capacity.Search.BudgetCut)
+	if decision.Keep.Status != SchedulerStatusOverload || decision.Target == nil || !poolsOn(*decision.Target, genesis3) || poolsOn(*decision.Target, NodeReference{Name: "node-lut", UID: "lut"}) {
+		t.Fatalf("keep %s: p95 Reject must choose the faster feasible route: target=%+v exclusions=%v", decision.Keep.Status, decision.Target, decision.Capacity.Search.Excluded)
 	}
 }
 
@@ -288,6 +291,8 @@ func TestCapacityDetectedDemandExpandsWithOutstandingOnce(t *testing.T) {
 	capacityLoad(s, &snap, d, 50)
 	recent := snap.ObservationEnd.Add(-s.ControlInterval)
 	snap.Arrivals = slices.DeleteFunc(snap.Arrivals, func(a SchedulerArrival) bool { return a.At.Before(recent) })
+	// A change is located just after an arrival: one closes the quiet stretch.
+	snap.Arrivals = append(snap.Arrivals, SchedulerArrival{ID: "quiet", At: recent.Add(-1), Definition: d, Accepted: true, Compute: true, WorkloadUID: d.UID})
 	// Six requests wait from before the load window; three more arrived inside
 	// it and are already among its arrivals.
 	for j := range 9 {
@@ -354,6 +359,8 @@ func TestCapacityHighDemandProtectsOnlyItsServingCapacity(t *testing.T) {
 	capacityLoad(s, &snap, w2, 10)
 	recent := snap.ObservationEnd.Add(-s.ControlInterval)
 	snap.Arrivals = slices.DeleteFunc(snap.Arrivals, func(a SchedulerArrival) bool { return a.WorkloadUID == w1.UID && a.At.Before(recent) })
+	// A change is located just after an arrival: one closes w1's quiet stretch.
+	snap.Arrivals = append(snap.Arrivals, SchedulerArrival{ID: "quiet", At: recent.Add(-1), Definition: w1, Accepted: true, Compute: true, WorkloadUID: w1.UID})
 	got := capacityDecideForTest(t, s, snap)
 	if got.Target == nil || len(got.Target.Routing[w1.UID]) != 2 ||
 		!poolsOn(*got.Target, snap.Nodes[0].Node) || !poolsOn(*got.Target, n2) ||
@@ -2097,33 +2104,20 @@ func TestCapacityIdleInstancesWithNegativeGainStay(t *testing.T) {
 	// Routing-on now assigns these destinations positive κ shares. Leave routing
 	// fixed here to exercise cleanup of instances that genuinely remain unrouted.
 	s.Controls.Routing = false
-	since := snap.At.Add(-30 * time.Second)
-	for k := 1; k < 3; k++ {
-		snap.Instances[k].UnroutedSince = &since
-	}
-	if d := capacityDecideForTest(t, s, snap); d.Status != SchedulerStatusKeep {
-		t.Fatalf("unrouted for 30 s removed: %s %v", d.Status, d.Reasons)
-	}
-	since = snap.At.Add(-time.Minute)
 	d := capacityDecideForTest(t, s, snap)
 	removes := func(node NodeReference) bool {
 		return slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Node == node })
 	}
-	if d.Target == nil || !poolsOn(*d.Target, genesis3) || !poolsOn(*d.Target, orangepi) || removes(genesis3) || removes(orangepi) {
-		t.Fatalf("negative-gain idle retirement chosen: %+v %v", d.Target, d.Reasons)
-	}
-	until := snap.At.Add(time.Minute)
-	snap.Instances[1].HeldUntil = &until
-	if d = capacityDecideForTest(t, s, snap); d.Target == nil || !poolsOn(*d.Target, genesis3) || !poolsOn(*d.Target, orangepi) {
-		t.Fatalf("held or negative-gain instance removed: %+v", d.Target)
+	if d.Status != SchedulerStatusKeep || d.Target == nil || !poolsOn(*d.Target, genesis3) || !poolsOn(*d.Target, orangepi) || removes(genesis3) || removes(orangepi) {
+		t.Fatalf("negative-gain idle retirement chosen: %s %+v %v", d.Status, d.Target, d.Reasons)
 	}
 }
 
 // m4 r6: the unrouted genesis3 q2 and orangepi q1 serve no Workload (capture
 // workloadUID "") and, prepared before the planner recorded owners, have no
 // owner; only their slot names the Workload. An instance owned by an
-// autonomous Workload, or owned by nobody and routed by nobody, is removed
-// after one unrouted window. One a disabled Workload routes to stays.
+// autonomous Workload, or owned by nobody and routed by nobody, is removed.
+// One a disabled Workload routes to stays.
 func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 	s, snap, genesis3, orangepi := capacityR5Fixture()
 	profitable := *snap.Instances[1].Profile
@@ -2133,9 +2127,8 @@ func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 	// Otherwise routing may legitimately bind the Ready owned slot to w1,
 	// making it active rather than an unrouted cleanup candidate.
 	s.Controls.Routing = false
-	since := snap.At.Add(-time.Minute)
 	for k := 1; k < 3; k++ {
-		snap.Instances[k].WorkloadUID, snap.Instances[k].TargetID, snap.Instances[k].UnroutedSince = "", "target-w1-"+snap.Instances[k].Profile.ID+"-1", &since
+		snap.Instances[k].WorkloadUID, snap.Instances[k].TargetID = "", "target-w1-"+snap.Instances[k].Profile.ID+"-1"
 	}
 	snap.Instances[1].OwnerWorkloadUID = "w1" // prepared with the planner's owner
 	// The unowned runner draws more loaded power, so the search itself wants
@@ -2158,27 +2151,8 @@ func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 	other := poolsAddWorkload(&snap, "w2")
 	other.Model.UID = "m2"
 	snap.Routing["w2"] = map[string]int32{"opi": 1}
-	snap.Instances[2].UnroutedSince = nil
 	if d := capacityDecideForTest(t, s, snap); !removed(d, genesis3) || removed(d, orangepi) {
 		t.Fatalf("an instance a disabled Workload routes to was removed: %+v", d.Target)
-	}
-}
-
-// m4 r5 D-R5-1: genesis2 was prepared at 04:28:48 while keep was in Overload
-// and removed 50 s later. Its hold keeps it for one observation window even
-// when removal saves energy.
-func TestCapacityHeldInstanceIsNotRemoved(t *testing.T) {
-	s, snap, genesis3, _ := capacityR5Fixture()
-	snap.Instances[1].Profile.Power = schedulerTestPower(60) // removal saves 10 W
-	d := capacityDecideForTest(t, s, snap)
-	if d.Target == nil || poolsOn(*d.Target, genesis3) {
-		t.Fatalf("fixture must remove genesis3 for energy: %+v", d.Target)
-	}
-	until := snap.At.Add(time.Minute)
-	snap.Instances[1].HeldUntil = &until
-	d = capacityDecideForTest(t, s, snap)
-	if d.Target == nil || !poolsOn(*d.Target, genesis3) || !slices.ContainsFunc(poolsPlans(d, genesis3), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanHeld }) {
-		t.Fatalf("held genesis3 removed: %+v %+v", d.Target, poolsPlans(d, genesis3))
 	}
 }
 
@@ -2244,6 +2218,7 @@ func TestCapacityReplacementRepaysAtTheDetectedLoad(t *testing.T) {
 	}
 	// One load judges everything: after the step down is detected, the decision is the one steady 5 req/s gets.
 	load(35, 35, 35, 35, 35, 5)
+	capacityStepAtForTest(&snap, snap.ObservationEnd.Add(-10*time.Second), 35, 5)
 	stepped := capacityDecideForTest(t, s, snap)
 	load(5, 5, 5, 5, 5, 5)
 	if steady := capacityDecideForTest(t, s, snap); !slices.Equal(actions(steady), actions(stepped)) || stepped.Capacity.Workloads[0].Rate != 5 || replaced(stepped) {

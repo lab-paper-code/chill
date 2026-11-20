@@ -25,9 +25,7 @@ func TestDefectEIdleKeepRetainsUnavailablePhysicalTarget(t *testing.T) {
 		t.Run(unavailable, func(t *testing.T) {
 			s, snap, healthy, badNode := capacityR5Fixture()
 			s.Controls.Routing = false
-			since := snap.At.Add(-s.ObservationWindow)
 			for k := 1; k < len(snap.Instances); k++ {
-				snap.Instances[k].UnroutedSince = &since
 				// Cleanup must repay its measured removal over H.
 				profile := *snap.Instances[k].Profile
 				idle, _ := profile.Power.IdleWatts.Value()
@@ -93,8 +91,6 @@ func TestDefectEUnavailableTrafficWithdrawalRetainsOccupancy(t *testing.T) {
 			bad.ID, bad.Node, bad.Ready = "unconfirmed", poolsAddNode(&snap, "unconfirmed", map[string]float64{"fixed": 1}), false
 			bad.OwnerWorkloadUID, bad.PodUID = "w1", "unconfirmed-pod"
 			bad.ObservedAt = time.Time{}
-			since := snap.At.Add(-s.ObservationWindow)
-			bad.UnroutedSince = &since
 			snap.Instances = append(snap.Instances, bad)
 			snap.Nodes[1].Reasons = []string{NodeInstanceUnavailable}
 			snap.Routing = map[string]map[string]int32{"w1": {"i1": 1, bad.ID: 1}}
@@ -128,10 +124,9 @@ func TestDefectEFiveNodeCandidateExcludesUnconfirmedCleanup(t *testing.T) {
 	}
 	snap.Arrivals = nil
 	snap.Routing = map[string]map[string]int32{"w1": {}}
-	since := snap.At.Add(-s.ObservationWindow)
 	for index := range snap.Instances {
 		i := &snap.Instances[index]
-		i.WorkloadUID, i.OwnerWorkloadUID, i.UnroutedSince = "", "", &since
+		i.WorkloadUID, i.OwnerWorkloadUID = "", ""
 		if i.Node == badNode {
 			i.Ready = false
 		}

@@ -11,73 +11,21 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-// annotateHistory sets each captured instance's UnroutedSince and HeldUntil
-// from the controller's records, drops records of instances that left, and
-// carries the load changes still inside the observation window into the
-// snapshot. A restart starts the records again, so an instance waits one more
-// window and each load window starts at what the next decision detects.
+// annotateHistory carries the load changes still inside the observation window
+// and what the configuration was last decided for into the snapshot. A restart
+// starts the records again, so each load window starts at what the next
+// decision detects and the configuration is decided again.
 func (c *reservationState) annotateHistory(s *serving.SchedulerSnapshot, window time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	maps.DeleteFunc(c.loadChanged, func(_ string, at time.Time) bool { return !at.After(s.ObservationEnd.Add(-window)) })
 	s.LoadChangedAt = maps.Clone(c.loadChanged)
-	if c.unrouted == nil {
-		c.unrouted, c.overloaded = map[string]time.Time{}, map[string]time.Time{}
-	}
-	for key, until := range c.overloaded {
-		if !until.IsZero() && !s.At.Before(until) {
-			delete(c.overloaded, key)
-		}
-	}
-	present := map[string]bool{}
-	for k := range s.Instances {
-		i := &s.Instances[k]
-		present[i.ID] = true
-		routed := false
-		for _, weights := range s.Routing {
-			routed = routed || weights[i.ID] > 0
-		}
-		if _, seen := c.unrouted[i.ID]; routed {
-			delete(c.unrouted, i.ID)
-		} else if !seen {
-			c.unrouted[i.ID] = s.At
-		}
-		if since, ok := c.unrouted[i.ID]; ok {
-			i.UnroutedSince = &since
-		}
-		for _, key := range []string{i.ID, i.TargetID} {
-			until, ok := c.overloaded[key]
-			if key == "" || !ok {
-				continue
-			}
-			if until.IsZero() && i.Ready {
-				until = s.At.Add(window)
-				c.overloaded[key] = until
-			}
-			if !until.IsZero() {
-				i.HeldUntil = &until
-			}
-		}
-	}
-	for id := range c.unrouted {
-		if !present[id] {
-			delete(c.unrouted, id)
-		}
-	}
-	// Marks remain while any owner still holds the corresponding preparation.
-	for key, until := range c.overloaded {
-		preparing := false
-		for _, r := range c.runs {
-			preparing = preparing || r.action.Kind == servingstate.OperationPrepare && r.action.Instance == key
-		}
-		if until.IsZero() && !preparing {
-			delete(c.overloaded, key)
-		}
-	}
+	s.DecidedFor = c.decidedFor
 }
 
 // rememberLoadChanges keeps each Workload's latest arrival-rate change an
-// evaluation detected, whether or not its decision is approved.
+// evaluation detected, whether or not its decision is approved. A detected
+// change leaves the configuration undecided.
 func (c *reservationState) rememberLoadChanges(search serving.SchedulerSearch) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -85,24 +33,9 @@ func (c *reservationState) rememberLoadChanges(search serving.SchedulerSearch) {
 		c.loadChanged = map[string]time.Time{}
 	}
 	for _, load := range search.Loads {
-		if load.WindowStart.After(serving.SchedulerLoadStretchStart(search.WindowStart, search.WindowEnd, c.loadChanged[load.UID])) {
+		if load.Changed {
 			c.loadChanged[load.UID] = load.WindowStart
-		}
-	}
-}
-
-// markOverloadPrepares records the slots a decision prepares while keep is in
-// Overload; once Ready they are held for one observation window.
-func (c *reservationState) markOverloadPrepares(decision serving.SchedulerDecision) {
-	if decision.Target == nil || decision.Keep.Status != serving.SchedulerStatusOverload {
-		return
-	}
-	if c.overloaded == nil {
-		c.unrouted, c.overloaded = map[string]time.Time{}, map[string]time.Time{}
-	}
-	for _, a := range decision.Target.Actions {
-		if _, marked := c.overloaded[a.Instance]; a.Kind == servingstate.OperationPrepare && !marked {
-			c.overloaded[a.Instance] = time.Time{}
+			c.decidedFor = ""
 		}
 	}
 }

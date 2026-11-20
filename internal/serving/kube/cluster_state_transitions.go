@@ -246,5 +246,4 @@ func (c *reservationState) publishSnapshotLocked(snapshot *serving.SchedulerSnap
 func (c *reservationState) publishDecisionLocked(snapshot *serving.SchedulerSnapshot, decision *serving.SchedulerDecision) {
 	c.publishSnapshotLocked(snapshot)
 	c.state.Decision = *decision
-	c.markOverloadPrepares(*decision)
 }

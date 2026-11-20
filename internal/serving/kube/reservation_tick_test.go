@@ -360,10 +360,12 @@ func tickRemembersTheDetectedLoadChange(t *testing.T, discarded bool) {
 	}
 	now := time.Now()
 	step := now.Add(-time.Second)
+	// A change is located just after an arrival: the last one at 10 req/s
+	// arrives 1 ns before the step.
 	for _, part := range []struct {
 		from time.Time
 		n    int
-	}{{now.Add(-settings.ObservationWindow), 10}, {step, 100}} { // 10 then 100 req/s
+	}{{step.Add(-900*time.Millisecond - 1), 10}, {step, 100}} { // 10 then 100 req/s
 		for j := range part.n {
 			at := part.from.Add(time.Duration(j) * time.Second / time.Duration(part.n))
 			id := fmt.Sprintf("%s-%d-%d", d.UID, part.n, j)

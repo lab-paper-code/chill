@@ -202,6 +202,7 @@ func capacityFixedWeights(rate float64, items []capacityItem) ([]int32, []float6
 type capacityResult struct {
 	choice                            []int
 	route                             float64
+	unmet                             float64 // route time in whole control intervals while keep misses an SLO (capacityPlanner.unmet)
 	keep                              bool
 	key                               string
 	joules, period, keepJoules, worst float64
@@ -289,7 +290,7 @@ func (p *capacityPlanner) evaluateChoice(choice []int, r float64, skipUndecidabl
 		r = bridge.route
 	}
 	if reason != "" {
-		return capacityResult{choice: choice, route: r, bridge: bridge, exclusion: reason, worst: math.Inf(1)}
+		return capacityResult{choice: choice, route: r, unmet: p.unmet(r), bridge: bridge, exclusion: reason, worst: math.Inf(1)}
 	}
 	if skipUndecidable && p.hasUnsharedMissingOperation(choice) {
 		// Missing operation joules have a nonzero coefficient independent of
@@ -381,7 +382,7 @@ func (p *capacityPlanner) evaluateEnergyAtWindow(choice []int, r float64, bridge
 	return p.evaluateEnergyForRoutes(choice, r, bridge, t, nil)
 }
 func (p *capacityPlanner) evaluateEnergyForRoutes(choice []int, r float64, bridge *schedulerBridgeSchedule, t float64, frozen map[string]map[string]int32) capacityResult {
-	res := capacityResult{choice: slices.Clone(choice), route: r, keep: true, bridge: bridge, period: t}
+	res := capacityResult{choice: slices.Clone(choice), route: r, unmet: p.unmet(r), keep: true, bridge: bridge, period: t}
 	keys := make([]string, len(choice))
 	items, retained := make([][]capacityItem, len(p.ws)), make([][]capacityItem, len(p.ws))
 	for n, j := range choice {
@@ -550,6 +551,12 @@ func (a capacityResult) better(b *capacityResult) bool {
 			return order < 0
 		}
 	}
+	// While keep misses an SLO, the candidate that routes in fewer whole
+	// control intervals ranks first: the next decision cannot tell apart
+	// routes within one interval.
+	if a.unmet != b.unmet {
+		return a.unmet < b.unmet
+	}
 	// At equal SLO excess, a candidate whose energy relative to keep is known
 	// ranks first; joules are compared only between such candidates.
 	if (len(a.missingCells) == 0) != (len(b.missingCells) == 0) {
@@ -562,4 +569,13 @@ func (a capacityResult) better(b *capacityResult) bool {
 		return a.keep
 	}
 	return a.key < b.key
+}
+
+// unmet is a route time r in seconds counted in whole control intervals while
+// keep misses an SLO (routeStep), and 0 for every route while keep meets them.
+func (p *capacityPlanner) unmet(r float64) float64 {
+	if p.routeStep == 0 {
+		return 0
+	}
+	return math.Floor(r / p.routeStep)
 }

@@ -47,8 +47,6 @@ func TestDefectEResidualPendingOccupancyKeepsReplicaAndInstanceLimits(t *testing
 					if physical == lateSlot {
 						actual := wanted
 						actual.ID, actual.TargetID, actual.Ready = "pod/container", wanted.ID, false
-						since := snap.At.Add(-s.ObservationWindow)
-						actual.UnroutedSince = &since
 						snap.Instances = []SchedulerInstance{actual}
 					}
 					if physical == "inventory-loss" {
