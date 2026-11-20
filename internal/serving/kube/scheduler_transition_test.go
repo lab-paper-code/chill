@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -736,8 +737,9 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			}
 			c.config.Settings = withSchedulerEstimateFixture(serving.SchedulerSettings{
 				ObservationWindow: time.Minute, ControlInterval: time.Second, ComparisonPeriod: time.Second,
-				MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true},
+				Controls: serving.SchedulerControls{Routing: true},
 			})
+			schedulerLoadForTest(snapshot, &definition, c.config.Settings.ObservationWindow, 23.383333)
 			verifyIndependentReadySubset(t, c, target, old, added, nano, scenario)
 		})
 	}
@@ -1771,5 +1773,16 @@ func TestReadySubsetMixedUIDPreservesNotReadyDeclarationE56(t *testing.T) {
 	}
 	if c.routingTargetPresent(&serving.SchedulerCandidate{Routing: map[string]map[string]int32{definition.UID: {}}}, c.state.Snapshot, c.runtime.Instances(), true, c.runtime) {
 		t.Fatal("empty route was promoted to a serving ACK")
+	}
+}
+
+// schedulerLoadForTest appends rate req/s of d spread evenly over the window
+// that ends at the snapshot's observation end.
+func schedulerLoadForTest(snapshot *serving.SchedulerSnapshot, d *serving.Definition, window time.Duration, rate float64) {
+	n := int(math.Round(rate * window.Seconds()))
+	start := snapshot.ObservationEnd.Add(-window)
+	for j := range n {
+		at := start.Add(time.Duration(j) * window / time.Duration(n))
+		snapshot.Arrivals = append(snapshot.Arrivals, serving.SchedulerArrival{ID: fmt.Sprintf("%s-%05d", d.UID, j), At: at, Definition: d, Accepted: true, Compute: true, WorkloadUID: d.UID})
 	}
 }

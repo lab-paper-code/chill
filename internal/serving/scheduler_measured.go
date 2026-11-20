@@ -24,12 +24,12 @@ type SchedulerServingShare struct {
 // Serving.
 //
 // The window's measurement holds its client-reported outcomes over its
-// compute arrivals from Since to the end of the observation window: OnTime and
-// Late are completions within and beyond the SLO target, every other report
-// and every unreported arrival older than the target is a failure. OnTimeRate
-// is its on-time completions per second and Satisfied the empirical rank rule
-// over Population. It judges every result that serves the Workload as it runs
-// at a demand it speaks for (speaksFor).
+// compute arrivals from Since to one SLO target before the end of the
+// observation window, the arrivals that had the whole target to report: OnTime
+// and Late are completions within and beyond the SLO target, every other
+// report and every unreported arrival is a failure. OnTimeRate is its on-time
+// completions per second of that stretch and Satisfied the empirical rank rule
+// over Population. It judges every result that serves the Workload as it runs.
 //
 // A remembered miss holds only the set and the most it delivered on time,
 // OnTimeRate (remember). It judges every result whose instances for the
@@ -70,16 +70,6 @@ func (m SchedulerMeasurement) covers(options []SchedulerServingShare) bool {
 		left = slices.Delete(left, at, at+1)
 	}
 	return true
-}
-
-// speaksFor reports whether the window's measurement, taken at the observed
-// demand, judges the Workload at the planned demand rate: a met window only
-// for a demand it saw, a miss for any demand at least as high.
-func (m SchedulerMeasurement) speaksFor(rate, observed float64) bool {
-	if m.Satisfied {
-		return rate <= observed
-	}
-	return rate >= observed
 }
 
 // servingShares lists the routed options of routes in a fixed order.
@@ -123,14 +113,14 @@ func sameSet(a, b []SchedulerServingShare) bool {
 	})
 }
 
-// windowMeasurement is d's measurement on the running serving, or nil when
-// there is no window or it holds fewer reports than identify d's SLO
-// percentile (MinimumServiceSamples). The window starts at the last action's
-// end. It exists only while every action has ended and every routed instance
-// of d is routable for it: otherwise the serving it would measure is not
-// settled.
-func windowMeasurement(snapshot SchedulerSnapshot, search SchedulerSearch, d *Definition, routes map[string]int32, serving []SchedulerServingShare) *SchedulerMeasurement {
-	since := search.WindowStart
+// windowMeasurement is d's measurement on the running serving over its load
+// window up to one SLO target before end, [since, end - target), or nil when
+// there is no window or it holds fewer reports than identify d's SLO percentile
+// (MinimumServiceSamples). The window starts no earlier than the last action's
+// end. It exists only while every action has ended and every routed instance of
+// d is routable for it: otherwise the serving it would measure is not settled.
+func windowMeasurement(snapshot SchedulerSnapshot, since, end time.Time, d *Definition, routes map[string]int32, serving []SchedulerServingShare) *SchedulerMeasurement {
+	until := end.Add(-d.SLO.TargetLatency)
 	for _, a := range snapshot.Actions {
 		if a.EndedAt == nil {
 			return nil
@@ -146,7 +136,7 @@ func windowMeasurement(snapshot SchedulerSnapshot, search SchedulerSearch, d *De
 	}
 	m, reports := SchedulerMeasurement{DefinitionID: d.Identity(), Serving: serving, Since: &since}, 0
 	for _, a := range snapshot.Arrivals {
-		if !a.computeInput() || a.Definition.UID != d.UID || a.At.Before(since) || !a.At.Before(search.WindowEnd) {
+		if !a.computeInput() || a.Definition.UID != d.UID || a.At.Before(since) || !a.At.Before(until) {
 			continue
 		}
 		switch {
@@ -154,9 +144,8 @@ func windowMeasurement(snapshot SchedulerSnapshot, search SchedulerSearch, d *De
 			m.OnTime++
 		case a.ClientOutcome == outcomeCompleted:
 			m.Late++
-		case a.ClientOutcome == "" && (a.Outcome != "" || search.WindowEnd.Sub(a.At) <= a.Definition.SLO.TargetLatency):
-			// Unreported and still able to finish on time, or finished at the
-			// server with its client's outcome unknown.
+		case a.ClientOutcome == "" && a.Outcome != "":
+			// Finished at the server with its client's outcome unknown.
 			continue
 		}
 		m.Population++
@@ -167,7 +156,7 @@ func windowMeasurement(snapshot SchedulerSnapshot, search SchedulerSearch, d *De
 	if minimum, err := firstfloor.MinimumServiceSamples(d.SLO.Percentile); err != nil || reports < minimum || len(serving) == 0 {
 		return nil
 	}
-	m.OnTimeRate = float64(m.OnTime) / search.WindowEnd.Sub(since).Seconds()
+	m.OnTimeRate = float64(m.OnTime) / until.Sub(since).Seconds()
 	m.Satisfied = m.OnTime >= empiricalSLORank(m.Population, d.SLO.Percentile)
 	return &m
 }
@@ -256,11 +245,11 @@ func instanceServing(instances []SchedulerInstance, routes map[string]int32) []S
 
 // measurement is the fact that judges Workload w served as serving over
 // population replayed requests, or nil when the replay judges it: the
-// window's measurement when the result serves w as it runs (running) at a
-// demand the window speaks for, else a covering remembered miss.
+// window's measurement when the result serves w as it runs (running), else a
+// covering remembered miss.
 func (p *capacityPlanner) measurement(w int, running bool, serving []SchedulerServingShare, population int) *SchedulerMeasurement {
 	ws := p.ws[w]
-	if m := ws.window; running && m != nil && m.speaksFor(ws.rate, ws.observedRate) {
+	if m := ws.window; running && m != nil {
 		return m
 	}
 	if population == 0 {

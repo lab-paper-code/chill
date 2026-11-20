@@ -27,7 +27,7 @@ func TestFeedbackConsumerCanceledReplaySkipsCohortAggregation(t *testing.T) {
 	base, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ctx := &feedbackCancelDuringReplay{Context: base, cancel: cancel}
-	result, err := schedulerReplay(ctx, settings, snapshot, candidate, rand.New(rand.NewPCG(1, 0)), map[NodeReference]bool{}, nil)
+	result, err := schedulerReplay(ctx, settings, snapshot, schedulerSearchPopulation(context.Background(), settings, snapshot).Loads, candidate, rand.New(rand.NewPCG(1, 0)), map[NodeReference]bool{}, nil)
 	if err != context.Canceled || len(result.feedback) != 0 || result.conditional.Queries != 0 || len(result.outcomes) != 0 {
 		t.Fatalf("canceled replay must not reduce accepted cohort or query failure potentials: %+v %v", result, err)
 	}

@@ -175,14 +175,15 @@ func TestCapacityWindowStopsOnlyAfterCertainFailure(t *testing.T) {
 			d := snap.Workloads[0]
 			d.SLO = SLO{Percentile: tc.percentile, TargetLatency: 20 * time.Millisecond}
 			keep := SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}
+			loads := schedulerSearchPopulation(context.Background(), s, snap).Loads
 			fullCtx := &capacityCountingContext{Context: context.Background()}
-			full, err := schedulerReplayEstimate(fullCtx, s, snap, keep, 1, nil, nil)
+			full, err := schedulerReplayEstimate(fullCtx, s, snap, loads, keep, 1, nil, nil)
 			if err != nil || len(full.Reasons) != 0 {
 				t.Fatalf("full replay failed: %v %+v", err, full)
 			}
 			limit := capacityWindowLimit{requests: n, slo: d.SLO}
 			earlyCtx := &capacityCountingContext{Context: context.Background()}
-			early, err := schedulerReplayEstimate(earlyCtx, s, snap, keep, 1, nil, &limit)
+			early, err := schedulerReplayEstimate(earlyCtx, s, snap, loads, keep, 1, nil, &limit)
 			if err != nil || limit.failed != tc.failed || (full.Status != schedulerStatusFeasible) != tc.failed {
 				t.Fatalf("window verdict changed: err %v, failed %v, full %+v", err, limit.failed, full)
 			}
@@ -201,7 +202,7 @@ func TestCapacityWindowStopsOnlyAfterCertainFailure(t *testing.T) {
 	t.Run("p100 service is unidentified", func(t *testing.T) {
 		s, snap := schedulerReplayWindow(400)
 		snap.Workloads[0].SLO = SLO{Percentile: 100, TargetLatency: 20 * time.Millisecond}
-		full, err := schedulerReplayEstimate(context.Background(), s, snap, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, 1, nil, nil)
+		full, err := schedulerReplayEstimate(context.Background(), s, snap, schedulerSearchPopulation(context.Background(), s, snap).Loads, SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, 1, nil, nil)
 		if err != nil || !slices.Contains(full.Reasons, "MissingConditionalServiceSupport:i1") {
 			t.Fatalf("p100 service draw must be reported unidentified: %v %+v", err, full.Reasons)
 		}

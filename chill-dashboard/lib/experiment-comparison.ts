@@ -89,7 +89,7 @@ export function comparisonValidity(a:ExperimentStage,b:ExperimentStage,leftRun?:
     limited:rulesMissing||!!ruleKeys.length||!sameDisplayedDuration(a,b)||!rows.length||unknown>0||changed>0||sameLoad!==true,
   }
 }
-/** Label of a settings patch path ("controls.power", "minimumDemand.<uid>"), the same words as the scheduler settings screen. */
+/** Label of a settings patch path ("controls.power"), the same words as the scheduler settings screen. */
 export function settingsPatchKeyLabel(path:string):string {
   const control=settingControls.find(control=>`controls.${control.key}`===path)
   return control?control.label:patchKeyLabel(path.split(".",1)[0])

@@ -82,7 +82,7 @@ func hydrationTickFixture() (serving.SchedulerSettings, serving.SchedulerSnapsho
 	at := time.Unix(100, 0)
 	settings := serving.SchedulerSettings{
 		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
-		MaxReplicas: 1, MaxInstances: 1, AutonomousWorkloads: []string{"w"}, MinimumDemand: map[string]float64{"w": 1},
+		MaxReplicas: 1, MaxInstances: 1, AutonomousWorkloads: []string{"w"},
 		CapacityMinimumRequests: 1, CapacityGridSteps: 1, CapacityBisectionWidth: .1, CapacityTailSamples: 1,
 		PlanSearchWorkers: 1, PlanSearchStrategy: "v2", PlanSearchEvaluations: 1, PlanExactFinalists: 1,
 		DefaultOperationCost: map[string]serving.OperationCostValue{"prepare": {Seconds: 1}, "remove": {Seconds: 1}, "power": {Seconds: 1}},
@@ -105,7 +105,8 @@ func hydrationTickFixture() (serving.SchedulerSettings, serving.SchedulerSnapsho
 	}
 	// A ready actor was warmed, so its last service end is known.
 	instance := serving.SchedulerInstance{ID: "i", Node: node.Node, Profile: profile, WorkloadUID: definition.UID, Allocation: serving.SchedulerAllocation{MemoryBytes: 1}, Ready: true, Routable: map[string]bool{definition.UID: true}, Capacity: 1, Weight: 1000, MaxBatch: 1, ObservedAt: at, LastServiceEndAgeNanos: new(int64), ArrivalAgesMS: map[string][]float64{}}
-	return settings, serving.SchedulerSnapshot{At: at, ObservationEnd: at, ObservedSince: at.Add(-time.Second), Workloads: []*serving.Definition{definition}, Nodes: []serving.SchedulerNode{node}, Instances: []serving.SchedulerInstance{instance}, Options: []serving.SchedulerOption{{Instance: instance, CompatibleUIDs: []string{definition.UID}}}, Routing: map[string]map[string]int32{definition.UID: {instance.ID: 1000}}}
+	arrivals := []serving.SchedulerArrival{{ID: "a", At: at.Add(-time.Second / 2), Definition: definition, Accepted: true, Compute: true, WorkloadUID: definition.UID}}
+	return settings, serving.SchedulerSnapshot{At: at, ObservationEnd: at, ObservedSince: at.Add(-time.Second), Workloads: []*serving.Definition{definition}, Nodes: []serving.SchedulerNode{node}, Instances: []serving.SchedulerInstance{instance}, Options: []serving.SchedulerOption{{Instance: instance, CompatibleUIDs: []string{definition.UID}}}, Routing: map[string]map[string]int32{definition.UID: {instance.ID: 1000}}, Arrivals: arrivals}
 }
 
 func kappaTestSlope(wire string) *profilederivation.SessionParameter {

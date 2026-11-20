@@ -10,7 +10,6 @@ func TestCapacitySharedUnknownPreparePreservesOnlyDurationIndependentSaving(t *t
 		t.Run(map[float64]string{0: "constant-zero", 5: "duration-dependent-post"}[targetWatts], func(t *testing.T) {
 			settings, snapshot := schedulerFixture()
 			settings.ComparisonPeriod = 600 * time.Second
-			settings.MinimumDemand = map[string]float64{"w1": 150}
 			recoveryNode := poolsAddNode(&snapshot, "recovery", map[string]float64{"fixed": 10})
 			recovery := poolsInstance(snapshot.Instances[0], "recovery", recoveryNode, "fixed", "w1")
 			snapshot.Options = append(snapshot.Options, poolsOption(recovery))

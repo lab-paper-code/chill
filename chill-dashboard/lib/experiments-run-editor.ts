@@ -6,7 +6,7 @@ import { object, records, type Spec } from "./evaluation-author.ts"
 
 type FieldKey = SettingField["key"]
 /** Patch keys with a dedicated input beyond the scalar scheduler fields. */
-export const targetKeys = ["autonomousWorkloads", "minimumDemand", "excludedNodes", "controls", "sloPriorityStrategy", "workloadPriority"] as const
+export const targetKeys = ["autonomousWorkloads", "excludedNodes", "controls", "sloPriorityStrategy", "workloadPriority"] as const
 export type TargetKey = typeof targetKeys[number]
 export type PatchKey = FieldKey | TargetKey
 // The same words as the scheduler settings screen (lib/scheduler-settings.ts and its 우선순위 group).
@@ -28,7 +28,6 @@ export function patchDefault(key: PatchKey, current: SchedulerSettings | undefin
   switch (key) {
     case "controls": return Object.fromEntries(settingControls.map(control => [control.key, true]))
     case "autonomousWorkloads": case "excludedNodes": case "workloadPriority": return []
-    case "minimumDemand": return {}
     case "sloPriorityStrategy": return "excess"
   }
   const field = settingFields.find(item => item.key === key)!

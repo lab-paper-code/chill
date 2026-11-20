@@ -107,7 +107,7 @@ func TestReplayAdmissionQueueLimitAndRejectedDemand(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	settings.AutonomousWorkloads = nil
 	snapshot.Arrivals = []SchedulerArrival{{ID: "rejected-demand", Definition: snapshot.Workloads[0], At: snapshot.ObservationEnd.Add(-settings.ObservationWindow), Compute: true, Accepted: false, Outcome: schedulerOutcomeRejected}}
-	cohort, err := newFeedbackArrivalCohort(context.Background(), settings, snapshot)
+	cohort, err := newFeedbackArrivalCohort(context.Background(), settings, snapshot, schedulerSearchPopulation(context.Background(), settings, snapshot).Loads)
 	if err != nil || len(cohort.requests) != 1 || snapshot.Arrivals[0].Accepted {
 		t.Fatalf("rejected compute demand disappeared or fabricated acceptance: %+v %v", cohort, err)
 	}

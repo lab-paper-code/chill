@@ -48,6 +48,8 @@ func loadRev76Fixture(t *testing.T) rev76Fixture {
 	}
 	// Read historical raw only to prove its controlled-execution rows cannot
 	// enter the shared planner; never rewrite its row keys into current keys.
+	// Its settings keep keys the scheduler no longer has (maxCPUs,
+	// maxObservationAgeNanos, capacityWindow*, minimumDemand); decoding drops them.
 	estimates := schedulerEstimateSettingsForTest()
 	f.Settings.DefaultOperationCost, f.Settings.DefaultIdlePower = estimates.DefaultOperationCost, estimates.DefaultIdlePower
 	margin := f.Settings.CompletionMarginMS
@@ -94,9 +96,9 @@ func sharedBootstrapFixture() (SchedulerSettings, SchedulerSnapshot) {
 	base := snapshot.Instances[0]
 	settings.MaxReplicas, settings.MaxInstances = 3, 3
 	settings.AutonomousWorkloads = []string{"w1", "w2", "w3"}
-	settings.MinimumDemand = map[string]float64{"w1": 20, "w2": 20, "w3": 20}
-	poolsAddWorkload(&snapshot, "w2")
-	poolsAddWorkload(&snapshot, "w3")
+	capacityLoad(settings, &snapshot, snapshot.Workloads[0], 20)
+	capacityLoad(settings, &snapshot, poolsAddWorkload(&snapshot, "w2"), 20)
+	capacityLoad(settings, &snapshot, poolsAddWorkload(&snapshot, "w3"), 20)
 	for _, uid := range []string{"n2", "n3"} {
 		node := poolsAddNode(&snapshot, uid, map[string]float64{"fixed": 10})
 		option := poolsInstance(base, "option-"+uid, node, "fixed", "")
@@ -180,9 +182,10 @@ func TestStartupMissingRawSupportIgnoresIncompatibleModels(t *testing.T) {
 			s, snapshot := schedulerFixture()
 			s.PlanSearchStrategy = strategy
 			s.AutonomousWorkloads = []string{"w1", "w2"}
-			s.MinimumDemand = map[string]float64{"w1": 20, "w2": 20}
 			other := poolsAddWorkload(&snapshot, "w2")
 			other.Model.Name, other.Model.UID = "other-model", "other-model-uid"
+			capacityLoad(s, &snapshot, snapshot.Workloads[0], 20)
+			capacityLoad(s, &snapshot, other, 20)
 			node := poolsAddNode(&snapshot, "n2", map[string]float64{"fixed": 10})
 			option := poolsInstance(snapshot.Instances[0], "other", node, "fixed", other.UID)
 			option.Profile.Condition.LogicalModel = other.Model.Name

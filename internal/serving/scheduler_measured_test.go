@@ -1,17 +1,19 @@
 package serving
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 	"time"
 )
 
 // measuredFixture serves w1 at 20 req/s on one instance the replay judges
-// feasible, with two expansion options (capacityE1Fixture) and a 3 s window
-// of 60 arrivals, enough to identify the 95th percentile (59).
+// feasible, with two expansion options (capacityE1Fixture) and a 4 s window.
+// Its first 3 s, the arrivals that had the whole 1 s SLO target to report,
+// hold 60 arrivals, enough to identify the 95th percentile (59).
 func measuredFixture() (SchedulerSettings, SchedulerSnapshot) {
 	s, snap, _ := capacityE1Fixture()
-	s.ObservationWindow = 3 * time.Second
+	s.ObservationWindow = 4 * time.Second
 	snap.Workloads[0].SLO.Percentile = 95
 	capacityLoad(s, &snap, snap.Workloads[0], 20)
 	return s, snap
@@ -124,23 +126,6 @@ func TestMeasuredWindowNeedsEveryRoutedInstanceRoutable(t *testing.T) {
 	}
 }
 
-// A met window speaks only for the demand it saw: under a 30 req/s floor above
-// the observed 20 req/s the replay judges keep. A miss speaks for any higher
-// demand (TestMeasuredShortfallIsTheDeliveredRate).
-func TestMeasuredMetWindowSpeaksOnlyForItsDemand(t *testing.T) {
-	s, snap := measuredFixture()
-	measuredReports(&snap, 0)
-	p := capacityPlannerForTest(t, s, snap)
-	if m := p.evaluateCurrentKeep(p.periodSeconds).feedback[0].Measured; m == nil || !m.Satisfied {
-		t.Fatalf("a met window must judge keep at its own demand: %+v", m)
-	}
-	s.MinimumDemand = map[string]float64{"w1": 30}
-	p = capacityPlannerForTest(t, s, snap)
-	if m := p.evaluateCurrentKeep(p.periodSeconds).feedback[0].Measured; m != nil {
-		t.Fatalf("a met window at 20 req/s must not judge the 30 req/s floor: %+v", m)
-	}
-}
-
 // The window restarts at the end of the last action: arrivals before it, here
 // all failed, do not judge the configuration the action produced.
 func TestMeasuredWindowRestartsAfterAction(t *testing.T) {
@@ -163,10 +148,12 @@ func TestMeasuredWindowRestartsAfterAction(t *testing.T) {
 
 // A measured miss corrects the surrogate supply by the on-time rate the set
 // delivered (18 req/s: 54 in 3 s), not by its on-time share of the planned
-// demand, which the 30 req/s floor raises above what was offered.
+// demand, which 30 queued requests raise above what was offered (20 + 30/3).
 func TestMeasuredShortfallIsTheDeliveredRate(t *testing.T) {
 	s, snap := measuredFixture()
-	s.MinimumDemand = map[string]float64{"w1": 30}
+	for j := range 30 {
+		snap.Outstanding = append(snap.Outstanding, SchedulerRequest{ID: fmt.Sprint("q", j), Definition: snap.Workloads[0], ReceivedAt: snap.At, Phase: phasePending})
+	}
 	measuredReports(&snap, 6)
 	p := capacityPlannerForTest(t, s, snap)
 	got := p.shortfalls(p.evaluateCurrentKeep(p.periodSeconds))

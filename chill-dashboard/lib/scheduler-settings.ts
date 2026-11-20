@@ -34,7 +34,6 @@ export const settingControls: {key:keyof SchedulerSettings["controls"];label:str
 ]
 export const settingTargets = [
   {key:"autonomousWorkloads",label:"자동 제어 서비스",help:"선택한 서비스의 구성을 스케줄러가 바꿈"},
-  {key:"minimumDemand",label:"최소 수요",help:"서비스별 계획 수요의 하한, 비우면 미설정"},
   {key:"excludedNodes",label:"제외 장치",help:"스케줄러가 배치, 제거, 전력 모드를 바꾸지 않는 장치"},
 ] as const
 export const editableSettingKeys = [...settingFields.map(field=>field.key),"controls",...settingTargets.map(field=>field.key),"sloPriorityStrategy","workloadPriority"] as const

@@ -284,9 +284,9 @@ func TestSchedulerDisabledWorkloadInstanceIsFixed(t *testing.T) {
 	}
 }
 
-// A zero-population Workload has no SLO obligation. Explicit minimum demand
-// creates one and selects the first physical configuration.
-func TestSchedulerMinimumDemandSelectsFirstConfiguration(t *testing.T) {
+// A zero-population Workload has no SLO obligation. Observed arrivals create
+// one and select the first physical configuration.
+func TestSchedulerObservedDemandSelectsFirstConfiguration(t *testing.T) {
 	s, snap := schedulerFixture()
 	option := snap.Options[0].Instance
 	snap.Instances = nil
@@ -296,7 +296,7 @@ func TestSchedulerMinimumDemandSelectsFirstConfiguration(t *testing.T) {
 		d.Target.Feedback[0].Population != 0 || !d.Target.Feedback[0].Satisfied {
 		t.Fatalf("zero demand invented a finite SLO obligation: %+v", d)
 	}
-	s.MinimumDemand = map[string]float64{snap.Workloads[0].UID: 1}
+	capacityLoad(s, &snap, snap.Workloads[0], 10)
 	d = capacityDecideForTest(t, s, snap)
 	if d.Target == nil || d.Target.Keep || d.Status != schedulerStatusFeasible || !poolsOn(*d.Target, option.Node) {
 		t.Fatalf("first configuration was not the target: %+v", d)

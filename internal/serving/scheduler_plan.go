@@ -8,6 +8,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
+
+	"gonum.org/v1/gonum/mathext"
 )
 
 // schedulerWorkloadStates classifies every current Workload for this decision.
@@ -121,64 +124,136 @@ func schedulerInstanceRouting(ctx context.Context, workloads []*Definition, inst
 	return routing
 }
 
+// schedulerSearchPopulation counts the observation window's arrivals and each
+// Workload's load. Settings are valid (Validate): the control interval that
+// spaces the change-detection boundaries is positive.
 func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) SchedulerSearch {
-	search := SchedulerSearch{Bounds: settings, WindowStart: snapshot.ObservationEnd.Add(-settings.ObservationWindow), WindowEnd: snapshot.ObservationEnd, Population: "received events in [windowStart,windowEnd); validated compute arrivals (including capacity/evidence rejections) replayed; outstanding retained independently"}
+	search := SchedulerSearch{Bounds: settings, WindowStart: snapshot.ObservationEnd.Add(-settings.ObservationWindow), WindowEnd: snapshot.ObservationEnd, Population: "received events in [windowStart,windowEnd); each Workload's load from its windowStart; validated compute arrivals (including capacity/evidence rejections) replayed; outstanding retained independently"}
 	if snapshot.ObservedSince.After(search.WindowStart) {
 		search.WindowStart = snapshot.ObservedSince
 	}
-	search.RecentWindowStart = LaterTime(search.WindowStart, search.WindowEnd.Add(-settings.ControlInterval))
-	loads := map[string]*SchedulerLoad{}
+	inWindow := func(a SchedulerArrival) bool {
+		return !a.At.Before(search.WindowStart) && a.At.Before(search.WindowEnd)
+	}
+	uidOf := func(a SchedulerArrival) string {
+		if a.Definition != nil {
+			return a.Definition.UID
+		}
+		return a.WorkloadUID
+	}
+	times := map[string][]time.Time{} // each Workload's compute arrivals
 	for _, a := range snapshot.Arrivals {
 		if ctx.Err() != nil {
 			return search
 		}
-		if a.At.Before(search.WindowStart) || !a.At.Before(search.WindowEnd) {
+		if !inWindow(a) {
 			continue
 		}
-		uid := a.WorkloadUID
-		if a.Definition != nil {
-			uid = a.Definition.UID
-		}
-		if loads[uid] == nil {
-			loads[uid] = &SchedulerLoad{UID: uid}
-		}
-		load := loads[uid]
+		uid := uidOf(a)
+		at := times[uid]
 		search.Received++
-		load.Received++
 		if a.Accepted {
 			search.Accepted++
-			load.Accepted++
 		}
 		if a.computeInput() {
 			search.ComputeInputs++
-			load.ComputeInputs++
-			if !a.At.Before(search.RecentWindowStart) {
-				load.RecentComputeInputs++
-			}
+			at = append(at, a.At)
 		}
+		times[uid] = at
 	}
-	keys := []string{}
-	for key := range loads {
-		if ctx.Err() != nil {
-			return search
-		}
+	keys := make([]string, 0, len(times))
+	for key := range times {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	index := make(map[string]int, len(keys))
 	for _, key := range keys {
+		load := SchedulerLoad{UID: key, WindowStart: search.WindowStart}
+		if i := slices.IndexFunc(snapshot.Workloads, func(d *Definition) bool { return d != nil && d.UID == key }); i >= 0 {
+			load.WindowStart = schedulerLoadStart(settings.ControlInterval, snapshot.Workloads[i], times[key], search.WindowStart, search.WindowEnd, snapshot.LoadChangedAt[key])
+		}
+		index[key] = len(search.Loads)
+		search.Loads = append(search.Loads, load)
+	}
+	for _, a := range snapshot.Arrivals {
 		if ctx.Err() != nil {
 			return search
 		}
-		load := *loads[key]
-		if covered := search.WindowEnd.Sub(search.WindowStart); covered > 0 {
-			load.InputsPerSecond = float64(load.ComputeInputs) / covered.Seconds()
+		if !inWindow(a) {
+			continue
 		}
-		if covered := search.WindowEnd.Sub(search.RecentWindowStart); covered > 0 {
-			load.RecentInputsPerSecond = float64(load.RecentComputeInputs) / covered.Seconds()
+		load := &search.Loads[index[uidOf(a)]]
+		if a.At.Before(load.WindowStart) {
+			continue
 		}
-		search.Loads = append(search.Loads, load)
+		load.Received++
+		if a.Accepted {
+			load.Accepted++
+		}
+		if a.computeInput() {
+			load.ComputeInputs++
+		}
+	}
+	for k := range search.Loads {
+		if covered := search.WindowEnd.Sub(search.Loads[k].WindowStart); covered > 0 {
+			search.Loads[k].InputsPerSecond = float64(search.Loads[k].ComputeInputs) / covered.Seconds()
+		}
 	}
 	return search
+}
+
+// schedulerLoadStart is where Workload d's load starts in the observation
+// window [start, end): at the last change of its arrival rate. The stretch
+// since the change an earlier decision detected (changed), while that change
+// is inside the window, or else the whole window, is tested for the next one:
+// the control-interval boundary of the stretch after which d's compute
+// arrivals (times) least fit a Poisson stream at the stretch's mean rate starts
+// the load, when the exact two-sided binomial test of the count after it
+// rejects that fit at the level d's SLO percentile leaves, (1 - percentile/100),
+// shared among the stretch's boundaries. A stretch of one interval or less
+// holds no boundary, so nothing is tested and the stretch stands.
+func schedulerLoadStart(interval time.Duration, d *Definition, times []time.Time, start, end, changed time.Time) time.Time {
+	from := SchedulerLoadStretchStart(start, end, changed)
+	slices.SortFunc(times, time.Time.Compare)
+	times = times[sort.Search(len(times), func(i int) bool { return !times[i].Before(from) }):]
+	var splits []time.Time
+	for split := end.Add(-interval); split.After(from); split = split.Add(-interval) {
+		splits = append(splits, split)
+	}
+	level := (1 - d.SLO.Percentile/100) / float64(len(splits))
+	best, bestP := from, level
+	for _, split := range splits {
+		after := len(times) - sort.Search(len(times), func(i int) bool { return !times[i].Before(split) })
+		if p := binomialTwoSided(len(times), after, end.Sub(split).Seconds()/end.Sub(from).Seconds()); p < bestP {
+			best, bestP = split, p
+		}
+	}
+	return best
+}
+
+// SchedulerLoadStretchStart is where the stretch tested for the next change of
+// a Workload's arrival rate starts in the observation window [start, end): at
+// the change an earlier decision detected (changed) while it is inside the
+// window, else at the window start. A load starting after it is a detected
+// change.
+func SchedulerLoadStretchStart(start, end, changed time.Time) time.Time {
+	if changed.After(start) && changed.Before(end) {
+		return changed
+	}
+	return start
+}
+
+// binomialTwoSided is the exact two-sided p-value of k successes in n trials
+// of probability p: twice the smaller tail, at most 1.
+func binomialTwoSided(n, k int, p float64) float64 {
+	lower, upper := 1.0, 1.0 // P(X <= k), P(X >= k)
+	if k < n {
+		lower = mathext.RegIncBeta(float64(n-k), float64(k+1), 1-p)
+	}
+	if k > 0 {
+		upper = mathext.RegIncBeta(float64(k), float64(n-k+1), p)
+	}
+	return min(1, 2*min(lower, upper))
 }
 
 func schedulerMeasuredOptions(ctx context.Context, snapshot SchedulerSnapshot) []SchedulerOption {

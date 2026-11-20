@@ -28,7 +28,6 @@ func TestIdleSingleInstanceUsesItsProfileBase(t *testing.T) {
 	snap.Instances[0].Profile.Power = schedulerTestPower(118.44)
 	snap.Instances[0].Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(8.77)
 	s.ObservationWindow = time.Second
-	s.MinimumDemand = map[string]float64{"w1": 1}
 	capacityLoad(s, &snap, snap.Workloads[0], 1)
 	p := capacityPlannerForTest(t, s, snap)
 	got := p.evaluateEnergyForRoutes([]int{0}, 0, nil, 1, p.keep.Routing)
@@ -199,7 +198,6 @@ func TestCapacityEqualUnknownLoadCancelsAcrossPhases(t *testing.T) {
 func TestIdleExactCellRequiresMatchingMeter(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow = time.Second
-	s.MinimumDemand = map[string]float64{"w1": 1}
 	capacityLoad(s, &snap, snap.Workloads[0], 1)
 	snap.Baselines[0].State = []string{schedulerState(snap.Instances[0])}
 	snap.Baselines[0].Meter = "another-node-wall-meter"
@@ -219,7 +217,7 @@ func TestCapacityBridgeRecordsPhaseRequestPower(t *testing.T) {
 	rate := 0.0
 	for _, workload := range decision.Capacity.Workloads {
 		if workload.UID == "w2" {
-			rate = workload.ObservedRate
+			rate = workload.Rate
 		}
 	}
 	for _, plan := range decision.Capacity.Plans {
@@ -367,16 +365,15 @@ func withoutDerivedDistributions(d SchedulerDecision) SchedulerDecision {
 	return d
 }
 
-func TestEnergyMinimumDemandUsesObservedRates(t *testing.T) {
+func TestEnergyUsesLoadRate(t *testing.T) {
 	for _, observed := range []float64{0, 1, 2} {
 		s, snap := schedulerFixture()
 		s.ObservationWindow = time.Second
-		s.MinimumDemand = map[string]float64{"w1": 40}
 		capacityLoad(s, &snap, snap.Workloads[0], observed)
 		snap.Instances[0].Profile.Power = schedulerTestPower(100)
 		snap.Instances[0].Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(3)
 		p := capacityPlannerForTest(t, s, snap)
-		if want := (capacityDemand{rate: 40, observedRate: observed}); p.ws[0].capacityDemand != want || p.ws[0].least != want {
+		if p.ws[0].rate != observed {
 			t.Fatalf("rates: %+v", p.ws[0])
 		}
 		table := p.planTable()

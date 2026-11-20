@@ -492,7 +492,6 @@ func TestE2EKindSCHAC24FirstConfiguration(t *testing.T) {
 	c := kindScheduler(t, kube, []string{"w-on"}, []*serving.Profile{profile}, nil, []*core.Node{measured, other}, definition)
 	config := c.config
 	config.Settings.CompletionMarginMS = 139
-	config.Settings.MinimumDemand = map[string]float64{definition.UID: 1}
 	if err := c.SetConfiguration(config); err != nil {
 		t.Fatal(err)
 	}

@@ -20,7 +20,6 @@ func TestContinueReadyExpansionUsesCallerCancellation(t *testing.T) {
 	controller.config.Settings.Controls = serving.SchedulerControls{Routing: true}
 	snapshot := handoffSnapshot(t, controller)
 	uid := snapshot.Workloads[0].UID
-	controller.config.Settings.MinimumDemand = map[string]float64{uid: 100000}
 	var added serving.SchedulerInstance
 	for _, instance := range snapshot.Instances {
 		if instance.Node.Name == "b" {
@@ -44,10 +43,11 @@ func TestContinueReadyExpansionUsesCallerCancellation(t *testing.T) {
 	installTestTransition(controller, goal)
 	parent := controller.runs[transitionRunKind+"/"+goal.ID]
 	parent.admittedControls = controller.config.Settings.Controls
+	now := recordLoadForTest(t, controller, snapshot.Workloads[0], 100000)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- controller.Continue(ctx, time.Now()) }()
+	go func() { done <- controller.Continue(ctx, now) }()
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.DeadlineExceeded) {

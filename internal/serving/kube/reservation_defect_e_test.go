@@ -403,7 +403,8 @@ func TestDefectEPartialReturnKeepsPendingReplicaBudget(t *testing.T) {
 	c := handoffController(t)
 	base := handoffSnapshot(t, c)
 	uid := base.Workloads[0].UID
-	for _, variant := range []string{"uncreated", "created-slot", "late-identity", "inventory-loss"} {
+	const lateIdentity = "late-identity"
+	for _, variant := range []string{"uncreated", "created-slot", lateIdentity, "inventory-loss"} {
 		for _, limit := range []int{1, 2} {
 			t.Run(variant+string(rune('0'+limit)), func(t *testing.T) {
 				snapshot := base
@@ -429,11 +430,11 @@ func TestDefectEPartialReturnKeepsPendingReplicaBudget(t *testing.T) {
 				}
 				snapshot.Reservations = ledger.reservationsLocked()
 				snapshot.Reservations = append(snapshot.Reservations, snapshot.Reservations[0])
-				if variant == "created-slot" || variant == "late-identity" {
+				if variant == "created-slot" || variant == lateIdentity {
 					actual := pending
 					actual.ID, actual.TargetID, actual.Ready, actual.WorkloadUID, actual.OwnerWorkloadUID = "pending-pod/container", pending.ID, false, "", uid
 					actual.PodUID = "pending-pod"
-					if variant == "late-identity" {
+					if variant == lateIdentity {
 						prepare.result.Operation.Prepare.Config.Policy.DecisionID = "pending-policy"
 						prepare.result.Preparation = &servingstate.PreparationEvidence{PodUID: actual.PodUID, NodeUID: actual.Node.UID, DecisionID: "pending-policy", Created: true}
 						ledger.freezePreparingExecutorsLocked(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{actual}})
@@ -454,7 +455,15 @@ func TestDefectEPartialReturnKeepsPendingReplicaBudget(t *testing.T) {
 				settings.ControlInterval = settings.ObservationWindow
 				snapshot.ObservedSince = snapshot.ObservationEnd.Add(-settings.ObservationWindow)
 				settings.MaxReplicas, settings.MaxInstances = limit, limit
-				settings.MinimumDemand = map[string]float64{uid: 1}
+				// A created slot still preparing is committed capacity: only a load
+				// beyond what it supplies (1000 req/s) reaches the budgets; staying near it
+				// keeps the search inside its control-interval deadline.
+				created := variant == "created-slot" || variant == lateIdentity
+				load := 10.0
+				if created {
+					load = 1100
+				}
+				schedulerLoadForTest(&snapshot, snapshot.Workloads[0], settings.ObservationWindow, load)
 				decision, err := serving.EvaluateScheduler(context.Background(), settings, snapshot)
 				if err != nil {
 					t.Fatal(err)
@@ -474,8 +483,8 @@ func TestDefectEPartialReturnKeepsPendingReplicaBudget(t *testing.T) {
 					t.Fatalf("pending=1 maxReplicas/instances=%d independent prepares=%d reasons=%v", limit, prepares, decision.Reasons)
 				}
 				for _, plan := range decision.Capacity.Plans {
-					if plan.Node == pending.Node && plan.Key == decision.Keep.ID && (plan.RoutingRate[uid] != 0 || plan.RetainedRoutingRate[uid] != 0) {
-						t.Fatal("held pending executor supplied invented routing weight")
+					if plan.Node == pending.Node && plan.Key == decision.Keep.ID && (plan.RoutingRate[uid] != 0 || plan.RetainedRoutingRate[uid] != 0) != created {
+						t.Fatalf("pending executor supplied the wrong routing weight (created=%v): %+v", created, plan)
 					}
 				}
 			})

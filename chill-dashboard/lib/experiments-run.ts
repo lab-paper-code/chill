@@ -158,7 +158,6 @@ function settingEntries(patch: Record<string, unknown>, name: (uid: string) => s
       if (controls.length === settingControls.length && controls.every(([, on]) => on === controls[0][1])) return [["controls", "자동 조정 항목", `모두 ${onOff(controls[0][1])}`]]
       return controls.map(([control, on]) => [`controls.${control}`, settingControls.find(item => item.key === control)?.label ?? null, onOff(on)])
     }
-    if (key === "minimumDemand") return Object.entries(object(value)).map(([uid, rate]) => [`minimumDemand.${uid}`, `${patchKeyLabel(key)} ${name(uid)}`, `${plain(rate)} req/s`])
     if (key === "autonomousWorkloads" || key === "workloadPriority") return [[key, patchKeyLabel(key), list(value, name)]]
     if (key === "excludedNodes") return [[key, patchKeyLabel(key), list(value)]]
     if (key === "sloPriorityStrategy") return [[key, patchKeyLabel(key), value === "workload" ? "서비스 순위" : "목표 초과 정도"]]

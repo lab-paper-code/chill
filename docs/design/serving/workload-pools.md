@@ -49,7 +49,7 @@ runtime image와 관측 version, 모델과 전처리, Dataset, Node와 전력모
 
 ## 판단과 적용
 
-수요는 장기와 최근 도착률 중 큰 값에 미실행 대기의 기여를 한 번 더하고 `minimumDemand` 하한을 적용한다. [계획기](analytic-planner.md)는 모든 후보에 같은 수요와 요청 모집단을 사용한다.
+수요는 워크로드마다 하나인 부하 추정에 미실행 대기의 기여를 한 번 더한 값이다. 부하 추정은 워크로드의 부하 창 안 도착률이고, 부하 창은 도착률 변화를 감지한 시각에서 다시 시작한다. [계획기](analytic-planner.md)는 모든 후보에 같은 수요와 요청 모집단을 사용한다.
 
 분배 후 저비용 탐색과 정밀 재생을 구분한다. 전체 충족 우선이며 미충족은 기한 내 미완료 비율, 유한 성공 초과와 조건부 potential 순이다.
 
@@ -63,4 +63,4 @@ TOTAL과 POST는 Workload의 관측 SLO percentile에서 구하고, POST는 경�
 
 비자율 Workload 배분은 route, unroute와 release 작업을 사용한다. settings PUT의 staticRouting은 읽기 전용이라 거절된다. 정리는 reset과 actual readback을 사용한다. [수동 원자 실행](scheduler-operations.md#수동-원자-실행)을 따른다.
 
-대량 수집 전 대표 측정의 생성, raw와 projection, planner 소비와 실제 반환을 확인한다. 같은 비교의 trace, seed, 요청 수명, SLO와 최소 수요, 시작 상태를 동결한다. 수치 예측을 실측 수용 결과로 보고하지 않는다.
+대량 수집 전 대표 측정의 생성, raw와 projection, planner 소비와 실제 반환을 확인한다. 같은 비교의 trace, seed, 요청 수명, SLO, 시작 상태를 동결한다. 수치 예측을 실측 수용 결과로 보고하지 않는다.

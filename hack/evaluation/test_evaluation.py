@@ -48,7 +48,7 @@ SERVER_READ_ONLY = {'staticRouting', 'staticRoutingValidatedAt', 'powerObservati
 class SettingsAPI:
     def __init__(self):
         self.value = {'controls': {'power': True, 'routing': True, 'replicas': True}, 'controlIntervalNanos': 30,
-                      'minimumDemand': {'other': 7, 'remove': 9}, 'autonomousWorkloads': ['one'],
+                      'autonomousWorkloads': ['one'],
                       'meters': ['read-only'], 'requestTimeout': 999, 'staticRouting': {}, 'powerObservation': {},
                       'staticRoutingValidatedAt': '2026-11-03T00:00:00Z'}
         self.calls, self.reject_codes = [], []
@@ -409,7 +409,7 @@ class EvaluationTests(unittest.TestCase):
             root = Path(directory)
             harness, state, objects, kube = live_fixture(root)
             state['decision'].update(status='Pending', workloads=[{'uid': 'workload-full', 'state': 'Fixed', 'reason': 'ReservedScope: diagnostic'}],
-                                     search={'loads': [{'workloadUID': 'workload-full', 'inputsPerSecond': 1, 'recentInputsPerSecond': 2}]})
+                                     search={'loads': [{'workloadUID': 'workload-full', 'inputsPerSecond': 1, 'windowStart': START}]})
             state['actions'] = [{'id': 'power-change', 'kind': 'power', 'node': {'name': 'dynamic'}, 'status': 'partial'}]
             objects['nodes'][0]['status']['conditions'][0]['status'] = 'False'
             objects['pods'][0]['status']['containerStatuses'] = [{'restartCount': 2, 'lastState': {'terminated': {'reason': 'OOMKilled'}}}]
@@ -439,7 +439,7 @@ class EvaluationTests(unittest.TestCase):
             self.assertGreaterEqual(row['harness']['vmHWMKiB'], row['harness']['vmRSSKiB'])
             alerts = [json.loads(line) for line in watcher.alerts.read_text().splitlines()]
             self.assertEqual({alert['key'][0] for alert in alerts},
-                             {'actionOnRisingLoad', 'action', 'executor', 'node', 'pod', 'loadJob'})
+                             {'action', 'executor', 'node', 'pod', 'loadJob'})
             self.assertTrue(any(alert['key'][2] == 'reboot' for alert in alerts if alert['key'][0] == 'node'))
             self.assertTrue(all(call.args[0].startswith('EVALUATION_ALERT ') for call in log.call_args_list))
 
@@ -754,18 +754,16 @@ class EvaluationTests(unittest.TestCase):
         before = copy.deepcopy(api.value)
         with tempfile.TemporaryDirectory() as directory:
             receipt = Path(directory) / 'patch.json'
-            applied = settings_patch.factor_apply(api, {'controls': {'power': False}, 'controlIntervalNanos': 42, 'autonomousWorkloads': ['two'], 'minimumDemand': {'remove': None}}, receipt)
+            applied = settings_patch.factor_apply(api, {'controls': {'power': False, 'replicas': None}, 'controlIntervalNanos': 42, 'autonomousWorkloads': ['two']}, receipt)
             self.assertTrue(applied['accepted'])
             self.assertIn('appliedAt', applied)
-            self.assertNotIn('remove', api.value['minimumDemand'])
+            self.assertNotIn('replicas', api.value['controls'])
             self.assertEqual([call[0] for call in api.calls], ['GET', 'PUT', 'GET'])
             api.value['controls']['routing'] = False
-            api.value['minimumDemand']['other'] = 8
             settings_patch.factor_revert(api, receipt)
             self.assertEqual([call[0] for call in api.calls], ['GET', 'PUT', 'GET', 'GET', 'PUT', 'GET'])
             expected = copy.deepcopy(before)
             expected['controls']['routing'] = False
-            expected['minimumDemand']['other'] = 8
             self.assertEqual(api.value, expected)
             final = evidence_io.load(receipt)
             for key in ('request', 'response', 'readback', 'appliedAt', 'revertRequest', 'revertResponse', 'revertReadback', 'revertedAt'):
@@ -880,9 +878,9 @@ class EvaluationTests(unittest.TestCase):
         api = SettingsAPI()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
-            settings_patch.factor_apply(api, {'minimumDemand': {'new': 7}}, path)
+            settings_patch.factor_apply(api, {'controls': {'batching': True}}, path)
             settings_patch.factor_revert(api, path)
-            self.assertNotIn('new', api.value['minimumDemand'])
+            self.assertNotIn('batching', api.value['controls'])
 
     def test_null_control_uses_canonical_applied_value_for_readback_and_revert(self):
         api = SettingsAPI()
@@ -903,24 +901,24 @@ class EvaluationTests(unittest.TestCase):
 
     def test_new_map_reverts_only_own_members_and_preserves_external_entry(self):
         api = SettingsAPI()
-        del api.value['minimumDemand']
+        del api.value['controls']
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
-            receipt = settings_patch.factor_apply(api, {'minimumDemand': {'evaluation': 7}}, path)
-            self.assertEqual(receipt['changed'][0]['path'], ['minimumDemand', 'evaluation'])
-            api.value['minimumDemand']['operator'] = 9
+            receipt = settings_patch.factor_apply(api, {'controls': {'batching': True}}, path)
+            self.assertEqual(receipt['changed'][0]['path'], ['controls', 'batching'])
+            api.value['controls']['routing'] = False
             settings_patch.factor_revert(api, path)
-            self.assertEqual(api.value['minimumDemand'], {'operator': 9})
+            self.assertEqual(api.value['controls'], {'routing': False})
             self.assertEqual(evidence_io.load(path)['revertSkipped'], [])
 
     def test_new_map_is_removed_when_own_member_cleanup_leaves_it_empty(self):
         api = SettingsAPI()
-        del api.value['minimumDemand']
+        del api.value['controls']
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
-            settings_patch.factor_apply(api, {'minimumDemand': {'evaluation': 7}}, path)
+            settings_patch.factor_apply(api, {'controls': {'batching': True}}, path)
             settings_patch.factor_revert(api, path)
-            self.assertNotIn('minimumDemand', api.value)
+            self.assertNotIn('controls', api.value)
 
     def test_empty_patch_is_read_only(self):
         api = SettingsAPI()

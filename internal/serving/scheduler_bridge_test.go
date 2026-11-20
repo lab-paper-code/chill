@@ -11,7 +11,7 @@ func capacityBridgeFixture(t *testing.T) (SchedulerSettings, SchedulerSnapshot, 
 	t.Helper()
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ComparisonPeriod = 6*s.ControlInterval, 600*s.ControlInterval
-	s.MinimumDemand = map[string]float64{"w1": .52, "w2": 20}
+	capacityLoad(s, &snap, snap.Workloads[0], .52)
 	s.AutonomousWorkloads = append(s.AutonomousWorkloads, "w2")
 	snap.Workloads[0].SLO.TargetLatency = 7 * s.ControlInterval
 	other := poolsAddWorkload(&snap, "w2")
@@ -19,6 +19,7 @@ func capacityBridgeFixture(t *testing.T) (SchedulerSettings, SchedulerSnapshot, 
 	other.Model.Name = "bridge-model"
 	other.Model.Paths = slices.Clone(other.Model.Paths)
 	other.Model.Paths[0].Artifact = "bridge-model"
+	capacityLoad(s, &snap, other, 20)
 	blocked := poolsAddNode(&snap, "blocked", map[string]float64{"fixed": 10})
 	spare := poolsAddNode(&snap, "spare", map[string]float64{"fixed": 10})
 	blocker := poolsInstance(snap.Instances[0], "blocker", blocked, "fixed", "w2")
@@ -196,8 +197,7 @@ func TestBridgeExcludesIndependentlyRetiringIdleDestination(t *testing.T) {
 	capacityServiceRatesForTest(&snapshot, map[string]float64{
 		snapshot.Instances[0].Profile.ID: .372,
 	})
-	keep := SchedulerCandidate{Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
-	planner := newCapacityPlanner(context.Background(), settings, snapshot, keep, decision)
+	planner := newCapacityPlanner(context.Background(), settings, snapshot, snapshot.Nodes, decision)
 	planner.plans = make([][]*capacityPlan, len(snapshot.Nodes))
 	for n, node := range snapshot.Nodes {
 		plan := &capacityPlan{mode: node.PowerMode}

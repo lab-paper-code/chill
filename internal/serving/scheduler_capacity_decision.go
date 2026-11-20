@@ -21,7 +21,7 @@ const (
 // target, or a target whose actions come from schedulerPlan.
 func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult) SchedulerDecision {
 	keepResult := p.evaluateCurrentKeep(best.period)
-	decision.Measurements = p.remembered
+	decision.Measurements, decision.Committed = p.remembered, p.committed
 	keep := &decision.Keep
 	keep.Feedback, keep.SLO, keep.ConditionalService = keepResult.feedback, keepResult.slo, keepResult.conditional
 	keep.Assumptions, keep.Sources = keepResult.assumptions, keepResult.sources
@@ -46,7 +46,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	p.recordNodePlans(best, keepResult, record)
 	for w, ws := range p.ws {
 		record.Workloads = append(record.Workloads, SchedulerCapacityWorkload{
-			UID: ws.d.UID, Rate: ws.rate, ObservedRate: ws.observedRate, MinimumDemand: p.settings.MinimumDemand[ws.d.UID], Queued: ws.queued,
+			UID: ws.d.UID, Rate: ws.rate, Queued: ws.queued,
 			RoutingRate: best.sums[w][0], RetainedRoutingRate: best.sums[w][1], Weights: best.weights[w],
 		})
 	}

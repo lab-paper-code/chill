@@ -7,7 +7,7 @@ import (
 )
 
 func TestCapacityHeuristicFrozenArithmetic(t *testing.T) {
-	w := capacityWorkload{d: &Definition{UID: "w", SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}, totalNanos: 20e6, queued: 2, capacityDemand: capacityDemand{rate: 10, observedRate: 10}}
+	w := capacityWorkload{d: &Definition{UID: "w", SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}, totalNanos: 20e6, queued: 2, rate: 10}
 	for _, tc := range []struct {
 		name              string
 		mu, service, want float64
@@ -25,7 +25,7 @@ func TestCapacityHeuristicFrozenArithmetic(t *testing.T) {
 }
 
 func TestCapacityHeuristicRetainedDrainAndHorizon(t *testing.T) {
-	w := capacityWorkload{d: &Definition{UID: "w", SLO: SLO{Percentile: 100, TargetLatency: time.Second}}, totalNanos: 20e6, queued: 4, capacityDemand: capacityDemand{rate: 1, observedRate: 1}}
+	w := capacityWorkload{d: &Definition{UID: "w", SLO: SLO{Percentile: 100, TargetLatency: time.Second}}, totalNanos: 20e6, queued: 4, rate: 1}
 	for _, tc := range []struct {
 		name                                       string
 		mu, retained, route, period, service, want float64
@@ -55,7 +55,7 @@ func TestCapacityHeuristicZeroSupplyEligibility(t *testing.T) {
 		{"empty", 0, 0, true}, {"arrivals", 1, 0, false}, {"captured-backlog", 0, 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			w := capacityWorkload{d: &Definition{SLO: SLO{TargetLatency: time.Second}}, capacityDemand: capacityDemand{rate: tc.rate, observedRate: tc.rate}, queued: tc.queued}
+			w := capacityWorkload{d: &Definition{SLO: SLO{TargetLatency: time.Second}}, rate: tc.rate, queued: tc.queued}
 			var arrivals []float64
 			if tc.rate > 0 {
 				arrivals = []float64{0}
@@ -69,7 +69,7 @@ func TestCapacityHeuristicZeroSupplyEligibility(t *testing.T) {
 }
 
 func TestCapacityHeuristicUsesFrozenServiceAndTotalOnce(t *testing.T) {
-	w := capacityWorkload{d: &Definition{SLO: SLO{TargetLatency: 100 * time.Millisecond}}, capacityDemand: capacityDemand{rate: 1, observedRate: 1}, totalNanos: 40e6}
+	w := capacityWorkload{d: &Definition{SLO: SLO{TargetLatency: 100 * time.Millisecond}}, rate: 1, totalNanos: 40e6}
 	got, eligible := capacityHeuristic(w, []float64{0}, 10, 10, 10*70e6, 10*70e6, 0, 1)
 	if !eligible || math.Abs(got-.1) > 1e-14 {
 		t.Fatalf("TOTAL+service must be 110ms: excess=%g eligible=%t", got, eligible)

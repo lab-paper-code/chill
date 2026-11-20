@@ -40,8 +40,6 @@ type SchedulerSettings struct {
 	// the supplied Workload order. Unknown UIDs remain stored for evaluation.
 	SLOPriorityStrategy string   `json:"sloPriorityStrategy,omitempty"`
 	WorkloadPriority    []string `json:"workloadPriority"`
-	// MinimumDemand floors planning demand in requests/second by Workload UID.
-	MinimumDemand map[string]float64 `json:"minimumDemand,omitempty"`
 	// ExcludedNodes names Nodes the planner keeps as they are, like
 	// measurement Nodes: no placement, removal, power change or lowering.
 	ExcludedNodes []string `json:"excludedNodes"`
@@ -75,7 +73,6 @@ func (s SchedulerSettings) Clone() SchedulerSettings {
 	s.AutonomousWorkloads = slices.Clone(s.AutonomousWorkloads)
 	s.WorkloadPriority = slices.Clone(s.WorkloadPriority)
 	s.ExcludedNodes = slices.Clone(s.ExcludedNodes)
-	s.MinimumDemand = maps.Clone(s.MinimumDemand)
 	s.DefaultOperationCost = maps.Clone(s.DefaultOperationCost)
 	if s.DefaultIdlePower != nil {
 		idle := *s.DefaultIdlePower
@@ -469,14 +466,19 @@ type SchedulerSnapshot struct {
 	Costs          []OperationCost             `json:"costs"`
 	// DispatchOccupancy holds the selected d and provenance per accepted
 	// node/model/mode/profile/execution path/batch, including configured defaults.
-	DispatchOccupancy []DispatchOccupancy    `json:"dispatchOccupancy"`
-	CostRefs          []string               `json:"costRefs,omitempty"`
-	Actions           []Action               `json:"actions"`
-	Reasons           []string               `json:"reasons"`
-	References        []string               `json:"references"`
-	Reservations      []SchedulerReservation `json:"reservations,omitempty"`
+	DispatchOccupancy []DispatchOccupancy `json:"dispatchOccupancy"`
+	CostRefs          []string            `json:"costRefs,omitempty"`
+	Actions           []Action            `json:"actions"`
+	Reasons           []string            `json:"reasons"`
+	References        []string            `json:"references"`
+	// Reservations are in launch order: their owners' first actions' starts.
+	Reservations []SchedulerReservation `json:"reservations,omitempty"`
 	// Measurements are the remembered misses the last decision returned.
 	Measurements []SchedulerMeasurement `json:"measurements,omitempty"`
+	// LoadChangedAt is, by Workload UID, the latest arrival-rate change an
+	// earlier decision detected (SchedulerLoad.WindowStart). It starts the
+	// Workload's load window while it lies inside the observation window.
+	LoadChangedAt map[string]time.Time `json:"loadChangedAt,omitempty"`
 	// replayScope is immutable, decision-local prediction authority, never stored.
 	replayScope *schedulerReplayScope
 }
@@ -522,27 +524,30 @@ type SchedulerCandidate struct {
 type SchedulerSearch struct {
 	// Examined counts node plans built, not plan-set candidates evaluated by
 	// the sweep (Capacity.Search.Evaluated).
-	Examined          int               `json:"examined"`
-	Bounds            SchedulerSettings `json:"bounds"`
-	WindowStart       time.Time         `json:"windowStart"`
-	WindowEnd         time.Time         `json:"windowEnd"`
-	RecentWindowStart time.Time         `json:"recentWindowStart"`
-	Received          int               `json:"received"`
-	Accepted          int               `json:"accepted"`
-	ComputeInputs     int               `json:"computeInputs"`
-	Population        string            `json:"population"`
-	Loads             []SchedulerLoad   `json:"loads"`
+	Examined      int               `json:"examined"`
+	Bounds        SchedulerSettings `json:"bounds"`
+	WindowStart   time.Time         `json:"windowStart"`
+	WindowEnd     time.Time         `json:"windowEnd"`
+	Received      int               `json:"received"`
+	Accepted      int               `json:"accepted"`
+	ComputeInputs int               `json:"computeInputs"`
+	Population    string            `json:"population"`
+	Loads         []SchedulerLoad   `json:"loads"`
 	// ComparedNodes are the Nodes with an eligible plan other than keep; ExpectedJoules sums only them.
 	ComparedNodes []NodeReference `json:"comparedNodes"`
 }
+
+// SchedulerLoad is one Workload's load: its arrivals since WindowStart, the
+// last detected change of its arrival rate in the observation window or the
+// window's start (schedulerLoadStart). Demand, replay, energy and payback all
+// read it.
 type SchedulerLoad struct {
-	UID                   string  `json:"uid"`
-	Received              int     `json:"received"`
-	Accepted              int     `json:"accepted"`
-	ComputeInputs         int     `json:"computeInputs"`
-	InputsPerSecond       float64 `json:"inputsPerSecond"`
-	RecentComputeInputs   int     `json:"recentComputeInputs"`
-	RecentInputsPerSecond float64 `json:"recentInputsPerSecond"`
+	UID             string    `json:"uid"`
+	WindowStart     time.Time `json:"windowStart"`
+	Received        int       `json:"received"`
+	Accepted        int       `json:"accepted"`
+	ComputeInputs   int       `json:"computeInputs"`
+	InputsPerSecond float64   `json:"inputsPerSecond"`
 }
 
 // Workload decision states.
@@ -559,9 +564,13 @@ type SchedulerWorkloadState struct {
 }
 
 type SchedulerDecision struct {
-	At           time.Time                `json:"at"`
-	Status       string                   `json:"status"`
-	Keep         SchedulerCandidate       `json:"keep"`
+	At     time.Time          `json:"at"`
+	Status string             `json:"status"`
+	Keep   SchedulerCandidate `json:"keep"`
+	// Committed are the instances still preparing for a reserved target that
+	// Keep's and Target's predictions count as Ready (schedulerCommittedView).
+	// Keep's Instances and Routing are the running configuration.
+	Committed    []string                 `json:"committed,omitempty"`
 	Target       *SchedulerCandidate      `json:"target"`
 	Reasons      []string                 `json:"reasons"`
 	Settings     SchedulerSettings        `json:"settings"`
@@ -614,11 +623,6 @@ func (s SchedulerSettings) Validate() error {
 	}
 	if err := s.validateSLOPriority(); err != nil {
 		return err
-	}
-	for uid, rate := range s.MinimumDemand {
-		if uid == "" || !schedulerFinite(rate) || rate < 0 {
-			return fmt.Errorf("minimumDemand entries need nonempty Workload UIDs and finite nonnegative rates")
-		}
 	}
 	if s.CapacityMinimumRequests < 1 {
 		return fmt.Errorf("capacityMinimumRequests must be at least 1")

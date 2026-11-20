@@ -92,7 +92,6 @@ func terminatedPodReplacementPlan(t *testing.T, c *SchedulerController, old serv
 			At: snapshot.ObservationEnd.Add(-80*time.Millisecond + time.Duration(index)*10*time.Millisecond)})
 	}
 	c.config.Settings.ComparisonPeriod = time.Second
-	c.config.Settings.MinimumDemand = map[string]float64{uid: 1}
 	c.config.Settings.DefaultOperationCost[servingstate.OperationRemove] = serving.OperationCostValue{Seconds: .001, Joules: .01}
 	decision, err := serving.EvaluateScheduler(c.ctx, c.config.Settings, snapshot)
 	if err != nil {

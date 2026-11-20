@@ -68,8 +68,8 @@ func replayKey(t *serving.SchedulerCandidate) string {
 }
 
 func replaySettings(base, recorded serving.SchedulerSettings, margin float64) serving.SchedulerSettings {
-	// Preserve all recorded control policy, including minimum demand, exclusions,
-	// and headroom; only offline numerical settings come from base.
+	// Preserve all recorded control policy, including exclusions and headroom;
+	// only offline numerical settings come from base.
 	recorded.CapacityMinimumRequests, recorded.CapacityGridSteps = base.CapacityMinimumRequests, base.CapacityGridSteps
 	recorded.CapacityBisectionWidth, recorded.CapacityTailSamples = base.CapacityBisectionWidth, base.CapacityTailSamples
 	recorded.PlanSearchWorkers = base.PlanSearchWorkers

@@ -97,7 +97,7 @@ func TestReadyExpansionRefusesSlowerExecutor(t *testing.T) {
 		t.Run(binding, func(t *testing.T) {
 			settings, snapshot := schedulerFixture()
 			settings.ObservationWindow, settings.ComparisonPeriod = time.Second, time.Second
-			settings.MinimumDemand = map[string]float64{snapshot.Workloads[0].UID: 10}
+			capacityLoad(settings, &snapshot, snapshot.Workloads[0], 10)
 			snapshot.Workloads[0].SLO.TargetLatency = 50 * time.Millisecond
 			old := snapshot.Instances[0]
 			node := poolsAddNode(&snapshot, "slow-ready", map[string]float64{"fixed": 10})

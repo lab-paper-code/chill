@@ -136,12 +136,12 @@ function Latency({ decision, name }: { decision: SchedulerDecision; name: Names 
   )
 }
 
-type DemandRow = { uid: string; received: number | null; accepted: number | null; inputs: number | null; planned: number | null }
+type DemandRow = { uid: string; since: string | null; received: number | null; accepted: number | null; inputs: number | null; planned: number | null }
 function Inputs({ decision, name }: { decision: SchedulerDecision; name: Names }) {
   const s = decision.search
   const rows = new Map<string, DemandRow>()
-  const row = (uid: string) => rows.get(uid) ?? rows.set(uid, { uid, received: null, accepted: null, inputs: null, planned: null }).get(uid)!
-  for (const load of s?.loads ?? []) Object.assign(row(load.uid), { received: load.received, accepted: load.accepted, inputs: load.inputsPerSecond })
+  const row = (uid: string) => rows.get(uid) ?? rows.set(uid, { uid, since: null, received: null, accepted: null, inputs: null, planned: null }).get(uid)!
+  for (const load of s?.loads ?? []) Object.assign(row(load.uid), { since: load.windowStart, received: load.received, accepted: load.accepted, inputs: load.inputsPerSecond })
   for (const workload of decision.capacity?.workloads ?? []) row(workload.uid).planned = workload.rate
   const list = [...rows.values()].sort((a, b) => (name(a.uid) ?? a.uid).localeCompare(name(b.uid) ?? b.uid))
   return (
@@ -156,6 +156,7 @@ function Inputs({ decision, name }: { decision: SchedulerDecision; name: Names }
         </Section>
         <DataTable label="서비스별 입력 수요" rows={list} rowKey={item => item.uid} pageSize={0} empty={<EmptyState compact title="입력 없음" />} columns={[
           { key: "service", header: "서비스", width: "32%", cell: item => <Service uid={item.uid} name={name} /> },
+          { key: "since", header: "입력 시작", cell: item => item.since == null ? null : formatKst(item.since).slice(11) },
           { key: "received", header: "받은 요청", unit: "건", numeric: true, cell: item => item.received == null ? null : formatNumber(item.received) },
           { key: "accepted", header: "접수", unit: "건", numeric: true, cell: item => item.accepted == null ? null : formatNumber(item.accepted) },
           { key: "inputs", header: "입력률", unit: "개/s", numeric: true, cell: item => item.inputs == null ? null : formatNumber(item.inputs, 2) },

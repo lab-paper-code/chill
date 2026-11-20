@@ -54,11 +54,6 @@ const fieldText = (key: FieldKey, value: unknown) => {
   const text = fieldInput(key, { [key]: value } as unknown as SchedulerSettings)
   return typeof text === "string" ? text : ""
 }
-const rate = (text: string) => {
-  const value = Number(text.trim())
-  if (!/^\d+(?:\.\d+)?$/.test(text.trim()) || !Number.isFinite(value)) throw new Error("0 이상 숫자")
-  return value
-}
 
 /** Settings changes of a run or a stage: one typed input per added scheduler setting key. */
 export function SettingsPatchEditor({ id, patch, onChange, context }: { id: string; patch: Spec; onChange: (patch: Spec) => void; context: Context }) {
@@ -132,7 +127,6 @@ function PatchValue({ id, name, value, onChange, context }: { id: string; name: 
           <ToggleGroupItem value="workload">서비스 순위</ToggleGroupItem>
         </ToggleGroup>
       )
-    case "minimumDemand": return <DemandEditor id={id} value={object(value)} onChange={onChange} services={context.services} />
     case "workloadPriority": return <PriorityEditor value={Array.isArray(value) ? value.map(String) : []} onChange={onChange} services={context.services} />
   }
   const field = settingFields.find(item => item.key === name)!
@@ -147,27 +141,6 @@ function PatchValue({ id, name, value, onChange, context }: { id: string; name: 
   return (
     <div className="sm:w-64">
       <CodecInput id={id} label={label} hideLabel initial={fieldText(name, value)} unit={fieldUnit(name)} parse={text => parseField(name, text)} onValue={onChange} />
-    </div>
-  )
-}
-
-function DemandEditor({ id, value, onChange, services }: { id: string; value: Spec; onChange: (value: Spec) => void; services: Service[] }) {
-  const uids = Object.keys(value)
-  const free = services.filter(service => !service.retired && !uids.includes(service.uid))
-  return (
-    <div className="grid gap-2">
-      {uids.map(uid => (
-        <div key={uid} className="grid grid-cols-[minmax(0,1fr)_9rem_auto] items-center gap-2">
-          <span className="truncate text-sm">{serviceName(services, uid)}</span>
-          <CodecInput id={`${id}:${uid}`} label={`${serviceName(services, uid)} 최소 수요`} hideLabel initial={String(value[uid] ?? "")} unit="req/s" parse={rate} onValue={rate => onChange({ ...value, [uid]: rate })} />
-          <Button type="button" size="icon" variant="ghost" className="size-7" aria-label={`${serviceName(services, uid)} 제거`} onClick={() => { const next = { ...value }; delete next[uid]; onChange(next) }}><X /></Button>
-        </div>
-      ))}
-      {free.length > 0 && (
-        <div className="sm:w-64">
-          <Select inputSize="sm" searchable placeholder="서비스 추가" value="" options={free.map(service => ({ value: service.uid, label: service.name }))} onChange={uid => onChange({ ...value, [uid]: 0 })} />
-        </div>
-      )}
     </div>
   )
 }

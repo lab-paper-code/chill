@@ -13,6 +13,7 @@ func TestSchedulerEvaluationTimingStages(t *testing.T) {
 			settings, snapshot := schedulerFixture()
 			settings.PlanSearchStrategy = strategy
 			snapshot.ObservedSince = snapshot.ObservationEnd.Add(-time.Hour)
+			capacityLoad(settings, &snapshot, snapshot.Workloads[0], 10)
 			started := time.Now()
 			decision := capacityDecideForTest(t, settings, snapshot)
 			elapsed := time.Since(started)

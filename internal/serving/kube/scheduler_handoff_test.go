@@ -98,7 +98,6 @@ func handoffController(t *testing.T, extraNodes ...string) *SchedulerController 
 	settings.ObservationWindow = 100 * time.Millisecond
 	settings.ControlInterval = time.Millisecond
 	uid := settings.AutonomousWorkloads[0]
-	settings.MinimumDemand = map[string]float64{uid: 0}
 	c.config.Preparations = map[string]servingstate.PrepareSpec{}
 	for _, profile := range c.observer.Profiles() {
 		spec := measuredCPUPreparationFixture()
@@ -291,7 +290,7 @@ func finishFailedHandoff(t *testing.T, c *SchedulerController, goal *serving.Sch
 		return slices.Contains(parent.result.Operation.Nodes, instance.Node) && before[uid][instance.ID] <= 0 &&
 			instance.Ready && !instance.Stopped && routing[uid][instance.ID] > 0
 	}) {
-		t.Fatalf("next IC route did not admit Ready capacity after return: %v; reasons=%v demand=%v capacity=%+v", routing, decision.Reasons, c.config.Settings.MinimumDemand, decision.Capacity.Workloads)
+		t.Fatalf("next IC route did not admit Ready capacity after return: %v; reasons=%v capacity=%+v", routing, decision.Reasons, decision.Capacity.Workloads)
 	}
 }
 

@@ -3,6 +3,8 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -133,7 +135,6 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			settings.ObservationWindow = 100 * time.Millisecond
 			settings.Controls = serving.SchedulerControls{Placement: true, Resources: true, Membership: true, Replicas: true, Routing: true, Batching: true}
 			settings.AutonomousWorkloads = []string{w1.UID, w2.UID}
-			settings.MinimumDemand = map[string]float64{w2.UID: 0}
 			c.config.Preparations = map[string]servingstate.PrepareSpec{}
 			for _, profile := range profiles {
 				profile.Power = catalogTestPower("10")
@@ -192,11 +193,10 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				}
 			}
 			// A new demand is evaluated by Tick while the actual power wait remains live.
-			settings.MinimumDemand[w2.UID] = 2
 			waitReservationTest(t, ctx, func() bool {
 				return !time.Now().Before(first.ObservedSince.Add(settings.ObservationWindow))
 			})
-			decision, err := c.Tick(ctx, time.Now())
+			decision, err := c.Tick(ctx, recordLoadForTest(t, c, &w2, 10))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -308,6 +308,93 @@ func waitReservationTest(t *testing.T, ctx context.Context, ready func() bool) {
 	}
 }
 
+// recordLoadForTest records rate req/s of d's accepted requests spread evenly
+// over the observation window that ends now, and returns now.
+func recordLoadForTest(t *testing.T, c *SchedulerController, d *serving.Definition, rate float64) time.Time {
+	t.Helper()
+	if err := c.observationLog.DefinitionRecord(d); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	window := c.config.Settings.ObservationWindow
+	n := int(math.Round(rate * window.Seconds()))
+	for j := range n {
+		at := now.Add(-window + time.Duration(j)*window/time.Duration(n))
+		id := fmt.Sprintf("%s-%d-%d", d.UID, now.UnixNano(), j)
+		for _, kind := range []string{"received", "accepted"} {
+			if err := c.observationLog.RequestEvent(serving.RequestEvent{RequestID: id, WorkloadName: d.Name, WorkloadUID: d.UID, Definition: d.Identity(), Kind: kind, At: at, ReceivedAt: at}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return now
+}
+
+// A change in the arrival rate one evaluation detects is remembered for the
+// next: the next capture carries it, and the next decision's load window stays
+// at it while the rate after it holds, where a fresh test of the whole window
+// would start it at a boundary of its own. A decision that is discarded
+// (here its record cannot be persisted) is remembered like an approved one.
+func TestTickRemembersTheDetectedLoadChange(t *testing.T) {
+	for _, discarded := range []bool{false, true} {
+		t.Run(fmt.Sprint("discarded=", discarded), func(t *testing.T) { tickRemembersTheDetectedLoadChange(t, discarded) })
+	}
+}
+
+func tickRemembersTheDetectedLoadChange(t *testing.T, discarded bool) {
+	c, prepared := tickReadySubsetController(t, func(int, *native.State) {})
+	prepared.Store(true)
+	if discarded {
+		c.config.OnDecision = func(serving.SchedulerDecision, serving.SchedulerSnapshot) error { return errors.New("disk full") }
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	c.ctx = ctx
+	t.Cleanup(func() { cancel(); c.wg.Wait() })
+	settings := &c.config.Settings
+	settings.ObservationWindow, settings.ControlInterval = 2*time.Second, 500*time.Millisecond
+	settings.Controls = serving.SchedulerControls{}
+	waitReservationTest(t, ctx, func() bool { return time.Since(c.observationLog.Started()) > settings.ObservationWindow })
+	d := c.runtime.SchedulerInputs(time.Now).Workloads[0]
+	if err := c.observationLog.DefinitionRecord(d); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	step := now.Add(-time.Second)
+	for _, part := range []struct {
+		from time.Time
+		n    int
+	}{{now.Add(-settings.ObservationWindow), 10}, {step, 100}} { // 10 then 100 req/s
+		for j := range part.n {
+			at := part.from.Add(time.Duration(j) * time.Second / time.Duration(part.n))
+			id := fmt.Sprintf("%s-%d-%d", d.UID, part.n, j)
+			for _, kind := range []string{"received", "accepted"} {
+				if err := c.observationLog.RequestEvent(serving.RequestEvent{RequestID: id, WorkloadName: d.Name, WorkloadUID: d.UID, Definition: d.Identity(), Kind: kind, At: at, ReceivedAt: at}); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	first, err := c.Tick(ctx, now)
+	if (err != nil) != discarded {
+		t.Fatalf("fixture: discarded=%v but the tick returned %v", discarded, err)
+	}
+	at := slices.IndexFunc(first.Search.Loads, func(l serving.SchedulerLoad) bool { return l.UID == d.UID })
+	if at < 0 || !first.Search.Loads[at].WindowStart.Equal(step) {
+		t.Fatalf("fixture: the step at %v was not detected: %+v", step, first.Search)
+	}
+	second, err := c.Tick(ctx, time.Now())
+	if (err != nil) != discarded {
+		t.Fatalf("fixture: discarded=%v but the second tick returned %v", discarded, err)
+	}
+	if got := c.State().Snapshot.LoadChangedAt[d.UID]; !got.Equal(step) {
+		t.Fatalf("the next capture lost the detected change: %v, want %v", got, step)
+	}
+	at = slices.IndexFunc(second.Search.Loads, func(l serving.SchedulerLoad) bool { return l.UID == d.UID })
+	if at < 0 || !second.Search.Loads[at].WindowStart.Equal(step) {
+		t.Fatalf("the next decision's load window left the remembered change at %v: %+v", step, second.Search)
+	}
+}
+
 // AC-43 exercises positive-reserve planning and native execution while source
 // removal is still owned and the Ready reserve serves the actual request.
 //
@@ -322,12 +409,11 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	release := make(chan struct{})
 	t.Cleanup(func() { cancel(); close(release); c.wg.Wait() })
 	settings := &c.config.Settings
-	settings.ObservationWindow = time.Millisecond
+	settings.ObservationWindow = 500 * time.Millisecond
 	settings.ComparisonPeriod = 10 * time.Second
 	settings.TransitionReserveFraction = .5
 	settings.Controls = serving.SchedulerControls{Replicas: true, Routing: true}
 	uid := settings.AutonomousWorkloads[0]
-	settings.MinimumDemand = map[string]float64{uid: 2}
 	profiles := c.observer.Profiles()
 	for index := range profiles {
 		profiles[index].Batches = slices.Clone(profiles[index].Batches)
@@ -382,7 +468,10 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 		}
 		return nil
 	}
-	decision, err := c.Tick(ctx, time.Now())
+	// One request in the window is 2 req/s once a whole window is observed.
+	waitReservationTest(t, ctx, func() bool { return time.Since(c.observationLog.Started()) > settings.ObservationWindow })
+	definition := c.runtime.SchedulerInputs(time.Now).Workloads[0]
+	decision, err := c.Tick(ctx, recordLoadForTest(t, c, definition, 2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +499,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 			return action.Kind == servingstate.OperationRoute && action.Status == servingstate.NativeOperationComplete
 		})
 	})
-	if _, err = c.Tick(ctx, time.Now()); err != nil {
+	if _, err = c.Tick(ctx, recordLoadForTest(t, c, definition, 2)); err != nil {
 		t.Fatal(err)
 	}
 	select {

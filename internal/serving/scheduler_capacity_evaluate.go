@@ -82,15 +82,16 @@ func SchedulerReadyExpansion(ctx context.Context, settings SchedulerSettings, sn
 	if len(target.Instances) > len(snapshot.Instances) {
 		snapshot.Instances = slices.Concat(snapshot.Instances, target.Instances[len(snapshot.Instances):])
 	}
-	a, err := EvaluateFeedbackCandidate(ctx, settings, snapshot, keep, 0)
+	search := schedulerSearchPopulation(ctx, settings, snapshot)
+	a, err := evaluateFeedbackCandidate(ctx, settings, snapshot, search.Loads, keep, 0, nil)
 	if err != nil || len(a.InvalidReasons) > 0 {
 		return nil, false
 	}
-	b, err := EvaluateFeedbackCandidate(ctx, settings, snapshot, target, 0)
+	b, err := evaluateFeedbackCandidate(ctx, settings, snapshot, search.Loads, target, 0, nil)
 	if err != nil || len(b.InvalidReasons) > 0 {
 		return nil, false
 	}
-	p := newCapacityPlanner(ctx, settings, snapshot, keep, SchedulerDecision{Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: []SchedulerWorkloadState{{UID: uid, State: WorkloadControlled}}})
+	p := newCapacityPlanner(ctx, settings, snapshot, keep.Nodes, SchedulerDecision{Search: search, Workloads: []SchedulerWorkloadState{{UID: uid, State: WorkloadControlled}}})
 	old, next := capacityResult{feedback: a.Workloads}, capacityResult{feedback: b.Workloads}
 	p.rankFeedback(&old)
 	p.rankFeedback(&next)
@@ -265,6 +266,14 @@ type capacityArrivalMemo struct {
 	err    error
 }
 
+// arrivalCohort builds the decision's replay arrivals once, from its loads.
+func (p *capacityPlanner) arrivalCohort() (*feedbackArrivalCohort, error) {
+	p.feedbackCohort.once.Do(func() {
+		p.feedbackCohort.cohort, p.feedbackCohort.err = newFeedbackArrivalCohort(p.ctx, p.settings, p.snapshot, p.loads)
+	})
+	return p.feedbackCohort.cohort, p.feedbackCohort.err
+}
+
 type capacityReplayKey struct {
 	config, plans string
 	route         float64
@@ -336,14 +345,12 @@ func (p *capacityPlanner) assessResult(res capacityResult) capacityResult {
 	}
 	memo := entry.(*capacityFeedbackMemo)
 	memo.once.Do(func() {
-		p.feedbackCohort.once.Do(func() {
-			p.feedbackCohort.cohort, p.feedbackCohort.err = newFeedbackArrivalCohort(p.ctx, p.settings, p.snapshot)
-		})
-		if p.feedbackCohort.err != nil {
-			memo.err = p.feedbackCohort.err
+		cohort, err := p.arrivalCohort()
+		if err != nil {
+			memo.err = err
 			return
 		}
-		memo.result, memo.err = evaluateFeedbackCandidate(p.ctx, p.settings, p.snapshot, candidate, 0, p.feedbackCohort.cohort)
+		memo.result, memo.err = evaluateFeedbackCandidate(p.ctx, p.settings, p.snapshot, nil, candidate, 0, cohort)
 	})
 	if memo.err != nil {
 		p.feedbackCache.Delete(key)
@@ -417,7 +424,7 @@ func (p *capacityPlanner) evaluateEnergyForRoutes(choice []int, r float64, bridg
 				mu += float64(item.routingWeight)
 			}
 		}
-		if len(routes) == 0 && (ws.rate > 0 || ws.queued > 0) {
+		if len(routes) == 0 && (ws.rate > 0 || ws.queued > 0 || ws.routed) {
 			res.exclusion = "NoRoute:" + ws.d.UID
 		}
 		res.weights = append(res.weights, routes)

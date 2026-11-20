@@ -2627,11 +2627,6 @@
           "3e085c39-161a-4ee0-b716-f25db0aa154f",
           "5668e113-92c0-4d71-9f79-f67ffe45f340"
         ],
-        "minimumDemand": {
-          "3e085c39-161a-4ee0-b716-f25db0aa154f": 40,
-          "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.3,
-          "5833a580-f4e7-473a-97ad-7129db6834c2": 20
-        },
         "excludedNodes": [
           "genesis1",
           "orin-nano",
@@ -2669,11 +2664,6 @@
             "3e085c39-161a-4ee0-b716-f25db0aa154f",
             "5668e113-92c0-4d71-9f79-f67ffe45f340"
           ],
-          "minimumDemand": {
-            "3e085c39-161a-4ee0-b716-f25db0aa154f": 40,
-            "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.3,
-            "5833a580-f4e7-473a-97ad-7129db6834c2": 20
-          },
           "excludedNodes": [
             "genesis1",
             "orin-nano",
@@ -2696,7 +2686,6 @@
         },
         "windowStart": "2026-10-28T01:33:28.049583219Z",
         "windowEnd": "2026-10-28T01:34:28.049583219Z",
-        "recentWindowStart": "2026-10-28T01:34:18.049583219Z",
         "received": 212,
         "accepted": 212,
         "computeInputs": 212,
@@ -2707,27 +2696,21 @@
             "received": 52,
             "accepted": 52,
             "computeInputs": 52,
-            "inputsPerSecond": 0.8666666666666667,
-            "recentComputeInputs": 52,
-            "recentInputsPerSecond": 5.2
+            "inputsPerSecond": 0.8666666666666667
           },
           {
             "uid": "5668e113-92c0-4d71-9f79-f67ffe45f340",
             "received": 1,
             "accepted": 1,
             "computeInputs": 1,
-            "inputsPerSecond": 0.016666666666666666,
-            "recentComputeInputs": 1,
-            "recentInputsPerSecond": 0.1
+            "inputsPerSecond": 0.016666666666666666
           },
           {
             "uid": "5833a580-f4e7-473a-97ad-7129db6834c2",
             "received": 159,
             "accepted": 159,
             "computeInputs": 159,
-            "inputsPerSecond": 2.65,
-            "recentComputeInputs": 159,
-            "recentInputsPerSecond": 15.9
+            "inputsPerSecond": 2.65
           }
         ],
         "comparedNodes": [
@@ -2902,7 +2885,6 @@
           {
             "uid": "3e085c39-161a-4ee0-b716-f25db0aa154f",
             "rate": 40,
-            "minimumDemand": 40,
             "queued": 0,
             "kappaNew": 140.76285585971843,
             "kappaRetained": 140.76285585971843,
@@ -2923,7 +2905,6 @@
           {
             "uid": "5668e113-92c0-4d71-9f79-f67ffe45f340",
             "rate": 0.3,
-            "minimumDemand": 0.3,
             "queued": 0,
             "kappaNew": 0.372262300732782,
             "kappaRetained": 0.372262300732782,
@@ -2942,7 +2923,6 @@
           {
             "uid": "5833a580-f4e7-473a-97ad-7129db6834c2",
             "rate": 20,
-            "minimumDemand": 20,
             "queued": 38,
             "kappaNew": 102.62910390081777,
             "kappaRetained": 26.322717760226524,

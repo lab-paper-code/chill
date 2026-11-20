@@ -39,16 +39,13 @@ func SchedulerTargetAdmission(ctx context.Context, settings SchedulerSettings, s
 	if reasons := schedulerValidateResources(settings, target.Nodes, target.Instances); len(reasons) > 0 {
 		return reasons[0], nil
 	}
-	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: schedulerCommonNodes(snapshot), Instances: slices.Clone(snapshot.Instances), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
-	for uid, routes := range snapshot.Routing {
-		keep.Routing[uid] = routes
-	}
+	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: schedulerCommonNodes(snapshot), Instances: slices.Clone(snapshot.Instances), Routing: schedulerKeepRouting(ctx, snapshot)}
 	fixed := schedulerPlanState{snap: snapshot, target: &keep, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
 	fixed.changeNodes(keep)
 	keep.Actions = fixed.actions
 	decision := SchedulerDecision{Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot)}
 	fixSchedulerWorkloads(&decision, snapshot)
-	p := newCapacityPlanner(ctx, settings, snapshot, keep, decision)
+	p := newCapacityPlanner(ctx, settings, snapshot, keep.Nodes, decision)
 	p.fixCapacityWorkloads(&decision)
 	if len(p.ws) == 0 {
 		if schedulerAdmissionSameTarget(target, keep) {

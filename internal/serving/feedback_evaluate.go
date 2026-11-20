@@ -19,7 +19,6 @@ type FeedbackWorkloadScore struct {
 	Population                  int                   `json:"population"`
 	ObservedArrivals            int                   `json:"observedArrivals"`
 	ReplayedArrivals            int                   `json:"replayedArrivals"`
-	MinimumDemandArrivals       int                   `json:"minimumDemandArrivals"`
 	OnTime                      int                   `json:"onTime"`
 	Late                        int                   `json:"late"`
 	Rejected                    int                   `json:"rejected"`
@@ -47,12 +46,18 @@ type FeedbackCandidateResult struct {
 }
 
 // EvaluateFeedbackCandidate drains the finite comparison-period arrival cohort
-// through the actual native policy. Planner energy remains owned by its caller.
+// of the snapshot's loads through the actual native policy. Planner energy
+// remains owned by its caller.
 func EvaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, candidate SchedulerCandidate, seed uint64) (FeedbackCandidateResult, error) {
-	return evaluateFeedbackCandidate(ctx, settings, snapshot, candidate, seed, nil)
+	if err := settings.Validate(); err != nil {
+		return FeedbackCandidateResult{InvalidReasons: []string{err.Error()}}, nil
+	}
+	return evaluateFeedbackCandidate(ctx, settings, snapshot, schedulerSearchPopulation(ctx, settings, snapshot).Loads, candidate, seed, nil)
 }
 
-func evaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, candidate SchedulerCandidate, seed uint64, cohort *feedbackArrivalCohort) (FeedbackCandidateResult, error) {
+// evaluateFeedbackCandidate takes its arrivals from cohort, or else from the
+// loads' windows.
+func evaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, loads []SchedulerLoad, candidate SchedulerCandidate, seed uint64, cohort *feedbackArrivalCohort) (FeedbackCandidateResult, error) {
 	if err := ctx.Err(); err != nil {
 		return FeedbackCandidateResult{}, err
 	}
@@ -72,7 +77,7 @@ func evaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, 
 	}
 	// Empty compared set disables node-energy estimation, not physical action,
 	// service, ownership, readiness, occupancy, or routing behavior.
-	replay, err := schedulerReplayWithArrivals(ctx, settings, snapshot, candidate, rand.New(rand.NewPCG(seed, 0)), map[NodeReference]bool{}, nil, cohort)
+	replay, err := schedulerReplayWithArrivals(ctx, settings, snapshot, loads, candidate, rand.New(rand.NewPCG(seed, 0)), map[NodeReference]bool{}, nil, cohort)
 	if err != nil {
 		return FeedbackCandidateResult{}, err
 	}
@@ -196,9 +201,7 @@ func (s *schedulerReplayState) finishFeedback() {
 
 func (s *schedulerReplayState) countFeedbackRequest(population *feedbackPopulation, request *schedulerReplayRequest) {
 	population.score.Population++
-	if request.minimumDemand {
-		population.score.MinimumDemandArrivals++
-	} else if !request.observed {
+	if !request.observed {
 		population.score.ReplayedArrivals++
 	}
 	switch {
@@ -280,7 +283,6 @@ func mergeFeedbackScore(previous, score FeedbackWorkloadScore) FeedbackWorkloadS
 	}
 	previous.Population += score.Population
 	previous.ReplayedArrivals += score.ReplayedArrivals
-	previous.MinimumDemandArrivals += score.MinimumDemandArrivals
 	previous.OnTime += score.OnTime
 	previous.Late += score.Late
 	previous.Rejected += score.Rejected

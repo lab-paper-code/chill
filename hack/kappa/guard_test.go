@@ -25,9 +25,9 @@ func TestReplayKeysIncludeFinalRouteAndWait(t *testing.T) {
 
 func TestReplayPreservesRecordedControlPolicy(t *testing.T) {
 	base := serving.SchedulerSettings{CapacityGridSteps: 20, PlanSearchWorkers: 2}
-	recorded := serving.SchedulerSettings{ScaleDownHeadroomFraction: .25, MinimumDemand: map[string]float64{"w": 20}, ExcludedNodes: []string{"excluded"}, CompletionMarginMS: 29}
+	recorded := serving.SchedulerSettings{ScaleDownHeadroomFraction: .25, ExcludedNodes: []string{"excluded"}, CompletionMarginMS: 29}
 	got := replaySettings(base, recorded, -1)
-	if got.ScaleDownHeadroomFraction != .25 || got.MinimumDemand["w"] != 20 || len(got.ExcludedNodes) != 1 || got.CompletionMarginMS != 29 || got.CapacityGridSteps != 20 {
+	if got.ScaleDownHeadroomFraction != .25 || len(got.ExcludedNodes) != 1 || got.CompletionMarginMS != 29 || got.CapacityGridSteps != 20 {
 		t.Fatalf("policy lost: %+v", got)
 	}
 }

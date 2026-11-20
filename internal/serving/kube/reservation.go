@@ -894,6 +894,7 @@ func (c *reservationState) releaseOwnerLocked(owner string) {
 func (c *reservationState) reservationsLocked() []serving.SchedulerReservation {
 	byOwner := map[string]*serving.SchedulerReservation{}
 	reasons := map[string][]string{}
+	launched := map[string]time.Time{} // each owner's first run start
 	for _, run := range c.runs {
 		if !run.reserved {
 			continue
@@ -902,6 +903,10 @@ func (c *reservationState) reservationsLocked() []serving.SchedulerReservation {
 		if reservation == nil {
 			reservation = &serving.SchedulerReservation{Owner: run.owner}
 			byOwner[run.owner] = reservation
+			launched[run.owner] = run.started
+		}
+		if run.started.Before(launched[run.owner]) {
+			launched[run.owner] = run.started
 		}
 		reservation.Nodes = append(reservation.Nodes, run.scope.Nodes...)
 		reservation.WorkloadUIDs = append(reservation.WorkloadUIDs, run.scope.Workloads...)
@@ -938,7 +943,7 @@ func (c *reservationState) reservationsLocked() []serving.SchedulerReservation {
 		reservations = append(reservations, *reservation)
 	}
 	slices.SortFunc(reservations, func(a, b serving.SchedulerReservation) int {
-		return cmp.Compare(a.Owner, b.Owner)
+		return cmp.Or(launched[a.Owner].Compare(launched[b.Owner]), cmp.Compare(a.Owner, b.Owner))
 	})
 	return reservations
 }

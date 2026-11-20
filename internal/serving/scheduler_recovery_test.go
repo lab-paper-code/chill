@@ -13,7 +13,7 @@ func TestCapacityTerminalLedgerAllowsIndependentRecoveryAC45(t *testing.T) {
 	for _, terminal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "logical-stop", true: "confirmed-termination"}[terminal], func(t *testing.T) {
 			s, snap := schedulerFixture()
-			s.MinimumDemand = map[string]float64{"w1": 10}
+			capacityLoad(s, &snap, snap.Workloads[0], 10)
 			old := &snap.Instances[0]
 			old.Ready, old.Stopped, old.ObservedAt = false, true, snap.At.Add(-time.Hour)
 			old.Routable = map[string]bool{"w1": false}
@@ -55,7 +55,6 @@ func TestCapacityTerminalSlotIsRepreparedWithoutReuseAC45(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, time.Minute
 	snap.ObservedSince = snap.ObservationEnd.Add(-time.Hour)
-	s.MinimumDemand = map[string]float64{"w1": 10}
 	old := &snap.Instances[0]
 	old.Ready, old.Stopped, old.Terminated = false, true, true
 	old.ObservedAt = snap.At.Add(-time.Hour)

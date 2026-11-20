@@ -35,19 +35,21 @@ Workload별 TOTAL과 POST는 SLO percentile로 각각 가공한다. POST는 경�
 
 ## 수요와 비교 모집단
 
-관측 구간의 끝은 `snapshot.observationEnd`, 진행 요청을 동결한 판단 원점은 `snapshot.at`이다. 도착률은 각각 실제로 관측한 장기 구간과 최근 한 제어 주기의 계산 도착 수로 구한다.
+관측 구간의 끝은 `snapshot.observationEnd`, 진행 요청을 동결한 판단 원점은 `snapshot.at`이다. 워크로드마다 부하 추정이 하나다. 추정은 그 워크로드의 부하 창 `[search.loads[].windowStart, observationEnd)` 안 계산 도착 수를 창 길이로 나눈 `inputsPerSecond`이며, 후보 용량과 SLO, 재생 도착, 에너지, 본전 판단이 모두 이 하나의 추정을 쓴다.
 
-`λ_observed = max(장기 도착률, 최근 도착률) + q / 장기 관측 길이`
+부하 창은 마지막으로 감지한 도착률 변화 이후의 구간이고, 다음 변화는 그 안에서 찾는다. 변화가 없으면 부하 창은 관측 창 전체다. 감지는 제어 주기 경계마다 그 경계 뒤의 계산 도착 수를 창 전체 평균률이 기대하는 수와 정확 양측 이항 검정으로 비교한다. 유의수준은 (1 − 워크로드 SLO 백분위/100)를 창 안 제어 주기 경계 수로 나눈 값이다. 기각한 경계 중 p값이 가장 작은 경계가 새 변화 시각이고, 부하 창은 거기서 시작한다. 판단이 감지한 변화 시각은 `snapshot.loadChangedAt`(UID별)에 남아 다음 판단이 이어받는다.
 
-q는 service 시작이 아직 관측되지 않은 pending, queued, deferred 요청과 native 관측 없는 assigned 요청 중 남은 수명이 양수이거나 미지정인 요청 수다. 관측된 running과 returning은 q에 넣지 않는다. 실제 점유와 drain 의무는 별도 장부에 유지한다.
+`λ = inputsPerSecond + q / 부하 창 길이`
 
-`λ = max(λ_observed, settings.minimumDemand[Workload UID])`
+q는 service 시작이 아직 관측되지 않은 pending, queued, deferred 요청과 native 관측 없는 assigned 요청 중 남은 수명이 양수이거나 미지정이고 부하 창 시작 전에 받은 요청 수다. 부하 창 안에서 받은 대기 요청은 이미 inputsPerSecond의 도착이므로 q에 다시 넣지 않는다. 관측된 running과 returning은 q에 넣지 않는다. 실제 점유와 drain 의무는 별도 장부에 유지한다.
 
-`minimumDemand`는 유한한 비음수 req/s이며 생략한 UID는 0이다. 빈 UID와 음수, 비유한 값은 거절한다. 교체 회수는 관측 창의 최소 관측 수요로 에너지를 계산하며, 용량과 SLO에 쓰는 최소 계획 수요에는 minimumDemand 하한을 유지한다. 이 하한은 사용자가 선택한 용량 예약이다. 최소 수요 하한을 적용한 계획 수요는 용량과 SLO를 결정하며, 에너지 비교는 하한 적용 전 관측 수요와 같은 분배 비율을 사용한다. 판단 기록의 rate와 observedRate로 두 수요를 구분한다.
+관측된 창 길이(`search.windowEnd − search.windowStart`)가 `min(observationWindow, controlInterval)`보다 짧으면 `PartialObservationWindow`로 대기한다. 전체 관측 창이 차기 전에는 기존 인스턴스 제거, 배치 정책 변경과 기존 양수 분배 철회를 제한하고 확장만 허용한다.
 
-장기 관측 길이가 `min(observationWindow, controlInterval)`보다 짧으면 `PartialObservationWindow`로 대기한다. 전체 관측 창이 차기 전에는 기존 인스턴스 제거, 배치 정책 변경과 기존 양수 분배 철회를 제한하고 확장만 허용한다.
+예약된 target이 준비 중인 인스턴스는 이미 건 용량이다. 계획기는 그 인스턴스를 target 인스턴스로서 Ready로 보고 용량과 라우팅을 계산한다. 단 Node가 이미 target 프로파일의 전력 모드에 있을 때만 그렇다. target이 라우팅하는 인스턴스가 모두 Ready로 보일 때만 그 워크로드의 경로가 target으로 바뀐다. 예약은 그대로 두어 그 Node는 계획할 수 없다. 측정과 마지막 경로 판정은 실행 중 구성의 라우팅으로 하고, 준비 중인 인스턴스를 측정 판정의 서빙으로 세지 않는다. 그래서 준비 중인 동안 같은 부족분에 두 번째 준비를 시작하지 않는다.
 
-직접 재생은 같은 불변 arrival cohort와 현재 outstanding에서 시작한다. 관측 패턴을 비교 기간에 반복하며 minimumDemand의 부족분은 모든 후보에 같은 균등 합성 요청으로 보충한다. 합성 요청은 실제 관측으로 표시하지 않는다. 비교 기간 뒤에는 새 도착 없이 cohort의 완료, 실패, 만료와 미완료를 수집한다.
+실행 중 구성이 라우팅하는 워크로드가 마지막 경로를 잃지 않는다는 보호는 Ready이고 멈추지 않은 인스턴스로 가는 경로만 대상이다. 아직 준비 중인 인스턴스로만 라우팅되는 워크로드에는 마지막 경로 보호가 없다. 같은 워크로드를 라우팅하는 target이 둘이면 launch 시각 순으로 늘어놓고 나중에 launch한 target이 이긴다.
+
+직접 재생은 같은 불변 arrival cohort와 현재 outstanding에서 시작한다. 워크로드마다 자기 부하 창의 실제 도착을 그 창의 길이로 비교 기간에 반복한다. 합성 요청은 만들지 않는다. 도착이 없으면 재생 모집단은 비고, 후보는 에너지로만 가려진다. 실행 중 구성이 라우팅하는 워크로드는 마지막 경로를 잃지 않는다. 비교 기간 뒤에는 새 도착 없이 cohort의 완료, 실패, 만료와 미완료를 수집한다.
 
 모든 후보는 같은 실행 제외 범위를 사용한다. 실패한 action의 미래 효과와 실행 입력이 없는 executor를 모델 공급에서 제외하되 실물 점유, 예약, owner 의무, 요청 모집단은 보존한다. retained worker가 실제 처리한 만큼만 큐를 줄이고 running batch는 같은 조건부 residual 법칙을 쓴다.
 
@@ -73,11 +75,13 @@ snapshot과 검사 입력은 선택 tuple, source와 `provenance{source,pairs,up
 
 측정 사실의 판정. 측정 사실은 Workload 정의 d(Definition identity: UID와 generation, 모델과 전처리의 UID와 generation)를 serving 집합 S로 실행한 결과다. S의 원소는 그 Workload에 route된 인스턴스의 profile ID와 `MaxBatch`이고 구간 측정의 원소는 route weight도 갖는다. profile ID가 Node, device, 전력모드와 측정 조건을 고정한다. 인스턴스 ID는 포함하지 않으므로 같은 profile과 cap으로 다시 만든 인스턴스도 같은 원소이고, 같은 profile과 cap의 인스턴스 둘은 원소 둘이다. batch 대기(`MaxWait`)와 할당은 원소에 없으므로 그것만 다른 serving은 같은 serving으로 판정한다.
 
-판단한 결과(keep과 모든 후보)의 w는 다음 순서로 판정한다. (1) 결과가 w를 실행 중 구성과 같은 serving(같은 원소와 같은 traffic 비율, weight 전체의 배율만 다르면 같다)으로 실행하고 이번 구간의 측정이 계획 rate λ에 대해 말하면 그 측정이 판정한다. 구간은 관측한 수요 λ_obs(`minimumDemand` 하한을 적용하기 전)만 보았으므로 충족한 측정은 λ ≤ λ_obs에, 놓친 측정은 λ ≥ λ_obs에 대해 말한다. (2) 그렇지 않고 기억한 놓친 사실이 결과의 w serving을 덮으며, 결과가 λ에서 필요로 하는 기한 내 rate `λ·ceil(n×p/100)/n`(n은 그 결과의 replay 모집단)가 사실의 `onTimeRate` m보다 크면 놓침으로 판정한다. 이 판정의 counts는 모집단 n과 기한 내 `⌊m·n/λ⌋`이다. 덮는다는 것은 w를 serving하는 인스턴스마다 사실의 서로 다른 원소 하나가 같은 profile이고 같거나 큰 `MaxBatch`라는 것이다. 곧 같은 인스턴스에 같거나 작은 batch cap 또는 그 부분집합이며, traffic 비율은 무엇이든 덮는다. 다른 profile, 다른 Node, 더 큰 cap, 추가 인스턴스에는 아무것도 추론하지 않는다. (3) 그 밖에는 replay가 판정한다. 모든 Node가 keep 계획이고 모든 Workload가 실행 중 구성과 같은 serving인 결과가 현재 구성 유지(`keep`)다.
+판단한 결과(keep과 모든 후보)의 w는 다음 순서로 판정한다. (1) 결과가 w를 실행 중 구성과 같은 serving(같은 원소와 같은 traffic 비율, weight 전체의 배율만 다르면 같다)으로 실행하고 이번 구간의 측정이 있으면 그 측정이 판정한다. (2) 그렇지 않고 기억한 놓친 사실이 결과의 w serving을 덮으며, 결과가 λ에서 필요로 하는 기한 내 rate `λ·ceil(n×p/100)/n`(n은 그 결과의 replay 모집단)가 사실의 `onTimeRate` m보다 크면 놓침으로 판정한다. 이 판정의 counts는 모집단 n과 기한 내 `⌊m·n/λ⌋`이다. 덮는다는 것은 w를 serving하는 인스턴스마다 사실의 서로 다른 원소 하나가 같은 profile이고 같거나 큰 `MaxBatch`라는 것이다. 곧 같은 인스턴스에 같거나 작은 batch cap 또는 그 부분집합이며, traffic 비율은 무엇이든 덮는다. 다른 profile, 다른 Node, 더 큰 cap, 추가 인스턴스에는 아무것도 추론하지 않는다. (3) 그 밖에는 replay가 판정한다. 모든 Node가 keep 계획이고 모든 Workload가 실행 중 구성과 같은 serving인 결과가 현재 구성 유지(`keep`)다.
 
 덮기의 가정. 덮기는 batch cap을 낮추거나 인스턴스를 빼거나 같은 인스턴스 사이에서 traffic 비율을 옮겨도 그 인스턴스들이 기한 내에 처리하는 양이 늘지 않는다고 가정한다. 큰 batch의 서비스 시간이 목표를 넘는 profile이나 늦게 처리하는 인스턴스를 뺀 부분집합에서는 이 가정이 틀릴 수 있다. 그때 계획기는 덮인 재배치나 축소 대신 용량을 더하므로 비용은 에너지이고 SLO가 아니다.
 
-측정 구간은 관측 구간 안에서 snapshot action의 마지막 `endedAt` 이후 받은 w의 compute 요청이다. 구간은 모든 action이 끝났고(`endedAt`이 있고) w에 route된 모든 인스턴스가 w로 routable한 동안만 있다. 그렇지 않으면 측정할 serving이 정해지지 않았다. client 보고(`ClientObservation`)의 완료 시간(`elapsedNanos`, client 송신부터 응답 수신까지이며 replay의 PRE, 서버 시간, POST가 모사하는 시간)이 목표 이하인 완료가 기한 내다. 늦은 완료와 그 밖의 보고(거절, 오류, timeout)는 놓침이다. capture까지 client 보고도 서버 결과(`outcome`)도 없고 받은 지 목표보다 오래된 요청은 기한 내에 끝날 수 없으므로 놓침이다. 보고가 없는 그 밖의 요청은 세지 않는다. 판정은 위의 순위 규칙 `onTime ≥ ceil(n×p/100)`이다. client 보고 수가 percentile의 표본 하한(`MinimumServiceSamples`, p95에서 59)보다 적으면 측정이 없다. 따라서 client 보고가 없는 traffic(평가 client가 없는 운영)에서는 이 규칙이 적용되지 않고 replay가 판정한다. `onTimeRate`는 기한 내 완료 수를 구간 길이로 나눈 값이다.
+측정 구간은 w의 부하 창 안에서 snapshot action의 마지막 `endedAt` 이후 받은 w의 compute 요청이다. 구간은 모든 action이 끝났고(`endedAt`이 있고) w에 route된 모든 인스턴스가 w로 routable한 동안만 있다. 그렇지 않으면 측정할 serving이 정해지지 않았다. client 보고(`ClientObservation`)의 완료 시간(`elapsedNanos`, client 송신부터 응답 수신까지이며 replay의 PRE, 서버 시간, POST가 모사하는 시간)이 목표 이하인 완료가 기한 내다. 늦은 완료와 그 밖의 보고(거절, 오류, timeout)는 놓침이다. capture까지 client 보고도 서버 결과(`outcome`)도 없고 받은 지 목표보다 오래된 요청은 기한 내에 끝날 수 없으므로 놓침이다. 보고가 없는 그 밖의 요청은 세지 않는다. 판정은 위의 순위 규칙 `onTime ≥ ceil(n×p/100)`이다. client 보고 수가 percentile의 표본 하한(`MinimumServiceSamples`, p95에서 59)보다 적으면 측정이 없다. 따라서 client 보고가 없는 traffic(평가 client가 없는 운영)에서는 이 규칙이 적용되지 않고 replay가 판정한다. `onTimeRate`는 기한 내 완료 수를 구간 길이로 나눈 값이다.
+
+측정 구간의 끝은 관측 끝보다 워크로드의 목표 지연 하나 앞이다: `[시작, 관측 끝 − 목표)`. 그 뒤에 받은 요청은 아직 완료할 시간이 없어 판정에 넣지 않는다.
 
 결정은 놓친 집합마다 사실 하나를 기억해 `measurements[{definitionID,serving[{profileID,maxBatch}],onTimeRate}]`로 돌려준다. 기억한 사실은 규칙이 읽는 정의, 집합과 m만 갖는다. 같은 정의의 같은 집합(비율 무관)의 이후 구간 측정이 더 큰 `onTimeRate`를 보이면 m을 올리고 작으면 바꾸지 않는다. m은 줄지 않는다. 충족한 집합은 기억하지 않는다. 사실은 그 정의가 snapshot의 Workload에 있는 동안 남는다. SLO, admission, lifetime 변경은 Workload generation을 올리므로 이전 사실을 버린다. catalog에서 사라진 profile의 사실은 재측정된 profile(새 ID)을 덮지 못하며 그 밖에는 영향이 없다. controller는 게시한 결정의 `measurements`를 다음 snapshot에 넣으며 메모리에만 둔다.
 
@@ -170,7 +174,7 @@ keep의 재생은 탐색 전에 읽으므로 keep의 부족이 첫 순회의 표
 
 ## 기록과 증거 경계
 
-판단에는 settings, 관측 구간, 최소 수요와 유효 rate, waiting q, timing, 정수 분배, 선택 사슬, 에너지와 제외 이유를 연결한다. heuristic 결과와 직접 재생 결과를 구분한다. `exactEvaluated`는 keep seed와 replay 생략 판정도 포함한다.
+판단에는 settings, 관측 구간, 워크로드별 부하 창 시작과 유효 rate, waiting q, timing, 정수 분배, 선택 사슬, 에너지와 제외 이유를 연결한다. heuristic 결과와 직접 재생 결과를 구분한다. `exactEvaluated`는 keep seed와 replay 생략 판정도 포함한다.
 
 `search`의 출발점, 평가 수, 후보 수, 가지치기, fallback, budget 종료와 시간은 [스케줄러 API](scheduler-api.md)에 둔다. `dualBound`는 가격 반복 진단이다. 전체 평가 구성 목록을 기록하지 않는다.
 

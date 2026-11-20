@@ -91,8 +91,6 @@ export type SettingsForm = {
   fields: Record<FieldKey, string | boolean>
   controls: SchedulerSettings["controls"]
   autonomous: string[]
-  /** Minimum demand text per workload UID; "" is unset. */
-  demand: Record<string, string>
   excluded: string[]
   priorityStrategy: "excess" | "workload"
   priority: string[]
@@ -102,7 +100,6 @@ export function formOf(settings: SchedulerSettings): SettingsForm {
     fields: Object.fromEntries(settingFields.map(field => [field.key, fieldInput(field.key, settings)])) as Record<FieldKey, string | boolean>,
     controls: { ...settings.controls },
     autonomous: [...settings.autonomousWorkloads ?? []],
-    demand: Object.fromEntries(Object.entries(settings.minimumDemand ?? {}).map(([uid, rate]) => [uid, String(rate)])),
     excluded: [...settings.excludedNodes ?? []],
     priorityStrategy: settings.sloPriorityStrategy ?? "excess",
     priority: [...settings.workloadPriority ?? []],
@@ -122,15 +119,6 @@ export function settingsOf(base: SchedulerSettings, form: SettingsForm): { setti
   next.controls = { ...form.controls }
   if (!sameSet(form.autonomous, base.autonomousWorkloads ?? [])) next.autonomousWorkloads = form.autonomous
   if (!sameSet(form.excluded, base.excludedNodes ?? [])) next.excludedNodes = form.excluded
-  const demand: Record<string, number> = {}
-  for (const [uid, text] of Object.entries(form.demand)) {
-    if (!text.trim()) continue
-    if (text === shown.demand[uid]) { demand[uid] = base.minimumDemand![uid]; continue }
-    const rate = Number(text)
-    if (!/^\d+(?:\.\d+)?$/.test(text.trim()) || !Number.isFinite(rate)) errors[`demand:${uid}`] = "0 이상 숫자"
-    else demand[uid] = rate
-  }
-  if (base.minimumDemand !== undefined || Object.keys(demand).length) next.minimumDemand = demand
   if (form.priorityStrategy !== shown.priorityStrategy) next.sloPriorityStrategy = form.priorityStrategy
   if (form.priority.join() !== shown.priority.join()) next.workloadPriority = form.priority
   return { settings: next, errors }
@@ -152,7 +140,6 @@ export function fieldText(key: FieldKey, settings: SchedulerSettings): string {
 
 export type ChangeRow = { id: string; group: SettingsGroup; label: string; before: string; after: string; apply: (settings: SchedulerSettings) => SchedulerSettings }
 const onOff = (on: boolean) => on ? "켜짐" : "꺼짐"
-const rate = (value: number | undefined) => value === undefined ? "미설정" : `${value} req/s`
 const strategy = (value: SchedulerSettings["sloPriorityStrategy"]) => value === "workload" ? "서비스 순위" : "목표 초과 정도"
 
 /** One row per changed value (per service, device and switch), each able to re-apply itself on other settings. */
@@ -162,11 +149,6 @@ export function changeRows(before: SchedulerSettings, after: SchedulerSettings, 
     const on = !!after.autonomousWorkloads?.includes(uid)
     if (!!before.autonomousWorkloads?.includes(uid) !== on) rows.push({ id: `auto:${uid}`, group: "targets", label: `자동 제어 ${name(uid)}`, before: onOff(!on), after: onOff(on),
       apply: s => ({ ...s, autonomousWorkloads: toggle(s.autonomousWorkloads, uid, on) }) })
-  }
-  for (const uid of union(Object.keys(before.minimumDemand ?? {}), Object.keys(after.minimumDemand ?? {}))) {
-    const was = before.minimumDemand?.[uid], now = after.minimumDemand?.[uid]
-    if (was !== now) rows.push({ id: `demand:${uid}`, group: "targets", label: `최소 수요 ${name(uid)}`, before: rate(was), after: rate(now),
-      apply: s => { const demand = { ...s.minimumDemand }; if (now === undefined) delete demand[uid]; else demand[uid] = now; return { ...s, minimumDemand: demand } } })
   }
   for (const node of union(before.excludedNodes, after.excludedNodes)) {
     const out = !!after.excludedNodes?.includes(node)

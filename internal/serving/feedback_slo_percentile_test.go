@@ -95,7 +95,7 @@ func TestFeedbackConsumerFullPopulationPercentile(t *testing.T) {
 			if outcomes != tc.n {
 				t.Fatalf("raw outcomes omitted requests: %+v", estimate)
 			}
-			candidate, err := schedulerReplayEstimate(context.Background(), settings, snapshot, candidate, 1, nil, nil)
+			candidate, err := schedulerReplayEstimate(context.Background(), settings, snapshot, schedulerSearchPopulation(context.Background(), settings, snapshot).Loads, candidate, 1, nil, nil)
 			if err != nil || len(candidate.Reasons) != 0 || (candidate.Status == schedulerStatusFeasible) != tc.met {
 				t.Fatalf("candidate consumer overrode full-population verdict: %+v %v", candidate, err)
 			}

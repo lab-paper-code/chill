@@ -11,8 +11,7 @@ import (
 
 func feedbackCohortFixture() (SchedulerSettings, SchedulerSnapshot, []SchedulerCandidate) {
 	settings, snapshot, keep := feedbackFixture()
-	settings.MinimumDemand = map[string]float64{snapshot.Workloads[0].UID: 5000}
-	// Equal-time accepted requests precede the repeated arrivals and supplements.
+	// Equal-time accepted requests precede the repeated arrivals.
 	// Frozen SLO/native/POST context must stay outside the shared arrival cohort.
 	frozen := *snapshot.Workloads[0]
 	frozen.Generation++
@@ -33,14 +32,15 @@ func feedbackCohortFixture() (SchedulerSettings, SchedulerSnapshot, []SchedulerC
 
 func TestFeedbackArrivalCohortIsolatesCandidates(t *testing.T) {
 	settings, snapshot, candidates := feedbackCohortFixture()
-	cohort, err := newFeedbackArrivalCohort(context.Background(), settings, snapshot)
+	loads := schedulerSearchPopulation(context.Background(), settings, snapshot).Loads
+	cohort, err := newFeedbackArrivalCohort(context.Background(), settings, snapshot, loads)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := make([]FeedbackCandidateResult, len(candidates))
 	for index, candidate := range candidates {
 		want[index], err = EvaluateFeedbackCandidate(context.Background(), settings, snapshot, candidate, 1)
-		if err != nil || len(want[index].InvalidReasons) != 0 || want[index].Workloads[0].Population != 8 || want[index].Workloads[0].MinimumDemandArrivals != 3 {
+		if err != nil || len(want[index].InvalidReasons) != 0 || want[index].Workloads[0].Population != 5 || want[index].Workloads[0].ReplayedArrivals != 2 {
 			t.Fatalf("direct cohort: %+v %v", want[index], err)
 		}
 	}
@@ -53,7 +53,7 @@ func TestFeedbackArrivalCohortIsolatesCandidates(t *testing.T) {
 		workers.Add(1)
 		go func(index int) {
 			defer workers.Done()
-			got, err := evaluateFeedbackCandidate(context.Background(), settings, snapshot, candidates[index], 1, cohort)
+			got, err := evaluateFeedbackCandidate(context.Background(), settings, snapshot, nil, candidates[index], 1, cohort)
 			if err != nil || !reflect.DeepEqual(got, want[index]) {
 				t.Errorf("candidate %d changed with shared cohort: got=%+v want=%+v err=%v", index, got, want[index], err)
 			}
@@ -67,13 +67,13 @@ func TestFeedbackArrivalCohortIsolatesCandidates(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := evaluateFeedbackCandidate(ctx, settings, snapshot, candidates[0], 1, cohort); err != context.Canceled {
+	if _, err := evaluateFeedbackCandidate(ctx, settings, snapshot, nil, candidates[0], 1, cohort); err != context.Canceled {
 		t.Fatalf("canceled shared-cohort replay: %v", err)
 	}
-	if _, err := newFeedbackArrivalCohort(ctx, settings, snapshot); err != context.Canceled {
+	if _, err := newFeedbackArrivalCohort(ctx, settings, snapshot, loads); err != context.Canceled {
 		t.Fatalf("canceled cohort construction: %v", err)
 	}
-	got, err := evaluateFeedbackCandidate(context.Background(), settings, snapshot, candidates[0], 1, cohort)
+	got, err := evaluateFeedbackCandidate(context.Background(), settings, snapshot, nil, candidates[0], 1, cohort)
 	if err != nil || !reflect.DeepEqual(got, want[0]) {
 		t.Fatalf("canceled candidate poisoned cohort: %+v %v", got, err)
 	}
@@ -81,7 +81,8 @@ func TestFeedbackArrivalCohortIsolatesCandidates(t *testing.T) {
 
 func TestFeedbackArrivalCohortPreservesSameTimeOrder(t *testing.T) {
 	settings, snapshot, _ := feedbackCohortFixture()
-	cohort, err := newFeedbackArrivalCohort(context.Background(), settings, snapshot)
+	loads := schedulerSearchPopulation(context.Background(), settings, snapshot).Loads
+	cohort, err := newFeedbackArrivalCohort(context.Background(), settings, snapshot, loads)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestFeedbackArrivalCohortPreservesSameTimeOrder(t *testing.T) {
 	shared := fresh
 	shared.requests = slices.Clone(fresh.requests)
 	shared.out.definitions = map[string]*Definition{}
-	if !fresh.initializeArrivals(context.Background()) || !shared.initializeArrivalCohort(context.Background(), cohort) {
+	if !fresh.initializeArrivals(context.Background(), loads) || !shared.initializeArrivalCohort(context.Background(), cohort) {
 		t.Fatal("arrival initialization failed")
 	}
 	for index, request := range fresh.requests {

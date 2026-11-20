@@ -25,11 +25,13 @@ func TestDefectEUnknownOccupancyCannotBeReused(t *testing.T) {
 }
 
 // T8: a partially returned owner counts only targets on its residual held
-// nodes. Duplicate reservations and a late physical slot count exactly once;
-// neither an uncreated target nor an unconfirmed physical slot supplies κ.
+// nodes. Duplicate reservations and a late physical slot count exactly once
+// against the budgets; an uncreated target supplies no κ, a physical slot its
+// reservation is still preparing supplies its target's κ (committed capacity),
+// which 10 req/s needs no addition to, so that case offers 1000 req/s.
 func TestDefectEResidualPendingOccupancyKeepsReplicaAndInstanceLimits(t *testing.T) {
-	const replicaBudget = "replicas"
-	for _, physical := range []string{"uncreated", "late-slot", "inventory-loss"} {
+	const replicaBudget, lateSlot = "replicas", "late-slot"
+	for _, physical := range []string{"uncreated", lateSlot, "inventory-loss"} {
 		for _, budget := range []string{replicaBudget, "instances"} {
 			for _, limit := range []int{1, 2} {
 				t.Run(fmt.Sprintf("%s/%s/%d", physical, budget, limit), func(t *testing.T) {
@@ -42,7 +44,7 @@ func TestDefectEResidualPendingOccupancyKeepsReplicaAndInstanceLimits(t *testing
 					snap.Instances, snap.Routing = nil, nil
 					residual := SchedulerReservation{Owner: "partially-returned", Nodes: []NodeReference{wanted.Node}, Target: &goal}
 					snap.Reservations = []SchedulerReservation{residual, residual}
-					if physical == "late-slot" {
+					if physical == lateSlot {
 						actual := wanted
 						actual.ID, actual.TargetID, actual.Ready = "pod/container", wanted.ID, false
 						since := snap.At.Add(-s.ObservationWindow)
@@ -58,13 +60,17 @@ func TestDefectEResidualPendingOccupancyKeepsReplicaAndInstanceLimits(t *testing
 					} else {
 						s.MaxInstances = limit
 					}
-					s.MinimumDemand = map[string]float64{wanted.WorkloadUID: 10}
+					load := 10.0
+					if physical == lateSlot {
+						load = 1000
+					}
+					capacityLoad(s, &snap, snap.Workloads[0], load)
 					next := poolsInstance(wanted, "independent-slot", returned, "fixed", wanted.WorkloadUID)
 					snap.Options = append(snap.Options, poolsOption(next))
 					snap.Costs = append(snap.Costs, poolsCost(schedulerActionPrepare, returned, "unloaded", schedulerState(next), "fixed"))
 					pending := schedulerUncreatedReservations(snap, wanted.Node)
 					wantPending := 1
-					if physical == "late-slot" {
+					if physical == lateSlot {
 						wantPending = 0
 					}
 					if len(pending) != wantPending || len(schedulerUncreatedReservations(snap, returned)) != 0 {
@@ -78,8 +84,8 @@ func TestDefectEResidualPendingOccupancyKeepsReplicaAndInstanceLimits(t *testing
 						t.Fatalf("pending occupancy exceeded or double-counted %s=%d: target=%+v reasons=%v", budget, limit, d.Target, d.Reasons)
 					}
 					for _, plan := range d.Capacity.Plans {
-						if plan.Node == wanted.Node && plan.Key == capacitySearchStartKeep && plan.RoutingRate[wanted.WorkloadUID] != 0 {
-							t.Fatalf("pending occupancy supplied capacity: %+v", plan)
+						if plan.Node == wanted.Node && plan.Key == capacitySearchStartKeep && (plan.RoutingRate[wanted.WorkloadUID] != 0) != (physical == lateSlot) {
+							t.Fatalf("pending occupancy supplied capacity wrongly: %+v", plan)
 						}
 					}
 				})

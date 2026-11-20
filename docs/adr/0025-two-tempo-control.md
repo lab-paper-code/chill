@@ -10,7 +10,7 @@ Use one planner to compare allocation, expansion, reduction, replacement and emp
 
 The policy times are `ControlInterval`, `ObservationWindow` and `ComparisonPeriod`. There is no stabilization history, replacement dwell, observation-age TTL or bounded bootstrap timer.
 
-Effective demand is the larger long-window/recent rate plus unexpired pending, assigned, queued and deferred requests divided by actual observed window length, with the configured minimum-demand floor. Observed running and returning work is excluded from this backlog term.
+Effective demand is one load estimate per Workload plus unexpired pending, assigned, queued and deferred requests divided by actual observed window length. The estimate is the Workload's arrival rate over a window that restarts where a change of arrival rate is detected: an exact two-sided binomial test at each control-interval boundary, at significance (1 − SLO percentile/100) divided by the number of boundaries in the window. There is no demand floor. Observed running and returning work is excluded from this backlog term.
 
 After restart, require one control interval of observation, bounded by the configured observation window. Until the complete observation window is available, plans only expand and preserve existing routes.
 

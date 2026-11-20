@@ -8,6 +8,8 @@ import { candidateStatus } from "./status-labels.ts"
 export type ControlObservation = {
   scope: string; tickAt?: string; decisionAt: string; startedAt: string; finishedAt: string; elapsedNanos: WireInteger; phase: string
   status?: string; targetID?: string; fallback?: string; error?: string
+  /** Actions of the chosen target that was discarded before launch; `error` says why. */
+  discardedActions?: SchedulerAction[]
   lockWaitNanos: WireInteger; captureNanos: WireInteger; windowNanos: WireInteger; refreshListNanos: WireInteger; sourceProbeNanos: WireInteger; restNanos: WireInteger
   evaluateNanos: WireInteger; publishNanos: WireInteger; recordNanos: WireInteger; launchNanos: WireInteger
   evaluation?: { preparationNanos: WireInteger; searchNanos: WireInteger; paybackNanos: WireInteger; projectionNanos: WireInteger }

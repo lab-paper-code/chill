@@ -188,7 +188,7 @@ if name=='kubectl':
    state['probeCount']=state.get('probeCount',0)+1;name=pod['metadata']['name']
    state.setdefault('probes',{})[name]=pod
    if state.get('concurrentEdit') and container['command'][-1]=='rknnlite':
-    state['settings']['minimumDemand']['external']=99
+    state['settings']['maxReplicas']=99
     if state['concurrentEdit']=='tracked':state['settings']['excludedNodes']=['external-choice']
     state['settingsVersion']+=1
     state.pop('concurrentEdit')
@@ -440,7 +440,7 @@ shutil.disk_usage = disk_usage
         instance = {'id': 'serving-fixture/server', 'node': {'name': gpu_nodes[0], 'uid': 'observed-node-uid'},
                     'ownerWorkloadUID': owner, 'workloadUID': '', 'podName': 'serving-fixture', 'podUID': 'observed-pod-uid'}
         settings = {'excludedNodes': ['preexisting-exclusion'], 'autonomousWorkloads': [owner, 'unrelated-workload'],
-                    'minimumDemand': {'unchanged': 7}}
+                    'maxReplicas': 7}
         pod = {'metadata': {'name': instance['podName'], 'namespace': 'review', 'uid': instance['podUID']},
                'spec': {'nodeName': gpu_nodes[0], 'containers': [{'name': 'server', 'resources': {'requests': {'nvidia.com/gpu': '1'}}}]},
                'status': {'phase': 'Running'}}
@@ -477,7 +477,7 @@ shutil.disk_usage = disk_usage
                 observed = json.loads((self.directory / 'state.json').read_text())
                 restored = copy.deepcopy(settings)
                 if scenario.startswith('concurrent-'):
-                    restored['minimumDemand']['external'] = 99
+                    restored['maxReplicas'] = 99
                 if scenario == 'concurrent-tracked':
                     restored['excludedNodes'] = ['external-choice']
                 self.assertEqual(observed['settings'], restored)

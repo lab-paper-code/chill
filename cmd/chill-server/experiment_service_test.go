@@ -155,7 +155,7 @@ func TestExperimentListRetainsFrozenFactsWithoutDefinition(t *testing.T) {
 	recorded := experimentFixture("recorded", from)
 	recorded.Definition = json.RawMessage(`{
 		"run":{"name":"recorded-name","uid":"recorded"},
-		"spec":{"question":"recorded question","settingsPatch":{"minimumDemand":{"x":1}},
+		"spec":{"question":"recorded question","settingsPatch":{"defaultOperationCost":{"x":1}},
 			"control":{"controls":{"power":false},"future":true},
 			"stages":[{"id":"full-E5-2","row":"E5-2","mode":"controls-disabled",
 				"settingsPatch":{"controls":{"power":true}},"control":{"controls":{"power":true}},
@@ -581,8 +581,8 @@ func TestExperimentSettingsPatchKeysUseRecordedInheritance(t *testing.T) {
 		{"no patch", "", "", []string{}},
 		{
 			name:     "inherited",
-			runPatch: `"settingsPatch":{"minimumDemand":{"x":1},"controls":{"power":false}},`,
-			want:     []string{"controls.power", "minimumDemand.x"},
+			runPatch: `"settingsPatch":{"defaultOperationCost":{"x":1},"controls":{"power":false}},`,
+			want:     []string{"controls.power", "defaultOperationCost.x"},
 		},
 		{
 			name:       "override",
@@ -605,8 +605,8 @@ func TestExperimentSettingsPatchKeysUseRecordedInheritance(t *testing.T) {
 		{"unknown patch shape", `"settingsPatch":false,`, "", nil},
 		{
 			name:       "leaves",
-			stagePatch: `"settingsPatch":{"minimumDemand":{"x":null},"controls":{}},`,
-			want:       []string{"controls", "minimumDemand.x"},
+			stagePatch: `"settingsPatch":{"defaultOperationCost":{"x":null},"controls":{}},`,
+			want:       []string{"controls", "defaultOperationCost.x"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

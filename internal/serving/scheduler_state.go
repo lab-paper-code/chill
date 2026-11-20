@@ -123,7 +123,7 @@ func (s *searchState) loadWatts(q int, sums []searchSum) (initial, final float64
 	rates := s.rates[:len(models)]
 	clear(rates)
 	for _, w := range t.loadWorkloads[q] {
-		rate, sum := p.ws[w].observedRate, &sums[w]
+		rate, sum := p.ws[w].rate, &sums[w]
 		for _, l := range t.loadFinal[q][w] {
 			rates[l.slot] += rate * s.finalShare(sum, l)
 		}
@@ -131,7 +131,7 @@ func (s *searchState) loadWatts(q int, sums []searchSum) (initial, final float64
 	final, finalOK = schedulerLoadWatts(models, rates)
 	clear(rates)
 	for _, w := range t.loadWorkloads[q] {
-		rate, sum := p.ws[w].observedRate, &sums[w]
+		rate, sum := p.ws[w].rate, &sums[w]
 		if sum.retainedWeight > 0 {
 			for _, l := range t.loadRetained[q][w] {
 				rates[l.slot] += min(rate, sum.retainedRoutingRate) * l.weight / sum.retainedWeight

@@ -63,7 +63,6 @@ export type SchedulerSettings = {
   // Omitted policy means excess; listed Workload UIDs are highest priority first.
   sloPriorityStrategy?:"excess"|"workload"; workloadPriority?:string[]
   autonomousWorkloads:string[]|null
-  minimumDemand?:Record<string,number>
   // Nodes the planner never changes (reason ExcludedNode).
   excludedNodes:string[]|null
   controls:{placement:boolean;resources:boolean;replicas:boolean;routing:boolean;batching:boolean;power:boolean;membership:boolean}
@@ -109,7 +108,7 @@ export type SchedulerNodePlan = {node:NodeRef;key:string;eligible:boolean;reason
 // search records the plan search scope, termination reason, and whether the time deadline cut it.
 export type SchedulerPlanSearch = {neighborhood:number;evaluated:number;durationNanos:WireInteger;budgetCut?:boolean;terminationReason?:string;strategy?:string;key?:string;joules?:number;pruned?:Record<string,number>;surrogateEvaluated?:number;finalists?:number;exactEvaluated?:number;surrogateGapJoules?:number;postFilterReverts?:number;fallback?:string;dualBound?:number;start?:string}
 export type SchedulerCapacity = {periodNanos:WireInteger;routeNanos:WireInteger;search?:SchedulerPlanSearch;workloads:SchedulerCapacityWorkload[]|null;plans:SchedulerNodePlan[]|null;gainUncertaintyJoules?:number}
-export type SchedulerDecision = {at:string;status:string;keep:SchedulerCandidate;target:SchedulerCandidate|null;reasons:string[]|null;settings:SchedulerSettings;workloads:SchedulerWorkloadState[]|null;search:{examined:number;bounds:SchedulerSettings;windowStart:string;windowEnd:string;received:number;accepted:number;computeInputs:number;population:string;loads:{uid:string;received:number;accepted:number;computeInputs:number;inputsPerSecond:number}[]|null;comparedNodes:NodeRef[]|null};references:string[]|null;capacity?:SchedulerCapacity;evaluationElapsedNanos?:WireInteger;pathFeedback?:PathFeedback[]|null}
+export type SchedulerDecision = {at:string;status:string;keep:SchedulerCandidate;target:SchedulerCandidate|null;reasons:string[]|null;settings:SchedulerSettings;workloads:SchedulerWorkloadState[]|null;search:{examined:number;bounds:SchedulerSettings;windowStart:string;windowEnd:string;received:number;accepted:number;computeInputs:number;population:string;loads:{uid:string;windowStart?:string;received:number;accepted:number;computeInputs:number;inputsPerSecond:number}[]|null;comparedNodes:NodeRef[]|null};references:string[]|null;capacity?:SchedulerCapacity;evaluationElapsedNanos?:WireInteger;pathFeedback?:PathFeedback[]|null;/** IDs of preparing instances keep's and target's predictions count as Ready. */committed?:string[]}
 // Weights per workload UID and instance ID; original weights, not probabilities.
 export type Routing = Record<string,Record<string,number>>
 export type SchedulerOperation = {id:string;kind:string;node:NodeRef;workloadUID?:string;workloadUIDs?:string[];instance?:string;prepare?:{name:string;instance:SchedulerInstance;bundle:unknown;store:unknown;config:unknown;memoryBytes:WireInteger};actuation?:unknown;target?:SchedulerCandidate;sourceConfigRV?:string;staticRouting?:Routing;settingsValidatedAt?:string;reason?:string;actorUsername?:string;actorUID?:string}

@@ -195,17 +195,17 @@ export function activeScene(capture, epoch, options = {}) {
       node: ref(PREPARE_NODE), workloadUID: ic.uid, dependsOn: [], expectedSeconds: 90 }], slo: services.map(svc => estimate(svc, svc === ic ? 0.94 : 1)), expectedJoules: targetJoules }
       : st === 'Pending' ? null : keep
     const loads = services.map(svc => { let received = 0; for (let i = s - 60; i < s; i++) received += load(svc, i).received; const accepted = Math.round(received * svc.success)
-      return { uid: svc.uid, received, accepted, computeInputs: accepted, inputsPerSecond: round(accepted / 60, 3), recentComputeInputs: Math.round(accepted / 6) } })
+      return { uid: svc.uid, windowStart: iso(t - 60_000), received, accepted, computeInputs: accepted, inputsPerSecond: round(accepted / 60, 3) } })
     const evaluate = evaluation(k)
     return { at: iso(t), status: st, keep, target, reasons: reasons(k).length ? reasons(k) : null, settings,
-      search: { examined: 40 + mod(k, 30), bounds: settings, windowStart: iso(t - 60_000), windowEnd: iso(t), recentWindowStart: iso(t - 10_000),
+      search: { examined: 40 + mod(k, 30), bounds: settings, windowStart: iso(t - 60_000), windowEnd: iso(t),
         received: loads.reduce((a, b) => a + b.received, 0), accepted: loads.reduce((a, b) => a + b.accepted, 0), computeInputs: loads.reduce((a, b) => a + b.computeInputs, 0),
         population: 'received events in [windowStart,windowEnd); validated compute arrivals (including capacity/evidence rejections) replayed; outstanding retained independently',
         loads, comparedNodes: [...servingNodes, PREPARE_NODE].map(ref) },
       workloads: workloadStates(autonomous), references: [],
       capacity: { periodNanos: 600e9, routeNanos: 60e9, search: { strategy: settings.planSearchStrategy ?? 'v2', neighborhood: 2, evaluated: 40 + mod(k, 30), durationNanos: Math.round(evaluate * 0.7), budgetCut: false,
         surrogateElapsedNanos: Math.round(evaluate * 0.4), exactElapsedNanos: Math.round(evaluate * 0.25) },
-        workloads: services.map(svc => ({ uid: svc.uid, rate: round(svc.rate * (1 + svc.swing * wave(t, svc.period)), 3), minimumDemand: settings.minimumDemand?.[svc.uid] ?? 0, queued: svc.pending,
+        workloads: services.map(svc => ({ uid: svc.uid, rate: round(svc.rate * (1 + svc.swing * wave(t, svc.period)), 3), queued: svc.pending,
           routingRate: round(svc.rate * 1.2, 3), retainedRoutingRate: round(svc.rate * 0.6, 3), weights: Object.fromEntries(svc.instances.map(inst => [inst.id, inst.weight])) })),
         plans: snapshot.nodes.map(node => { const eligible = servingNodes.has(node.name) || node.name === PREPARE_NODE
           return { node: ref(node.name), key: `${node.name}/${node.powerMode}`, eligible, ...(eligible ? {} : { reason: node.name === MEASUREMENT_NODE ? 'ReservedScope' : 'NotSelected' }),

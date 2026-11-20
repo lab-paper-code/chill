@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -12,13 +13,16 @@ import (
 
 // annotateHistory sets each captured instance's UnroutedSince and HeldUntil
 // from the controller's records, drops records of instances that left, and
-// carries the published decision's measurements into the snapshot. A restart
-// starts the records again, so an instance waits one more window and no
-// measured miss is remembered.
+// carries the published decision's measurements and the load changes still
+// inside the observation window into the snapshot. A restart starts the
+// records again, so an instance waits one more window, no measured miss is
+// remembered and each load window starts at what the next decision detects.
 func (c *reservationState) annotateHistory(s *serving.SchedulerSnapshot, window time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s.Measurements = slices.Clone(c.state.Decision.Measurements)
+	maps.DeleteFunc(c.loadChanged, func(_ string, at time.Time) bool { return !at.After(s.ObservationEnd.Add(-window)) })
+	s.LoadChangedAt = maps.Clone(c.loadChanged)
 	if c.unrouted == nil {
 		c.unrouted, c.overloaded = map[string]time.Time{}, map[string]time.Time{}
 	}
@@ -70,6 +74,21 @@ func (c *reservationState) annotateHistory(s *serving.SchedulerSnapshot, window 
 		}
 		if until.IsZero() && !preparing {
 			delete(c.overloaded, key)
+		}
+	}
+}
+
+// rememberLoadChanges keeps each Workload's latest arrival-rate change an
+// evaluation detected, whether or not its decision is approved.
+func (c *reservationState) rememberLoadChanges(search serving.SchedulerSearch) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.loadChanged == nil {
+		c.loadChanged = map[string]time.Time{}
+	}
+	for _, load := range search.Loads {
+		if load.WindowStart.After(serving.SchedulerLoadStretchStart(search.WindowStart, search.WindowEnd, c.loadChanged[load.UID])) {
+			c.loadChanged[load.UID] = load.WindowStart
 		}
 	}
 }

@@ -382,8 +382,9 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	settings.ObservationWindow, settings.ComparisonPeriod = span, span
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
 	// An empty compared set excludes Node energy; request joules count separately.
+	// The window's arrivals are an explicit rate experiment: all of it is load.
 	limit := capacityWindowLimit{requests: n, slo: w.SLO}
-	estimate, err := schedulerReplayEstimate(ctx, settings, snapshot, keep, uint64(seed), map[NodeReference]bool{}, &limit)
+	estimate, err := schedulerReplayEstimate(ctx, settings, snapshot, []SchedulerLoad{{UID: w.UID, WindowStart: start}}, keep, uint64(seed), map[NodeReference]bool{}, &limit)
 	if err != nil {
 		return capacityWindowResult{}, err
 	}

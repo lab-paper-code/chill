@@ -2,6 +2,9 @@ package serving
 
 import "testing"
 
+// An uncreated reservation fabricates no capacity; a created slot still
+// preparing supplies its target's capacity (committed), so that case offers
+// more than it supplies. Both count once against the replica budget.
 func TestPendingPrepareRespectsReplicaBudget(t *testing.T) {
 	for _, created := range []bool{false, true} {
 		for _, limit := range []int{1, 2} {
@@ -17,7 +20,11 @@ func TestPendingPrepareRespectsReplicaBudget(t *testing.T) {
 				snap.Instances = []SchedulerInstance{actual}
 			}
 			s.MaxReplicas, s.MaxInstances = limit, 4
-			s.MinimumDemand = map[string]float64{wanted.WorkloadUID: 10}
+			load := 10.0
+			if created {
+				load = 1000
+			}
+			capacityLoad(s, &snap, snap.Workloads[0], load)
 			node := poolsAddNode(&snap, "independent", map[string]float64{"fixed": 10})
 			next := poolsInstance(wanted, "independent-slot", node, "fixed", wanted.WorkloadUID)
 			snap.Options = append(snap.Options, poolsOption(next))
@@ -28,8 +35,8 @@ func TestPendingPrepareRespectsReplicaBudget(t *testing.T) {
 				t.Errorf("created=%v maxReplicas=%d pending=1 secondPrepare=%v", created, limit, expanded)
 			}
 			for _, plan := range d.Capacity.Plans {
-				if plan.Node == wanted.Node && plan.Key == capacitySearchStartKeep && plan.RoutingRate[wanted.WorkloadUID] != 0 {
-					t.Fatalf("pending replica fabricated capacity: %+v", plan)
+				if plan.Node == wanted.Node && plan.Key == capacitySearchStartKeep && (plan.RoutingRate[wanted.WorkloadUID] != 0) != created {
+					t.Fatalf("pending replica supplied capacity wrongly (created=%v): %+v", created, plan)
 				}
 			}
 		}
@@ -49,7 +56,7 @@ func TestPendingInventoryLossKeepsBudget(t *testing.T) {
 	}
 	s.MaxReplicas, s.MaxInstances = 1, 1
 	s.Controls.Replicas = false
-	s.MinimumDemand = map[string]float64{wanted.WorkloadUID: 10}
+	capacityLoad(s, &snap, snap.Workloads[0], 10)
 	node := poolsAddNode(&snap, "independent", map[string]float64{"fixed": 10})
 	snap.Nodes[len(snap.Nodes)-1].Reasons = nil
 	next := poolsInstance(wanted, "independent-slot", node, "fixed", wanted.WorkloadUID)

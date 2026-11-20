@@ -9,7 +9,7 @@ const base = {
   maxReplicas: 8, maxInstances: 16, servingMemoryBytes: 18446744073709551615n, completionMarginMS: 29,
   capacityMinimumRequests: 1000, capacityGridSteps: 20, capacityBisectionWidth: 0.005, capacityTailSamples: 100, planSearchWorkers: 3,
   defaultOperationCost: { prepare: { seconds: 1, joules: 1 }, remove: { seconds: 1, joules: 1 }, power: { seconds: 1, joules: 1 } }, defaultIdlePower: { nodeWatts: 1, perInstanceWatts: 1 }, defaultDispatchOccupancyNanos: 1,
-  autonomousWorkloads: ["a", "b"], minimumDemand: { a: 0.3 }, excludedNodes: ["n1"], controls,
+  autonomousWorkloads: ["a", "b"], excludedNodes: ["n1"], controls,
 } satisfies SchedulerSettings
 
 test("untouched form keeps exact stored values and absent optional fields", () => {
@@ -34,22 +34,20 @@ test("inputs convert units exactly and reject invalid values", () => {
     assert.throws(() => parseField(key, text))
   const form = formOf(base)
   form.fields.capacityGridSteps = "0"
-  form.demand.b = "x"
-  assert.deepEqual(Object.keys(settingsOf(base, form).errors).sort(), ["capacityGridSteps", "demand:b"])
+  form.fields.maxReplicas = "0"
+  assert.deepEqual(Object.keys(settingsOf(base, form).errors).sort(), ["capacityGridSteps", "maxReplicas"])
 })
 
 test("rebase applies only my changes onto the latest settings", () => {
   const form = formOf(base)
   form.autonomous = ["a"]
   form.fields.maxReplicas = "10"
-  form.demand.a = ""
   const mine = settingsOf(base, form).settings
-  assert.deepEqual(changeRows(base, mine, uid => uid).map(row => row.id), ["auto:b", "demand:a", "maxReplicas"])
+  assert.deepEqual(changeRows(base, mine, uid => uid).map(row => row.id), ["auto:b", "maxReplicas"])
   const latest = { ...base, autonomousWorkloads: ["a", "b", "c"], maxInstances: 4, controls: { ...controls, power: false } }
   const merged = rebase(latest, base, mine)
   assert.deepEqual(merged.autonomousWorkloads, ["a", "c"])
   assert.equal(merged.maxInstances, 4)
   assert.equal(merged.maxReplicas, 10n)
   assert.equal(merged.controls.power, false)
-  assert.deepEqual(merged.minimumDemand, {})
 })

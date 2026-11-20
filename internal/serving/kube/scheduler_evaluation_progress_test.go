@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"slices"
 	"strings"
@@ -236,52 +237,61 @@ func TestSchedulerTargetAdmissionDoesNotBlockProgress(t *testing.T) {
 	}
 }
 
+// approvalOnLatestCapture is a controller whose published capture is newer than
+// an evaluation input: it returns that input (snapshot) and a route target on
+// the latest capture, after an unrelated owner completed and progress published.
+func approvalOnLatestCapture(t *testing.T) (*SchedulerController, context.Context, serving.SchedulerSnapshot, serving.SchedulerCandidate, serving.SchedulerInstance) {
+	t.Helper()
+	c, _ := tickReadySubsetController(t, nil)
+	c.config.Settings.AutonomousWorkloads = nil
+	c.config.Settings.Controls.Routing = true
+	c.runtime.EnableSchedulerRouting()
+	parent, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	snapshot, err := c.captureReconciled(parent, time.Now(), c.config, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid := snapshot.Workloads[0].UID
+	ready := snapshot.Instances[0]
+	ready.WorkloadUID = uid
+	seed := serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{ready},
+		Routing: map[string]map[string]int32{uid: {ready.ID: 1000}}}
+	if err := c.runtime.ApplySchedulerWorkloadsTarget(seed, []string{uid}); err != nil {
+		t.Fatal(err)
+	}
+	slow := serving.NodeReference{Name: slowNodeName, UID: slowNodeName}
+	c.mu.Lock()
+	c.runs["unrelated"] = &actionRun{owner: "unrelated", reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{slow}},
+		action: serving.Action{ID: "unrelated", Kind: measurementLeaseKind}, result: &servingstate.OperationResult{}}
+	c.mu.Unlock()
+	snapshot, err = c.captureReconciled(parent, time.Now(), c.config, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.state.Snapshot = snapshot
+	target := serving.SchedulerCandidate{ID: "latest-capture-target", Nodes: snapshot.Nodes,
+		Instances: slices.Clone(snapshot.Instances), Actions: []serving.Action{{ID: "latest-capture-route", Kind: servingstate.OperationRoute}},
+		Routing: map[string]map[string]int32{uid: {snapshot.Instances[0].ID: 1000, snapshot.Instances[1].ID: 0}}}
+	// During evaluation the unrelated owner completes and progress publishes.
+	c.mu.Lock()
+	c.releaseOwnerLocked("unrelated")
+	c.mu.Unlock()
+	if err := c.Continue(parent, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	return c, parent, snapshot, target, ready
+}
+
 // The evaluation input predates an unrelated owner's completion and a newer
 // published capture. Approval asks admission on the latest capture only.
 func TestSchedulerApprovalAdmitsTargetOnLatestCapture(t *testing.T) {
 	const reservedDuringAdmission = "reserved-during-admission"
 	for _, change := range []string{"unrelated-completion", "instance-changed", reservedDuringAdmission} {
 		t.Run(change, func(t *testing.T) {
-			c, _ := tickReadySubsetController(t, nil)
-			c.config.Settings.AutonomousWorkloads = nil
-			c.config.Settings.Controls.Routing = true
-			c.runtime.EnableSchedulerRouting()
-			parent, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			snapshot, err := c.captureReconciled(parent, time.Now(), c.config, false, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			uid := snapshot.Workloads[0].UID
-			ready := snapshot.Instances[0]
-			ready.WorkloadUID = uid
-			seed := serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{ready},
-				Routing: map[string]map[string]int32{uid: {ready.ID: 1000}}}
-			if err := c.runtime.ApplySchedulerWorkloadsTarget(seed, []string{uid}); err != nil {
-				t.Fatal(err)
-			}
-			slow := serving.NodeReference{Name: slowNodeName, UID: slowNodeName}
-			c.mu.Lock()
-			c.runs["unrelated"] = &actionRun{owner: "unrelated", reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{slow}},
-				action: serving.Action{ID: "unrelated", Kind: measurementLeaseKind}, result: &servingstate.OperationResult{}}
-			c.mu.Unlock()
-			snapshot, err = c.captureReconciled(parent, time.Now(), c.config, false, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			c.state.Snapshot = snapshot
-			target := serving.SchedulerCandidate{ID: "latest-capture-target", Nodes: snapshot.Nodes,
-				Instances: slices.Clone(snapshot.Instances), Actions: []serving.Action{{ID: "latest-capture-route", Kind: servingstate.OperationRoute}},
-				Routing: map[string]map[string]int32{uid: {snapshot.Instances[0].ID: 1000, snapshot.Instances[1].ID: 0}}}
+			c, parent, snapshot, target, ready := approvalOnLatestCapture(t)
 			if change == "instance-changed" {
 				target.Instances[0].Allocation.MemoryBytes++
-			}
-			// During evaluation the unrelated owner completes and progress publishes.
-			c.mu.Lock()
-			c.releaseOwnerLocked("unrelated")
-			c.mu.Unlock()
-			if err := c.Continue(parent, time.Now()); err != nil {
-				t.Fatal(err)
 			}
 			ctx := &heldEvaluationContext{Context: parent, entered: make(chan struct{}), release: make(chan struct{}),
 				function: ".SchedulerTargetAdmission"}
@@ -289,11 +299,12 @@ func TestSchedulerApprovalAdmitsTargetOnLatestCapture(t *testing.T) {
 				close(ctx.release)
 			}
 			config := c.config
+			event := &observation.SchedulerControlObservation{}
 			done := make(chan error, 1)
 			go func() {
 				c.tickMu.Lock()
 				_, err := c.approveEvaluation(ctx, time.Now(), config, snapshot.At, snapshot,
-					serving.SchedulerDecision{At: snapshot.At, Target: &target}, &observation.SchedulerControlObservation{}, func(string, *time.Duration) {})
+					serving.SchedulerDecision{At: snapshot.At, Target: &target}, event, func(string, *time.Duration) {})
 				c.tickMu.Unlock()
 				done <- err
 			}()
@@ -305,11 +316,15 @@ func TestSchedulerApprovalAdmitsTargetOnLatestCapture(t *testing.T) {
 				c.mu.Unlock()
 				close(ctx.release)
 			}
-			err = <-done
+			err := <-done
 			c.wg.Wait()
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			route := c.runs["latest-capture-route"]
+			// A discarded decision keeps the target it chose in the record.
+			if discarded := event.DiscardedActions; (err == nil) != (len(discarded) == 0) || err != nil && (len(discarded) != 1 || discarded[0].Kind != servingstate.OperationRoute) {
+				t.Fatalf("record of the target: err=%v discarded=%+v", err, discarded)
+			}
 			switch change {
 			case "unrelated-completion":
 				if err != nil || route == nil || route.action.Status != servingstate.NativeOperationComplete {
@@ -323,6 +338,70 @@ func TestSchedulerApprovalAdmitsTargetOnLatestCapture(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "live reservations changed") || route != nil {
 					t.Fatalf("target admitted before a reservation was launched: %v", err)
 				}
+			}
+		})
+	}
+}
+
+// A decision that never launches keeps the target it chose in the record, at
+// every one of the five places approval discards it.
+func TestEveryDiscardRecordsTheChosenActions(t *testing.T) {
+	for _, exit := range []struct {
+		name, want string
+		arrange    func(c *SchedulerController, snapshot *serving.SchedulerSnapshot, target *serving.SchedulerCandidate, config *SchedulerControllerConfig, ready serving.SchedulerInstance) (during func())
+	}{
+		{"planned Node changed", "planned Node changed", func(_ *SchedulerController, snapshot *serving.SchedulerSnapshot, target *serving.SchedulerCandidate, _ *SchedulerControllerConfig, ready serving.SchedulerInstance) func() {
+			target.Actions[0].Node = ready.Node
+			snapshot.Nodes = slices.Clone(snapshot.Nodes)
+			for k := range snapshot.Nodes {
+				if snapshot.Nodes[k].Node == ready.Node {
+					snapshot.Nodes[k].PowerMode += "-changed"
+				}
+			}
+			return nil
+		}},
+		{"latest target admission", "latest target admission", func(_ *SchedulerController, _ *serving.SchedulerSnapshot, target *serving.SchedulerCandidate, _ *SchedulerControllerConfig, _ serving.SchedulerInstance) func() {
+			target.Instances[0].Allocation.MemoryBytes++
+			return nil
+		}},
+		{"configuration changed", "configuration changed", func(_ *SchedulerController, _ *serving.SchedulerSnapshot, _ *serving.SchedulerCandidate, config *SchedulerControllerConfig, _ serving.SchedulerInstance) func() {
+			config.Settings.MaxReplicas++
+			return nil
+		}},
+		{"live reservations changed", "live reservations changed", func(c *SchedulerController, _ *serving.SchedulerSnapshot, _ *serving.SchedulerCandidate, _ *SchedulerControllerConfig, ready serving.SchedulerInstance) func() {
+			return func() {
+				c.mu.Lock()
+				defer c.mu.Unlock()
+				c.runs["taker"] = &actionRun{owner: "taker", reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{ready.Node}},
+					action: serving.Action{ID: "taker", Kind: measurementLeaseKind}, result: &servingstate.OperationResult{}}
+			}
+		}},
+		{"persist decision", "persist decision before physical action", func(c *SchedulerController, _ *serving.SchedulerSnapshot, _ *serving.SchedulerCandidate, _ *SchedulerControllerConfig, _ serving.SchedulerInstance) func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.config.OnDecision = func(serving.SchedulerDecision, serving.SchedulerSnapshot) error { return errors.New("disk full") }
+			return nil
+		}},
+	} {
+		t.Run(exit.name, func(t *testing.T) {
+			c, parent, snapshot, target, ready := approvalOnLatestCapture(t)
+			config := c.config
+			during := exit.arrange(c, &snapshot, &target, &config, ready)
+			event := &observation.SchedulerControlObservation{}
+			c.tickMu.Lock()
+			_, err := c.approveEvaluation(parent, time.Now(), config, snapshot.At, snapshot,
+				serving.SchedulerDecision{At: snapshot.At, Target: &target}, event, func(step string, _ *time.Duration) {
+					if step == "lock" && during != nil {
+						during()
+					}
+				})
+			c.tickMu.Unlock()
+			c.wg.Wait()
+			if err == nil || !strings.Contains(err.Error(), exit.want) {
+				t.Fatalf("the exit %q was not taken: %v", exit.want, err)
+			}
+			if got := event.DiscardedActions; len(got) != 1 || got[0].ID != target.Actions[0].ID {
+				t.Fatalf("the discarded decision's record lost the chosen actions: %+v", got)
 			}
 		})
 	}

@@ -21,7 +21,6 @@ func TestSchedulerPrioritySettingsRoundTrip(t *testing.T) {
 	h.config.MaxRequestBytes = 1 << 20
 	before := schedulerSettingsForTest()
 	before.CompletionMarginMS = 23
-	before.MinimumDemand = map[string]float64{"other-uid": 3}
 	raw, err := json.Marshal(before)
 	if err != nil {
 		t.Fatal(err)

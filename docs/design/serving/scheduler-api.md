@@ -10,8 +10,8 @@
 
 | 필드 | 의미 |
 |---|---|
-| `settings.observationWindowNanos` | 부하와 피드백 관측창, 양수 |
-| `settings.controlIntervalNanos` | 제어 주기, 양수 |
+| `settings.observationWindowNanos` | 부하와 피드백 관측창, 양수. 워크로드의 부하 창은 이 창 안에서 도착률 변화를 감지한 시각에서 다시 시작한다 |
+| `settings.controlIntervalNanos` | 제어 주기, 양수. 변화 감지 검정의 경계 간격 |
 | `settings.comparisonPeriodNanos` | 모든 후보와 keep의 고정 에너지 기간, 양수 |
 | `settings.maxReplicas`, `maxInstances` | UID별 복제와 전체 실물 및 미생성 예약 상한 |
 | `settings.servingMemoryBytes` | frozen memory envelope 안 queue headroom의 상한 |
@@ -20,7 +20,6 @@
 | `settings.controls` | placement, resources, replicas, routing, batching, power, membership |
 | `settings.autonomousWorkloads` | 현재 UID 중 자동제어 대상. PUT에서 미등록 UID 제거 |
 | `settings.excludedNodes` | 중복과 빈 이름 없는 Node 이름. keep과 실물 점유 유지 |
-| `settings.minimumDemand` | UID별 유한 비음수 req/s. 생략0, 미등록 UID도 보존 |
 | `settings.sloPriorityStrategy` | `excess` 기본 또는 `workload` |
 | `settings.workloadPriority` | 중복과 빈 값 없는 UID 순서. 미등록 UID 보존, 평가에서는 무시 |
 | `settings.transitionReserveFraction`, `scaleDownHeadroomFraction` | 전환 실제 예비와 최종 하강 수요 여유 |
@@ -73,11 +72,13 @@ PUT은 `SchedulerSettings`만 받는다. `staticRouting`과 `staticRoutingValida
 | `GET /api/v1/observations/scheduler` | 판단과 제어 원시 이력 |
 | `GET /api/v1/observations/power` | raw 적분과 coverage, 전체와 활성 풀 |
 
+제어 기록(`SchedulerControlObservation`)은 평가가 고른 target을 실행 전에 버리면(계획한 Node 변경, 최신 admission 거절, 구성 변경, 예약 장부 변경, 판단 저장 실패) 그 target의 동작을 `discardedActions`(action 객체 목록. 판단의 `target.actions`와 같은 모양)에 남기고 사유를 `error`에 남긴다. 실행한 판단은 비어 있다.
+
 측정 생성과 삭제, profile 재사용, 공개 Query 응답은 [측정 API](measurement-api.md)에 둔다. ChillServer는 공개 Query route의 인증과 proxy를 소유하며 Query는 Serving 패키지를 import하지 않는다.
 
 ## 현재 상태와 catalog
 
-decision은 keep, target, Workload 제어 상태, capacity, search와 제외 이유를 연결한다. capacity는 period, route 시각, UID별 rate와 queued, profile routingRate와 retainedRoutingRate, 정수 weights를 제공한다.
+decision은 keep, target, Workload 제어 상태, capacity, search와 제외 이유를 연결한다. capacity는 period, route 시각, UID별 rate와 queued, profile routingRate와 retainedRoutingRate, 정수 weights를 제공한다. `search.loads[].windowStart`는 워크로드의 부하 창 시작이고, 같은 행의 `received`, `accepted`, `computeInputs`, `inputsPerSecond`는 그 시작부터 센 값이다(관측 창 전체가 아니다). snapshot `loadChangedAt`은 앞선 판단이 감지한 도착률 변화 시각(UID별)이다.
 
 `ComparedNodes`는 keep 외 적격 계획이 있는 Node다. expectedJoules도 이 집합을 합한다. 전체 풀 실측과 구분한다. `missingCells`는 decision 전체에서 중복 제거하며 energyComparison과 undecidableCandidates는 정수 `missingCellRefs`로 참조한다. keep 충족 상태의 비-exact 새 operation 후보는 `replaySkipped:true`일 수 있다.
 
@@ -86,6 +87,8 @@ snapshot reservations는 owner, nodes, workloadUIDs, podUIDs, instances, frozen 
 인스턴스 `routable`은 현재 새 요청의 양수 분배와 Ready, Stopped, owner와 모델 적격성으로 계산한다. accepted 요청의 drain용 보존 route는 새 요청 가능으로 세지 않는다. Pod Ready와 새 정책 ACK도 별도다.
 
 keep과 target의 Workload별 `feedback`은 replay 예측이다. 측정 사실이 그 Workload를 판정했으면 같은 항목에 `measured{definitionID,serving[{profileID,maxBatch,weight}],onTimeRate,since,population,onTime,late,satisfied}`가 있고 없으면 replay가 판정했다([측정 사실의 판정](analytic-planner.md#slo-판정과-후보-순서)). 기억한 놓침이 판정한 항목에는 `since`가 없다. keep `status`는 판정 결과다. snapshot의 `measurements[{definitionID,serving[{profileID,maxBatch}],onTimeRate}]`는 이전 결정이 기억한 놓친 사실이고 decision의 `measurements`는 이 결정 뒤 기억하는 놓친 사실이다. snapshot action의 `endedAt`은 끝난 action의 종료 시각이다. 이 필드는 모두 추가 필드이며 없는 기록은 기억한 사실 없음, action 종료 미상으로 읽는다. arrival의 `clientOutcome`과 `clientElapsedNanos`는 capture까지 도착한 첫 client 보고이며 메모리의 snapshot에만 있다. 저장 기록과 조회 API의 snapshot에는 arrival이 없다.
+
+decision의 `committed`는 준비 중이지만 예약된 target의 인스턴스로서 keep과 target의 예측이 Ready로 세는 인스턴스의 ID 목록이다. 없으면 비어 있다. keep의 `instances`와 `routing`은 실행 중 구성 그대로다.
 
 private catalog-read의 reporting과 accepted는 독립 revision이다. source 일부 실패나 preparation 문제는 per-source issue이며 필수 read와 설정, meter, 저장 실패는 adoption을 중단한다. 이전 accepted가 남아도 현재 reporting에 수락을 추정하지 않는다.
 

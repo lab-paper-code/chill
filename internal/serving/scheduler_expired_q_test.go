@@ -47,7 +47,11 @@ func TestPlannerBacklogProjectedPhases(t *testing.T) {
 				snap.Outstanding = r.SchedulerInputs(func() time.Time { return snap.At }).Outstanding
 				decision := SchedulerDecision{Workloads: []SchedulerWorkloadState{{UID: snap.Workloads[0].UID, State: WorkloadControlled}}}
 				decision.Search.WindowStart, decision.Search.WindowEnd = snap.At.Add(-time.Minute), snap.At
-				p := newCapacityPlanner(context.Background(), s, snap, SchedulerCandidate{}, decision)
+				// Only a request received before the load window adds demand to it.
+				for n := range snap.Outstanding {
+					snap.Outstanding[n].ReceivedAt = decision.Search.WindowStart.Add(-time.Second)
+				}
+				p := newCapacityPlanner(context.Background(), s, snap, nil, decision)
 				want := 1
 				if expired || phase == phaseRunning || phase == phaseReturning {
 					want = 0
@@ -78,7 +82,7 @@ func TestPlannerNativeQueueUsesFiniteDemandSLO(t *testing.T) {
 			r, owner := backlogRuntimeForTest(snap, phase, 3, false)
 			snap.Outstanding = r.SchedulerInputs(func() time.Time { return snap.At }).Outstanding
 			decision := SchedulerDecision{Workloads: []SchedulerWorkloadState{{UID: snap.Workloads[0].UID, State: WorkloadControlled}}}
-			p := newCapacityPlanner(context.Background(), s, snap, SchedulerCandidate{}, decision)
+			p := newCapacityPlanner(context.Background(), s, snap, nil, decision)
 			snap.Arrivals = nil
 			keep := SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances, Routing: schedulerInstanceRouting(context.Background(), snap.Workloads, snap.Instances)}
 			result, err := EvaluateFeedbackCandidate(context.Background(), s, snap, keep, 0)
@@ -148,7 +152,7 @@ func TestPlannerExpiredPendingResponseGap(t *testing.T) {
 	}
 	snap.Outstanding = r.SchedulerInputs(func() time.Time { return snap.At }).Outstanding
 	decision := SchedulerDecision{Workloads: []SchedulerWorkloadState{{UID: snap.Workloads[0].UID, State: WorkloadControlled}}}
-	p := newCapacityPlanner(context.Background(), s, snap, SchedulerCandidate{}, decision)
+	p := newCapacityPlanner(context.Background(), s, snap, nil, decision)
 	if len(snap.Outstanding) != 1 || snap.Outstanding[0].Phase != phasePending || p.ws[0].queued != 0 {
 		t.Fatalf("expired pending counted: %+v", snap.Outstanding)
 	}

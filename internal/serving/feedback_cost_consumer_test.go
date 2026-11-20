@@ -23,9 +23,9 @@ func TestReplayCostConsumerEquivalence(t *testing.T) {
 		}
 		t.Logf("CONTROL_REPLAY_EVIDENCE %s", data)
 	}
-	for _, name := range []string{"finite-minimum", "frozen-contexts", "failure-heavy"} {
+	for _, name := range []string{"finite-arrivals", "frozen-contexts", "failure-heavy"} {
 		settings, snapshot, keep := feedbackFixture()
-		settings.MinimumDemand = map[string]float64{snapshot.Workloads[0].UID: 5000}
+		feedbackArrivalsForTest(settings, &snapshot, 5)
 		if name == "frozen-contexts" {
 			frozen := *snapshot.Workloads[0]
 			frozen.Generation++
@@ -46,7 +46,7 @@ func TestReplayCostConsumerEquivalence(t *testing.T) {
 			}
 		}
 		if name == "failure-heavy" {
-			settings.MinimumDemand[snapshot.Workloads[0].UID] = 256000
+			feedbackArrivalsForTest(settings, &snapshot, 256)
 			snapshot.Workloads[0].SLO.TargetLatency = 10 * time.Millisecond
 			snapshot.Instances[0].MaxBatch = 1
 			snapshot.Workloads[0].Admission.Policy = AdmissionPolicyReject
@@ -130,5 +130,17 @@ func BenchmarkFeedbackCostFinalReduction(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// feedbackArrivalsForTest replaces the arrivals with n accepted arrivals of
+// the first Workload spread over the comparison period at the start of the
+// observation window, the part the replay repeats.
+func feedbackArrivalsForTest(settings SchedulerSettings, snapshot *SchedulerSnapshot, n int) {
+	start := snapshot.ObservationEnd.Add(-settings.ObservationWindow)
+	snapshot.Arrivals = nil
+	for j := range n {
+		at := start.Add(time.Duration(j) * settings.ComparisonPeriod / time.Duration(n))
+		snapshot.Arrivals = append(snapshot.Arrivals, SchedulerArrival{ID: fmt.Sprintf("a%05d", j), At: at, Definition: snapshot.Workloads[0], Accepted: true})
 	}
 }

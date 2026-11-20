@@ -17,7 +17,7 @@ func TestValidateSchedulerSettingsPatch(t *testing.T) {
 	}{
 		{"one switch", `{"controls":{"power":false}}`, false},
 		{"public numeric setting", `{"maxReplicas":3}`, false},
-		{"public map", `{"minimumDemand":{"work-uid":2}}`, false},
+		{"public map", `{"defaultOperationCost":{"prepare":{"seconds":2,"joules":3}}}`, false},
 		{"dispatch default", `{"defaultDispatchOccupancyNanos":2000000}`, false},
 		{"zero dispatch default", `{"defaultDispatchOccupancyNanos":0}`, false},
 		{"negative dispatch default", `{"defaultDispatchOccupancyNanos":-1}`, true},

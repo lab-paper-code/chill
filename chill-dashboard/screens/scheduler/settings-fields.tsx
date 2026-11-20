@@ -111,14 +111,14 @@ function CheckRow({ checked, onChange, changed, children }: { checked: boolean; 
   )
 }
 
-const [autonomousTarget, demandTarget, excludedTarget] = settingTargets
+const [autonomousTarget, excludedTarget] = settingTargets
 
-function Targets({ form, errors, changed, update, services: serviceState, nodes: nodeState }: Props) {
+function Targets({ form, changed, update, services: serviceState, nodes: nodeState }: Props) {
   const services = typeof serviceState === "string" ? [] : serviceState, nodes = typeof nodeState === "string" ? [] : nodeState
   const known = new Map(services.map(service => [service.uid, service.name]))
   const label = (uid: string) => known.get(uid) ?? <IdText value={uid} copy={false} />
   // Stored UIDs no longer in the service list stay visible so they can be removed.
-  const uniqueUIDs = [...new Set([...services.map(service => service.uid), ...form.autonomous, ...Object.keys(form.demand)])]
+  const uniqueUIDs = [...new Set([...services.map(service => service.uid), ...form.autonomous])]
   const nodeNames = [...new Set([...nodes, ...form.excluded])].sort()
   const toggle = (list: string[], item: string, on: boolean) => on ? [...list, item] : list.filter(value => value !== item)
   const move = (index: number, offset: number) => update(current => {
@@ -136,17 +136,6 @@ function Targets({ form, errors, changed, update, services: serviceState, nodes:
             {uniqueUIDs.map(uid => (
               <CheckRow key={uid} checked={form.autonomous.includes(uid)} changed={changed.has(`auto:${uid}`)}
                 onChange={on => update(current => ({ ...current, autonomous: toggle(current.autonomous, uid, on) }))}>{label(uid)}</CheckRow>
-            ))}
-          </div>
-        ) : empty("서비스", serviceState)}
-      </FormSection>
-
-      <FormSection title={demandTarget.label} info={demandTarget.help}>
-        {uniqueUIDs.length ? (
-          <div className="grid gap-x-10 gap-y-3 sm:grid-cols-2">
-            {uniqueUIDs.map(uid => (
-              <NumberField key={uid} label={label(uid)} unit="req/s" placeholder="미설정" value={form.demand[uid] ?? ""} error={errors[`demand:${uid}`]} changed={changed.has(`demand:${uid}`)}
-                onChange={text => update(current => ({ ...current, demand: { ...current.demand, [uid]: text } }))} />
             ))}
           </div>
         ) : empty("서비스", serviceState)}

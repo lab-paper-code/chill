@@ -64,7 +64,6 @@ type schedulerReplayRequest struct {
 	accountedAgeNanos   float64 // S+N for native requests, actual server age otherwise
 	potential           float64 // conditional failure excess, never a completion time
 	hasPotential        bool
-	minimumDemand       bool
 }
 
 type schedulerReplayInstance struct {
@@ -188,11 +187,11 @@ func (i *schedulerReplayInstance) idleUpperNanos(now float64) *int64 {
 	return &i.gapUpperNanos
 }
 
-// schedulerReplayEstimate replays candidate c once with seed and records each
-// definition's SLO-percentile estimate and predicted outcomes in c. Energy
-// counts the compared Nodes only (nil counts every Node). Reasons name the
-// snapshot, resource or replay facts that block the replay.
-func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, c SchedulerCandidate, seed uint64, compared map[NodeReference]bool, capacity *capacityWindowLimit) (SchedulerCandidate, error) {
+// schedulerReplayEstimate replays candidate c once with seed over the loads'
+// arrivals and records each definition's SLO-percentile estimate and predicted
+// outcomes in c. Energy counts the compared Nodes only (nil counts every Node).
+// Reasons name the snapshot, resource or replay facts that block the replay.
+func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, loads []SchedulerLoad, c SchedulerCandidate, seed uint64, compared map[NodeReference]bool, capacity *capacityWindowLimit) (SchedulerCandidate, error) {
 	c.Status = schedulerStatusPending
 	if capacity == nil {
 		c.Reasons = append(c.Reasons, snapshot.Reasons...)
@@ -208,7 +207,7 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 	if len(c.Reasons) != 0 {
 		return c, ctx.Err()
 	}
-	r, err := schedulerReplay(ctx, settings, snapshot, c, rand.New(rand.NewPCG(seed, 0)), compared, capacity)
+	r, err := schedulerReplay(ctx, settings, snapshot, loads, c, rand.New(rand.NewPCG(seed, 0)), compared, capacity)
 	if err != nil {
 		return c, err
 	}
@@ -290,13 +289,16 @@ func (s *schedulerReplayState) counted(node NodeReference) bool {
 	return s.compared == nil || s.compared[node]
 }
 
-// schedulerReplay replays candidate c over the horizon; energy counts the
-// compared Nodes only (nil counts every Node).
-func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool, capacity *capacityWindowLimit) (result schedulerReplayResult, err error) {
-	return schedulerReplayWithArrivals(ctx, settings, snap, c, rng, compared, capacity, nil)
+// schedulerReplay replays candidate c over the horizon with the compute
+// arrivals of each load's window; energy counts the compared Nodes only (nil
+// counts every Node).
+func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, loads []SchedulerLoad, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool, capacity *capacityWindowLimit) (result schedulerReplayResult, err error) {
+	return schedulerReplayWithArrivals(ctx, settings, snap, loads, c, rng, compared, capacity, nil)
 }
 
-func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool, capacity *capacityWindowLimit, cohort *feedbackArrivalCohort) (result schedulerReplayResult, err error) {
+// schedulerReplayWithArrivals takes its arrivals from cohort, or else from the
+// loads' windows.
+func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, loads []SchedulerLoad, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool, capacity *capacityWindowLimit, cohort *feedbackArrivalCohort) (result schedulerReplayResult, err error) {
 	if err := ctx.Err(); err != nil {
 		return schedulerReplayResult{}, err
 	}
@@ -314,10 +316,10 @@ func schedulerReplayWithArrivals(ctx context.Context, settings SchedulerSettings
 	s.initializeActions()
 	s.initializeOutstanding()
 	arrivalsReady := false
-	if cohort != nil && capacity == nil {
+	if cohort != nil {
 		arrivalsReady = s.initializeArrivalCohort(ctx, cohort)
 	} else {
-		arrivalsReady = s.initializeArrivals(ctx)
+		arrivalsReady = s.initializeArrivals(ctx, loads)
 	}
 	if !arrivalsReady || len(s.out.reasons) != 0 || !s.initializeRunning() {
 		return s.out, ctx.Err()
@@ -685,20 +687,28 @@ func (s *schedulerReplayState) restoreNativeOutstanding(x *schedulerReplayReques
 	}
 }
 
-func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
-	window := float64(s.settings.ObservationWindow)
-	if window <= 0 {
+// initializeArrivals repeats each Workload's compute arrivals of its load
+// window (loads: SchedulerLoad.WindowStart to the observation end) over the
+// horizon, one window length after another.
+func (s *schedulerReplayState) initializeArrivals(ctx context.Context, loads []SchedulerLoad) bool {
+	if s.settings.ObservationWindow <= 0 {
 		s.out.reasons = appendUnique(s.out.reasons, "InvalidReplayObservationWindow")
 		return false
 	}
-	start := s.snap.ObservationEnd.Add(-s.settings.ObservationWindow)
+	starts := make(map[string]time.Time, len(loads))
+	for _, load := range loads {
+		starts[load.UID] = load.WindowStart
+	}
 	arrivals := []SchedulerArrival{}
 	s.out.observedArrivals = map[string]int{}
 	for _, a := range s.snap.Arrivals {
 		if ctx.Err() != nil {
 			return false
 		}
-		if !a.At.Before(start) && a.At.Before(s.snap.ObservationEnd) && a.computeInput() {
+		if !a.computeInput() || !a.At.Before(s.snap.ObservationEnd) {
+			continue
+		}
+		if start, ok := starts[a.Definition.UID]; ok && !a.At.Before(start) {
 			arrivals = append(arrivals, a)
 			s.out.observedArrivals[a.Definition.UID]++
 		}
@@ -710,15 +720,15 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 		return arrivals[i].At.Before(arrivals[j].At)
 	})
 	identities := map[*Definition]string{}
-	for cycle := 0.0; len(arrivals) > 0 && cycle < s.horizon; cycle += window {
-		for j, a := range arrivals {
+	replayed := []*schedulerReplayRequest{}
+	for j, a := range arrivals {
+		start := starts[a.Definition.UID]
+		period := float64(s.snap.ObservationEnd.Sub(start))
+		for cycle := 0.0; cycle+float64(a.At.Sub(start)) < s.horizon; cycle += period {
 			if ctx.Err() != nil {
 				return false
 			}
 			at := cycle + float64(a.At.Sub(start))
-			if at >= s.horizon {
-				continue
-			}
 			r := SchedulerRequest{ID: fmt.Sprintf("replay-%g-%d", cycle, j), Definition: a.Definition, ReceivedAt: s.snap.At.Add(time.Duration(at)), Phase: phasePending}
 			identity, ok := identities[a.Definition]
 			if !ok {
@@ -729,11 +739,13 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 			if a.Lifetime > 0 {
 				x.expires = at + float64(a.Lifetime)
 			}
-			s.requests = append(s.requests, x)
+			replayed = append(replayed, x)
 			s.out.definitions[x.identity] = a.Definition
 		}
 	}
-	return s.addMinimumDemand(ctx)
+	sort.SliceStable(replayed, func(i, j int) bool { return replayed[i].arrival < replayed[j].arrival })
+	s.requests = append(s.requests, replayed...)
+	return true
 }
 
 func (s *schedulerReplayState) initializeRunning() bool {

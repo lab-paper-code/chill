@@ -206,7 +206,7 @@ func (p *capacityPlanner) bridgeStateRates(res capacityResult, state []map[strin
 			ids = append(ids, id)
 		}
 		slices.Sort(ids)
-		rest := ws.observedRate
+		rest := ws.rate
 		if units > 0 {
 			rest = 0
 		}
@@ -216,7 +216,7 @@ func (p *capacityPlanner) bridgeStateRates(res capacityResult, state []map[strin
 				continue
 			}
 			instance := res.bridge.instances[id]
-			share := schedulerShareRate(ws.observedRate, float64(weight), units)
+			share := schedulerShareRate(ws.rate, float64(weight), units)
 			flow := min(p.currentRoutingRate(instance), share)
 			rest += share - flow
 			rates = append(rates, schedulerRate{id: id, node: instance.Node, model: p.loadModels.of(instance), rate: flow})
@@ -554,11 +554,11 @@ func (p *capacityPlanner) requestRates(res capacityResult) (initial, final []sch
 		for _, item := range retained {
 			if weightSum > 0 {
 				initial = append(initial, schedulerRate{id: item.id, node: item.node, model: item.model,
-					rate: schedulerShareRate(min(ws.observedRate, retainedRate), float64(item.weight), weightSum)})
+					rate: schedulerShareRate(min(ws.rate, retainedRate), float64(item.weight), weightSum)})
 			}
 		}
-		initial = shares[w].scaled(initial, max(0, ws.observedRate-retainedRate))
-		final = shares[w].scaled(final, ws.observedRate)
+		initial = shares[w].scaled(initial, max(0, ws.rate-retainedRate))
+		final = shares[w].scaled(final, ws.rate)
 	}
 	return initial, final
 }

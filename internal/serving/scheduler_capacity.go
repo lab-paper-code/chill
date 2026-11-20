@@ -25,7 +25,7 @@ const (
 	// window is observed it names the node plans that remove or replace.
 	schedulerPartialObservation = "PartialObservationWindow"
 	// schedulerReplacementUnpaid names a node whose replacement did not repay
-	// its transition at the least load of the observation window.
+	// its transition at the observed load.
 	schedulerReplacementUnpaid = "ReplacementUnpaid"
 	// schedulerGainWithinUncertainty keeps the current configuration when the
 	// chosen transition saves no more than the selected evidence's conditional B.
@@ -161,8 +161,6 @@ type SchedulerPlanSearchStep struct {
 type SchedulerCapacityWorkload struct {
 	UID                 string           `json:"uid"`
 	Rate                float64          `json:"rate"`
-	ObservedRate        float64          `json:"observedRate"`
-	MinimumDemand       float64          `json:"minimumDemand"`
 	Queued              int              `json:"queued"`
 	RoutingRate         float64          `json:"routingRate"`
 	RetainedRoutingRate float64          `json:"retainedRoutingRate"`
@@ -239,17 +237,15 @@ func evaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	}
 	settings = settings.Clone()
 	snapshot = schedulerReplayScopedSnapshot(schedulerCanonical(snapshot))
-	decision = SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References), Measurements: slices.Clone(snapshot.Measurements)}
+	decision = SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References), Measurements: slices.Clone(snapshot.Measurements)}
 	decision.Reasons = appendUnique(decision.Reasons, schedulerReplayInitialScope(snapshot).evidence...)
 	fixSchedulerWorkloads(&decision, snapshot)
-	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
-	for uid, routing := range snapshot.Routing {
-		keep.Routing[uid] = routing
-	}
+	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances), Routing: schedulerKeepRouting(ctx, snapshot)}
 	if err := settings.Validate(); err != nil {
 		decision.Reasons, decision.Keep = []string{err.Error()}, keep
 		return decision, ctx.Err()
 	}
+	decision.Search = schedulerSearchPopulation(ctx, settings, snapshot)
 	// Keep carries only already-authorized Fixed completion obligations.
 	keep.Nodes = schedulerCommonNodes(snapshot)
 	p := schedulerPlanState{snap: snapshot, target: &keep, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
@@ -263,7 +259,7 @@ func evaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		decision.Keep.Reasons, decision.Reasons = reasons, reasons
 		return decision, ctx.Err()
 	}
-	planner := newCapacityPlanner(ctx, settings, snapshot, keep, decision)
+	planner := newCapacityPlanner(ctx, settings, snapshot, keep.Nodes, decision)
 	planner.fixCapacityWorkloads(&decision)
 	if len(planner.ws) == 0 {
 		if len(snapshot.Instances) == 0 && slices.ContainsFunc(decision.Workloads, func(w SchedulerWorkloadState) bool {
@@ -357,6 +353,8 @@ type capacityPlanner struct {
 	ctx            context.Context
 	settings       SchedulerSettings
 	snapshot       SchedulerSnapshot
+	loads          []SchedulerLoad // the decision's loads; the replay arrivals come from their windows
+	committed      []string        // preparing instances the committed view counts as Ready (schedulerCommittedView)
 	keep           SchedulerCandidate
 	feedbackCache  sync.Map            // Tick-local exact replay results; v1 workers share immutable values
 	feedbackCohort capacityArrivalMemo // Tick-local immutable arrivals; mutable requests belong to each replay
@@ -396,50 +394,24 @@ func (p *capacityPlanner) currentKeep() capacityResult {
 	return p.keepEnergy
 }
 
-func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, keep SchedulerCandidate, decision SchedulerDecision) *capacityPlanner {
-	snapshot = schedulerReplayScopedSnapshot(snapshot)
-	p := &capacityPlanner{ctx: ctx, settings: settings, snapshot: snapshot, keep: keep, index: map[string]int{}}
+// newCapacityPlanner plans from the committed view of the running snapshot (a
+// preparing instance counts as capacity already committed) with keep's Nodes
+// (nodes); what the running configuration measured is judged on what runs,
+// with its own routing.
+func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, running SchedulerSnapshot, nodes []SchedulerNode, decision SchedulerDecision) *capacityPlanner {
+	running = schedulerReplayScopedSnapshot(running)
+	snapshot, committed := schedulerCommittedView(running)
+	runningRoutes := schedulerKeepRouting(ctx, running)
+	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: nodes, Instances: snapshot.Instances, Routing: schedulerKeepRouting(ctx, snapshot)}
+	p := &capacityPlanner{ctx: ctx, settings: settings, snapshot: snapshot, keep: keep, loads: decision.Search.Loads, committed: committed, index: map[string]int{}}
 	var window []SchedulerMeasurement
 	for _, state := range decision.Workloads {
 		if state.State != WorkloadControlled {
 			continue
 		}
-		w := capacityWorkload{}
-		for _, d := range snapshot.Workloads {
-			if d != nil && d.UID == state.UID {
-				w.d = d
-			}
-		}
-		for _, load := range decision.Search.Loads {
-			if load.UID == state.UID {
-				w.rate = max(load.InputsPerSecond, load.RecentInputsPerSecond)
-			}
-		}
-		for _, r := range snapshot.Outstanding {
-			// Assignment reserves a slot before native dispatch, not service
-			// start. Only observed running/returning work leaves backlog.
-			if r.Definition != nil && r.Definition.UID == state.UID &&
-				(r.Phase == phasePending || r.Phase == phaseAssigned || r.Phase == phaseQueued || r.Phase == phaseDeferred) &&
-				(r.RemainingLifetime == nil || *r.RemainingLifetime > 0) {
-				w.queued++
-			}
-		}
-		covered := decision.Search.WindowEnd.Sub(decision.Search.WindowStart)
-		if covered > 0 {
-			w.rate += float64(w.queued) / covered.Seconds()
-		}
-		floor := settings.MinimumDemand[w.d.UID]
-		w.capacityDemand = newCapacityDemand(w.rate, floor)
-		w.least = newCapacityDemand(capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID), floor)
-		w.totalNanos = p.pathFeedback(w.d).TotalNanos
-		w.serving = instanceServing(snapshot.Instances, keep.Routing[w.d.UID])
-		if w.window = windowMeasurement(snapshot, decision.Search, w.d, keep.Routing[w.d.UID], w.serving); w.window != nil {
+		w := p.newCapacityWorkload(state.UID, running, runningRoutes, decision)
+		if w.window != nil {
 			window = append(window, *w.window)
-		}
-		for _, i := range snapshot.Instances {
-			if i.WorkloadUID == w.d.UID || i.OwnerWorkloadUID == w.d.UID {
-				w.current++
-			}
 		}
 		p.index[w.d.UID] = len(p.ws)
 		p.ws = append(p.ws, w)
@@ -464,6 +436,54 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 	p.options = schedulerMeasuredOptions(ctx, snapshot)
 	p.resolveCapacity()
 	return p
+}
+
+// newCapacityWorkload reads one controlled Workload's load, backlog, serving
+// and routed state: its load is the decision's estimate with the waiting
+// requests received before the load window added as demand of that window.
+func (p *capacityPlanner) newCapacityWorkload(uid string, running SchedulerSnapshot, runningRoutes map[string]map[string]int32, decision SchedulerDecision) capacityWorkload {
+	w := capacityWorkload{}
+	for _, d := range p.snapshot.Workloads {
+		if d != nil && d.UID == uid {
+			w.d = d
+		}
+	}
+	since := decision.Search.WindowStart
+	for _, load := range decision.Search.Loads {
+		if load.UID == uid {
+			w.rate, since = load.InputsPerSecond, load.WindowStart
+		}
+	}
+	older := 0
+	for _, r := range p.snapshot.Outstanding {
+		// Assignment reserves a slot before native dispatch, not service
+		// start. Only observed running/returning work leaves backlog.
+		if r.Definition != nil && r.Definition.UID == uid &&
+			(r.Phase == phasePending || r.Phase == phaseAssigned || r.Phase == phaseQueued || r.Phase == phaseDeferred) &&
+			(r.RemainingLifetime == nil || *r.RemainingLifetime > 0) {
+			w.queued++
+			if r.ReceivedAt.Before(since) {
+				older++
+			}
+		}
+	}
+	// A waiting request received since the load window started is already one
+	// of its arrivals; only those received before it add demand to the window.
+	if covered := decision.Search.WindowEnd.Sub(since); covered > 0 {
+		w.rate += float64(older) / covered.Seconds()
+	}
+	w.totalNanos = p.pathFeedback(w.d).TotalNanos
+	w.serving = instanceServing(running.Instances, runningRoutes[w.d.UID])
+	w.routed = slices.ContainsFunc(running.Instances, func(i SchedulerInstance) bool {
+		return runningRoutes[w.d.UID][i.ID] > 0 && i.Ready && !i.Stopped && !i.Terminated
+	})
+	w.window = windowMeasurement(running, since, decision.Search.WindowEnd, w.d, runningRoutes[w.d.UID], w.serving)
+	for _, i := range p.snapshot.Instances {
+		if i.WorkloadUID == w.d.UID || i.OwnerWorkloadUID == w.d.UID {
+			w.current++
+		}
+	}
+	return w
 }
 
 // fixCapacityWorkloads fixes only Workloads lacking valid raw profile support.
@@ -507,26 +527,6 @@ func (p *capacityPlanner) fixCapacityWorkloads(decision *SchedulerDecision) {
 	for option, choices := range p.optionCapacity {
 		p.optionCapacity[option] = choices[:kept]
 	}
-}
-
-// capacityMinimumRate is the least arrival rate of the Workload over the
-// control intervals that tile the observed part of the observation window.
-func capacityMinimumRate(settings SchedulerSettings, search SchedulerSearch, arrivals []SchedulerArrival, uid string) float64 {
-	covered := search.WindowEnd.Sub(search.WindowStart)
-	if covered <= 0 {
-		return 0
-	}
-	buckets := max(1, int(covered/settings.ControlInterval))
-	width := covered / time.Duration(buckets)
-	start := search.WindowEnd.Add(-time.Duration(buckets) * width)
-	counts := make([]int, buckets)
-	for _, a := range arrivals {
-		if !a.computeInput() || a.Definition.UID != uid || a.At.Before(start) || !a.At.Before(search.WindowEnd) {
-			continue
-		}
-		counts[min(buckets-1, int(a.At.Sub(start)/width))]++
-	}
-	return float64(slices.Min(counts)) / width.Seconds()
 }
 
 func (p *capacityPlanner) pathFeedback(d *Definition) PathFeedback {

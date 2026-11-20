@@ -218,7 +218,7 @@ func ActionDeadline(window time.Duration, costs []OperationCost, a Action) time.
 }
 
 // payback reverts optional replacements and new empty-Node savings when they
-// do not repay their transition at the least load over the same period T.
+// do not repay their transition at the observed load over the same period T.
 // Empty-Node savings must pay independently, including in overload plan sets.
 func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 	// Each alternative includes earlier reverts, so these replays are dependent.
@@ -239,7 +239,7 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 		if best.feasible && !kept.feasible || !best.feasible && !kept.feasible && slices.Compare(best.excesses, kept.excesses) < 0 {
 			continue
 		}
-		paid := len(p.missingEnergyCells(kept, best)) == 0 && p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route)
+		paid := len(p.missingEnergyCells(kept, best)) == 0 && p.loadJoules(alt, r) > p.loadJoules(best.choice, best.route)
 		bound, withinUncertainty := 0.0, false
 		if emptySaving {
 			bound = p.gainBound(kept, best)
@@ -320,21 +320,8 @@ func (p *capacityPlanner) routeOf(choice []int) float64 {
 	return r
 }
 
-// leastLoadJoules is the plan set's energy over T with every Workload at its
-// least rate of the observation window.
-func (p *capacityPlanner) leastLoadJoules(choice []int, r float64) float64 {
-	swapDemand := func() {
-		for w := range p.ws {
-			p.ws[w].capacityDemand, p.ws[w].least = p.ws[w].least, p.ws[w].capacityDemand
-		}
-	}
-	swapDemand()
-	defer swapDemand()
-	oldKeepWatts := p.keepWatts
-	p.keepWatts = p.evaluateEnergyForRoutes(make([]int, len(p.plans)), 0, nil, 1, p.keep.Routing).joules
+// loadJoules is the plan set's energy over T at the observed load.
+func (p *capacityPlanner) loadJoules(choice []int, r float64) float64 {
 	bridge, _ := p.bridgeSchedule(choice)
-	result := p.evaluateEnergyAtWindow(choice, r, bridge, p.periodSeconds)
-	joules := result.joules - p.keepWatts*p.periodSeconds
-	p.keepWatts = oldKeepWatts
-	return joules
+	return p.evaluateEnergyAtWindow(choice, r, bridge, p.periodSeconds).joules
 }

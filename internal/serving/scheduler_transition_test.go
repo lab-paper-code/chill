@@ -460,7 +460,7 @@ func TestLegalOverlappingResourceDAGStillReportsMeasuredOutageOverload(t *testin
 	d := snapshot.Workloads[0]
 	d.Admission.Policy = AdmissionPolicyDelay // expose the outage's late completion, not gateway rejection
 	snapshot.Arrivals = []SchedulerArrival{{ID: "arrival", Definition: d, Compute: true, At: snapshot.At.Add(-settings.ObservationWindow + time.Millisecond)}}
-	evaluated, err := schedulerReplayEstimate(context.Background(), settings, snapshot, target, schedulerTestSeed, nil, nil)
+	evaluated, err := schedulerReplayEstimate(context.Background(), settings, snapshot, schedulerSearchPopulation(context.Background(), settings, snapshot).Loads, target, schedulerTestSeed, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,7 +572,7 @@ func TestPolicyAckPendingRetainsRouteEffectAndReplicaCountAC34(t *testing.T) {
 		t.Fatalf("ACK marker caused identical target retransmission: %+v", actions)
 	}
 	decision := SchedulerDecision{Workloads: schedulerWorkloadStates(settings, snapshot), Search: schedulerSearchPopulation(context.Background(), settings, snapshot)}
-	planner := newCapacityPlanner(context.Background(), settings, snapshot, target, decision)
+	planner := newCapacityPlanner(context.Background(), settings, snapshot, target.Nodes, decision)
 	if len(planner.ws) != 1 || planner.ws[0].current != 1 {
 		t.Fatalf("ACK wait changed existing replica count: %+v", planner.ws)
 	}

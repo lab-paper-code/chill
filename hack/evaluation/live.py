@@ -103,16 +103,12 @@ class Watcher:
                 self.held_since.pop(uid, None)
         row['workloads'] = workloads
         loads = {(load.get('workloadUID') or load.get('uid') or '?')[:8]:
-                 {'inputsPerSecond': load.get('inputsPerSecond'), 'recentInputsPerSecond': load.get('recentInputsPerSecond')}
+                 {'inputsPerSecond': load.get('inputsPerSecond'), 'windowStart': load.get('windowStart')}
                  for load in (decision.get('search') or {}).get('loads') or []}
         row['loads'] = loads
-        rising = [uid for uid, value in loads.items()
-                  if (value['recentInputsPerSecond'] or 0) > (value['inputsPerSecond'] or 0) * 1.05]
         actions = []
         for action in state.get('actions') or []:
             aid = action.get('id', '')
-            if action.get('kind') in ('remove', 'power') and action.get('status') != 'complete' and rising:
-                self.alert(('actionOnRisingLoad', aid[:60]), f'{aid} while recent load rising for {rising}')
             first = self.first_seen_action.setdefault(aid, instant)
             actions.append({'kind': action.get('kind'), 'node': (action.get('node') or {}).get('name'),
                             'instance': str(action.get('instance', ''))[:8], 'status': action.get('status'),

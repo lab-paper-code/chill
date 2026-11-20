@@ -364,6 +364,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
+	c.rememberLoadChanges(decision.Search)
 	decision.PathFeedback = slices.Clone(snapshot.PathFeedback)
 	next("lock", &event.LockWait)
 	c.tickMu.Lock()
@@ -409,6 +410,14 @@ func (c *SchedulerController) approveEvaluation(
 	snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision,
 	event *observation.SchedulerControlObservation, next func(string, *time.Duration),
 ) (serving.SchedulerDecision, error) {
+	// discard returns the decision's error with the target it chose kept in the
+	// record, for a decision that never launches.
+	discard := func(err error) (serving.SchedulerDecision, error) {
+		if decision.Target != nil {
+			event.DiscardedActions = slices.Clone(decision.Target.Actions)
+		}
+		return decision, err
+	}
 	next("publish", &event.Publish)
 	c.mu.Lock()
 	latest := c.config
@@ -435,7 +444,7 @@ func (c *SchedulerController) approveEvaluation(
 	if newTarget {
 		// The action plan was built for the evaluated state of its Nodes.
 		if !reflect.DeepEqual(plannedNodeStates(decision.Target.Actions, snapshot), plannedNodeStates(decision.Target.Actions, current)) {
-			return decision, errors.New("scheduler evaluation invalidated: planned Node changed")
+			return discard(errors.New("scheduler evaluation invalidated: planned Node changed"))
 		}
 		// Exact replay uses fresh worker-clock history without blocking control progress.
 		next("evaluate", &event.Evaluate)
@@ -447,7 +456,7 @@ func (c *SchedulerController) approveEvaluation(
 			return decision, err
 		}
 		if reason != "" {
-			return decision, fmt.Errorf("scheduler evaluation invalidated: latest target admission: %s", reason)
+			return discard(fmt.Errorf("scheduler evaluation invalidated: latest target admission: %s", reason))
 		}
 	}
 	next("publish", &event.Publish)
@@ -458,7 +467,7 @@ func (c *SchedulerController) approveEvaluation(
 	}
 	if !reflect.DeepEqual(schedulerApprovalConfiguration(config), schedulerApprovalConfiguration(c.config)) {
 		c.mu.Unlock()
-		return decision, errors.New("scheduler evaluation invalidated: configuration changed")
+		return discard(errors.New("scheduler evaluation invalidated: configuration changed"))
 	}
 	config = c.config
 	// Executors may finish while admission runs. A new target launches only on
@@ -466,7 +475,7 @@ func (c *SchedulerController) approveEvaluation(
 	if newTarget && !reflect.DeepEqual(schedulerApprovalLedger(current.Actions, current.Reservations),
 		schedulerApprovalLedger(c.actionsLocked(current.At), c.reservationsLocked())) {
 		c.mu.Unlock()
-		return decision, errors.New("scheduler evaluation invalidated: live reservations changed")
+		return discard(errors.New("scheduler evaluation invalidated: live reservations changed"))
 	}
 	c.publishDecisionLocked(&current, &decision)
 	c.runtime.SetPathFeedback(decision.PathFeedback)
@@ -477,7 +486,7 @@ func (c *SchedulerController) approveEvaluation(
 	next("record", &event.Record)
 	if config.OnDecision != nil {
 		if err := config.OnDecision(decision, snapshot); err != nil {
-			return decision, fmt.Errorf("persist decision before physical action: %w", err)
+			return discard(fmt.Errorf("persist decision before physical action: %w", err))
 		}
 	}
 	if err := ctx.Err(); err != nil {

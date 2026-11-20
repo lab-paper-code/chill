@@ -803,6 +803,21 @@ func TestSetConfigurationDoesNotRebindRetainedMeters(t *testing.T) {
 	}
 }
 
+// Reservations come in launch order, their owners' first run starts, whatever
+// the owner names: of two targets routing one Workload the committed view
+// applies the later launched.
+func TestReservationsAreInLaunchOrder(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	c := &reservationState{runs: map[string]*actionRun{
+		"late":         {owner: "a-plan", reserved: true, started: t0.Add(time.Second), action: serving.Action{ID: "late"}},
+		"early":        {owner: "z-plan", reserved: true, started: t0, action: serving.Action{ID: "early"}},
+		"early-second": {owner: "z-plan", reserved: true, started: t0.Add(2 * time.Second), action: serving.Action{ID: "early-second"}},
+	}}
+	if got := c.reservationsLocked(); len(got) != 2 || got[0].Owner != "z-plan" || got[1].Owner != "a-plan" {
+		t.Fatalf("reservations out of launch order: %+v", got)
+	}
+}
+
 // The controller records when each instance lost its route weight and holds
 // an instance prepared while keep was in Overload for one window after Ready.
 func TestSchedulerControllerAnnotatesUnroutedAndHeldInstances(t *testing.T) {

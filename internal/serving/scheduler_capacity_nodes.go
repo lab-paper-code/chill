@@ -10,27 +10,16 @@ import (
 	"time"
 )
 
-// capacityDemand is a Workload's demand in req/s. Capacity and SLO are planned
-// at rate, the observed demand with the minimumDemand floor; energy is priced
-// at observedRate, the demand without it.
-type capacityDemand struct {
-	rate, observedRate float64
-}
-
-func newCapacityDemand(observed, floor float64) capacityDemand {
-	return capacityDemand{rate: max(observed, floor), observedRate: observed}
-}
-
 type capacityWorkload struct {
-	d              *Definition
-	capacityDemand                         // λ
-	least          capacityDemand          // at the least arrival rate of one control interval in the observation window
-	queued         int                     // q
-	current        int                     // instances serving it now
-	totalNanos     float64                 // frozen current-window TOTAL, heuristic only
-	serving        []SchedulerServingShare // how the running configuration serves it
-	window         *SchedulerMeasurement   // the running serving's measurement in this window
-	misses         []SchedulerMeasurement  // remembered misses of its Definition
+	d          *Definition
+	rate       float64                 // λ, req/s
+	queued     int                     // q
+	current    int                     // instances serving it now
+	routed     bool                    // the running configuration routes it to a serving instance: no plan takes its last route away
+	totalNanos float64                 // frozen current-window TOTAL, heuristic only
+	serving    []SchedulerServingShare // how the running configuration serves it
+	window     *SchedulerMeasurement   // the running serving's measurement in this window
+	misses     []SchedulerMeasurement  // remembered misses of its Definition
 }
 
 // profileRoutingWeight is optimistic observed support, not an SLO certificate.
