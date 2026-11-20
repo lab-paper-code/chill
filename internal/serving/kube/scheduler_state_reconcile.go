@@ -13,10 +13,9 @@ import (
 
 // annotateHistory sets each captured instance's UnroutedSince and HeldUntil
 // from the controller's records, drops records of instances that left, and
-// carries the load changes still
-// inside the observation window into the snapshot. A restart starts the
-// records again, so an instance waits one more window and each load window
-// starts at what the next decision detects.
+// carries the load changes still inside the observation window into the
+// snapshot. A restart starts the records again, so an instance waits one more
+// window and each load window starts at what the next decision detects.
 func (c *reservationState) annotateHistory(s *serving.SchedulerSnapshot, window time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

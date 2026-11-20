@@ -43,17 +43,6 @@ func measuredScoreOf(t *testing.T, c *SchedulerCandidate) FeedbackWorkloadScore 
 	return c.Feedback[at]
 }
 
-// servingOfW1 is how c serves w1.
-func servingOfW1(c *SchedulerCandidate) []SchedulerServingShare {
-	return servingShares(c.Routing["w1"], func(id string) (SchedulerServingShare, bool) {
-		at := slices.IndexFunc(c.Instances, func(i SchedulerInstance) bool { return i.ID == id })
-		if at < 0 {
-			return SchedulerServingShare{}, false
-		}
-		return servingOption(c.Instances[at]), true
-	})
-}
-
 // The replay of the running configuration meets the SLO; its measured window
 // does not. The identical configuration is judged by the measurement too, so
 // the decision is no Keep: it adds capacity.
@@ -74,7 +63,6 @@ func TestMeasuredInfeasibleKeepIsNotKept(t *testing.T) {
 	if measuredScoreOf(t, d.Target).Measured != nil {
 		t.Fatalf("an added instance changes w1's serving; the replay must judge it: %+v", d.Target.Feedback)
 	}
-
 }
 
 // A late completion is no on-time completion, and the on-time rate counts
@@ -174,7 +162,8 @@ func TestMeasuredTooFewReportsFallToReplay(t *testing.T) {
 
 // The window's measurement judges only a result serving w1 with the same
 // options and traffic shares; scaling every weight is the same serving. An
-// added instance or shifted traffic share is replay-judged.
+// added instance, a shifted traffic share or a changed batch cap is
+// replay-judged.
 func TestMeasuredVerdictOnlyForTheSameServing(t *testing.T) {
 	s, snap := measuredFixture()
 	snap.Instances = append(snap.Instances, poolsInstance(snap.Instances[0], "i2", NodeReference{Name: "node-lut", UID: "lut"}, "fixed", "w1"))
@@ -197,26 +186,9 @@ func TestMeasuredVerdictOnlyForTheSameServing(t *testing.T) {
 	if scaled := route(1000, 1000); !scaled.keep || scaled.feedback[0].Measured == nil || scaled.feedback[0].Measured.Since == nil || scaled.feedback[0].Measured.Population != 60 {
 		t.Fatalf("scaled weights are the running serving, judged by its window: %+v", scaled.feedback)
 	}
-}
-
-// A previous window miss must not judge A after B becomes the running set.
-func TestMeasuredPreviousMissDoesNotJudgeCandidate(t *testing.T) {
-	s, snap := measuredFixture()
-	measuredReports(&snap, 6)
-	first := capacityDecideForTest(t, s, snap)
-	if m := measuredScoreOf(t, &first.Keep).Measured; m == nil || m.Satisfied {
-		t.Fatalf("A must miss in its window: %+v", m)
-	}
-	q2 := snap.Options[slices.IndexFunc(snap.Options, func(o SchedulerOption) bool { return o.Instance.ID == "q2" })].Instance
-	snap.Instances = append(snap.Instances, q2)
-	snap.Routing = map[string]map[string]int32{"w1": {"i1": 1, "q2": 1}}
-	snap.Costs = append(snap.Costs, poolsCost(schedulerActionRemove, q2.Node, schedulerState(q2), "unloaded", "fixed"))
-	second := capacityDecideForTest(t, s, snap)
-	if second.Target == nil || !sameServing(servingOfW1(second.Target), servingOfW1(&first.Keep)) {
-		t.Fatalf("replay must select A as candidate: %+v", second.Target)
-	}
-	score := measuredScoreOf(t, second.Target)
-	if score.Measured != nil || !score.Satisfied {
-		t.Fatalf("A candidate must receive the replay verdict: %+v", score)
+	capped := slices.Clone(p.ws[0].serving)
+	capped[0].MaxBatch++
+	if sameServing(capped, p.ws[0].serving) {
+		t.Fatal("a changed batch cap is another serving: the replay must judge it")
 	}
 }

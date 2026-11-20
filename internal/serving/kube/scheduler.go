@@ -375,14 +375,14 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (result s
 
 // plannedNodeState is what an action plan assumes of one Node it acts on.
 type plannedNodeState struct {
-	PowerMode string
-	Ready     bool
+	Node      serving.SchedulerNode
 	Instances []string
 }
 
-// plannedNodeStates is the state of every Node the actions touch: its power
-// mode and readiness and the executors on it that are not yet terminated, with
-// their readiness.
+// plannedNodeStates is the state of every Node the actions touch: the Node as
+// captured and the executors on it that are not yet terminated, with their
+// readiness. The observation time and the learned reboot facts are not Node
+// state.
 func plannedNodeStates(actions []serving.Action, s serving.SchedulerSnapshot) map[string]plannedNodeState {
 	states := map[string]plannedNodeState{}
 	for _, action := range actions {
@@ -390,7 +390,8 @@ func plannedNodeStates(actions []serving.Action, s serving.SchedulerSnapshot) ma
 	}
 	for _, node := range s.Nodes {
 		if _, planned := states[node.Node.UID]; planned {
-			states[node.Node.UID] = plannedNodeState{PowerMode: node.PowerMode, Ready: node.Ready}
+			node.ObservedAt, node.Reboots = time.Time{}, nil
+			states[node.Node.UID] = plannedNodeState{Node: node}
 		}
 	}
 	for _, instance := range s.Instances {
@@ -405,9 +406,10 @@ func plannedNodeStates(actions []serving.Action, s serving.SchedulerSnapshot) ma
 // approveEvaluation is called with tickMu held and returns holding it. Progress
 // during evaluation only selects a fresh capture for publication. A decision is
 // evaluated once, on its own capture: a new target needs only the Nodes its
-// actions touch unchanged since evaluation and the action and reservation
-// ledger unchanged since the fresh capture. Nodes it does not act on may have
-// progressed. Otherwise only a changed approval configuration discards it.
+// actions touch unchanged since evaluation. Nodes it does not act on may have
+// progressed. Reservations cannot appear while tickMu is held, and launch
+// checks overlap against the live ledger. Otherwise only a changed approval
+// configuration discards the evaluation.
 func (c *SchedulerController) approveEvaluation(
 	ctx context.Context, now time.Time, config SchedulerControllerConfig, publishedAt time.Time,
 	snapshot serving.SchedulerSnapshot, decision serving.SchedulerDecision,
@@ -459,13 +461,6 @@ func (c *SchedulerController) approveEvaluation(
 		return discard(errors.New("scheduler evaluation invalidated: configuration changed"))
 	}
 	config = c.config
-	// Executors may finish after the fresh capture. A new target launches only
-	// on the ledger of that capture, read under the ledger mutex.
-	if newTarget && !reflect.DeepEqual(schedulerApprovalLedger(current.Actions, current.Reservations),
-		schedulerApprovalLedger(c.actionsLocked(current.At), c.reservationsLocked())) {
-		c.mu.Unlock()
-		return discard(errors.New("scheduler evaluation invalidated: live reservations changed"))
-	}
 	c.publishDecisionLocked(&current, &decision)
 	c.runtime.SetPathFeedback(decision.PathFeedback)
 	c.mu.Unlock()

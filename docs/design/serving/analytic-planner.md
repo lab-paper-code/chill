@@ -73,15 +73,13 @@ snapshot과 검사 입력은 선택 tuple, source와 `provenance{source,pairs,up
 
 전체 percentile 순위는 `ceil(n×p/100)`이며 목표와 같은 완료시간은 충족이다. percentile이 허용하는 실패 tail에 별도 zero-failure 조건을 추가하지 않는다. JSON에는 무한대나 가짜 완료시간을 저장하지 않는다.
 
-측정 사실의 판정. 측정 사실은 Workload 정의 d(Definition identity: UID와 generation, 모델과 전처리의 UID와 generation)를 serving 집합 S로 실행한 결과다. S의 원소는 그 Workload에 route된 인스턴스의 profile ID와 `MaxBatch`이고 구간 측정의 원소는 route weight도 갖는다. profile ID가 Node, device, 전력모드와 측정 조건을 고정한다. 인스턴스 ID는 포함하지 않으므로 같은 profile과 cap으로 다시 만든 인스턴스도 같은 원소이고, 같은 profile과 cap의 인스턴스 둘은 원소 둘이다. batch 대기(`MaxWait`)와 할당은 원소에 없으므로 그것만 다른 serving은 같은 serving으로 판정한다.
+창 측정의 판정. 창 측정은 Workload 정의 d(Definition identity: UID와 generation, 모델과 전처리의 UID와 generation)를 실행 중 구성이 serving한 결과다. serving의 원소는 그 Workload에 route된 인스턴스의 profile ID, `MaxBatch`와 route weight다. profile ID가 Node, device, 전력모드와 측정 조건을 고정한다. 인스턴스 ID는 포함하지 않으므로 같은 profile과 cap으로 다시 만든 인스턴스도 같은 원소이고, 같은 profile과 cap의 인스턴스 둘은 원소 둘이다. batch 대기(`MaxWait`)와 할당은 원소에 없으므로 그것만 다른 serving은 같은 serving으로 판정한다.
 
 판단한 결과(keep과 모든 후보)가 워크로드를 실행 중 구성과 같은 serving(같은 원소, 배치 상한과 traffic 비율, weight 전체의 배율만 다르면 같다)으로 실행하고 이번 부하 창에 백분위를 식별할 client 보고가 있으면 창 측정으로 판정한다. 그 밖에는 replay가 판정한다. 모든 Node가 keep 계획이고 모든 Workload가 실행 중 구성과 같은 serving인 결과가 현재 구성 유지(`keep`)다.
-
 
 측정 구간은 w의 부하 창 안에서 snapshot action의 마지막 `endedAt` 이후 받은 w의 compute 요청이다. 구간은 모든 action이 끝났고(`endedAt`이 있고) w에 route된 모든 인스턴스가 w로 routable한 동안만 있다. 그렇지 않으면 측정할 serving이 정해지지 않았다. client 보고(`ClientObservation`)의 완료 시간(`elapsedNanos`, client 송신부터 응답 수신까지이며 replay의 PRE, 서버 시간, POST가 모사하는 시간)이 목표 이하인 완료가 기한 내다. 늦은 완료와 그 밖의 보고(거절, 오류, timeout)는 놓침이다. capture까지 client 보고도 서버 결과(`outcome`)도 없고 받은 지 목표보다 오래된 요청은 기한 내에 끝날 수 없으므로 놓침이다. 보고가 없는 그 밖의 요청은 세지 않는다. 판정은 위의 순위 규칙 `onTime ≥ ceil(n×p/100)`이다. client 보고 수가 percentile의 표본 하한(`MinimumServiceSamples`, p95에서 59)보다 적으면 측정이 없다. 따라서 client 보고가 없는 traffic(평가 client가 없는 운영)에서는 이 규칙이 적용되지 않고 replay가 판정한다. `onTimeRate`는 기한 내 완료 수를 구간 길이로 나눈 값이다.
 
 측정 구간의 끝은 관측 끝보다 워크로드의 목표 지연 하나 앞이다: `[시작, 관측 끝 − 목표)`. 그 뒤에 받은 요청은 아직 완료할 시간이 없어 판정에 넣지 않는다.
-
 
 창 측정은 결과의 Workload score에 `measured{definitionID,serving,onTimeRate,since,population,onTime,late,satisfied}`로 붙는다. 충족 여부와 아래 tuple의 미완료 비율은 측정이 있으면 그 counts를 읽는다. 성공 지연 초과, potential의 적용 여부와 값, `worstExceedance`는 replay의 값이다. score의 나머지 필드는 replay 예측 그대로 기록한다. 에너지 계산은 측정과 무관하다. 창 측정은 정밀 판정에 적용하며 surrogate 공급은 아래 재생 공급 보정으로만 바뀐다.
 

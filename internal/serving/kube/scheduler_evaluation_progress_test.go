@@ -276,56 +276,46 @@ func TestSchedulerApprovalChecksOnlyTheNodesTheTargetActsOn(t *testing.T) {
 }
 
 // A decision that never launches keeps the target it chose in the record, at
-// every one of the four places approval discards it.
+// every one of the places approval discards it. A planned Node is compared as
+// captured: its power mode or its non-serving occupancy changing since
+// evaluation both discard the decision.
 func TestEveryDiscardRecordsTheChosenActions(t *testing.T) {
-	for _, exit := range []struct {
-		name, want string
-		arrange    func(c *SchedulerController, snapshot *serving.SchedulerSnapshot, target *serving.SchedulerCandidate, config *SchedulerControllerConfig, ready serving.SchedulerInstance) (during func())
-	}{
-		{"planned Node changed", "planned Node changed", func(_ *SchedulerController, snapshot *serving.SchedulerSnapshot, target *serving.SchedulerCandidate, _ *SchedulerControllerConfig, ready serving.SchedulerInstance) func() {
+	plannedNode := func(change func(*serving.SchedulerNode)) func(*SchedulerController, *serving.SchedulerSnapshot, *serving.SchedulerCandidate, *SchedulerControllerConfig, serving.SchedulerInstance) {
+		return func(_ *SchedulerController, snapshot *serving.SchedulerSnapshot, target *serving.SchedulerCandidate, _ *SchedulerControllerConfig, ready serving.SchedulerInstance) {
 			target.Actions[0].Node = ready.Node
 			snapshot.Nodes = slices.Clone(snapshot.Nodes)
 			for k := range snapshot.Nodes {
 				if snapshot.Nodes[k].Node == ready.Node {
-					snapshot.Nodes[k].PowerMode += "-changed"
+					change(&snapshot.Nodes[k])
 				}
 			}
-			return nil
-		}},
-		{"configuration changed", "configuration changed", func(_ *SchedulerController, _ *serving.SchedulerSnapshot, _ *serving.SchedulerCandidate, config *SchedulerControllerConfig, _ serving.SchedulerInstance) func() {
+		}
+	}
+	for _, exit := range []struct {
+		name, want string
+		arrange    func(c *SchedulerController, snapshot *serving.SchedulerSnapshot, target *serving.SchedulerCandidate, config *SchedulerControllerConfig, ready serving.SchedulerInstance)
+	}{
+		{"planned Node power mode", "planned Node changed", plannedNode(func(n *serving.SchedulerNode) { n.PowerMode += "-changed" })},
+		{"planned Node non-serving occupancy", "planned Node changed", plannedNode(func(n *serving.SchedulerNode) {
+			n.NonServing = append(slices.Clone(n.NonServing), serving.SchedulerAllocation{MemoryBytes: 1 << 30})
+		})},
+		{"configuration changed", "configuration changed", func(_ *SchedulerController, _ *serving.SchedulerSnapshot, _ *serving.SchedulerCandidate, config *SchedulerControllerConfig, _ serving.SchedulerInstance) {
 			config.Settings.MaxReplicas++
-			return nil
 		}},
-		{"live reservations changed", "live reservations changed", func(c *SchedulerController, _ *serving.SchedulerSnapshot, _ *serving.SchedulerCandidate, _ *SchedulerControllerConfig, ready serving.SchedulerInstance) func() {
-			return func() {
-				c.mu.Lock()
-				defer c.mu.Unlock()
-				c.runs["taker"] = &actionRun{owner: "taker", reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{ready.Node}},
-					action: serving.Action{ID: "taker", Kind: measurementLeaseKind}, result: &servingstate.OperationResult{}}
-			}
-		}},
-		{"persist decision", "persist decision before physical action", func(c *SchedulerController, _ *serving.SchedulerSnapshot, _ *serving.SchedulerCandidate, _ *SchedulerControllerConfig, _ serving.SchedulerInstance) func() {
+		{"persist decision", "persist decision before physical action", func(c *SchedulerController, _ *serving.SchedulerSnapshot, _ *serving.SchedulerCandidate, _ *SchedulerControllerConfig, _ serving.SchedulerInstance) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			c.config.OnDecision = func(serving.SchedulerDecision, serving.SchedulerSnapshot) error { return errors.New("disk full") }
-			return nil
 		}},
 	} {
 		t.Run(exit.name, func(t *testing.T) {
 			c, parent, snapshot, target, ready := approvalOnLatestCapture(t)
 			config := c.config
-			during := exit.arrange(c, &snapshot, &target, &config, ready)
+			exit.arrange(c, &snapshot, &target, &config, ready)
 			event := &observation.SchedulerControlObservation{}
-			captured := false
 			c.tickMu.Lock()
 			_, err := c.approveEvaluation(parent, time.Now(), config, snapshot.At, snapshot,
-				serving.SchedulerDecision{At: snapshot.At, Target: &target}, event, func(step string, _ *time.Duration) {
-					// Between the fresh capture and the ledger read.
-					captured = captured || step == "capture"
-					if step == "publish" && captured && during != nil {
-						during()
-					}
-				})
+				serving.SchedulerDecision{At: snapshot.At, Target: &target}, event, func(string, *time.Duration) {})
 			c.tickMu.Unlock()
 			c.wg.Wait()
 			if err == nil || !strings.Contains(err.Error(), exit.want) {

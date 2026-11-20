@@ -194,29 +194,10 @@ func (c *SchedulerController) releaseCapturedScopes(
 // Function ports do not carry admission policy. All accepted values do.
 func schedulerApprovalConfiguration(config SchedulerControllerConfig) SchedulerControllerConfig {
 	config.OnDecision, config.OnAction = nil, nil
-	// Occupancy reaches approval through the capture a new target is admitted
-	// on, not through raw cache evidence.
+	// Occupancy reaches approval through the evaluated capture, not through raw
+	// cache evidence.
 	config.DispatchOccupancySnapshot, config.MeterSource, config.Session.Prepare = nil, nil, nil
 	return config
-}
-
-// schedulerApprovalLedger is the action and reservation ledger a new target is
-// admitted on, without running action clocks or scope order.
-func schedulerApprovalLedger(actions []serving.Action, reservations []serving.SchedulerReservation) serving.SchedulerSnapshot {
-	s := serving.SchedulerSnapshot{Actions: slices.Clone(actions), Reservations: slices.Clone(reservations)}
-	for i := range s.Actions {
-		s.Actions[i].Elapsed = 0
-	}
-	for i := range s.Reservations {
-		r := &s.Reservations[i]
-		r.Nodes = slices.Clone(r.Nodes)
-		slices.SortFunc(r.Nodes, func(a, b serving.NodeReference) int { return strings.Compare(a.UID, b.UID) })
-		r.WorkloadUIDs, r.PodUIDs, r.Instances = slices.Clone(r.WorkloadUIDs), slices.Clone(r.PodUIDs), slices.Clone(r.Instances)
-		slices.Sort(r.WorkloadUIDs)
-		slices.Sort(r.PodUIDs)
-		slices.Sort(r.Instances)
-	}
-	return s
 }
 
 func capturePreparationOptions(s *serving.SchedulerSnapshot, profiles []serving.Profile, profileByID map[string]*serving.Profile, preparations map[string]servingstate.PrepareSpec, now time.Time) {
