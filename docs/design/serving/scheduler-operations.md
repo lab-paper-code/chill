@@ -132,7 +132,9 @@ opcost는 승인 Node에서 production primitive를 순차 Measure한다. ID는 
 
 실행기 전달 정보는 준비 요청의 `Delivery`에서만 읽는다. RKNNLite는 고정된 전달 문서를 runner의 `delivery.json`으로 두고 host 접근으로 투영한다. 다른 backend는 보조 그룹만 쓴다. serving은 프로파일에서, 측정 세션은 자기 실행 조건에서 채운다.
 
-runner는 초기화한 배치 크기를 모두 warmup한다. 어느 배치 크기의 첫 실행도 cold start가 아니다. serving은 측정 때 명령이 일부 배치만 warmup했더라도 같은 recipe(`BuildRunnerCommand`)로 명령을 다시 만든다. 측정 인스턴스는 자기 고정 배치 B 하나만 초기화한다(`BatchSizes == [B]`). profiling mode는 배치 1을 요구하지 않는다.
+runner는 초기화한 배치 크기를 모두 warmup한다. 어느 배치 크기의 첫 실행도 cold start가 아니다. serving은 측정 때 명령이 일부 배치만 warmup했더라도 같은 recipe(`BuildRunnerCommand`)로 명령을 다시 만들고, 새로 준비하는 인스턴스는 배치 크기마다 한 번만 실행한다. 한 번의 실행이 그 크기를 초기화하고, runner의 ready가 첫 요청의 gap을 재는 기준이 된다. 측정 요청의 warmup 횟수는 세션이 표본을 받기 전에 돌리는 횟수이고 serving 준비에는 쓰지 않는다. 한 번 실행한 직후의 처리 시간이 측정 횟수만큼 실행한 뒤와 같은지는 장치에서 잰 적이 없다. 측정 인스턴스는 자기 고정 배치 B 하나만 초기화한다(`BatchSizes == [B]`). profiling mode는 배치 1을 요구하지 않는다.
+
+세션이 잰 준비 비용(`prepare-b<B>`)은 배치 크기 하나를 측정 횟수만큼 실행한 준비의 값이고, serving 준비는 측정한 크기 전부를 한 번씩 실행한다. 두 동작이 달라 그 값은 serving 준비의 시간과 에너지가 아니다. 어느 쪽이 큰지도 정해져 있지 않다. serving 준비의 비용은 동작 비용 측정(`OperationCostMeasurement`)의 prepare 단계가 같은 준비 요청으로 재고, 같은 조건에서는 가장 늦게 잰 값이 쓰인다.
 
 catalog 프로파일이 없으므로 runtime은 측정 인스턴스를 Ready로 두지 않고 route하지 않는다. 제거는 serving 인스턴스와 같다. 측정 동작은 이 준비 요청에 catalog 프로파일을 요구하지 않는다. 자원 표본 대상 선택은 같은 표식으로 이 Pod를 고르므로 메모리 기록이 남는다.
 

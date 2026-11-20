@@ -73,7 +73,7 @@ memory request/limit은 측정 요청을 해석할 때 동결한 Actor envelope�
 
 ORT는 기본 자동 병렬성을 사용한다. affinity와 cgroup, quota와 실제 thread 값은 관측이다. GPU UUID, RKNN delivery와 host library, initialized batch와 실제 runtime identity는 검증한다.
 
-capability initialization과 measured batch warmup은 별도 domain이다. 서빙 인스턴스는 실제 측정 K 전체를 같은 순서로 warmup하며 cap/fixed K만 warmup하지 않는다. 측정 세션의 인스턴스는 자기 고정 배치 하나만 초기화하고 warmup한다. initialized/measured 안의 정책 cap 증가는 재시작 없이 ACK로 적용한다. profile와 initialized capacity 변경은 재시작한다.
+capability initialization과 measured batch warmup은 별도 domain이다. 서빙 인스턴스는 실제 측정 K 전체를 같은 순서로 한 번씩 warmup하며 cap/fixed K만 warmup하지 않는다. 측정 세션의 인스턴스는 자기 고정 배치 하나만 초기화하고 측정 요청의 횟수만큼 warmup한다. initialized/measured 안의 정책 cap 증가는 재시작 없이 ACK로 적용한다. profile와 initialized capacity 변경은 재시작한다.
 
 ## 조건과 현재 측정 선택
 

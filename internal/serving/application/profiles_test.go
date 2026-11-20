@@ -162,10 +162,11 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 		t.Fatalf("runner timeout %d ms, want the operation timeout", spec.Config.RunnerTimeoutMS)
 	}
 	// The configuration allows batch 4, but the session stopped there (a
-	// capacity limit) and measured 1 and 2: serving initializes and warms
-	// exactly the measured sizes, never the one that ran out of memory.
+	// capacity limit) and measured 1 and 2: serving initializes exactly the
+	// measured sizes, never the one that ran out of memory, and executes each
+	// once whatever the session's warm-up count (5 here).
 	command := strings.Join(spec.Config.RunnerCommand, " ")
-	if !strings.Contains(command, "--warmup-batch 1 --warmup-batch 2") || strings.Contains(command, "--warmup-batch 4") ||
+	if !strings.Contains(command, "--warmup-iterations 1 --warmup-batch 1 --warmup-batch 2") || strings.Contains(command, "--warmup-batch 4") ||
 		!reflect.DeepEqual(spec.Config.WarmupBatchSizes, []int{1, 2}) {
 		t.Fatalf("serving warms %v of initialized %v", spec.Config.RunnerCommand, spec.Config.BatchSizes)
 	}

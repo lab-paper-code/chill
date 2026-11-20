@@ -162,11 +162,14 @@ func (o *SchedulerService) measuredPreparation(
 	actor := p.Condition.Actor
 	// Serving initializes and warms exactly the measured batch sizes: a size
 	// the session stopped at (a capacity limit) or never reached has no
-	// profile and may not fit.
+	// profile and may not fit. One execution initializes a size; the
+	// profile's warm-up count is how many the session ran before it took
+	// samples, and a prepare that repeats it is that much longer.
 	actor.BatchSizes = make([]int, len(p.Batches))
 	for i, batch := range p.Batches {
 		actor.BatchSizes[i] = batch.Batch
 	}
+	actor.WarmupIterations = 1
 	actor.BuildRunnerCommand()
 	actor.Mode = "serving"
 	actor.ProfilePath = "/profile/bundle.json"
