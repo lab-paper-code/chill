@@ -42,7 +42,7 @@ Serving의 Reject와 Delay는 요청 정책이다. gateway는 준비된 실행�
 
 주기 판단과 완료 후 진행은 별도다. capture, 승인, 기록과 launch는 제어 mutex로 직렬화하며 수치 평가는 불변 capture 위에서 lock 밖으로 실행한다. 진행된 상태 위에 옛 snapshot을 다시 게시하지 않는다.
 
-새 target은 자기 capture에서 한 번만 평가하고 최신 capture에서 하나만 확인해 승인한다. action 계획은 평가한 상태로 만들었으므로 계획이 손대는 Node가 capture된 그대로(관측 시각과 학습한 재부팅 사실 제외: 전력모드, Ready, 사유, 비서빙 점유, 메모리, 전환 가능 모드, 측정 여부) 평가 때와 같아야 하고, 그 Node의 종료되지 않은 실행기와 그 Ready도 같아야 한다. 예약 장부는 다시 비교하지 않는다. 새 예약을 만드는 경로는 모두 tickMu를 잡으므로 승인과 launch 사이에 생기지 않고, launch의 `startTransition`과 동작마다의 `reserveRun`이 제어 mutex 아래 live 장부로 범위 충돌을 막는다. 평가 중 다른 제어 호출의 게시나 계획 밖 Node의 진행(준비 중 실행기의 식별자 변화, Ready, 제거)은 평가를 버리는 사유가 되지 않는다. 그런 Node를 가리키는 경로는 launch가 확인한다: 예약 범위 충돌은 시작하지 않고, 같은 ID로 남은 Ready가 아닌 목적지는 unconfirmed로 막히며, 사라졌거나 ID가 바뀐 목적지는 현재 Ready 목적지 위의 rebase가 뺀다. 평가 뒤의 관측으로 판단을 다시 하는 것은 다음 주기의 판단이다. target이 이미 실행 중인지는 재capture 뒤에 판단한다.
+새 target은 자기 capture에서 한 번만 평가하고 최신 capture에서 하나만 확인해 승인한다. action 계획은 평가한 상태로 만들었으므로 계획이 손대는 Node의 capture된 기록 전체(전력모드, Ready, 사유, 예약과 비서빙 점유, GPU, 메모리, 전환 가능 모드, 측정 여부. 관측 시각과 학습한 재부팅 사실만 뺀다)가 평가 때와 같아야 하고, 그 Node의 종료되지 않은 실행기와 그 Ready도 같아야 한다. 예약 장부는 다시 비교하지 않는다. 새 예약을 만드는 경로는 모두 tickMu를 잡으므로 승인과 launch 사이에 생기지 않고, launch의 `startTransition`과 동작마다의 `reserveRun`이 제어 mutex 아래 live 장부로 범위 충돌을 막는다. 평가 중 다른 제어 호출의 게시나 계획 밖 Node의 진행(준비 중 실행기의 식별자 변화, Ready, 제거)은 평가를 버리는 사유가 되지 않는다. 그런 Node를 가리키는 경로는 launch가 확인한다: 예약 범위 충돌은 시작하지 않고, 같은 ID로 남은 Ready가 아닌 목적지는 unconfirmed로 막히며, 사라졌거나 ID가 바뀐 목적지는 현재 Ready 목적지 위의 rebase가 뺀다. 평가 뒤의 관측으로 판단을 다시 하는 것은 다음 주기의 판단이다. target이 이미 실행 중인지는 재capture 뒤에 판단한다.
 
 Keep 판단은 새 target을 시작하지 않는다. 평가 중 게시가 있었거나 owner나 Keep action이 있으면 다시 capture해 게시하고, 이미 승인된 Fixed 작업만 이어 간다. 승인 구성이 평가 중 바뀌면 두 판단 모두 버린다.
 
