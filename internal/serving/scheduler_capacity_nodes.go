@@ -12,12 +12,14 @@ import (
 
 type capacityWorkload struct {
 	d          *Definition
-	rate       float64                 // λ, req/s
+	rate       float64                 // planned λ (SchedulerLoad.PlannedPerSecond), req/s: capacity, routing and replay demand
+	observed   float64                 // observed λ (SchedulerLoad.InputsPerSecond), req/s: request energy
 	queued     int                     // q
 	current    int                     // instances serving it now
 	routed     bool                    // the running configuration routes it to a serving instance: no plan takes its last route away
 	totalNanos float64                 // frozen current-window TOTAL, heuristic only
 	serving    []SchedulerServingShare // how the running configuration serves it
+	kept       []SchedulerServingShare // how keep serves it in the committed view: the serving the scheduler already decided on
 	window     *SchedulerMeasurement   // the running serving's measurement in this window
 }
 
@@ -110,7 +112,8 @@ func (p *capacityPlanner) fixed(i SchedulerInstance) bool {
 	return !ownerControlled && current(i.OwnerWorkloadUID) || !servedControlled && current(i.WorkloadUID)
 }
 
-// build lists every Node's plans and the comparison period T.
+// build lists every Node's plans and the comparison period T, and records
+// keep's power and each Workload's serving under keep (capacityWorkload.kept).
 func (p *capacityPlanner) build() error {
 	common := p.keep.Nodes
 	p.plans = make([][]*capacityPlan, len(p.snapshot.Nodes))
@@ -133,6 +136,9 @@ func (p *capacityPlanner) build() error {
 	}
 	keep := p.evaluateEnergyForRoutes(make([]int, len(p.plans)), 0, nil, 1, p.keep.Routing)
 	p.keepWatts = keep.joules
+	for w := range p.ws {
+		p.ws[w].kept = keep.serving[w]
+	}
 	return nil
 }
 

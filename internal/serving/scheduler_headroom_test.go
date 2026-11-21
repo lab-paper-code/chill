@@ -3,6 +3,7 @@ package serving
 import (
 	"math"
 	"testing"
+	"time"
 )
 
 func TestTempoHeadroomSettingsBoundsSCH55(t *testing.T) {
@@ -19,6 +20,7 @@ func TestTempoHeadroomSettingsBoundsSCH55(t *testing.T) {
 func TestTempoRecoverySurvivesNodeLocalTimingAndNotReadySCH56(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ScaleDownHeadroomFraction = .25
+	s.ObservationWindow = time.Minute // 72 req/s over a minute plan at 73.8 req/s, within the headroom of 100
 	old := snap.Instances[0]
 	next := poolsInstance(old, "cuda", old.Node, snap.Nodes[0].PowerMode, "w1")
 	profile := *next.Profile

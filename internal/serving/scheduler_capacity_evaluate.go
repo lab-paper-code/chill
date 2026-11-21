@@ -30,9 +30,13 @@ func (p *capacityPlanner) bounded(choice []int) bool {
 	return total <= p.settings.MaxInstances
 }
 
-// SchedulerReadyExpansion admits independently placed, already-Ready peers.
-// Physical identity/policy ACK remain caller obligations. SLO assessment uses
-// the same finite-demand replay and tuple ordering as exact planner finalists.
+// SchedulerReadyExpansion admits independently placed, already-Ready peers
+// into a target already adopted: a step of that transition, not the choice of
+// a configuration. It replays the running routes and the expanded routes at
+// the planned load and admits the expansion when the replay's rank tuple
+// (rankFeedback over the raw replayed counts, never the planner's verdict on a
+// decided serving) is no worse. Physical identity/policy ACK remain caller
+// obligations.
 func SchedulerReadyExpansion(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, uid string, current, added []SchedulerInstance) (map[string]int32, bool) {
 	if ctx.Err() != nil || len(current) == 0 || len(added) == 0 || !settings.Controls.Routing || settings.ObservationWindow <= 0 || settings.ControlInterval <= 0 || len(schedulerValidateObservationTimes(&snapshot)) != 0 {
 		return nil, false
@@ -359,12 +363,30 @@ func (p *capacityPlanner) assessResult(res capacityResult) capacityResult {
 		return res
 	}
 	result := memo.result
-	// The memo is shared by every result of this configuration; the window's
+	// The memo is shared by every result of this configuration. The window's
 	// measurement judges only a result serving the Workload as it runs.
+	// Without one, a result serving it as keep does in the committed view
+	// (kept, the serving the scheduler already decided on) misses only when
+	// its replayed on-time share, carried over to the requests it rests on,
+	// is significantly short (schedulerOnTimeShort). Those are the load
+	// window's observed arrivals (ObservedArrivals, untiled: repeating the
+	// window over the comparison period adds no evidence) plus the requests
+	// outstanding at the snapshot, each judged once (Population -
+	// ReplayedArrivals); a request of the window still outstanding is in
+	// both. Like the measurement, it counts the Workload's requests of every
+	// Definition identity, each against its own target, at the current
+	// Definition's percentile. A result that changes the serving is chosen
+	// only if it passes the replay's rank rule.
 	res.feedback, res.slo, res.conditional = slices.Clone(result.Workloads), result.SLO, result.ConditionalService
 	for j, score := range res.feedback {
-		if w, controlled := p.index[score.UID]; controlled && res.running[w] {
+		w, controlled := p.index[score.UID]
+		switch {
+		case !controlled:
+		case res.running[w] && p.ws[w].window != nil:
 			res.feedback[j].Measured = p.ws[w].window
+		case score.Population > 0 && sameServing(res.serving[w], p.ws[w].kept):
+			n := score.ObservedArrivals + score.Population - score.ReplayedArrivals
+			res.feedback[j].Satisfied = !schedulerOnTimeShort(p.settings, p.ws[w].d, n, float64(n)*float64(score.OnTime)/float64(score.Population))
 		}
 	}
 	res.assumptions, res.sources = result.Assumptions, result.Sources

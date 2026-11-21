@@ -26,10 +26,15 @@ type SchedulerServingShare struct {
 // from Since to one SLO target before the end of the observation window, the
 // arrivals that had the whole target to report: OnTime and Late are
 // completions within and beyond the SLO target, every other report and every
-// unreported arrival is a failure. OnTimeRate is its on-time completions per
-// second of that stretch and Satisfied the empirical rank rule over
-// Population. It judges every result that serves the Workload as it runs; the
-// replay judges every other result.
+// unreported arrival is a failure. It exists only once the running serving
+// has been settled for one control interval (the observation window, if
+// shorter): from Since, the later of the load window's start and the last
+// action's end, to the end of the observation window; and only with enough
+// reports to identify the SLO percentile (windowMeasurement). OnTimeRate is
+// its on-time completions per second of that stretch. Satisfied holds unless
+// OnTime is significantly short of the percentile over Population
+// (schedulerOnTimeShort). It judges every result that serves the Workload as
+// it runs; the replay judges every other result.
 type SchedulerMeasurement struct {
 	DefinitionID string                  `json:"definitionID"`
 	Serving      []SchedulerServingShare `json:"serving"`
@@ -78,12 +83,17 @@ func sameServing(a, b []SchedulerServingShare) bool {
 }
 
 // windowMeasurement is d's measurement on the running serving over its load
-// window up to one SLO target before end, [since, end - target), or nil when
-// there is no window or it holds fewer reports than identify d's SLO percentile
-// (MinimumServiceSamples). The window starts no earlier than the last action's
-// end. It exists only while every action has ended and every routed instance of
-// d is routable for it: otherwise the serving it would measure is not settled.
-func windowMeasurement(snapshot SchedulerSnapshot, since, end time.Time, d *Definition, routes map[string]int32, serving []SchedulerServingShare) *SchedulerMeasurement {
+// window up to one SLO target before end, [since, end - target). The window
+// starts no earlier than the last action's end. It is nil unless the serving
+// it measures has been settled for one control interval (the observation
+// window, if shorter) by end, [since, end), and the window holds enough
+// reports to identify d's SLO percentile (MinimumServiceSamples). It exists
+// only while every action has ended and every routed instance of d is
+// routable for it: otherwise the serving it would measure is not settled.
+// The first seconds after an action are its tail, and clients miss in bursts:
+// a serving settled for less would let one burst decide the verdict, which
+// the binomial test, assuming independent reports, cannot see.
+func windowMeasurement(settings SchedulerSettings, snapshot SchedulerSnapshot, since, end time.Time, d *Definition, routes map[string]int32, serving []SchedulerServingShare) *SchedulerMeasurement {
 	until := end.Add(-d.SLO.TargetLatency)
 	if !schedulerActionsEnded(snapshot.Actions) {
 		return nil
@@ -92,6 +102,9 @@ func windowMeasurement(snapshot SchedulerSnapshot, since, end time.Time, d *Defi
 		if a.EndedAt.After(since) {
 			since = *a.EndedAt
 		}
+	}
+	if end.Sub(since) < min(settings.ObservationWindow, settings.ControlInterval) {
+		return nil
 	}
 	for _, i := range snapshot.Instances {
 		if routes[i.ID] > 0 && !i.Routable[d.UID] {
@@ -121,7 +134,7 @@ func windowMeasurement(snapshot SchedulerSnapshot, since, end time.Time, d *Defi
 		return nil
 	}
 	m.OnTimeRate = float64(m.OnTime) / until.Sub(since).Seconds()
-	m.Satisfied = m.OnTime >= empiricalSLORank(m.Population, d.SLO.Percentile)
+	m.Satisfied = !schedulerOnTimeShort(settings, d, m.Population, float64(m.OnTime))
 	return &m
 }
 
@@ -141,10 +154,10 @@ func (s FeedbackWorkloadScore) judged() (population, onTime, completed int, sati
 
 // shortfall is the completed rate a judged score shows for Workload w served
 // short, when it shows one: the score missed w's SLO and completed only part
-// of its population. A replayed score shows λ_w times the completed share, on
-// time or late; the window's measurement shows the on-time rate the running
-// set delivered (OnTimeRate), what the set did rather than a share of the
-// planned demand.
+// of its population. A replayed score shows the planned λ_w, the rate the
+// replay offered, times the completed share, on time or late; the window's
+// measurement shows the on-time rate the running set delivered (OnTimeRate),
+// what the set did rather than a share of the planned demand.
 func (p *capacityPlanner) shortfall(w int, s FeedbackWorkloadScore) (float64, bool) {
 	population, _, completed, satisfied := s.judged()
 	switch m := s.Measured; {

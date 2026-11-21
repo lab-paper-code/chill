@@ -31,8 +31,10 @@ func TestLoadSchedulerHydratesEvidenceThroughTick(t *testing.T) {
 	if err != nil || decision.Target == nil || len(decision.Keep.Feedback) != 1 {
 		t.Fatalf("loaded snapshot failed direct Tick assessment: decision=%+v err=%v", decision, err)
 	}
+	// The window's one observed arrival is replayed, as often as the planned
+	// rate repeats it, and the hydrated service serves every repetition on time.
 	score := decision.Keep.Feedback[0]
-	if score.Population != 1 || score.OnTime != 1 || !score.Satisfied {
+	if score.ObservedArrivals != 1 || score.Population == 0 || score.OnTime != score.Population || !score.Satisfied {
 		t.Fatalf("decoded service evidence never reached native replay: %+v", score)
 	}
 	if err := tick(decodedSettings, loaded, 0, 1); err != nil {

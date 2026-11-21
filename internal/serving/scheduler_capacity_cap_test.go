@@ -75,7 +75,7 @@ func TestCapacityDeltaPreparationUsesConfiguredQuantile(t *testing.T) {
 	p := capacityDeltaTiny([]float64{50}, 10)
 	p.periodSeconds = 1
 	p.settings.ComparisonPeriod, p.settings.ObservationWindow = time.Second, time.Second
-	p.ws[0].rate = 20
+	p.ws[0].rate, p.ws[0].observed = 20, 20
 	p.index = map[string]int{"w": 0}
 	p.snapshot.Workloads = []*Definition{p.ws[0].d}
 	for j := range 20 {
@@ -84,7 +84,7 @@ func TestCapacityDeltaPreparationUsesConfiguredQuantile(t *testing.T) {
 		})
 	}
 	p.ws[0].d.SLO.TargetLatency = 100 * time.Millisecond
-	p.loads = schedulerSearchPopulation(p.ctx, p.settings, p.snapshot).Loads
+	p.loads = schedulerObservedLoadsForTest(p.settings, p.snapshot)
 	base := p.plans[0][0]
 	next := *base
 	next.keep, next.preMax = false, .01
@@ -113,7 +113,7 @@ func TestCapacityDeltaFrozenWorkloadPriority(t *testing.T) {
 		p.ws[0].d.SLO.TargetLatency = 100 * time.Millisecond
 		a := *p.ws[0].d
 		a.UID = "a"
-		p.ws = append(p.ws, capacityWorkload{d: &a, rate: 1})
+		p.ws = append(p.ws, capacityWorkload{d: &a, rate: 1, observed: 1})
 		p.index = map[string]int{"b": 0, "a": 1}
 		p.settings.ObservationWindow = time.Second
 		p.snapshot.Workloads = []*Definition{p.ws[0].d, p.ws[1].d}
@@ -123,7 +123,7 @@ func TestCapacityDeltaFrozenWorkloadPriority(t *testing.T) {
 			})
 		}
 		p.settings.SLOPriorityStrategy, p.settings.WorkloadPriority = strategy, []string{"a"}
-		p.loads = schedulerSearchPopulation(p.ctx, p.settings, p.snapshot).Loads
+		p.loads = schedulerObservedLoadsForTest(p.settings, p.snapshot)
 		makePlan := func(bService, aService float64, key string) *capacityPlan {
 			return &capacityPlan{items: [][]capacityItem{
 				{{id: "b", routingWeight: 10, throughput: 10, serviceNanos: bService}},

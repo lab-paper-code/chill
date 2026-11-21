@@ -174,23 +174,25 @@ func TestCapacityTransientRuleRejectsCheaperSlowRoute(t *testing.T) {
 }
 
 // Under p95 Reject both expansions are feasible. While keep meets the SLOs the
-// cheaper one ranks first; keep misses it here (40 req/s on 34.3), so the
-// decision takes the expansion that routes in fewer control intervals.
+// cheaper one ranks first; keep misses it here (30 arrivals in the 1 s window
+// plan at 40.7 req/s, the Poisson upper limit at p95, on 34.3), so the
+// decision takes the expansion that routes in fewer control intervals. The
+// slower route loses more of the same replayed population while it prepares.
 func TestCapacityRejectAtP95FeasibleExpansionsRankByRouteWhileKeepMisses(t *testing.T) {
 	s, snap, genesis3 := capacityE1Fixture()
 	snap.Workloads[0].SLO.Percentile = 95
+	capacityLoad(s, &snap, snap.Workloads[0], 30)
 	p := capacityPlannerForTest(t, s, snap)
 	slow := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"lut": "profile@lut-fixed/b1/w1"}), 20.2)
 	fast := p.evaluate(capacityChoiceForTest(t, p, map[string]string{"genesis3": "profile@genesis3-fixed/b1/w1"}), 10.7)
-	for _, tc := range []struct {
-		result   capacityResult
-		rejected int
-	}{{slow, 88}, {fast, 34}} {
-		if !tc.result.feasible || len(tc.result.feedback) != 1 || !tc.result.feedback[0].Satisfied ||
-			tc.result.feedback[0].Population != 2400 || tc.result.feedback[0].Rejected != tc.rejected ||
-			tc.result.feedback[0].OnTime+tc.result.feedback[0].Late != 2400-tc.rejected {
-			t.Fatalf("p95 Reject outcome changed: %+v", tc.result)
+	for _, r := range []capacityResult{slow, fast} {
+		if score := r.feedback; !r.feasible || len(score) != 1 || !score[0].Satisfied || score[0].Population != slow.feedback[0].Population ||
+			score[0].Rejected == 0 || score[0].OnTime+score[0].Late+score[0].Rejected != score[0].Population {
+			t.Fatalf("p95 Reject outcome changed: %+v", r)
 		}
+	}
+	if slow.feedback[0].Rejected <= fast.feedback[0].Rejected {
+		t.Fatalf("the slower route must reject more while it prepares: slow %+v fast %+v", slow.feedback, fast.feedback)
 	}
 	if slow.joules >= fast.joules || !slow.better(&fast) {
 		t.Fatalf("both feasible expansions must retain energy preference while keep meets the SLOs: slow=%+v fast=%+v", slow, fast)
@@ -223,7 +225,7 @@ func TestCapacityRateCoversOnlyTheObservedWindow(t *testing.T) {
 	capacityServiceRatesForTest(&snap, map[string]float64{snap.Instances[0].Profile.ID: 25})
 	d := capacityDecideForTest(t, s, snap)
 	if d.Target == nil || !poolsOn(*d.Target, n2) || !d.Search.WindowStart.Equal(snap.ObservedSince) ||
-		d.Capacity == nil || math.Abs(d.Capacity.Workloads[0].Rate-40) > 1e-9 {
+		d.Capacity == nil || math.Abs(d.Search.Loads[0].InputsPerSecond-40) > 1e-9 {
 		t.Fatalf("partial window read as the whole window: %s %+v %+v", d.Status, d.Search, d.Capacity)
 	}
 	snap.ObservedSince = snap.ObservationEnd.Add(-5 * time.Second)
@@ -275,9 +277,9 @@ func TestCapacityPartialWindowOnlyExpands(t *testing.T) {
 }
 
 // A mature observation process still sees a new step through the window the
-// detected change starts. The same λ reaches capacity, transient delay, route
-// shares and request energy; waiting requests add to it once, as demand of the
-// same load window.
+// detected change starts. The planned λ reaches capacity, transient delay and
+// route shares, the observed one request energy; waiting requests add to both
+// once, as demand of the same load window.
 func TestCapacityDetectedDemandExpandsWithOutstandingOnce(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, time.Minute
@@ -308,9 +310,9 @@ func TestCapacityDetectedDemandExpandsWithOutstandingOnce(t *testing.T) {
 		t.Fatalf("recent demand must expand: %s %v %+v", got.Status, got.Reasons, got.Target)
 	}
 	load, w := got.Search.Loads[0], got.Capacity.Workloads[0]
-	rate := 50.6 // (500+6)/10: the three waiting requests inside the window count once, as arrivals
-	if !load.WindowStart.Equal(recent) || load.ComputeInputs != 500 || load.InputsPerSecond != 50 ||
-		math.Abs(w.Rate-rate) > 1e-9 || w.Queued != 9 {
+	observed := 50.6 // (500+6)/10: the three waiting requests inside the window count once, as arrivals
+	if !load.WindowStart.Equal(recent) || load.ComputeInputs != 500 || load.InputsPerSecond != 50 || load.PlannedPerSecond <= 50 ||
+		math.Abs(w.Rate-(load.PlannedPerSecond+0.6)) > 1e-9 || w.Queued != 9 {
 		t.Fatalf("demand inputs: %+v %+v %+v", got.Search, load, w)
 	}
 	total := int32(0)
@@ -330,7 +332,7 @@ func TestCapacityDetectedDemandExpandsWithOutstandingOnce(t *testing.T) {
 		}
 	}
 	// Both instances share batch-1 energy, so every λW input has that cost.
-	want := rate * res.period * capacityEnergyOrder(snap.Instances[0])
+	want := observed * res.period * capacityEnergyOrder(snap.Instances[0])
 	if math.Abs(res.joules-background-want) > 1e-8 {
 		t.Fatalf("energy used another rate: request J %g want %g", res.joules-background, want)
 	}
@@ -667,9 +669,10 @@ func TestCapacityJudgesEachWorkloadWithItsSLO(t *testing.T) {
 		if score.SuccessQuantileNanos == nil || !schedulerFinite(*score.SuccessQuantileNanos) {
 			t.Fatalf("%s lost finite success quantile: %+v", score.UID, score)
 		}
-		// The success quantile counts failures as +Inf, so the allowed tail
-		// (here p95's 5%) may hold failures and still satisfy the SLO.
-		want := *score.SuccessQuantileNanos <= float64(definition.SLO.TargetLatency)
+		// The verdict ranks the whole population, failures as late, at the
+		// Workload's own percentile and target: the allowed tail (here p95's
+		// 5%) may hold failures and still satisfy the SLO.
+		want := score.OnTime >= empiricalSLORank(score.Population, definition.SLO.Percentile)
 		if score.Satisfied != want {
 			t.Fatalf("%s judged against another SLO: %+v", score.UID, score)
 		}
@@ -874,7 +877,8 @@ func assertCapacitySearchMove(t testing.TB, step, previous SchedulerPlanSearchSt
 }
 
 // capacityRawPlannerForTest gives hand-built search plans real replay inputs.
-// Scalar routing terms remain distinct from exact demand outcomes.
+// Scalar routing terms remain distinct from exact demand outcomes. The plans
+// are for each Workload's set rate: capacity, replay and energy all read it.
 func capacityRawPlannerForTest(p *capacityPlanner) {
 	settings, base := schedulerFixture()
 	if p.settings.ObservationWindow <= 0 {
@@ -907,7 +911,7 @@ func capacityRawPlannerForTest(p *capacityPlanner) {
 		if ws.d.SLO.Percentile > 0 {
 			definition.SLO.Percentile = ws.d.SLO.Percentile
 		}
-		ws.d = &definition
+		ws.d, ws.observed = &definition, ws.rate
 		p.index[definition.UID] = w
 		p.snapshot.Workloads = append(p.snapshot.Workloads, ws.d)
 		p.settings.AutonomousWorkloads = append(p.settings.AutonomousWorkloads, definition.UID)
@@ -964,9 +968,10 @@ func capacityRawPlannerForTest(p *capacityPlanner) {
 	p.keep.Routing = p.snapshot.Routing
 	for w := range p.ws {
 		p.ws[w].serving = instanceServing(p.snapshot.Instances, p.keep.Routing[p.ws[w].d.UID])
+		p.ws[w].kept = p.ws[w].serving
 	}
 	capacityFeedbackForTest(p.settings, &p.snapshot)
-	p.loads = schedulerSearchPopulation(p.ctx, p.settings, p.snapshot).Loads
+	p.loads = schedulerObservedLoadsForTest(p.settings, p.snapshot)
 	p.keepWatts = p.evaluateEnergyForRoutes(make([]int, len(p.plans)), 0, nil, 1, p.keep.Routing).joules
 }
 
@@ -2221,8 +2226,8 @@ func TestCapacityReplacementRepaysAtTheDetectedLoad(t *testing.T) {
 	capacityStepAtForTest(&snap, snap.ObservationEnd.Add(-10*time.Second), 35, 5)
 	stepped := capacityDecideForTest(t, s, snap)
 	load(5, 5, 5, 5, 5, 5)
-	if steady := capacityDecideForTest(t, s, snap); !slices.Equal(actions(steady), actions(stepped)) || stepped.Capacity.Workloads[0].Rate != 5 || replaced(stepped) {
-		t.Fatalf("step down to 5 req/s judged at %v with %v (replacement unpaid at 5 req/s), steady 5 req/s with %v", stepped.Capacity.Workloads[0].Rate, actions(stepped), actions(steady))
+	if steady := capacityDecideForTest(t, s, snap); !slices.Equal(actions(steady), actions(stepped)) || stepped.Search.Loads[0].InputsPerSecond != 5 || replaced(stepped) {
+		t.Fatalf("step down to 5 req/s judged at %v with %v (replacement unpaid at 5 req/s), steady 5 req/s with %v", stepped.Search.Loads[0].InputsPerSecond, actions(stepped), actions(steady))
 	}
 	// Recovery changes shared profile pointers; test normal payback before that mutation.
 	for _, plans := range p.plans {

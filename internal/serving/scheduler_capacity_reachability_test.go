@@ -73,14 +73,17 @@ func TestCapacityV2HeuristicAdmitsExactFeasible(t *testing.T) {
 							continue
 						}
 						var quantile *float64
-						population := 0
+						population, onTime := 0, 0
 						for _, score := range exact.feedback {
 							if score.UID == ws.d.UID {
-								quantile, population = score.SuccessQuantileNanos, score.Population
+								quantile, population, onTime = score.SuccessQuantileNanos, score.Population, score.OnTime
 							}
 						}
 						if trial > 0 && empiricalSLORank(population, ws.d.SLO.Percentile) != population {
 							continue // a below-maximum quantile is outside the property
+						}
+						if onTime < empiricalSLORank(population, ws.d.SLO.Percentile) {
+							continue // keep's serving met only the evidence test (schedulerOnTimeShort), which the fluid bound does not model
 						}
 						if quantile == nil {
 							t.Errorf("trial=%d choice=%v w=%s exact quantile missing, fluid excess=%g eligible=%t", trial, choice, ws.d.UID, excess, eligible)

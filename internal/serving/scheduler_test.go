@@ -149,6 +149,17 @@ func schedulerRequireReason(t *testing.T, reasons []string, prefix string) {
 // schedulerTestSeed seeds every replay in these tests.
 const schedulerTestSeed = 42
 
+// schedulerObservedLoadsForTest is the snapshot's loads replayed as observed:
+// the replay timing these tests pin follows the observed arrivals, not their
+// compression to the planned rate (TestPlannedLoadIsThePoissonUpperLimit).
+func schedulerObservedLoadsForTest(settings SchedulerSettings, snapshot SchedulerSnapshot) []SchedulerLoad {
+	loads := schedulerSearchPopulation(context.Background(), settings, snapshot).Loads
+	for k := range loads {
+		loads[k].PlannedPerSecond = loads[k].InputsPerSecond
+	}
+	return loads
+}
+
 // schedulerKeepForTest replays the snapshot's keep candidate (continuing an
 // in-progress target) once and returns it with its SLO estimates.
 func schedulerKeepForTest(t testing.TB, settings SchedulerSettings, snapshot SchedulerSnapshot) SchedulerCandidate {
@@ -157,7 +168,7 @@ func schedulerKeepForTest(t testing.TB, settings SchedulerSettings, snapshot Sch
 	for uid, routing := range snapshot.Routing {
 		keep.Routing[uid] = routing
 	}
-	keep, err := schedulerReplayEstimate(context.Background(), settings, snapshot, schedulerSearchPopulation(context.Background(), settings, snapshot).Loads, keep, schedulerTestSeed, nil, nil)
+	keep, err := schedulerReplayEstimate(context.Background(), settings, snapshot, schedulerObservedLoadsForTest(settings, snapshot), keep, schedulerTestSeed, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +176,7 @@ func schedulerKeepForTest(t testing.TB, settings SchedulerSettings, snapshot Sch
 }
 
 func schedulerReplayForTest(s SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate) schedulerReplayResult {
-	result, err := schedulerReplay(context.Background(), s, snap, schedulerSearchPopulation(context.Background(), s, snap).Loads, c, rand.New(rand.NewPCG(schedulerTestSeed, 0)), nil, nil)
+	result, err := schedulerReplay(context.Background(), s, snap, schedulerObservedLoadsForTest(s, snap), c, rand.New(rand.NewPCG(schedulerTestSeed, 0)), nil, nil)
 	if err != nil {
 		panic(err)
 	}

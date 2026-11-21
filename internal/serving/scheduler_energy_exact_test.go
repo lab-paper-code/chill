@@ -214,10 +214,10 @@ func TestIdleExactCellRequiresMatchingMeter(t *testing.T) {
 func TestCapacityBridgeRecordsPhaseRequestPower(t *testing.T) {
 	settings, snapshot, _, bridge := capacityBridgeFixture(t)
 	decision := capacityDecideForTest(t, settings, snapshot)
-	rate := 0.0
-	for _, workload := range decision.Capacity.Workloads {
-		if workload.UID == "w2" {
-			rate = workload.Rate
+	rate := 0.0 // request power follows the observed rate, not the planned one
+	for _, load := range decision.Search.Loads {
+		if load.UID == "w2" {
+			rate = load.InputsPerSecond
 		}
 	}
 	for _, plan := range decision.Capacity.Plans {
@@ -365,6 +365,8 @@ func withoutDerivedDistributions(d SchedulerDecision) SchedulerDecision {
 	return d
 }
 
+// Request energy is the observed load's: the search's load watts and the exact
+// energy both read the observed rate, below the planned one capacity reads.
 func TestEnergyUsesLoadRate(t *testing.T) {
 	for _, observed := range []float64{0, 1, 2} {
 		s, snap := schedulerFixture()
@@ -373,7 +375,7 @@ func TestEnergyUsesLoadRate(t *testing.T) {
 		snap.Instances[0].Profile.Power = schedulerTestPower(100)
 		snap.Instances[0].Profile.Batches[0].InputSlopeJoules = schedulerTestSlope(3)
 		p := capacityPlannerForTest(t, s, snap)
-		if p.ws[0].rate != observed {
+		if p.ws[0].observed != observed || observed > 0 && p.ws[0].rate <= observed {
 			t.Fatalf("rates: %+v", p.ws[0])
 		}
 		table := p.planTable()

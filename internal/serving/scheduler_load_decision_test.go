@@ -187,16 +187,16 @@ func TestCommittedKeepWithoutASearchCreatesNoAction(t *testing.T) {
 }
 
 // A part shorter than the stretch's mean gap between arrivals does not decide
-// where the load starts. Sparse arrivals at 0.24 req/s rise to 0.8 req/s 10 s
+// where the load starts. Sparse arrivals at 0.24 req/s rise to 1 req/s 10 s
 // before the end; two more arrive 2 ms and 1 ms before it. The split after the
 // first of those two scores higher than any other but leaves a second part of
-// 2 ms, far shorter than the mean gap (60 s over 22 arrivals). The located
+// 2 ms, far shorter than the mean gap (60 s over 24 arrivals). The located
 // start leaves both parts at least that long.
 func TestLoadStartLeavesBothPartsAtLeastTheMeanGap(t *testing.T) {
 	end := time.Unix(100000, 0)
 	from := end.Add(-time.Minute)
 	at := func(seconds float64) time.Time { return from.Add(time.Duration(seconds * float64(time.Second))) }
-	times := append(evenTimesForTest(at(0), at(50), 0.24), evenTimesForTest(at(50), at(60), 0.8)...)
+	times := append(evenTimesForTest(at(0), at(50), 0.24), evenTimesForTest(at(50), at(60), 1)...)
 	times = append(times, at(59.998), at(59.999))
 	span, total := end.Sub(from).Seconds(), float64(len(times))
 	gap := span / total
@@ -217,12 +217,36 @@ func TestLoadStartLeavesBothPartsAtLeastTheMeanGap(t *testing.T) {
 		return l
 	}
 	short := at(59.998).Add(1)
-	located := schedulerLoadStart(10*time.Second, &Definition{UID: "w", SLO: SLO{Percentile: 95}}, slices.Clone(times), from, end, time.Time{})
+	located := schedulerLoadStart(SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: 10 * time.Second}, &Definition{UID: "w", SLO: SLO{Percentile: 95}}, slices.Clone(times), from, end, time.Time{})
 	if end.Sub(short).Seconds() >= gap || likelihood(short) <= likelihood(located) {
 		t.Fatalf("fixture: the split after 59.998 s (%v) must score above the located start %v (%v)", likelihood(short), located.Sub(from), likelihood(located))
 	}
 	if located.Sub(from).Seconds() < gap || end.Sub(located).Seconds() < gap {
 		t.Fatalf("located start %v leaves a part shorter than the mean gap %v s", located.Sub(from), gap)
+	}
+}
+
+// One decision's burst of a sparse stream is no load change. 17 arrivals in
+// the first 50 s of the minute and 11 in its last 10 s (the shape of a
+// recorded false detection) reject a constant rate at the level one decision
+// gives its five boundaries, 0.05/5, but not at the level the six decisions
+// that test the same window share, 0.05/5/6. A step of a dense stream at the
+// same last boundary is found by the same decision.
+func TestSparseBurstIsNoLoadChange(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval = time.Minute, 10*time.Second
+	end := time.Unix(100000, 0)
+	start, last := end.Add(-s.ObservationWindow), end.Add(-s.ControlInterval)
+	burst := append(evenTimesForTest(start, last, 17.0/50), evenTimesForTest(last, end, 1.1)...)
+	if p := binomialTwoSided(len(burst), 11, 1.0/6); len(burst) != 28 || p >= 0.05/5 {
+		t.Fatalf("fixture: one decision's level must reject 11 of %d arrivals in the last interval, p = %v", len(burst), p)
+	}
+	if load := loadsOverDecisionsForTest(s, snap, burst, []time.Time{end})[0]; load.Changed || !load.WindowStart.Equal(start) {
+		t.Fatalf("a burst of a sparse stream started the load at %v", load.WindowStart.Sub(start))
+	}
+	step := append(evenTimesForTest(start, last, 64), evenTimesForTest(last, end, 96)...)
+	if load := loadsOverDecisionsForTest(s, snap, step, []time.Time{end})[0]; !load.Changed || load.WindowStart.Sub(last).Abs() > time.Second/64 {
+		t.Fatalf("a step at %v started the load at %v", last.Sub(start), load.WindowStart.Sub(start))
 	}
 }
 

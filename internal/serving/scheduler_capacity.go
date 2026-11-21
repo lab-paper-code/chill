@@ -168,6 +168,8 @@ type SchedulerPlanSearchStep struct {
 }
 
 // SchedulerCapacityWorkload records the routing heuristics of one Workload.
+// Rate is the planned rate (SchedulerLoad.PlannedPerSecond) with the waiting
+// requests received before the load window added over its length.
 type SchedulerCapacityWorkload struct {
 	UID                 string           `json:"uid"`
 	Rate                float64          `json:"rate"`
@@ -490,8 +492,9 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, running
 }
 
 // newCapacityWorkload reads one controlled Workload's load, backlog, serving
-// and routed state: its load is the decision's estimate with the waiting
-// requests received before the load window added as demand of that window.
+// and routed state: its load is the decision's estimate, planned and observed,
+// with the waiting requests received before the load window added to both as
+// demand of that window.
 func (p *capacityPlanner) newCapacityWorkload(uid string, running SchedulerSnapshot, runningRoutes map[string]map[string]int32, decision SchedulerDecision) capacityWorkload {
 	w := capacityWorkload{}
 	for _, d := range p.snapshot.Workloads {
@@ -502,7 +505,7 @@ func (p *capacityPlanner) newCapacityWorkload(uid string, running SchedulerSnaps
 	since := decision.Search.WindowStart
 	for _, load := range decision.Search.Loads {
 		if load.UID == uid {
-			w.rate, since = load.InputsPerSecond, load.WindowStart
+			w.rate, w.observed, since = load.PlannedPerSecond, load.InputsPerSecond, load.WindowStart
 		}
 	}
 	older := 0
@@ -522,13 +525,14 @@ func (p *capacityPlanner) newCapacityWorkload(uid string, running SchedulerSnaps
 	// of its arrivals; only those received before it add demand to the window.
 	if covered := decision.Search.WindowEnd.Sub(since); covered > 0 {
 		w.rate += float64(older) / covered.Seconds()
+		w.observed += float64(older) / covered.Seconds()
 	}
 	w.totalNanos = p.pathFeedback(w.d).TotalNanos
 	w.serving = instanceServing(running.Instances, runningRoutes[w.d.UID])
 	w.routed = slices.ContainsFunc(running.Instances, func(i SchedulerInstance) bool {
 		return runningRoutes[w.d.UID][i.ID] > 0 && i.Ready && !i.Stopped && !i.Terminated
 	})
-	w.window = windowMeasurement(running, since, decision.Search.WindowEnd, w.d, runningRoutes[w.d.UID], w.serving)
+	w.window = windowMeasurement(p.settings, running, since, decision.Search.WindowEnd, w.d, runningRoutes[w.d.UID], w.serving)
 	for _, i := range p.snapshot.Instances {
 		if i.WorkloadUID == w.d.UID || i.OwnerWorkloadUID == w.d.UID {
 			w.current++

@@ -248,10 +248,10 @@ func TestCapacitySearchV2Determinism(t *testing.T) {
 func TestCapacitySearchV2Steps(t *testing.T) {
 	two := capacityThreeNodeSwap()
 	two.plans, two.compared, two.snapshot.Nodes = two.plans[:2], two.compared[:2], two.snapshot.Nodes[:2]
-	two.ws[0].rate, two.plans[0][1].after = 19, 15
+	two.ws[0].rate, two.ws[0].observed, two.plans[0][1].after = 19, 19, 15
 	capacityLoad(two.settings, &two.snapshot, two.ws[0].d, two.ws[0].rate)
 	cover := capacityThreeNodeSwap()
-	cover.ws[0].rate = 45
+	cover.ws[0].rate, cover.ws[0].observed = 45, 45
 	capacityLoad(cover.settings, &cover.snapshot, cover.ws[0].d, cover.ws[0].rate)
 	countRecovery := capacityThreeNodeSwap()
 	countRecovery.settings.MaxInstances = 2

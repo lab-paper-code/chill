@@ -13,7 +13,11 @@ import (
 // FeedbackWorkloadScore separates replayed finite outcomes from conditional
 // compute potential. Null quantile means no successful completion. Measured,
 // when present, is the measurement that judges the Workload in place of the
-// replayed counts (judged).
+// replayed counts (judged). Satisfied is the replay's rank rule per
+// Definition; in a planner result serving the Workload as keep does it is the
+// significance test over ObservedArrivals + Population - ReplayedArrivals,
+// the window's observed arrivals plus the outstanding requests, instead
+// (assessResult).
 type FeedbackWorkloadScore struct {
 	UID                         string                `json:"uid"`
 	Population                  int                   `json:"population"`

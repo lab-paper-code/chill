@@ -65,7 +65,7 @@ func capacityScalarProductFixture() *capacityPlanner {
 	p.index = map[string]int{p.ws[0].d.UID: 0}
 	p.snapshot.Workloads = []*Definition{p.ws[0].d}
 	capacityLoad(p.settings, &p.snapshot, p.ws[0].d, p.ws[0].rate)
-	p.loads = schedulerSearchPopulation(p.ctx, p.settings, p.snapshot).Loads
+	p.loads = schedulerObservedLoadsForTest(p.settings, p.snapshot)
 	return p
 }
 

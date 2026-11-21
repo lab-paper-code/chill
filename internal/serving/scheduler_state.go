@@ -112,8 +112,9 @@ func (s *searchState) finalShare(sum *searchSum, l tableLoad) float64 {
 }
 
 // loadWatts is plan q's node load watts (schedulerLoadWatts) under the
-// Workload sums, before the route (retained instances serve up to their
-// routing rate, the rest follows the final shares) and after it.
+// Workload sums at their observed rates, before the route (retained instances
+// serve up to their routing rate, the rest follows the final shares) and
+// after it.
 func (s *searchState) loadWatts(q int, sums []searchSum) (initial, final float64, initialOK, finalOK bool) {
 	t, p := s.table, s.planner
 	models := t.loadModels[q]
@@ -123,7 +124,7 @@ func (s *searchState) loadWatts(q int, sums []searchSum) (initial, final float64
 	rates := s.rates[:len(models)]
 	clear(rates)
 	for _, w := range t.loadWorkloads[q] {
-		rate, sum := p.ws[w].rate, &sums[w]
+		rate, sum := p.ws[w].observed, &sums[w]
 		for _, l := range t.loadFinal[q][w] {
 			rates[l.slot] += rate * s.finalShare(sum, l)
 		}
@@ -131,7 +132,7 @@ func (s *searchState) loadWatts(q int, sums []searchSum) (initial, final float64
 	final, finalOK = schedulerLoadWatts(models, rates)
 	clear(rates)
 	for _, w := range t.loadWorkloads[q] {
-		rate, sum := p.ws[w].rate, &sums[w]
+		rate, sum := p.ws[w].observed, &sums[w]
 		if sum.retainedWeight > 0 {
 			for _, l := range t.loadRetained[q][w] {
 				rates[l.slot] += min(rate, sum.retainedRoutingRate) * l.weight / sum.retainedWeight

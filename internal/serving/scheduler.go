@@ -535,16 +535,25 @@ type SchedulerSearch struct {
 
 // SchedulerLoad is one Workload's load: its arrivals since WindowStart, the
 // last detected change of its arrival rate in the observation window or the
-// window's start (schedulerLoadStart). Demand, replay, energy and payback all
-// read it. Changed is set when this decision detected the change.
+// window's start (schedulerLoadStart). Changed is set when this decision
+// detected the change. InputsPerSecond is the observed rate, ComputeInputs
+// over the load window; energy reads it. PlannedPerSecond is the rate the
+// planner plans for (schedulerPlannedRate): the exact Poisson upper
+// confidence limit of ComputeInputs at the share the Workload's SLO
+// percentile leaves; capacity, routing and the replay read it, and the replay
+// repeats the observed arrivals compressed in time by InputsPerSecond /
+// PlannedPerSecond. A load without a current Workload, or one whose
+// percentile is outside (0, 100) where no such limit exists (the Workload API
+// admits only (0, 100)), is planned at its observed rate.
 type SchedulerLoad struct {
-	UID             string    `json:"uid"`
-	WindowStart     time.Time `json:"windowStart"`
-	Changed         bool      `json:"changed,omitempty"`
-	Received        int       `json:"received"`
-	Accepted        int       `json:"accepted"`
-	ComputeInputs   int       `json:"computeInputs"`
-	InputsPerSecond float64   `json:"inputsPerSecond"`
+	UID              string    `json:"uid"`
+	WindowStart      time.Time `json:"windowStart"`
+	Changed          bool      `json:"changed,omitempty"`
+	Received         int       `json:"received"`
+	Accepted         int       `json:"accepted"`
+	ComputeInputs    int       `json:"computeInputs"`
+	InputsPerSecond  float64   `json:"inputsPerSecond"`
+	PlannedPerSecond float64   `json:"plannedPerSecond"`
 }
 
 // Workload decision states.

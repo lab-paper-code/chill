@@ -51,10 +51,10 @@ func TestMeasuredInfeasibleKeepIsNotKept(t *testing.T) {
 	if d := capacityDecideForTest(t, s, snap); d.Status != SchedulerStatusKeep || measuredScoreOf(t, &d.Keep).Measured != nil {
 		t.Fatalf("unreported window must keep the replay-feasible configuration: status=%s keep=%+v", d.Status, d.Keep.Feedback)
 	}
-	measuredReports(&snap, 6) // 54 of 60 on time < ⌈0.95·60⌉ = 57
+	measuredReports(&snap, 10) // 50 of 60 on time: P(X <= 50) = 0.0007 for Binomial(60, 0.95), below 0.05/4
 	d := capacityDecideForTest(t, s, snap)
 	keep := measuredScoreOf(t, &d.Keep)
-	if keep.Measured == nil || keep.Measured.Population != 60 || keep.Measured.OnTime != 54 || keep.Measured.Satisfied || !keep.Satisfied {
+	if keep.Measured == nil || keep.Measured.Population != 60 || keep.Measured.OnTime != 50 || keep.Measured.Satisfied || !keep.Satisfied {
 		t.Fatalf("keep must record the replayed prediction and the measured verdict: %+v %+v", keep, keep.Measured)
 	}
 	if d.Keep.Status != SchedulerStatusOverload || d.Status == SchedulerStatusKeep || d.Target == nil || len(d.Target.Instances) < 2 {
@@ -66,16 +66,16 @@ func TestMeasuredInfeasibleKeepIsNotKept(t *testing.T) {
 }
 
 // A late completion is no on-time completion, and the on-time rate counts
-// on-time completions only: 56 of 60 in 3 s.
+// on-time completions only: 50 of 60 in 3 s.
 func TestMeasuredLateCompletionIsNotOnTime(t *testing.T) {
 	s, snap := measuredFixture()
 	measuredReports(&snap, 0)
-	for j := range snap.Arrivals[:4] {
+	for j := range snap.Arrivals[:10] {
 		snap.Arrivals[j].ClientElapsed = 2 * snap.Workloads[0].SLO.TargetLatency
 	}
 	m := capacityPlannerForTest(t, s, snap).ws[0].window
-	if m == nil || m.Population != 60 || m.OnTime != 56 || m.Late != 4 || m.Satisfied || m.OnTimeRate != 56.0/3 {
-		t.Fatalf("4 late of 60 must miss at 56/3 req/s on time: %+v", m)
+	if m == nil || m.Population != 60 || m.OnTime != 50 || m.Late != 10 || m.Satisfied || m.OnTimeRate != 50.0/3 {
+		t.Fatalf("10 late of 60 must miss at 50/3 req/s on time: %+v", m)
 	}
 }
 
@@ -86,16 +86,16 @@ func TestMeasuredUnreportedOldArrivalIsAMiss(t *testing.T) {
 	s, snap := measuredFixture()
 	capacityLoad(s, &snap, snap.Workloads[0], 40) // 120 arrivals over 3 s
 	measuredReports(&snap, 0)
-	for j := range snap.Arrivals[:7] {
+	for j := range snap.Arrivals[:20] {
 		snap.Arrivals[j].ClientOutcome, snap.Arrivals[j].Outcome = "", ""
 	}
-	if m := capacityPlannerForTest(t, s, snap).ws[0].window; m == nil || m.Population != 120 || m.OnTime != 113 || m.Satisfied {
-		t.Fatalf("7 unfinished arrivals older than the target must count as misses (113 < 114 of 120): %+v", m)
+	if m := capacityPlannerForTest(t, s, snap).ws[0].window; m == nil || m.Population != 120 || m.OnTime != 100 || m.Satisfied {
+		t.Fatalf("20 unfinished arrivals older than the target must count as misses (100 of 120, significantly short): %+v", m)
 	}
-	for j := range snap.Arrivals[:7] {
+	for j := range snap.Arrivals[:20] {
 		snap.Arrivals[j].Outcome = outcomeCompleted
 	}
-	if m := capacityPlannerForTest(t, s, snap).ws[0].window; m == nil || m.Population != 113 || !m.Satisfied {
+	if m := capacityPlannerForTest(t, s, snap).ws[0].window; m == nil || m.Population != 100 || !m.Satisfied {
 		t.Fatalf("arrivals the server finished without a client report must be left out: %+v", m)
 	}
 }
@@ -104,7 +104,7 @@ func TestMeasuredUnreportedOldArrivalIsAMiss(t *testing.T) {
 // no window.
 func TestMeasuredWindowNeedsEveryRoutedInstanceRoutable(t *testing.T) {
 	s, snap := measuredFixture()
-	measuredReports(&snap, 6)
+	measuredReports(&snap, 10)
 	snap.Instances[0].Routable = map[string]bool{"w1": false}
 	if m := capacityPlannerForTest(t, s, snap).ws[0].window; m != nil {
 		t.Fatalf("an unroutable routed instance must leave no window: %+v", m)
@@ -132,25 +132,25 @@ func TestMeasuredWindowRestartsAfterAction(t *testing.T) {
 }
 
 // A measured miss corrects the surrogate supply by the on-time rate the set
-// delivered (18 req/s: 54 in 3 s), not by its on-time share of the planned
-// demand, which 30 queued requests raise above what was offered (20 + 30/3).
+// delivered (50 in 3 s), not by its on-time share of the planned demand, which
+// 30 queued requests raise above what was offered (20 + 30/3).
 func TestMeasuredShortfallIsTheDeliveredRate(t *testing.T) {
 	s, snap := measuredFixture()
 	for j := range 30 {
 		snap.Outstanding = append(snap.Outstanding, SchedulerRequest{ID: fmt.Sprint("q", j), Definition: snap.Workloads[0], ReceivedAt: snap.At, Phase: phasePending})
 	}
-	measuredReports(&snap, 6)
+	measuredReports(&snap, 10)
 	p := capacityPlannerForTest(t, s, snap)
 	got := p.shortfalls(p.evaluateCurrentKeep(p.periodSeconds))
-	if len(got) != 1 || got[0].completed != 18 {
-		t.Fatalf("measured shortfall must be the delivered on-time rate 18, not 54/60 of 30: %+v", got)
+	if len(got) != 1 || got[0].completed != 50.0/3 {
+		t.Fatalf("measured shortfall must be the delivered on-time rate 50/3, not 50/60 of the planned demand: %+v", got)
 	}
 }
 
 // Fewer reports than identify the percentile leave the replay's verdict.
 func TestMeasuredTooFewReportsFallToReplay(t *testing.T) {
 	s, snap := measuredFixture()
-	measuredReports(&snap, 6)
+	measuredReports(&snap, 10)
 	for j := range snap.Arrivals[:2] {
 		snap.Arrivals[j].ClientOutcome = "" // 58 reported, one below the floor
 	}
@@ -167,7 +167,7 @@ func TestMeasuredTooFewReportsFallToReplay(t *testing.T) {
 func TestMeasuredVerdictOnlyForTheSameServing(t *testing.T) {
 	s, snap := measuredFixture()
 	snap.Instances = append(snap.Instances, poolsInstance(snap.Instances[0], "i2", NodeReference{Name: "node-lut", UID: "lut"}, "fixed", "w1"))
-	measuredReports(&snap, 6)
+	measuredReports(&snap, 10)
 	p := capacityPlannerForTest(t, s, snap)
 	keep := p.evaluateCurrentKeep(p.periodSeconds)
 	if keep.feedback[0].Measured == nil || keep.feasible {
@@ -190,5 +190,60 @@ func TestMeasuredVerdictOnlyForTheSameServing(t *testing.T) {
 	capped[0].MaxBatch++
 	if sameServing(capped, p.ws[0].serving) {
 		t.Fatal("a changed batch cap is another serving: the replay must judge it")
+	}
+}
+
+// A measurement needs the running serving settled for one control interval:
+// from the last action's end to the end of the observation window. At 120
+// req/s and a 100 ms target the stretch to measure holds enough reports
+// either way, but a serving settled for 0.9 s, under the 1 s interval, has no
+// measurement and leaves the replay's verdict; one settled for 1.1 s has one.
+func TestMeasuredWindowNeedsOneControlInterval(t *testing.T) {
+	s, snap := measuredFixture()
+	snap.Workloads[0].SLO.TargetLatency = 100 * time.Millisecond
+	capacityLoad(s, &snap, snap.Workloads[0], 120)
+	measuredReports(&snap, 0)
+	for _, c := range []struct {
+		settled  time.Duration
+		measured bool
+	}{{900 * time.Millisecond, false}, {1100 * time.Millisecond, true}} {
+		ended := snap.ObservationEnd.Add(-c.settled)
+		snap.Actions = []Action{{ID: "route", Kind: schedulerActionRoute, Status: schedulerActionComplete, EndedAt: &ended}}
+		if m := capacityPlannerForTest(t, s, snap).ws[0].window; (m != nil) != c.measured || m != nil && m.Population != 120 {
+			t.Fatalf("a serving settled for %v: measurement %+v, want one: %v", c.settled, m, c.measured)
+		}
+	}
+}
+
+// The settled stretch is the whole serving time, not the part one target
+// before the end that is measured: with the control interval as long as the
+// observation window (4 s) and a 1 s target, a serving settled for the whole
+// window has its measurement over the first 3 s.
+func TestMeasurementExistsWithTheIntervalAsLongAsTheWindow(t *testing.T) {
+	s, snap := measuredFixture()
+	s.ControlInterval = s.ObservationWindow
+	measuredReports(&snap, 0)
+	if m := capacityPlannerForTest(t, s, snap).ws[0].window; m == nil || m.Population != 60 || !m.Satisfied {
+		t.Fatalf("a serving settled for the whole window must be measured: %+v", m)
+	}
+}
+
+// The measured verdict is the one-sided binomial test at the level the
+// decisions that look at one window share, exact for the measurement's whole
+// counts. At p95, a 60 s window and 10 s decisions (0.05/6), 3646 on time of
+// 3839 (94.97 %) cannot be told from 95 % and meets the SLO; 426 of 581 does
+// not. Through windowMeasurement in measuredFixture (a 4 s window and 1 s
+// decisions, 0.05/4), 53 on time of 60 (P(X <= 53) = 0.030) meets it, which
+// the unshared 0.05 would call a miss.
+func TestMeasuredVerdictIsASignificantShortfall(t *testing.T) {
+	s := SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: 10 * time.Second}
+	d := &Definition{SLO: SLO{Percentile: 95}}
+	if schedulerOnTimeShort(s, d, 3839, 3646) || !schedulerOnTimeShort(s, d, 581, 426) {
+		t.Fatal("3646 of 3839 must meet p95 and 426 of 581 must miss it")
+	}
+	s, snap := measuredFixture()
+	measuredReports(&snap, 7)
+	if m := capacityPlannerForTest(t, s, snap).ws[0].window; m == nil || m.Population != 60 || m.OnTime != 53 || !m.Satisfied {
+		t.Fatalf("53 of 60 must meet p95 at 0.05/4: %+v", m)
 	}
 }

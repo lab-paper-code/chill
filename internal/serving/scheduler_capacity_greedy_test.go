@@ -137,7 +137,7 @@ func capacityDeltaWalk(t testing.TB, p *capacityPlanner, rng *rand.Rand) {
 func capacityDeltaTiny(rates []float64, rate float64) *capacityPlanner {
 	p := &capacityPlanner{ctx: context.Background(), settings: capacityTestSettings, periodSeconds: 60}
 	p.snapshot.ObservationEnd = time.Unix(1000, 0) // the load window needs a clock after the zero ObservedSince
-	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{Percentile: 100, TargetLatency: time.Second}}, rate: rate}}
+	p.ws = []capacityWorkload{{d: &Definition{UID: "w", SLO: SLO{Percentile: 100, TargetLatency: time.Second}}, rate: rate, observed: rate}}
 	for n, mu := range rates {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: fmt.Sprint("n", n)}})
 		item := capacityItem{id: fmt.Sprint("i", n), routingWeight: profileRoutingWeight(mu), throughput: mu, serviceNanos: 20e6, order: float64(n + 1), model: schedulerTestModel(float64(n + 1)), weight: 1}

@@ -51,9 +51,10 @@ func capacityStepAtForTest(snap *SchedulerSnapshot, step time.Time, before, afte
 }
 
 // Once a step in the arrival rate is detected the estimate is the rate after
-// it, and that one value is the candidate demand, the replay's arrivals, the
-// energy's request rate and the payback's load: each equals what a steady
-// stream at the new rate gives.
+// it, and that one window is the load of every consumer: its Poisson upper
+// limit is the candidate and search demand, its arrivals are the replay's,
+// and its observed rate is the energy's request rate and the payback's load,
+// which equals what a steady stream at the new rate gives.
 func TestDetectedStepIsTheOneLoadEveryConsumerUses(t *testing.T) {
 	for _, c := range []struct {
 		name  string
@@ -85,11 +86,15 @@ func TestDetectedStepIsTheOneLoadEveryConsumerUses(t *testing.T) {
 			if !load.WindowStart.Equal(snap.ObservationEnd.Add(-c.since)) || load.InputsPerSecond != want {
 				t.Fatalf("estimate: window from %v at %v req/s, want from -%v at %v", load.WindowStart, load.InputsPerSecond, c.since, want)
 			}
-			if got := d.Capacity.Workloads[0].Rate; got != want { // candidate demand
-				t.Fatalf("decision demand %v, want %v", got, want)
+			planned := schedulerPlannedRate(load.ComputeInputs, c.since.Seconds(), 1-snap.Workloads[0].SLO.Percentile/100)
+			if load.PlannedPerSecond != planned || planned <= want {
+				t.Fatalf("planned %v, want the upper limit %v above %v", load.PlannedPerSecond, planned, want)
 			}
-			if got := p.searchProblem(time.Time{}).Workloads[0].Rate; got != want {
-				t.Fatalf("search demand %v, want %v", got, want)
+			if got := d.Capacity.Workloads[0].Rate; got != planned { // candidate demand
+				t.Fatalf("decision demand %v, want %v", got, planned)
+			}
+			if got := p.searchProblem(time.Time{}).Workloads[0].Rate; got != planned {
+				t.Fatalf("search demand %v, want %v", got, planned)
 			}
 			if got := d.Target.Feedback[0].ObservedArrivals; got != load.ComputeInputs || float64(got) != want*c.since.Seconds() { // replay arrivals
 				t.Fatalf("replay arrivals %d, want the %d of the new rate", got, int(want*c.since.Seconds()))
@@ -110,6 +115,41 @@ func TestDetectedStepIsTheOneLoadEveryConsumerUses(t *testing.T) {
 	}
 }
 
+// The planned rate is the exact Poisson upper confidence limit of the load
+// window's count at the share the SLO percentile leaves (p95): 28 arrivals in
+// a minute (0.47 req/s observed) plan at 0.640 req/s, 5738 at 97.74 (1.022
+// times their rate), none at nothing. The replay repeats the window's
+// arrivals compressed by observed over planned, so it offers the planned rate.
+func TestPlannedLoadIsThePoissonUpperLimit(t *testing.T) {
+	for _, c := range []struct {
+		n    int
+		want float64
+	}{{28, 0.63982}, {5738, 97.7362}, {0, 0}} {
+		if got := schedulerPlannedRate(c.n, 60, 0.05); math.Abs(got-c.want) > 1e-4 {
+			t.Fatalf("%d arrivals in 60 s plan at %v req/s, want %v", c.n, got, c.want)
+		}
+	}
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, 10*time.Minute
+	capacityLoad(s, &snap, snap.Workloads[0], 28.0/60)
+	loads := schedulerSearchPopulation(context.Background(), s, snap).Loads
+	load := loads[0]
+	if load.ComputeInputs != 28 || load.InputsPerSecond != 28.0/60 || load.PlannedPerSecond != schedulerPlannedRate(28, 60, 0.05) {
+		t.Fatalf("decision load %+v", load)
+	}
+	cohort, err := newFeedbackArrivalCohort(context.Background(), s, snap, loads)
+	if err != nil || len(cohort.requests) <= 28 {
+		t.Fatalf("replay arrivals %d: %v", len(cohort.requests), err)
+	}
+	period := float64(s.ObservationWindow) * load.InputsPerSecond / load.PlannedPerSecond
+	if got := cohort.requests[28].arrival - cohort.requests[0].arrival; math.Abs(got-period) > 1 {
+		t.Fatalf("the window repeats every %v s, want %v s", got/1e9, period/1e9)
+	}
+	if offered := float64(len(cohort.requests)) / s.ComparisonPeriod.Seconds(); math.Abs(offered-load.PlannedPerSecond) > 28/s.ComparisonPeriod.Seconds() {
+		t.Fatalf("the replay offers %v req/s, want the planned %v", offered, load.PlannedPerSecond)
+	}
+}
+
 // poissonTimes is a Poisson stream of the given rate over [start, start+window).
 func poissonTimes(rng *rand.Rand, start time.Time, window time.Duration, rate float64) []time.Time {
 	var times []time.Time
@@ -119,13 +159,15 @@ func poissonTimes(rng *rand.Rand, start time.Time, window time.Duration, rate fl
 	return times
 }
 
-// At a constant Poisson rate a window is called changed at most with the
-// significance the SLO percentile leaves, (1 - percentile/100): each of the
-// k boundaries is an exact test at that level over k, so by the union bound a
-// window of k boundaries rejects with probability at most the level. The
-// count alarms of N seeded windows is then below the level times N plus four
-// binomial standard deviations (false alarm probability under 1e-4 for a true
-// rate at the level).
+// At a constant Poisson rate a window is called changed at most with d's
+// evidence level, the significance the SLO percentile leaves, (1 -
+// percentile/100), over the decisions that look at one observation window:
+// each of the k boundaries is an exact test at that level over k, so by the
+// union bound a window of k boundaries rejects with probability at most the
+// level, and the decisions that test the same window together at most the
+// percentile's share. The count alarms of N seeded windows is then below the
+// level times N plus four binomial standard deviations (false alarm
+// probability under 1e-4 for a true rate at the level).
 func TestChangeDetectionFalseAlarmRateStaysUnderItsSignificance(t *testing.T) {
 	const windows = 2000
 	end := time.Unix(100000, 0)
@@ -133,12 +175,12 @@ func TestChangeDetectionFalseAlarmRateStaysUnderItsSignificance(t *testing.T) {
 		t.Run(fmt.Sprint(rate, " req/s"), func(t *testing.T) {
 			s := SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: 10 * time.Second}
 			d := &Definition{UID: "w", SLO: SLO{Percentile: 95}}
-			level := 1 - d.SLO.Percentile/100
+			level := schedulerEvidenceLevel(s, d)
 			rng := rand.New(rand.NewSource(1))
 			alarms := 0
 			for range windows {
 				start := end.Add(-s.ObservationWindow)
-				since := schedulerLoadStart(s.ControlInterval, d, poissonTimes(rng, start, s.ObservationWindow, rate), start, end, time.Time{})
+				since := schedulerLoadStart(s, d, poissonTimes(rng, start, s.ObservationWindow, rate), start, end, time.Time{})
 				if !since.Equal(start) {
 					alarms++
 				}
@@ -152,18 +194,20 @@ func TestChangeDetectionFalseAlarmRateStaysUnderItsSignificance(t *testing.T) {
 	}
 }
 
-// A real step is found: at the significance the SLO percentile leaves, a step
-// of a third (30 to 39 req/s) starts the load later than one control interval
-// before the step at the first decision after it, and a tripling of a sparse
-// stream (0.5 to 1.5 req/s) within three decisions, in at least 90 % of 400
-// seeded Poisson streams. A level stricter than (1 - percentile/100) over the
-// boundaries misses more (one over the cube of the boundaries: 79 % and 67 %).
+// A real step is found at d's evidence level: a step of a third (30 to 39
+// req/s) starts the load later than one control interval before the step at
+// the first decision after it in at least 90 % of 400 seeded Poisson streams
+// (364 of 400 found, against 360), and a tripling of a sparse stream (0.5 to
+// 1.5 req/s) does within three decisions in at least 80 % (335 of 400, against
+// 320). Sharing the level among the six decisions that look at one window
+// costs the sparse stream that power (at least 90 % with the level unshared).
 func TestChangeDetectionFindsARealStep(t *testing.T) {
 	const streams = 400
 	for _, c := range []struct {
 		before, after float64
 		intervals     int
-	}{{30, 39, 1}, {0.5, 1.5, 3}} {
+		percent       int
+	}{{30, 39, 1, 90}, {0.5, 1.5, 3, 80}} {
 		t.Run(fmt.Sprint(c.before, " to ", c.after, " req/s"), func(t *testing.T) {
 			s := SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: 10 * time.Second}
 			d := &Definition{UID: "w", SLO: SLO{Percentile: 95}}
@@ -182,14 +226,14 @@ func TestChangeDetectionFindsARealStep(t *testing.T) {
 							window = append(window, at)
 						}
 					}
-					if schedulerLoadStart(s.ControlInterval, d, window, start, end, time.Time{}).After(step.Add(-s.ControlInterval)) {
+					if schedulerLoadStart(s, d, window, start, end, time.Time{}).After(step.Add(-s.ControlInterval)) {
 						found++
 						break
 					}
 				}
 			}
-			if found < streams*9/10 {
-				t.Fatalf("step found within %d intervals in %d of %d streams, below 90 %%", c.intervals, found, streams)
+			if found < streams*c.percent/100 {
+				t.Fatalf("step found within %d intervals in %d of %d streams, below %d %%", c.intervals, found, streams, c.percent)
 			}
 			t.Logf("%d of %d streams", found, streams)
 		})

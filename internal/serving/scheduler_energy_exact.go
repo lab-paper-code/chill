@@ -193,9 +193,9 @@ func (p *capacityPlanner) bridgeEvents(res capacityResult) []schedulerBridgeEven
 	return events
 }
 
-// bridgeStateRates gives each routed bridge instance its flow, its share up to
-// its routing rate; what the shares do not serve goes to the final routing,
-// exactly none when no flow is capped.
+// bridgeStateRates gives each routed bridge instance its flow, its share of
+// the observed rate up to its routing rate; what the shares do not serve goes
+// to the final routing, exactly none when no flow is capped.
 func (p *capacityPlanner) bridgeStateRates(res capacityResult, state []map[string]int32, shares []schedulerShares) []schedulerRate {
 	var rates []schedulerRate
 	for w, ws := range p.ws {
@@ -206,7 +206,7 @@ func (p *capacityPlanner) bridgeStateRates(res capacityResult, state []map[strin
 			ids = append(ids, id)
 		}
 		slices.Sort(ids)
-		rest := ws.rate
+		rest := ws.observed
 		if units > 0 {
 			rest = 0
 		}
@@ -216,7 +216,7 @@ func (p *capacityPlanner) bridgeStateRates(res capacityResult, state []map[strin
 				continue
 			}
 			instance := res.bridge.instances[id]
-			share := schedulerShareRate(ws.rate, float64(weight), units)
+			share := schedulerShareRate(ws.observed, float64(weight), units)
 			flow := min(p.currentRoutingRate(instance), share)
 			rest += share - flow
 			rates = append(rates, schedulerRate{id: id, node: instance.Node, model: p.loadModels.of(instance), rate: flow})
@@ -536,9 +536,10 @@ func (s schedulerShares) scaled(rates []schedulerRate, rate float64) []scheduler
 }
 
 // requestRates gives every instance its input rate before and after the
-// route: retained current instances first serve up to their routing rate,
-// the rest of a Workload goes to its final routing; after the route the whole
-// Workload follows the final routing.
+// route at the observed rate: retained current instances first serve up to
+// their routing rate, the rest of a Workload goes to its final routing; after
+// the route the whole Workload follows the final routing. Energy is the
+// expected cost of the observed load; only capacity plans for the planned one.
 func (p *capacityPlanner) requestRates(res capacityResult) (initial, final []schedulerRate) {
 	shares := p.finalShares(res)
 	for w, ws := range p.ws {
@@ -554,11 +555,11 @@ func (p *capacityPlanner) requestRates(res capacityResult) (initial, final []sch
 		for _, item := range retained {
 			if weightSum > 0 {
 				initial = append(initial, schedulerRate{id: item.id, node: item.node, model: item.model,
-					rate: schedulerShareRate(min(ws.rate, retainedRate), float64(item.weight), weightSum)})
+					rate: schedulerShareRate(min(ws.observed, retainedRate), float64(item.weight), weightSum)})
 			}
 		}
-		initial = shares[w].scaled(initial, max(0, ws.rate-retainedRate))
-		final = shares[w].scaled(final, ws.rate)
+		initial = shares[w].scaled(initial, max(0, ws.observed-retainedRate))
+		final = shares[w].scaled(final, ws.observed)
 	}
 	return initial, final
 }

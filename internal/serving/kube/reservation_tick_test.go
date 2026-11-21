@@ -480,7 +480,13 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	if decision.Target == nil || decision.Target.Keep || len(decision.Target.Instances) != 1 || decision.Target.Instances[0].Node.Name != "b" {
 		t.Fatalf("positive reserve did not select source removal: status=%s reasons=%v capacity=%+v target=%+v", decision.Status, decision.Reasons, decision.Capacity, decision.Target)
 	}
-	if len(decision.Capacity.TransitionReserves) != 1 || !decision.Capacity.TransitionReserves[0].Allowed || decision.Capacity.TransitionReserves[0].RequiredRate != 3 {
+	// The reserve covers the planned rate, the Poisson upper limit of the
+	// window's one observed request (2 req/s), times one plus the fraction.
+	if len(decision.Search.Loads) != 1 || decision.Search.Loads[0].InputsPerSecond != 2 {
+		t.Fatalf("one request in the window must read 2 req/s: %+v", decision.Search.Loads)
+	}
+	planned := decision.Search.Loads[0].PlannedPerSecond
+	if len(decision.Capacity.TransitionReserves) != 1 || !decision.Capacity.TransitionReserves[0].Allowed || math.Abs(decision.Capacity.TransitionReserves[0].RequiredRate-1.5*planned) > 1e-9 {
 		t.Fatalf("reserve judgment missing: %+v", decision.Capacity)
 	}
 	// Both nodes are charged over the configured H: removal consumes 1 J,

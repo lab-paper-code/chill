@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gonum.org/v1/gonum/mathext"
+	"gonum.org/v1/gonum/stat/distuv"
 )
 
 // schedulerWorkloadStates classifies every current Workload for this decision.
@@ -171,7 +172,7 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 	for _, key := range keys {
 		load := SchedulerLoad{UID: key, WindowStart: search.WindowStart}
 		if i := slices.IndexFunc(snapshot.Workloads, func(d *Definition) bool { return d != nil && d.UID == key }); i >= 0 {
-			load.WindowStart = schedulerLoadStart(settings.ControlInterval, snapshot.Workloads[i], times[key], search.WindowStart, search.WindowEnd, snapshot.LoadChangedAt[key])
+			load.WindowStart = schedulerLoadStart(settings, snapshot.Workloads[i], times[key], search.WindowStart, search.WindowEnd, snapshot.LoadChangedAt[key])
 		}
 		load.Changed = load.WindowStart.After(schedulerLoadStretchStart(search.WindowStart, search.WindowEnd, snapshot.LoadChangedAt[key]))
 		index[key] = len(search.Loads)
@@ -197,8 +198,17 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 		}
 	}
 	for k := range search.Loads {
-		if covered := search.WindowEnd.Sub(search.Loads[k].WindowStart); covered > 0 {
-			search.Loads[k].InputsPerSecond = float64(search.Loads[k].ComputeInputs) / covered.Seconds()
+		load := &search.Loads[k]
+		covered := search.WindowEnd.Sub(load.WindowStart)
+		if covered <= 0 {
+			continue
+		}
+		load.InputsPerSecond = float64(load.ComputeInputs) / covered.Seconds()
+		load.PlannedPerSecond = load.InputsPerSecond
+		if i := slices.IndexFunc(snapshot.Workloads, func(d *Definition) bool { return d != nil && d.UID == load.UID }); i >= 0 {
+			if p := snapshot.Workloads[i].SLO.Percentile; p > 0 && p < 100 {
+				load.PlannedPerSecond = schedulerPlannedRate(load.ComputeInputs, covered.Seconds(), 1-p/100)
+			}
 		}
 	}
 	return search
@@ -211,8 +221,8 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 // The test decides whether the rate changed: it selects the control-interval
 // boundary of the stretch after which d's compute arrivals (times) least fit a
 // Poisson stream at the stretch's mean rate, when the exact two-sided binomial
-// test of the count after it rejects that fit at the level d's SLO percentile
-// leaves, (1 - percentile/100), shared among the stretch's boundaries. The
+// test of the count after it rejects that fit at d's evidence level
+// (schedulerEvidenceLevel) shared among the stretch's boundaries. The
 // arrivals decide when: the load starts at the instant within one interval of
 // the selected boundary that best splits the stretch into two Poisson rates
 // (the largest n1·ln(n1/t1) + n2·ln(n2/t2)). Candidates are the instants just
@@ -224,7 +234,8 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 // arrival takes on average, so its rate is not judged from it. A stretch of
 // one interval or less holds no boundary, so nothing is tested and the
 // stretch stands.
-func schedulerLoadStart(interval time.Duration, d *Definition, times []time.Time, start, end, changed time.Time) time.Time {
+func schedulerLoadStart(settings SchedulerSettings, d *Definition, times []time.Time, start, end, changed time.Time) time.Time {
+	interval := settings.ControlInterval
 	from := schedulerLoadStretchStart(start, end, changed)
 	slices.SortFunc(times, time.Time.Compare)
 	times = times[sort.Search(len(times), func(i int) bool { return !times[i].Before(from) }):]
@@ -232,7 +243,7 @@ func schedulerLoadStart(interval time.Duration, d *Definition, times []time.Time
 	for split := end.Add(-interval); split.After(from); split = split.Add(-interval) {
 		splits = append(splits, split)
 	}
-	level := (1 - d.SLO.Percentile/100) / float64(len(splits))
+	level := schedulerEvidenceLevel(settings, d) / float64(len(splits))
 	best, bestP := from, level
 	for _, split := range splits {
 		after := len(times) - sort.Search(len(times), func(i int) bool { return !times[i].Before(split) })
@@ -291,14 +302,54 @@ func schedulerLoadStretchStart(start, end, changed time.Time) time.Time {
 // binomialTwoSided is the exact two-sided p-value of k successes in n trials
 // of probability p: twice the smaller tail, at most 1.
 func binomialTwoSided(n, k int, p float64) float64 {
-	lower, upper := 1.0, 1.0 // P(X <= k), P(X >= k)
-	if k < n {
-		lower = mathext.RegIncBeta(float64(n-k), float64(k+1), 1-p)
-	}
+	upper := 1.0 // P(X >= k)
 	if k > 0 {
 		upper = mathext.RegIncBeta(float64(k), float64(n-k+1), p)
 	}
-	return min(1, 2*min(lower, upper))
+	return min(1, 2*min(binomialLowerTail(n, float64(k), p), upper))
+}
+
+// binomialLowerTail is P(X <= k) for X ~ Binomial(n, p), the regularized
+// incomplete beta I_{1-p}(n - k, k + 1), exact at whole k. At a fractional k
+// it is that beta function's continuous extension of the lower tail, between
+// the tails of the whole counts around k; k is not rounded.
+func binomialLowerTail(n int, k, p float64) float64 {
+	if k >= float64(n) {
+		return 1
+	}
+	return mathext.RegIncBeta(float64(n)-k, k+1, 1-p)
+}
+
+// schedulerEvidenceLevel is the significance a verdict on Workload d's
+// evidence is held to: the share d's SLO percentile leaves, 1 -
+// percentile/100, divided among the decisions that look at one observation
+// window, ceil(ObservationWindow / ControlInterval), since each of them tests
+// the same arrivals again. Settings are valid (Validate): both are positive.
+func schedulerEvidenceLevel(settings SchedulerSettings, d *Definition) float64 {
+	return (1 - d.SLO.Percentile/100) / math.Ceil(float64(settings.ObservationWindow)/float64(settings.ControlInterval))
+}
+
+// schedulerOnTimeShort reports whether onTime of n requests is significantly
+// short of Workload d's SLO percentile p: the one-sided binomial lower tail,
+// P(X <= onTime) for X ~ Binomial(n, p) (binomialLowerTail: the exact test
+// at a whole onTime, its continuous extension at a fractional one), falls
+// below d's evidence level. Discarding a configuration the scheduler decided
+// on takes that much evidence; a shortfall the sample cannot tell from chance
+// does not.
+func schedulerOnTimeShort(settings SchedulerSettings, d *Definition, n int, onTime float64) bool {
+	return binomialLowerTail(n, onTime, d.SLO.Percentile/100) < schedulerEvidenceLevel(settings, d)
+}
+
+// schedulerPlannedRate is the rate a Workload with n compute arrivals in a
+// load window of seconds is planned at: the exact upper confidence limit of
+// a Poisson rate at confidence 1 - alpha, χ²(1 - alpha; 2(n + 1)) / 2T. A
+// configuration is chosen at the highest rate its evidence allows. No
+// arrivals plan nothing.
+func schedulerPlannedRate(n int, seconds, alpha float64) float64 {
+	if n == 0 {
+		return 0
+	}
+	return distuv.ChiSquared{K: float64(2 * (n + 1))}.Quantile(1-alpha) / (2 * seconds)
 }
 
 func schedulerMeasuredOptions(ctx context.Context, snapshot SchedulerSnapshot) []SchedulerOption {

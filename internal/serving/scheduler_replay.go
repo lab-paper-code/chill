@@ -689,15 +689,22 @@ func (s *schedulerReplayState) restoreNativeOutstanding(x *schedulerReplayReques
 
 // initializeArrivals repeats each Workload's compute arrivals of its load
 // window (loads: SchedulerLoad.WindowStart to the observation end) over the
-// horizon, one window length after another.
+// horizon, one window length after another, with the window compressed in
+// time by its observed over its planned rate (InputsPerSecond /
+// PlannedPerSecond): the observed pattern at the planned rate. A load without
+// a planned rate repeats as observed.
 func (s *schedulerReplayState) initializeArrivals(ctx context.Context, loads []SchedulerLoad) bool {
 	if s.settings.ObservationWindow <= 0 {
 		s.out.reasons = appendUnique(s.out.reasons, "InvalidReplayObservationWindow")
 		return false
 	}
 	starts := make(map[string]time.Time, len(loads))
+	scales := make(map[string]float64, len(loads))
 	for _, load := range loads {
-		starts[load.UID] = load.WindowStart
+		starts[load.UID], scales[load.UID] = load.WindowStart, 1
+		if load.PlannedPerSecond > 0 {
+			scales[load.UID] = load.InputsPerSecond / load.PlannedPerSecond
+		}
 	}
 	arrivals := []SchedulerArrival{}
 	s.out.observedArrivals = map[string]int{}
@@ -722,13 +729,14 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context, loads []S
 	identities := map[*Definition]string{}
 	replayed := []*schedulerReplayRequest{}
 	for j, a := range arrivals {
-		start := starts[a.Definition.UID]
-		period := float64(s.snap.ObservationEnd.Sub(start))
-		for cycle := 0.0; cycle+float64(a.At.Sub(start)) < s.horizon; cycle += period {
+		start, scale := starts[a.Definition.UID], scales[a.Definition.UID]
+		period := float64(s.snap.ObservationEnd.Sub(start)) * scale
+		offset := float64(a.At.Sub(start)) * scale
+		for cycle := 0.0; cycle+offset < s.horizon; cycle += period {
 			if ctx.Err() != nil {
 				return false
 			}
-			at := cycle + float64(a.At.Sub(start))
+			at := cycle + offset
 			r := SchedulerRequest{ID: fmt.Sprintf("replay-%g-%d", cycle, j), Definition: a.Definition, ReceivedAt: s.snap.At.Add(time.Duration(at)), Phase: phasePending}
 			identity, ok := identities[a.Definition]
 			if !ok {
